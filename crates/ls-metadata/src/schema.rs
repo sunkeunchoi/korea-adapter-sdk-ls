@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 /// The dependency class that owns a TR. Exactly one per TR — enforced
 /// structurally by this being a single (non-`Vec`) field.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum OwnerClass {
     Standalone,

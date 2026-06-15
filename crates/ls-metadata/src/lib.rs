@@ -6,9 +6,11 @@
 //! verification set from changed TRs, owning dependency classes, and facets.
 //! No hand-maintained JSON Schema (ADR 0012).
 
+pub mod planner;
 pub mod schema;
 pub mod validator;
 
+pub use planner::{plan_changes, plan_with_metadata, ChangeSet, PlanError, TestGroup};
 pub use schema::{
     CertificationPath, Dependencies, Facets, IndexEntry, InstrumentDomain, Maintenance, OwnerClass,
     Protocol, RateBucket, Support, TrIndex, TrMetadata, VenueSession,
