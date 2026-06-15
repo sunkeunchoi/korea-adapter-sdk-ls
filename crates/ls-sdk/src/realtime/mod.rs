@@ -525,7 +525,7 @@ mod tests {
             appkey: "test-appkey".into(),
             appsecretkey: "test-appsecretkey".into(),
             account_no: "00000000-01".into(),
-            environment: Environment::Simulation,
+            environment: Environment::Paper,
             rate_limits: Some(RateLimitConfig {
                 market_data_per_sec: Some(1000),
                 orders_per_sec: Some(1000),

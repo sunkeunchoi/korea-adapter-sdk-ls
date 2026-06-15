@@ -24,7 +24,7 @@ pub const DEFAULT_TOKEN_TTL_SECS: u64 = 86_400;
 
 /// Build a mock `LsConfig` pointed at `base_url`.
 ///
-/// - `environment`: `Simulation`
+/// - `environment`: `Paper`
 /// - `base_url`: `Some(base_url)` so dispatch hits the mock server (the single
 ///   test-injection seam)
 /// - `rate_limits`: generous 1000/s on every category so the limiter never
@@ -39,7 +39,7 @@ pub fn mock_config(base_url: &str) -> LsConfig {
         appkey: TEST_APPKEY.into(),
         appsecretkey: TEST_APPSECRETKEY.into(),
         account_no: TEST_ACCOUNT_NO.into(),
-        environment: Environment::Simulation,
+        environment: Environment::Paper,
         rate_limits: Some(ls_core::RateLimitConfig {
             auth_per_sec: Some(1000),
             market_data_per_sec: Some(1000),

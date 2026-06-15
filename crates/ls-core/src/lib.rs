@@ -31,7 +31,7 @@ pub use rate_limiter::{RateLimitCategory, RateLimiterManager};
 
 /// Deserialise a JSON string **or** number into a `String`.
 ///
-/// TR response blocks use this because the LS simulation gateway occasionally
+/// TR response blocks use this because the LS paper gateway occasionally
 /// returns numerics as JSON numbers instead of strings. Referenced from
 /// `ls-sdk` TR structs as `#[serde(deserialize_with = "ls_core::string_or_number")]`.
 pub fn string_or_number<'de, D>(deserializer: D) -> Result<String, D::Error>
@@ -228,7 +228,7 @@ mod tests {
     #[test]
     fn string_or_number_string_and_number_yield_same_value() {
         // The load-bearing behaviour: "123" and 123 must both land on the same
-        // numeric value so the simulation gateway's number-vs-string drift is
+        // numeric value so the paper gateway's number-vs-string drift is
         // transparent to typed TR structs.
         let from_string: StringField = serde_json::from_str(r#"{"val":"123"}"#).unwrap();
         let from_number: StringField = serde_json::from_str(r#"{"val":123}"#).unwrap();

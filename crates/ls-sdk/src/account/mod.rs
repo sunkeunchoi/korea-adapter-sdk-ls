@@ -39,7 +39,7 @@
 //! ## Error classification: `01715` vs `01900` are DISTINCT
 //!
 //! Business errors classify on the structured `rsp_cd`, never on `rsp_msg`
-//! substrings. `01900` (paper/simulation-incompatible work) is the sole
+//! substrings. `01900` (paper-incompatible work) is the sole
 //! paper-incompatible signal — [`ls_core::LsError::is_paper_incompatible`] is
 //! `true` for it. `01715` (a date-related error, e.g. an empty date defaulting to a
 //! non-trading day) is a normal [`ls_core::LsError::ApiError`] with code `"01715"`

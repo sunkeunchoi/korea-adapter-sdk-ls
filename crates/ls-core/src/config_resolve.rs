@@ -102,7 +102,7 @@ pub struct ResolvedConfig {
     pub account_no: String,
 
     // Environment
-    /// Target environment (Real / Simulation).
+    /// Target environment (Real / Paper).
     pub environment: Environment,
     /// Resolved REST base URL (override or environment default).
     pub base_url: String,

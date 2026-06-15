@@ -26,10 +26,10 @@ use crate::pagination::HasPagination;
 use crate::rate_limiter::RateLimiterManager;
 use crate::{LsConfig, LsError, LsResult};
 
-/// The single LS Simulation "unsupported work" signal.
+/// The single LS Paper "unsupported work" signal.
 ///
 /// `01900` (모의투자에서는 해당업무가 제공되지 않습니다 — "this service is not
-/// provided in Simulation") is the ONLY paper-incompatible response code. It is
+/// provided in Paper") is the ONLY paper-incompatible response code. It is
 /// surfaced as a normal `LsError::ApiError { code: "01900", .. }` — the code is
 /// preserved verbatim, never collapsed into a generic failure — and callers
 /// recognize it via [`is_paper_incompatible`] / [`LsError::is_paper_incompatible`].
@@ -119,7 +119,7 @@ impl Inner {
     ///
     /// `tr_code` is injected as the `tr_cd` header when non-empty. The LS gateway
     /// requires `tr_cont`/`tr_cont_key` on every request; the first-page defaults
-    /// are `"N"` and `""` (omitting them causes HTTP 500 from the simulation
+    /// are `"N"` and `""` (omitting them causes HTTP 500 from the paper
     /// gateway). Response `tr_cont`/`tr_cont_key` headers are read BEFORE the body
     /// is consumed and injected into the deserialized JSON so `HasPagination`
     /// getters on `Res` can read them for `collect_all` continuation.
@@ -427,7 +427,7 @@ mod tests {
             appkey: "test-appkey".into(),
             appsecretkey: "test-appsecretkey".into(),
             account_no: "00000000-01".into(),
-            environment: crate::Environment::Simulation,
+            environment: crate::Environment::Paper,
             rate_limits: None,
             base_url: Some(base_url.to_string()),
             ws_base_url: None,

@@ -4,12 +4,12 @@
 //! All fields are `pub` so downstream crates construct it directly.
 //!
 //! For ergonomic env-var loading, use [`LsConfig::from_env`] which reads
-//! paper / production credentials from `LS_PAPER_*` / `LS_PROD_*` (or
+//! paper / real credentials from `LS_PAPER_*` / `LS_REAL_*` (or
 //! legacy `LS_APPKEY` / `LS_SECRET` / `LS_ACCOUNT`) based on `LS_TRADING_ENV`.
 //!
 //! `Environment` is a 2-variant enum — no runtime inference; users choose
-//! Real or Simulation explicitly. String parsing via [`FromStr`] accepts
-//! common aliases (`paper`, `sim`, `production`, `prod`, `real`).
+//! Real or Paper explicitly. String parsing via [`FromStr`] accepts only the
+//! two canonical names (`paper`, `real`) — no aliases.
 //!
 //! `base_url: Option<String>` is the test-injection escape hatch. When
 //! `Some(url)`, runtime code uses that URL verbatim. When `None`, runtime
@@ -23,26 +23,26 @@ use std::str::FromStr;
 /// Which LS API environment to target.
 ///
 /// Both variants currently route to the same public REST gateway
-/// (`https://openapi.ls-sec.co.kr:8080`). Simulation is distinguished by
+/// (`https://openapi.ls-sec.co.kr:8080`). Paper is distinguished by
 /// the appkey/appsecretkey credentials, not by domain — LS has no separate
 /// sandbox host.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Environment {
     /// Production (real-money) environment.
     Real,
-    /// Simulation / paper-trading environment.
-    Simulation,
+    /// Paper-trading environment.
+    Paper,
 }
 
 impl Environment {
     /// Return the base URL for this environment.
     ///
-    /// Both Real and Simulation currently return the same URL — LS routes
-    /// simulation traffic by credential, not by domain.
+    /// Both Real and Paper currently return the same URL — LS routes
+    /// paper traffic by credential, not by domain.
     pub fn base_url(&self) -> &'static str {
         match self {
             Environment::Real => "https://openapi.ls-sec.co.kr:8080",
-            Environment::Simulation => "https://openapi.ls-sec.co.kr:8080",
+            Environment::Paper => "https://openapi.ls-sec.co.kr:8080",
         }
     }
 
@@ -65,7 +65,7 @@ impl Environment {
     pub fn ws_url(&self) -> &'static str {
         match self {
             Environment::Real => "wss://openapi.ls-sec.co.kr:9443/websocket",
-            Environment::Simulation => "wss://openapi.ls-sec.co.kr:29443/websocket",
+            Environment::Paper => "wss://openapi.ls-sec.co.kr:29443/websocket",
         }
     }
 
@@ -78,9 +78,9 @@ impl Environment {
             .unwrap_or_else(|| config.environment.ws_url().to_string())
     }
 
-    /// Convenience constructor for the paper-trading (simulation) environment.
+    /// Convenience constructor for the paper-trading environment.
     pub fn paper() -> Self {
-        Environment::Simulation
+        Environment::Paper
     }
 
     /// Convenience constructor for the production (real-money) environment.
@@ -90,7 +90,7 @@ impl Environment {
 
     /// Returns `true` if this is the paper-trading environment.
     pub fn is_paper(&self) -> bool {
-        matches!(self, Environment::Simulation)
+        matches!(self, Environment::Paper)
     }
 
     /// Returns `true` if this is the production environment.
@@ -102,8 +102,8 @@ impl Environment {
 impl std::fmt::Display for Environment {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Environment::Real => write!(f, "production"),
-            Environment::Simulation => write!(f, "paper"),
+            Environment::Real => write!(f, "real"),
+            Environment::Paper => write!(f, "paper"),
         }
     }
 }
@@ -113,10 +113,10 @@ impl FromStr for Environment {
 
     fn from_str(s: &str) -> LsResult<Self> {
         match s.to_ascii_lowercase().as_str() {
-            "paper" | "simulation" | "sim" => Ok(Environment::Simulation),
-            "production" | "prod" | "real" => Ok(Environment::Real),
+            "paper" => Ok(Environment::Paper),
+            "real" => Ok(Environment::Real),
             other => Err(LsError::Config(format!(
-                "unknown environment '{other}'. Expected one of: paper, simulation, sim, production, prod, real"
+                "unknown environment '{other}'. Expected one of: paper, real"
             ))),
         }
     }
@@ -180,7 +180,7 @@ pub struct LsConfig {
     pub appsecretkey: String,
     /// Account number (CANO) — required for order and account TRs.
     pub account_no: String,
-    /// Which environment to target (Real or Simulation).
+    /// Which environment to target (Real or Paper).
     pub environment: Environment,
     /// Optional per-bucket rate limit config.
     pub rate_limits: Option<RateLimitConfig>,
@@ -245,18 +245,17 @@ impl LsConfig {
     /// Load configuration from environment variables.
     ///
     /// Reads `LS_TRADING_ENV` to determine which credential set to load:
-    /// - `"paper"` (or `"simulation"`, `"sim"`) → reads `LS_PAPER_APPKEY`,
-    ///   `LS_PAPER_SECRET`, `LS_PAPER_ACCOUNT`
-    /// - `"production"` (or `"prod"`, `"real"`) → reads `LS_PROD_APPKEY`,
-    ///   `LS_PROD_SECRET`, `LS_PROD_ACCOUNT`
+    /// - `"paper"` → reads `LS_PAPER_APPKEY`, `LS_PAPER_SECRET`, `LS_PAPER_ACCOUNT`
+    /// - `"real"` → reads `LS_REAL_APPKEY`, `LS_REAL_SECRET`, `LS_REAL_ACCOUNT`
     ///
-    /// If `LS_TRADING_ENV` is unset, defaults to `"paper"`.
+    /// `LS_TRADING_ENV` accepts only `paper` and `real`; any other value is an
+    /// error. If `LS_TRADING_ENV` is unset, defaults to `"paper"`.
     ///
     /// Each credential falls back to the legacy name if the env-specific one
     /// is missing:
-    /// - `LS_APPKEY`  (if `LS_PAPER_APPKEY` / `LS_PROD_APPKEY` missing)
-    /// - `LS_SECRET`  (if `LS_PAPER_SECRET` / `LS_PROD_SECRET` missing)
-    /// - `LS_ACCOUNT` (if `LS_PAPER_ACCOUNT` / `LS_PROD_ACCOUNT` missing)
+    /// - `LS_APPKEY`  (if `LS_PAPER_APPKEY` / `LS_REAL_APPKEY` missing)
+    /// - `LS_SECRET`  (if `LS_PAPER_SECRET` / `LS_REAL_SECRET` missing)
+    /// - `LS_ACCOUNT` (if `LS_PAPER_ACCOUNT` / `LS_REAL_ACCOUNT` missing)
     ///
     /// All optional fields (`rate_limits`, `base_url`, `ws_base_url`, etc.)
     /// use their defaults (`None` / `false`).
@@ -272,7 +271,7 @@ impl LsConfig {
         let (appkey_var, secret_var, account_var) = if environment.is_paper() {
             ("LS_PAPER_APPKEY", "LS_PAPER_SECRET", "LS_PAPER_ACCOUNT")
         } else {
-            ("LS_PROD_APPKEY", "LS_PROD_SECRET", "LS_PROD_ACCOUNT")
+            ("LS_REAL_APPKEY", "LS_REAL_SECRET", "LS_REAL_ACCOUNT")
         };
 
         let appkey = env_with_fallback(appkey_var, "LS_APPKEY")?;
@@ -336,7 +335,7 @@ pub(crate) fn test_config() -> LsConfig {
         appkey: "test-appkey".into(),
         appsecretkey: "test-appsecretkey".into(),
         account_no: "00000000-01".into(),
-        environment: Environment::Simulation,
+        environment: Environment::Paper,
         rate_limits: None,
         base_url: None,
         ws_base_url: None,
@@ -372,26 +371,25 @@ mod tests {
     }
 
     #[test]
-    fn environment_from_str_aliases() {
-        assert_eq!(
-            "paper".parse::<Environment>().unwrap(),
-            Environment::Simulation
-        );
-        assert_eq!(
-            "sim".parse::<Environment>().unwrap(),
-            Environment::Simulation
-        );
-        assert_eq!(
-            "simulation".parse::<Environment>().unwrap(),
-            Environment::Simulation
-        );
-        assert_eq!("prod".parse::<Environment>().unwrap(), Environment::Real);
-        assert_eq!(
-            "production".parse::<Environment>().unwrap(),
-            Environment::Real
-        );
+    fn environment_from_str_canonical_only() {
+        // Only the two canonical names parse — case-insensitively.
+        assert_eq!("paper".parse::<Environment>().unwrap(), Environment::Paper);
+        assert_eq!("Paper".parse::<Environment>().unwrap(), Environment::Paper);
         assert_eq!("real".parse::<Environment>().unwrap(), Environment::Real);
-        assert!("bogus".parse::<Environment>().is_err());
+        assert_eq!("REAL".parse::<Environment>().unwrap(), Environment::Real);
+        // Former aliases are now hard errors.
+        for alias in ["simulation", "sim", "production", "prod", "bogus"] {
+            assert!(
+                alias.parse::<Environment>().is_err(),
+                "{alias} should no longer parse"
+            );
+        }
+    }
+
+    #[test]
+    fn environment_display_is_symmetric() {
+        assert_eq!(Environment::Paper.to_string(), "paper");
+        assert_eq!(Environment::Real.to_string(), "real");
     }
 
     /// Snapshot the LS_* env vars this test family touches, returning a restorer.
@@ -401,9 +399,9 @@ mod tests {
             "LS_PAPER_APPKEY",
             "LS_PAPER_SECRET",
             "LS_PAPER_ACCOUNT",
-            "LS_PROD_APPKEY",
-            "LS_PROD_SECRET",
-            "LS_PROD_ACCOUNT",
+            "LS_REAL_APPKEY",
+            "LS_REAL_SECRET",
+            "LS_REAL_ACCOUNT",
             "LS_APPKEY",
             "LS_SECRET",
             "LS_ACCOUNT",
@@ -421,7 +419,7 @@ mod tests {
     }
 
     #[test]
-    fn from_env_paper_resolves_simulation() {
+    fn from_env_paper_resolves_paper() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = save_ls_env();
 
@@ -440,7 +438,7 @@ mod tests {
         std::env::set_var("LS_PAPER_ACCOUNT", "paper-account");
 
         let cfg = LsConfig::from_env().expect("from_env should succeed");
-        assert_eq!(cfg.environment, Environment::Simulation);
+        assert_eq!(cfg.environment, Environment::Paper);
         assert_eq!(cfg.appkey, "paper-key");
         assert_eq!(cfg.appsecretkey, "paper-secret");
         assert_eq!(cfg.account_no, "paper-account");

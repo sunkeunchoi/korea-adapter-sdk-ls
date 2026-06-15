@@ -282,7 +282,7 @@ mod tests {
             appkey: "test-appkey".into(),
             appsecretkey: "test-appsecretkey".into(),
             account_no: "00000000-01".into(),
-            environment: Environment::Simulation,
+            environment: Environment::Paper,
             rate_limits: None,
             base_url: Some(base_url.to_string()),
             ws_base_url: None,
