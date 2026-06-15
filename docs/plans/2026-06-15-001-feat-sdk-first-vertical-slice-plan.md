@@ -391,6 +391,8 @@ The tree is a scope declaration; per-unit `Files` lists are authoritative.
 - `ls-trackers` and both Change Trackers (API Drift, Specification Document) are out of this slice; change-driven evidence invalidation (origin R8) is documented but inactive until the tracker skeleton lands.
 - A true standalone *data* TR is not in the slice; the standalone class is represented by auth primitives only (origin Scope Boundaries). `t8430` is excluded (blocked upstream).
 - The `paper_incompatible` dependency class is not exercised this slice.
+- Credentialed live checking for this slice is a paper-only live smoke, not broad integration coverage or new TR expansion. It runs as ignored Rust integration tests through a repo-level `Makefile` that loads the gitignored `.env`; SDK code continues to read ordinary environment variables only.
+- The default live smoke proves auth plus harmless market-data REST behavior. `CSPAQ12200` account-state checking is read-only and opt-in, and `S3_` WebSocket checking is a timeboxed lifecycle smoke whose row receipt is extra evidence rather than the pass/fail gate.
 
 ### Deferred to Follow-Up Work
 
