@@ -28,3 +28,7 @@ rust_decimal.workspace = true
 [dev-dependencies]
 wiremock.workspace = true
 tracing-subscriber.workspace = true
+# Dev-only: cross-check the {TR}_POLICY runtime consts against the maintained
+# metadata index so code and metadata cannot drift. ls-metadata has no runtime
+# deps, so this does not pull anything into the shipped library.
+ls-metadata = { path = "../ls-metadata" }

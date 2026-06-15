@@ -1018,6 +1018,7 @@ dependencies = [
  "dashmap",
  "futures",
  "governor",
+ "ls-metadata",
  "reqwest",
  "rust_decimal",
  "serde",

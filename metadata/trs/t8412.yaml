@@ -1,0 +1,24 @@
+tr_code: t8412
+name: 주식 차트(N분봉) 조회
+owner_class: paginated
+facets:
+  protocol: rest
+  instrument_domain: stock
+  venue_session: krx_regular
+  date_sensitive: true
+  self_paginated: true
+  account_state: false
+  paper_incompatible: false
+  certification_path: automated
+  rate_bucket: market_data
+  caller_supplied_identifiers: [shcode]
+dependencies:
+  self_continuation_fields: [cts_date, cts_time]
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: true
+  recommended: false
+maintenance:
+  source_spec_hash: 238beb842b1a
+  last_reviewed: 2026-06-15
