@@ -1033,6 +1033,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ls-docgen"
+version = "0.1.0"
+dependencies = [
+ "ls-metadata",
+]
+
+[[package]]
 name = "ls-metadata"
 version = "0.1.0"
 dependencies = [
@@ -1073,6 +1080,15 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "wiremock",
+]
+
+[[package]]
+name = "ls-trackers"
+version = "0.1.0"
+dependencies = [
+ "ls-metadata",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

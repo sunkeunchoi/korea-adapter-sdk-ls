@@ -57,10 +57,17 @@ impl fmt::Display for DocgenError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             DocgenError::UnknownArg(arg) => {
-                write!(f, "unrecognized argument `{arg}` (expected no flag, or `--check`)")
+                write!(
+                    f,
+                    "unrecognized argument `{arg}` (expected no flag, or `--check`)"
+                )
             }
             DocgenError::MetadataInvalid(errors) => {
-                writeln!(f, "metadata failed to validate ({} error(s)):", errors.len())?;
+                writeln!(
+                    f,
+                    "metadata failed to validate ({} error(s)):",
+                    errors.len()
+                )?;
                 for e in errors {
                     writeln!(f, "  - {e}")?;
                 }
@@ -250,7 +257,10 @@ fn render_dependency_page(meta: &TrMetadata) -> String {
     ));
 
     out.push_str("## Facets\n\n");
-    out.push_str(&format!("- Protocol: `{}`\n", protocol_str(facets.protocol)));
+    out.push_str(&format!(
+        "- Protocol: `{}`\n",
+        protocol_str(facets.protocol)
+    ));
     out.push_str(&format!(
         "- Instrument domain: `{}`\n",
         instrument_domain_str(facets.instrument_domain)
@@ -267,7 +277,10 @@ fn render_dependency_page(meta: &TrMetadata) -> String {
         "- Self-paginated: {}\n",
         yes_no(facets.self_paginated)
     ));
-    out.push_str(&format!("- Account state: {}\n", yes_no(facets.account_state)));
+    out.push_str(&format!(
+        "- Account state: {}\n",
+        yes_no(facets.account_state)
+    ));
     out.push_str(&format!(
         "- Paper incompatible: {}\n",
         yes_no(facets.paper_incompatible)
@@ -350,7 +363,10 @@ pub fn render_dependency_docs(
 
     for tr_code in index.trs.keys() {
         if let Some(meta) = trs.get(tr_code) {
-            files.insert(dir.join(format!("{tr_code}.md")), render_dependency_page(meta));
+            files.insert(
+                dir.join(format!("{tr_code}.md")),
+                render_dependency_page(meta),
+            );
         }
     }
 
@@ -435,7 +451,10 @@ pub fn render_reference_docs(trs: &BTreeMap<String, TrMetadata>) -> BTreeMap<Pat
     let mut files = BTreeMap::new();
     files.insert(dir.join("index.md"), render_reference_index(&implemented));
     for (tr_code, meta) in &implemented {
-        files.insert(dir.join(format!("{tr_code}.md")), render_reference_page(meta));
+        files.insert(
+            dir.join(format!("{tr_code}.md")),
+            render_reference_page(meta),
+        );
     }
     files
 }
@@ -574,7 +593,10 @@ mod tests {
         assert!(files.contains_key(Path::new("docs/tr-dependencies/index.md")));
         for tr in TRACKED_TRS {
             let path = format!("docs/tr-dependencies/{tr}.md");
-            assert!(files.contains_key(Path::new(&path)), "missing page for {tr}");
+            assert!(
+                files.contains_key(Path::new(&path)),
+                "missing page for {tr}"
+            );
         }
         assert_eq!(files.len(), TRACKED_TRS.len() + 1, "index + 7 pages");
 
@@ -699,7 +721,10 @@ mod tests {
     fn reference_excludes_unimplemented_tr() {
         let mut trs: BTreeMap<String, TrMetadata> = BTreeMap::new();
         trs.insert("done".to_string(), sample_meta("done", true, false));
-        trs.insert("tracked_only".to_string(), sample_meta("tracked_only", false, false));
+        trs.insert(
+            "tracked_only".to_string(),
+            sample_meta("tracked_only", false, false),
+        );
 
         let reference = render_reference_docs(&trs);
         assert!(reference.contains_key(Path::new("docs/reference/done.md")));

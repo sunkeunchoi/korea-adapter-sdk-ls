@@ -106,9 +106,9 @@ impl fmt::Display for Change {
         match self {
             Change::FieldAdded { path, .. } => write!(f, "added field `{path}`"),
             Change::FieldRemoved { path, .. } => write!(f, "removed field `{path}`"),
-            Change::FieldChanged {
-                path, from, to, ..
-            } => write!(f, "field `{path}` changed shape {from} → {to}"),
+            Change::FieldChanged { path, from, to, .. } => {
+                write!(f, "field `{path}` changed shape {from} → {to}")
+            }
         }
     }
 }

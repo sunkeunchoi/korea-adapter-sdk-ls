@@ -207,12 +207,12 @@ pub fn promote(findings: &[TrackerFinding]) -> PromoteReport {
 
     let mut report = PromoteReport::default();
     for tr in &affected {
-        report
-            .baseline_files
-            .push(format!("crates/ls-trackers/tests/fixtures/{tr}_baseline.json"));
-        report
-            .metadata_fields
-            .push(format!("metadata/trs/{tr}.yaml: maintenance.source_spec_hash"));
+        report.baseline_files.push(format!(
+            "crates/ls-trackers/tests/fixtures/{tr}_baseline.json"
+        ));
+        report.metadata_fields.push(format!(
+            "metadata/trs/{tr}.yaml: maintenance.source_spec_hash"
+        ));
         report
             .metadata_fields
             .push(format!("metadata/trs/{tr}.yaml: maintenance.last_reviewed"));

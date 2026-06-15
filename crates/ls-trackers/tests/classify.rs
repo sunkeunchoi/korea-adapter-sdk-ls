@@ -52,7 +52,10 @@ fn normalize_produces_a_stable_canonical_artifact() {
         a.fields.get("t8412OutBlock1[].jongchk"),
         Some(&FieldShape::String)
     );
-    assert_eq!(a.fields.get("t8412OutBlock.rec_count"), Some(&FieldShape::Number));
+    assert_eq!(
+        a.fields.get("t8412OutBlock.rec_count"),
+        Some(&FieldShape::Number)
+    );
     assert_eq!(a.tr_code, "t8412");
 }
 
@@ -133,11 +136,13 @@ fn fixture_diff_classifies_breaking_first() {
     // is `maintenance` and sorts last.
     assert_eq!(findings[0].severity, Severity::Breaking);
     assert!(findings.windows(2).all(|w| w[0].severity >= w[1].severity));
-    assert!(findings.iter().any(|finding| finding.severity == Severity::Breaking
-        && matches!(
-            finding.change,
-            Change::FieldRemoved { ref path, .. } if path == "t8412OutBlock1[].jongchk"
-        )));
+    assert!(findings
+        .iter()
+        .any(|finding| finding.severity == Severity::Breaking
+            && matches!(
+                finding.change,
+                Change::FieldRemoved { ref path, .. } if path == "t8412OutBlock1[].jongchk"
+            )));
     assert!(matches!(
         findings[2].change,
         Change::FieldAdded { ref path, .. } if path == "t8412OutBlock1[].vwap"
