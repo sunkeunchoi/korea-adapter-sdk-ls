@@ -6,12 +6,16 @@
 
 pub mod config;
 pub mod config_resolve;
+pub mod endpoint_policy;
 pub mod error;
 pub mod parse;
+pub mod rate_limiter;
 
 pub use config::{Environment, LsConfig, RateLimitConfig, WsOverflowPolicy};
 pub use config_resolve::{ResolvedConfig, ResolvedRateLimits};
+pub use endpoint_policy::{EndpointPolicy, Protocol};
 pub use error::{LsError, LsResult};
+pub use rate_limiter::{RateLimitCategory, RateLimiterManager};
 
 /// Deserialise a JSON string **or** number into a `String`.
 ///
