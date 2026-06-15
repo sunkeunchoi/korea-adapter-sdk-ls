@@ -9,11 +9,11 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
-use ls_metadata::TrMetadata;
+use ls_metadata::{Support, TrMetadata};
 use serde_json::Value;
 
 use crate::types::{
-    Change, FieldShape, NormalizedArtifact, PromoteReport, StagedSnapshot, TrackerFinding,
+    Change, FieldShape, NormalizedArtifact, PromoteReport, Severity, StagedSnapshot, TrackerFinding,
 };
 
 /// The explicit not-implemented marker `fetch` returns (R12). fetch does not
@@ -134,17 +134,101 @@ pub fn diff(baseline: &NormalizedArtifact, candidate: &NormalizedArtifact) -> Ve
     changes
 }
 
-/// Stage 4 — classify each [`Change`] into a Support-Aware Severity using the
-/// affected TR's support state, emitting advisory [`TrackerFinding`]s. Real
-/// logic lands in U7.
-pub fn classify(_changes: &[Change], _trs: &BTreeMap<String, TrMetadata>) -> Vec<TrackerFinding> {
-    Vec::new()
+/// The Support-Aware Severity ladder (R11). A change to an implemented or
+/// recommended TR always outranks the same change to a tracked-only TR:
+///
+/// | change            | implemented / recommended | tracked-only   |
+/// |-------------------|---------------------------|----------------|
+/// | removed / changed | `breaking`                | `maintenance`  |
+/// | added (optional)  | `maintenance`             | `informational`|
+///
+/// `critical` (auth/order-safety) and `evidence` (stale evidence on a
+/// recommended TR) are unreachable this round — no TR is recommended and
+/// change-driven evidence invalidation is inactive.
+fn severity_for(change: &Change, support: &Support) -> Severity {
+    let strong = support.recommended || support.implemented;
+    match change {
+        Change::FieldRemoved { .. } | Change::FieldChanged { .. } => {
+            if strong {
+                Severity::Breaking
+            } else {
+                Severity::Maintenance
+            }
+        }
+        Change::FieldAdded { .. } => {
+            if strong {
+                Severity::Maintenance
+            } else {
+                Severity::Informational
+            }
+        }
+    }
 }
 
-/// Stage 5 — promote. A dry-run that writes nothing (R13); it enumerates what a
-/// real promote would touch. Real logic lands in U7.
-pub fn promote(_findings: &[TrackerFinding]) -> PromoteReport {
-    PromoteReport::default()
+/// Stage 4 — classify each [`Change`] into a Support-Aware Severity using the
+/// affected TR's support state, emitting advisory [`TrackerFinding`]s sorted
+/// highest-severity first. Output is advisory only — classify mutates nothing
+/// (R15); the metadata map is read-only.
+///
+/// A change whose TR is absent from `trs` (not expected — you only snapshot
+/// tracked TRs) is surfaced at `informational` rather than dropped, so signal is
+/// never silently lost.
+pub fn classify(changes: &[Change], trs: &BTreeMap<String, TrMetadata>) -> Vec<TrackerFinding> {
+    let mut findings: Vec<TrackerFinding> = changes
+        .iter()
+        .map(|change| {
+            let severity = match trs.get(change.tr_code()) {
+                Some(meta) => severity_for(change, &meta.support),
+                None => Severity::Informational,
+            };
+            TrackerFinding {
+                tr_code: change.tr_code().to_string(),
+                change: change.clone(),
+                severity,
+            }
+        })
+        .collect();
+
+    // Highest severity first; ties keep diff's path-sorted order (stable sort).
+    findings.sort_by(|a, b| b.severity.cmp(&a.severity));
+    findings
+}
+
+/// Stage 5 — promote. A **dry-run** that writes nothing (R13): it enumerates the
+/// reviewed baseline files, metadata fields, and generated docs a real,
+/// mutating promote would touch for the affected TRs. This report is the
+/// contract a future mutating promote must satisfy.
+///
+/// `promote` has no metadata access (only the findings), so it lists each
+/// affected TR's Dependency Doc plus the shared index pages; whether a TR also
+/// has a Reference page is a metadata question deferred to the real promote.
+pub fn promote(findings: &[TrackerFinding]) -> PromoteReport {
+    let affected: BTreeSet<&str> = findings.iter().map(|f| f.tr_code.as_str()).collect();
+
+    let mut report = PromoteReport::default();
+    for tr in &affected {
+        report
+            .baseline_files
+            .push(format!("crates/ls-trackers/tests/fixtures/{tr}_baseline.json"));
+        report
+            .metadata_fields
+            .push(format!("metadata/trs/{tr}.yaml: maintenance.source_spec_hash"));
+        report
+            .metadata_fields
+            .push(format!("metadata/trs/{tr}.yaml: maintenance.last_reviewed"));
+        report
+            .generated_docs
+            .push(format!("docs/tr-dependencies/{tr}.md"));
+    }
+    if !affected.is_empty() {
+        report
+            .generated_docs
+            .push("docs/tr-dependencies/index.md".to_string());
+        report
+            .generated_docs
+            .push("docs/reference/index.md".to_string());
+    }
+    report
 }
 
 #[cfg(test)]
