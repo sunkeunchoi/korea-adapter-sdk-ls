@@ -1,0 +1,30 @@
+tr_code: CSPAT00601
+name: 현물 정규주문 (cash equity order submission)
+owner_class: orders
+facets:
+  protocol: rest
+  instrument_domain: stock
+  venue_session: krx_regular
+  date_sensitive: false
+  self_paginated: false
+  account_state: true
+  paper_incompatible: false
+  certification_path: manual
+  rate_bucket: orders
+  caller_supplied_identifiers: [IsuNo]
+dependencies:
+  self_continuation_fields: []
+  # Order-identity fields — the semantically strong inputs that define a unique
+  # order for deduplication. The dedup key is built from account_no + tr_code +
+  # the request; these are the fields that make two submissions "the same order".
+  strong_order_fields: [IsuNo, BnsTpCode, OrdQty, OrdPrc]
+support:
+  # Tracked-not-implemented: the order class is recorded in metadata so upstream
+  # changes can be reasoned about, but no order runtime ships this slice
+  # (ADR 0008). See docs/design/order-safety-design.md.
+  tracked: true
+  implemented: false
+  recommended: false
+maintenance:
+  source_spec_hash: f6a1b2c3d4e5
+  last_reviewed: 2026-06-15

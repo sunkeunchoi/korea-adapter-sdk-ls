@@ -49,3 +49,9 @@ trs:
     protocol: websocket
     instrument_domain: stock
     venue_session: krx_regular
+  CSPAT00601:
+    file: trs/CSPAT00601.yaml
+    owner_class: orders
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
