@@ -1,0 +1,15 @@
+[package]
+name = "ls-docgen"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Deterministic generator for TR Dependency Docs and SDK Reference Docs, projected from ls-metadata."
+
+[dependencies]
+ls-metadata = { path = "../ls-metadata" }
+
+[dev-dependencies]
