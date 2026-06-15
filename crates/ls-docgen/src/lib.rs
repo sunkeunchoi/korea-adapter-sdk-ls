@@ -131,9 +131,13 @@ const GENERATED_BANNER: &str =
     "> Generated from `ls-metadata` — do not edit by hand. Run `make docs` to regenerate.";
 
 /// Canonical snake_case form of each closed-set enum, matching the YAML the
-/// metadata is authored in. Hand-written rather than routed through serde so the
-/// generator keeps its single `ls-metadata` dependency (no serde_json) and the
-/// rendered vocabulary is explicit and deterministic.
+/// metadata is authored in. The authoritative vocabulary lives on the enums via
+/// `#[serde(rename_all = "snake_case")]`; these helpers deliberately mirror it so
+/// rendering stays a pure, dependency-free string build (the plan's "markdown by
+/// hand" decision) rather than a serde round-trip. The exhaustive `match` makes a
+/// newly *added* variant a compile error; a *renamed* serde value would need
+/// these kept in step by hand. If a third consumer appears, lift `as_str` onto
+/// the enums in `ls-metadata` instead.
 fn owner_class_str(c: OwnerClass) -> &'static str {
     match c {
         OwnerClass::Standalone => "standalone",
@@ -485,12 +489,19 @@ pub fn write_docs(root: &Path, files: &BTreeMap<PathBuf, String>) -> Result<(), 
     Ok(())
 }
 
-/// Compare the rendered file set against the committed files under `root`.
+/// Compare the rendered file set against the committed files under `root`,
+/// **bidirectionally**.
 ///
-/// Returns the drifted repo-relative paths (missing or differing), sorted. An
-/// empty vec means the committed docs match the current metadata.
+/// Reports every drifted repo-relative path, sorted: a rendered file that is
+/// missing or differs on disk, *and* an orphaned committed `*.md` under the
+/// managed doc dirs that the generator no longer produces (e.g. a TR removed
+/// from metadata, or demoted out of Reference). Without the orphan sweep a stale
+/// file would pass `--check` silently, leaving the R6 guarantee one-directional.
+/// An empty vec means the committed docs match the current metadata exactly.
 pub fn check_docs(root: &Path, files: &BTreeMap<PathBuf, String>) -> Vec<PathBuf> {
     let mut drifted: Vec<PathBuf> = Vec::new();
+
+    // Forward: each rendered file must be present and identical on disk.
     for (rel, expected) in files {
         let path = root.join(rel);
         match std::fs::read_to_string(&path) {
@@ -498,7 +509,30 @@ pub fn check_docs(root: &Path, files: &BTreeMap<PathBuf, String>) -> Vec<PathBuf
             _ => drifted.push(rel.clone()),
         }
     }
+
+    // Reverse: any committed `*.md` under a managed dir that we no longer render
+    // is an orphan and counts as drift.
+    for dir in [DEPENDENCY_DOCS_DIR, REFERENCE_DOCS_DIR] {
+        let managed = Path::new(dir);
+        let Ok(entries) = std::fs::read_dir(root.join(managed)) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            if let Some(name) = path.file_name() {
+                let rel = managed.join(name);
+                if !files.contains_key(&rel) {
+                    drifted.push(rel);
+                }
+            }
+        }
+    }
+
     drifted.sort();
+    drifted.dedup();
     drifted
 }
 
@@ -729,5 +763,43 @@ mod tests {
         let reference = render_reference_docs(&trs);
         assert!(reference.contains_key(Path::new("docs/reference/done.md")));
         assert!(!reference.contains_key(Path::new("docs/reference/tracked_only.md")));
+    }
+
+    /// A unique tempdir under the OS temp root (no external crate), mirroring the
+    /// `ls-metadata` validator test helper.
+    fn temp_root() -> PathBuf {
+        use std::sync::atomic::{AtomicU32, Ordering};
+        static COUNTER: AtomicU32 = AtomicU32::new(0);
+        let n = COUNTER.fetch_add(1, Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("ls-docgen-test-{}-{n}", std::process::id()));
+        std::fs::create_dir_all(dir.join(DEPENDENCY_DOCS_DIR)).expect("create managed dir");
+        dir
+    }
+
+    #[test]
+    fn check_detects_orphaned_committed_doc() {
+        let root = temp_root();
+        let rel = Path::new(DEPENDENCY_DOCS_DIR).join("index.md");
+
+        // One rendered file, written to disk so it matches …
+        let mut files: BTreeMap<PathBuf, String> = BTreeMap::new();
+        files.insert(rel.clone(), "rendered\n".to_string());
+        write_docs(&root, &files).expect("write");
+
+        // … plus a stale orphan the generator no longer produces.
+        std::fs::write(
+            root.join(DEPENDENCY_DOCS_DIR).join("removed_tr.md"),
+            "stale",
+        )
+        .expect("orphan");
+
+        let drifted = check_docs(&root, &files);
+        assert_eq!(
+            drifted,
+            vec![Path::new(DEPENDENCY_DOCS_DIR).join("removed_tr.md")],
+            "the orphan must be reported as drift; the matching rendered file must not"
+        );
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }

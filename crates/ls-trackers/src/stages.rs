@@ -62,9 +62,7 @@ fn collect_paths(value: &Value, path: String, fields: &mut BTreeMap<String, Fiel
     match value {
         Value::Object(map) => {
             if map.is_empty() {
-                if !path.is_empty() {
-                    fields.insert(path, FieldShape::Object);
-                }
+                record(fields, path, FieldShape::Object);
             } else {
                 for (key, child) in map {
                     let child_path = if path.is_empty() {
@@ -78,9 +76,7 @@ fn collect_paths(value: &Value, path: String, fields: &mut BTreeMap<String, Fiel
         }
         Value::Array(items) => {
             if items.is_empty() {
-                if !path.is_empty() {
-                    fields.insert(path, FieldShape::Array);
-                }
+                record(fields, path, FieldShape::Array);
             } else {
                 let child_path = format!("{path}[]");
                 for item in items {
@@ -88,19 +84,27 @@ fn collect_paths(value: &Value, path: String, fields: &mut BTreeMap<String, Fiel
                 }
             }
         }
-        Value::Null => {
-            fields.insert(path, FieldShape::Null);
-        }
-        Value::Bool(_) => {
-            fields.insert(path, FieldShape::Bool);
-        }
-        Value::Number(_) => {
-            fields.insert(path, FieldShape::Number);
-        }
-        Value::String(_) => {
-            fields.insert(path, FieldShape::String);
-        }
+        Value::Null => record(fields, path, FieldShape::Null),
+        Value::Bool(_) => record(fields, path, FieldShape::Bool),
+        Value::Number(_) => record(fields, path, FieldShape::Number),
+        Value::String(_) => record(fields, path, FieldShape::String),
     }
+}
+
+/// Record `path → shape`, merging order-independently when the same collapsed
+/// array path is reached by multiple elements with differing shapes: the higher
+/// [`FieldShape`] (by `Ord`) wins. This keeps normalization deterministic and
+/// independent of element order even for heterogeneous array rows, so a pure
+/// reorder is never reported as drift. An empty path (a degenerate root-scalar
+/// snapshot) is ignored — real LS payloads are objects.
+fn record(fields: &mut BTreeMap<String, FieldShape>, path: String, shape: FieldShape) {
+    if path.is_empty() {
+        return;
+    }
+    fields
+        .entry(path)
+        .and_modify(|existing| *existing = (*existing).max(shape))
+        .or_insert(shape);
 }
 
 /// Stage 3 — diff a reviewed `baseline` against a `candidate` artifact into a
@@ -200,8 +204,11 @@ pub fn classify(changes: &[Change], trs: &BTreeMap<String, TrMetadata>) -> Vec<T
 /// contract a future mutating promote must satisfy.
 ///
 /// `promote` has no metadata access (only the findings), so it lists each
-/// affected TR's Dependency Doc plus the shared index pages; whether a TR also
-/// has a Reference page is a metadata question deferred to the real promote.
+/// affected TR's Dependency Doc plus the shared index pages. The
+/// `docs/reference/index.md` entry is a **conservative superset**: the dry-run
+/// cannot tell whether any affected TR is implemented (only implemented TRs have
+/// Reference pages), so it lists the reference index as an upper bound rather
+/// than a guaranteed touch — the real, metadata-aware promote tightens it.
 pub fn promote(findings: &[TrackerFinding]) -> PromoteReport {
     let affected: BTreeSet<&str> = findings.iter().map(|f| f.tr_code.as_str()).collect();
 
@@ -240,5 +247,40 @@ mod tests {
         let err = fetch().expect_err("fetch is stubbed this round");
         assert_eq!(err, FetchNotImplemented);
         assert!(err.to_string().contains("not implemented"));
+    }
+
+    fn snap(payload: Value) -> StagedSnapshot {
+        StagedSnapshot {
+            tr_code: "x".to_string(),
+            payload,
+        }
+    }
+
+    /// Reordering heterogeneous array rows (a field with differing leaf shapes
+    /// across rows) must NOT register as drift: normalization merges the shapes
+    /// order-independently, so the two orders diff to nothing.
+    #[test]
+    fn normalize_is_order_independent_for_heterogeneous_arrays() {
+        let forward = snap(serde_json::json!({ "arr": [ { "f": 1 }, { "f": "s" } ] }));
+        let reversed = snap(serde_json::json!({ "arr": [ { "f": "s" }, { "f": 1 } ] }));
+
+        let a = normalize(&forward);
+        let b = normalize(&reversed);
+        assert_eq!(
+            a, b,
+            "reordering heterogeneous rows must not change the artifact"
+        );
+        assert!(
+            diff(&a, &b).is_empty(),
+            "a pure reorder must produce no drift"
+        );
+    }
+
+    /// A degenerate root-scalar payload produces no nameless field rather than a
+    /// field keyed by the empty string.
+    #[test]
+    fn normalize_ignores_root_scalar() {
+        let artifact = normalize(&snap(serde_json::json!(42)));
+        assert!(artifact.fields.is_empty(), "no empty-string-keyed field");
     }
 }
