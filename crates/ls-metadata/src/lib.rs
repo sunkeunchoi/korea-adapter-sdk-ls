@@ -5,3 +5,15 @@
 //! checked against `metadata/trs/*.yaml`. The change-scoped planner selects the
 //! verification set from changed TRs, owning dependency classes, and facets.
 //! No hand-maintained JSON Schema (ADR 0012).
+
+pub mod schema;
+pub mod validator;
+
+pub use schema::{
+    CertificationPath, Dependencies, Facets, IndexEntry, InstrumentDomain, Maintenance, OwnerClass,
+    Protocol, RateBucket, Support, TrIndex, TrMetadata, VenueSession,
+};
+pub use validator::{
+    check_routing, parse_tr_metadata, validate_dir, ValidationError, ValidationReport,
+    INDEX_FILE_NAME,
+};
