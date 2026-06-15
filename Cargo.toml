@@ -1,0 +1,40 @@
+[workspace]
+members = [
+    "crates/ls-core",
+    "crates/ls-sdk",
+    "crates/ls-metadata",
+    "crates/ls-sdk-test-support",
+]
+resolver = "2"
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+repository = "https://github.com/sunkeunchoi/korea-adapter-sdk-ls"
+homepage = "https://github.com/sunkeunchoi/korea-adapter-sdk-ls"
+authors = ["sunkeunchoi <datalobby@datalobby.co.kr>"]
+
+[workspace.dependencies]
+# Runtime — versions ported verbatim from the Migration Source workspace.
+tokio        = { version = "1.52", features = ["sync", "time", "net", "io-util", "rt", "rt-multi-thread", "macros"] }
+reqwest      = { version = "0.13", features = ["rustls", "json", "form"] }
+serde        = { version = "1",    features = ["derive"] }
+serde_json   = "1"
+serde_yaml   = "0.9"
+thiserror    = "2"
+# `serde` feature intentionally omitted: no DateTime field is serialized
+# (token expiry is arithmetic-only). Re-add if a public API exposes DateTime.
+chrono       = { version = "0.4" }
+tracing      = "0.1"
+futures      = "0.3"
+tracing-subscriber = { version = "0.3", features = ["registry", "env-filter"] }
+# Resilience layer
+backon            = { version = "1.5", features = ["tokio-sleep"] }
+governor          = "0.10"
+tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }
+dashmap           = "6"
+tokio-stream      = "0.1"
+rust_decimal      = "1.36"
+# Dev
+wiremock     = "0.6"

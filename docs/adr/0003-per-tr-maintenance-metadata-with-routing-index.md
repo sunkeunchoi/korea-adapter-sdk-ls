@@ -1,0 +1,3 @@
+# Per-TR maintenance metadata with a routing index
+
+Every maintained TR needs durable metadata for debugging, test selection, evidence routing, and documentation, but a single monolithic inventory would create noisy diffs and merge conflicts. We will bootstrap the initial records once from the old dependency docs and LS spec, then treat the per-TR records as maintained project data rather than continuously generated output. Full metadata lives in one file per TR under `metadata/trs/`, while `metadata/tr-index.yaml` is a fast routing table that duplicates only selector fields and is validated against the per-TR records.

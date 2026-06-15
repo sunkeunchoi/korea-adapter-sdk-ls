@@ -1,0 +1,30 @@
+[package]
+name = "ls-core"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Transport-agnostic runtime (auth, config, transport, rate limiting, serde wire-compat) for the maintained LS Securities SDK."
+
+[dependencies]
+tokio.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+chrono.workspace = true
+tracing.workspace = true
+futures.workspace = true
+backon.workspace = true
+governor.workspace = true
+tokio-tungstenite.workspace = true
+dashmap.workspace = true
+tokio-stream.workspace = true
+rust_decimal.workspace = true
+
+[dev-dependencies]
+wiremock.workspace = true
+tracing-subscriber.workspace = true

@@ -1,0 +1,3 @@
+# Dependency class ownership with facet-based test routing
+
+The new SDK must be easier to maintain than the old generated category tree while still supporting precise, fast verification. We will organize SDK code by dependency class, because prerequisite patterns define the behavior maintainers need to reason about, and attach facet metadata such as protocol, venue/session, TR code, and instrument domain to route tests, evidence, documentation, and operator scheduling. Ordinary maintenance uses change-scoped gates selected from this metadata; full baseline verification is reserved for release or periodic confidence.

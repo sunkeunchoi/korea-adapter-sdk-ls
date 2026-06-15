@@ -1,0 +1,17 @@
+[package]
+name = "ls-sdk-test-support"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+description = "Dev-only test mocks (mock config, wiremock HTTP endpoints, mock WS server) for ls-sdk. Not a shippable crate."
+
+[dependencies]
+ls-core = { path = "../ls-core" }
+wiremock.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+futures.workspace = true
+tokio-tungstenite.workspace = true
