@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use ls_core::{Inner, LsClient, LsConfig, LsResult};
 
+pub mod market_session;
 pub mod standalone;
 
 /// Public SDK client — the maintained entry point.
@@ -56,5 +57,10 @@ impl LsSdk {
     /// The standalone (OAuth-only) dependency class: `token` and `revoke`.
     pub fn standalone(&self) -> standalone::Standalone {
         standalone::Standalone::new(Arc::clone(&self.inner))
+    }
+
+    /// The market-session dependency class: the `t1102` current-price quote.
+    pub fn market_session(&self) -> market_session::MarketSession {
+        market_session::MarketSession::new(Arc::clone(&self.inner))
     }
 }

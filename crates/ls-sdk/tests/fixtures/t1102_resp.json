@@ -1,0 +1,19 @@
+{
+  "rsp_cd": "00000",
+  "rsp_msg": "정상처리 되었습니다.",
+  "t1102OutBlock": {
+    "hname": "LS증권",
+    "price": 4535,
+    "sign": "2",
+    "change": 10,
+    "diff": "000.22",
+    "volume": 6929,
+    "open": 4550,
+    "high": 4600,
+    "low": 4535,
+    "uplmtprice": 5880,
+    "dnlmtprice": 4095,
+    "jnilvolume": 32336,
+    "volumediff": 25407
+  }
+}
