@@ -357,12 +357,87 @@ pub fn render_dependency_docs(
     files
 }
 
+/// The status banner an implemented-but-not-recommended TR carries (R4). Keyed
+/// purely on `support.recommended == false`, so the day a TR is promoted the
+/// banner drops automatically.
+const NOT_RECOMMENDED_BANNER: &str =
+    "> ⚠️ **Implemented, not yet recommended.** This TR is wired and tested but has not been \
+     promoted to recommended status; its surface and guidance may still change.";
+
+/// Render a single implemented TR's Reference page (intentionally thin: name,
+/// owner class, support caveat — schemas and examples are deferred).
+fn render_reference_page(meta: &TrMetadata) -> String {
+    let mut out = String::new();
+    out.push_str(&format!("# SDK Reference: {}\n\n", meta.tr_code));
+    if let Some(name) = &meta.name {
+        out.push_str(&format!("{name}\n\n"));
+    }
+    out.push_str(GENERATED_BANNER);
+    out.push_str("\n\n");
+
+    if !meta.support.recommended {
+        out.push_str(NOT_RECOMMENDED_BANNER);
+        out.push_str("\n\n");
+    }
+
+    out.push_str(&format!(
+        "- Owner class: `{}`\n\n",
+        owner_class_str(meta.owner_class)
+    ));
+    out.push_str(
+        "_Request/response schemas and verified examples are deferred until this TR reaches \
+         recommended status or a real consumer exists._\n",
+    );
+    out
+}
+
+/// Render the Reference Docs index page over the implemented TRs.
+fn render_reference_index(implemented: &BTreeMap<&String, &TrMetadata>) -> String {
+    let mut out = String::new();
+    out.push_str("# SDK Reference Docs\n\n");
+    out.push_str(GENERATED_BANNER);
+    out.push_str("\n\n");
+    out.push_str(
+        "Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented TRs are \
+         intentionally excluded; see the TR Dependency Docs for the full tracked set.\n\n",
+    );
+    out.push_str("| TR | Name | Owner class | Status |\n");
+    out.push_str("|----|------|-------------|--------|\n");
+    for (tr_code, meta) in implemented {
+        let name = meta.name.as_deref().unwrap_or("");
+        let status = if meta.support.recommended {
+            "recommended"
+        } else {
+            "implemented, not yet recommended"
+        };
+        out.push_str(&format!(
+            "| `{tr_code}` | {name} | `{}` | {status} |\n",
+            owner_class_str(meta.owner_class),
+        ));
+    }
+    out
+}
+
 /// Low-level: render the SDK Reference Docs file set (implemented TRs only),
 /// keyed by repo-relative path.
 ///
-/// Filled in U3; this scaffold returns an empty set.
-pub fn render_reference_docs(_trs: &BTreeMap<String, TrMetadata>) -> BTreeMap<PathBuf, String> {
-    BTreeMap::new()
+/// Filters to `support.implemented == true`, so a tracked-but-unimplemented TR
+/// such as `CSPAT00601` is excluded from Reference while still appearing in the
+/// Dependency Docs (R3). Each entry carries the "not yet recommended" banner
+/// whenever `support.recommended == false` (R4).
+pub fn render_reference_docs(trs: &BTreeMap<String, TrMetadata>) -> BTreeMap<PathBuf, String> {
+    let dir = Path::new(REFERENCE_DOCS_DIR);
+    let implemented: BTreeMap<&String, &TrMetadata> = trs
+        .iter()
+        .filter(|(_, meta)| meta.support.implemented)
+        .collect();
+
+    let mut files = BTreeMap::new();
+    files.insert(dir.join("index.md"), render_reference_index(&implemented));
+    for (tr_code, meta) in &implemented {
+        files.insert(dir.join(format!("{tr_code}.md")), render_reference_page(meta));
+    }
+    files
 }
 
 /// High-level: render the full generated file set from a validated
@@ -533,5 +608,101 @@ mod tests {
         let a = render_dependency_docs(&report.trs, &report.index);
         let b = render_dependency_docs(&report.trs, &report.index);
         assert_eq!(a, b, "identical metadata yields byte-identical output");
+    }
+
+    use ls_metadata::{
+        Dependencies, Facets, InstrumentDomain, Maintenance, Protocol, RateBucket, Support,
+        VenueSession,
+    };
+
+    /// Build a minimal TR record for inline reference-rendering tests.
+    fn sample_meta(tr_code: &str, implemented: bool, recommended: bool) -> TrMetadata {
+        TrMetadata {
+            tr_code: tr_code.to_string(),
+            name: Some(format!("name of {tr_code}")),
+            owner_class: OwnerClass::Standalone,
+            facets: Facets {
+                protocol: Protocol::Rest,
+                instrument_domain: InstrumentDomain::Misc,
+                venue_session: VenueSession::Unspecified,
+                date_sensitive: false,
+                self_paginated: false,
+                account_state: false,
+                paper_incompatible: false,
+                certification_path: CertificationPath::Automated,
+                rate_bucket: RateBucket::Auth,
+                caller_supplied_identifiers: vec![],
+            },
+            dependencies: Dependencies::default(),
+            support: Support {
+                tracked: true,
+                implemented,
+                recommended,
+            },
+            maintenance: Maintenance {
+                source_spec_hash: "deadbeef".to_string(),
+                last_reviewed: "2026-06-15".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn reference_covers_six_implemented_with_banner_and_omits_unimplemented() {
+        let report = authored_report();
+        let reference = render_reference_docs(&report.trs);
+        let dependency = render_dependency_docs(&report.trs, &report.index);
+
+        // Six implemented TRs each get a Reference page with the banner.
+        let implemented = ["CSPAQ12200", "S3_", "revoke", "t1102", "t8412", "token"];
+        for tr in implemented {
+            let page = reference
+                .get(Path::new(&format!("docs/reference/{tr}.md")))
+                .unwrap_or_else(|| panic!("reference page for {tr}"));
+            assert!(
+                page.contains("Implemented, not yet recommended"),
+                "{tr} reference must carry the not-recommended banner"
+            );
+        }
+        // index + 6 pages.
+        assert_eq!(reference.len(), implemented.len() + 1);
+
+        // The tracked-but-unimplemented order TR is excluded from Reference …
+        assert!(!reference.contains_key(Path::new("docs/reference/CSPAT00601.md")));
+        let ref_index = &reference[Path::new("docs/reference/index.md")];
+        assert!(!ref_index.contains("CSPAT00601"));
+
+        // … but still appears in the Dependency Docs.
+        assert!(dependency.contains_key(Path::new("docs/tr-dependencies/CSPAT00601.md")));
+    }
+
+    #[test]
+    fn reference_banner_is_keyed_on_recommended_flag() {
+        let mut trs: BTreeMap<String, TrMetadata> = BTreeMap::new();
+        trs.insert("rec".to_string(), sample_meta("rec", true, true));
+        trs.insert("notrec".to_string(), sample_meta("notrec", true, false));
+
+        let reference = render_reference_docs(&trs);
+
+        let rec = &reference[Path::new("docs/reference/rec.md")];
+        let notrec = &reference[Path::new("docs/reference/notrec.md")];
+        assert!(
+            !rec.contains("Implemented, not yet recommended"),
+            "a recommended TR drops the banner"
+        );
+        assert!(
+            notrec.contains("Implemented, not yet recommended"),
+            "a not-recommended TR keeps the banner"
+        );
+    }
+
+    #[test]
+    fn reference_excludes_unimplemented_tr() {
+        let mut trs: BTreeMap<String, TrMetadata> = BTreeMap::new();
+        trs.insert("done".to_string(), sample_meta("done", true, false));
+        trs.insert("tracked_only".to_string(), sample_meta("tracked_only", false, false));
+
+        let reference = render_reference_docs(&trs);
+        assert!(reference.contains_key(Path::new("docs/reference/done.md")));
+        assert!(!reference.contains_key(Path::new("docs/reference/tracked_only.md")));
     }
 }
