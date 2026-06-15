@@ -1,0 +1,27 @@
+{
+  "tr_code": "t8412",
+  "payload": {
+    "rsp_cd": "00000",
+    "rsp_msg": "정상처리 되었습니다.",
+    "t8412OutBlock": {
+      "shcode": "078020",
+      "cts_date": "20240105",
+      "cts_time": "153000",
+      "rec_count": "2"
+    },
+    "t8412OutBlock1": [
+      {
+        "date": "20240105",
+        "time": "090200",
+        "close": 4550,
+        "vwap": 4548
+      },
+      {
+        "date": "20240105",
+        "time": "090100",
+        "close": 4540,
+        "vwap": 4538
+      }
+    ]
+  }
+}
