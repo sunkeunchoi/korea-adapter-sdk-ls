@@ -52,7 +52,7 @@ pub enum LsError {
 
 impl LsError {
     /// Returns `true` if this error is the sole paper-incompatible signal —
-    /// an `ApiError` carrying the LS Simulation "unsupported work" code `01900`
+    /// an `ApiError` carrying the LS Paper "unsupported work" code `01900`
     /// (모의투자에서는 해당업무가 제공되지 않습니다).
     ///
     /// `01900` is preserved verbatim in `ApiError::code` rather than collapsed
