@@ -141,11 +141,20 @@ impl ResolvedConfig {
     ///
     /// Returns [`LsError::Config`] if:
     /// - `ws_channel_capacity` is `Some(0)` (empty channel would block forever).
+    /// - `max_pages` is `Some(0)` (`collect_all` would silently fetch nothing and
+    ///   return an empty result, masking "never queried" as "no data").
     pub fn from_raw(raw: &LsConfig) -> LsResult<Self> {
         // capacity=0 is rejected immediately with a field-named error.
         if raw.ws_channel_capacity == Some(0) {
             return Err(LsError::Config(
                 "ws_channel_capacity must be >= 1 (None uses the SDK default of 64)".into(),
+            ));
+        }
+        // max_pages=0 makes collect_all return Ok(vec![]) with zero HTTP calls —
+        // a silent failure where no-data is indistinguishable from never-queried.
+        if raw.max_pages == Some(0) {
+            return Err(LsError::Config(
+                "max_pages must be >= 1 (None uses the SDK default of 100)".into(),
             ));
         }
 
@@ -346,6 +355,22 @@ mod tests {
             LsError::Config(msg) => {
                 assert!(
                     msg.contains("ws_channel_capacity"),
+                    "error should mention field: {msg}"
+                );
+            }
+            other => panic!("expected LsError::Config, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_max_pages_zero_rejected() {
+        let mut cfg = crate::config::test_config();
+        cfg.max_pages = Some(0);
+        let err = ResolvedConfig::from_raw(&cfg).expect_err("should fail");
+        match err {
+            LsError::Config(msg) => {
+                assert!(
+                    msg.contains("max_pages"),
                     "error should mention field: {msg}"
                 );
             }

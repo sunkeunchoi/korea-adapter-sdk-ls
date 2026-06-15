@@ -138,6 +138,19 @@ pub(super) fn spawn_reconnect_task(arc_self: Arc<WsManager>) {
             }
         }
         if !reconnected {
+            // Serialize the terminal cleanup against `ensure_connected` by holding
+            // `connect_lock` for its duration. Without this, a concurrent
+            // `subscribe -> ensure_connected` could re-establish the connection and
+            // replay subscriptions while this loop removes those same keys, leaving
+            // a live dispatch consumer whose subscription is gone — it would then
+            // never be replayed and hang with no data and no terminal None.
+            let _connect_guard = arc_self.connect_lock.lock().await;
+            // Re-check under the lock: if a concurrent subscribe already brought the
+            // connection back up, the subscriptions are valid — abort cleanup.
+            if arc_self.tx.lock().await.is_some() {
+                tracing::info!("ws: connection recovered concurrently — skipping terminal cleanup");
+                return;
+            }
             tracing::error!("ws: reconnect budget exhausted — notifying all subscribers");
             let keys: Vec<String> = arc_self.dispatch.iter().map(|e| e.key().clone()).collect();
             for key in keys {

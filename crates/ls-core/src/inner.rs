@@ -572,6 +572,40 @@ mod tests {
         assert!(!is_paper_incompatible("IGW40013"));
     }
 
+    /// rsp_cd classification is load-bearing on BOTH 2xx and non-2xx. A non-2xx
+    /// status carrying a JSON error envelope must surface the structured
+    /// `rsp_cd` as an `ApiError` (not an opaque `Http`), so `01900` arriving on
+    /// a 5xx still classifies specifically as paper-incompatible.
+    #[tokio::test]
+    async fn code_01900_on_non_2xx_classifies_as_paper_incompatible() {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        Mock::given(method("POST"))
+            .and(path("/test/path"))
+            .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                "rsp_cd": "01900",
+                "rsp_msg": "모의투자에서는 해당업무가 제공되지 않습니다."
+            })))
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        let err = inner
+            .post::<_, EchoRes>(&test_policy(), &serde_json::json!({}))
+            .await
+            .expect_err("01900 on a non-2xx must be an error");
+        match &err {
+            LsError::ApiError { code, .. } => {
+                assert_eq!(
+                    code, "01900",
+                    "non-2xx rsp_cd must be extracted as ApiError"
+                );
+                assert!(err.is_paper_incompatible());
+            }
+            other => panic!("expected ApiError from non-2xx body, got {other:?}"),
+        }
+    }
+
     /// Counts hits and returns 503 for the first `fail_first` requests, then 200.
     struct FlakyResponder {
         hits: std::sync::Arc<std::sync::atomic::AtomicUsize>,
