@@ -1,0 +1,789 @@
+//! Shared runtime state — the single auth/transport core.
+//!
+//! `Inner` owns one pooled `reqwest::Client`, the resolved config, an
+//! `Arc<TokenManager>` (so a future WebSocket manager can share it without a
+//! circular `Arc`), and an `Arc<RateLimiterManager>`. It exposes:
+//!
+//! - `dispatch_once` (private) — one HTTP attempt, no retry, no rate limit; the
+//!   SINGLE place a bearer token and the LS continuation headers are applied.
+//! - `post` (public) — retry + rate limit for non-order REST.
+//! - `post_paginated` (public) — like `post`, threading `tr_cont`/`tr_cont_key`.
+//! - `collect_all` (public) — drives multi-page collection via `HasPagination`.
+//!
+//! No order-dispatch path exists here.
+
+use std::sync::Arc;
+
+use backon::{ExponentialBuilder, Retryable};
+use reqwest::Client;
+use serde::de::DeserializeOwned;
+use serde::Serialize;
+
+use crate::auth::TokenManager;
+use crate::config_resolve::ResolvedConfig;
+use crate::endpoint_policy::EndpointPolicy;
+use crate::pagination::HasPagination;
+use crate::rate_limiter::RateLimiterManager;
+use crate::{LsConfig, LsError, LsResult};
+
+/// The single LS Simulation "unsupported work" signal.
+///
+/// `01900` (모의투자에서는 해당업무가 제공되지 않습니다 — "this service is not
+/// provided in Simulation") is the ONLY paper-incompatible response code. It is
+/// surfaced as a normal `LsError::ApiError { code: "01900", .. }` — the code is
+/// preserved verbatim, never collapsed into a generic failure — and callers
+/// recognize it via [`is_paper_incompatible`] / [`LsError::is_paper_incompatible`].
+pub const PAPER_INCOMPATIBLE_CODE: &str = "01900";
+
+/// Returns `true` if `code` is the sole paper-incompatible signal (`01900`).
+///
+/// Mirrors the certification harness's `classify_api_error` `01900 =>
+/// paper_incompatible` branch, but located in the runtime so any consumer can
+/// classify an `ApiError` without a test-only dependency.
+pub fn is_paper_incompatible(code: &str) -> bool {
+    code == PAPER_INCOMPATIBLE_CODE
+}
+
+/// Classify an LS `rsp_cd` response code as success.
+///
+/// `"00000"` (and an absent/empty code) is the universal success code for query
+/// TRs. Read TRs may also return informational completion codes — `00136`
+/// (조회가 완료되었습니다, inquiry completed) and `00707` (조회할 내역이 없습니다,
+/// inquiry completed with an empty result set). These are successes: the gateway
+/// processed the query and the response carries valid (possibly empty) data
+/// blocks. Rejections and gateway errors are not in the set and surface as
+/// `LsError::ApiError`.
+fn rsp_cd_is_success(code: &str) -> bool {
+    if code.is_empty() || code == "00000" {
+        return true;
+    }
+    matches!(code, "00136" | "00707")
+}
+
+/// Return `true` if the error should trigger a retry.
+///
+/// - `LsError::Http` with a 5xx status → true (server error)
+/// - `LsError::Http` with no status (transport error) → true
+/// - `LsError::Http` with a 4xx status → false (client error)
+/// - all other variants → false
+fn is_retryable(err: &LsError) -> bool {
+    match err {
+        LsError::Http(re) => re.status().map(|s| s.is_server_error()).unwrap_or(true),
+        _ => false,
+    }
+}
+
+/// Shared runtime state, wrapped in `Arc<Inner>`.
+pub struct Inner {
+    /// Connection-pooled HTTP client, shared across every request.
+    pub client: Client,
+    /// Immutable resolved runtime configuration.
+    pub config: ResolvedConfig,
+    /// Bearer-token cache + refresh logic. `Arc` so it can be shared without an
+    /// `Arc<Inner>` (avoids a circular `Arc`).
+    pub token_manager: Arc<TokenManager>,
+    /// Per-category rate limiter. Charged inside the retry closure.
+    pub rate_limiter: Arc<RateLimiterManager>,
+}
+
+impl Inner {
+    /// Construct an `Arc<Inner>` from a validated `LsConfig`.
+    ///
+    /// Synchronous — no network I/O. The OAuth2 token is fetched lazily on the
+    /// first dispatch, so this is callable outside a Tokio runtime.
+    pub fn new(config: LsConfig) -> Result<Arc<Self>, LsError> {
+        let resolved = ResolvedConfig::from_raw(&config)?;
+
+        // Chain connect_timeout + timeout onto the shared client:
+        // - connect_timeout guards the TCP handshake phase only.
+        // - timeout guards the full request lifecycle (connect + send + read).
+        // Both `fetch_token` and `revoke_token_http` receive this client, so the
+        // timeouts apply to the OAuth endpoints too.
+        let client = Client::builder()
+            .connect_timeout(resolved.connect_timeout)
+            .timeout(resolved.request_timeout)
+            .build()
+            .map_err(LsError::Http)?;
+        let token_manager = Arc::new(TokenManager::new());
+        let rate_limiter = Arc::new(RateLimiterManager::new(&resolved.rate_limits)?);
+        Ok(Arc::new(Inner {
+            client,
+            config: resolved,
+            token_manager,
+            rate_limiter,
+        }))
+    }
+
+    /// Single HTTP attempt — no retry, no rate limit. The SINGLE auth/transport
+    /// enforcement point: every authenticated request flows through here.
+    ///
+    /// `tr_code` is injected as the `tr_cd` header when non-empty. The LS gateway
+    /// requires `tr_cont`/`tr_cont_key` on every request; the first-page defaults
+    /// are `"N"` and `""` (omitting them causes HTTP 500 from the simulation
+    /// gateway). Response `tr_cont`/`tr_cont_key` headers are read BEFORE the body
+    /// is consumed and injected into the deserialized JSON so `HasPagination`
+    /// getters on `Res` can read them for `collect_all` continuation.
+    #[tracing::instrument(skip_all, fields(tr_code, path, http_status, rsp_cd, latency_ms))]
+    async fn dispatch_once<Req, Res>(
+        &self,
+        policy: &EndpointPolicy,
+        req: &Req,
+        tr_cont: Option<&str>,
+        tr_cont_key: Option<&str>,
+    ) -> LsResult<Res>
+    where
+        Req: Serialize,
+        Res: DeserializeOwned,
+    {
+        let span = tracing::Span::current();
+        span.record("tr_code", policy.tr_code);
+        span.record("path", policy.path);
+
+        // Step 1: obtain a valid bearer token (fetches or refreshes lazily).
+        let token = self
+            .token_manager
+            .get_or_refresh(&self.client, &self.config, &self.rate_limiter)
+            .await?;
+
+        // Step 2: assemble URL from resolved config. `base_url` is the single
+        // test-injection choke point.
+        let url = format!("{}{}", &self.config.base_url, policy.path);
+
+        // Step 3: build request with the Bearer header and continuation headers.
+        let mut builder = self.client.post(url).bearer_auth(&token);
+        if !policy.tr_code.is_empty() {
+            builder = builder.header("tr_cd", policy.tr_code);
+        }
+        builder = builder.header("tr_cont", tr_cont.unwrap_or("N"));
+        builder = builder.header("tr_cont_key", tr_cont_key.unwrap_or(""));
+
+        // Step 4: dispatch with an explicit body + charset=utf-8 content-type
+        // (required by the LS spec).
+        let start = std::time::Instant::now();
+        let body_bytes = serde_json::to_vec(req).map_err(LsError::Decode)?;
+        let resp = builder
+            .header("content-type", "application/json; charset=utf-8")
+            .body(body_bytes)
+            .send()
+            .await
+            .map_err(|e| {
+                tracing::debug!(error = %e, "dispatch_once: HTTP send failed");
+                LsError::Http(e)
+            })?;
+        let latency = start.elapsed();
+        span.record("latency_ms", latency.as_millis() as i64);
+        span.record("http_status", resp.status().as_u16() as i64);
+
+        // Read tr_cont/tr_cont_key response headers BEFORE consuming the body.
+        let resp_tr_cont = resp
+            .headers()
+            .get("tr_cont")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+        let resp_tr_cont_key = resp
+            .headers()
+            .get("tr_cont_key")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+
+        let status = resp.status();
+
+        if !status.is_success() {
+            // LS returns JSON error bodies even on HTTP 5xx. Try to extract
+            // rsp_cd/rsp_msg so callers get ApiError instead of an opaque Http.
+            let e = resp.error_for_status_ref().unwrap_err();
+            let body_text = resp.text().await.unwrap_or_default();
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&body_text) {
+                if let Some(code) = val.get("rsp_cd").and_then(|v| v.as_str()) {
+                    if !code.is_empty() {
+                        let message = val
+                            .get("rsp_msg")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        tracing::debug!(
+                            status = %status,
+                            rsp_cd = %code,
+                            rsp_msg = %message,
+                            "dispatch_once: API business error via non-2xx status"
+                        );
+                        return Err(LsError::ApiError {
+                            code: code.to_string(),
+                            message,
+                        });
+                    }
+                }
+            }
+            tracing::debug!(
+                status = %status,
+                error = %e,
+                body = %body_text,
+                "dispatch_once: HTTP error response"
+            );
+            return Err(LsError::Http(e));
+        }
+
+        // Step 5: decode body, inject pagination state for HasPagination getters.
+        let mut val: serde_json::Value = resp.json().await.map_err(|e| {
+            tracing::debug!(error = %e, "dispatch_once: body decode failed");
+            LsError::Http(e)
+        })?;
+        // Inject tr_cont/tr_cont_key into the response JSON so Res::HasPagination
+        // getters can read them. Guard against non-object responses.
+        if let serde_json::Value::Object(ref mut map) = val {
+            map.insert("tr_cont".into(), serde_json::json!(resp_tr_cont));
+            map.insert("tr_cont_key".into(), serde_json::json!(resp_tr_cont_key));
+        }
+        // Inspect rsp_cd before deserializing into Res. Missing/empty rsp_cd is
+        // treated as success. `01900` (paper-incompatible) is NOT collapsed — it
+        // surfaces as ApiError with its exact code preserved.
+        if let Some(code) = val.get("rsp_cd").and_then(|v| v.as_str()) {
+            span.record("rsp_cd", code);
+            if !rsp_cd_is_success(code) {
+                let message = val
+                    .get("rsp_msg")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                tracing::debug!(rsp_cd = %code, "dispatch_once: API business error");
+                return Err(LsError::ApiError {
+                    code: code.to_string(),
+                    message,
+                });
+            }
+        }
+        serde_json::from_value::<Res>(val).map_err(LsError::Decode)
+    }
+
+    /// Record the common span fields shared by `post` and `post_paginated`.
+    fn record_request_span(span: &tracing::Span, policy: &EndpointPolicy) {
+        span.record("tr_code", policy.tr_code);
+        span.record("path", policy.path);
+        span.record("category", policy.category.as_str());
+        if let Some(v) = policy.rate_limit_per_sec {
+            span.record("tr_rate_limit_per_sec", v as i64);
+        }
+    }
+
+    /// Shared retry pipeline for non-order POSTs.
+    ///
+    /// The rate-limiter `wait` is INSIDE the retry closure, so each of the
+    /// up-to-4 attempts independently charges the bucket. `backon`'s default
+    /// `ExponentialBuilder` does up to 3 retries → ≤4 total HTTP calls.
+    /// `.when(is_retryable)` retries only 5xx + transport errors.
+    async fn post_with_retry<Req, Res>(
+        &self,
+        policy: &EndpointPolicy,
+        req: &Req,
+        tr_cont: Option<&str>,
+        tr_cont_key: Option<&str>,
+    ) -> LsResult<Res>
+    where
+        Req: Serialize + Sync,
+        Res: DeserializeOwned + Send,
+    {
+        let attempt = std::sync::atomic::AtomicU64::new(0);
+        let dispatch = || async {
+            let a = attempt.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+            tracing::Span::current().record("retry_attempt", a);
+            self.rate_limiter.wait(policy.category).await;
+            self.dispatch_once::<Req, Res>(policy, req, tr_cont, tr_cont_key)
+                .await
+        };
+        let result = dispatch
+            .retry(ExponentialBuilder::default())
+            .sleep(tokio::time::sleep)
+            .when(is_retryable)
+            .await;
+        let final_attempt = attempt.load(std::sync::atomic::Ordering::Relaxed);
+        if final_attempt > 1 {
+            tracing::info!(retry_attempt = final_attempt, "request succeeded after retries");
+        }
+        result
+    }
+
+    /// Non-order POST with retry + rate limiting.
+    ///
+    /// The rate limiter waits INSIDE the retry closure, so each of the up-to-4
+    /// attempts independently charges the bucket. `.when(is_retryable)` retries
+    /// 5xx + transport errors only.
+    #[tracing::instrument(
+        skip_all,
+        fields(tr_code, path, category, retry_attempt, tr_rate_limit_per_sec)
+    )]
+    pub async fn post<Req, Res>(&self, policy: &EndpointPolicy, req: &Req) -> LsResult<Res>
+    where
+        Req: Serialize + Sync,
+        Res: DeserializeOwned + Send,
+    {
+        policy.guard_non_order()?;
+        Self::record_request_span(&tracing::Span::current(), policy);
+        self.post_with_retry::<Req, Res>(policy, req, None, None)
+            .await
+    }
+
+    /// Paginated non-order POST — retry + rate limit with `tr_cont`/`tr_cont_key`
+    /// header propagation.
+    ///
+    /// Callers (typically `collect_all`) set `req.tr_cont`/`req.tr_cont_key`
+    /// before each page call; this reads them via `HasPagination` and passes them
+    /// to `dispatch_once` for injection as HTTP request headers.
+    #[tracing::instrument(
+        skip_all,
+        fields(tr_code, path, category, retry_attempt, tr_rate_limit_per_sec)
+    )]
+    pub async fn post_paginated<Req, Res>(
+        &self,
+        policy: &EndpointPolicy,
+        req: &Req,
+    ) -> LsResult<Res>
+    where
+        Req: HasPagination + Serialize + Sync,
+        Res: DeserializeOwned + Send,
+    {
+        policy.guard_non_order()?;
+        Self::record_request_span(&tracing::Span::current(), policy);
+        let tr_cont = req.tr_cont();
+        let tr_cont_key = req.tr_cont_key();
+        self.post_with_retry::<Req, Res>(
+            policy,
+            req,
+            if tr_cont.is_empty() { None } else { Some(tr_cont) },
+            if tr_cont_key.is_empty() {
+                None
+            } else {
+                Some(tr_cont_key)
+            },
+        )
+        .await
+    }
+
+    /// Collect all pages of a paginated TR by looping until the `tr_cont`
+    /// response header is empty/`"N"` or `max_pages` is reached.
+    ///
+    /// `dispatch_once` injects the response `tr_cont`/`tr_cont_key` headers into
+    /// the deserialized JSON so `Res::HasPagination` getters can read them; the
+    /// continuation is copied onto a cloned next request via the closure. Returns
+    /// `LsError::PaginationLimit(max_pages)` if the loop is still continuing at
+    /// the cap.
+    pub async fn collect_all<Req, Res, F, Fut>(&self, mut req: Req, f: F) -> LsResult<Vec<Res>>
+    where
+        Req: HasPagination + Clone + Send + Serialize,
+        Res: HasPagination + DeserializeOwned + Send,
+        F: Fn(Req) -> Fut,
+        Fut: std::future::Future<Output = LsResult<Res>> + Send,
+    {
+        let max = self.config.max_pages;
+        let mut results = Vec::new();
+        let mut truncated = false;
+        for _ in 0..max {
+            // `req.clone()` is required: the closure takes `Req` by value, and
+            // the request must survive the call so continuation fields can be set
+            // for the next page.
+            let page = f(req.clone()).await?;
+            // Terminal page: an empty (or "N") tr_cont stops the loop. Test on a
+            // borrow first so single-page calls allocate nothing.
+            let cont = page.tr_cont();
+            if cont.is_empty() || cont == "N" {
+                results.push(page);
+                truncated = false;
+                break;
+            }
+            // Continuing: extract continuation strings before `push` moves `page`.
+            let tr_cont = page.tr_cont().to_string();
+            let tr_cont_key = page.tr_cont_key().to_string();
+            results.push(page);
+            truncated = true;
+            req.set_tr_cont(tr_cont);
+            req.set_tr_cont_key(tr_cont_key);
+        }
+        if truncated {
+            return Err(LsError::PaginationLimit(max));
+        }
+        Ok(results)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::endpoint_policy::{EndpointPolicy, Protocol};
+    use crate::{LsConfig, RateLimitCategory};
+    use serde::Deserialize;
+    use wiremock::matchers::{header, method, path};
+    use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
+
+    fn mock_config(base_url: &str) -> LsConfig {
+        LsConfig {
+            appkey: "test-appkey".into(),
+            appsecretkey: "test-appsecretkey".into(),
+            account_no: "00000000-01".into(),
+            environment: crate::Environment::Simulation,
+            rate_limits: None,
+            base_url: Some(base_url.to_string()),
+            ws_base_url: None,
+            max_pages: None,
+            connect_timeout_secs: None,
+            request_timeout_secs: None,
+            ws_connect_timeout_secs: None,
+            allow_insecure_localhost: true,
+            ws_channel_capacity: None,
+            ws_overflow_policy: None,
+        }
+    }
+
+    fn mock_config_max_pages(base_url: &str, max_pages: usize) -> LsConfig {
+        LsConfig {
+            max_pages: Some(max_pages),
+            ..mock_config(base_url)
+        }
+    }
+
+    fn test_policy() -> EndpointPolicy {
+        EndpointPolicy {
+            tr_code: "TEST",
+            path: "/test/path",
+            module: "test",
+            group: "test",
+            protocol: Protocol::Rest,
+            category: RateLimitCategory::MarketData,
+            is_order: false,
+            has_pagination: false,
+            rate_limit_per_sec: None,
+            corp_rate_limit_per_sec: None,
+        }
+    }
+
+    /// Mount a wiremock token endpoint that always issues a fixed token.
+    async fn mount_token(server: &MockServer) {
+        Mock::given(method("POST"))
+            .and(path("/oauth2/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "test-token",
+                "token_type": "Bearer",
+                "expire_in": 86400
+            })))
+            .mount(server)
+            .await;
+    }
+
+    #[derive(Debug, Deserialize, PartialEq)]
+    struct EchoRes {
+        rsp_cd: String,
+        rsp_msg: String,
+        #[serde(default)]
+        value: String,
+    }
+
+    #[tokio::test]
+    async fn post_happy_path_sends_headers_and_deserializes() {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        // The dispatch must carry tr_cd=TEST and the default tr_cont="N".
+        Mock::given(method("POST"))
+            .and(path("/test/path"))
+            .and(header("tr_cd", "TEST"))
+            .and(header("tr_cont", "N"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "rsp_cd": "00000",
+                "rsp_msg": "ok",
+                "value": "hello"
+            })))
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        let res: EchoRes = inner
+            .post(&test_policy(), &serde_json::json!({"q": 1}))
+            .await
+            .expect("post should succeed");
+        assert_eq!(res.value, "hello");
+        assert_eq!(res.rsp_cd, "00000");
+    }
+
+    #[tokio::test]
+    async fn non_success_rsp_cd_on_2xx_surfaces_api_error() {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        Mock::given(method("POST"))
+            .and(path("/test/path"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "rsp_cd": "IGW40013",
+                "rsp_msg": "데이터 조회 실패"
+            })))
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        let err = inner
+            .post::<_, EchoRes>(&test_policy(), &serde_json::json!({}))
+            .await
+            .expect_err("non-success rsp_cd must be an error");
+        match err {
+            LsError::ApiError { code, message } => {
+                assert_eq!(code, "IGW40013");
+                assert_eq!(message, "데이터 조회 실패");
+            }
+            other => panic!("expected ApiError, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn code_01900_classifies_as_paper_incompatible() {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        Mock::given(method("POST"))
+            .and(path("/test/path"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "rsp_cd": "01900",
+                "rsp_msg": "모의투자에서는 해당업무가 제공되지 않습니다."
+            })))
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        let err = inner
+            .post::<_, EchoRes>(&test_policy(), &serde_json::json!({}))
+            .await
+            .expect_err("01900 must be an error");
+        // The mechanism: the exact code is preserved (not collapsed) and the
+        // runtime helper classifies it specifically as paper-incompatible.
+        match &err {
+            LsError::ApiError { code, .. } => {
+                assert_eq!(code, "01900");
+                assert!(is_paper_incompatible(code));
+            }
+            other => panic!("expected ApiError, got {other:?}"),
+        }
+        assert!(
+            err.is_paper_incompatible(),
+            "LsError::is_paper_incompatible() must be true for 01900"
+        );
+        // A different non-success code must NOT classify as paper-incompatible.
+        assert!(!is_paper_incompatible("IGW40013"));
+    }
+
+    /// Counts hits and returns 503 for the first `fail_first` requests, then 200.
+    struct FlakyResponder {
+        hits: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        fail_first: usize,
+    }
+
+    impl Respond for FlakyResponder {
+        fn respond(&self, _req: &Request) -> ResponseTemplate {
+            let n = self.hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if n < self.fail_first {
+                ResponseTemplate::new(503)
+            } else {
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "rsp_cd": "00000",
+                    "rsp_msg": "ok",
+                    "value": "recovered"
+                }))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn retryable_transport_error_retries_up_to_cap_and_charges_bucket() {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        // 503 forever → the retry budget (≤4 attempts) is exhausted.
+        Mock::given(method("POST"))
+            .and(path("/test/path"))
+            .respond_with(FlakyResponder {
+                hits: hits.clone(),
+                fail_first: usize::MAX,
+            })
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        let err = inner
+            .post::<_, EchoRes>(&test_policy(), &serde_json::json!({}))
+            .await
+            .expect_err("persistent 503 must fail");
+        assert!(matches!(err, LsError::Http(_)), "expected Http, got {err:?}");
+        // ≤4 total attempts (1 initial + up to 3 retries). Each attempt charged
+        // the bucket (the wait is inside the retry closure).
+        let total = hits.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(total, 4, "expected exactly 4 attempts, got {total}");
+    }
+
+    #[tokio::test]
+    async fn non_retryable_error_does_not_retry() {
+        // 400 is a client error → non-retryable.
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let hits_inner = hits.clone();
+        Mock::given(method("POST"))
+            .and(path("/test/path"))
+            .respond_with(move |_req: &Request| {
+                hits_inner.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                ResponseTemplate::new(400)
+            })
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        let err = inner
+            .post::<_, EchoRes>(&test_policy(), &serde_json::json!({}))
+            .await
+            .expect_err("400 must fail");
+        assert!(matches!(err, LsError::Http(_)), "expected Http, got {err:?}");
+        let total = hits.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(total, 1, "non-retryable error must not retry, got {total} attempts");
+    }
+
+    // --- Pagination: a local paginated request/response pair ----------------
+
+    #[derive(Debug, Clone, Serialize)]
+    struct PageReq {
+        shcode: String,
+        #[serde(skip)]
+        tr_cont: String,
+        #[serde(skip)]
+        tr_cont_key: String,
+    }
+    crate::impl_has_pagination!(PageReq);
+
+    #[derive(Debug, Deserialize)]
+    struct PageRes {
+        #[serde(default)]
+        rsp_cd: String,
+        #[serde(default)]
+        row: String,
+        #[serde(default)]
+        tr_cont: String,
+        #[serde(default)]
+        tr_cont_key: String,
+    }
+    crate::impl_has_pagination!(PageRes);
+
+    /// Two-page responder: page 1 returns tr_cont="Y", page 2 returns "" / "N".
+    struct PaginateResponder {
+        hits: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        /// When true, never stops paginating (always returns tr_cont="Y").
+        never_stop: bool,
+    }
+
+    impl Respond for PaginateResponder {
+        fn respond(&self, _req: &Request) -> ResponseTemplate {
+            let n = self.hits.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.never_stop {
+                return ResponseTemplate::new(200)
+                    .insert_header("tr_cont", "Y")
+                    .insert_header("tr_cont_key", "k")
+                    .set_body_json(serde_json::json!({"rsp_cd": "00000", "row": format!("r{n}")}));
+            }
+            if n == 0 {
+                ResponseTemplate::new(200)
+                    .insert_header("tr_cont", "Y")
+                    .insert_header("tr_cont_key", "page2key")
+                    .set_body_json(serde_json::json!({"rsp_cd": "00000", "row": "r0"}))
+            } else {
+                ResponseTemplate::new(200)
+                    .insert_header("tr_cont", "N")
+                    .insert_header("tr_cont_key", "")
+                    .set_body_json(serde_json::json!({"rsp_cd": "00000", "row": "r1"}))
+            }
+        }
+    }
+
+    fn page_policy() -> EndpointPolicy {
+        EndpointPolicy {
+            tr_code: "PAGE",
+            path: "/page",
+            has_pagination: true,
+            ..test_policy()
+        }
+    }
+
+    #[tokio::test]
+    async fn collect_all_walks_two_pages() {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        Mock::given(method("POST"))
+            .and(path("/page"))
+            .respond_with(PaginateResponder {
+                hits: hits.clone(),
+                never_stop: false,
+            })
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        let inner2 = inner.clone();
+        let req = PageReq {
+            shcode: "005930".into(),
+            tr_cont: String::new(),
+            tr_cont_key: String::new(),
+        };
+        let pages = inner
+            .collect_all(req, move |r| {
+                let inner = inner2.clone();
+                async move { inner.post_paginated::<PageReq, PageRes>(&page_policy(), &r).await }
+            })
+            .await
+            .expect("collect_all should walk two pages");
+        assert_eq!(pages.len(), 2);
+        assert_eq!(pages[0].row, "r0");
+        assert_eq!(pages[1].row, "r1");
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+        // Page 1's tr_cont header was injected into the JSON so the getter works.
+        assert_eq!(pages[0].tr_cont, "Y");
+        assert_eq!(pages[0].tr_cont_key, "page2key");
+        assert_eq!(pages[1].tr_cont, "N");
+    }
+
+    #[tokio::test]
+    async fn collect_all_returns_pagination_limit_when_truncated() {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        Mock::given(method("POST"))
+            .and(path("/page"))
+            .respond_with(PaginateResponder {
+                hits: hits.clone(),
+                never_stop: true,
+            })
+            .mount(&server)
+            .await;
+
+        // Cap at 3 pages; the server never stops → PaginationLimit(3).
+        let inner = Inner::new(mock_config_max_pages(&server.uri(), 3)).expect("valid config");
+        let inner2 = inner.clone();
+        let req = PageReq {
+            shcode: "005930".into(),
+            tr_cont: String::new(),
+            tr_cont_key: String::new(),
+        };
+        let err = inner
+            .collect_all(req, move |r| {
+                let inner = inner2.clone();
+                async move { inner.post_paginated::<PageReq, PageRes>(&page_policy(), &r).await }
+            })
+            .await
+            .expect_err("must hit the pagination cap");
+        match err {
+            LsError::PaginationLimit(n) => assert_eq!(n, 3),
+            other => panic!("expected PaginationLimit(3), got {other:?}"),
+        }
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 3);
+    }
+
+    #[test]
+    fn rsp_cd_success_classification() {
+        assert!(rsp_cd_is_success(""));
+        assert!(rsp_cd_is_success("00000"));
+        assert!(rsp_cd_is_success("00136"));
+        assert!(rsp_cd_is_success("00707"));
+        assert!(!rsp_cd_is_success("01900"));
+        assert!(!rsp_cd_is_success("IGW40013"));
+    }
+}

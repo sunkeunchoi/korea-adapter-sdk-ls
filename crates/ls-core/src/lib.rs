@@ -5,19 +5,29 @@
 //! pagination, and the load-bearing serde wire-compat helpers.
 
 pub mod auth;
+pub mod client;
 pub mod config;
 pub mod config_resolve;
 pub mod endpoint_policy;
 pub mod error;
+pub mod inner;
+pub mod pagination;
 pub mod parse;
 pub mod rate_limiter;
 
 pub use auth::{revoke_token_http, TokenData, TokenManager};
+pub use client::LsClient;
 pub use config::{Environment, LsConfig, RateLimitConfig, WsOverflowPolicy};
 pub use config_resolve::{ResolvedConfig, ResolvedRateLimits};
 pub use endpoint_policy::{EndpointPolicy, Protocol};
 pub use error::{LsError, LsResult};
+pub use inner::{is_paper_incompatible, Inner, PAPER_INCOMPATIBLE_CODE};
+pub use pagination::HasPagination;
 pub use rate_limiter::{RateLimitCategory, RateLimiterManager};
+
+// `impl_has_pagination!` is `#[macro_export]`, so it is available at the crate
+// root as `ls_core::impl_has_pagination!` for paginated request structs in
+// `ls-sdk`. No additional re-export statement is required.
 
 /// Deserialise a JSON string **or** number into a `String`.
 ///

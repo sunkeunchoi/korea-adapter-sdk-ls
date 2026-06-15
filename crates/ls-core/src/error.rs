@@ -50,5 +50,18 @@ pub enum LsError {
     Parse(String),
 }
 
+impl LsError {
+    /// Returns `true` if this error is the sole paper-incompatible signal —
+    /// an `ApiError` carrying the LS Simulation "unsupported work" code `01900`
+    /// (모의투자에서는 해당업무가 제공되지 않습니다).
+    ///
+    /// `01900` is preserved verbatim in `ApiError::code` rather than collapsed
+    /// into a generic failure, so callers can defer paper-incompatible TRs
+    /// specifically. See [`crate::is_paper_incompatible`].
+    pub fn is_paper_incompatible(&self) -> bool {
+        matches!(self, LsError::ApiError { code, .. } if crate::inner::is_paper_incompatible(code))
+    }
+}
+
 /// Canonical result alias used throughout the crate.
 pub type LsResult<T> = Result<T, LsError>;
