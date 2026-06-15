@@ -390,7 +390,10 @@ mod tests {
             .expect("cached");
         assert_eq!(first, "tok_cached");
         assert_eq!(second, "tok_cached");
-        assert_eq!(manager.snapshot_token().await, Some("tok_cached".to_string()));
+        assert_eq!(
+            manager.snapshot_token().await,
+            Some("tok_cached".to_string())
+        );
     }
 
     /// Edge: `expire_in` absent → 24-hour default (token is not expiring soon).
@@ -422,7 +425,10 @@ mod tests {
         let config = resolved_for(&server.uri());
         let client = reqwest::Client::new();
         let err = fetch_token(&client, &config).await.unwrap_err();
-        assert!(matches!(err, LsError::Auth(_)), "expected Auth, got {err:?}");
+        assert!(
+            matches!(err, LsError::Auth(_)),
+            "expected Auth, got {err:?}"
+        );
     }
 
     /// Edge: negative `expire_in` fails closed with `LsError::Auth`.
@@ -437,7 +443,10 @@ mod tests {
         let config = resolved_for(&server.uri());
         let client = reqwest::Client::new();
         let err = fetch_token(&client, &config).await.unwrap_err();
-        assert!(matches!(err, LsError::Auth(_)), "expected Auth, got {err:?}");
+        assert!(
+            matches!(err, LsError::Auth(_)),
+            "expected Auth, got {err:?}"
+        );
     }
 
     /// `expires_in` (standard OAuth2 spelling) is accepted via the serde alias.

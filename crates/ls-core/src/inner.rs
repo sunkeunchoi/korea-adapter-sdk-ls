@@ -299,7 +299,10 @@ impl Inner {
             .await;
         let final_attempt = attempt.load(std::sync::atomic::Ordering::Relaxed);
         if final_attempt > 1 {
-            tracing::info!(retry_attempt = final_attempt, "request succeeded after retries");
+            tracing::info!(
+                retry_attempt = final_attempt,
+                "request succeeded after retries"
+            );
         }
         result
     }
@@ -350,7 +353,11 @@ impl Inner {
         self.post_with_retry::<Req, Res>(
             policy,
             req,
-            if tr_cont.is_empty() { None } else { Some(tr_cont) },
+            if tr_cont.is_empty() {
+                None
+            } else {
+                Some(tr_cont)
+            },
             if tr_cont_key.is_empty() {
                 None
             } else {
@@ -606,7 +613,10 @@ mod tests {
             .post::<_, EchoRes>(&test_policy(), &serde_json::json!({}))
             .await
             .expect_err("persistent 503 must fail");
-        assert!(matches!(err, LsError::Http(_)), "expected Http, got {err:?}");
+        assert!(
+            matches!(err, LsError::Http(_)),
+            "expected Http, got {err:?}"
+        );
         // ≤4 total attempts (1 initial + up to 3 retries). Each attempt charged
         // the bucket (the wait is inside the retry closure).
         let total = hits.load(std::sync::atomic::Ordering::SeqCst);
@@ -634,9 +644,15 @@ mod tests {
             .post::<_, EchoRes>(&test_policy(), &serde_json::json!({}))
             .await
             .expect_err("400 must fail");
-        assert!(matches!(err, LsError::Http(_)), "expected Http, got {err:?}");
+        assert!(
+            matches!(err, LsError::Http(_)),
+            "expected Http, got {err:?}"
+        );
         let total = hits.load(std::sync::atomic::Ordering::SeqCst);
-        assert_eq!(total, 1, "non-retryable error must not retry, got {total} attempts");
+        assert_eq!(
+            total, 1,
+            "non-retryable error must not retry, got {total} attempts"
+        );
     }
 
     // --- Pagination: a local paginated request/response pair ----------------
@@ -727,7 +743,11 @@ mod tests {
         let pages = inner
             .collect_all(req, move |r| {
                 let inner = inner2.clone();
-                async move { inner.post_paginated::<PageReq, PageRes>(&page_policy(), &r).await }
+                async move {
+                    inner
+                        .post_paginated::<PageReq, PageRes>(&page_policy(), &r)
+                        .await
+                }
             })
             .await
             .expect("collect_all should walk two pages");
@@ -766,7 +786,11 @@ mod tests {
         let err = inner
             .collect_all(req, move |r| {
                 let inner = inner2.clone();
-                async move { inner.post_paginated::<PageReq, PageRes>(&page_policy(), &r).await }
+                async move {
+                    inner
+                        .post_paginated::<PageReq, PageRes>(&page_policy(), &r)
+                        .await
+                }
             })
             .await
             .expect_err("must hit the pagination cap");

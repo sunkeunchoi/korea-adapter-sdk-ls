@@ -49,7 +49,11 @@ impl Standalone {
     pub async fn token(&self) -> LsResult<String> {
         self.inner
             .token_manager
-            .get_or_refresh(&self.inner.client, &self.inner.config, &self.inner.rate_limiter)
+            .get_or_refresh(
+                &self.inner.client,
+                &self.inner.config,
+                &self.inner.rate_limiter,
+            )
             .await
     }
 
@@ -82,9 +86,9 @@ impl Standalone {
             // A non-OK `{code,message}` envelope surfaces from core as
             // `ApiError`; the standalone surface re-frames it as `Auth` while
             // preserving the code/message. The cache is deliberately NOT cleared.
-            Err(LsError::ApiError { code, message }) => {
-                Err(LsError::Auth(format!("token revoke rejected ({code}): {message}")))
-            }
+            Err(LsError::ApiError { code, message }) => Err(LsError::Auth(format!(
+                "token revoke rejected ({code}): {message}"
+            ))),
             // Transport and other failures propagate unchanged; the cache is
             // likewise left intact (the token may still be valid).
             Err(other) => Err(other),

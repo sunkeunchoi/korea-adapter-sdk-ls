@@ -150,11 +150,12 @@ pub fn parse_tr_metadata(
     path: &Path,
     yaml: &str,
 ) -> Result<TrMetadata, ValidationError> {
-    let meta: TrMetadata = serde_yaml::from_str(yaml).map_err(|e| ValidationError::TrFileParse {
-        tr_code: tr_code.to_string(),
-        path: path.to_path_buf(),
-        message: e.to_string(),
-    })?;
+    let meta: TrMetadata =
+        serde_yaml::from_str(yaml).map_err(|e| ValidationError::TrFileParse {
+            tr_code: tr_code.to_string(),
+            path: path.to_path_buf(),
+            message: e.to_string(),
+        })?;
     if meta.tr_code != tr_code {
         return Err(ValidationError::TrCodeMismatch {
             index_key: tr_code.to_string(),
@@ -533,6 +534,9 @@ trs:
             .expect("valid single file parses");
         assert_eq!(meta.tr_code, "t8412");
         assert!(meta.facets.date_sensitive);
-        assert_eq!(meta.dependencies.self_continuation_fields, ["cts_date", "cts_time"]);
+        assert_eq!(
+            meta.dependencies.self_continuation_fields,
+            ["cts_date", "cts_time"]
+        );
     }
 }

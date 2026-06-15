@@ -203,7 +203,13 @@ mod tests {
 
     #[test]
     fn slice_rest_policies_are_non_order_rest() {
-        for p in [TOKEN_POLICY, REVOKE_POLICY, T1102_POLICY, T8412_POLICY, CSPAQ12200_POLICY] {
+        for p in [
+            TOKEN_POLICY,
+            REVOKE_POLICY,
+            T1102_POLICY,
+            T8412_POLICY,
+            CSPAQ12200_POLICY,
+        ] {
             assert!(!p.is_order, "{} must not be an order endpoint", p.tr_code);
             assert!(p.is_rest(), "{} must be a REST endpoint", p.tr_code);
             assert!(p.guard_non_order().is_ok());

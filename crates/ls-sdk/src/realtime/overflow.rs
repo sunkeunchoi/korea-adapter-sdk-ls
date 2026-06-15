@@ -322,7 +322,10 @@ mod tests {
         assert!(poll(&mut stream, &waker).is_pending());
         deliver(&slot, Ok(serde_json::json!({"seq": 1})));
         assert!(counter.0.load(Ordering::SeqCst) >= 1);
-        assert!(matches!(poll(&mut stream, &waker), Poll::Ready(Some(Ok(_)))));
+        assert!(matches!(
+            poll(&mut stream, &waker),
+            Poll::Ready(Some(Ok(_)))
+        ));
 
         let wakes_after_first_cycle = counter.0.load(Ordering::SeqCst);
         assert!(poll(&mut stream, &waker).is_pending()); // park again

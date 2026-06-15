@@ -111,7 +111,10 @@ async fn reconnect_refreshes_token_and_replays_subscription() {
     wait_for(|| async { ws.count_subscribe_frames("S3_", "3").await >= 2 }).await;
 
     // The replayed subscription delivers a freshly pushed frame end-to-end.
-    ws.push_s3("005930", serde_json::json!({ "price": "60000", "volume": "1" }));
+    ws.push_s3(
+        "005930",
+        serde_json::json!({ "price": "60000", "volume": "1" }),
+    );
     let item = timeout(Duration::from_secs(5), stream.next())
         .await
         .expect("a frame should arrive after reconnect")
@@ -195,7 +198,10 @@ async fn latest_only_yields_newest_then_terminal_none_on_unsubscribe() {
     wait_for(|| async { ws.count_subscribe_frames("S3_", "3").await >= 1 }).await;
 
     // Push a frame; the latest-only slot holds it and wakes the consumer.
-    ws.push_s3("005930", serde_json::json!({ "price": "70000", "volume": "5" }));
+    ws.push_s3(
+        "005930",
+        serde_json::json!({ "price": "70000", "volume": "5" }),
+    );
     let item = timeout(Duration::from_secs(5), stream.next())
         .await
         .expect("latest-only frame should arrive")

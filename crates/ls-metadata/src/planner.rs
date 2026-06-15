@@ -297,11 +297,16 @@ mod tests {
         .into_iter()
         .collect();
 
-        assert_eq!(selected, expected, "exact selected-group set for CSPAQ12200");
+        assert_eq!(
+            selected, expected,
+            "exact selected-group set for CSPAQ12200"
+        );
 
         // There is no credentialed-evidence variant at all, and the
         // credential-free group is present — the gate runs construction only.
-        assert!(selected.contains(&TestGroup::CredentialFreeConstruction("CSPAQ12200".to_string())));
+        assert!(selected.contains(&TestGroup::CredentialFreeConstruction(
+            "CSPAQ12200".to_string()
+        )));
         assert!(
             !selected
                 .iter()
@@ -392,8 +397,9 @@ mod tests {
         let changes = ChangeSet::default().with_owner_class(OwnerClass::Paginated);
         let selected = plan_changes(&report, &changes).expect("owner_class plan must succeed");
 
-        let expected: BTreeSet<TestGroup> =
-            [TestGroup::ClassUnit(OwnerClass::Paginated)].into_iter().collect();
+        let expected: BTreeSet<TestGroup> = [TestGroup::ClassUnit(OwnerClass::Paginated)]
+            .into_iter()
+            .collect();
         assert_eq!(selected, expected);
     }
 
@@ -407,7 +413,10 @@ mod tests {
 
         assert_eq!(errors.len(), 1);
         let msg = errors[0].to_string();
-        assert!(msg.contains("t9999_nope"), "error names the missing TR: {msg}");
+        assert!(
+            msg.contains("t9999_nope"),
+            "error names the missing TR: {msg}"
+        );
         assert!(matches!(
             &errors[0],
             PlanError::UnknownTr { tr_code } if tr_code == "t9999_nope"
@@ -434,6 +443,9 @@ mod tests {
         let b: Vec<_> = plan(&report, &["CSPAQ12200", "S3_", "t8412"])
             .into_iter()
             .collect();
-        assert_eq!(a, b, "BTreeSet iteration order is stable regardless of input order");
+        assert_eq!(
+            a, b,
+            "BTreeSet iteration order is stable regardless of input order"
+        );
     }
 }

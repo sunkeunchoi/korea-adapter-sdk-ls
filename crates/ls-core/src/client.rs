@@ -82,7 +82,12 @@ impl LsClient {
             "base_url",
         )?;
         let ws_url = crate::config::Environment::resolve_ws_url(&config);
-        validate_url_scheme(&ws_url, &["wss"], config.allow_insecure_localhost, "ws_base_url")?;
+        validate_url_scheme(
+            &ws_url,
+            &["wss"],
+            config.allow_insecure_localhost,
+            "ws_base_url",
+        )?;
 
         let inner = Inner::new(config)?;
         Ok(LsClient { inner })

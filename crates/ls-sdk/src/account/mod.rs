@@ -161,16 +161,28 @@ pub struct CSPAQ12200OutBlock2 {
     #[serde(rename = "AcntNm", deserialize_with = "ls_core::string_or_number")]
     pub acntnm: String,
     /// Cash orderable amount / 현금주문가능금액.
-    #[serde(rename = "MnyOrdAbleAmt", deserialize_with = "ls_core::string_or_number")]
+    #[serde(
+        rename = "MnyOrdAbleAmt",
+        deserialize_with = "ls_core::string_or_number"
+    )]
     pub mnyordableamt: String,
     /// Cash withdrawable amount / 현금출금가능금액.
-    #[serde(rename = "MnyoutAbleAmt", deserialize_with = "ls_core::string_or_number")]
+    #[serde(
+        rename = "MnyoutAbleAmt",
+        deserialize_with = "ls_core::string_or_number"
+    )]
     pub mnyoutableamt: String,
     /// KOSPI orderable amount / 유가증권주문가능금액.
-    #[serde(rename = "SeOrdAbleAmt", deserialize_with = "ls_core::string_or_number")]
+    #[serde(
+        rename = "SeOrdAbleAmt",
+        deserialize_with = "ls_core::string_or_number"
+    )]
     pub seordableamt: String,
     /// KOSDAQ orderable amount / 코스닥주문가능금액.
-    #[serde(rename = "KdqOrdAbleAmt", deserialize_with = "ls_core::string_or_number")]
+    #[serde(
+        rename = "KdqOrdAbleAmt",
+        deserialize_with = "ls_core::string_or_number"
+    )]
     pub kdqordableamt: String,
     /// Total balance valuation / 잔고평가금액.
     #[serde(rename = "BalEvalAmt", deserialize_with = "ls_core::string_or_number")]
@@ -179,7 +191,10 @@ pub struct CSPAQ12200OutBlock2 {
     #[serde(rename = "RcvblAmt", deserialize_with = "ls_core::string_or_number")]
     pub rcvblamt: String,
     /// Deposit-asset total amount / 예탁자산총금액.
-    #[serde(rename = "DpsastTotamt", deserialize_with = "ls_core::string_or_number")]
+    #[serde(
+        rename = "DpsastTotamt",
+        deserialize_with = "ls_core::string_or_number"
+    )]
     pub dpsasttotamt: String,
     /// Profit-and-loss rate / 손익율.
     #[serde(rename = "PnlRat", deserialize_with = "ls_core::string_or_number")]

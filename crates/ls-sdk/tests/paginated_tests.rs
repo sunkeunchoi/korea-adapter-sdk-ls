@@ -79,7 +79,10 @@ fn request_serializes_cts_in_body_and_no_tr_cont_anywhere() {
     assert!(obj.contains_key("t8412InBlock"), "missing t8412InBlock key");
 
     // Transport continuation NEVER serializes into the body (top level or inblock).
-    assert!(value.get("tr_cont").is_none(), "tr_cont must not be in the body");
+    assert!(
+        value.get("tr_cont").is_none(),
+        "tr_cont must not be in the body"
+    );
     assert!(
         value.get("tr_cont_key").is_none(),
         "tr_cont_key must not be in the body"
@@ -96,7 +99,10 @@ fn request_serializes_cts_in_body_and_no_tr_cont_anywhere() {
     );
 
     // cts_* ARE body fields the server echoes — they must serialize.
-    assert_eq!(inblock["cts_date"], PINNED_TRADE_DATE, "cts_date rides in the body");
+    assert_eq!(
+        inblock["cts_date"], PINNED_TRADE_DATE,
+        "cts_date rides in the body"
+    );
     assert_eq!(inblock["cts_time"], "120000", "cts_time rides in the body");
 
     // The pinned trade date is present (never empty-defaults-to-today).
@@ -104,8 +110,14 @@ fn request_serializes_cts_in_body_and_no_tr_cont_anywhere() {
     assert_eq!(inblock["edate"], PINNED_TRADE_DATE);
 
     // ncnt/qrycnt serialize as JSON numbers (string_as_number).
-    assert!(inblock["ncnt"].is_number(), "ncnt must serialize as a number");
-    assert!(inblock["qrycnt"].is_number(), "qrycnt must serialize as a number");
+    assert!(
+        inblock["ncnt"].is_number(),
+        "ncnt must serialize as a number"
+    );
+    assert!(
+        inblock["qrycnt"].is_number(),
+        "qrycnt must serialize as a number"
+    );
 }
 
 /// Happy path: a single page deserializes from the spec-derived fixture with the
@@ -236,7 +248,11 @@ fn out_block1_single_object_deserializes_to_one_element_vec() {
     });
     let resp: T8412Response =
         serde_json::from_value(json).expect("single-object out-block must deserialize");
-    assert_eq!(resp.outblock1.len(), 1, "single object becomes a 1-element Vec");
+    assert_eq!(
+        resp.outblock1.len(),
+        1,
+        "single object becomes a 1-element Vec"
+    );
     assert_eq!(resp.outblock1[0].date, "20240105");
     assert_eq!(resp.outblock1[0].close, "4540");
 }
@@ -286,5 +302,9 @@ async fn chart_all_truncates_at_max_pages() {
         LsError::PaginationLimit(n) => assert_eq!(n, 2, "cap is the configured max_pages"),
         other => panic!("expected PaginationLimit(2), got {other:?}"),
     }
-    assert_eq!(hits.load(Ordering::SeqCst), 2, "exactly max_pages HTTP calls");
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        2,
+        "exactly max_pages HTTP calls"
+    );
 }

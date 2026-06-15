@@ -39,7 +39,10 @@ fn request_serializes_to_inblock_with_no_continuation_fields() {
     assert!(obj.contains_key("t1102InBlock"), "missing t1102InBlock key");
 
     // No continuation tokens anywhere in the serialized body.
-    assert!(value.get("tr_cont").is_none(), "tr_cont must not be in the body");
+    assert!(
+        value.get("tr_cont").is_none(),
+        "tr_cont must not be in the body"
+    );
     assert!(
         value.get("tr_cont_key").is_none(),
         "tr_cont_key must not be in the body"
@@ -48,7 +51,10 @@ fn request_serializes_to_inblock_with_no_continuation_fields() {
     let inblock = &value["t1102InBlock"];
     assert_eq!(inblock["shcode"], "078020");
     assert_eq!(inblock["exchgubun"], "K");
-    assert!(inblock.get("tr_cont").is_none(), "tr_cont must not be in the inblock");
+    assert!(
+        inblock.get("tr_cont").is_none(),
+        "tr_cont must not be in the inblock"
+    );
     assert!(
         inblock.get("tr_cont_key").is_none(),
         "tr_cont_key must not be in the inblock"

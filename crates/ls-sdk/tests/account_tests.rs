@@ -82,12 +82,18 @@ fn request_constructs_from_config_account_and_serializes_inblock_only() {
     );
 
     // Transport continuation NEVER serializes into the body (top level or inblock).
-    assert!(value.get("tr_cont").is_none(), "tr_cont must not be in the body");
+    assert!(
+        value.get("tr_cont").is_none(),
+        "tr_cont must not be in the body"
+    );
     assert!(
         value.get("tr_cont_key").is_none(),
         "tr_cont_key must not be in the body"
     );
-    assert!(inblock.get("tr_cont").is_none(), "tr_cont must not be in the inblock");
+    assert!(
+        inblock.get("tr_cont").is_none(),
+        "tr_cont must not be in the inblock"
+    );
     assert!(
         inblock.get("tr_cont_key").is_none(),
         "tr_cont_key must not be in the inblock"
@@ -159,7 +165,11 @@ fn out_block2_single_object_deserializes_to_one_element_vec() {
     });
     let resp: CSPAQ12200Response =
         serde_json::from_value(json).expect("single-object out-block must deserialize");
-    assert_eq!(resp.outblock2.len(), 1, "single object becomes a 1-element Vec");
+    assert_eq!(
+        resp.outblock2.len(),
+        1,
+        "single object becomes a 1-element Vec"
+    );
     assert_eq!(resp.outblock2[0].mnyordableamt, "500000");
     assert_eq!(resp.outblock2[0].balevalamt, "750000");
 }

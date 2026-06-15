@@ -75,7 +75,10 @@ async fn failed_revoke_surfaces_auth_and_keeps_cache() {
     let err = standalone.revoke().await.expect_err("revoke must fail");
     match err {
         LsError::Auth(msg) => {
-            assert!(msg.contains("IGW00121"), "auth message preserves the code: {msg}");
+            assert!(
+                msg.contains("IGW00121"),
+                "auth message preserves the code: {msg}"
+            );
         }
         other => panic!("expected LsError::Auth, got {other:?}"),
     }
@@ -95,7 +98,10 @@ async fn revoke_with_no_token_is_ok_noop() {
     let server = MockServer::start().await;
     // Deliberately mount nothing.
     let standalone = sdk_for(&server).standalone();
-    standalone.revoke().await.expect("revoke with empty cache is a no-op");
+    standalone
+        .revoke()
+        .await
+        .expect("revoke with empty cache is a no-op");
 }
 
 // ---------------------------------------------------------------------------

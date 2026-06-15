@@ -290,7 +290,10 @@ impl WsManager {
             WsOverflowPolicy::LatestOnly => {
                 let slot_arc = Arc::new(LatestOnlySlot::new());
                 (
-                    DispatchEntry::LatestOnly(Arc::downgrade(&slot_arc), Arc::new(AtomicU64::new(0))),
+                    DispatchEntry::LatestOnly(
+                        Arc::downgrade(&slot_arc),
+                        Arc::new(AtomicU64::new(0)),
+                    ),
                     WsStream::latest_only(slot_arc),
                 )
             }
@@ -577,7 +580,12 @@ mod tests {
         let rate_limiter = Arc::new(
             RateLimiterManager::new(&resolved.rate_limits).expect("default rate limits resolve"),
         );
-        let wm = WsManager::new(token_manager, reqwest::Client::new(), rate_limiter, resolved);
+        let wm = WsManager::new(
+            token_manager,
+            reqwest::Client::new(),
+            rate_limiter,
+            resolved,
+        );
 
         // Install a live-looking outbound sender whose receiver is dropped:
         // tx.is_some() passes (skips ensure_connected); tx.send() fails

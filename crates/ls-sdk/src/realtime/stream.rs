@@ -44,7 +44,9 @@ pub struct WsStream<Res> {
 
 impl<Res> WsStream<Res> {
     /// DropNewest arm — wraps the bounded dispatch channel receiver.
-    pub(crate) fn drop_newest(rx: tokio::sync::mpsc::Receiver<LsResult<serde_json::Value>>) -> Self {
+    pub(crate) fn drop_newest(
+        rx: tokio::sync::mpsc::Receiver<LsResult<serde_json::Value>>,
+    ) -> Self {
         Self {
             inner: Either::Left(ReceiverStream::new(rx)),
             _marker: PhantomData,
@@ -75,7 +77,9 @@ where
         let this = self.get_mut();
         Pin::new(&mut this.inner).poll_next(cx).map(|item| {
             item.map(|result| {
-                result.and_then(|v| serde_json::from_value::<Res>(v).map_err(ls_core::LsError::Decode))
+                result.and_then(|v| {
+                    serde_json::from_value::<Res>(v).map_err(ls_core::LsError::Decode)
+                })
             })
         })
     }

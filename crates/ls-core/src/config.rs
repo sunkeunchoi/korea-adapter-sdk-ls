@@ -373,14 +373,23 @@ mod tests {
 
     #[test]
     fn environment_from_str_aliases() {
-        assert_eq!("paper".parse::<Environment>().unwrap(), Environment::Simulation);
-        assert_eq!("sim".parse::<Environment>().unwrap(), Environment::Simulation);
+        assert_eq!(
+            "paper".parse::<Environment>().unwrap(),
+            Environment::Simulation
+        );
+        assert_eq!(
+            "sim".parse::<Environment>().unwrap(),
+            Environment::Simulation
+        );
         assert_eq!(
             "simulation".parse::<Environment>().unwrap(),
             Environment::Simulation
         );
         assert_eq!("prod".parse::<Environment>().unwrap(), Environment::Real);
-        assert_eq!("production".parse::<Environment>().unwrap(), Environment::Real);
+        assert_eq!(
+            "production".parse::<Environment>().unwrap(),
+            Environment::Real
+        );
         assert_eq!("real".parse::<Environment>().unwrap(), Environment::Real);
         assert!("bogus".parse::<Environment>().is_err());
     }
@@ -538,7 +547,10 @@ mod tests {
         match err {
             LsError::Config(msg) => {
                 // Exact-match pin on the full error format.
-                assert_eq!(msg, "missing env var: U3_TEST_PRIMARY_D (or U3_TEST_LEGACY_D)");
+                assert_eq!(
+                    msg,
+                    "missing env var: U3_TEST_PRIMARY_D (or U3_TEST_LEGACY_D)"
+                );
             }
             other => panic!("expected LsError::Config, got {other:?}"),
         }
@@ -549,7 +561,10 @@ mod tests {
         let cfg = test_config();
         let dbg = format!("{cfg:?}");
         // The known test appkey must never appear in Debug output.
-        assert!(!dbg.contains("test-appkey"), "appkey leaked in Debug: {dbg}");
+        assert!(
+            !dbg.contains("test-appkey"),
+            "appkey leaked in Debug: {dbg}"
+        );
         assert!(
             !dbg.contains("test-appsecretkey"),
             "secret leaked in Debug: {dbg}"

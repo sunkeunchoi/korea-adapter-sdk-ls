@@ -265,7 +265,11 @@ pub struct T8412Response {
     pub rsp_msg: String,
     #[serde(rename = "t8412OutBlock", default)]
     pub outblock: T8412OutBlock,
-    #[serde(rename = "t8412OutBlock1", default, deserialize_with = "ls_core::de_vec_or_single")]
+    #[serde(
+        rename = "t8412OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
     pub outblock1: Vec<T8412OutBlock1>,
     /// Continuation token from the response header (injected by `dispatch_once`).
     #[serde(default)]

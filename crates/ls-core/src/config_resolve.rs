@@ -274,7 +274,10 @@ mod tests {
     fn test_url_resolution() {
         let resolved = ResolvedConfig::from_raw(&crate::config::test_config()).expect("resolve");
         assert_eq!(resolved.base_url, "https://openapi.ls-sec.co.kr:8080");
-        assert_eq!(resolved.ws_url, "wss://openapi.ls-sec.co.kr:29443/websocket");
+        assert_eq!(
+            resolved.ws_url,
+            "wss://openapi.ls-sec.co.kr:29443/websocket"
+        );
     }
 
     #[test]
@@ -365,12 +368,18 @@ mod tests {
         // must be absent from the Debug output.
         let resolved = ResolvedConfig::from_raw(&crate::config::test_config()).expect("resolve");
         let dbg = format!("{resolved:?}");
-        assert!(!dbg.contains("test-appkey"), "appkey leaked in Debug: {dbg}");
+        assert!(
+            !dbg.contains("test-appkey"),
+            "appkey leaked in Debug: {dbg}"
+        );
         assert!(
             !dbg.contains("test-appsecretkey"),
             "secret leaked in Debug: {dbg}"
         );
-        assert!(!dbg.contains("00000000-01"), "account leaked in Debug: {dbg}");
+        assert!(
+            !dbg.contains("00000000-01"),
+            "account leaked in Debug: {dbg}"
+        );
         assert!(dbg.contains("<redacted>"));
     }
 }
