@@ -4,9 +4,13 @@
 //! generator coupling. Houses auth, config, transport dispatch, rate limiting,
 //! pagination, and the load-bearing serde wire-compat helpers.
 
+pub mod config;
+pub mod config_resolve;
 pub mod error;
 pub mod parse;
 
+pub use config::{Environment, LsConfig, RateLimitConfig, WsOverflowPolicy};
+pub use config_resolve::{ResolvedConfig, ResolvedRateLimits};
 pub use error::{LsError, LsResult};
 
 /// Deserialise a JSON string **or** number into a `String`.
