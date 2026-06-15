@@ -4,6 +4,7 @@
 //! generator coupling. Houses auth, config, transport dispatch, rate limiting,
 //! pagination, and the load-bearing serde wire-compat helpers.
 
+pub mod auth;
 pub mod config;
 pub mod config_resolve;
 pub mod endpoint_policy;
@@ -11,6 +12,7 @@ pub mod error;
 pub mod parse;
 pub mod rate_limiter;
 
+pub use auth::{revoke_token_http, TokenData, TokenManager};
 pub use config::{Environment, LsConfig, RateLimitConfig, WsOverflowPolicy};
 pub use config_resolve::{ResolvedConfig, ResolvedRateLimits};
 pub use endpoint_policy::{EndpointPolicy, Protocol};
