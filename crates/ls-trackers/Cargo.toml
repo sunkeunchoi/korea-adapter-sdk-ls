@@ -1,0 +1,17 @@
+[package]
+name = "ls-trackers"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+description = "Staged-snapshot change trackers: normalize/diff/classify LS API drift into support-aware advisory findings."
+
+[dependencies]
+ls-metadata = { path = "../ls-metadata" }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]

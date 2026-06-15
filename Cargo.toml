@@ -4,6 +4,8 @@ members = [
     "crates/ls-sdk",
     "crates/ls-metadata",
     "crates/ls-sdk-test-support",
+    "crates/ls-docgen",
+    "crates/ls-trackers",
 ]
 resolver = "2"
 
