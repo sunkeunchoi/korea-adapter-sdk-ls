@@ -1,0 +1,30 @@
+{
+  "rsp_cd": "00000",
+  "rsp_msg": "정상처리 되었습니다.",
+  "CSPAQ12200OutBlock1": {
+    "RecCnt": 1,
+    "MgmtBrnNo": "",
+    "AcntNo": "00000000-01",
+    "Pwd": "****",
+    "BalCreTp": "1"
+  },
+  "CSPAQ12200OutBlock2": [
+    {
+      "RecCnt": 1,
+      "BrnNm": "테스트지점",
+      "AcntNm": "홍길동",
+      "MnyOrdAbleAmt": 1000000,
+      "MnyoutAbleAmt": 1000000,
+      "SeOrdAbleAmt": 990000,
+      "KdqOrdAbleAmt": 990000,
+      "BalEvalAmt": 2500000,
+      "RcvblAmt": 0,
+      "DpsastTotamt": 3500000,
+      "PnlRat": "12.345678",
+      "Dps": 1000000,
+      "SubstAmt": 0,
+      "D1Dps": 1000000,
+      "D2Dps": 1000000
+    }
+  ]
+}

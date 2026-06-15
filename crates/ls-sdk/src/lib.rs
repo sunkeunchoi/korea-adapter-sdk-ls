@@ -14,6 +14,7 @@ use std::sync::Arc;
 
 use ls_core::{Inner, LsClient, LsConfig, LsResult};
 
+pub mod account;
 pub mod market_session;
 pub mod paginated;
 pub mod standalone;
@@ -68,5 +69,11 @@ impl LsSdk {
     /// The paginated dependency class: the SELF-paginated `t8412` chart.
     pub fn paginated(&self) -> paginated::Paginated {
         paginated::Paginated::new(Arc::clone(&self.inner))
+    }
+
+    /// The account dependency class: the `CSPAQ12200` balance/orderable-amount
+    /// inquiry. The account number is sourced from config, not the caller.
+    pub fn account(&self) -> account::Account {
+        account::Account::new(Arc::clone(&self.inner))
     }
 }
