@@ -41,3 +41,20 @@ live-smoke-account:
 ## WebSocket smoke: S3_ connect/subscribe/unsubscribe lifecycle (timeboxed).
 live-smoke-ws:
 	$(call run_smoke,live_smoke_ws)
+
+# ---------------------------------------------------------------------------
+# Docs generation — ls-docgen projects TR Dependency Docs and SDK Reference
+# Docs from ls-metadata. These targets need no credentials, so (unlike the
+# live-smoke recipes above) they do NOT source .env. If a future docs target
+# ever needs credentials, source .env in the recipe shell (`set -a; . ./.env;
+# set +a`) — never via make `include` (see the header note and
+# docs/solutions/integration-issues/makefile-include-env-quotes-gateway-403.md).
+.PHONY: docs docs-check
+
+## Regenerate TR Dependency Docs and SDK Reference Docs from ls-metadata.
+docs:
+	cargo run -q -p ls-docgen
+
+## Drift gate: fail (non-zero) if committed docs no longer match ls-metadata.
+docs-check:
+	cargo run -q -p ls-docgen -- --check
