@@ -5,11 +5,10 @@
 //! mock WebSocket server, reused across the dependency-class test suites.
 
 pub mod mock_http;
-
-// U14 adds `pub mod mock_ws;` in a separate file so the two units never edit the
-// same file.
+pub mod mock_ws;
 
 pub use mock_http::{
     mock_config, mount_revoke, mount_revoke_non_ok, mount_token, mount_token_expect,
     DEFAULT_TOKEN_TTL_SECS, TEST_ACCOUNT_NO, TEST_APPKEY, TEST_APPSECRETKEY, TEST_TOKEN,
 };
+pub use mock_ws::MockWsServer;

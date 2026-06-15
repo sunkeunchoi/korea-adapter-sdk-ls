@@ -114,6 +114,22 @@ impl TokenManager {
         *guard = None;
     }
 
+    /// Seed the cache with a known [`TokenData`] directly, bypassing the network.
+    ///
+    /// This is the cross-crate test seam: `ls-sdk`'s WebSocket ordering proof
+    /// (`subscribe_records_subscription_before_outbound_send`) seeds a
+    /// far-future token so `get_or_refresh` takes the cache fast path — no HTTP,
+    /// no rate-limiter wait — which is what lets the test inject a *synchronous*
+    /// send failure at the exact step after the ordering point. In the old
+    /// single-crate runtime the test wrote the `pub(crate)` `token` field
+    /// directly; the maintained layout puts the WS manager in a separate crate,
+    /// so the seam is exposed as this explicit, narrowly-documented method
+    /// rather than as field visibility.
+    pub async fn seed_token(&self, token: TokenData) {
+        let mut guard = self.token.write().await;
+        *guard = Some(token);
+    }
+
     /// Return the current access token if any. Uses a read lock and does NOT
     /// trigger a refresh.
     pub async fn snapshot_token(&self) -> Option<String> {

@@ -17,6 +17,7 @@ use ls_core::{Inner, LsClient, LsConfig, LsResult};
 pub mod account;
 pub mod market_session;
 pub mod paginated;
+pub mod realtime;
 pub mod standalone;
 
 /// Public SDK client — the maintained entry point.
@@ -75,5 +76,18 @@ impl LsSdk {
     /// inquiry. The account number is sourced from config, not the caller.
     pub fn account(&self) -> account::Account {
         account::Account::new(Arc::clone(&self.inner))
+    }
+
+    /// The realtime dependency class: the S3_ KOSPI-trade WebSocket subscription.
+    ///
+    /// Returns an `Arc<WsManager>` built from the shared core's components —
+    /// `inner.token_manager`, `inner.client`, `inner.rate_limiter`, and
+    /// `inner.config` — NOT `Arc<Inner>`. The manager holds the `TokenManager`
+    /// directly (via `Arc::new_cyclic`) so its reconnect tasks hold a `Weak`
+    /// back-reference without forming a circular `Arc`. Each call builds a fresh
+    /// manager with its own connection lifecycle; callers that want one shared
+    /// connection should keep the returned handle.
+    pub fn realtime(&self) -> Arc<realtime::WsManager> {
+        realtime::WsManager::from_inner(&self.inner)
     }
 }

@@ -1,0 +1,159 @@
+//! Mock WebSocket server for the realtime (S3_) suite.
+//!
+//! Ported from the Migration Source `crates/test-support/src/mock_support.rs` WS
+//! helpers, stripped of the order-event scaffolding this slice does not exercise.
+//! The server binds an ephemeral loopback port, accepts connections, records
+//! every text frame it receives (so tests can assert subscribe/replay frames),
+//! lets a test broadcast frames to all connected clients (so tests can push S3_
+//! rows), and supports forcibly killing connections (so reconnect tests can
+//! sever a live socket).
+//!
+//! The realtime tests inject `ws://127.0.0.1:<port>` through `LsConfig.ws_base_url`
+//! (the single WS test seam), so the REAL connect / replay / dispatch / reconnect
+//! code paths run against this server.
+
+use std::sync::Arc;
+
+use futures::{SinkExt, StreamExt};
+use tokio::sync::{broadcast, Mutex};
+use tokio_tungstenite::tungstenite::Message;
+
+/// A running mock WS server bound to an ephemeral loopback port.
+///
+/// Drop the handle to stop accepting new connections (the spawned accept loop is
+/// detached; dropping `MockWsServer` drops the broadcast/kill senders).
+pub struct MockWsServer {
+    port: u16,
+    /// Broadcast a JSON text frame to every connected client.
+    broadcast_tx: broadcast::Sender<String>,
+    /// Force every active connection closed (reconnect tests).
+    kill_tx: broadcast::Sender<()>,
+    /// Every text frame received from clients, accumulated across connections.
+    received: Arc<Mutex<Vec<String>>>,
+    /// The detached accept loop — aborting it closes the listening port so a
+    /// reconnect can never succeed (reconnect-budget-exhaustion tests).
+    accept_handle: tokio::task::JoinHandle<()>,
+}
+
+impl MockWsServer {
+    /// Spawn a mock WS server on a random loopback port.
+    pub async fn start() -> Self {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind mock ws listener");
+        let port = listener.local_addr().expect("local addr").port();
+
+        let received: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+        let (broadcast_tx, _) = broadcast::channel::<String>(512);
+        let (kill_tx, _) = broadcast::channel::<()>(16);
+
+        let received_loop = Arc::clone(&received);
+        let broadcast_loop = broadcast_tx.clone();
+        let kill_loop = kill_tx.clone();
+
+        let accept_handle = tokio::spawn(async move {
+            loop {
+                let Ok((stream, _)) = listener.accept().await else {
+                    break;
+                };
+                let recv_inner = Arc::clone(&received_loop);
+                let mut bcast_rx = broadcast_loop.subscribe();
+                let mut kill_rx = kill_loop.subscribe();
+                tokio::spawn(async move {
+                    let mut ws = match tokio_tungstenite::accept_async(stream).await {
+                        Ok(ws) => ws,
+                        Err(_) => return,
+                    };
+                    loop {
+                        tokio::select! {
+                            frame = ws.next() => {
+                                match frame {
+                                    Some(Ok(Message::Text(t))) => {
+                                        recv_inner.lock().await.push(t.to_string());
+                                    }
+                                    _ => break,
+                                }
+                            }
+                            result = bcast_rx.recv() => {
+                                if let Ok(text) = result {
+                                    let _ = ws.send(Message::Text(text.into())).await;
+                                }
+                            }
+                            _ = kill_rx.recv() => break,
+                        }
+                    }
+                });
+            }
+        });
+
+        MockWsServer {
+            port,
+            broadcast_tx,
+            kill_tx,
+            received,
+            accept_handle,
+        }
+    }
+
+    /// Stop accepting connections AND sever active ones, then close the port.
+    ///
+    /// After this, a client reconnect attempt against [`Self::ws_url`] fails to
+    /// connect — which is how a reconnect-budget-exhaustion test forces all four
+    /// attempts to fail. The port may take a moment to free; tests that need a
+    /// hard-dead port should also point reconnect at it only after `shutdown`.
+    pub fn shutdown(&self) {
+        let _ = self.kill_tx.send(());
+        self.accept_handle.abort();
+    }
+
+    /// The `ws://127.0.0.1:<port>` URL clients connect to. Inject into
+    /// `LsConfig.ws_base_url`.
+    pub fn ws_url(&self) -> String {
+        format!("ws://127.0.0.1:{}", self.port)
+    }
+
+    /// Broadcast a raw JSON text frame to every connected client.
+    ///
+    /// Returns the number of clients the frame was queued for (0 if none are
+    /// connected yet — broadcast does not buffer for future subscribers).
+    pub fn push_frame(&self, json: impl Into<String>) -> usize {
+        self.broadcast_tx.send(json.into()).unwrap_or(0)
+    }
+
+    /// Build and broadcast an S3_ push frame for `tr_key` with the given `body`
+    /// object. The frame shape matches the LS gateway:
+    /// `{"header":{"tr_cd":"S3_","tr_key":<key>},"body":<body>}`.
+    pub fn push_s3(&self, tr_key: &str, body: serde_json::Value) -> usize {
+        let frame = serde_json::json!({
+            "header": { "tr_cd": "S3_", "tr_key": tr_key },
+            "body": body,
+        });
+        self.push_frame(frame.to_string())
+    }
+
+    /// Force every active connection closed — drives a reconnect in the client.
+    pub fn kill_connections(&self) {
+        let _ = self.kill_tx.send(());
+    }
+
+    /// All text frames received from clients so far (subscribe/replay/unsubscribe
+    /// frames), cloned out for assertion.
+    pub async fn received_frames(&self) -> Vec<String> {
+        self.received.lock().await.clone()
+    }
+
+    /// Count of received frames whose parsed JSON has `body.tr_cd == tr_cd`
+    /// (i.e. subscribe/unsubscribe control frames for that TR).
+    pub async fn count_subscribe_frames(&self, tr_cd: &str, tr_type: &str) -> usize {
+        self.received
+            .lock()
+            .await
+            .iter()
+            .filter_map(|f| serde_json::from_str::<serde_json::Value>(f).ok())
+            .filter(|v| {
+                v["body"]["tr_cd"].as_str() == Some(tr_cd)
+                    && v["header"]["tr_type"].as_str() == Some(tr_type)
+            })
+            .count()
+    }
+}

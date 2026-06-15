@@ -1047,9 +1047,11 @@ name = "ls-sdk"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "dashmap",
  "futures",
  "ls-core",
  "ls-sdk-test-support",
+ "reqwest",
  "rust_decimal",
  "serde",
  "serde_json",
