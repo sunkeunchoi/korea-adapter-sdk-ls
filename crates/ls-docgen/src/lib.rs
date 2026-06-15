@@ -19,7 +19,10 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use ls_metadata::{validate_dir, TrIndex, TrMetadata, ValidationError, ValidationReport};
+use ls_metadata::{
+    validate_dir, CertificationPath, InstrumentDomain, OwnerClass, Protocol, RateBucket, Support,
+    TrIndex, TrMetadata, ValidationError, ValidationReport, VenueSession,
+};
 
 /// Generated TR Dependency Docs live here, relative to the repo root.
 pub const DEPENDENCY_DOCS_DIR: &str = "docs/tr-dependencies";
@@ -116,17 +119,242 @@ pub fn metadata_root() -> PathBuf {
     repo_root().join("metadata")
 }
 
+/// Shared do-not-edit banner placed at the top of every generated file.
+const GENERATED_BANNER: &str =
+    "> Generated from `ls-metadata` — do not edit by hand. Run `make docs` to regenerate.";
+
+/// Canonical snake_case form of each closed-set enum, matching the YAML the
+/// metadata is authored in. Hand-written rather than routed through serde so the
+/// generator keeps its single `ls-metadata` dependency (no serde_json) and the
+/// rendered vocabulary is explicit and deterministic.
+fn owner_class_str(c: OwnerClass) -> &'static str {
+    match c {
+        OwnerClass::Standalone => "standalone",
+        OwnerClass::MarketSession => "market_session",
+        OwnerClass::Paginated => "paginated",
+        OwnerClass::Account => "account",
+        OwnerClass::Orders => "orders",
+        OwnerClass::Realtime => "realtime",
+        OwnerClass::PaperIncompatible => "paper_incompatible",
+    }
+}
+
+fn protocol_str(p: Protocol) -> &'static str {
+    match p {
+        Protocol::Rest => "rest",
+        Protocol::Websocket => "websocket",
+    }
+}
+
+fn instrument_domain_str(d: InstrumentDomain) -> &'static str {
+    match d {
+        InstrumentDomain::Stock => "stock",
+        InstrumentDomain::FuturesOptions => "futures_options",
+        InstrumentDomain::OverseasStock => "overseas_stock",
+        InstrumentDomain::OverseasFutures => "overseas_futures",
+        InstrumentDomain::SectorIndex => "sector_index",
+        InstrumentDomain::RealtimeInvest => "realtime_invest",
+        InstrumentDomain::Misc => "misc",
+    }
+}
+
+fn venue_session_str(v: VenueSession) -> &'static str {
+    match v {
+        VenueSession::KrxRegular => "krx_regular",
+        VenueSession::KrxExtended => "krx_extended",
+        VenueSession::Unspecified => "unspecified",
+    }
+}
+
+fn certification_path_str(c: CertificationPath) -> &'static str {
+    match c {
+        CertificationPath::Automated => "automated",
+        CertificationPath::Manual => "manual",
+        CertificationPath::None => "none",
+    }
+}
+
+fn rate_bucket_str(b: RateBucket) -> &'static str {
+    match b {
+        RateBucket::MarketData => "market_data",
+        RateBucket::Orders => "orders",
+        RateBucket::Account => "account",
+        RateBucket::Auth => "auth",
+    }
+}
+
+fn yes_no(b: bool) -> &'static str {
+    if b {
+        "yes"
+    } else {
+        "no"
+    }
+}
+
+/// Render a list of field names as backtick-quoted, comma-joined, or `none` when
+/// empty — so an empty dependency list renders as a clear `none` rather than a
+/// dangling, empty section.
+fn field_list(fields: &[String]) -> String {
+    if fields.is_empty() {
+        "none".to_string()
+    } else {
+        fields
+            .iter()
+            .map(|f| format!("`{f}`"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+}
+
+/// The highest support tier a TR has reached, as a single compact label for the
+/// index routing table (recommended ⊃ implemented ⊃ tracked).
+fn support_label(support: &Support) -> &'static str {
+    if support.recommended {
+        "recommended"
+    } else if support.implemented {
+        "implemented"
+    } else if support.tracked {
+        "tracked"
+    } else {
+        "untracked"
+    }
+}
+
+/// Render a single TR's Dependency Doc page.
+fn render_dependency_page(meta: &TrMetadata) -> String {
+    let facets = &meta.facets;
+    let mut out = String::new();
+
+    out.push_str(&format!("# TR Dependency: {}\n\n", meta.tr_code));
+    if let Some(name) = &meta.name {
+        out.push_str(&format!("{name}\n\n"));
+    }
+    out.push_str(GENERATED_BANNER);
+    out.push_str("\n\n");
+
+    out.push_str("## Support\n\n");
+    out.push_str(&format!("- Tracked: {}\n", yes_no(meta.support.tracked)));
+    out.push_str(&format!(
+        "- Implemented: {}\n",
+        yes_no(meta.support.implemented)
+    ));
+    out.push_str(&format!(
+        "- Recommended: {}\n\n",
+        yes_no(meta.support.recommended)
+    ));
+
+    out.push_str("## Ownership\n\n");
+    out.push_str(&format!(
+        "- Owner class: `{}`\n\n",
+        owner_class_str(meta.owner_class)
+    ));
+
+    out.push_str("## Facets\n\n");
+    out.push_str(&format!("- Protocol: `{}`\n", protocol_str(facets.protocol)));
+    out.push_str(&format!(
+        "- Instrument domain: `{}`\n",
+        instrument_domain_str(facets.instrument_domain)
+    ));
+    out.push_str(&format!(
+        "- Venue / session: `{}`\n",
+        venue_session_str(facets.venue_session)
+    ));
+    out.push_str(&format!(
+        "- Date sensitive: {}\n",
+        yes_no(facets.date_sensitive)
+    ));
+    out.push_str(&format!(
+        "- Self-paginated: {}\n",
+        yes_no(facets.self_paginated)
+    ));
+    out.push_str(&format!("- Account state: {}\n", yes_no(facets.account_state)));
+    out.push_str(&format!(
+        "- Paper incompatible: {}\n",
+        yes_no(facets.paper_incompatible)
+    ));
+    out.push_str(&format!(
+        "- Certification path: `{}`\n",
+        certification_path_str(facets.certification_path)
+    ));
+    out.push_str(&format!(
+        "- Rate bucket: `{}`\n",
+        rate_bucket_str(facets.rate_bucket)
+    ));
+    out.push_str(&format!(
+        "- Caller-supplied identifiers: {}\n\n",
+        field_list(&facets.caller_supplied_identifiers)
+    ));
+
+    out.push_str("## Dependencies\n\n");
+    out.push_str(&format!(
+        "- Self-continuation fields: {}\n",
+        field_list(&meta.dependencies.self_continuation_fields)
+    ));
+    out.push_str(&format!(
+        "- Strong-order fields: {}\n\n",
+        field_list(&meta.dependencies.strong_order_fields)
+    ));
+
+    out.push_str("## Maintenance\n\n");
+    out.push_str(&format!(
+        "- Source spec hash: `{}`\n",
+        meta.maintenance.source_spec_hash
+    ));
+    out.push_str(&format!(
+        "- Last reviewed: `{}`\n",
+        meta.maintenance.last_reviewed
+    ));
+
+    out
+}
+
+/// Render the Dependency Docs index page: a routing table over every tracked TR.
+fn render_dependency_index(trs: &BTreeMap<String, TrMetadata>) -> String {
+    let mut out = String::new();
+    out.push_str("# TR Dependency Docs\n\n");
+    out.push_str(GENERATED_BANNER);
+    out.push_str("\n\n");
+    out.push_str(
+        "Maintainer- and operator-facing projection of TR maintenance metadata: owner class, \
+         support state, prerequisite coupling, and venue/session constraints for every tracked TR.\n\n",
+    );
+    out.push_str("| TR | Name | Owner class | Support | Page |\n");
+    out.push_str("|----|------|-------------|---------|------|\n");
+    for (tr_code, meta) in trs {
+        let name = meta.name.as_deref().unwrap_or("");
+        out.push_str(&format!(
+            "| `{tr_code}` | {name} | `{}` | {} | [{tr_code}](./{tr_code}.md) |\n",
+            owner_class_str(meta.owner_class),
+            support_label(&meta.support),
+        ));
+    }
+    out
+}
+
 /// Low-level: render the TR Dependency Docs file set (index + per-TR pages),
 /// keyed by repo-relative path. Takes the raw metadata map (and index) so tests
 /// drive it from inline fixtures without touching disk.
 ///
-/// Filled in U2; this scaffold returns an empty set so the crate compiles and
-/// the binary runs without panicking.
+/// The index defines the canonical TR set and page ordering (its `BTreeMap` is
+/// sorted for free); per-page content is projected from the matching metadata
+/// record. A TR present in the index but absent from `trs` is skipped — the
+/// validator already rejects that case before this runs.
 pub fn render_dependency_docs(
-    _trs: &BTreeMap<String, TrMetadata>,
-    _index: &TrIndex,
+    trs: &BTreeMap<String, TrMetadata>,
+    index: &TrIndex,
 ) -> BTreeMap<PathBuf, String> {
-    BTreeMap::new()
+    let dir = Path::new(DEPENDENCY_DOCS_DIR);
+    let mut files = BTreeMap::new();
+
+    files.insert(dir.join("index.md"), render_dependency_index(trs));
+
+    for tr_code in index.trs.keys() {
+        if let Some(meta) = trs.get(tr_code) {
+            files.insert(dir.join(format!("{tr_code}.md")), render_dependency_page(meta));
+        }
+    }
+
+    files
 }
 
 /// Low-level: render the SDK Reference Docs file set (implemented TRs only),
@@ -224,5 +452,86 @@ mod tests {
         let err = parse_mode(["--nope"]).expect_err("unknown flag must error");
         assert!(matches!(err, DocgenError::UnknownArg(ref a) if a == "--nope"));
         assert!(err.to_string().contains("--nope"));
+    }
+
+    /// The authored metadata under `<repo>/metadata`, validated. Doubles as an
+    /// integration check that the real set renders.
+    fn authored_report() -> ValidationReport {
+        validate_dir(&metadata_root()).expect("authored metadata must validate clean")
+    }
+
+    /// The seven tracked TRs in the slice.
+    const TRACKED_TRS: [&str; 7] = [
+        "CSPAQ12200",
+        "CSPAT00601",
+        "S3_",
+        "revoke",
+        "t1102",
+        "t8412",
+        "token",
+    ];
+
+    #[test]
+    fn dependency_page_for_t8412_renders_all_metadata_facts() {
+        let report = authored_report();
+        let files = render_dependency_docs(&report.trs, &report.index);
+        let page = files
+            .get(Path::new("docs/tr-dependencies/t8412.md"))
+            .expect("t8412 page exists");
+
+        // Owner class, support flags, facets, dependency fields, venue/session.
+        assert!(page.contains("Owner class: `paginated`"));
+        assert!(page.contains("- Tracked: yes"));
+        assert!(page.contains("- Implemented: yes"));
+        assert!(page.contains("- Recommended: no"));
+        assert!(page.contains("Venue / session: `krx_regular`"));
+        assert!(page.contains("Date sensitive: yes"));
+        assert!(page.contains("Self-paginated: yes"));
+        assert!(page.contains("Self-continuation fields: `cts_date`, `cts_time`"));
+    }
+
+    #[test]
+    fn every_tracked_tr_gets_a_page_and_the_index_lists_all_seven() {
+        let report = authored_report();
+        let files = render_dependency_docs(&report.trs, &report.index);
+
+        // index + one page per TR.
+        assert!(files.contains_key(Path::new("docs/tr-dependencies/index.md")));
+        for tr in TRACKED_TRS {
+            let path = format!("docs/tr-dependencies/{tr}.md");
+            assert!(files.contains_key(Path::new(&path)), "missing page for {tr}");
+        }
+        assert_eq!(files.len(), TRACKED_TRS.len() + 1, "index + 7 pages");
+
+        let index = files
+            .get(Path::new("docs/tr-dependencies/index.md"))
+            .expect("index exists");
+        for tr in TRACKED_TRS {
+            assert!(index.contains(&format!("`{tr}`")), "index omits {tr}");
+        }
+    }
+
+    #[test]
+    fn tr_with_empty_dependency_fields_renders_none_not_dangling() {
+        let report = authored_report();
+        let files = render_dependency_docs(&report.trs, &report.index);
+        let page = files
+            .get(Path::new("docs/tr-dependencies/token.md"))
+            .expect("token page exists");
+
+        // token has no dependency coupling — sections render `none`, not empty.
+        assert!(page.contains("Self-continuation fields: none"));
+        assert!(page.contains("Strong-order fields: none"));
+        assert!(page.contains("Caller-supplied identifiers: none"));
+        // No empty trailing bullet (a "- \n" would be a dangling list item).
+        assert!(!page.contains("- \n"), "no dangling empty bullets");
+    }
+
+    #[test]
+    fn dependency_rendering_is_deterministic() {
+        let report = authored_report();
+        let a = render_dependency_docs(&report.trs, &report.index);
+        let b = render_dependency_docs(&report.trs, &report.index);
+        assert_eq!(a, b, "identical metadata yields byte-identical output");
     }
 }
