@@ -135,9 +135,10 @@ async fn live_smoke_default() {
         "live-smoke",
         &format!("env=paper symbol={symbol}"),
         &format!(
-            "token_len={} rsp_cd={} price={}",
+            "token_len={} rsp_cd={} rsp_msg={} price={}",
             token.len(),
             resp.rsp_cd,
+            resp.rsp_msg,
             resp.outblock.price
         ),
     );
@@ -218,7 +219,12 @@ async fn live_smoke_chart() {
     record(
         "live-smoke-chart",
         &format!("symbol={symbol} date={d}"),
-        &format!("rsp_cd={} rows={}", resp.rsp_cd, resp.outblock1.len()),
+        &format!(
+            "rsp_cd={} rsp_msg={} rows={}",
+            resp.rsp_cd,
+            resp.rsp_msg,
+            resp.outblock1.len()
+        ),
     );
 }
 
@@ -240,7 +246,10 @@ async fn live_smoke_account() {
         Ok(resp) => record(
             "live-smoke-account",
             "balcretp=1",
-            &format!("rsp_cd={} reccnt={}", resp.rsp_cd, resp.outblock1.reccnt),
+            &format!(
+                "rsp_cd={} rsp_msg={} reccnt={}",
+                resp.rsp_cd, resp.rsp_msg, resp.outblock1.reccnt
+            ),
         ),
         Err(e) => {
             record(
