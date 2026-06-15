@@ -1,0 +1,52 @@
+{
+  "rsp_cd": "00000",
+  "rsp_msg": "정상처리 되었습니다.",
+  "t8412OutBlock": {
+    "shcode": "078020",
+    "jisiga": 4500,
+    "jihigh": 4560,
+    "jilow": 4480,
+    "jiclose": 4535,
+    "jivolume": 812345,
+    "disiga": 4535,
+    "dihigh": 4600,
+    "dilow": 4510,
+    "diclose": 4575,
+    "highend": 5890,
+    "lowend": 3180,
+    "cts_date": "20240105",
+    "cts_time": "153000",
+    "s_time": "090000",
+    "e_time": "153000",
+    "dshmin": "1",
+    "rec_count": 2
+  },
+  "t8412OutBlock1": [
+    {
+      "date": "20240105",
+      "time": "090100",
+      "open": 4535,
+      "high": 4545,
+      "low": 4530,
+      "close": 4540,
+      "jdiff_vol": 12045,
+      "value": 54600,
+      "jongchk": "0",
+      "rate": "0.11",
+      "sign": "2"
+    },
+    {
+      "date": "20240105",
+      "time": "090200",
+      "open": 4540,
+      "high": 4555,
+      "low": 4538,
+      "close": 4550,
+      "jdiff_vol": 9821,
+      "value": 44700,
+      "jongchk": "0",
+      "rate": "0.22",
+      "sign": "2"
+    }
+  ]
+}

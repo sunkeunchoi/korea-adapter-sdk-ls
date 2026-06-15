@@ -15,6 +15,7 @@ use std::sync::Arc;
 use ls_core::{Inner, LsClient, LsConfig, LsResult};
 
 pub mod market_session;
+pub mod paginated;
 pub mod standalone;
 
 /// Public SDK client — the maintained entry point.
@@ -62,5 +63,10 @@ impl LsSdk {
     /// The market-session dependency class: the `t1102` current-price quote.
     pub fn market_session(&self) -> market_session::MarketSession {
         market_session::MarketSession::new(Arc::clone(&self.inner))
+    }
+
+    /// The paginated dependency class: the SELF-paginated `t8412` chart.
+    pub fn paginated(&self) -> paginated::Paginated {
+        paginated::Paginated::new(Arc::clone(&self.inner))
     }
 }
