@@ -84,6 +84,14 @@ _Avoid_: default test gate, change-scoped gate
 Targeted proof for a specific implemented behavior, dependency class, or TR selected through maintained metadata.
 _Avoid_: TR Certification, Certified TR Coverage, Evidence Accountability
 
+**Credentialed Live Smoke**:
+A narrow LS gateway check that uses real credentials to prove an existing implemented slice still reaches live LS behavior. It is smaller than broad integration coverage and may become **Focused Evidence** only when its target, inputs, and result are recorded.
+_Avoid_: real gate test, live integration suite, production test
+
+**Paper Live Smoke**:
+A **Credentialed Live Smoke** that targets LS paper credentials only. It is the default live check before any real or order-capable evidence is considered.
+_Avoid_: simulation smoke, real-money smoke, sandbox test
+
 **Bootstrap Tool**:
 A temporary migration utility used to create initial project data from old specs or documents.
 _Avoid_: permanent tracker, maintained tooling, SDK runtime
@@ -124,6 +132,8 @@ _Avoid_: dependency, standalone prerequisite
 - A **Change-Scoped Gate** is the default verification path for an **SDK Maintenance Work Item**.
 - A **Full Baseline** is not the default verification path for ordinary SDK maintenance.
 - **Focused Evidence** replaces old certification vocabulary for implemented or recommended behavior.
+- **Credentialed Live Smoke** can support **Focused Evidence** but is not automatically **Focused Evidence**.
+- **Paper Live Smoke** is a **Credentialed Live Smoke**.
 - A **Bootstrap Tool** is not part of the permanent maintenance architecture.
 - A **Migration Source** does not remain a dependency after migration.
 - An **Instrument Domain** is **Facet Metadata**, not a code ownership boundary.
