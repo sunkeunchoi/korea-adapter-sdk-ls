@@ -47,9 +47,14 @@ operator-invoked (`make api-drift-check`, `make spec-doc-check`); see the
 The project's authoritative terms (Maintained SDK Surface, Recommended TR,
 Focused Evidence, Migration Source, …) are defined in [`CONTEXT.md`](CONTEXT.md).
 
-## Relationship to `korea-broker-sdk-ls`
+## Standalone — and the role of `korea-broker-sdk-ls`
 
-`korea-broker-sdk-ls` is **historical Migration Source material**, not the
-maintained SDK and not a dependency. Its old generated all-TR surface seeded this
-project; its docs, runtime lessons, and specifications remain migration reference
-only. New SDK behavior belongs here, in the maintained surface.
+This repository is **standalone**: it builds, tests, and ships on its own, with
+no build or runtime dependency on any other SDK repository. Every crate
+dependency is internal to this workspace.
+
+`korea-broker-sdk-ls` is a **Migration Source** only — a repository we reference
+to pull **already-generated code**, docs, and runtime lessons from so migration
+goes faster. It is **not a dependency** and not the maintained SDK; this SDK does
+not import, link, or build against it. New SDK behavior belongs here, in the
+maintained surface.
