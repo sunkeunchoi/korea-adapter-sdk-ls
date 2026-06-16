@@ -1,0 +1,142 @@
+name: SDK work item
+description: Accepted maintenance or expansion work for the LS adapter SDK.
+title: "[SDK work item]: "
+labels: ["gate:change-scoped"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this only after a Tracker Finding or Manual Maintenance Input has been reviewed and accepted into the Maintenance Work Queue.
+
+  - type: dropdown
+    id: work_item_type
+    attributes:
+      label: Work item type
+      options:
+        - queue:maintenance
+        - queue:expansion
+    validations:
+      required: true
+
+  - type: dropdown
+    id: source
+    attributes:
+      label: Source
+      options:
+        - source:api-drift
+        - source:spec-doc
+        - source:manual
+    validations:
+      required: true
+
+  - type: textarea
+    id: source_signal
+    attributes:
+      label: Source signal
+      description: Link or describe the tracker run, tracker finding, or manual observation that led to this accepted work item.
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance_rationale
+    attributes:
+      label: Acceptance rationale
+      description: Explain why this signal was accepted instead of deferred or rejected.
+    validations:
+      required: true
+
+  - type: input
+    id: affected_trs
+    attributes:
+      label: Affected TRs
+      description: List TR codes, comma-separated. Use "none" only for cross-cutting work.
+      placeholder: token, t1102
+    validations:
+      required: true
+
+  - type: dropdown
+    id: dependency_class
+    attributes:
+      label: Dependency class
+      options:
+        - class:standalone
+        - class:market-session
+        - class:paginated
+        - class:account
+        - class:orders
+        - class:realtime
+        - class:paper-incompatible
+        - class:cross-cutting
+    validations:
+      required: true
+
+  - type: dropdown
+    id: support_state
+    attributes:
+      label: Support state
+      options:
+        - support:tracked
+        - support:implemented
+        - support:recommended
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: required_artifacts
+    attributes:
+      label: Required maintained artifacts
+      description: Check every maintained artifact type this work item must update or review.
+      options:
+        - label: SDK code
+        - label: TR Maintenance Metadata
+        - label: SDK Reference Docs or TR Dependency Docs
+        - label: Focused Evidence
+        - label: Reviewed Baseline
+        - label: Runbook or operator documentation
+    validations:
+      required: true
+
+  - type: textarea
+    id: selected_gate
+    attributes:
+      label: Selected Change-Scoped Gate
+      description: Name the exact test, docs, tracker, or evidence checks required for completion.
+      placeholder: cargo test -p ls-sdk --test standalone_tests; make docs-check
+    validations:
+      required: true
+
+  - type: dropdown
+    id: baseline_decision
+    attributes:
+      label: Baseline Promotion decision
+      options:
+        - Not needed
+        - Needed as a separate review step
+        - This issue is baseline-only
+    validations:
+      required: true
+
+  - type: dropdown
+    id: evidence_decision
+    attributes:
+      label: Focused Evidence decision
+      options:
+        - Not needed
+        - Refresh needed
+        - Recommendation affected
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: completion
+    attributes:
+      label: Completion checklist
+      options:
+        - label: Required maintained artifacts are updated or explicitly marked not needed.
+          required: true
+        - label: Selected Change-Scoped Gate passed.
+          required: true
+        - label: Baseline Promotion decision is recorded.
+          required: true
+        - label: Focused Evidence decision is recorded.
+          required: true

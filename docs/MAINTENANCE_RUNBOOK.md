@@ -11,6 +11,30 @@ network-free (ADR 0009, R18).
 > below into it and link back here. No cron/CI scheduling is added (R19) — the
 > trigger is an operator running the step at this checkpoint.
 
+## Maintenance Work Queue
+
+GitHub Issues are the **Maintenance Work Queue** (ADR 0013). After reviewing a
+Tracker Finding or Manual Maintenance Input, decide whether it is accepted,
+deferred, or rejected. Accepted items must be opened with the
+`SDK work item` issue template and labelled according to
+[`docs/maintenance-labels.md`](maintenance-labels.md).
+
+An accepted issue must name the source signal, acceptance rationale, work item
+type, affected TRs, dependency class, support state, required maintained
+artifacts, selected Change-Scoped Gate, Baseline Promotion decision, and Focused
+Evidence decision. A code change alone does not complete the item; completion
+requires the selected gate to pass and the baseline/evidence decisions to be
+recorded.
+
+### Foundation Complete checkpoint
+
+The first proof item is
+[`#9 Prove Maintenance Work Queue end-to-end`](https://github.com/sunkeunchoi/korea-adapter-sdk-ls/issues/9).
+Closing it cleanly proves that the queue mechanics can carry one accepted item
+through labels, template fields, maintained-artifact review, gate decision,
+Baseline Promotion decision, and Focused Evidence decision. After #9 closes, the
+next proof should be one real SDK-facing maintenance or expansion issue.
+
 ## API Drift review
 
 Detects upstream LS Open API changes against the committed bounded baseline and
@@ -25,7 +49,7 @@ Interpret the [tiered exit code](../docs/plans/2026-06-16-002-feat-api-drift-rea
 | Exit | Meaning | Action |
 |------|---------|--------|
 | `0` | No finding crossed the gate threshold | Nothing required. Report-only findings (untracked drift, description-only changes) may still print — review at your discretion. |
-| `1` | A finding touches a tracked/implemented/recommended TR at ≥ maintenance, **or** a new untracked TR was discovered (R17b) | Review each gating finding. For a **new-TR discovery**, decide whether to admit the code into the reviewed code-set (KTD-5) — re-attestation is the reviewed commit that updates `code-set.json`; no separate attestation file. For a **maintained-TR change**, plan the SDK/metadata follow-up. |
+| `1` | A finding touches a tracked/implemented/recommended TR at ≥ maintenance, **or** a new untracked TR was discovered (R17b) | Review each gating finding. For a **new-TR discovery**, decide whether to admit the code into the reviewed code-set (KTD-5) — re-attestation is the reviewed commit that updates `code-set.json`; no separate attestation file. For a **maintained-TR change**, accept/defer/reject the finding; accepted findings become GitHub Issues in the Maintenance Work Queue. |
 | `2` | Fetch, parse, baseline, or staged-run error | Investigate. A menu/group parse failure or a suspected mass-truncation (full inventory shrank > 10% vs the committed code-set) aborts before staging; a single baselined-TR absence is **not** an error (it is a removal finding at exit `1`). |
 
 To review a previously staged run without re-fetching:
@@ -75,7 +99,8 @@ A finding becomes an **SDK Maintenance Work Item only after human review** (R8) 
 you judge whether the referenced artifacts are stale; the tracker proves nothing
 about staleness. SDK reference docs stay generated from maintained behavior and
 metadata via `make docs` (R11); `spec-doc-check` resolves to existing doc paths,
-it does not generate or mirror upstream text.
+it does not generate or mirror upstream text. Accepted findings become GitHub
+Issues in the Maintenance Work Queue.
 
 To re-seed the example baseline after an `EXAMPLE_NORMALIZER_VERSION` bump
 (network-free; reads only the shared committed raw), then review the diff:
