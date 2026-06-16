@@ -22,3 +22,11 @@ support:
 maintenance:
   source_spec_hash: a1b2c3d4e5f6
   last_reviewed: 2026-06-16
+recommendation:
+  behavior: Paper OAuth access-token issuance
+  evidence_ref: evidence/token.yaml
+  excludes:
+    - Production-credential token issuance (evidence is paper only)
+    - Broader OAuth edge-case coverage (refresh, revoke-races, error taxonomy)
+    - Non-auth authorization or session semantics beyond token issuance
+    - Stronger freshness automation than the stated policy (no enforcement in code today)

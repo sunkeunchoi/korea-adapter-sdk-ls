@@ -28,9 +28,17 @@ _Avoid_: generated SDK reference, upstream documentation mirror
 A mechanism that records upstream LS API or documentation changes so SDK maintenance work can be reviewed and assigned.
 _Avoid_: code generator, release gate, CI job
 
+**Upstream Change Signal**:
+An observed LS API, documentation, or gateway behavior change that may need SDK maintenance review.
+_Avoid_: tracker finding, SDK task, generated patch
+
 **Tracker Finding**:
 A severity-classified observation emitted by a **Change Tracker** before it becomes SDK work.
 _Avoid_: task, patch, generated change
+
+**Manual Maintenance Input**:
+A maintainer-observed LS API, documentation, or gateway behavior change that may need review but was not emitted by a **Change Tracker**.
+_Avoid_: tracker finding, ad hoc task, generated change
 
 **Support-Aware Severity**:
 The classification of a tracker finding according to both upstream change risk and whether the affected TR is tracked, implemented, or recommended.
@@ -44,6 +52,10 @@ _Avoid_: live fetch, generated source, pinned baseline
 The accepted upstream API or documentation state that a **Change Tracker** compares new **Staged Snapshots** against after human review.
 _Avoid_: generated source, fixture, live snapshot
 
+**Baseline Promotion**:
+The reviewed act of replacing or extending a **Reviewed Baseline** after deciding the staged upstream state should become the future comparison point.
+_Avoid_: SDK patch, automatic update, tracker write
+
 **Structural API Shape**:
 The normalized request and response structure of an LS transaction request, including block identity, field position, field name, field attributes, protocol, and endpoint facts.
 _Avoid_: sample payload, generated struct, leaf path
@@ -51,6 +63,30 @@ _Avoid_: sample payload, generated struct, leaf path
 **SDK Maintenance Work Item**:
 A reviewed unit of work derived from a **Tracker Finding** that asks an agent or maintainer to update, create, or remove SDK behavior.
 _Avoid_: generated diff, regeneration task, tracker result
+
+**SDK Expansion Work Item**:
+A reviewed unit of work that asks maintainers to start owning additional SDK behavior that is not already part of the **Maintained SDK Surface**.
+_Avoid_: migration task, generated port, backlog item
+
+**Completed Maintenance Work Item**:
+An **SDK Maintenance Work Item** whose affected maintained artifacts have been updated and whose selected **Change-Scoped Gate** has passed.
+_Avoid_: merged patch, closed issue, generated update
+
+**Maintenance Work Queue**:
+The durable collection of accepted SDK work items waiting for completion or already completed with review history.
+_Avoid_: tracker output, sprint board, generated task list
+
+**Maintenance Review Decision**:
+The accepted, deferred, or rejected decision made after reviewing a **Tracker Finding** or **Manual Maintenance Input**.
+_Avoid_: severity, tracker status, test result
+
+**Maintenance Flow**:
+The reviewed path from an upstream change signal to accepted SDK maintenance work, verification, and any necessary baseline update.
+_Avoid_: tracker flow, migration flow, automatic regeneration
+
+**Foundation Complete**:
+The state where ordinary SDK maintenance or expansion can move through review, queued work, artifact updates, verification, and any needed baseline decision without inventing a new process.
+_Avoid_: all TRs ported, tracker perfection, migration done
 
 **Dependency Class**:
 The primary ownership boundary for SDK behavior, grouping TRs by the prerequisite pattern that maintainers must understand.
@@ -126,11 +162,20 @@ _Avoid_: dependency, standalone prerequisite
 - An **API Drift Tracker** and a **Specification Document Tracker** are both **Change Trackers**.
 - **SDK Reference Docs** are not generated directly from upstream LS documentation.
 - **TR Dependency Docs** are derived from maintained metadata, not raw tracker output.
+- An **Upstream Change Signal** is reviewed before it is treated as SDK work.
 - A **Change Tracker** emits advisory **Tracker Findings**.
+- A **Manual Maintenance Input** is not a **Tracker Finding**.
 - A **Tracker Finding** uses **Support-Aware Severity**.
 - A **Change Tracker** compares **Staged Snapshots** to **Reviewed Baselines**.
+- A **Baseline Promotion** is a separate review act from ordinary SDK maintenance unless the work item is specifically about tracker baseline state.
 - An **API Drift Tracker** normalizes upstream API data into **Structural API Shape** before diffing.
+- A **Maintenance Review Decision** determines whether a **Tracker Finding** or **Manual Maintenance Input** becomes SDK work.
 - A **Tracker Finding** can be promoted into an **SDK Maintenance Work Item**.
+- A **SDK Expansion Work Item** is a decision to own additional SDK behavior, not a reaction to behavior already owned by the **Maintained SDK Surface**.
+- Accepted **SDK Maintenance Work Items** and **SDK Expansion Work Items** live in the **Maintenance Work Queue**.
+- A **Completed Maintenance Work Item** is not complete from code changes alone.
+- The **Maintenance Flow** begins with an upstream change signal and does not change the **Maintained SDK Surface** until reviewed work is accepted.
+- **Foundation Complete** means the **Maintenance Flow** can be repeated without creating a new process for each work item.
 - An **SDK Maintenance Work Item** changes the **Maintained SDK Surface** only after review.
 - A **Dependency Class** owns SDK code organization.
 - **Facet Metadata** routes tests, evidence, documentation, and operator scheduling.
@@ -143,6 +188,7 @@ _Avoid_: dependency, standalone prerequisite
 - **Focused Evidence** replaces old certification vocabulary for implemented or recommended behavior.
 - **Credentialed Live Smoke** can support **Focused Evidence** but is not automatically **Focused Evidence**.
 - **Paper Live Smoke** is a **Credentialed Live Smoke**.
+- **Focused Evidence** is required for **Recommended TR** claims, not for every **Tracked TR** or every **Completed Maintenance Work Item**.
 - A **Bootstrap Tool** is not part of the permanent maintenance architecture.
 - A **Migration Source** does not remain a dependency after migration.
 - An **Instrument Domain** is **Facet Metadata**, not a code ownership boundary.
