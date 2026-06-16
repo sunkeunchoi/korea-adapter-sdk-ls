@@ -5,12 +5,15 @@
 # needed for fast routing/selection; the validator asserts every field here
 # equals its per-TR file.
 #
-# Evidence freshness (R9): a Recommended TR's focused evidence is valid for 90
-# days from `maintenance.last_reviewed`, after which an `evidence` finding
-# fires. Change-driven invalidation (R8/R10) is INACTIVE in this slice — it
-# becomes operative only once the Specification Document Tracker and its
-# reviewed baselines exist. Until then the 90-day backstop is the sole control.
-# See EVIDENCE-FRESHNESS.md.
+# Evidence freshness: the only operative control today is human review
+# discipline anchored on the manually-set per-TR `maintenance.last_reviewed`
+# date. NO code enforces freshness: nothing reads `last_reviewed` (the 90-day
+# backstop is not computed) and no path emits a `Severity::Evidence` finding
+# (change-driven invalidation is not wired). The API Drift and Specification
+# Document Trackers exist and see changes, but acting on them to revoke a claim
+# is unbuilt. The backstop, structural-change staling, advisory example
+# findings, and informational-only description changes are documented intent
+# pending an evaluator. See EVIDENCE-FRESHNESS.md.
 version: 1
 trs:
   token:
