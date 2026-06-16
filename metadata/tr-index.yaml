@@ -7,9 +7,10 @@
 #
 # Evidence freshness: the only operative control today is human review
 # discipline anchored on the manually-set per-TR `maintenance.last_reviewed`
-# date. NO code enforces freshness: nothing reads `last_reviewed` (the 90-day
-# backstop is not computed) and no path emits a `Severity::Evidence` finding
-# (change-driven invalidation is not wired). The API Drift and Specification
+# date. NO code enforces freshness: nothing computes a backstop from
+# `last_reviewed` (docgen only renders it verbatim) and no path emits a
+# `Severity::Evidence` finding (change-driven invalidation is not wired). The
+# API Drift and Specification
 # Document Trackers exist and see changes, but acting on them to revoke a claim
 # is unbuilt. The backstop, structural-change staling, advisory example
 # findings, and informational-only description changes are documented intent

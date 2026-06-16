@@ -12,9 +12,12 @@ TR's evidence on a dated run and records that date; nothing else is automated.
 
 Concretely, **no code enforces any of the controls described in the next section**:
 
-- **The 90-day backstop is not computed.** No code reads `maintenance.last_reviewed`
-  or compares it against today. The field is an input waiting for an evaluator, not
-  a wired trigger.
+- **The 90-day backstop is not computed.** No code computes a freshness backstop
+  from `maintenance.last_reviewed` or compares it against today. (`ls-docgen` reads
+  the field only to render it verbatim into the TR Dependency Docs, and the
+  consistency test reads it only to compare it against the evidence file — neither
+  enforces freshness.) The field is an input waiting for an evaluator, not a wired
+  trigger.
 - **Change-driven evidence invalidation is not wired.** No code path emits a
   `Severity::Evidence` finding (`crates/ls-trackers/src/types.rs` declares the variant
   but states it is unreachable — mirror that candor). No tracker stales evidence.
