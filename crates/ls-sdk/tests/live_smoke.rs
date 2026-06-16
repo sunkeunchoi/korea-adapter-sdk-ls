@@ -131,14 +131,20 @@ async fn live_smoke_default() {
         .await
         .expect("t1102 quote failed");
 
+    // The recorded line is the Focused Evidence for `token` (see
+    // metadata/evidence/token.yaml). It is credential-free and dated *by
+    // construction*: `rsp_msg` is dropped (it carries localized,
+    // account-identifying text), only the numeric `rsp_cd` proves success, and
+    // the run stamps its own UTC date so a verbatim capture cannot reintroduce a
+    // secret or a hand-typed date.
+    let date = Utc::now().format("%Y-%m-%d");
     record(
         "live-smoke",
-        &format!("env=paper symbol={symbol}"),
+        &format!("env=paper symbol={symbol} date={date}"),
         &format!(
-            "token_len={} rsp_cd={} rsp_msg={} price={}",
+            "token_len={} rsp_cd={} price={}",
             token.len(),
             resp.rsp_cd,
-            resp.rsp_msg,
             resp.outblock.price
         ),
     );
