@@ -328,14 +328,10 @@ pub fn load_example_baseline(dir: &Path) -> Result<ExampleRun, String> {
 
 /// Re-project the example shapes from the shared committed raw snapshot
 /// (`<baseline_dir>/raw/ls-openapi-full.json`, KTD2) — the network-free staged
-/// side. Preserves the committed example baseline's `provisional` stance when one
-/// exists (else defaults to provisional, bootstrap).
-fn reproject_examples_from_raw(paths: &Paths) -> Result<ExampleRun, String> {
+/// side. `provisional` is supplied by the caller (from the committed baseline it
+/// already holds) so this does not re-read the committed baseline.
+fn reproject_examples_from_raw(paths: &Paths, provisional: bool) -> Result<ExampleRun, String> {
     let raw: RawInventory = read_json(&paths.baseline_dir.join(RAW_FILE))?;
-    let provisional = load_example_baseline(&paths.spec_baseline_dir)
-        .ok()
-        .map(|run| run.code_set.provisional)
-        .unwrap_or(true);
     Ok(normalize_example_run(&raw, provisional))
 }
 
@@ -588,7 +584,9 @@ pub fn run_spec_check(paths: &Paths, staged: Option<&Path>) -> Result<SpecReport
         Some(dir) => {
             load_example_baseline(dir).map_err(|e| format!("staged spec-doc run unavailable: {e}"))?
         }
-        None => reproject_examples_from_raw(paths)?,
+        // Re-project from the shared raw, carrying the committed baseline's
+        // provisional stance — `committed` is already loaded, so no re-read.
+        None => reproject_examples_from_raw(paths, committed.code_set.provisional)?,
     };
 
     // Refuse to compare across example-normalizer versions — the committed shapes
@@ -612,7 +610,13 @@ pub fn run_spec_check(paths: &Paths, staged: Option<&Path>) -> Result<SpecReport
 /// single aggregated map is fully rewritten, so a TR that lost its example simply
 /// disappears from the map.
 pub fn renormalize_examples(paths: &Paths) -> Result<ExampleRun, String> {
-    let run = reproject_examples_from_raw(paths)?;
+    // Preserve the committed example baseline's provisional stance when one
+    // exists (else default to provisional, bootstrap).
+    let provisional = load_example_baseline(&paths.spec_baseline_dir)
+        .ok()
+        .map(|run| run.code_set.provisional)
+        .unwrap_or(true);
+    let run = reproject_examples_from_raw(paths, provisional)?;
     write_example_baseline(&paths.spec_baseline_dir, &run).map_err(|e| e.to_string())?;
     Ok(run)
 }
@@ -774,8 +778,8 @@ fn print_spec_report(report: &SpecReport) {
             let pointers = if f.pointers.is_empty() {
                 " (no artifact pointer — informational)".to_string()
             } else {
-                let paths: Vec<&str> = f.pointers.iter().map(|p| p.path.as_str()).collect();
-                format!(" → review: {}", paths.join(", "))
+                let pointer_paths: Vec<&str> = f.pointers.iter().map(|p| p.path.as_str()).collect();
+                format!(" → review: {}", pointer_paths.join(", "))
             };
             println!("  [{}] {} {:?}{pointers}", f.severity, f.tr_code, f.change);
         }

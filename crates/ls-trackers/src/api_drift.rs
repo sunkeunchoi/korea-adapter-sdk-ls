@@ -518,7 +518,16 @@ pub fn compare(
     DriftReport { findings, coverage }
 }
 
-fn support_state_for(code: &str, trs: &BTreeMap<String, TrMetadata>) -> SupportState {
+/// Project a TR's metadata support into a [`SupportState`], or [`Untracked`] when
+/// no metadata exists. Shared `pub(crate)` so the Specification Document Tracker
+/// ([`crate::spec_doc`]) classifies example findings through the same lookup
+/// rather than copying it.
+///
+/// [`Untracked`]: SupportState::Untracked
+pub(crate) fn support_state_for(
+    code: &str,
+    trs: &BTreeMap<String, TrMetadata>,
+) -> SupportState {
     trs.get(code)
         .map(|m| SupportState::from_support(&m.support))
         .unwrap_or(SupportState::Untracked)

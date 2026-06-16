@@ -252,7 +252,7 @@ pub fn compare_examples(
     // TRs in the staged projection: diff against the committed shape, or against
     // an absent shape when the TR newly carries an example.
     for (code, staged_shape) in &staged.shapes {
-        let support = support_state_for(code, trs);
+        let support = crate::api_drift::support_state_for(code, trs);
         let absent = ExampleShape::absent(code);
         let base_shape = committed.shapes.get(code).unwrap_or(&absent);
         for change in diff_example_shapes(base_shape, staged_shape) {
@@ -266,7 +266,7 @@ pub fn compare_examples(
         if staged.shapes.contains_key(code) {
             continue;
         }
-        let support = support_state_for(code, trs);
+        let support = crate::api_drift::support_state_for(code, trs);
         let absent = ExampleShape::absent(code);
         for change in diff_example_shapes(base_shape, &absent) {
             let severity = example_change_severity(&change, support);
@@ -282,12 +282,6 @@ pub fn compare_examples(
         example_tr_count: staged.shapes.len(),
     };
     SpecReport { findings, coverage }
-}
-
-fn support_state_for(code: &str, trs: &BTreeMap<String, TrMetadata>) -> SupportState {
-    trs.get(code)
-        .map(|m| SupportState::from_support(&m.support))
-        .unwrap_or(SupportState::Untracked)
 }
 
 /// Diff two example shapes per direction into example changes (no severity yet).
