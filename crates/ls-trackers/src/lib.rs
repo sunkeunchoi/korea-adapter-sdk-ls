@@ -20,5 +20,7 @@ pub mod types;
 
 pub use stages::{classify, diff, fetch, normalize, promote, FetchNotImplemented};
 pub use types::{
-    Change, FieldShape, NormalizedArtifact, PromoteReport, Severity, StagedSnapshot, TrackerFinding,
+    gates_for, BlockField, Change, CodeSet, CoverageSummary, Direction, DriftChange, DriftFinding,
+    FetchReport, FieldShape, Manifest, NormalizedArtifact, PromoteReport, Protocol, Severity,
+    StagedSnapshot, SupportState, TrShape, TrackerFinding,
 };
