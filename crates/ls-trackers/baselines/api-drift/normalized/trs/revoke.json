@@ -1,0 +1,101 @@
+{
+  "tr_code": "revoke",
+  "tr_name": "접근토큰 폐기",
+  "protocol": "rest",
+  "is_websocket": false,
+  "endpoint_path": "/oauth2/revoke",
+  "api_group_id": "2d923333-f816-4df9-932d-ad390437b66f",
+  "source_group_name": "접근토큰 폐기",
+  "request_blocks": [
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "f7b99898ecbb7a46"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_body",
+      "field_index": 0,
+      "field_name": "appkey",
+      "korean_name": "고객 앱Key",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "5070b9816591b521"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_body",
+      "field_index": 1,
+      "field_name": "appsecretkey",
+      "korean_name": "고객 앱 비밀Key",
+      "type": "String",
+      "length": 36,
+      "required": true,
+      "description_hash": "624cb863cc98bcfa"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_body",
+      "field_index": 2,
+      "field_name": "token_type_hint",
+      "korean_name": "토큰 유형 hint",
+      "type": "String",
+      "length": 36,
+      "required": true,
+      "description_hash": "26da163e04524790"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_body",
+      "field_index": 3,
+      "field_name": "token",
+      "korean_name": "접근토큰",
+      "type": "String",
+      "length": 256,
+      "required": true,
+      "description_hash": "dadeff127c5589ed"
+    }
+  ],
+  "response_blocks": [
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "4d48d122dacacf1f"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 0,
+      "field_name": "code",
+      "korean_name": "응답코드",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 1,
+      "field_name": "message",
+      "korean_name": "응답메시지",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "99cb1ac4d67b236c"
+    }
+  ],
+  "rate_source_group": "2d923333-f816-4df9-932d-ad390437b66f"
+}

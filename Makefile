@@ -58,3 +58,24 @@ docs:
 ## Drift gate: fail (non-zero) if committed docs no longer match ls-metadata.
 docs-check:
 	cargo run -q -p ls-docgen -- --check
+
+# ---------------------------------------------------------------------------
+# API Drift Tracker — opt-in. These targets hit the live LS Open API and are
+# deliberately EXCLUDED from default gates (`cargo test`/CI stays network-free,
+# R18). They are run by hand at a recurring operator checkpoint (R19; see
+# docs/MAINTENANCE_RUNBOOK.md). Exit contract for `api-drift-check`: 0 no gating
+# drift, 1 a finding crossed the gate threshold (review needed), 2 fetch/parse/
+# baseline error.
+.PHONY: api-drift-fetch api-drift-check api-drift-promote-dry-run
+
+## Live-fetch the full LS inventory into a timestamped staged run + latest.txt.
+api-drift-fetch:
+	cargo run -q -p ls-trackers -- api-drift fetch
+
+## Fetch + compare against the committed bounded baseline; tiered exit (R17).
+api-drift-check:
+	cargo run -q -p ls-trackers -- api-drift check
+
+## Report what a real promote would touch (writes nothing).
+api-drift-promote-dry-run:
+	cargo run -q -p ls-trackers -- api-drift promote --dry-run

@@ -1,0 +1,1772 @@
+{
+  "tr_code": "t1102",
+  "tr_name": "주식현재가(시세)조회",
+  "protocol": "rest",
+  "is_websocket": false,
+  "endpoint_path": "/stock/market-data",
+  "api_group_id": "54a99b02-dbba-4057-8756-9ac759c9a2ed",
+  "source_group_name": "[주식] 시세",
+  "request_blocks": [
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 1,
+      "field_name": "authorization",
+      "korean_name": "접근토큰",
+      "type": "String",
+      "length": 1000,
+      "required": true,
+      "description_hash": "62956eed2a6e506a"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 2,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 3,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 4,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 5,
+      "field_name": "mac_address",
+      "korean_name": "MAC 주소",
+      "type": "String",
+      "length": 12,
+      "required": true,
+      "description_hash": "1d2213655779faf2"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1102InBlock",
+      "field_index": 0,
+      "field_name": "shcode",
+      "korean_name": "단축코드",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t1102InBlock",
+      "field_index": 1,
+      "field_name": "exchgubun",
+      "korean_name": "거래소구분코드",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "b0c365e7c250393d"
+    }
+  ],
+  "response_blocks": [
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 1,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 2,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 3,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 0,
+      "field_name": "hname",
+      "korean_name": "한글명",
+      "type": "String",
+      "length": 20,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 1,
+      "field_name": "price",
+      "korean_name": "현재가",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 2,
+      "field_name": "sign",
+      "korean_name": "전일대비구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 3,
+      "field_name": "change",
+      "korean_name": "전일대비",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 4,
+      "field_name": "diff",
+      "korean_name": "등락율",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 5,
+      "field_name": "volume",
+      "korean_name": "누적거래량",
+      "type": "Decimal",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 6,
+      "field_name": "recprice",
+      "korean_name": "기준가(평가가격)",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 7,
+      "field_name": "avg",
+      "korean_name": "가중평균",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 8,
+      "field_name": "uplmtprice",
+      "korean_name": "상한가(최고호가가격)",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 9,
+      "field_name": "dnlmtprice",
+      "korean_name": "하한가(최저호가가격)",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 10,
+      "field_name": "jnilvolume",
+      "korean_name": "전일거래량",
+      "type": "Decimal",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 11,
+      "field_name": "volumediff",
+      "korean_name": "거래량차",
+      "type": "Decimal",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 12,
+      "field_name": "open",
+      "korean_name": "시가",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 13,
+      "field_name": "opentime",
+      "korean_name": "시가시간",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 14,
+      "field_name": "high",
+      "korean_name": "고가",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 15,
+      "field_name": "hightime",
+      "korean_name": "고가시간",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 16,
+      "field_name": "low",
+      "korean_name": "저가",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 17,
+      "field_name": "lowtime",
+      "korean_name": "저가시간",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 18,
+      "field_name": "high52w",
+      "korean_name": "52최고가",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 19,
+      "field_name": "high52wdate",
+      "korean_name": "52최고가일",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 20,
+      "field_name": "low52w",
+      "korean_name": "52최저가",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 21,
+      "field_name": "low52wdate",
+      "korean_name": "52최저가일",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 22,
+      "field_name": "exhratio",
+      "korean_name": "소진율",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 23,
+      "field_name": "per",
+      "korean_name": "PER",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 24,
+      "field_name": "pbrx",
+      "korean_name": "PBRX",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 25,
+      "field_name": "listing",
+      "korean_name": "상장주식수(천)",
+      "type": "Decimal",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 26,
+      "field_name": "jkrate",
+      "korean_name": "증거금율",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 27,
+      "field_name": "memedan",
+      "korean_name": "수량단위",
+      "type": "String",
+      "length": 5,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 28,
+      "field_name": "offernocd1",
+      "korean_name": "매도증권사코드1",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 29,
+      "field_name": "bidnocd1",
+      "korean_name": "매수증권사코드1",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 30,
+      "field_name": "offerno1",
+      "korean_name": "매도증권사명1",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 31,
+      "field_name": "bidno1",
+      "korean_name": "매수증권사명1",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 32,
+      "field_name": "dvol1",
+      "korean_name": "총매도수량1",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 33,
+      "field_name": "svol1",
+      "korean_name": "총매수수량1",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 34,
+      "field_name": "dcha1",
+      "korean_name": "매도증감1",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 35,
+      "field_name": "scha1",
+      "korean_name": "매수증감1",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 36,
+      "field_name": "ddiff1",
+      "korean_name": "매도비율1",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 37,
+      "field_name": "sdiff1",
+      "korean_name": "매수비율1",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 38,
+      "field_name": "offernocd2",
+      "korean_name": "매도증권사코드2",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 39,
+      "field_name": "bidnocd2",
+      "korean_name": "매수증권사코드2",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 40,
+      "field_name": "offerno2",
+      "korean_name": "매도증권사명2",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 41,
+      "field_name": "bidno2",
+      "korean_name": "매수증권사명2",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 42,
+      "field_name": "dvol2",
+      "korean_name": "총매도수량2",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 43,
+      "field_name": "svol2",
+      "korean_name": "총매수수량2",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 44,
+      "field_name": "dcha2",
+      "korean_name": "매도증감2",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 45,
+      "field_name": "scha2",
+      "korean_name": "매수증감2",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 46,
+      "field_name": "ddiff2",
+      "korean_name": "매도비율2",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 47,
+      "field_name": "sdiff2",
+      "korean_name": "매수비율2",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 48,
+      "field_name": "offernocd3",
+      "korean_name": "매도증권사코드3",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 49,
+      "field_name": "bidnocd3",
+      "korean_name": "매수증권사코드3",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 50,
+      "field_name": "offerno3",
+      "korean_name": "매도증권사명3",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 51,
+      "field_name": "bidno3",
+      "korean_name": "매수증권사명3",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 52,
+      "field_name": "dvol3",
+      "korean_name": "총매도수량3",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 53,
+      "field_name": "svol3",
+      "korean_name": "총매수수량3",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 54,
+      "field_name": "dcha3",
+      "korean_name": "매도증감3",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 55,
+      "field_name": "scha3",
+      "korean_name": "매수증감3",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 56,
+      "field_name": "ddiff3",
+      "korean_name": "매도비율3",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 57,
+      "field_name": "sdiff3",
+      "korean_name": "매수비율3",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 58,
+      "field_name": "offernocd4",
+      "korean_name": "매도증권사코드4",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 59,
+      "field_name": "bidnocd4",
+      "korean_name": "매수증권사코드4",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 60,
+      "field_name": "offerno4",
+      "korean_name": "매도증권사명4",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 61,
+      "field_name": "bidno4",
+      "korean_name": "매수증권사명4",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 62,
+      "field_name": "dvol4",
+      "korean_name": "총매도수량4",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 63,
+      "field_name": "svol4",
+      "korean_name": "총매수수량4",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 64,
+      "field_name": "dcha4",
+      "korean_name": "매도증감4",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 65,
+      "field_name": "scha4",
+      "korean_name": "매수증감4",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 66,
+      "field_name": "ddiff4",
+      "korean_name": "매도비율4",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 67,
+      "field_name": "sdiff4",
+      "korean_name": "매수비율4",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 68,
+      "field_name": "offernocd5",
+      "korean_name": "매도증권사코드5",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 69,
+      "field_name": "bidnocd5",
+      "korean_name": "매수증권사코드5",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 70,
+      "field_name": "offerno5",
+      "korean_name": "매도증권사명5",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 71,
+      "field_name": "bidno5",
+      "korean_name": "매수증권사명5",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 72,
+      "field_name": "dvol5",
+      "korean_name": "총매도수량5",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 73,
+      "field_name": "svol5",
+      "korean_name": "총매수수량5",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 74,
+      "field_name": "dcha5",
+      "korean_name": "매도증감5",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 75,
+      "field_name": "scha5",
+      "korean_name": "매수증감5",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 76,
+      "field_name": "ddiff5",
+      "korean_name": "매도비율5",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 77,
+      "field_name": "sdiff5",
+      "korean_name": "매수비율5",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 78,
+      "field_name": "fwdvl",
+      "korean_name": "외국계매도합계수량",
+      "type": "Decimal",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 79,
+      "field_name": "ftradmdcha",
+      "korean_name": "외국계매도직전대비",
+      "type": "Decimal",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 80,
+      "field_name": "ftradmddiff",
+      "korean_name": "외국계매도비율",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 81,
+      "field_name": "fwsvl",
+      "korean_name": "외국계매수합계수량",
+      "type": "Decimal",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 82,
+      "field_name": "ftradmscha",
+      "korean_name": "외국계매수직전대비",
+      "type": "Decimal",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 83,
+      "field_name": "ftradmsdiff",
+      "korean_name": "외국계매수비율",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 84,
+      "field_name": "vol",
+      "korean_name": "회전율",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 85,
+      "field_name": "shcode",
+      "korean_name": "단축코드",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 86,
+      "field_name": "value",
+      "korean_name": "누적거래대금",
+      "type": "Decimal",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 87,
+      "field_name": "jvolume",
+      "korean_name": "전일동시간거래량",
+      "type": "Decimal",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 88,
+      "field_name": "highyear",
+      "korean_name": "연중최고가",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 89,
+      "field_name": "highyeardate",
+      "korean_name": "연중최고일자",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 90,
+      "field_name": "lowyear",
+      "korean_name": "연중최저가",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 91,
+      "field_name": "lowyeardate",
+      "korean_name": "연중최저일자",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 92,
+      "field_name": "target",
+      "korean_name": "목표가",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 93,
+      "field_name": "capital",
+      "korean_name": "자본금",
+      "type": "Decimal",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 94,
+      "field_name": "abscnt",
+      "korean_name": "유동주식수",
+      "type": "Decimal",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 95,
+      "field_name": "parprice",
+      "korean_name": "액면가",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 96,
+      "field_name": "gsmm",
+      "korean_name": "결산월",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 97,
+      "field_name": "subprice",
+      "korean_name": "대용가",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 98,
+      "field_name": "total",
+      "korean_name": "시가총액",
+      "type": "Decimal",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 99,
+      "field_name": "listdate",
+      "korean_name": "상장일",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 100,
+      "field_name": "name",
+      "korean_name": "전분기명",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 101,
+      "field_name": "bfsales",
+      "korean_name": "전분기매출액",
+      "type": "Decimal",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 102,
+      "field_name": "bfoperatingincome",
+      "korean_name": "전분기영업이익",
+      "type": "Decimal",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 103,
+      "field_name": "bfordinaryincome",
+      "korean_name": "전분기경상이익",
+      "type": "Decimal",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 104,
+      "field_name": "bfnetincome",
+      "korean_name": "전분기순이익",
+      "type": "Decimal",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 105,
+      "field_name": "bfeps",
+      "korean_name": "전분기EPS",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 106,
+      "field_name": "name2",
+      "korean_name": "전전분기명",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 107,
+      "field_name": "bfsales2",
+      "korean_name": "전전분기매출액",
+      "type": "Decimal",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 108,
+      "field_name": "bfoperatingincome2",
+      "korean_name": "전전분기영업이익",
+      "type": "Decimal",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 109,
+      "field_name": "bfordinaryincome2",
+      "korean_name": "전전분기경상이익",
+      "type": "Decimal",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 110,
+      "field_name": "bfnetincome2",
+      "korean_name": "전전분기순이익",
+      "type": "Decimal",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 111,
+      "field_name": "bfeps2",
+      "korean_name": "전전분기EPS",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 112,
+      "field_name": "salert",
+      "korean_name": "전년대비매출액",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 113,
+      "field_name": "opert",
+      "korean_name": "전년대비영업이익",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 114,
+      "field_name": "ordrt",
+      "korean_name": "전년대비경상이익",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 115,
+      "field_name": "netrt",
+      "korean_name": "전년대비순이익",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 116,
+      "field_name": "epsrt",
+      "korean_name": "전년대비EPS",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 117,
+      "field_name": "info1",
+      "korean_name": "락구분",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 118,
+      "field_name": "info2",
+      "korean_name": "관리/급등구분",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 119,
+      "field_name": "info3",
+      "korean_name": "정지/연장구분",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 120,
+      "field_name": "info4",
+      "korean_name": "투자/불성실구분",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 121,
+      "field_name": "janginfo",
+      "korean_name": "장구분",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 122,
+      "field_name": "t_per",
+      "korean_name": "T.PER",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 123,
+      "field_name": "tonghwa",
+      "korean_name": "통화ISO코드",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 124,
+      "field_name": "dval1",
+      "korean_name": "총매도대금1",
+      "type": "Decimal",
+      "length": 18,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 125,
+      "field_name": "sval1",
+      "korean_name": "총매수대금1",
+      "type": "Decimal",
+      "length": 18,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 126,
+      "field_name": "dval2",
+      "korean_name": "총매도대금2",
+      "type": "Decimal",
+      "length": 18,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 127,
+      "field_name": "sval2",
+      "korean_name": "총매수대금2",
+      "type": "Decimal",
+      "length": 18,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 128,
+      "field_name": "dval3",
+      "korean_name": "총매도대금3",
+      "type": "Decimal",
+      "length": 18,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 129,
+      "field_name": "sval3",
+      "korean_name": "총매수대금3",
+      "type": "Decimal",
+      "length": 18,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 130,
+      "field_name": "dval4",
+      "korean_name": "총매도대금4",
+      "type": "Decimal",
+      "length": 18,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 131,
+      "field_name": "sval4",
+      "korean_name": "총매수대금4",
+      "type": "Decimal",
+      "length": 18,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 132,
+      "field_name": "dval5",
+      "korean_name": "총매도대금5",
+      "type": "Decimal",
+      "length": 18,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 133,
+      "field_name": "sval5",
+      "korean_name": "총매수대금5",
+      "type": "Decimal",
+      "length": 18,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 134,
+      "field_name": "davg1",
+      "korean_name": "총매도평단가1",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 135,
+      "field_name": "savg1",
+      "korean_name": "총매수평단가1",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 136,
+      "field_name": "davg2",
+      "korean_name": "총매도평단가2",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 137,
+      "field_name": "savg2",
+      "korean_name": "총매수평단가2",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 138,
+      "field_name": "davg3",
+      "korean_name": "총매도평단가3",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 139,
+      "field_name": "savg3",
+      "korean_name": "총매수평단가3",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 140,
+      "field_name": "davg4",
+      "korean_name": "총매도평단가4",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 141,
+      "field_name": "savg4",
+      "korean_name": "총매수평단가4",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 142,
+      "field_name": "davg5",
+      "korean_name": "총매도평단가5",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 143,
+      "field_name": "savg5",
+      "korean_name": "총매수평단가5",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 144,
+      "field_name": "ftradmdval",
+      "korean_name": "외국계매도대금",
+      "type": "Decimal",
+      "length": 18,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 145,
+      "field_name": "ftradmsval",
+      "korean_name": "외국계매수대금",
+      "type": "Decimal",
+      "length": 18,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 146,
+      "field_name": "ftradmdvag",
+      "korean_name": "외국계매도평단가",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 147,
+      "field_name": "ftradmsvag",
+      "korean_name": "외국계매수평단가",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 148,
+      "field_name": "info5",
+      "korean_name": "투자주의환기",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 149,
+      "field_name": "spac_gubun",
+      "korean_name": "기업인수목적회사여부",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 150,
+      "field_name": "issueprice",
+      "korean_name": "발행가격",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 151,
+      "field_name": "alloc_gubun",
+      "korean_name": "배분적용구분코드(1:배분발생2:배분해제그외:미발생)",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 152,
+      "field_name": "alloc_text",
+      "korean_name": "배분적용구분",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 153,
+      "field_name": "shterm_text",
+      "korean_name": "단기과열/VI발동",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 154,
+      "field_name": "svi_uplmtprice",
+      "korean_name": "정적VI상한가",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 155,
+      "field_name": "svi_dnlmtprice",
+      "korean_name": "정적VI하한가",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 156,
+      "field_name": "low_lqdt_gu",
+      "korean_name": "저유동성종목여부",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 157,
+      "field_name": "abnormal_rise_gu",
+      "korean_name": "이상급등종목여부",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 158,
+      "field_name": "lend_text",
+      "korean_name": "대차불가표시",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 159,
+      "field_name": "ty_text",
+      "korean_name": "ETF/ETN투자유의",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 160,
+      "field_name": "nxt_janginfo",
+      "korean_name": "NXT장구분",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 161,
+      "field_name": "nxt_shterm_text",
+      "korean_name": "NXT단기과열/VI발동",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 162,
+      "field_name": "nxt_svi_uplmtprice",
+      "korean_name": "NXT정적VI상한가",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 163,
+      "field_name": "nxt_svi_dnlmtprice",
+      "korean_name": "NXT정적VI하한가",
+      "type": "Decimal",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1102OutBlock",
+      "field_index": 164,
+      "field_name": "ex_shcode",
+      "korean_name": "거래소별단축코드",
+      "type": "String",
+      "length": 10,
+      "required": true
+    }
+  ],
+  "rate_limit_per_sec": 10,
+  "corp_rate_limit_per_sec": 5,
+  "rate_source_group": "54a99b02-dbba-4057-8756-9ac759c9a2ed"
+}
