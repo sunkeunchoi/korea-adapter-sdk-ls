@@ -616,6 +616,100 @@ impl ExampleFacet {
     }
 }
 
+/// A single leaf-shape change at one field path within a JSON example, carrying
+/// only the path name and the structural [`FieldShape`] on each side — never the
+/// scalar sample value that changed (KTD7).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShapePathChange {
+    pub path: String,
+    pub from: FieldShape,
+    pub to: FieldShape,
+}
+
+/// One example-drift change in the Specification Document Tracker (U2). `tr_code`
+/// lives on the wrapping [`SpecFinding`], so variants carry only the change's own
+/// locating fields.
+///
+/// Every variant carries **only structural descriptors** — the request/response
+/// [`Direction`], field-path names, key names, and [`FieldShape`]s — never a raw
+/// example string or scalar value (KTD7), following the API Drift
+/// [`DescriptionChanged`](DriftChange::DescriptionChanged) advisory template.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SpecChange {
+    /// A direction gained an example where the baseline had none.
+    ExampleAdded { direction: Direction },
+    /// A direction lost the example the baseline carried.
+    ExampleRemoved { direction: Direction },
+    /// A JSON example's leaf-path shape set changed (R2). Pure scalar-value churn
+    /// produces none of these (AE4) — only added/removed paths and leaf-shape
+    /// changes qualify.
+    ExampleShapeChanged {
+        direction: Direction,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        added_paths: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        removed_paths: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        changed_paths: Vec<ShapePathChange>,
+    },
+    /// A form-encoded example's key set changed (R2, AE5). A secret-only value
+    /// rotation produces none of these — only key add/remove qualifies.
+    ExampleKeySetChanged {
+        direction: Direction,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        added_keys: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        removed_keys: Vec<String>,
+    },
+    /// An example could not be structurally compared this run — it is opaque on
+    /// one side, or transitioned across payload classes (R9, AE5). Always
+    /// informational, never gating; carries no structure.
+    ExampleUnparseable { direction: Direction },
+}
+
+/// A support-aware Specification Document Tracker finding (U2). Mirrors
+/// [`DriftFinding`] but is **always advisory**: `gates` is `false` for every
+/// example finding by construction (KTD4), so [`SpecReport::gates`] is never true.
+/// `pointers` (U3) names the maintained SDK artifacts a Tracked TR's change should
+/// prompt review of; it is empty for an untracked TR or a TR with no registered
+/// artifact (R7).
+///
+/// [`SpecReport::gates`]: crate::spec_doc::SpecReport::gates
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpecFinding {
+    pub tr_code: String,
+    pub change: SpecChange,
+    pub severity: Severity,
+    pub support_state: SupportState,
+    /// Always `false`: example changes are advisory and never gate (KTD4).
+    pub gates: bool,
+    /// Maintained SDK artifacts to review for this change (U3); empty →
+    /// informational-only, no pointer (R7).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pointers: Vec<ArtifactRef>,
+}
+
+/// A pointer to a maintained SDK artifact a changed TR references (R4, R5). The
+/// first version covers only naming-convention-derivable docs (KTD5): the
+/// per-TR Reference Doc (Implemented TRs only) and TR Dependency Doc (all Tracked
+/// TRs). SDK-example and Focused-Evidence artifacts are deferred.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArtifactRef {
+    pub kind: ArtifactKind,
+    pub path: String,
+}
+
+/// Which maintained artifact an [`ArtifactRef`] points at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactKind {
+    /// `docs/reference/{tr}.md` — only for Implemented TRs.
+    ReferenceDoc,
+    /// `docs/tr-dependencies/{tr}.md` — for every Tracked TR.
+    DependencyDoc,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

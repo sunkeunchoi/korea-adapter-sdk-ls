@@ -45,11 +45,13 @@ pub use fetch::{
     DEFAULT_TRUNCATION_PROPORTION,
 };
 pub use spec_doc::{
-    normalize_example_run, ExampleManifest, ExampleRun, EXAMPLE_NORMALIZER_VERSION,
+    compare_examples, normalize_example_run, spec_targets, ExampleManifest, ExampleRun, SpecCoverage,
+    SpecReport, EXAMPLE_NORMALIZER_VERSION,
 };
 pub use stages::{classify, diff, normalize, promote, FetchNotImplemented};
 pub use types::{
-    gates_for, BlockField, Change, CodeSet, CoverageSummary, Direction, DriftChange, DriftFinding,
-    ExampleFacet, ExampleShape, FetchReport, FieldShape, Manifest, NormalizedArtifact,
-    PromoteReport, Protocol, Severity, StagedSnapshot, SupportState, TrShape, TrackerFinding,
+    gates_for, ArtifactKind, ArtifactRef, BlockField, Change, CodeSet, CoverageSummary, Direction,
+    DriftChange, DriftFinding, ExampleFacet, ExampleShape, FetchReport, FieldShape, Manifest,
+    NormalizedArtifact, PromoteReport, Protocol, Severity, ShapePathChange, SpecChange, SpecFinding,
+    StagedSnapshot, SupportState, TrShape, TrackerFinding,
 };

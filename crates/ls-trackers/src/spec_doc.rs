@@ -22,11 +22,15 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use ls_metadata::TrMetadata;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::fetch::RawInventory;
-use crate::types::{ExampleFacet, ExampleShape, FieldShape};
+use crate::types::{
+    Direction, ExampleFacet, ExampleShape, FieldShape, Severity, ShapePathChange, SpecChange,
+    SpecFinding, SupportState,
+};
 
 /// The example-normalizer version recorded in the [`ExampleManifest`] (R8/KTD2).
 /// It starts independent of [`NORMALIZER_VERSION`](crate::api_drift::NORMALIZER_VERSION)
@@ -195,6 +199,272 @@ fn form_keys(trimmed: &str) -> Option<BTreeSet<String>> {
         keys.insert(key.to_string());
     }
     Some(keys)
+}
+
+// ---------------------------------------------------------------------------
+// U2 — compare a staged example projection against the Reviewed Baseline
+// ---------------------------------------------------------------------------
+
+/// The full output of one example comparison (U2): support-aware **advisory**
+/// findings plus an example-coverage summary. Mirrors
+/// [`DriftReport`](crate::api_drift::DriftReport), but
+/// [`gates`](SpecReport::gates) is `false` for every example finding by
+/// construction (KTD4) — only a snapshot-level fetch/parse/version error (U4)
+/// ever exits non-zero.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpecReport {
+    pub findings: Vec<SpecFinding>,
+    pub coverage: SpecCoverage,
+}
+
+impl SpecReport {
+    /// Whether any finding gates. Always `false`: example changes are advisory
+    /// (KTD4). Kept for parity with the API Drift exit contract so the CLI maps
+    /// both reports through the same `exit_for` shape.
+    pub fn gates(&self) -> bool {
+        self.findings.iter().any(|f| f.gates)
+    }
+}
+
+/// Example-projection coverage for a staged run (informational; never gates).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct SpecCoverage {
+    /// Distinct upstream TR codes in the staged inventory.
+    pub upstream_count: usize,
+    /// TRs carrying a projected example shape.
+    pub example_tr_count: usize,
+}
+
+/// Compare a committed example baseline against a staged example projection (U2),
+/// emitting support-aware **advisory** findings. Every finding is non-gating
+/// (KTD4). This function only reads `trs` — it never writes metadata (R8).
+///
+/// A TR carrying an example on only one side is handled by diffing against a
+/// synthetic [`ExampleShape::absent`], so an example's appearance/disappearance
+/// surfaces as `ExampleAdded`/`ExampleRemoved` without a special case.
+pub fn compare_examples(
+    committed: &ExampleRun,
+    staged: &ExampleRun,
+    trs: &BTreeMap<String, TrMetadata>,
+) -> SpecReport {
+    let mut findings = Vec::new();
+
+    // TRs in the staged projection: diff against the committed shape, or against
+    // an absent shape when the TR newly carries an example.
+    for (code, staged_shape) in &staged.shapes {
+        let support = support_state_for(code, trs);
+        let absent = ExampleShape::absent(code);
+        let base_shape = committed.shapes.get(code).unwrap_or(&absent);
+        for change in diff_example_shapes(base_shape, staged_shape) {
+            let severity = example_change_severity(&change, support);
+            findings.push(make_spec_finding(code, change, severity, support, trs));
+        }
+    }
+
+    // TRs whose committed example disappeared from the staged projection.
+    for (code, base_shape) in &committed.shapes {
+        if staged.shapes.contains_key(code) {
+            continue;
+        }
+        let support = support_state_for(code, trs);
+        let absent = ExampleShape::absent(code);
+        for change in diff_example_shapes(base_shape, &absent) {
+            let severity = example_change_severity(&change, support);
+            findings.push(make_spec_finding(code, change, severity, support, trs));
+        }
+    }
+
+    // Highest severity first; ties keep insertion order.
+    findings.sort_by(|a, b| b.severity.cmp(&a.severity));
+
+    let coverage = SpecCoverage {
+        upstream_count: staged.code_set.len(),
+        example_tr_count: staged.shapes.len(),
+    };
+    SpecReport { findings, coverage }
+}
+
+fn support_state_for(code: &str, trs: &BTreeMap<String, TrMetadata>) -> SupportState {
+    trs.get(code)
+        .map(|m| SupportState::from_support(&m.support))
+        .unwrap_or(SupportState::Untracked)
+}
+
+/// Diff two example shapes per direction into example changes (no severity yet).
+fn diff_example_shapes(base: &ExampleShape, staged: &ExampleShape) -> Vec<SpecChange> {
+    let mut out = Vec::new();
+    if let Some(change) = diff_facet(Direction::Request, &base.req, &staged.req) {
+        out.push(change);
+    }
+    if let Some(change) = diff_facet(Direction::Response, &base.res, &staged.res) {
+        out.push(change);
+    }
+    out
+}
+
+/// Diff one direction's facet pair. Same-class facets are structurally compared;
+/// `Absent`/`Opaque` are handled by class. A class transition that cannot be
+/// structurally compared (parseable ↔ opaque, or JSON ↔ form) is surfaced as an
+/// informational `ExampleUnparseable` rather than a guessed shape diff (R9, AE5).
+/// Two `Opaque` facets compare equal (no finding), which keeps the self-diff
+/// clean over the ~13 naturally-opaque examples.
+fn diff_facet(
+    direction: Direction,
+    base: &ExampleFacet,
+    staged: &ExampleFacet,
+) -> Option<SpecChange> {
+    match (base, staged) {
+        (ExampleFacet::Absent, ExampleFacet::Absent) => None,
+        (ExampleFacet::Absent, _) => Some(SpecChange::ExampleAdded { direction }),
+        (_, ExampleFacet::Absent) => Some(SpecChange::ExampleRemoved { direction }),
+        (ExampleFacet::Opaque, ExampleFacet::Opaque) => None,
+        (ExampleFacet::Json { shape: b }, ExampleFacet::Json { shape: s }) => {
+            diff_json(direction, b, s)
+        }
+        (ExampleFacet::Form { keys: b }, ExampleFacet::Form { keys: s }) => {
+            diff_form(direction, b, s)
+        }
+        _ => Some(SpecChange::ExampleUnparseable { direction }),
+    }
+}
+
+/// Diff two JSON leaf-path shape maps into an `ExampleShapeChanged`, or `None`
+/// when only scalar values differed (the maps are identical — AE4).
+fn diff_json(
+    direction: Direction,
+    base: &BTreeMap<String, FieldShape>,
+    staged: &BTreeMap<String, FieldShape>,
+) -> Option<SpecChange> {
+    let mut added_paths = Vec::new();
+    let mut removed_paths = Vec::new();
+    let mut changed_paths = Vec::new();
+    let mut paths: BTreeSet<&String> = base.keys().collect();
+    paths.extend(staged.keys());
+    for path in paths {
+        match (base.get(path), staged.get(path)) {
+            (None, Some(_)) => added_paths.push(path.clone()),
+            (Some(_), None) => removed_paths.push(path.clone()),
+            (Some(&from), Some(&to)) if from != to => changed_paths.push(ShapePathChange {
+                path: path.clone(),
+                from,
+                to,
+            }),
+            _ => {}
+        }
+    }
+    if added_paths.is_empty() && removed_paths.is_empty() && changed_paths.is_empty() {
+        None
+    } else {
+        Some(SpecChange::ExampleShapeChanged {
+            direction,
+            added_paths,
+            removed_paths,
+            changed_paths,
+        })
+    }
+}
+
+/// Diff two form key sets into an `ExampleKeySetChanged`, or `None` when the key
+/// sets match (a secret-only value rotation — AE5).
+fn diff_form(
+    direction: Direction,
+    base: &BTreeSet<String>,
+    staged: &BTreeSet<String>,
+) -> Option<SpecChange> {
+    let added_keys: Vec<String> = staged.difference(base).cloned().collect();
+    let removed_keys: Vec<String> = base.difference(staged).cloned().collect();
+    if added_keys.is_empty() && removed_keys.is_empty() {
+        None
+    } else {
+        Some(SpecChange::ExampleKeySetChanged {
+            direction,
+            added_keys,
+            removed_keys,
+        })
+    }
+}
+
+/// Severity for an example change, support-aware (R6) but **always advisory**:
+/// `make_spec_finding` stores `gates: false` regardless (KTD4). A change on a
+/// maintained TR is surfaced at `Maintenance` for visibility; an untracked-only
+/// change, and any unparseable change, is `Informational` (R6, R9).
+fn example_change_severity(change: &SpecChange, support: SupportState) -> Severity {
+    match change {
+        SpecChange::ExampleUnparseable { .. } => Severity::Informational,
+        _ => {
+            if support.is_maintained() {
+                Severity::Maintenance
+            } else {
+                Severity::Informational
+            }
+        }
+    }
+}
+
+/// Build an advisory [`SpecFinding`]. `gates` is always `false` (KTD4). The
+/// artifact pointers are resolved in U3 ([`spec_targets`]); until then a finding
+/// carries no pointer (informational-only, R7).
+fn make_spec_finding(
+    code: &str,
+    change: SpecChange,
+    severity: Severity,
+    support: SupportState,
+    trs: &BTreeMap<String, TrMetadata>,
+) -> SpecFinding {
+    let pointers = trs.get(code).map(|m| spec_targets(code, m)).unwrap_or_default();
+    SpecFinding {
+        tr_code: code.to_string(),
+        change,
+        severity,
+        support_state: support,
+        gates: false,
+        pointers,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// U3 — TR → maintained-artifact resolver (tier-a pointer)
+// ---------------------------------------------------------------------------
+
+/// The maintained-doc directories, mirrored from `ls-docgen`'s
+/// `DEPENDENCY_DOCS_DIR` / `REFERENCE_DOCS_DIR` (KTD5). Hardcoded as string
+/// literals — like [`promote_targets`](crate::stages::promote_targets) — rather
+/// than taking an `ls-docgen` dependency for two path constants.
+const DEPENDENCY_DOCS_DIR: &str = "docs/tr-dependencies";
+const REFERENCE_DOCS_DIR: &str = "docs/reference";
+
+/// Resolve a TR with metadata to its naming-convention-derivable maintained
+/// artifacts (R4, KTD5), mirroring `ls-docgen`'s directory + implemented-only
+/// conventions:
+///
+/// * `docs/tr-dependencies/{tr}.md` — for every **Tracked** TR (any maintained
+///   support state).
+/// * `docs/reference/{tr}.md` — only when `support.implemented`.
+///
+/// A metadata entry with no maintained support state (all-false support) resolves
+/// **nothing** — informational-only, no pointer (R7, AE3). SDK-example and
+/// Focused-Evidence artifacts have no derivable path today and are deferred until
+/// the first Recommended TR exists (KTD5), so a Recommended TR also resolves only
+/// these tier-a docs.
+pub fn spec_targets(tr_code: &str, meta: &TrMetadata) -> Vec<crate::types::ArtifactRef> {
+    use crate::types::{ArtifactKind, ArtifactRef};
+
+    let mut targets = Vec::new();
+    // An untracked metadata entry (all-false support) has no maintained artifact.
+    if !SupportState::from_support(&meta.support).is_maintained() {
+        return targets;
+    }
+    targets.push(ArtifactRef {
+        kind: ArtifactKind::DependencyDoc,
+        path: format!("{DEPENDENCY_DOCS_DIR}/{tr_code}.md"),
+    });
+    if meta.support.implemented {
+        targets.push(ArtifactRef {
+            kind: ArtifactKind::ReferenceDoc,
+            path: format!("{REFERENCE_DOCS_DIR}/{tr_code}.md"),
+        });
+    }
+    targets
 }
 
 #[cfg(test)]
@@ -423,5 +693,194 @@ mod tests {
             !text.contains("appsecretkey=") && !text.contains("eyJ0eXAiOiJKV1Q"),
             "no raw form pair or JWT value is serialized"
         );
+    }
+
+    // --- U2 compare + U3 resolver -----------------------------------------
+
+    use ls_metadata::{
+        CertificationPath, Facets, InstrumentDomain, Maintenance, OwnerClass,
+        Protocol as MetaProtocol, RateBucket, Support, TrMetadata, VenueSession,
+    };
+
+    /// A minimal valid `TrMetadata` with the given support flags, for the
+    /// support-aware severity + resolver tests.
+    fn meta(code: &str, tracked: bool, implemented: bool) -> TrMetadata {
+        TrMetadata {
+            tr_code: code.to_string(),
+            name: None,
+            owner_class: OwnerClass::Standalone,
+            facets: Facets {
+                protocol: MetaProtocol::Rest,
+                instrument_domain: InstrumentDomain::Misc,
+                venue_session: VenueSession::Unspecified,
+                date_sensitive: false,
+                self_paginated: false,
+                account_state: false,
+                paper_incompatible: false,
+                certification_path: CertificationPath::None,
+                rate_bucket: RateBucket::MarketData,
+                caller_supplied_identifiers: vec![],
+            },
+            dependencies: Default::default(),
+            support: Support {
+                tracked,
+                implemented,
+                recommended: false,
+            },
+            maintenance: Maintenance {
+                source_spec_hash: "x".to_string(),
+                last_reviewed: "2026-06-16".to_string(),
+            },
+        }
+    }
+
+    fn run_of(trs: Vec<RawTr>, provisional: bool) -> ExampleRun {
+        normalize_example_run(&inventory(trs), provisional)
+    }
+
+    fn meta_map(entries: Vec<TrMetadata>) -> BTreeMap<String, TrMetadata> {
+        entries.into_iter().map(|m| (m.tr_code.clone(), m)).collect()
+    }
+
+    /// An identical baseline-vs-staged comparison yields no findings and never
+    /// gates — the clean-self-diff property the whole tracker rests on.
+    #[test]
+    fn identical_projection_yields_no_findings() {
+        let trs = raw_tr("t1102", json_str(r#"{"a":1}"#), json_str(r#"{"b":"s"}"#));
+        let committed = run_of(vec![trs.clone()], false);
+        let staged = run_of(vec![trs], false);
+        let report = compare_examples(&committed, &staged, &meta_map(vec![]));
+        assert!(report.findings.is_empty(), "got: {:?}", report.findings);
+        assert!(!report.gates());
+    }
+
+    /// A JSON shape change on an implemented TR is advisory: it carries a finding
+    /// at a visible severity but `gates == false` (KTD4).
+    #[test]
+    fn shape_change_on_implemented_tr_is_advisory_non_gating() {
+        let committed = run_of(vec![raw_tr("t1102", Value::Null, json_str(r#"{"blk":{"price":1}}"#))], false);
+        let staged = run_of(vec![raw_tr("t1102", Value::Null, json_str(r#"{"blk":{"price":1,"qty":2}}"#))], false);
+        let report = compare_examples(&committed, &staged, &meta_map(vec![meta("t1102", true, true)]));
+
+        let finding = report
+            .findings
+            .iter()
+            .find(|f| matches!(f.change, SpecChange::ExampleShapeChanged { .. }))
+            .expect("a shape change is emitted");
+        assert_eq!(finding.severity, Severity::Maintenance, "maintained → visible");
+        assert!(!finding.gates, "example changes never gate (KTD4)");
+        assert!(!report.gates(), "the report never gates on example changes");
+        // The added path is named; no scalar value is carried.
+        if let SpecChange::ExampleShapeChanged { added_paths, direction, .. } = &finding.change {
+            assert_eq!(*direction, Direction::Response);
+            assert!(added_paths.iter().any(|p| p == "blk.qty"));
+        }
+    }
+
+    /// AE2: an example change on an untracked TR (no metadata) emits a visible
+    /// finding with no pointer; the report does not gate.
+    #[test]
+    fn untracked_example_change_is_visible_non_gating_without_pointer() {
+        let committed = run_of(vec![raw_tr("UNTRACKED", Value::Null, json_str(r#"{"a":1}"#))], false);
+        let staged = run_of(vec![raw_tr("UNTRACKED", Value::Null, json_str(r#"{"a":1,"b":2}"#))], false);
+        let report = compare_examples(&committed, &staged, &meta_map(vec![]));
+
+        let finding = report
+            .findings
+            .iter()
+            .find(|f| f.tr_code == "UNTRACKED")
+            .expect("the untracked change is observed");
+        assert_eq!(finding.severity, Severity::Informational, "untracked → informational");
+        assert!(!finding.gates);
+        assert!(finding.pointers.is_empty(), "no pointer for an untracked TR (R7)");
+        assert!(!report.gates(), "exit 0");
+    }
+
+    /// AE5: a key added to the `token` form request emits an `ExampleKeySetChanged`
+    /// finding; a secret-only value rotation emits nothing.
+    #[test]
+    fn form_key_set_change_emits_finding_secret_rotation_does_not() {
+        let base_req = "appkey=A&appsecretkey=B&grant_type=client_credentials&scope=oob";
+        let committed = run_of(vec![raw_tr("token", json_str(base_req), Value::Null)], false);
+
+        // Secret-only rotation → no finding.
+        let rotated = run_of(
+            vec![raw_tr("token", json_str("appkey=ZZZ&appsecretkey=YYY&grant_type=client_credentials&scope=oob"), Value::Null)],
+            false,
+        );
+        let report = compare_examples(&committed, &rotated, &meta_map(vec![meta("token", true, true)]));
+        assert!(report.findings.is_empty(), "a secret rotation is not drift: {:?}", report.findings);
+
+        // Added key → an ExampleKeySetChanged finding.
+        let extra = run_of(
+            vec![raw_tr("token", json_str(&format!("{base_req}&newparam=1")), Value::Null)],
+            false,
+        );
+        let report = compare_examples(&committed, &extra, &meta_map(vec![meta("token", true, true)]));
+        let finding = report
+            .findings
+            .iter()
+            .find(|f| matches!(f.change, SpecChange::ExampleKeySetChanged { .. }))
+            .expect("a key-set change is emitted");
+        assert!(!finding.gates);
+        if let SpecChange::ExampleKeySetChanged { added_keys, .. } = &finding.change {
+            assert_eq!(added_keys, &vec!["newparam".to_string()]);
+        }
+    }
+
+    /// A JSON example that becomes non-parseable surfaces an informational
+    /// `ExampleUnparseable` finding without gating (R9, AE5); two opaque examples
+    /// compare equal (no finding), keeping the self-diff clean.
+    #[test]
+    fn parseable_to_opaque_is_informational_and_opaque_self_compares_clean() {
+        let committed = run_of(vec![raw_tr("t1", Value::Null, json_str(r#"{"a":1}"#))], false);
+        let opaque = run_of(vec![raw_tr("t1", Value::Null, json_str("{ 'a': 1 }"))], false); // single-quoted → opaque
+        let report = compare_examples(&committed, &opaque, &meta_map(vec![]));
+        let finding = report.findings.iter().find(|f| f.tr_code == "t1").unwrap();
+        assert!(matches!(finding.change, SpecChange::ExampleUnparseable { .. }));
+        assert_eq!(finding.severity, Severity::Informational);
+        assert!(!finding.gates);
+
+        // Opaque vs opaque (same naturally-opaque example) → no finding.
+        let report = compare_examples(&opaque, &opaque, &meta_map(vec![]));
+        assert!(report.findings.is_empty(), "opaque self-compare is clean");
+    }
+
+    /// AE1 resolver: an Implemented TR resolves both its reference and dependency
+    /// docs; the finding carries both pointers.
+    #[test]
+    fn implemented_tr_resolves_reference_and_dependency_docs() {
+        use crate::types::ArtifactKind;
+        let targets = spec_targets("t1102", &meta("t1102", true, true));
+        assert_eq!(targets.len(), 2);
+        assert!(targets.iter().any(|t| t.kind == ArtifactKind::DependencyDoc
+            && t.path == "docs/tr-dependencies/t1102.md"));
+        assert!(targets.iter().any(|t| t.kind == ArtifactKind::ReferenceDoc
+            && t.path == "docs/reference/t1102.md"));
+    }
+
+    /// A Tracked-only (not implemented) TR resolves its dependency doc only.
+    #[test]
+    fn tracked_only_tr_resolves_dependency_doc_only() {
+        use crate::types::ArtifactKind;
+        let targets = spec_targets("CSPAT00601", &meta("CSPAT00601", true, false));
+        assert_eq!(targets.len(), 1);
+        assert_eq!(targets[0].kind, ArtifactKind::DependencyDoc);
+        assert_eq!(targets[0].path, "docs/tr-dependencies/CSPAT00601.md");
+    }
+
+    /// AE3: a metadata entry with no maintained support resolves no artifact →
+    /// the finding is informational-only, no pointer.
+    #[test]
+    fn unmaintained_metadata_resolves_no_artifact() {
+        let targets = spec_targets("SYNTH", &meta("SYNTH", false, false));
+        assert!(targets.is_empty(), "all-false support resolves nothing (R7/AE3)");
+
+        // And a finding for that TR carries no pointer.
+        let committed = run_of(vec![raw_tr("SYNTH", Value::Null, json_str(r#"{"a":1}"#))], false);
+        let staged = run_of(vec![raw_tr("SYNTH", Value::Null, json_str(r#"{"a":1,"b":2}"#))], false);
+        let report = compare_examples(&committed, &staged, &meta_map(vec![meta("SYNTH", false, false)]));
+        let finding = report.findings.iter().find(|f| f.tr_code == "SYNTH").unwrap();
+        assert!(finding.pointers.is_empty(), "no pointer when resolution is empty");
     }
 }
