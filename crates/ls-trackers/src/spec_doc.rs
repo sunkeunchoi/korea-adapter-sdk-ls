@@ -174,17 +174,48 @@ fn classify_example_str(raw: &str) -> ExampleFacet {
 /// reusing the API Drift leaf walker (KTD3) so example shape-diffing is identical
 /// to the structural leaf model. Scalar sample values are discarded — only the
 /// leaf shape per collapsed path survives, so value churn is not drift (AE4).
+///
+/// `collect_paths` ignores the empty root path (it targets object payloads), so a
+/// root-level scalar or empty container (`5`, `"OK"`, `{}`, `[]`) would otherwise
+/// yield an empty map — making two structurally-different degenerate examples
+/// compare equal and hiding a real scalar↔scalar or `{}`↔`[]` change. Record a
+/// `$` root sentinel for those cases so the shape stays faithful. No real LS
+/// example is a bare scalar or empty container today, so this never fires over
+/// the committed inventory (the self-diff is unaffected).
 fn json_shape(value: &Value) -> BTreeMap<String, FieldShape> {
     let mut fields = BTreeMap::new();
     crate::stages::collect_paths(value, String::new(), &mut fields);
+    if fields.is_empty() {
+        fields.insert("$".to_string(), root_leaf_shape(value));
+    }
     fields
 }
 
+/// The leaf [`FieldShape`] of a root JSON value — the shape recorded under the
+/// `$` sentinel when an example's root carries no nested fields.
+fn root_leaf_shape(value: &Value) -> FieldShape {
+    match value {
+        Value::Null => FieldShape::Null,
+        Value::Bool(_) => FieldShape::Bool,
+        Value::Number(_) => FieldShape::Number,
+        Value::String(_) => FieldShape::String,
+        Value::Array(_) => FieldShape::Array,
+        Value::Object(_) => FieldShape::Object,
+    }
+}
+
 /// Parse a form-encoded example into its sorted key set, or `None` when the
-/// string is not form-encoded. A form example is `k=v` pairs joined by `&`, with
-/// no JSON object brace; each pair's key is the text before its first `=`, so a
-/// value containing `=` (e.g. base64 padding in a JWT) does not corrupt the key.
-/// Values are discarded entirely — only keys are retained (KTD7, AE5).
+/// string is not **cleanly** form-encoded — in which case the caller marks it
+/// `Opaque`. A form example is `k=v` pairs joined by `&`, with no JSON object
+/// brace; each pair's key is the text before its first `=`, so a value containing
+/// `=` (e.g. base64 padding in a JWT) does not corrupt the key. Values are
+/// discarded entirely — only keys are retained (KTD7, AE5).
+///
+/// Detection is deliberately **conservative** (the plan's R-1 caution: never
+/// guess keys from a payload that is not really a form). A real form key is an
+/// identifier-like token, so any key that is empty or contains whitespace flips
+/// the whole example to `Opaque` rather than emitting bogus keys from a
+/// free-text-with-`=` string.
 fn form_keys(trimmed: &str) -> Option<BTreeSet<String>> {
     if trimmed.contains('{') || !trimmed.contains('=') {
         return None;
@@ -193,7 +224,9 @@ fn form_keys(trimmed: &str) -> Option<BTreeSet<String>> {
     for pair in trimmed.split('&') {
         let (key, _value) = pair.split_once('=')?;
         let key = key.trim();
-        if key.is_empty() {
+        // A genuine form key is a non-empty token with no internal whitespace; a
+        // key that fails this is free text masquerading as a form → Opaque.
+        if key.is_empty() || key.chars().any(char::is_whitespace) {
             return None;
         }
         keys.insert(key.to_string());
@@ -572,6 +605,54 @@ mod tests {
         } else {
             panic!("expected Form");
         }
+    }
+
+    /// Conservative form detection (R-1 caution): a free-text string that merely
+    /// contains `=` but no `{` is NOT a form — a key with whitespace flips the
+    /// whole example to `Opaque` rather than emitting a bogus key.
+    #[test]
+    fn free_text_with_equals_is_opaque_not_form() {
+        assert_eq!(
+            classify_example(&json_str("error code=500 trace=abc")),
+            ExampleFacet::Opaque,
+            "a space-bearing key is not a form key"
+        );
+        assert_eq!(
+            classify_example(&json_str("Example Language : Python = see below")),
+            ExampleFacet::Opaque
+        );
+        // A genuine single-pair form (identifier key) is still a form.
+        assert!(matches!(
+            classify_example(&json_str("grant_type=client_credentials")),
+            ExampleFacet::Form { .. }
+        ));
+    }
+
+    /// A degenerate JSON root (bare scalar or empty container) records a `$`
+    /// sentinel so structurally-different roots do not compare equal.
+    #[test]
+    fn degenerate_json_roots_carry_a_sentinel_shape() {
+        let num = classify_example(&json_str("5"));
+        let string = classify_example(&json_str("\"OK\""));
+        let empty_obj = classify_example(&json_str("{}"));
+        let empty_arr = classify_example(&json_str("[]"));
+        for (facet, expected) in [
+            (&num, FieldShape::Number),
+            (&string, FieldShape::String),
+            (&empty_obj, FieldShape::Object),
+            (&empty_arr, FieldShape::Array),
+        ] {
+            match facet {
+                ExampleFacet::Json { shape } => {
+                    assert_eq!(shape.get("$"), Some(&expected), "root sentinel present");
+                }
+                other => panic!("expected Json, got {other:?}"),
+            }
+        }
+        // The four degenerate roots are mutually distinct (no silent collapse).
+        assert_ne!(num, string);
+        assert_ne!(empty_obj, empty_arr);
+        assert_ne!(num, empty_obj);
     }
 
     /// A free-text / non-parseable example normalizes to `Opaque` with no
