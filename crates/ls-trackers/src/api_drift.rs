@@ -20,7 +20,8 @@ use serde_json::Value;
 use crate::fetch::RawInventory;
 use crate::stages::{classify, diff, normalize};
 use crate::types::{
-    BlockField, CodeSet, Direction, Manifest, Protocol, StagedSnapshot, TrShape, TrackerFinding,
+    gates_for, BlockField, CodeSet, CoverageSummary, Direction, DriftChange, DriftFinding,
+    Manifest, Protocol, Severity, StagedSnapshot, SupportState, TrShape, TrackerFinding,
 };
 
 /// The normalizer version recorded in the [`Manifest`] (R8). Bump when the
@@ -311,6 +312,536 @@ fn normalize_description(raw: &str) -> String {
     let fragment = scraper::Html::parse_fragment(&s);
     let text: String = fragment.root_element().text().collect();
     text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+// ---------------------------------------------------------------------------
+// U4 — compare a staged run against the committed bounded baselines + code-set
+// ---------------------------------------------------------------------------
+
+/// The full output of one comparison (U4): support-aware findings plus the
+/// metadata-coverage summary. Coverage is a separate section that **never**
+/// affects exit codes (R11).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DriftReport {
+    pub findings: Vec<DriftFinding>,
+    pub coverage: CoverageSummary,
+}
+
+impl DriftReport {
+    /// Whether any finding crossed the exit-`1` threshold (R17b). The exit-code
+    /// mapping (U5) reads this aggregate of stored `gates` flags — coverage is
+    /// not consulted.
+    pub fn gates(&self) -> bool {
+        self.findings.iter().any(|f| f.gates)
+    }
+}
+
+/// Compare a committed bounded baseline against a staged run (U4). Inventory
+/// diffs come from code-set comparison (added/removed codes); structural diffs
+/// come from per-TR shape comparison over the bounded baseline set. Each change
+/// is classified by `ls-metadata` support state and carries a stored `gates`
+/// flag per R17b. This function only reads `trs` — it never writes `metadata/`
+/// (R10).
+pub fn compare(
+    committed: &NormalizedRun,
+    staged: &NormalizedRun,
+    trs: &BTreeMap<String, TrMetadata>,
+) -> DriftReport {
+    let mut findings = Vec::new();
+
+    // --- Inventory diff (code-set) ----------------------------------------
+    // New-TR discovery: a code in the staged inventory but not the reviewed
+    // code-set. This is the one untracked event that gates (R9b).
+    let mut added_codes = Vec::new();
+    let mut removed_codes = Vec::new();
+    for code in &staged.code_set.codes {
+        if !committed.code_set.contains(code) {
+            added_codes.push(code.clone());
+            let support = support_state_for(code, trs);
+            findings.push(make_finding(
+                code,
+                DriftChange::TrAdded,
+                Severity::Maintenance,
+                support,
+                /* is_new_tr */ true,
+            ));
+        }
+    }
+    // Removal: a code in the reviewed code-set absent from the staged inventory.
+    // A maintained/baselined TR's removal gates by support state; an untracked
+    // TR's removal is report-only (R12, severity table).
+    for code in &committed.code_set.codes {
+        if !staged.code_set.contains(code) {
+            removed_codes.push(code.clone());
+            let support = support_state_for(code, trs);
+            let severity = removal_severity(support);
+            findings.push(make_finding(
+                code,
+                DriftChange::TrRemoved,
+                severity,
+                support,
+                false,
+            ));
+        }
+    }
+
+    // --- Structural diff (per-TR shape, bounded baseline set) --------------
+    // Diff every TR with a shape on both sides (maintained TRs in production;
+    // tests may supply untracked shapes to exercise the classification path).
+    for (code, base_shape) in &committed.shapes {
+        let Some(cand_shape) = staged.shapes.get(code) else {
+            continue; // absence is handled by the code-set removal diff above
+        };
+        let support = support_state_for(code, trs);
+        for change in diff_shapes(base_shape, cand_shape) {
+            let severity = change_severity(&change, support);
+            findings.push(make_finding(code, change, severity, support, false));
+        }
+    }
+
+    // --- Rename hook (R14b): co-occurring add + remove get an adjacency note,
+    // with no matching logic. Each side references the other side's codes.
+    if !added_codes.is_empty() && !removed_codes.is_empty() {
+        let added_note = added_codes.join(", ");
+        let removed_note = removed_codes.join(", ");
+        for f in &mut findings {
+            match &f.change {
+                DriftChange::TrAdded => f.possible_rename = Some(removed_note.clone()),
+                DriftChange::TrRemoved => f.possible_rename = Some(added_note.clone()),
+                _ => {}
+            }
+        }
+    }
+
+    // Highest severity first; ties keep insertion (code-set then shape) order.
+    findings.sort_by(|a, b| b.severity.cmp(&a.severity));
+
+    let coverage = coverage_summary(&staged.code_set, trs);
+    DriftReport { findings, coverage }
+}
+
+fn support_state_for(code: &str, trs: &BTreeMap<String, TrMetadata>) -> SupportState {
+    trs.get(code)
+        .map(|m| SupportState::from_support(&m.support))
+        .unwrap_or(SupportState::Untracked)
+}
+
+/// Removal severity by support state (severity table): implemented/recommended →
+/// breaking; tracked-only or untracked → maintenance (the untracked case is
+/// report-only, decided by [`gates_for`], not by a lower severity).
+fn removal_severity(support: SupportState) -> Severity {
+    if is_strong(support) {
+        Severity::Breaking
+    } else {
+        Severity::Maintenance
+    }
+}
+
+fn is_strong(support: SupportState) -> bool {
+    matches!(
+        support,
+        SupportState::Implemented | SupportState::Recommended
+    )
+}
+
+/// Severity for a structural change, by support state (severity table). Untracked
+/// known-TR changes get a non-informational severity where natural, but never
+/// gate — gating is decided by [`gates_for`], which reports-only all untracked
+/// changes that are not new-TR discoveries.
+fn change_severity(change: &DriftChange, support: SupportState) -> Severity {
+    let strong = is_strong(support);
+    match change {
+        DriftChange::TrAdded => Severity::Maintenance,
+        DriftChange::TrRemoved => removal_severity(support),
+        // Incompatible-tier changes: breaking for the strong surface.
+        DriftChange::FieldRemoved { .. }
+        | DriftChange::FieldChanged { .. }
+        | DriftChange::FieldMovedAcrossBlock { .. }
+        | DriftChange::EndpointChanged { .. }
+        | DriftChange::ProtocolChanged { .. } => {
+            if strong {
+                Severity::Breaking
+            } else {
+                Severity::Maintenance
+            }
+        }
+        // A same-block reorder is maintenance for implemented or tracked.
+        DriftChange::FieldReordered { .. } => Severity::Maintenance,
+        // A new (optional) field is maintenance for the strong surface,
+        // informational otherwise.
+        DriftChange::FieldAdded { .. } => {
+            if strong {
+                Severity::Maintenance
+            } else {
+                Severity::Informational
+            }
+        }
+        // A rate-limit decrease (or a newly-imposed limit) is maintenance; a
+        // relaxation or removal is informational.
+        DriftChange::RateLimitChanged { from, to } => {
+            if rate_is_more_restrictive(*from, *to) {
+                Severity::Maintenance
+            } else {
+                Severity::Informational
+            }
+        }
+        // Description-only changes are always informational, report-only (R13).
+        DriftChange::DescriptionChanged { .. } => Severity::Informational,
+    }
+}
+
+/// `true` when the candidate rate limit is stricter than the baseline: a smaller
+/// positive limit, or a limit newly imposed where there was none.
+fn rate_is_more_restrictive(from: Option<u32>, to: Option<u32>) -> bool {
+    match (from, to) {
+        (Some(a), Some(b)) => b < a,
+        (None, Some(_)) => true,
+        _ => false,
+    }
+}
+
+fn make_finding(
+    code: &str,
+    change: DriftChange,
+    severity: Severity,
+    support: SupportState,
+    is_new_tr: bool,
+) -> DriftFinding {
+    DriftFinding {
+        tr_code: code.to_string(),
+        change,
+        severity,
+        support_state: support,
+        is_new_tr,
+        gates: gates_for(severity, support, is_new_tr),
+        possible_rename: None,
+    }
+}
+
+/// Diff two Structural API Shapes into structural changes (no severity yet).
+/// Top-level facts first (endpoint/protocol/rate/description), then per-field.
+fn diff_shapes(base: &TrShape, cand: &TrShape) -> Vec<DriftChange> {
+    let mut changes = Vec::new();
+
+    if base.endpoint_path != cand.endpoint_path {
+        changes.push(DriftChange::EndpointChanged {
+            from: base.endpoint_path.clone(),
+            to: cand.endpoint_path.clone(),
+        });
+    }
+    if base.protocol != cand.protocol || base.is_websocket != cand.is_websocket {
+        changes.push(DriftChange::ProtocolChanged {
+            from: protocol_label(base.protocol, base.is_websocket),
+            to: protocol_label(cand.protocol, cand.is_websocket),
+        });
+    }
+    if base.rate_limit_per_sec != cand.rate_limit_per_sec
+        || base.corp_rate_limit_per_sec != cand.corp_rate_limit_per_sec
+    {
+        changes.push(DriftChange::RateLimitChanged {
+            from: base.rate_limit_per_sec,
+            to: cand.rate_limit_per_sec,
+        });
+    }
+
+    diff_fields(base, cand, &mut changes);
+
+    // A TR-level description change with no structural change is informational.
+    if base.description_hash != cand.description_hash {
+        changes.push(DriftChange::DescriptionChanged {
+            location: "tr".to_string(),
+        });
+    }
+
+    changes
+}
+
+fn protocol_label(protocol: Protocol, is_websocket: bool) -> String {
+    if is_websocket {
+        "websocket".to_string()
+    } else {
+        match protocol {
+            Protocol::Rest => "rest".to_string(),
+            Protocol::Websocket => "websocket".to_string(),
+        }
+    }
+}
+
+/// All fields of a shape, both directions, in stable order.
+fn all_fields(shape: &TrShape) -> Vec<&BlockField> {
+    shape
+        .request_blocks
+        .iter()
+        .chain(shape.response_blocks.iter())
+        .collect()
+}
+
+/// Field-level diff with reorder/move reconciliation (R6). Exact identity
+/// `(direction, block, index, name)` matches first (so a type/length/required or
+/// description change on a stable field is detected); the leftovers are
+/// reconciled into same-block reorders and cross-block moves, with the
+/// duplicate-name guard falling back to raw add/remove.
+fn diff_fields(base: &TrShape, cand: &TrShape, changes: &mut Vec<DriftChange>) {
+    type Ident = (Direction, String, u32, String);
+    let ident = |f: &BlockField| -> Ident {
+        (
+            f.direction,
+            f.block_name.clone(),
+            f.field_index,
+            f.field_name.clone(),
+        )
+    };
+
+    let base_fields = all_fields(base);
+    let cand_fields = all_fields(cand);
+    let base_by: BTreeMap<Ident, &BlockField> =
+        base_fields.iter().map(|f| (ident(f), *f)).collect();
+    let cand_by: BTreeMap<Ident, &BlockField> =
+        cand_fields.iter().map(|f| (ident(f), *f)).collect();
+
+    // Exact-identity matches → attribute/description changes.
+    for (key, bf) in &base_by {
+        if let Some(cf) = cand_by.get(key) {
+            if let Some(detail) = attribute_change_detail(bf, cf) {
+                changes.push(DriftChange::FieldChanged {
+                    direction: bf.direction,
+                    block_name: bf.block_name.clone(),
+                    field_index: bf.field_index,
+                    field_name: bf.field_name.clone(),
+                    detail,
+                });
+            } else if bf.description_hash != cf.description_hash || bf.korean_name != cf.korean_name
+            {
+                changes.push(DriftChange::DescriptionChanged {
+                    location: format!("{}.{}", bf.block_name, bf.field_name),
+                });
+            }
+        }
+    }
+
+    // Leftovers (identity present on only one side) → reconcile.
+    let mut removed: Vec<&BlockField> = base_fields
+        .iter()
+        .filter(|f| !cand_by.contains_key(&ident(f)))
+        .copied()
+        .collect();
+    let mut added: Vec<&BlockField> = cand_fields
+        .iter()
+        .filter(|f| !base_by.contains_key(&ident(f)))
+        .copied()
+        .collect();
+
+    reconcile_reorders(
+        &mut removed,
+        &mut added,
+        &base_fields,
+        &cand_fields,
+        changes,
+    );
+    reconcile_moves(
+        &mut removed,
+        &mut added,
+        &base_fields,
+        &cand_fields,
+        changes,
+    );
+
+    for f in removed {
+        changes.push(DriftChange::FieldRemoved {
+            direction: f.direction,
+            block_name: f.block_name.clone(),
+            field_index: f.field_index,
+            field_name: f.field_name.clone(),
+        });
+    }
+    for f in added {
+        changes.push(DriftChange::FieldAdded {
+            direction: f.direction,
+            block_name: f.block_name.clone(),
+            field_index: f.field_index,
+            field_name: f.field_name.clone(),
+        });
+    }
+}
+
+/// A type / length / required change on an identity-stable field, rendered as a
+/// human-readable detail. `None` when those attributes are unchanged.
+fn attribute_change_detail(base: &BlockField, cand: &BlockField) -> Option<String> {
+    let mut parts = Vec::new();
+    if base.r#type != cand.r#type {
+        parts.push(format!(
+            "type {}→{}",
+            base.r#type.as_deref().unwrap_or("?"),
+            cand.r#type.as_deref().unwrap_or("?")
+        ));
+    }
+    if base.length != cand.length {
+        parts.push(format!(
+            "length {}→{}",
+            opt_u32(base.length),
+            opt_u32(cand.length)
+        ));
+    }
+    if base.required != cand.required {
+        parts.push(format!("required {}→{}", base.required, cand.required));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(", "))
+    }
+}
+
+fn opt_u32(v: Option<u32>) -> String {
+    v.map(|n| n.to_string()).unwrap_or_else(|| "?".to_string())
+}
+
+/// Same-block reorder reconciliation (R6): group leftover removed/added by
+/// `(direction, block_name, field_name)`. A group whose **full** multiplicity is
+/// exactly one on each side (measured over all fields, not just leftovers), with
+/// differing indices, is one reorder. A group with multiplicity > 1 on either
+/// side (duplicate names) is left untouched → raw add/remove.
+fn reconcile_reorders(
+    removed: &mut Vec<&BlockField>,
+    added: &mut Vec<&BlockField>,
+    base_fields: &[&BlockField],
+    cand_fields: &[&BlockField],
+    changes: &mut Vec<DriftChange>,
+) {
+    let key = |f: &BlockField| (f.direction, f.block_name.clone(), f.field_name.clone());
+    let mut reconciled_removed = Vec::new();
+    let mut reconciled_added = Vec::new();
+
+    let groups: BTreeSet<_> = removed.iter().map(|f| key(f)).collect();
+    for g in groups {
+        // Duplicate-name guard: never positionally match a group that has more
+        // than one member on either side in the full field set (R6).
+        let base_mult = base_fields.iter().filter(|f| key(f) == g).count();
+        let cand_mult = cand_fields.iter().filter(|f| key(f) == g).count();
+        if base_mult > 1 || cand_mult > 1 {
+            continue;
+        }
+        let r: Vec<usize> = indices_matching(removed, &g, &key);
+        let a: Vec<usize> = indices_matching(added, &g, &key);
+        if r.len() == 1 && a.len() == 1 {
+            let rf = removed[r[0]];
+            let af = added[a[0]];
+            if rf.field_index != af.field_index {
+                changes.push(DriftChange::FieldReordered {
+                    direction: rf.direction,
+                    block_name: rf.block_name.clone(),
+                    field_name: rf.field_name.clone(),
+                    from_index: rf.field_index,
+                    to_index: af.field_index,
+                });
+                reconciled_removed.push(r[0]);
+                reconciled_added.push(a[0]);
+            }
+        }
+    }
+    retain_except(removed, &reconciled_removed);
+    retain_except(added, &reconciled_added);
+}
+
+/// Cross-block move reconciliation: among the remaining leftovers, group by
+/// `(direction, field_name)`. A group whose full multiplicity is one on each
+/// side, in different blocks, is a move; duplicates fall back to raw add/remove.
+fn reconcile_moves(
+    removed: &mut Vec<&BlockField>,
+    added: &mut Vec<&BlockField>,
+    base_fields: &[&BlockField],
+    cand_fields: &[&BlockField],
+    changes: &mut Vec<DriftChange>,
+) {
+    let key = |f: &BlockField| (f.direction, f.field_name.clone());
+    let mut reconciled_removed = Vec::new();
+    let mut reconciled_added = Vec::new();
+
+    let groups: BTreeSet<_> = removed.iter().map(|f| key(f)).collect();
+    for g in groups {
+        let base_mult = base_fields.iter().filter(|f| key(f) == g).count();
+        let cand_mult = cand_fields.iter().filter(|f| key(f) == g).count();
+        if base_mult > 1 || cand_mult > 1 {
+            continue;
+        }
+        let r: Vec<usize> = indices_matching(removed, &g, &key);
+        let a: Vec<usize> = indices_matching(added, &g, &key);
+        if r.len() == 1 && a.len() == 1 {
+            let rf = removed[r[0]];
+            let af = added[a[0]];
+            if rf.block_name != af.block_name {
+                changes.push(DriftChange::FieldMovedAcrossBlock {
+                    direction: rf.direction,
+                    field_name: rf.field_name.clone(),
+                    from_block: rf.block_name.clone(),
+                    to_block: af.block_name.clone(),
+                });
+                reconciled_removed.push(r[0]);
+                reconciled_added.push(a[0]);
+            }
+        }
+    }
+    retain_except(removed, &reconciled_removed);
+    retain_except(added, &reconciled_added);
+}
+
+/// Positions in `fields` whose grouping key equals `g`.
+fn indices_matching<K: PartialEq>(
+    fields: &[&BlockField],
+    g: &K,
+    key: &impl Fn(&BlockField) -> K,
+) -> Vec<usize> {
+    fields
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| key(f) == *g)
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Drop the elements at `drop_indices` from `v` (order-preserving).
+fn retain_except<T>(v: &mut Vec<T>, drop_indices: &[usize]) {
+    let drop: BTreeSet<usize> = drop_indices.iter().copied().collect();
+    let mut i = 0;
+    v.retain(|_| {
+        let keep = !drop.contains(&i);
+        i += 1;
+        keep
+    });
+}
+
+/// Metadata-coverage summary (R11), driven by the code-set, not structural
+/// shape. Never affects exit codes.
+fn coverage_summary(staged: &CodeSet, trs: &BTreeMap<String, TrMetadata>) -> CoverageSummary {
+    let mut implemented_count = 0;
+    let mut tracked_only_count = 0;
+    let mut metadata_missing_upstream = Vec::new();
+    for (code, meta) in trs {
+        let s = SupportState::from_support(&meta.support);
+        match s {
+            SupportState::Implemented => implemented_count += 1,
+            SupportState::Tracked => tracked_only_count += 1,
+            _ => {}
+        }
+        if !staged.contains(code) {
+            metadata_missing_upstream.push(code.clone());
+        }
+    }
+    let upstream_missing_metadata = staged
+        .codes
+        .iter()
+        .filter(|c| !trs.contains_key(*c))
+        .cloned()
+        .collect();
+
+    CoverageSummary {
+        upstream_count: staged.len(),
+        metadata_count: trs.len(),
+        implemented_count,
+        tracked_only_count,
+        metadata_missing_upstream,
+        upstream_missing_metadata,
+    }
 }
 
 /// FNV-1a 64-bit, rendered as zero-padded hex. Deterministic across machines and
@@ -614,5 +1145,265 @@ mod tests {
         assert_eq!(a, b);
         let back: NormalizedRun = serde_json::from_slice(&a).unwrap();
         assert_eq!(back, run);
+    }
+
+    // --- U4 compare (structural detection + reconciliation) ----------------
+
+    fn raw_tr_with(code: &str, props: Vec<Value>) -> RawTr {
+        RawTr {
+            code: code.to_string(),
+            name: Some(code.to_string()),
+            is_websocket: false,
+            http_method: Some("POST".to_string()),
+            url: Some(format!("/{code}")),
+            protocol_type: Some("REST".to_string()),
+            rate_limit_per_sec: Some(1),
+            corp_rate_limit_per_sec: None,
+            description: None,
+            properties: props,
+            req_example: Value::Null,
+            res_example: Value::Null,
+        }
+    }
+
+    fn run_of(code: &str, props: Vec<Value>) -> NormalizedRun {
+        let inv = inventory(vec![group_with(vec![raw_tr_with(code, props)])]);
+        normalize_run(&inv, &maintained(&[code]), false)
+    }
+
+    fn no_meta() -> BTreeMap<String, TrMetadata> {
+        BTreeMap::new()
+    }
+
+    fn rb(name: &str, ty: &str, len: Value) -> Value {
+        prop("res_b", name, name_korean(name), ty, len, "Y", "")
+    }
+
+    // A distinct Korean label so real fields are never mistaken for block heads.
+    fn name_korean(name: &str) -> &str {
+        match name {
+            "OB" => "OB",
+            _ => "라벨",
+        }
+    }
+
+    #[test]
+    fn compare_identical_runs_yields_no_findings() {
+        let props = vec![
+            rb("OB", "A0003", Value::Null),
+            rb("a", "A0001", serde_json::json!("4")),
+        ];
+        let committed = run_of("t8412", props.clone());
+        let staged = run_of("t8412", props);
+        let report = compare(&committed, &staged, &no_meta());
+        assert!(report.findings.is_empty(), "got: {:?}", report.findings);
+        assert!(!report.gates());
+    }
+
+    #[test]
+    fn reorder_with_unique_names_reconciles_to_reorder_findings() {
+        let base = run_of(
+            "t8412",
+            vec![
+                rb("OB", "A0003", Value::Null),
+                rb("a", "A0001", serde_json::json!("4")),
+                rb("b", "A0001", serde_json::json!("4")),
+            ],
+        );
+        // Same fields, swapped order → indices shift, names unique.
+        let staged = run_of(
+            "t8412",
+            vec![
+                rb("OB", "A0003", Value::Null),
+                rb("b", "A0001", serde_json::json!("4")),
+                rb("a", "A0001", serde_json::json!("4")),
+            ],
+        );
+        let report = compare(&base, &staged, &no_meta());
+        let reorders = report
+            .findings
+            .iter()
+            .filter(|f| matches!(f.change, DriftChange::FieldReordered { .. }))
+            .count();
+        assert_eq!(
+            reorders, 2,
+            "two unique-name reorders, got: {:?}",
+            report.findings
+        );
+        assert!(
+            !report.findings.iter().any(|f| matches!(
+                f.change,
+                DriftChange::FieldAdded { .. } | DriftChange::FieldRemoved { .. }
+            )),
+            "a reconciled reorder emits no raw add/remove"
+        );
+    }
+
+    #[test]
+    fn duplicate_name_shift_falls_back_to_raw_add_remove() {
+        let base = run_of(
+            "t8412",
+            vec![
+                rb("OB", "A0003", Value::Null),
+                rb("dup", "A0001", serde_json::json!("4")),
+                rb("dup", "A0001", serde_json::json!("4")),
+            ],
+        );
+        // A new field pushes the second `dup` to a higher index.
+        let staged = run_of(
+            "t8412",
+            vec![
+                rb("OB", "A0003", Value::Null),
+                rb("dup", "A0001", serde_json::json!("4")),
+                rb("other", "A0001", serde_json::json!("4")),
+                rb("dup", "A0001", serde_json::json!("4")),
+            ],
+        );
+        let report = compare(&base, &staged, &no_meta());
+        assert!(
+            !report
+                .findings
+                .iter()
+                .any(|f| matches!(f.change, DriftChange::FieldReordered { .. })),
+            "a duplicate-name group is not positionally matched"
+        );
+        assert!(report
+            .findings
+            .iter()
+            .any(|f| matches!(&f.change, DriftChange::FieldRemoved { field_name, .. } if field_name == "dup")));
+        assert!(report
+            .findings
+            .iter()
+            .any(|f| matches!(&f.change, DriftChange::FieldAdded { field_name, .. } if field_name == "dup")));
+    }
+
+    #[test]
+    fn field_moved_across_block_reconciles_to_a_move() {
+        // Block headers (name == korean) delimit OB1 / OB2; `moved` migrates
+        // from OB1 into OB2.
+        let bh = |n: &str| prop("res_b", n, n, "A0003", Value::Null, "Y", "");
+        let base = run_of(
+            "t8412",
+            vec![
+                bh("OB1"),
+                rb("moved", "A0001", serde_json::json!("4")),
+                bh("OB2"),
+                rb("stay", "A0001", serde_json::json!("4")),
+            ],
+        );
+        let staged = run_of(
+            "t8412",
+            vec![
+                bh("OB1"),
+                bh("OB2"),
+                rb("moved", "A0001", serde_json::json!("4")),
+                rb("stay", "A0001", serde_json::json!("4")),
+            ],
+        );
+        let report = compare(&base, &staged, &no_meta());
+        assert!(
+            report.findings.iter().any(|f| matches!(
+                &f.change,
+                DriftChange::FieldMovedAcrossBlock { field_name, from_block, to_block, .. }
+                    if field_name == "moved" && from_block == "OB1" && to_block == "OB2"
+            )),
+            "got: {:?}",
+            report.findings
+        );
+    }
+
+    #[test]
+    fn new_untracked_tr_discovery_gates() {
+        let committed = run_of("t8412", vec![rb("OB", "A0003", Value::Null)]);
+        // Staged inventory adds a brand-new code not in the reviewed code-set.
+        let mut inv = inventory(vec![group_with(vec![
+            raw_tr_with("t8412", vec![rb("OB", "A0003", Value::Null)]),
+            raw_tr_with("t9999", vec![]),
+        ])]);
+        inv.property_types.clear();
+        let staged = normalize_run(&inv, &maintained(&["t8412"]), false);
+
+        let report = compare(&committed, &staged, &no_meta());
+        let new_tr = report
+            .findings
+            .iter()
+            .find(|f| f.tr_code == "t9999")
+            .expect("new TR finding");
+        assert!(matches!(new_tr.change, DriftChange::TrAdded));
+        assert!(new_tr.is_new_tr);
+        assert!(new_tr.gates, "new-TR discovery gates (R9b)");
+        assert!(report.gates());
+    }
+
+    #[test]
+    fn rename_hook_annotates_cooccurring_add_and_remove() {
+        // committed has old_tr; staged drops it and introduces new_tr.
+        let committed = {
+            let inv = inventory(vec![group_with(vec![raw_tr_with("old_tr", vec![])])]);
+            normalize_run(&inv, &maintained(&[]), false)
+        };
+        let staged = {
+            let inv = inventory(vec![group_with(vec![raw_tr_with("new_tr", vec![])])]);
+            normalize_run(&inv, &maintained(&[]), false)
+        };
+        let report = compare(&committed, &staged, &no_meta());
+        let added = report
+            .findings
+            .iter()
+            .find(|f| f.tr_code == "new_tr")
+            .unwrap();
+        let removed = report
+            .findings
+            .iter()
+            .find(|f| f.tr_code == "old_tr")
+            .unwrap();
+        assert_eq!(added.possible_rename.as_deref(), Some("old_tr"));
+        assert_eq!(removed.possible_rename.as_deref(), Some("new_tr"));
+        // Both underlying findings are preserved.
+        assert!(matches!(added.change, DriftChange::TrAdded));
+        assert!(matches!(removed.change, DriftChange::TrRemoved));
+    }
+
+    #[test]
+    fn description_only_change_is_informational_and_does_not_gate() {
+        let base = run_of(
+            "t8412",
+            vec![
+                rb("OB", "A0003", Value::Null),
+                prop(
+                    "res_b",
+                    "a",
+                    "라벨",
+                    "A0001",
+                    serde_json::json!("4"),
+                    "Y",
+                    "old text",
+                ),
+            ],
+        );
+        let staged = run_of(
+            "t8412",
+            vec![
+                rb("OB", "A0003", Value::Null),
+                prop(
+                    "res_b",
+                    "a",
+                    "라벨",
+                    "A0001",
+                    serde_json::json!("4"),
+                    "Y",
+                    "new text",
+                ),
+            ],
+        );
+        // Identity-stable field `a` with the same type/length/required but a
+        // changed description → a field-level description change, no structural
+        // diff.
+        let report = compare(&base, &staged, &no_meta());
+        assert!(report
+            .findings
+            .iter()
+            .all(|f| matches!(f.change, DriftChange::DescriptionChanged { .. })));
+        assert!(!report.gates(), "description-only never gates (R13)");
     }
 }
