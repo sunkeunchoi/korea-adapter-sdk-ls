@@ -245,6 +245,10 @@ pub struct RawGroup {
 pub struct RawInventory {
     #[serde(default)]
     pub source_urls: Vec<String>,
+    /// Property-type code → display-name mapping captured at fetch time, so U3
+    /// normalization resolves `propertyType` codes without re-fetching.
+    #[serde(default)]
+    pub property_types: BTreeMap<String, String>,
     #[serde(default)]
     pub groups: Vec<RawGroup>,
 }
@@ -480,7 +484,6 @@ impl FetchClient {
         let html = self.menu_html().map_err(FetchInventoryError::Fetch)?;
         let menu = parse_menu(&html).map_err(FetchInventoryError::Menu)?;
         let prop_types = self.property_type_mapping();
-        let _ = &prop_types; // U3 maps property-type codes during normalization.
 
         let mut source_urls = vec![self.url("/apiservice")];
         let mut groups = Vec::new();
@@ -555,6 +558,7 @@ impl FetchClient {
 
         Ok(RawInventory {
             source_urls,
+            property_types: prop_types,
             groups,
         })
     }
@@ -770,6 +774,7 @@ mod tests {
     fn code_set_collects_distinct_sorted_codes() {
         let inv = RawInventory {
             source_urls: vec![],
+            property_types: BTreeMap::new(),
             groups: vec![
                 RawGroup {
                     category_name: "c".into(),
