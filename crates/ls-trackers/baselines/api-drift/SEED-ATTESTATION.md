@@ -14,12 +14,24 @@ directory is the attestation trail; this file summarizes what was checked.
 - **Maintained shapes normalized:** 7 (`token`, `revoke`, `t1102`, `t8412`,
   `CSPAQ12200`, `S3_`, `CSPAT00601`) — the TRs in `metadata/trs/`.
 - **`code-set.json` `provisional`:** `true` (not yet independently attested as
-  complete; cleared by an operator through normal maintenance — KTD-5).
+  complete; cleared by an operator through normal maintenance — KTD-5). This
+  remains the recorded governance stance: the seed is carried **visibly
+  provisional**, with re-attestation flowing through the D5 new-TR review loop
+  (see below). Independent operator attestation is a deliberate de-scope for a
+  solo-maintainer project.
 - **Property-type mapping:** the LS `system-codes` endpoint returned HTTP 500 at
   fetch time; the fetch used the hardcoded fallback mapping and continued (a
   recoverable, warning-only path). Property-type *display names* on some fields
   therefore fall back to raw type codes until a future fetch resolves them; this
   does not affect the code-set, the completeness gate, or field identity.
+  - **Update (normalizer v2, R3):** a property-type mapping fallback is no longer
+    silent at *check* time. The support-aware facts-outage gate now treats it as
+    a whole-inventory degradation — `api-drift check` exits `2` whenever the
+    fallback was served and any maintained TR is in the run, rather than letting
+    fallback type codes diff as false `FieldChanged` findings. The seed itself was
+    fetched under this fallback, so a fresh operator fetch should resolve the
+    real type names before the seed's `token`/maintained shapes are trusted for
+    type-level drift.
 
 ## First-baseline parity check (computed, not copied)
 
@@ -44,6 +56,18 @@ computed inventory. The group set is non-empty (41).
 with no drift findings (a self-diff; confirms storage + compare wiring, not
 completeness). Coverage at seed time: 365 upstream, 7 metadata (6 implemented, 1
 tracked-only), 0 metadata-missing-upstream, 358 upstream-missing-metadata.
+
+## Normalizer v2 correction (R-1 closed)
+
+The committed shapes were re-seeded at `normalizer_version: 2` via the
+network-free `api-drift renormalize` affordance, re-normalizing the same reviewed
+raw evidence in `raw/ls-openapi-full.json`. v2 fixes the block-header rule so a
+real field whose compact code equals its Korean label is no longer dropped: the
+`token` `scope` field (request + response, length 256) now appears in the
+Structural API Shape, and `token_type` is filed under `response_body` rather than
+a phantom `scope` block. Only `manifest.json` (the version) and `token.json`
+changed; the other six maintained shapes re-normalized byte-for-byte. The
+self-diff (`api-drift check --staged`) still exits `0`.
 
 ## Re-attestation (KTD-5)
 
