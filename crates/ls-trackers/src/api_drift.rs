@@ -26,7 +26,11 @@ use crate::types::{
 
 /// The normalizer version recorded in the [`Manifest`] (R8). Bump when the
 /// normalization rules change so a normalizer-driven hash shift is auditable.
-pub const NORMALIZER_VERSION: u32 = 1;
+///
+/// v2 (U1): [`ParsedProp::is_block_header`] now also requires a null `length`, so
+/// a real field whose compact code equals its Korean label (e.g. `token`'s
+/// `scope`, length 256) is no longer dropped as a block delimiter.
+pub const NORMALIZER_VERSION: u32 = 2;
 
 /// Run the PR #2 leaf-path API Drift pipeline over a reviewed `baseline` and a
 /// candidate snapshot for the same TR, classifying each detected change against
@@ -226,8 +230,13 @@ impl ParsedProp {
     /// LS marks a body block boundary with a row whose compact name equals its
     /// Korean name (e.g. `t8412InBlock` / `t8412InBlock`) — a real field's
     /// English code never equals its Korean label. Used to derive `block_name`.
+    ///
+    /// A genuine delimiter row carries a null `length`; a real field carries a
+    /// length. Requiring `length.is_none()` keeps a field whose code happens to
+    /// equal its label (e.g. `token`'s `scope`, length 256) from being dropped as
+    /// a phantom block header (U1, NORMALIZER_VERSION v2).
     fn is_block_header(&self) -> bool {
-        self.korean_name.as_deref().is_some_and(|k| k == self.name)
+        self.length.is_none() && self.korean_name.as_deref().is_some_and(|k| k == self.name)
     }
 
     fn to_field(&self, direction: Direction, block_name: &str, field_index: u32) -> BlockField {
@@ -333,6 +342,95 @@ impl DriftReport {
     /// not consulted.
     pub fn gates(&self) -> bool {
         self.findings.iter().any(|f| f.gates)
+    }
+}
+
+/// The support-aware facts-outage decision (U5, R3), kept as a single-sourced
+/// pure function distinct from [`gates_for`] (KTD-3). It decides the exit
+/// *before* `compare` runs, so degraded facts never turn into spurious
+/// Structural API Shape changes.
+///
+/// Membership joins on TR **code**, not group id: a degraded group's protocol
+/// UUID is exactly the field that went missing, so the committed
+/// `TrShape.api_group_id` is unusable as a join key (KTD-4a).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FactsOutage {
+    /// No facts dependency degraded — proceed to the normal compare path.
+    None,
+    /// A degraded facts dependency touches a maintained/baselined TR — exit `2`,
+    /// because degraded facts could corrupt a comparison the tracker gates on.
+    MaintainedAffected(String),
+    /// Degradation is confined to untracked inventory — exit `0` plus a visible
+    /// finding (the string describes the degraded dependency).
+    UntrackedOnly(String),
+}
+
+/// Decide the facts-outage exit (U5). `degraded_tr_codes` are the codes under an
+/// endpoint/rate-degraded group (per-group, KTD-4a); `property_type_fallback`
+/// marks a whole-inventory mapping outage (KTD-5). `maintained` is the maintained
+/// TR-code set; `maintained_present_in_run` is whether any maintained TR appears
+/// in the run at all (the whole-inventory branch needs a maintained TR to be at
+/// risk before it gates).
+pub fn facts_outage_decision(
+    degraded_tr_codes: &BTreeSet<String>,
+    maintained: &BTreeSet<String>,
+    property_type_fallback: bool,
+    maintained_present_in_run: bool,
+) -> FactsOutage {
+    // Property-type fallback is whole-inventory (KTD-5): it substitutes raw type
+    // codes for every TR, with no per-group granularity, so it does not route
+    // through the untracked-only branch — if any maintained TR is in the run, its
+    // fields could diff as false `FieldChanged`.
+    if property_type_fallback && maintained_present_in_run {
+        return FactsOutage::MaintainedAffected(
+            "property-type mapping served the hardcoded fallback (whole-inventory)".to_string(),
+        );
+    }
+
+    // Endpoint/rate degradation is per-group: gate only when a maintained TR's
+    // group is degraded; degradation confined to untracked codes is a notice.
+    let maintained_degraded: Vec<&str> = degraded_tr_codes
+        .iter()
+        .filter(|c| maintained.contains(*c))
+        .map(String::as_str)
+        .collect();
+    if !maintained_degraded.is_empty() {
+        return FactsOutage::MaintainedAffected(format!(
+            "endpoint/rate facts degraded for maintained TR(s): {}",
+            maintained_degraded.join(", ")
+        ));
+    }
+    if !degraded_tr_codes.is_empty() {
+        return FactsOutage::UntrackedOnly(format!(
+            "endpoint/rate facts degraded for {} untracked TR(s)",
+            degraded_tr_codes.len()
+        ));
+    }
+
+    // Property-type fallback served but no maintained TR present: still a visible
+    // notice (the whole inventory degraded), but nothing gated is at risk.
+    if property_type_fallback {
+        return FactsOutage::UntrackedOnly(
+            "property-type mapping served the hardcoded fallback (no maintained TR in run)"
+                .to_string(),
+        );
+    }
+
+    FactsOutage::None
+}
+
+/// Build the visible, non-gating finding for an untracked-only facts outage
+/// ([`FactsOutage::UntrackedOnly`]). `tr_code` is a whole-inventory marker since
+/// the degradation is not pinned to a single maintained TR.
+pub fn facts_degraded_finding(detail: String) -> DriftFinding {
+    DriftFinding {
+        tr_code: "(facts)".to_string(),
+        change: DriftChange::FactsDegraded { detail },
+        severity: Severity::Informational,
+        support_state: SupportState::Untracked,
+        is_new_tr: false,
+        gates: false,
+        possible_rename: None,
     }
 }
 
@@ -487,6 +585,8 @@ fn change_severity(change: &DriftChange, support: SupportState) -> Severity {
         }
         // Description-only changes are always informational, report-only (R13).
         DriftChange::DescriptionChanged { .. } => Severity::Informational,
+        // An untracked-only facts degradation is a visible, non-gating notice.
+        DriftChange::FactsDegraded { .. } => Severity::Informational,
     }
 }
 
@@ -1071,6 +1171,109 @@ mod tests {
         assert_eq!(shape.response_blocks[0].direction, Direction::Response);
     }
 
+    /// A body row whose compact code equals its Korean label but carries a
+    /// non-null length is a real field, not a block delimiter (U1, R-1). The
+    /// field that follows it is filed under the surrounding block, not under a
+    /// phantom block named after it (the `token_type` mis-filing regression).
+    #[test]
+    fn same_code_label_field_with_length_is_a_field_not_a_block_header() {
+        // Mirrors the real `token` response body: a normal field, then `scope`
+        // (code == label, length 256), then `token_type` following it.
+        let mut raw = t8412_raw();
+        raw.properties = vec![
+            prop(
+                "res_b",
+                "access_token",
+                "접근토큰",
+                "A0001",
+                serde_json::json!("1000"),
+                "Y",
+                "",
+            ),
+            // code == label, but a real field (length 256) — must not be dropped.
+            prop("res_b", "scope", "scope", "A0001", serde_json::json!("256"), "Y", ""),
+            prop(
+                "res_b",
+                "token_type",
+                "토큰 유형",
+                "A0001",
+                serde_json::json!("256"),
+                "Y",
+                "",
+            ),
+        ];
+        let inv = inventory(vec![group_with(vec![raw])]);
+        let run = normalize_run(&inv, &maintained(&["t8412"]), false);
+        let blocks = &run.shapes["t8412"].response_blocks;
+
+        // `scope` survives as a real field under the default response body block.
+        let scope = blocks
+            .iter()
+            .find(|f| f.field_name == "scope")
+            .expect("scope is a real field, not dropped");
+        assert_eq!(scope.block_name, "response_body");
+        assert_eq!(scope.r#type.as_deref(), Some("String"));
+        assert_eq!(scope.length, Some(256));
+
+        // `token_type` is filed under the surrounding block, not a phantom
+        // `scope` block (the pre-v2 mis-filing this fix closes).
+        let token_type = blocks
+            .iter()
+            .find(|f| f.field_name == "token_type")
+            .expect("token_type present");
+        assert_eq!(token_type.block_name, "response_body");
+
+        // All three sit in one block, indexed in order: no phantom block split.
+        assert!(blocks.iter().all(|f| f.block_name == "response_body"));
+        assert_eq!(blocks.len(), 3);
+    }
+
+    /// A body row whose compact code equals its Korean label AND carries a null
+    /// length is still treated as a block-header delimiter (existing behavior
+    /// preserved): it names the block and is not emitted as a field.
+    #[test]
+    fn same_code_label_row_with_null_length_is_still_a_block_header() {
+        let mut raw = t8412_raw();
+        raw.properties = vec![
+            // Null length → a genuine delimiter, as before v2.
+            prop("res_b", "OutBlock", "OutBlock", "A0003", Value::Null, "Y", ""),
+            prop("res_b", "price", "현재가", "A0004", serde_json::json!("8"), "Y", ""),
+        ];
+        let inv = inventory(vec![group_with(vec![raw])]);
+        let run = normalize_run(&inv, &maintained(&["t8412"]), false);
+        let blocks = &run.shapes["t8412"].response_blocks;
+
+        // The delimiter is not emitted as a field; `price` sits under it.
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].field_name, "price");
+        assert_eq!(blocks[0].block_name, "OutBlock");
+        assert_eq!(blocks[0].field_index, 0);
+    }
+
+    /// The v2 rule rests on the invariant that a genuine delimiter carries a null
+    /// length: a code==label row with ANY parseable length — including a numeric
+    /// `0` and a numeric (not string) JSON value — is a real field. Guards the
+    /// boundary the block-header heuristic depends on; if upstream ever gave a
+    /// real delimiter a numeric length this test would surface the reclassification.
+    #[test]
+    fn same_code_label_row_with_numeric_length_is_a_field() {
+        let mut raw = t8412_raw();
+        raw.properties = vec![
+            prop("res_b", "OB", "OB", "A0003", Value::Null, "Y", ""),
+            // code == label, numeric JSON length 0 → a real field, not a delimiter.
+            prop("res_b", "flag", "flag", "A0001", serde_json::json!(0), "Y", ""),
+        ];
+        let inv = inventory(vec![group_with(vec![raw])]);
+        let run = normalize_run(&inv, &maintained(&["t8412"]), false);
+        let blocks = &run.shapes["t8412"].response_blocks;
+        let flag = blocks
+            .iter()
+            .find(|f| f.field_name == "flag")
+            .expect("a numeric-length code==label row is a field");
+        assert_eq!(flag.block_name, "OB", "filed under the surrounding block");
+        assert_eq!(flag.length, Some(0));
+    }
+
     /// Duplicate field names, a reorder, a block move, a length change, a
     /// required-flag change, and a rate-limit change are each represented
     /// distinctly in the normalized shape.
@@ -1560,6 +1763,56 @@ mod tests {
             )),
             "the attribute change is not swallowed by the reorder: {:?}",
             report.findings
+        );
+    }
+
+    // --- U5 facts-outage decision (pure, single-sourced) ------------------
+
+    fn codes(cs: &[&str]) -> BTreeSet<String> {
+        cs.iter().map(|c| c.to_string()).collect()
+    }
+
+    /// The discriminating per-group case (R3): a degraded group containing no
+    /// maintained TR is untracked-only (exit 0 + finding); a co-occurring
+    /// degraded group containing a maintained TR forces MaintainedAffected
+    /// (exit 2).
+    #[test]
+    fn facts_outage_discriminates_maintained_from_untracked_endpoint_rate() {
+        let maintained = codes(&["t1102", "token"]);
+
+        // Untracked-only degradation → visible notice, not a gate.
+        let d = facts_outage_decision(&codes(&["UNTRACKED_X"]), &maintained, false, true);
+        assert!(matches!(d, FactsOutage::UntrackedOnly(_)), "got {d:?}");
+
+        // A maintained TR co-occurs in the degraded set → exit 2.
+        let d = facts_outage_decision(&codes(&["UNTRACKED_X", "t1102"]), &maintained, false, true);
+        assert!(
+            matches!(&d, FactsOutage::MaintainedAffected(r) if r.contains("t1102")),
+            "got {d:?}"
+        );
+    }
+
+    /// Property-type fallback is whole-inventory (KTD-5): served + any maintained
+    /// TR present → exit 2, with no untracked-only split. Served with no
+    /// maintained TR in the run is a visible notice only.
+    #[test]
+    fn facts_outage_property_type_fallback_is_whole_inventory() {
+        let maintained = codes(&["t1102"]);
+        let d = facts_outage_decision(&BTreeSet::new(), &maintained, true, true);
+        assert!(
+            matches!(&d, FactsOutage::MaintainedAffected(r) if r.contains("property-type")),
+            "got {d:?}"
+        );
+        let d = facts_outage_decision(&BTreeSet::new(), &maintained, true, false);
+        assert!(matches!(d, FactsOutage::UntrackedOnly(_)), "got {d:?}");
+    }
+
+    /// No degradation → None (the clean-fetch path is untouched).
+    #[test]
+    fn facts_outage_none_when_no_degradation() {
+        assert_eq!(
+            facts_outage_decision(&BTreeSet::new(), &codes(&["t1102"]), false, true),
+            FactsOutage::None
         );
     }
 

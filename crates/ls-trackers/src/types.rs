@@ -6,7 +6,7 @@
 //! its classified severity. These define the shared contract both Change Trackers
 //! (the API Drift Tracker and, later, the Specification Document Tracker) speak.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -399,6 +399,18 @@ pub struct FetchReport {
     /// surface as spurious endpoint/rate drift at compare time.
     #[serde(default)]
     pub facts_degraded_groups: usize,
+    /// TR codes that live under a facts-degraded group (endpoint/rate facts
+    /// missing, so the group's id is `None`). The facts-outage gate (U5) joins
+    /// these against the maintained set by **code**, since the group UUID is the
+    /// field that went missing (KTD-4a).
+    #[serde(default)]
+    pub degraded_tr_codes: BTreeSet<String>,
+    /// `true` when the whole-inventory property-type mapping served the hardcoded
+    /// fallback (U4, KTD-5). Unlike endpoint/rate degradation this has no
+    /// per-group granularity — it substitutes raw type codes for every TR — so
+    /// the gate treats it as whole-inventory.
+    #[serde(default)]
+    pub property_type_fallback_served: bool,
     /// Set when `ok` is false: the gate that fired (parse failure or truncation).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<String>,
@@ -488,6 +500,13 @@ pub enum DriftChange {
     /// informational, never gating.
     DescriptionChanged {
         location: String,
+    },
+    /// A whole-inventory facts dependency degraded (endpoint/rate facts or the
+    /// property-type mapping) but only for **untracked** inventory (U5, R3).
+    /// Emitted as a visible, non-gating finding at exit `0`; a degradation that
+    /// touches a maintained TR is an exit-`2` error instead, not a finding.
+    FactsDegraded {
+        detail: String,
     },
 }
 

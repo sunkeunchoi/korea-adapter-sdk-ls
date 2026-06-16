@@ -60,17 +60,23 @@ docs-check:
 	cargo run -q -p ls-docgen -- --check
 
 # ---------------------------------------------------------------------------
-# API Drift Tracker — opt-in. These targets hit the live LS Open API and are
-# deliberately EXCLUDED from default gates (`cargo test`/CI stays network-free,
-# R18). They are run by hand at a recurring operator checkpoint (R19; see
-# docs/MAINTENANCE_RUNBOOK.md). Exit contract for `api-drift-check`: 0 no gating
-# drift, 1 a finding crossed the gate threshold (review needed), 2 fetch/parse/
-# baseline error.
-.PHONY: api-drift-fetch api-drift-check api-drift-promote-dry-run
+# API Drift Tracker — opt-in, and deliberately EXCLUDED from default gates
+# (`cargo test`/CI stays network-free, R18). Run by hand at a recurring operator
+# checkpoint (R19; see docs/MAINTENANCE_RUNBOOK.md). `api-drift-fetch` and
+# `api-drift-check` hit the live LS Open API; `api-drift-renormalize` is
+# network-free (it reads only the committed raw evidence). Exit contract for
+# `api-drift-check`: 0 no gating drift, 1 a finding crossed the gate threshold
+# (review needed), 2 fetch/parse/baseline error.
+.PHONY: api-drift-fetch api-drift-check api-drift-promote-dry-run api-drift-renormalize
 
 ## Live-fetch the full LS inventory into a timestamped staged run + latest.txt.
 api-drift-fetch:
 	cargo run -q -p ls-trackers -- api-drift fetch
+
+## Re-seed the committed baseline from its reviewed raw evidence (network-free;
+## no live fetch). Run after a normalizer-version bump, then review the diff.
+api-drift-renormalize:
+	cargo run -q -p ls-trackers -- api-drift renormalize
 
 ## Fetch + compare against the committed bounded baseline; tiered exit (R17).
 api-drift-check:

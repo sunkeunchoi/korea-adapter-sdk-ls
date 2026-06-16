@@ -1,6 +1,7 @@
-//! The thin `ls-trackers` CLI (U5): `api-drift fetch`, `api-drift check`, and
-//! `api-drift promote --dry-run`, mapping findings to the tiered exit contract
-//! (R17). Only `api-drift` subcommands are exposed (R20).
+//! The thin `ls-trackers` CLI (U5): `api-drift fetch`, `api-drift check`,
+//! `api-drift promote --dry-run`, and `api-drift renormalize`, mapping findings
+//! to the tiered exit contract (R17). Only `api-drift` subcommands are exposed
+//! (R20).
 //!
 //! All logic lives here so it is unit-testable; the binary
 //! (`src/main.rs`) only maps the resolved exit code. Arg parsing, staged-run
@@ -14,12 +15,15 @@ use std::path::{Path, PathBuf};
 
 use ls_metadata::validate_dir;
 
-use crate::api_drift::{compare, normalize_run, DriftReport, NormalizedRun};
+use crate::api_drift::{
+    compare, facts_degraded_finding, facts_outage_decision, normalize_run, DriftReport,
+    FactsOutage, NormalizedRun,
+};
 use crate::fetch::{
     completeness_gate, FetchClient, GateOutcome, RawInventory, DEFAULT_TRUNCATION_PROPORTION,
 };
 use crate::stages::promote_targets;
-use crate::types::{CodeSet, FetchReport, Manifest, TrShape};
+use crate::types::{CodeSet, DriftChange, FetchReport, Manifest, TrShape};
 
 /// The live LS Open API base URL (`api-drift fetch` / default `check`).
 pub const LS_BASE_URL: &str = "https://openapi.ls-sec.co.kr";
@@ -59,6 +63,10 @@ pub enum Command {
     PromoteDryRun {
         staged: Option<PathBuf>,
     },
+    /// `renormalize` re-derives the committed normalized layout from the
+    /// committed reviewed raw evidence, in place, without a live fetch (KTD-2) —
+    /// the reviewed re-seed path for a normalizer-version bump.
+    Renormalize,
 }
 
 /// Filesystem locations, injected so tests drive everything over a tempdir.
@@ -128,8 +136,16 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, Str
             )?;
             Ok(Command::PromoteDryRun { staged })
         }
+        Some("renormalize") => {
+            if let Some(other) = rest.first() {
+                return Err(format!("unexpected argument `{other}`"));
+            }
+            Ok(Command::Renormalize)
+        }
         Some(other) => Err(format!("unknown api-drift subcommand `{other}`")),
-        None => Err("usage: ls-trackers api-drift <fetch|check|promote --dry-run>".to_string()),
+        None => Err(
+            "usage: ls-trackers api-drift <fetch|check|promote --dry-run|renormalize>".to_string(),
+        ),
     }
 }
 
@@ -265,10 +281,48 @@ pub fn run_check(paths: &Paths, staged: Option<&Path>) -> Result<DriftReport, St
     let committed = load_normalized(&paths.baseline_dir)
         .map_err(|e| format!("committed baseline unavailable: {e}"))?;
     let trs = load_metadata(paths)?;
-    let staged_run = match staged {
-        Some(dir) => load_normalized(dir).map_err(|e| format!("staged run unavailable: {e}"))?,
-        None => fetch_and_stage(paths, /* provisional */ false)?.1,
+    let (staged_run, fetch_report) = match staged {
+        Some(dir) => {
+            let run = load_normalized(dir).map_err(|e| format!("staged run unavailable: {e}"))?;
+            (run, load_fetch_report(dir)?)
+        }
+        None => {
+            let (run_dir, run) = fetch_and_stage(paths, /* provisional */ false)?;
+            let report = load_fetch_report(&run_dir)?;
+            (run, report)
+        }
     };
+
+    // Support-aware facts-outage gate (U5, R3), applied *before* compare so
+    // degraded facts never turn into spurious Structural API Shape changes
+    // (KTD-4). The
+    // decision is single-sourced in `facts_outage_decision` (KTD-3); a synthetic
+    // staged run with no `fetch-report.json` carries no degradation context, so
+    // the gate is a no-op there.
+    let outage = match &fetch_report {
+        Some(report) => {
+            let maintained: BTreeSet<String> = trs.keys().cloned().collect();
+            let maintained_present = staged_run
+                .code_set
+                .codes
+                .iter()
+                .any(|c| maintained.contains(c));
+            facts_outage_decision(
+                &report.degraded_tr_codes,
+                &maintained,
+                report.property_type_fallback_served,
+                maintained_present,
+            )
+        }
+        None => FactsOutage::None,
+    };
+    if let FactsOutage::MaintainedAffected(reason) = &outage {
+        return Err(format!(
+            "facts outage affects a maintained TR ({reason}); degraded facts could corrupt a \
+             gated comparison — re-fetch before comparing"
+        ));
+    }
+
     // Refuse to compare across normalizer versions — the committed
     // description-hashes were computed under different rules, so a mismatch would
     // emit spurious findings instead of a clean diff. Re-baseline first (exit 2).
@@ -278,7 +332,15 @@ pub fn run_check(paths: &Paths, staged: Option<&Path>) -> Result<DriftReport, St
             committed.manifest.normalizer_version, staged_run.manifest.normalizer_version
         ));
     }
-    Ok(compare(&committed, &staged_run, &trs))
+
+    let mut report = compare(&committed, &staged_run, &trs);
+    // An untracked-only facts degradation is surfaced as a visible, non-gating
+    // finding at exit `0` (R3); re-sort so presentation stays highest-first.
+    if let FactsOutage::UntrackedOnly(detail) = outage {
+        report.findings.push(facts_degraded_finding(detail));
+        report.findings.sort_by(|a, b| b.severity.cmp(&a.severity));
+    }
+    Ok(report)
 }
 
 /// Live-fetch the inventory, apply the split completeness gate, and write a
@@ -292,7 +354,9 @@ pub fn fetch_and_stage(
     let committed_len = committed_code_set_len(&paths.baseline_dir)?;
 
     let client = FetchClient::new(LS_BASE_URL).map_err(|e| e.to_string())?;
-    let raw = client.fetch_full_inventory().map_err(|e| e.to_string())?;
+    let outcome = client.fetch_full_inventory().map_err(|e| e.to_string())?;
+    let raw = outcome.inventory;
+    let property_type_fallback_served = outcome.property_type_fallback_served;
     let fetched = raw.code_set(false).len();
 
     // Menu parsed (fetch succeeded); apply the truncation guard (KTD-3).
@@ -308,13 +372,21 @@ pub fn fetch_and_stage(
 
     // A group whose protocol endpoint failed has no `group_id`; a wholesale
     // outage would otherwise stage `ok: true` and surface as spurious endpoint/
-    // rate drift at compare time. Surface the degradation at fetch time.
+    // rate drift at compare time. Surface the degradation at fetch time and
+    // record the affected TR codes so the gate (U5) can join on code (KTD-4a).
+    let degraded_tr_codes = raw.facts_degraded_tr_codes();
     let facts_degraded_groups = raw.groups.iter().filter(|g| g.group_id.is_none()).count();
     if facts_degraded_groups > 0 {
         eprintln!(
             "warning: {facts_degraded_groups} of {} group(s) returned no protocol/rate facts; \
              endpoint/rate fields may be degraded for this run",
             raw.groups.len()
+        );
+    }
+    if property_type_fallback_served {
+        eprintln!(
+            "warning: property-type mapping served the hardcoded fallback; field types may be \
+             degraded for this run"
         );
     }
 
@@ -324,11 +396,82 @@ pub fn fetch_and_stage(
         fetched_count: fetched,
         committed_code_set_len: committed_len,
         facts_degraded_groups,
+        degraded_tr_codes,
+        property_type_fallback_served,
         failure: None,
     };
     write_staged_run(&run_dir, &raw, &normalized, &report).map_err(|e| e.to_string())?;
     update_latest(paths, &run_dir)?;
     Ok((run_dir, normalized))
+}
+
+/// Re-normalize the committed baseline's reviewed raw evidence into a fresh
+/// normalized layout, in place, without a live fetch (KTD-2). Reads
+/// `<baseline>/raw/ls-openapi-full.json`, normalizes the maintained TRs with the
+/// current normalizer, preserves the committed code-set's `provisional` stance,
+/// and rewrites the code-set / manifest / per-TR shapes. Deterministic and
+/// network-free — it constructs no HTTP client. This is the reviewed re-seed path
+/// after a [`NORMALIZER_VERSION`](crate::api_drift::NORMALIZER_VERSION) bump.
+pub fn renormalize_committed(paths: &Paths) -> Result<NormalizedRun, String> {
+    let maintained = maintained_codes(paths)?;
+    let raw: RawInventory = read_json(&paths.baseline_dir.join(RAW_FILE))?;
+    // Preserve the committed seed's provisional stance (KTD-6); default to
+    // provisional when no committed code-set exists yet (bootstrap).
+    let committed_prev = load_normalized(&paths.baseline_dir).ok();
+    let provisional = committed_prev
+        .as_ref()
+        .map(|run| run.code_set.provisional)
+        .unwrap_or(true);
+    let normalized = normalize_run(&raw, &maintained, provisional);
+
+    // Re-seeding re-derives the code-set from the committed raw evidence. If that
+    // membership differs from the committed code-set (raw was refreshed, or codes
+    // were admitted into code-set.json out of band), surface it rather than
+    // silently overwriting — the re-seed is sold as a normalizer-only refresh.
+    if let Some(prev) = &committed_prev {
+        let added = normalized
+            .code_set
+            .codes
+            .difference(&prev.code_set.codes)
+            .count();
+        let removed = prev
+            .code_set
+            .codes
+            .difference(&normalized.code_set.codes)
+            .count();
+        if added > 0 || removed > 0 {
+            eprintln!(
+                "warning: re-normalized code-set differs from committed ({added} added, \
+                 {removed} removed); review the code-set.json diff before committing"
+            );
+        }
+    }
+
+    write_normalized(&paths.baseline_dir, &normalized).map_err(|e| e.to_string())?;
+    prune_stale_shapes(&paths.baseline_dir, &normalized)?;
+    Ok(normalized)
+}
+
+/// Remove per-TR shape files in the committed layout whose code is no longer in
+/// the maintained set. Without this, a maintained TR dropped from metadata would
+/// leave a ghost `trs/<code>.json` that [`load_normalized`] keeps reading as
+/// committed truth. Only the in-place re-seed needs this — a live staged run
+/// writes into a fresh timestamped directory.
+fn prune_stale_shapes(baseline_dir: &Path, normalized: &NormalizedRun) -> Result<(), String> {
+    let trs_dir = baseline_dir.join(TRS_DIR);
+    if !trs_dir.is_dir() {
+        return Ok(());
+    }
+    for entry in fs::read_dir(&trs_dir).map_err(|e| format!("reading {}: {e}", trs_dir.display()))? {
+        let path = entry.map_err(|e| e.to_string())?.path();
+        if path.extension().is_some_and(|x| x == "json") {
+            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+            if !normalized.shapes.contains_key(stem) {
+                fs::remove_file(&path).map_err(|e| format!("removing {}: {e}", path.display()))?;
+            }
+        }
+    }
+    Ok(())
 }
 
 fn failure_report(fetched: usize, committed_len: Option<usize>, gate: &GateOutcome) -> FetchReport {
@@ -337,7 +480,24 @@ fn failure_report(fetched: usize, committed_len: Option<usize>, gate: &GateOutco
         fetched_count: fetched,
         committed_code_set_len: committed_len,
         facts_degraded_groups: 0,
+        degraded_tr_codes: BTreeSet::new(),
+        property_type_fallback_served: false,
         failure: Some(format!("{gate:?}")),
+    }
+}
+
+/// Read a staged or live run's `fetch-report.json`. `None` means the file is
+/// absent — a synthetic staged run (tests, hand-authored fixtures) carries no
+/// degradation context and the facts gate is a no-op. A file that is *present
+/// but unreadable* is an error (exit `2`): it must not silently degrade to `None`
+/// and disable the facts gate (U5, R3), the same fail-loud stance as
+/// [`committed_code_set_len`].
+fn load_fetch_report(dir: &Path) -> Result<Option<FetchReport>, String> {
+    let path = dir.join(FETCH_REPORT_FILE);
+    if path.exists() {
+        read_json(&path).map(Some)
+    } else {
+        Ok(None)
     }
 }
 
@@ -389,12 +549,26 @@ pub fn dispatch(paths: &Paths, command: Command) -> Exit {
             }
             exit_for(&result)
         }
+        Command::Renormalize => match renormalize_committed(paths) {
+            Ok(run) => {
+                println!(
+                    "re-normalized {} maintained shape(s) at normalizer v{} into {}",
+                    run.shapes.len(),
+                    run.manifest.normalizer_version,
+                    paths.baseline_dir.display()
+                );
+                Exit::Ok
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                Exit::Error
+            }
+        },
         Command::PromoteDryRun { staged } => {
             let result = run_check(paths, staged.as_deref());
             match &result {
                 Ok(report) => {
-                    let affected: BTreeSet<&str> =
-                        report.findings.iter().map(|f| f.tr_code.as_str()).collect();
+                    let affected = promote_affected_codes(report);
                     let targets = promote_targets(affected.iter().copied());
                     print_promote(&targets);
                     // A dry-run reports and writes nothing; it does not gate.
@@ -440,6 +614,19 @@ fn print_report(report: &DriftReport) {
     );
 }
 
+/// TR codes a real promote would touch, derived from a drift report. The
+/// `FactsDegraded` finding carries the `(facts)` whole-inventory marker rather
+/// than a real TR code, so it is excluded — otherwise a dry-run during a facts
+/// outage would print a bogus `(facts)` promote target.
+fn promote_affected_codes(report: &DriftReport) -> BTreeSet<&str> {
+    report
+        .findings
+        .iter()
+        .filter(|f| !matches!(f.change, DriftChange::FactsDegraded { .. }))
+        .map(|f| f.tr_code.as_str())
+        .collect()
+}
+
 fn print_promote(targets: &crate::types::PromoteReport) {
     println!("promote --dry-run (writes nothing). A real promote would touch:");
     for f in &targets.baseline_files {
@@ -467,7 +654,7 @@ pub fn run_cli(args: impl IntoIterator<Item = String>) -> Exit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{CodeSet, Manifest};
+    use crate::types::{CodeSet, DriftChange, Manifest};
 
     fn args(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| s.to_string()).collect()
@@ -497,6 +684,10 @@ mod tests {
             parse_args(args(&["api-drift", "promote", "--dry-run"])).unwrap(),
             Command::PromoteDryRun { staged: None }
         );
+        assert_eq!(
+            parse_args(args(&["api-drift", "renormalize"])).unwrap(),
+            Command::Renormalize
+        );
     }
 
     #[test]
@@ -511,6 +702,120 @@ mod tests {
             parse_args(args(&["api-drift", "check", "--staged"])).is_err(),
             "needs a dir"
         );
+        assert!(
+            parse_args(args(&["api-drift", "renormalize", "--seed"])).is_err(),
+            "renormalize takes no arguments"
+        );
+    }
+
+    /// The committed-raw root that ships with the crate — the reviewed evidence
+    /// the re-normalize affordance reads (KTD-2).
+    fn committed_baseline_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("baselines")
+            .join("api-drift")
+    }
+
+    fn repo_metadata_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("metadata")
+    }
+
+    /// U2: re-normalizing the committed reviewed raw evidence is network-free,
+    /// produces a v2 manifest with the 7 maintained shapes, and is byte-stable
+    /// across runs. Writes into a scratch copy so the committed baseline is never
+    /// mutated by the test.
+    #[test]
+    fn renormalize_from_committed_raw_is_deterministic_and_v2() {
+        let scratch = scratch("renormalize");
+        // Copy only the reviewed raw evidence into the scratch baseline; the
+        // affordance regenerates the normalized layout from it.
+        fs::create_dir_all(scratch.join("raw")).unwrap();
+        fs::copy(
+            committed_baseline_dir().join(RAW_FILE),
+            scratch.join(RAW_FILE),
+        )
+        .unwrap();
+
+        let paths = Paths {
+            baseline_dir: scratch.clone(),
+            run_root: scratch.join("runs"),
+            metadata_dir: repo_metadata_dir(),
+        };
+
+        let run = renormalize_committed(&paths).expect("re-normalize from committed raw");
+        assert_eq!(
+            run.manifest.normalizer_version,
+            crate::api_drift::NORMALIZER_VERSION
+        );
+        assert_eq!(run.manifest.normalizer_version, 2);
+        assert_eq!(run.shapes.len(), 7, "seven maintained shapes");
+        assert_eq!(run.code_set.len(), 365, "full inventory code-set preserved");
+        assert!(
+            run.code_set.provisional,
+            "the seed's provisional stance is preserved (KTD-6)"
+        );
+        // The token correction is present: `scope` is a real field now (U1).
+        let token = &run.shapes["token"];
+        assert!(
+            token
+                .response_blocks
+                .iter()
+                .any(|f| f.field_name == "scope" && f.length == Some(256)),
+            "token exposes scope after re-normalization"
+        );
+
+        // Byte-stable: a second re-normalization writes identical token bytes.
+        let first = fs::read(scratch.join(TRS_DIR).join("token.json")).unwrap();
+        renormalize_committed(&paths).expect("second re-normalize");
+        let second = fs::read(scratch.join(TRS_DIR).join("token.json")).unwrap();
+        assert_eq!(first, second, "re-normalization is byte-stable");
+    }
+
+    /// U2 hardening: re-normalizing an already-attested baseline preserves a
+    /// `provisional: false` stance (KTD-6, non-bootstrap), and prunes a stale
+    /// shape left from a prior re-seed so it cannot linger as committed truth.
+    #[test]
+    fn renormalize_preserves_attested_flag_and_prunes_stale_shapes() {
+        let scratch = scratch("renormalize-prune");
+        // Seed a committed normalized layout that is already attested (provisional
+        // false) and carries a ghost shape for a TR no longer maintained.
+        write_normalized(&scratch, &empty_run(&["t1102"])).unwrap();
+        assert!(!empty_run(&["t1102"]).code_set.provisional, "fixture is attested");
+        fs::write(
+            scratch.join(TRS_DIR).join("ghost.json"),
+            br#"{"tr_code":"ghost","protocol":"rest","is_websocket":false}"#,
+        )
+        .unwrap();
+        fs::create_dir_all(scratch.join("raw")).unwrap();
+        fs::copy(
+            committed_baseline_dir().join(RAW_FILE),
+            scratch.join(RAW_FILE),
+        )
+        .unwrap();
+
+        let paths = Paths {
+            baseline_dir: scratch.clone(),
+            run_root: scratch.join("runs"),
+            metadata_dir: repo_metadata_dir(),
+        };
+        let run = renormalize_committed(&paths).expect("re-normalize");
+
+        assert!(
+            !run.code_set.provisional,
+            "an already-attested seed keeps provisional=false (KTD-6)"
+        );
+        assert!(
+            !scratch.join(TRS_DIR).join("ghost.json").exists(),
+            "a stale shape is pruned from the committed layout"
+        );
+        assert!(
+            scratch.join(TRS_DIR).join("token.json").exists(),
+            "maintained shapes remain"
+        );
+        assert_eq!(run.shapes.len(), 7);
     }
 
     fn empty_run(codes: &[&str]) -> NormalizedRun {
@@ -550,6 +855,8 @@ mod tests {
             fetched_count: 2,
             committed_code_set_len: Some(2),
             facts_degraded_groups: 0,
+            degraded_tr_codes: BTreeSet::new(),
+            property_type_fallback_served: false,
             failure: None,
         };
         write_staged_run(&run_dir, &raw, &normalized, &report).unwrap();
@@ -647,6 +954,124 @@ mod tests {
         assert!(
             committed_code_set_len(&bad).is_err(),
             "a corrupt baseline must not silently disable the truncation guard"
+        );
+    }
+
+    /// Write a `fetch-report.json` carrying degradation signals into a staged-run
+    /// directory, so `run_check` exercises the facts gate on the `--staged` path
+    /// with no network call.
+    fn write_facts_report(dir: &Path, degraded: &[&str], fallback: bool) {
+        let report = FetchReport {
+            ok: true,
+            fetched_count: 1,
+            committed_code_set_len: Some(1),
+            facts_degraded_groups: usize::from(!degraded.is_empty()),
+            degraded_tr_codes: degraded.iter().map(|s| s.to_string()).collect(),
+            property_type_fallback_served: fallback,
+            failure: None,
+        };
+        write_json(&dir.join(FETCH_REPORT_FILE), &report).unwrap();
+    }
+
+    fn has_facts_finding(report: &DriftReport) -> bool {
+        report
+            .findings
+            .iter()
+            .any(|f| matches!(&f.change, DriftChange::FactsDegraded { .. }))
+    }
+
+    /// U5 (R3): the facts-outage gate is support-aware on the `--staged` path and
+    /// network-free. The discriminating case — an untracked-only degradation
+    /// exits `0` with a visible finding; a co-occurring maintained degradation
+    /// exits `2` before compare. A property-type fallback with a maintained TR
+    /// present exits `2`; a clean report and a report-less run are unaffected.
+    #[test]
+    fn facts_outage_gate_is_support_aware_on_the_staged_path() {
+        let root = scratch("facts-gate");
+        let baseline = root.join("baseline");
+        let metadata = repo_metadata_dir();
+        write_normalized(&baseline, &empty_run(&["t1102"])).unwrap();
+        let paths = Paths {
+            baseline_dir: baseline,
+            run_root: root.join("runs"),
+            metadata_dir: metadata,
+        };
+
+        // Untracked-only degradation → exit 0 + a visible facts finding.
+        let untracked = root.join("staged-untracked");
+        write_normalized(&untracked, &empty_run(&["t1102"])).unwrap();
+        write_facts_report(&untracked, &["UNTRACKED_X"], false);
+        let result = run_check(&paths, Some(&untracked));
+        assert_eq!(exit_for(&result), Exit::Ok);
+        let report = result.unwrap();
+        assert!(!report.gates(), "untracked-only facts outage does not gate");
+        assert!(has_facts_finding(&report), "a visible finding is emitted");
+
+        // A maintained TR co-occurs in the degraded set → exit 2 before compare.
+        let maintained_deg = root.join("staged-maintained");
+        write_normalized(&maintained_deg, &empty_run(&["t1102"])).unwrap();
+        write_facts_report(&maintained_deg, &["t1102", "UNTRACKED_X"], false);
+        let result = run_check(&paths, Some(&maintained_deg));
+        assert_eq!(exit_for(&result), Exit::Error);
+        assert!(result.unwrap_err().contains("maintained TR"));
+
+        // Property-type mapping fallback + a maintained TR present → exit 2.
+        let proptype = root.join("staged-proptype");
+        write_normalized(&proptype, &empty_run(&["t1102"])).unwrap();
+        write_facts_report(&proptype, &[], true);
+        assert_eq!(exit_for(&run_check(&paths, Some(&proptype))), Exit::Error);
+
+        // A clean fetch-report → no facts finding, unaffected (exit 0).
+        let clean = root.join("staged-clean-facts");
+        write_normalized(&clean, &empty_run(&["t1102"])).unwrap();
+        write_facts_report(&clean, &[], false);
+        let report = run_check(&paths, Some(&clean)).unwrap();
+        assert!(!has_facts_finding(&report));
+        assert!(!report.gates());
+
+        // No fetch-report at all (synthetic run) → the gate is a no-op (exit 0).
+        let no_report = root.join("staged-no-report");
+        write_normalized(&no_report, &empty_run(&["t1102"])).unwrap();
+        assert_eq!(exit_for(&run_check(&paths, Some(&no_report))), Exit::Ok);
+
+        // A present-but-corrupt fetch-report.json must NOT silently disable the
+        // gate — it is exit 2, not a no-op (distinct from the absent case above).
+        let corrupt = root.join("staged-corrupt-report");
+        write_normalized(&corrupt, &empty_run(&["t1102"])).unwrap();
+        fs::write(corrupt.join(FETCH_REPORT_FILE), b"{ not json").unwrap();
+        assert_eq!(
+            exit_for(&run_check(&paths, Some(&corrupt))),
+            Exit::Error,
+            "a corrupt fetch-report is an error, not a silently-disabled gate"
+        );
+    }
+
+    /// `promote --dry-run` excludes the `(facts)` whole-inventory marker so a
+    /// dry-run during an untracked-only facts outage does not print a bogus
+    /// `(facts)` promote target — only real TR codes are surfaced.
+    #[test]
+    fn promote_affected_codes_excludes_facts_marker() {
+        use crate::api_drift::{facts_degraded_finding, DriftReport};
+        use crate::types::{CoverageSummary, DriftChange, Severity, SupportState};
+
+        let real = crate::types::DriftFinding {
+            tr_code: "t1102".to_string(),
+            change: DriftChange::TrRemoved,
+            severity: Severity::Breaking,
+            support_state: SupportState::Implemented,
+            is_new_tr: false,
+            gates: true,
+            possible_rename: None,
+        };
+        let report = DriftReport {
+            findings: vec![real, facts_degraded_finding("endpoint/rate degraded".to_string())],
+            coverage: CoverageSummary::default(),
+        };
+        let affected = promote_affected_codes(&report);
+        assert!(affected.contains("t1102"), "real TR codes are surfaced");
+        assert!(
+            !affected.contains("(facts)"),
+            "the facts marker is not a promote target"
         );
     }
 
