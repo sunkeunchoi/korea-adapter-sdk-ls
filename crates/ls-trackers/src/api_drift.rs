@@ -348,7 +348,7 @@ impl DriftReport {
 /// The support-aware facts-outage decision (U5, R3), kept as a single-sourced
 /// pure function distinct from [`gates_for`] (KTD-3). It decides the exit
 /// *before* `compare` runs, so degraded facts never turn into spurious
-/// structural drift.
+/// Structural API Shape changes.
 ///
 /// Membership joins on TR **code**, not group id: a degraded group's protocol
 /// UUID is exactly the field that went missing, so the committed
