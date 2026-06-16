@@ -14,6 +14,18 @@ use ls_trackers::{
     Severity, TrShape,
 };
 
+/// The committed bounded baseline that ships with the crate.
+fn baseline_dir() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("baselines")
+        .join("api-drift")
+}
+
+fn read_committed<T: serde::de::DeserializeOwned>(rel: &str) -> T {
+    let bytes = std::fs::read(baseline_dir().join(rel)).expect("committed baseline file present");
+    serde_json::from_slice(&bytes).expect("committed baseline file parses")
+}
+
 /// The authored, validated metadata map — the real support state classify reads.
 fn authored_trs() -> BTreeMap<String, TrMetadata> {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -80,6 +92,51 @@ fn run(shapes: Vec<TrShape>, extra_codes: &[&str]) -> NormalizedRun {
         },
         shapes: shape_map,
     }
+}
+
+/// U3: the re-seeded committed baseline carries the `token` `scope` correction
+/// (R1/R2), the v2 manifest, and its invariant counts — the load-bearing
+/// truthfulness assertion for this slice.
+#[test]
+fn committed_token_shape_exposes_scope_under_v2() {
+    let manifest: Manifest = read_committed("normalized/manifest.json");
+    assert_eq!(manifest.normalizer_version, 2, "re-seeded at normalizer v2");
+    assert_eq!(manifest.upstream_tr_count, 365);
+    assert_eq!(manifest.maintained_tr_count, 7);
+
+    let code_set: CodeSet = read_committed("code-set.json");
+    assert_eq!(code_set.len(), 365, "full inventory code-set preserved");
+
+    let token: TrShape = read_committed("normalized/trs/token.json");
+
+    // `scope` is a real field in both request and response, length 256 (the
+    // field whose code equals its Korean label, previously dropped — R-1).
+    let req_scope = token
+        .request_blocks
+        .iter()
+        .find(|f| f.field_name == "scope")
+        .expect("request scope field present");
+    assert_eq!(req_scope.block_name, "request_body");
+    assert_eq!(req_scope.length, Some(256));
+
+    let res_scope = token
+        .response_blocks
+        .iter()
+        .find(|f| f.field_name == "scope")
+        .expect("response scope field present");
+    assert_eq!(res_scope.block_name, "response_body");
+    assert_eq!(res_scope.length, Some(256));
+
+    // `token_type` is filed under `response_body`, not a phantom `scope` block.
+    let token_type = token
+        .response_blocks
+        .iter()
+        .find(|f| f.field_name == "token_type")
+        .expect("token_type present");
+    assert_eq!(
+        token_type.block_name, "response_body",
+        "token_type re-filed under response_body, not a phantom scope block"
+    );
 }
 
 /// AE2: an identical staged run vs the committed baseline → no gating (exit 0).

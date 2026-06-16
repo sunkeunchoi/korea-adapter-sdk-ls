@@ -26,7 +26,11 @@ use crate::types::{
 
 /// The normalizer version recorded in the [`Manifest`] (R8). Bump when the
 /// normalization rules change so a normalizer-driven hash shift is auditable.
-pub const NORMALIZER_VERSION: u32 = 1;
+///
+/// v2 (U1): [`ParsedProp::is_block_header`] now also requires a null `length`, so
+/// a real field whose compact code equals its Korean label (e.g. `token`'s
+/// `scope`, length 256) is no longer dropped as a block delimiter.
+pub const NORMALIZER_VERSION: u32 = 2;
 
 /// Run the PR #2 leaf-path API Drift pipeline over a reviewed `baseline` and a
 /// candidate snapshot for the same TR, classifying each detected change against
@@ -226,8 +230,13 @@ impl ParsedProp {
     /// LS marks a body block boundary with a row whose compact name equals its
     /// Korean name (e.g. `t8412InBlock` / `t8412InBlock`) — a real field's
     /// English code never equals its Korean label. Used to derive `block_name`.
+    ///
+    /// A genuine delimiter row carries a null `length`; a real field carries a
+    /// length. Requiring `length.is_none()` keeps a field whose code happens to
+    /// equal its label (e.g. `token`'s `scope`, length 256) from being dropped as
+    /// a phantom block header (U1, NORMALIZER_VERSION v2).
     fn is_block_header(&self) -> bool {
-        self.korean_name.as_deref().is_some_and(|k| k == self.name)
+        self.length.is_none() && self.korean_name.as_deref().is_some_and(|k| k == self.name)
     }
 
     fn to_field(&self, direction: Direction, block_name: &str, field_index: u32) -> BlockField {
@@ -1069,6 +1078,85 @@ mod tests {
         assert_eq!(shape.response_blocks.len(), 2);
         assert_eq!(shape.response_blocks[0].block_name, "t8412OutBlock");
         assert_eq!(shape.response_blocks[0].direction, Direction::Response);
+    }
+
+    /// A body row whose compact code equals its Korean label but carries a
+    /// non-null length is a real field, not a block delimiter (U1, R-1). The
+    /// field that follows it is filed under the surrounding block, not under a
+    /// phantom block named after it (the `token_type` mis-filing regression).
+    #[test]
+    fn same_code_label_field_with_length_is_a_field_not_a_block_header() {
+        // Mirrors the real `token` response body: a normal field, then `scope`
+        // (code == label, length 256), then `token_type` following it.
+        let mut raw = t8412_raw();
+        raw.properties = vec![
+            prop(
+                "res_b",
+                "access_token",
+                "접근토큰",
+                "A0001",
+                serde_json::json!("1000"),
+                "Y",
+                "",
+            ),
+            // code == label, but a real field (length 256) — must not be dropped.
+            prop("res_b", "scope", "scope", "A0001", serde_json::json!("256"), "Y", ""),
+            prop(
+                "res_b",
+                "token_type",
+                "토큰 유형",
+                "A0001",
+                serde_json::json!("256"),
+                "Y",
+                "",
+            ),
+        ];
+        let inv = inventory(vec![group_with(vec![raw])]);
+        let run = normalize_run(&inv, &maintained(&["t8412"]), false);
+        let blocks = &run.shapes["t8412"].response_blocks;
+
+        // `scope` survives as a real field under the default response body block.
+        let scope = blocks
+            .iter()
+            .find(|f| f.field_name == "scope")
+            .expect("scope is a real field, not dropped");
+        assert_eq!(scope.block_name, "response_body");
+        assert_eq!(scope.r#type.as_deref(), Some("String"));
+        assert_eq!(scope.length, Some(256));
+
+        // `token_type` is filed under the surrounding block, not a phantom
+        // `scope` block (the pre-v2 mis-filing this fix closes).
+        let token_type = blocks
+            .iter()
+            .find(|f| f.field_name == "token_type")
+            .expect("token_type present");
+        assert_eq!(token_type.block_name, "response_body");
+
+        // All three sit in one block, indexed in order: no phantom block split.
+        assert!(blocks.iter().all(|f| f.block_name == "response_body"));
+        assert_eq!(blocks.len(), 3);
+    }
+
+    /// A body row whose compact code equals its Korean label AND carries a null
+    /// length is still treated as a block-header delimiter (existing behavior
+    /// preserved): it names the block and is not emitted as a field.
+    #[test]
+    fn same_code_label_row_with_null_length_is_still_a_block_header() {
+        let mut raw = t8412_raw();
+        raw.properties = vec![
+            // Null length → a genuine delimiter, as before v2.
+            prop("res_b", "OutBlock", "OutBlock", "A0003", Value::Null, "Y", ""),
+            prop("res_b", "price", "현재가", "A0004", serde_json::json!("8"), "Y", ""),
+        ];
+        let inv = inventory(vec![group_with(vec![raw])]);
+        let run = normalize_run(&inv, &maintained(&["t8412"]), false);
+        let blocks = &run.shapes["t8412"].response_blocks;
+
+        // The delimiter is not emitted as a field; `price` sits under it.
+        assert_eq!(blocks.len(), 1);
+        assert_eq!(blocks[0].field_name, "price");
+        assert_eq!(blocks[0].block_name, "OutBlock");
+        assert_eq!(blocks[0].field_index, 0);
     }
 
     /// Duplicate field names, a reorder, a block move, a length change, a

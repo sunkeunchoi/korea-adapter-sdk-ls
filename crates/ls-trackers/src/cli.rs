@@ -1,6 +1,7 @@
-//! The thin `ls-trackers` CLI (U5): `api-drift fetch`, `api-drift check`, and
-//! `api-drift promote --dry-run`, mapping findings to the tiered exit contract
-//! (R17). Only `api-drift` subcommands are exposed (R20).
+//! The thin `ls-trackers` CLI (U5): `api-drift fetch`, `api-drift check`,
+//! `api-drift promote --dry-run`, and `api-drift renormalize`, mapping findings
+//! to the tiered exit contract (R17). Only `api-drift` subcommands are exposed
+//! (R20).
 //!
 //! All logic lives here so it is unit-testable; the binary
 //! (`src/main.rs`) only maps the resolved exit code. Arg parsing, staged-run
@@ -59,6 +60,10 @@ pub enum Command {
     PromoteDryRun {
         staged: Option<PathBuf>,
     },
+    /// `renormalize` re-derives the committed normalized layout from the
+    /// committed reviewed raw evidence, in place, without a live fetch (KTD-2) —
+    /// the reviewed re-seed path for a normalizer-version bump.
+    Renormalize,
 }
 
 /// Filesystem locations, injected so tests drive everything over a tempdir.
@@ -128,8 +133,16 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, Str
             )?;
             Ok(Command::PromoteDryRun { staged })
         }
+        Some("renormalize") => {
+            if let Some(other) = rest.first() {
+                return Err(format!("unexpected argument `{other}`"));
+            }
+            Ok(Command::Renormalize)
+        }
         Some(other) => Err(format!("unknown api-drift subcommand `{other}`")),
-        None => Err("usage: ls-trackers api-drift <fetch|check|promote --dry-run>".to_string()),
+        None => Err(
+            "usage: ls-trackers api-drift <fetch|check|promote --dry-run|renormalize>".to_string(),
+        ),
     }
 }
 
@@ -331,6 +344,26 @@ pub fn fetch_and_stage(
     Ok((run_dir, normalized))
 }
 
+/// Re-normalize the committed baseline's reviewed raw evidence into a fresh
+/// normalized layout, in place, without a live fetch (KTD-2). Reads
+/// `<baseline>/raw/ls-openapi-full.json`, normalizes the maintained TRs with the
+/// current normalizer, preserves the committed code-set's `provisional` stance,
+/// and rewrites the code-set / manifest / per-TR shapes. Deterministic and
+/// network-free — it constructs no HTTP client. This is the reviewed re-seed path
+/// after a [`NORMALIZER_VERSION`](crate::api_drift::NORMALIZER_VERSION) bump.
+pub fn renormalize_committed(paths: &Paths) -> Result<NormalizedRun, String> {
+    let maintained = maintained_codes(paths)?;
+    let raw: RawInventory = read_json(&paths.baseline_dir.join(RAW_FILE))?;
+    // Preserve the committed seed's provisional stance (KTD-6); default to
+    // provisional when no committed code-set exists yet (bootstrap).
+    let provisional = load_normalized(&paths.baseline_dir)
+        .map(|run| run.code_set.provisional)
+        .unwrap_or(true);
+    let normalized = normalize_run(&raw, &maintained, provisional);
+    write_normalized(&paths.baseline_dir, &normalized).map_err(|e| e.to_string())?;
+    Ok(normalized)
+}
+
 fn failure_report(fetched: usize, committed_len: Option<usize>, gate: &GateOutcome) -> FetchReport {
     FetchReport {
         ok: false,
@@ -389,6 +422,21 @@ pub fn dispatch(paths: &Paths, command: Command) -> Exit {
             }
             exit_for(&result)
         }
+        Command::Renormalize => match renormalize_committed(paths) {
+            Ok(run) => {
+                println!(
+                    "re-normalized {} maintained shape(s) at normalizer v{} into {}",
+                    run.shapes.len(),
+                    run.manifest.normalizer_version,
+                    paths.baseline_dir.display()
+                );
+                Exit::Ok
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                Exit::Error
+            }
+        },
         Command::PromoteDryRun { staged } => {
             let result = run_check(paths, staged.as_deref());
             match &result {
@@ -497,6 +545,10 @@ mod tests {
             parse_args(args(&["api-drift", "promote", "--dry-run"])).unwrap(),
             Command::PromoteDryRun { staged: None }
         );
+        assert_eq!(
+            parse_args(args(&["api-drift", "renormalize"])).unwrap(),
+            Command::Renormalize
+        );
     }
 
     #[test]
@@ -511,6 +563,76 @@ mod tests {
             parse_args(args(&["api-drift", "check", "--staged"])).is_err(),
             "needs a dir"
         );
+        assert!(
+            parse_args(args(&["api-drift", "renormalize", "--seed"])).is_err(),
+            "renormalize takes no arguments"
+        );
+    }
+
+    /// The committed-raw root that ships with the crate — the reviewed evidence
+    /// the re-normalize affordance reads (KTD-2).
+    fn committed_baseline_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("baselines")
+            .join("api-drift")
+    }
+
+    fn repo_metadata_dir() -> PathBuf {
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("metadata")
+    }
+
+    /// U2: re-normalizing the committed reviewed raw evidence is network-free,
+    /// produces a v2 manifest with the 7 maintained shapes, and is byte-stable
+    /// across runs. Writes into a scratch copy so the committed baseline is never
+    /// mutated by the test.
+    #[test]
+    fn renormalize_from_committed_raw_is_deterministic_and_v2() {
+        let scratch = scratch("renormalize");
+        // Copy only the reviewed raw evidence into the scratch baseline; the
+        // affordance regenerates the normalized layout from it.
+        fs::create_dir_all(scratch.join("raw")).unwrap();
+        fs::copy(
+            committed_baseline_dir().join(RAW_FILE),
+            scratch.join(RAW_FILE),
+        )
+        .unwrap();
+
+        let paths = Paths {
+            baseline_dir: scratch.clone(),
+            run_root: scratch.join("runs"),
+            metadata_dir: repo_metadata_dir(),
+        };
+
+        let run = renormalize_committed(&paths).expect("re-normalize from committed raw");
+        assert_eq!(
+            run.manifest.normalizer_version,
+            crate::api_drift::NORMALIZER_VERSION
+        );
+        assert_eq!(run.manifest.normalizer_version, 2);
+        assert_eq!(run.shapes.len(), 7, "seven maintained shapes");
+        assert_eq!(run.code_set.len(), 365, "full inventory code-set preserved");
+        assert!(
+            run.code_set.provisional,
+            "the seed's provisional stance is preserved (KTD-6)"
+        );
+        // The token correction is present: `scope` is a real field now (U1).
+        let token = &run.shapes["token"];
+        assert!(
+            token
+                .response_blocks
+                .iter()
+                .any(|f| f.field_name == "scope" && f.length == Some(256)),
+            "token exposes scope after re-normalization"
+        );
+
+        // Byte-stable: a second re-normalization writes identical token bytes.
+        let first = fs::read(scratch.join(TRS_DIR).join("token.json")).unwrap();
+        renormalize_committed(&paths).expect("second re-normalize");
+        let second = fs::read(scratch.join(TRS_DIR).join("token.json")).unwrap();
+        assert_eq!(first, second, "re-normalization is byte-stable");
     }
 
     fn empty_run(codes: &[&str]) -> NormalizedRun {

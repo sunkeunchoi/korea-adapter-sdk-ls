@@ -66,11 +66,16 @@ docs-check:
 # docs/MAINTENANCE_RUNBOOK.md). Exit contract for `api-drift-check`: 0 no gating
 # drift, 1 a finding crossed the gate threshold (review needed), 2 fetch/parse/
 # baseline error.
-.PHONY: api-drift-fetch api-drift-check api-drift-promote-dry-run
+.PHONY: api-drift-fetch api-drift-check api-drift-promote-dry-run api-drift-renormalize
 
 ## Live-fetch the full LS inventory into a timestamped staged run + latest.txt.
 api-drift-fetch:
 	cargo run -q -p ls-trackers -- api-drift fetch
+
+## Re-seed the committed baseline from its reviewed raw evidence (network-free;
+## no live fetch). Run after a normalizer-version bump, then review the diff.
+api-drift-renormalize:
+	cargo run -q -p ls-trackers -- api-drift renormalize
 
 ## Fetch + compare against the committed bounded baseline; tiered exit (R17).
 api-drift-check:
