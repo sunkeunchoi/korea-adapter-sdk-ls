@@ -271,6 +271,21 @@ impl RawInventory {
     pub fn tr_count(&self) -> usize {
         self.code_set(false).len()
     }
+
+    /// TR codes that live under a facts-degraded group — one whose protocol
+    /// endpoint failed, so its `group_id` is `None` (U4, KTD-4a). The protocol
+    /// UUID is exactly the field that goes missing on an endpoint/rate facts
+    /// outage, so the gate joins these *codes* against the maintained set rather
+    /// than the (now-`None`) group id. A degraded group still lists its TRs.
+    pub fn facts_degraded_tr_codes(&self) -> std::collections::BTreeSet<String> {
+        self.groups
+            .iter()
+            .filter(|g| g.group_id.is_none())
+            .flat_map(|g| g.trs.iter())
+            .map(|tr| tr.code.trim().to_string())
+            .filter(|c| !c.is_empty())
+            .collect()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -414,12 +429,20 @@ impl FetchClient {
     /// Property-type code → name mapping. On any failure or empty response,
     /// falls back to the hardcoded map with a stderr warning and continues — a
     /// recoverable path (migration-source parity).
-    pub fn property_type_mapping(&self) -> BTreeMap<String, String> {
-        let fallback = || -> BTreeMap<String, String> {
-            PROPERTY_TYPE_FALLBACK
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_string()))
-                .collect()
+    ///
+    /// The second tuple element is `true` when the fallback table was served
+    /// (U4): unlike endpoint/rate facts, the mapping is a single whole-inventory
+    /// call, so its fallback substitutes raw type codes for *every* TR with no
+    /// per-group granularity — the facts-outage gate (U5) keys on this signal.
+    pub fn property_type_mapping(&self) -> (BTreeMap<String, String>, bool) {
+        let fallback = || -> (BTreeMap<String, String>, bool) {
+            (
+                PROPERTY_TYPE_FALLBACK
+                    .iter()
+                    .map(|(k, v)| (k.to_string(), v.to_string()))
+                    .collect(),
+                true,
+            )
         };
         let body =
             match self.get_text_once("/api/codes/public/system-codes?groupCode=property_type") {
@@ -453,7 +476,7 @@ impl FetchClient {
             eprintln!("warning: property-type mapping empty; using fallback");
             return fallback();
         }
-        map
+        (map, false)
     }
 
     /// TR list for a group (`/api/apis/guide/tr/{api_id}`). Failure after retries
@@ -490,10 +513,10 @@ impl FetchClient {
     /// Menu-parse failure surfaces as [`MenuParseError`]; transport failure on a
     /// required endpoint surfaces as [`FetchError`]. Both are exit `2`. The
     /// truncation guard is applied by the caller via [`completeness_gate`].
-    pub fn fetch_full_inventory(&self) -> Result<RawInventory, FetchInventoryError> {
+    pub fn fetch_full_inventory(&self) -> Result<FetchOutcome, FetchInventoryError> {
         let html = self.menu_html().map_err(FetchInventoryError::Fetch)?;
         let menu = parse_menu(&html).map_err(FetchInventoryError::Menu)?;
-        let prop_types = self.property_type_mapping();
+        let (prop_types, property_type_fallback_served) = self.property_type_mapping();
 
         let mut source_urls = vec![self.url("/apiservice")];
         let mut groups = Vec::new();
@@ -566,12 +589,26 @@ impl FetchClient {
             });
         }
 
-        Ok(RawInventory {
-            source_urls,
-            property_types: prop_types,
-            groups,
+        Ok(FetchOutcome {
+            inventory: RawInventory {
+                source_urls,
+                property_types: prop_types,
+                groups,
+            },
+            property_type_fallback_served,
         })
     }
+}
+
+/// The result of a full inventory scrape: the raw inventory plus the fetch-time
+/// signal that the whole-inventory property-type mapping fell back to the
+/// hardcoded table (U4). The flag lives here rather than inside [`RawInventory`]
+/// so the persisted raw evidence stays pure inventory; the gate reads it from the
+/// `fetch-report.json` the caller writes.
+#[derive(Debug, Clone)]
+pub struct FetchOutcome {
+    pub inventory: RawInventory,
+    pub property_type_fallback_served: bool,
 }
 
 /// `id` may arrive as a string or a number; accept either as a path segment.
@@ -836,10 +873,11 @@ mod tests {
             ]}));
         });
         let client = FetchClient::new(server.base_url()).unwrap();
-        let map = client.property_type_mapping();
+        let (map, fell_back) = client.property_type_mapping();
         m.assert();
         assert_eq!(map.get("A0001"), Some(&"String".to_string()));
         assert_eq!(map.len(), 2);
+        assert!(!fell_back, "a real mapping response did not fall back");
     }
 
     #[test]
@@ -851,10 +889,11 @@ mod tests {
             then.status(500);
         });
         let client = FetchClient::new(server.base_url()).unwrap();
-        let map = client.property_type_mapping();
+        let (map, fell_back) = client.property_type_mapping();
         // Fallback map is non-empty and the call does not error out.
         assert_eq!(map.get("A0001"), Some(&"String".to_string()));
         assert_eq!(map.len(), PROPERTY_TYPE_FALLBACK.len());
+        assert!(fell_back, "a 500 response served the fallback table (U4)");
     }
 
     #[test]
@@ -927,7 +966,8 @@ mod tests {
         });
 
         let client = FetchClient::new(server.base_url()).unwrap();
-        let inv = client.fetch_full_inventory().expect("mock scrape succeeds");
+        let outcome = client.fetch_full_inventory().expect("mock scrape succeeds");
+        let inv = &outcome.inventory;
         let cs = inv.code_set(true);
         assert!(cs.contains("t8412"));
         assert_eq!(cs.len(), 1);
@@ -940,7 +980,73 @@ mod tests {
             "raw property rows captured verbatim"
         );
 
+        // Healthy protocol facts (g100 has an `id`) → no degradation; the
+        // property-type mapping returned `{ "list": [] }` → empty → fallback.
+        assert!(inv.facts_degraded_tr_codes().is_empty());
+        assert!(
+            outcome.property_type_fallback_served,
+            "an empty mapping response served the fallback table"
+        );
+
         let gate = completeness_gate(true, inv.tr_count(), None, DEFAULT_TRUNCATION_PROPORTION);
         assert_eq!(gate, GateOutcome::Pass);
+    }
+
+    /// U4: a group whose protocol facts failed has no `group_id`; its TR codes
+    /// are recorded as degraded TR codes (not merely counted), so the facts gate
+    /// can join on code (KTD-4a). The mapping 500 also flags the fallback.
+    #[test]
+    fn fetch_records_degraded_tr_codes_and_property_type_fallback() {
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET).path("/apiservice");
+            then.status(200).body(MENU_HTML);
+        });
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/apis/guide/tr/g100");
+            then.status(200).json_body(serde_json::json!([
+                { "trCode": "t8412", "trName": "차트", "id": "tr-1" }
+            ]));
+        });
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/apis/guide/tr/g200");
+            then.status(200).json_body(serde_json::json!([]));
+        });
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/apis/guide/tr/property/tr-1");
+            then.status(200).json_body(serde_json::json!([]));
+        });
+        // Protocol facts fail for g100 → its group_id is None (degraded).
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/apis/public/g100");
+            then.status(500);
+        });
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/apis/public/g200");
+            then.status(500);
+        });
+        // Property-type mapping fails → fallback served.
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/codes/public/system-codes");
+            then.status(500);
+        });
+
+        let client = FetchClient::new(server.base_url()).unwrap();
+        let outcome = client.fetch_full_inventory().expect("scrape succeeds");
+        assert!(
+            outcome.property_type_fallback_served,
+            "the mapping 500 served the fallback (U4)"
+        );
+        let degraded = outcome.inventory.facts_degraded_tr_codes();
+        assert!(
+            degraded.contains("t8412"),
+            "t8412 lives under a facts-degraded group: {degraded:?}"
+        );
     }
 }

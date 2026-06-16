@@ -15,7 +15,10 @@ use std::path::{Path, PathBuf};
 
 use ls_metadata::validate_dir;
 
-use crate::api_drift::{compare, normalize_run, DriftReport, NormalizedRun};
+use crate::api_drift::{
+    compare, facts_degraded_finding, facts_outage_decision, normalize_run, DriftReport,
+    FactsOutage, NormalizedRun,
+};
 use crate::fetch::{
     completeness_gate, FetchClient, GateOutcome, RawInventory, DEFAULT_TRUNCATION_PROPORTION,
 };
@@ -278,10 +281,47 @@ pub fn run_check(paths: &Paths, staged: Option<&Path>) -> Result<DriftReport, St
     let committed = load_normalized(&paths.baseline_dir)
         .map_err(|e| format!("committed baseline unavailable: {e}"))?;
     let trs = load_metadata(paths)?;
-    let staged_run = match staged {
-        Some(dir) => load_normalized(dir).map_err(|e| format!("staged run unavailable: {e}"))?,
-        None => fetch_and_stage(paths, /* provisional */ false)?.1,
+    let (staged_run, fetch_report) = match staged {
+        Some(dir) => {
+            let run = load_normalized(dir).map_err(|e| format!("staged run unavailable: {e}"))?;
+            (run, load_fetch_report(dir))
+        }
+        None => {
+            let (run_dir, run) = fetch_and_stage(paths, /* provisional */ false)?;
+            let report = load_fetch_report(&run_dir);
+            (run, report)
+        }
     };
+
+    // Support-aware facts-outage gate (U5, R3), applied *before* compare so
+    // degraded facts never turn into spurious structural drift (KTD-4). The
+    // decision is single-sourced in `facts_outage_decision` (KTD-3); a synthetic
+    // staged run with no `fetch-report.json` carries no degradation context, so
+    // the gate is a no-op there.
+    let outage = match &fetch_report {
+        Some(report) => {
+            let maintained: BTreeSet<String> = trs.keys().cloned().collect();
+            let maintained_present = staged_run
+                .code_set
+                .codes
+                .iter()
+                .any(|c| maintained.contains(c));
+            facts_outage_decision(
+                &report.degraded_tr_codes,
+                &maintained,
+                report.property_type_fallback_served,
+                maintained_present,
+            )
+        }
+        None => FactsOutage::None,
+    };
+    if let FactsOutage::MaintainedAffected(reason) = &outage {
+        return Err(format!(
+            "facts outage affects a maintained TR ({reason}); degraded facts could corrupt a \
+             gated comparison — re-fetch before comparing"
+        ));
+    }
+
     // Refuse to compare across normalizer versions — the committed
     // description-hashes were computed under different rules, so a mismatch would
     // emit spurious findings instead of a clean diff. Re-baseline first (exit 2).
@@ -291,7 +331,15 @@ pub fn run_check(paths: &Paths, staged: Option<&Path>) -> Result<DriftReport, St
             committed.manifest.normalizer_version, staged_run.manifest.normalizer_version
         ));
     }
-    Ok(compare(&committed, &staged_run, &trs))
+
+    let mut report = compare(&committed, &staged_run, &trs);
+    // An untracked-only facts degradation is surfaced as a visible, non-gating
+    // finding at exit `0` (R3); re-sort so presentation stays highest-first.
+    if let FactsOutage::UntrackedOnly(detail) = outage {
+        report.findings.push(facts_degraded_finding(detail));
+        report.findings.sort_by(|a, b| b.severity.cmp(&a.severity));
+    }
+    Ok(report)
 }
 
 /// Live-fetch the inventory, apply the split completeness gate, and write a
@@ -305,7 +353,9 @@ pub fn fetch_and_stage(
     let committed_len = committed_code_set_len(&paths.baseline_dir)?;
 
     let client = FetchClient::new(LS_BASE_URL).map_err(|e| e.to_string())?;
-    let raw = client.fetch_full_inventory().map_err(|e| e.to_string())?;
+    let outcome = client.fetch_full_inventory().map_err(|e| e.to_string())?;
+    let raw = outcome.inventory;
+    let property_type_fallback_served = outcome.property_type_fallback_served;
     let fetched = raw.code_set(false).len();
 
     // Menu parsed (fetch succeeded); apply the truncation guard (KTD-3).
@@ -321,13 +371,21 @@ pub fn fetch_and_stage(
 
     // A group whose protocol endpoint failed has no `group_id`; a wholesale
     // outage would otherwise stage `ok: true` and surface as spurious endpoint/
-    // rate drift at compare time. Surface the degradation at fetch time.
+    // rate drift at compare time. Surface the degradation at fetch time and
+    // record the affected TR codes so the gate (U5) can join on code (KTD-4a).
+    let degraded_tr_codes = raw.facts_degraded_tr_codes();
     let facts_degraded_groups = raw.groups.iter().filter(|g| g.group_id.is_none()).count();
     if facts_degraded_groups > 0 {
         eprintln!(
             "warning: {facts_degraded_groups} of {} group(s) returned no protocol/rate facts; \
              endpoint/rate fields may be degraded for this run",
             raw.groups.len()
+        );
+    }
+    if property_type_fallback_served {
+        eprintln!(
+            "warning: property-type mapping served the hardcoded fallback; field types may be \
+             degraded for this run"
         );
     }
 
@@ -337,6 +395,8 @@ pub fn fetch_and_stage(
         fetched_count: fetched,
         committed_code_set_len: committed_len,
         facts_degraded_groups,
+        degraded_tr_codes,
+        property_type_fallback_served,
         failure: None,
     };
     write_staged_run(&run_dir, &raw, &normalized, &report).map_err(|e| e.to_string())?;
@@ -370,7 +430,21 @@ fn failure_report(fetched: usize, committed_len: Option<usize>, gate: &GateOutco
         fetched_count: fetched,
         committed_code_set_len: committed_len,
         facts_degraded_groups: 0,
+        degraded_tr_codes: BTreeSet::new(),
+        property_type_fallback_served: false,
         failure: Some(format!("{gate:?}")),
+    }
+}
+
+/// Read a staged or live run's `fetch-report.json`, if present. A synthetic
+/// staged run (tests, hand-authored fixtures) may not have one — that is `None`,
+/// meaning no degradation context is available and the facts gate is a no-op.
+fn load_fetch_report(dir: &Path) -> Option<FetchReport> {
+    let path = dir.join(FETCH_REPORT_FILE);
+    if path.exists() {
+        read_json(&path).ok()
+    } else {
+        None
     }
 }
 
@@ -515,7 +589,7 @@ pub fn run_cli(args: impl IntoIterator<Item = String>) -> Exit {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{CodeSet, Manifest};
+    use crate::types::{CodeSet, DriftChange, Manifest};
 
     fn args(parts: &[&str]) -> Vec<String> {
         parts.iter().map(|s| s.to_string()).collect()
@@ -672,6 +746,8 @@ mod tests {
             fetched_count: 2,
             committed_code_set_len: Some(2),
             facts_degraded_groups: 0,
+            degraded_tr_codes: BTreeSet::new(),
+            property_type_fallback_served: false,
             failure: None,
         };
         write_staged_run(&run_dir, &raw, &normalized, &report).unwrap();
@@ -770,6 +846,84 @@ mod tests {
             committed_code_set_len(&bad).is_err(),
             "a corrupt baseline must not silently disable the truncation guard"
         );
+    }
+
+    /// Write a `fetch-report.json` carrying degradation signals into a staged-run
+    /// directory, so `run_check` exercises the facts gate on the `--staged` path
+    /// with no network call.
+    fn write_facts_report(dir: &Path, degraded: &[&str], fallback: bool) {
+        let report = FetchReport {
+            ok: true,
+            fetched_count: 1,
+            committed_code_set_len: Some(1),
+            facts_degraded_groups: usize::from(!degraded.is_empty()),
+            degraded_tr_codes: degraded.iter().map(|s| s.to_string()).collect(),
+            property_type_fallback_served: fallback,
+            failure: None,
+        };
+        write_json(&dir.join(FETCH_REPORT_FILE), &report).unwrap();
+    }
+
+    fn has_facts_finding(report: &DriftReport) -> bool {
+        report
+            .findings
+            .iter()
+            .any(|f| matches!(&f.change, DriftChange::FactsDegraded { .. }))
+    }
+
+    /// U5 (R3): the facts-outage gate is support-aware on the `--staged` path and
+    /// network-free. The discriminating case — an untracked-only degradation
+    /// exits `0` with a visible finding; a co-occurring maintained degradation
+    /// exits `2` before compare. A property-type fallback with a maintained TR
+    /// present exits `2`; a clean report and a report-less run are unaffected.
+    #[test]
+    fn facts_outage_gate_is_support_aware_on_the_staged_path() {
+        let root = scratch("facts-gate");
+        let baseline = root.join("baseline");
+        let metadata = repo_metadata_dir();
+        write_normalized(&baseline, &empty_run(&["t1102"])).unwrap();
+        let paths = Paths {
+            baseline_dir: baseline,
+            run_root: root.join("runs"),
+            metadata_dir: metadata,
+        };
+
+        // Untracked-only degradation → exit 0 + a visible facts finding.
+        let untracked = root.join("staged-untracked");
+        write_normalized(&untracked, &empty_run(&["t1102"])).unwrap();
+        write_facts_report(&untracked, &["UNTRACKED_X"], false);
+        let result = run_check(&paths, Some(&untracked));
+        assert_eq!(exit_for(&result), Exit::Ok);
+        let report = result.unwrap();
+        assert!(!report.gates(), "untracked-only facts outage does not gate");
+        assert!(has_facts_finding(&report), "a visible finding is emitted");
+
+        // A maintained TR co-occurs in the degraded set → exit 2 before compare.
+        let maintained_deg = root.join("staged-maintained");
+        write_normalized(&maintained_deg, &empty_run(&["t1102"])).unwrap();
+        write_facts_report(&maintained_deg, &["t1102", "UNTRACKED_X"], false);
+        let result = run_check(&paths, Some(&maintained_deg));
+        assert_eq!(exit_for(&result), Exit::Error);
+        assert!(result.unwrap_err().contains("maintained TR"));
+
+        // Property-type mapping fallback + a maintained TR present → exit 2.
+        let proptype = root.join("staged-proptype");
+        write_normalized(&proptype, &empty_run(&["t1102"])).unwrap();
+        write_facts_report(&proptype, &[], true);
+        assert_eq!(exit_for(&run_check(&paths, Some(&proptype))), Exit::Error);
+
+        // A clean fetch-report → no facts finding, unaffected (exit 0).
+        let clean = root.join("staged-clean-facts");
+        write_normalized(&clean, &empty_run(&["t1102"])).unwrap();
+        write_facts_report(&clean, &[], false);
+        let report = run_check(&paths, Some(&clean)).unwrap();
+        assert!(!has_facts_finding(&report));
+        assert!(!report.gates());
+
+        // No fetch-report at all (synthetic run) → the gate is a no-op (exit 0).
+        let no_report = root.join("staged-no-report");
+        write_normalized(&no_report, &empty_run(&["t1102"])).unwrap();
+        assert_eq!(exit_for(&run_check(&paths, Some(&no_report))), Exit::Ok);
     }
 
     /// A normalizer-version mismatch between committed and staged refuses to

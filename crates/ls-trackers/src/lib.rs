@@ -33,11 +33,14 @@ pub mod fetch;
 pub mod stages;
 pub mod types;
 
-pub use api_drift::{compare, normalize_run, DriftReport, NormalizedRun, NORMALIZER_VERSION};
+pub use api_drift::{
+    compare, facts_outage_decision, normalize_run, DriftReport, FactsOutage, NormalizedRun,
+    NORMALIZER_VERSION,
+};
 pub use cli::{run_cli, Command, Exit, Paths};
 pub use fetch::{
-    completeness_gate, parse_menu, FetchClient, FetchError, FetchInventoryError, GateOutcome,
-    MenuGroup, MenuParseError, RawGroup, RawInventory, RawTr, RetryConfig,
+    completeness_gate, parse_menu, FetchClient, FetchError, FetchInventoryError, FetchOutcome,
+    GateOutcome, MenuGroup, MenuParseError, RawGroup, RawInventory, RawTr, RetryConfig,
     DEFAULT_TRUNCATION_PROPORTION,
 };
 pub use stages::{classify, diff, normalize, promote, FetchNotImplemented};

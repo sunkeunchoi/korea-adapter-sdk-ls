@@ -345,6 +345,95 @@ impl DriftReport {
     }
 }
 
+/// The support-aware facts-outage decision (U5, R3), kept as a single-sourced
+/// pure function distinct from [`gates_for`] (KTD-3). It decides the exit
+/// *before* `compare` runs, so degraded facts never turn into spurious
+/// structural drift.
+///
+/// Membership joins on TR **code**, not group id: a degraded group's protocol
+/// UUID is exactly the field that went missing, so the committed
+/// `TrShape.api_group_id` is unusable as a join key (KTD-4a).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FactsOutage {
+    /// No facts dependency degraded — proceed to the normal compare path.
+    None,
+    /// A degraded facts dependency touches a maintained/baselined TR — exit `2`,
+    /// because degraded facts could corrupt a comparison the tracker gates on.
+    MaintainedAffected(String),
+    /// Degradation is confined to untracked inventory — exit `0` plus a visible
+    /// finding (the string describes the degraded dependency).
+    UntrackedOnly(String),
+}
+
+/// Decide the facts-outage exit (U5). `degraded_tr_codes` are the codes under an
+/// endpoint/rate-degraded group (per-group, KTD-4a); `property_type_fallback`
+/// marks a whole-inventory mapping outage (KTD-5). `maintained` is the maintained
+/// TR-code set; `maintained_present_in_run` is whether any maintained TR appears
+/// in the run at all (the whole-inventory branch needs a maintained TR to be at
+/// risk before it gates).
+pub fn facts_outage_decision(
+    degraded_tr_codes: &BTreeSet<String>,
+    maintained: &BTreeSet<String>,
+    property_type_fallback: bool,
+    maintained_present_in_run: bool,
+) -> FactsOutage {
+    // Property-type fallback is whole-inventory (KTD-5): it substitutes raw type
+    // codes for every TR, with no per-group granularity, so it does not route
+    // through the untracked-only branch — if any maintained TR is in the run, its
+    // fields could diff as false `FieldChanged`.
+    if property_type_fallback && maintained_present_in_run {
+        return FactsOutage::MaintainedAffected(
+            "property-type mapping served the hardcoded fallback (whole-inventory)".to_string(),
+        );
+    }
+
+    // Endpoint/rate degradation is per-group: gate only when a maintained TR's
+    // group is degraded; degradation confined to untracked codes is a notice.
+    let maintained_degraded: Vec<&str> = degraded_tr_codes
+        .iter()
+        .filter(|c| maintained.contains(*c))
+        .map(String::as_str)
+        .collect();
+    if !maintained_degraded.is_empty() {
+        return FactsOutage::MaintainedAffected(format!(
+            "endpoint/rate facts degraded for maintained TR(s): {}",
+            maintained_degraded.join(", ")
+        ));
+    }
+    if !degraded_tr_codes.is_empty() {
+        return FactsOutage::UntrackedOnly(format!(
+            "endpoint/rate facts degraded for {} untracked TR(s)",
+            degraded_tr_codes.len()
+        ));
+    }
+
+    // Property-type fallback served but no maintained TR present: still a visible
+    // notice (the whole inventory degraded), but nothing gated is at risk.
+    if property_type_fallback {
+        return FactsOutage::UntrackedOnly(
+            "property-type mapping served the hardcoded fallback (no maintained TR in run)"
+                .to_string(),
+        );
+    }
+
+    FactsOutage::None
+}
+
+/// Build the visible, non-gating finding for an untracked-only facts outage
+/// ([`FactsOutage::UntrackedOnly`]). `tr_code` is a whole-inventory marker since
+/// the degradation is not pinned to a single maintained TR.
+pub fn facts_degraded_finding(detail: String) -> DriftFinding {
+    DriftFinding {
+        tr_code: "(facts)".to_string(),
+        change: DriftChange::FactsDegraded { detail },
+        severity: Severity::Informational,
+        support_state: SupportState::Untracked,
+        is_new_tr: false,
+        gates: false,
+        possible_rename: None,
+    }
+}
+
 /// Compare a committed bounded baseline against a staged run (U4). Inventory
 /// diffs come from code-set comparison (added/removed codes); structural diffs
 /// come from per-TR shape comparison over the bounded baseline set. Each change
@@ -496,6 +585,8 @@ fn change_severity(change: &DriftChange, support: SupportState) -> Severity {
         }
         // Description-only changes are always informational, report-only (R13).
         DriftChange::DescriptionChanged { .. } => Severity::Informational,
+        // An untracked-only facts degradation is a visible, non-gating notice.
+        DriftChange::FactsDegraded { .. } => Severity::Informational,
     }
 }
 
@@ -1648,6 +1739,56 @@ mod tests {
             )),
             "the attribute change is not swallowed by the reorder: {:?}",
             report.findings
+        );
+    }
+
+    // --- U5 facts-outage decision (pure, single-sourced) ------------------
+
+    fn codes(cs: &[&str]) -> BTreeSet<String> {
+        cs.iter().map(|c| c.to_string()).collect()
+    }
+
+    /// The discriminating per-group case (R3): a degraded group containing no
+    /// maintained TR is untracked-only (exit 0 + finding); a co-occurring
+    /// degraded group containing a maintained TR forces MaintainedAffected
+    /// (exit 2).
+    #[test]
+    fn facts_outage_discriminates_maintained_from_untracked_endpoint_rate() {
+        let maintained = codes(&["t1102", "token"]);
+
+        // Untracked-only degradation → visible notice, not a gate.
+        let d = facts_outage_decision(&codes(&["UNTRACKED_X"]), &maintained, false, true);
+        assert!(matches!(d, FactsOutage::UntrackedOnly(_)), "got {d:?}");
+
+        // A maintained TR co-occurs in the degraded set → exit 2.
+        let d = facts_outage_decision(&codes(&["UNTRACKED_X", "t1102"]), &maintained, false, true);
+        assert!(
+            matches!(&d, FactsOutage::MaintainedAffected(r) if r.contains("t1102")),
+            "got {d:?}"
+        );
+    }
+
+    /// Property-type fallback is whole-inventory (KTD-5): served + any maintained
+    /// TR present → exit 2, with no untracked-only split. Served with no
+    /// maintained TR in the run is a visible notice only.
+    #[test]
+    fn facts_outage_property_type_fallback_is_whole_inventory() {
+        let maintained = codes(&["t1102"]);
+        let d = facts_outage_decision(&BTreeSet::new(), &maintained, true, true);
+        assert!(
+            matches!(&d, FactsOutage::MaintainedAffected(r) if r.contains("property-type")),
+            "got {d:?}"
+        );
+        let d = facts_outage_decision(&BTreeSet::new(), &maintained, true, false);
+        assert!(matches!(d, FactsOutage::UntrackedOnly(_)), "got {d:?}");
+    }
+
+    /// No degradation → None (the clean-fetch path is untouched).
+    #[test]
+    fn facts_outage_none_when_no_degradation() {
+        assert_eq!(
+            facts_outage_decision(&BTreeSet::new(), &codes(&["t1102"]), false, true),
+            FactsOutage::None
         );
     }
 
