@@ -708,9 +708,9 @@ mod tests {
         let reference = render_reference_docs(&report.trs);
         let dependency = render_dependency_docs(&report.trs, &report.index);
 
-        // Six implemented TRs each get a Reference page with the banner.
-        let implemented = ["CSPAQ12200", "S3_", "revoke", "t1102", "t8412", "token"];
-        for tr in implemented {
+        // The five still-unrecommended implemented TRs each carry the banner.
+        let banner_trs = ["CSPAQ12200", "S3_", "revoke", "t1102", "t8412"];
+        for tr in banner_trs {
             let page = reference
                 .get(Path::new(&format!("docs/reference/{tr}.md")))
                 .unwrap_or_else(|| panic!("reference page for {tr}"));
@@ -719,8 +719,20 @@ mod tests {
                 "{tr} reference must carry the not-recommended banner"
             );
         }
-        // index + 6 pages.
-        assert_eq!(reference.len(), implemented.len() + 1);
+
+        // token is the first Recommended TR: it still renders a Reference page
+        // (it stays implemented), but the banner is gone now that it is promoted.
+        let token = reference
+            .get(Path::new("docs/reference/token.md"))
+            .expect("token reference page still renders (still implemented)");
+        assert!(
+            !token.contains("Implemented, not yet recommended"),
+            "token is recommended — its reference page must not carry the banner"
+        );
+
+        // index + 6 implemented pages (5 banner + token). token stays implemented,
+        // so the count holds at 7 even though it lost the banner.
+        assert_eq!(reference.len(), 7, "index + six implemented reference pages");
 
         // The tracked-but-unimplemented order TR is excluded from Reference …
         assert!(!reference.contains_key(Path::new("docs/reference/CSPAT00601.md")));
