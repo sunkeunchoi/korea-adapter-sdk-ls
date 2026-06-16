@@ -20,8 +20,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use ls_metadata::{
-    validate_dir, CertificationPath, InstrumentDomain, OwnerClass, Protocol, RateBucket, Support,
-    TrIndex, TrMetadata, ValidationError, ValidationReport, VenueSession,
+    validate_dir, CertificationPath, EvidenceRecord, InstrumentDomain, OwnerClass, Protocol,
+    RateBucket, Support, TrIndex, TrMetadata, ValidationError, ValidationReport, VenueSession,
 };
 
 /// Generated TR Dependency Docs live here, relative to the repo root.
@@ -384,9 +384,58 @@ const NOT_RECOMMENDED_BANNER: &str =
     "> ⚠️ **Implemented, not yet recommended.** This TR is wired and tested but has not been \
      promoted to recommended status; its surface and guidance may still change.";
 
-/// Render a single implemented TR's Reference page (intentionally thin: name,
-/// owner class, support caveat — schemas and examples are deferred).
-fn render_reference_page(meta: &TrMetadata) -> String {
+/// The stable revocation-policy text rendered into every Recommended TR's
+/// contract. Phrased as **stated policy, not enforced behavior** — the
+/// evidence-freshness evaluator is deferred, and this candor mirrors
+/// `metadata/EVIDENCE-FRESHNESS.md`. Do not reword to imply code enforcement.
+const REVOCATION_POLICY: &str =
+    "What would revoke this claim (stated policy — not enforced by code today): a maintained-TR \
+     Structural API Shape change stales the backing Focused Evidence, or the 90-day backstop \
+     elapses from the freshness date, whichever comes first. Description / `korean_name` changes \
+     are informational and do not stale it. See `metadata/EVIDENCE-FRESHNESS.md`.";
+
+/// Render the user-facing recommendation contract for a Recommended TR (R9): the
+/// recommended behavior, the backing evidence and its environment level, the
+/// freshness date, the revocation policy, and what the claim does *not* cover.
+/// `evidence` is the parsed Focused Evidence record surfaced by the validator;
+/// `None` only when a caller drives rendering from a map without the record (the
+/// real `render_all` path always supplies it for a recommended TR).
+fn render_recommendation(meta: &TrMetadata, evidence: Option<&EvidenceRecord>) -> String {
+    let Some(rec) = &meta.recommendation else {
+        // Defensive: a recommended TR without a block cannot reach the validated
+        // report, but keep rendering total rather than panicking.
+        return String::new();
+    };
+    let env = evidence.map(|e| e.env.as_str()).unwrap_or("unspecified");
+
+    let mut out = String::new();
+    out.push_str("## Recommendation\n\n");
+    out.push_str(&format!("**Recommended behavior:** {}\n\n", rec.behavior));
+    out.push_str(&format!(
+        "- Evidence: `{}` (environment: `{}`)\n",
+        rec.evidence_ref, env
+    ));
+    out.push_str(&format!(
+        "- Freshness date: `{}` (`maintenance.last_reviewed`)\n",
+        meta.maintenance.last_reviewed
+    ));
+    out.push_str(&format!("- {REVOCATION_POLICY}\n\n"));
+
+    out.push_str("This recommendation does not claim:\n\n");
+    if rec.excludes.is_empty() {
+        out.push_str("- (no explicit exclusions recorded)\n");
+    } else {
+        for exclude in &rec.excludes {
+            out.push_str(&format!("- {exclude}\n"));
+        }
+    }
+    out
+}
+
+/// Render a single implemented TR's Reference page. A Recommended TR carries its
+/// full recommendation contract (R9); an implemented-but-not-recommended TR keeps
+/// the not-recommended banner and the schemas/examples-deferred caveat.
+fn render_reference_page(meta: &TrMetadata, evidence: Option<&EvidenceRecord>) -> String {
     let mut out = String::new();
     out.push_str(&format!("# SDK Reference: {}\n\n", meta.tr_code));
     if let Some(name) = &meta.name {
@@ -395,6 +444,9 @@ fn render_reference_page(meta: &TrMetadata) -> String {
     out.push_str(GENERATED_BANNER);
     out.push_str("\n\n");
 
+    // The not-recommended warning stays prominent, above the owner class, exactly
+    // where it was before the contract surface existed — so non-recommended pages
+    // remain byte-identical and only a promoted TR's page changes.
     if !meta.support.recommended {
         out.push_str(NOT_RECOMMENDED_BANNER);
         out.push_str("\n\n");
@@ -404,10 +456,15 @@ fn render_reference_page(meta: &TrMetadata) -> String {
         "- Owner class: `{}`\n\n",
         owner_class_str(meta.owner_class)
     ));
-    out.push_str(
-        "_Request/response schemas and verified examples are deferred until this TR reaches \
-         recommended status or a real consumer exists._\n",
-    );
+
+    if meta.support.recommended {
+        out.push_str(&render_recommendation(meta, evidence));
+    } else {
+        out.push_str(
+            "_Request/response schemas and verified examples are deferred until this TR reaches \
+             recommended status or a real consumer exists._\n",
+        );
+    }
     out
 }
 
@@ -445,7 +502,10 @@ fn render_reference_index(implemented: &BTreeMap<&String, &TrMetadata>) -> Strin
 /// such as `CSPAT00601` is excluded from Reference while still appearing in the
 /// Dependency Docs (R3). Each entry carries the "not yet recommended" banner
 /// whenever `support.recommended == false` (R4).
-pub fn render_reference_docs(trs: &BTreeMap<String, TrMetadata>) -> BTreeMap<PathBuf, String> {
+pub fn render_reference_docs(
+    trs: &BTreeMap<String, TrMetadata>,
+    evidence: &BTreeMap<String, EvidenceRecord>,
+) -> BTreeMap<PathBuf, String> {
     let dir = Path::new(REFERENCE_DOCS_DIR);
     let implemented: BTreeMap<&String, &TrMetadata> = trs
         .iter()
@@ -457,7 +517,7 @@ pub fn render_reference_docs(trs: &BTreeMap<String, TrMetadata>) -> BTreeMap<Pat
     for (tr_code, meta) in &implemented {
         files.insert(
             dir.join(format!("{tr_code}.md")),
-            render_reference_page(meta),
+            render_reference_page(meta, evidence.get(*tr_code)),
         );
     }
     files
@@ -467,7 +527,7 @@ pub fn render_reference_docs(trs: &BTreeMap<String, TrMetadata>) -> BTreeMap<Pat
 /// [`ValidationReport`], keyed by repo-relative path.
 pub fn render_all(report: &ValidationReport) -> BTreeMap<PathBuf, String> {
     let mut files = render_dependency_docs(&report.trs, &report.index);
-    files.extend(render_reference_docs(&report.trs));
+    files.extend(render_reference_docs(&report.trs, &report.evidence));
     files
 }
 
@@ -667,8 +727,8 @@ mod tests {
     }
 
     use ls_metadata::{
-        Dependencies, Facets, InstrumentDomain, Maintenance, Protocol, RateBucket, Support,
-        VenueSession,
+        Dependencies, Facets, InstrumentDomain, Maintenance, Protocol, RateBucket, Recommendation,
+        Support, VenueSession,
     };
 
     /// Build a minimal TR record for inline reference-rendering tests.
@@ -706,7 +766,7 @@ mod tests {
     #[test]
     fn reference_covers_six_implemented_with_banner_and_omits_unimplemented() {
         let report = authored_report();
-        let reference = render_reference_docs(&report.trs);
+        let reference = render_reference_docs(&report.trs, &report.evidence);
         let dependency = render_dependency_docs(&report.trs, &report.index);
 
         // The five still-unrecommended implemented TRs each carry the banner.
@@ -750,7 +810,7 @@ mod tests {
         trs.insert("rec".to_string(), sample_meta("rec", true, true));
         trs.insert("notrec".to_string(), sample_meta("notrec", true, false));
 
-        let reference = render_reference_docs(&trs);
+        let reference = render_reference_docs(&trs, &BTreeMap::new());
 
         let rec = &reference[Path::new("docs/reference/rec.md")];
         let notrec = &reference[Path::new("docs/reference/notrec.md")];
@@ -773,9 +833,95 @@ mod tests {
             sample_meta("tracked_only", false, false),
         );
 
-        let reference = render_reference_docs(&trs);
+        let reference = render_reference_docs(&trs, &BTreeMap::new());
         assert!(reference.contains_key(Path::new("docs/reference/done.md")));
         assert!(!reference.contains_key(Path::new("docs/reference/tracked_only.md")));
+    }
+
+    /// Build a recommended TR (with a contract block) plus its evidence record.
+    fn recommended_with_evidence() -> (BTreeMap<String, TrMetadata>, BTreeMap<String, EvidenceRecord>)
+    {
+        let mut meta = sample_meta("token", true, true);
+        meta.recommendation = Some(Recommendation {
+            behavior: "Paper OAuth access-token issuance".to_string(),
+            excludes: vec!["Production-credential token issuance".to_string()],
+            evidence_ref: "evidence/token.yaml".to_string(),
+        });
+        let mut trs = BTreeMap::new();
+        trs.insert("token".to_string(), meta);
+
+        let mut evidence = BTreeMap::new();
+        evidence.insert(
+            "token".to_string(),
+            EvidenceRecord {
+                tr_code: "token".to_string(),
+                date: "2026-06-15".to_string(),
+                env: "paper".to_string(),
+                target: Some("live-smoke".to_string()),
+                line: None,
+            },
+        );
+        (trs, evidence)
+    }
+
+    #[test]
+    fn recommended_page_renders_full_contract_and_no_deferred_line() {
+        // Covers AE3: behavior, evidence + env, freshness date, and excludes are
+        // all present; the schemas-deferred caveat is gone for a recommended TR.
+        let (trs, evidence) = recommended_with_evidence();
+        let reference = render_reference_docs(&trs, &evidence);
+        let page = &reference[Path::new("docs/reference/token.md")];
+
+        assert!(page.contains("## Recommendation"));
+        assert!(page.contains("Paper OAuth access-token issuance"));
+        assert!(page.contains("environment: `paper`"));
+        assert!(page.contains("Freshness date: `2026-06-15`"));
+        assert!(page.contains("Production-credential token issuance"));
+        assert!(
+            !page.contains("deferred until this TR reaches"),
+            "a recommended TR must not carry the schemas-deferred caveat"
+        );
+        assert!(
+            !page.contains("Implemented, not yet recommended"),
+            "a recommended TR drops the not-recommended banner"
+        );
+    }
+
+    #[test]
+    fn recommended_page_states_policy_not_enforcement() {
+        // Covers AE4: revocation is phrased as stated policy, explicitly not
+        // enforced by code — guards against an over-claiming reword.
+        let (trs, evidence) = recommended_with_evidence();
+        let reference = render_reference_docs(&trs, &evidence);
+        let page = &reference[Path::new("docs/reference/token.md")];
+
+        assert!(
+            page.contains("stated policy — not enforced by code today"),
+            "revocation text must carry the not-enforced candor"
+        );
+        assert!(page.contains("EVIDENCE-FRESHNESS.md"));
+    }
+
+    #[test]
+    fn not_recommended_implemented_tr_keeps_deferred_caveat_and_banner() {
+        // Covers AE5 (negative side): the five banner TRs are unregressed —
+        // implemented-but-not-recommended pages still defer schemas and warn.
+        let mut trs = BTreeMap::new();
+        trs.insert("notrec".to_string(), sample_meta("notrec", true, false));
+        let reference = render_reference_docs(&trs, &BTreeMap::new());
+        let page = &reference[Path::new("docs/reference/notrec.md")];
+
+        assert!(page.contains("Implemented, not yet recommended"));
+        assert!(page.contains("deferred until this TR reaches"));
+        assert!(!page.contains("## Recommendation"));
+    }
+
+    #[test]
+    fn recommended_rendering_is_deterministic() {
+        let (trs, evidence) = recommended_with_evidence();
+        let a = render_reference_docs(&trs, &evidence);
+        let b = render_reference_docs(&trs, &evidence);
+        assert_eq!(a, b, "identical metadata + evidence yields identical output");
     }
 
     /// A unique tempdir under the OS temp root (no external crate), mirroring the
