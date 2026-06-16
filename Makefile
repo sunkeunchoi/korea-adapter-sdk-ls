@@ -85,3 +85,27 @@ api-drift-check:
 ## Report what a real promote would touch (writes nothing).
 api-drift-promote-dry-run:
 	cargo run -q -p ls-trackers -- api-drift promote --dry-run
+
+# ---------------------------------------------------------------------------
+# Specification Document Tracker — opt-in, and deliberately EXCLUDED from default
+# gates (`cargo test`/CI stays untouched, R10). Run by hand at a recurring
+# operator checkpoint (see docs/MAINTENANCE_RUNBOOK.md). Unlike the API Drift
+# targets, BOTH spec-doc targets are network-free: they reuse the shared raw
+# snapshot the API Drift staging path already produced
+# (baselines/api-drift/raw/), so they add no new fetch source (R1, R9). Findings
+# are ADVISORY and never gate (KTD4) — `spec-doc-check` exits 0 unless a
+# load/parse/version error occurs (exit 2). An example change becomes an SDK
+# Maintenance Work Item only after human review (R8); the tracker never mutates
+# code, docs, metadata, examples, or baselines.
+.PHONY: spec-doc-check spec-doc-renormalize
+
+## Compare staged example shapes against the committed example baseline; print
+## advisory findings and the maintained-artifact review pointers (network-free).
+spec-doc-check:
+	cargo run -q -p ls-trackers -- spec-doc check
+
+## Re-seed the committed example baseline from the shared committed raw evidence
+## (network-free; no live fetch). Run after an EXAMPLE_NORMALIZER_VERSION bump,
+## then review the normalized/examples.json diff.
+spec-doc-renormalize:
+	cargo run -q -p ls-trackers -- spec-doc renormalize

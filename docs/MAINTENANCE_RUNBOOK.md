@@ -49,3 +49,49 @@ make api-drift-promote-dry-run
   the full-inventory code-set. It is seeded once (provisionally) and re-attested
   incrementally as new TRs are admitted (KTD-2, KTD-5).
 - `api-drift check` never edits `metadata/` or SDK code (R10); it is advisory.
+
+## Specification Document review (example drift)
+
+Detects upstream request/response **example** drift — the one documentation facet
+the API Drift Tracker does not diff — against the committed example baseline, and
+points at the maintained SDK artifacts a changed TR references. Run at each
+maintenance checkpoint:
+
+```sh
+make spec-doc-check
+```
+
+Unlike `api-drift-check`, this is **network-free**: it re-projects examples from
+the shared raw snapshot the API Drift staging path already produced
+(`crates/ls-trackers/baselines/api-drift/raw/`), adding no new fetch source (R1).
+Findings are **advisory and never gate** (KTD4):
+
+| Exit | Meaning | Action |
+|------|---------|--------|
+| `0` | The comparison completed | Review any printed findings at your discretion. Each names the changed TR, the payload class that drifted, and — for a Tracked TR — the maintained docs (`docs/reference/{tr}.md` for Implemented TRs, `docs/tr-dependencies/{tr}.md` for all Tracked TRs) to review as candidates. An untracked-only change prints with no pointer. |
+| `2` | Load, parse, or example-normalizer-version error | Investigate. After an `EXAMPLE_NORMALIZER_VERSION` bump, re-seed first (below). |
+
+A finding becomes an **SDK Maintenance Work Item only after human review** (R8) —
+you judge whether the referenced artifacts are stale; the tracker proves nothing
+about staleness. SDK reference docs stay generated from maintained behavior and
+metadata via `make docs` (R11); `spec-doc-check` resolves to existing doc paths,
+it does not generate or mirror upstream text.
+
+To re-seed the example baseline after an `EXAMPLE_NORMALIZER_VERSION` bump
+(network-free; reads only the shared committed raw), then review the diff:
+
+```sh
+make spec-doc-renormalize
+git diff crates/ls-trackers/baselines/spec-doc/normalized/examples.json
+```
+
+### Notes
+
+- The committed example baseline lives at
+  `crates/ls-trackers/baselines/spec-doc/`; it covers the full upstream inventory
+  (every TR carrying an example, ~355) as one aggregated
+  `normalized/examples.json` map, under its own `EXAMPLE_NORMALIZER_VERSION`
+  (KTD2). It stores only structural descriptors — form keys and JSON
+  field-name→leaf-type shapes — never a raw example value (KTD7).
+- `spec-doc check` never edits `metadata/`, SDK code, docs, examples, or
+  baselines (R8); it is advisory.
