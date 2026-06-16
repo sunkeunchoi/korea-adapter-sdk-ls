@@ -533,6 +533,183 @@ pub struct DriftFinding {
     pub possible_rename: Option<String>,
 }
 
+// ---------------------------------------------------------------------------
+// Specification Document Tracker — example projection (U1). The example facet is
+// net-new: the API Drift normalizer never reads `req_example`/`res_example`.
+// These persisted types live in the `spec-doc` baseline tree under their own
+// `EXAMPLE_NORMALIZER_VERSION` (KTD2), with `#[serde(default)]` on optional
+// fields from day one to heed the carried R-4 serde forward-compat residual
+// (KTD6).
+// ---------------------------------------------------------------------------
+
+/// One TR's normalized request/response example projection (R2), stored in the
+/// `spec-doc` baseline keyed by `tr_code`.
+///
+/// By construction it carries only structural descriptors — field-path → leaf
+/// [`FieldShape`] for JSON, the key set for form-encoded, and nothing at all for
+/// opaque/absent — never a raw example string or scalar value. The real-looking
+/// credentials embedded in the `token`/`revoke`/`S3_` examples therefore can
+/// never reach a committed baseline (KTD7): the type makes the unsafe write
+/// unrepresentable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExampleShape {
+    pub tr_code: String,
+    #[serde(default)]
+    pub req: ExampleFacet,
+    #[serde(default)]
+    pub res: ExampleFacet,
+}
+
+impl ExampleShape {
+    /// An all-[`ExampleFacet::Absent`] shape for `tr_code` — the synthetic "other
+    /// side" when a TR's example appears or disappears across a comparison, so the
+    /// per-facet diff handles add/remove without a special case.
+    pub fn absent(tr_code: &str) -> Self {
+        ExampleShape {
+            tr_code: tr_code.to_string(),
+            req: ExampleFacet::Absent,
+            res: ExampleFacet::Absent,
+        }
+    }
+
+    /// Whether neither direction carries an example (so the TR contributes no
+    /// shape to the baseline).
+    pub fn is_absent(&self) -> bool {
+        self.req.is_absent() && self.res.is_absent()
+    }
+}
+
+/// One direction's normalized example, projected per payload class (KTD3):
+///
+/// * [`Json`](ExampleFacet::Json) — a JSON-parseable example reduced to the same
+///   field-path → leaf [`FieldShape`] map the API Drift leaf walker produces,
+///   discarding scalar sample values so value churn is not drift (R2, AE4).
+/// * [`Form`](ExampleFacet::Form) — a form-encoded example reduced to its key
+///   set, discarding values so a secret-only change is not drift (R2, AE5).
+/// * [`Opaque`](ExampleFacet::Opaque) — present but non-parseable; carries no
+///   structure, compared only by class, never shape-diffed (R2, R9).
+/// * [`Absent`](ExampleFacet::Absent) — no example in this direction.
+///
+/// `Opaque` and `Absent` carry no payload, so a non-parseable example's raw text
+/// (which may embed credentials, e.g. the untracked `UBM` request JWT) never
+/// lands in a committed baseline (KTD7).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExampleFacet {
+    #[default]
+    Absent,
+    Json {
+        #[serde(default)]
+        shape: BTreeMap<String, FieldShape>,
+    },
+    Form {
+        #[serde(default)]
+        keys: BTreeSet<String>,
+    },
+    Opaque,
+}
+
+impl ExampleFacet {
+    /// Whether this direction carries no example at all.
+    pub fn is_absent(&self) -> bool {
+        matches!(self, ExampleFacet::Absent)
+    }
+}
+
+/// A single leaf-shape change at one field path within a JSON example, carrying
+/// only the path name and the structural [`FieldShape`] on each side — never the
+/// scalar sample value that changed (KTD7).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShapePathChange {
+    pub path: String,
+    pub from: FieldShape,
+    pub to: FieldShape,
+}
+
+/// One example-drift change in the Specification Document Tracker (U2). `tr_code`
+/// lives on the wrapping [`SpecFinding`], so variants carry only the change's own
+/// locating fields.
+///
+/// Every variant carries **only structural descriptors** — the request/response
+/// [`Direction`], field-path names, key names, and [`FieldShape`]s — never a raw
+/// example string or scalar value (KTD7), following the API Drift
+/// [`DescriptionChanged`](DriftChange::DescriptionChanged) advisory template.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum SpecChange {
+    /// A direction gained an example where the baseline had none.
+    ExampleAdded { direction: Direction },
+    /// A direction lost the example the baseline carried.
+    ExampleRemoved { direction: Direction },
+    /// A JSON example's leaf-path shape set changed (R2). Pure scalar-value churn
+    /// produces none of these (AE4) — only added/removed paths and leaf-shape
+    /// changes qualify.
+    ExampleShapeChanged {
+        direction: Direction,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        added_paths: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        removed_paths: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        changed_paths: Vec<ShapePathChange>,
+    },
+    /// A form-encoded example's key set changed (R2, AE5). A secret-only value
+    /// rotation produces none of these — only key add/remove qualifies.
+    ExampleKeySetChanged {
+        direction: Direction,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        added_keys: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        removed_keys: Vec<String>,
+    },
+    /// An example could not be structurally compared this run — it is opaque on
+    /// one side, or transitioned across payload classes (R9, AE5). Always
+    /// informational, never gating; carries no structure.
+    ExampleUnparseable { direction: Direction },
+}
+
+/// A support-aware Specification Document Tracker finding (U2). Mirrors
+/// [`DriftFinding`] but is **always advisory**: `gates` is `false` for every
+/// example finding by construction (KTD4), so [`SpecReport::gates`] is never true.
+/// `pointers` (U3) names the maintained SDK artifacts a Tracked TR's change should
+/// prompt review of; it is empty for an untracked TR or a TR with no registered
+/// artifact (R7).
+///
+/// [`SpecReport::gates`]: crate::spec_doc::SpecReport::gates
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpecFinding {
+    pub tr_code: String,
+    pub change: SpecChange,
+    pub severity: Severity,
+    pub support_state: SupportState,
+    /// Always `false`: example changes are advisory and never gate (KTD4).
+    pub gates: bool,
+    /// Maintained SDK artifacts to review for this change (U3); empty →
+    /// informational-only, no pointer (R7).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pointers: Vec<ArtifactRef>,
+}
+
+/// A pointer to a maintained SDK artifact a changed TR references (R4, R5). The
+/// first version covers only naming-convention-derivable docs (KTD5): the
+/// per-TR Reference Doc (Implemented TRs only) and TR Dependency Doc (all Tracked
+/// TRs). SDK-example and Focused-Evidence artifacts are deferred.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ArtifactRef {
+    pub kind: ArtifactKind,
+    pub path: String,
+}
+
+/// Which maintained artifact an [`ArtifactRef`] points at.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactKind {
+    /// `docs/reference/{tr}.md` — only for Implemented TRs.
+    ReferenceDoc,
+    /// `docs/tr-dependencies/{tr}.md` — for every Tracked TR.
+    DependencyDoc,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

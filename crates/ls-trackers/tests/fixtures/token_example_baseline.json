@@ -1,0 +1,4 @@
+{
+  "req_example": "appkey=BSrTOOZNoXtx&appsecretkey=d3HloL6T&grant_type=client_credentials&scope=oob",
+  "res_example": "{\"access_token\":\"eyJ0OLD\",\"token_type\":\"Bearer\",\"expires_in\":86400}"
+}

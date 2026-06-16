@@ -30,6 +30,7 @@
 pub mod api_drift;
 pub mod cli;
 pub mod fetch;
+pub mod spec_doc;
 pub mod stages;
 pub mod types;
 
@@ -37,15 +38,23 @@ pub use api_drift::{
     compare, facts_outage_decision, normalize_run, DriftReport, FactsOutage, NormalizedRun,
     NORMALIZER_VERSION,
 };
-pub use cli::{run_cli, Command, Exit, Paths};
+pub use cli::{
+    load_example_baseline, renormalize_examples, run_cli, run_spec_check, spec_exit_for,
+    write_example_baseline, Command, Exit, Paths,
+};
 pub use fetch::{
     completeness_gate, parse_menu, FetchClient, FetchError, FetchInventoryError, FetchOutcome,
     GateOutcome, MenuGroup, MenuParseError, RawGroup, RawInventory, RawTr, RetryConfig,
     DEFAULT_TRUNCATION_PROPORTION,
 };
+pub use spec_doc::{
+    compare_examples, normalize_example_run, spec_targets, ExampleManifest, ExampleRun, SpecCoverage,
+    SpecReport, EXAMPLE_NORMALIZER_VERSION,
+};
 pub use stages::{classify, diff, normalize, promote, FetchNotImplemented};
 pub use types::{
-    gates_for, BlockField, Change, CodeSet, CoverageSummary, Direction, DriftChange, DriftFinding,
-    FetchReport, FieldShape, Manifest, NormalizedArtifact, PromoteReport, Protocol, Severity,
+    gates_for, ArtifactKind, ArtifactRef, BlockField, Change, CodeSet, CoverageSummary, Direction,
+    DriftChange, DriftFinding, ExampleFacet, ExampleShape, FetchReport, FieldShape, Manifest,
+    NormalizedArtifact, PromoteReport, Protocol, Severity, ShapePathChange, SpecChange, SpecFinding,
     StagedSnapshot, SupportState, TrShape, TrackerFinding,
 };

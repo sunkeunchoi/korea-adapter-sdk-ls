@@ -22,8 +22,11 @@ use crate::api_drift::{
 use crate::fetch::{
     completeness_gate, FetchClient, GateOutcome, RawInventory, DEFAULT_TRUNCATION_PROPORTION,
 };
+use crate::spec_doc::{
+    compare_examples, normalize_example_run, ExampleManifest, ExampleRun, SpecReport,
+};
 use crate::stages::promote_targets;
-use crate::types::{CodeSet, DriftChange, FetchReport, Manifest, TrShape};
+use crate::types::{CodeSet, DriftChange, ExampleShape, FetchReport, Manifest, TrShape};
 
 /// The live LS Open API base URL (`api-drift fetch` / default `check`).
 pub const LS_BASE_URL: &str = "https://openapi.ls-sec.co.kr";
@@ -67,17 +70,33 @@ pub enum Command {
     /// committed reviewed raw evidence, in place, without a live fetch (KTD-2) —
     /// the reviewed re-seed path for a normalizer-version bump.
     Renormalize,
+    /// `spec-doc check` — compare a staged example projection against the
+    /// committed example baseline, emitting advisory (non-gating) findings (U4).
+    /// `--staged DIR` loads a pre-projected example run (the seam for a future
+    /// staged snapshot); without it the staged side re-projects the shared raw.
+    SpecCheck {
+        staged: Option<PathBuf>,
+    },
+    /// `spec-doc renormalize` — re-project the example baseline from the shared
+    /// committed raw snapshot, in place, network-free (the example re-seed path).
+    SpecRenormalize,
 }
 
 /// Filesystem locations, injected so tests drive everything over a tempdir.
 #[derive(Debug, Clone)]
 pub struct Paths {
-    /// Committed bounded baseline (`crates/ls-trackers/baselines/api-drift`).
+    /// Committed bounded baseline (`crates/ls-trackers/baselines/api-drift`). Also
+    /// holds the shared raw snapshot the Specification Document Tracker re-projects
+    /// examples from (`<baseline_dir>/raw/ls-openapi-full.json`, KTD2).
     pub baseline_dir: PathBuf,
     /// Staged-run root (`target/ls-trackers/api-drift`).
     pub run_root: PathBuf,
     /// Authored metadata directory (`metadata`).
     pub metadata_dir: PathBuf,
+    /// Committed example baseline for the Specification Document Tracker
+    /// (`crates/ls-trackers/baselines/spec-doc`) — its own tree under an
+    /// independent `EXAMPLE_NORMALIZER_VERSION`, reusing the shared raw (KTD2).
+    pub spec_baseline_dir: PathBuf,
 }
 
 impl Paths {
@@ -87,30 +106,37 @@ impl Paths {
             baseline_dir: PathBuf::from("crates/ls-trackers/baselines/api-drift"),
             run_root: PathBuf::from("target/ls-trackers/api-drift"),
             metadata_dir: PathBuf::from("metadata"),
+            spec_baseline_dir: PathBuf::from("crates/ls-trackers/baselines/spec-doc"),
         }
     }
 }
 
-/// Parse `api-drift <subcommand> [flags]`. Only `api-drift` is exposed (R20);
-/// anything else is a usage error (mapped to exit `2`).
+/// Parse `<api-drift|spec-doc> <subcommand> [flags]`. Any other first token is a
+/// usage error (mapped to exit `2`).
 pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, String> {
     let mut it = args.into_iter();
-    match it.next().as_deref() {
-        Some("api-drift") => {}
-        Some(other) => return Err(format!("unknown command `{other}` (expected `api-drift`)")),
-        None => {
-            return Err(
-                "usage: ls-trackers api-drift <fetch|check|promote> [--staged DIR] [--dry-run]"
-                    .to_string(),
-            )
-        }
-    }
+    let family = it.next();
     let sub = it.next();
     let rest: Vec<String> = it.collect();
-    match sub.as_deref() {
+    match family.as_deref() {
+        Some("api-drift") => parse_api_drift(sub.as_deref(), &rest),
+        Some("spec-doc") => parse_spec_doc(sub.as_deref(), &rest),
+        Some(other) => Err(format!(
+            "unknown command `{other}` (expected `api-drift` or `spec-doc`)"
+        )),
+        None => Err(
+            "usage: ls-trackers <api-drift|spec-doc> <subcommand> [--staged DIR] [--dry-run]"
+                .to_string(),
+        ),
+    }
+}
+
+/// Parse an `api-drift` subcommand.
+fn parse_api_drift(sub: Option<&str>, rest: &[String]) -> Result<Command, String> {
+    match sub {
         Some("fetch") => {
             let mut seed = false;
-            for arg in &rest {
+            for arg in rest {
                 match arg.as_str() {
                     "--seed" => seed = true,
                     other => return Err(format!("unexpected argument `{other}`")),
@@ -119,7 +145,7 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, Str
             Ok(Command::Fetch { seed })
         }
         Some("check") => Ok(Command::Check {
-            staged: parse_staged(&rest)?,
+            staged: parse_staged(rest)?,
         }),
         Some("promote") => {
             if !rest.iter().any(|a| a == "--dry-run") {
@@ -146,6 +172,25 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, Str
         None => Err(
             "usage: ls-trackers api-drift <fetch|check|promote --dry-run|renormalize>".to_string(),
         ),
+    }
+}
+
+/// Parse a `spec-doc` subcommand. The tracker adds no fetch path (R1) — it reuses
+/// the shared raw the API Drift staging path produces — so only `check` and the
+/// network-free `renormalize` re-seed are exposed.
+fn parse_spec_doc(sub: Option<&str>, rest: &[String]) -> Result<Command, String> {
+    match sub {
+        Some("check") => Ok(Command::SpecCheck {
+            staged: parse_staged(rest)?,
+        }),
+        Some("renormalize") => {
+            if let Some(other) = rest.first() {
+                return Err(format!("unexpected argument `{other}`"));
+            }
+            Ok(Command::SpecRenormalize)
+        }
+        Some(other) => Err(format!("unknown spec-doc subcommand `{other}`")),
+        None => Err("usage: ls-trackers spec-doc <check [--staged DIR]|renormalize>".to_string()),
     }
 }
 
@@ -243,6 +288,51 @@ pub fn load_normalized(dir: &Path) -> Result<NormalizedRun, String> {
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
     let bytes = fs::read(path).map_err(|e| format!("reading {}: {e}", path.display()))?;
     serde_json::from_slice(&bytes).map_err(|e| format!("parsing {}: {e}", path.display()))
+}
+
+/// The aggregated example-shapes file. Unlike the API Drift per-TR layout
+/// (`normalized/trs/{code}.json`), the **full-inventory** example baseline (KTD8)
+/// is stored as one sorted `code → ExampleShape` map. Per-TR files are lossy
+/// here: ~4 upstream codes collide case-insensitively (`S3_`/`s3_`, `K1_`/`k1_`,
+/// `S2_`/`s2_`, `YS3`/`Ys3`), so on a case-insensitive filesystem the second
+/// write of each pair would overwrite the first and silently drop a shape —
+/// breaking the clean self-diff. A single map is collision-proof and reviews as
+/// one sorted file.
+const EXAMPLES_FILE: &str = "normalized/examples.json";
+
+/// Write an example projection to `dir`: code-set, example manifest, and the
+/// aggregated example-shapes map. Deterministic, pretty JSON. The map value type
+/// is [`ExampleShape`], never a raw `serde_json::Value`, so no unprocessed
+/// example payload can be written (KTD7).
+pub fn write_example_baseline(dir: &Path, run: &ExampleRun) -> std::io::Result<()> {
+    fs::create_dir_all(dir.join("normalized"))?;
+    write_json(&dir.join(CODE_SET_FILE), &run.code_set)?;
+    write_json(&dir.join(MANIFEST_FILE), &run.manifest)?;
+    write_json(&dir.join(EXAMPLES_FILE), &run.shapes)?;
+    Ok(())
+}
+
+/// Load an [`ExampleRun`] (code-set + example manifest + aggregated example
+/// shapes) from a `spec-doc` baseline or staged-run directory. Missing or
+/// malformed files are an error (exit `2`).
+pub fn load_example_baseline(dir: &Path) -> Result<ExampleRun, String> {
+    let code_set: CodeSet = read_json(&dir.join(CODE_SET_FILE))?;
+    let manifest: ExampleManifest = read_json(&dir.join(MANIFEST_FILE))?;
+    let shapes: BTreeMap<String, ExampleShape> = read_json(&dir.join(EXAMPLES_FILE))?;
+    Ok(ExampleRun {
+        code_set,
+        manifest,
+        shapes,
+    })
+}
+
+/// Re-project the example shapes from the shared committed raw snapshot
+/// (`<baseline_dir>/raw/ls-openapi-full.json`, KTD2) — the network-free staged
+/// side. `provisional` is supplied by the caller (from the committed baseline it
+/// already holds) so this does not re-read the committed baseline.
+fn reproject_examples_from_raw(paths: &Paths, provisional: bool) -> Result<ExampleRun, String> {
+    let raw: RawInventory = read_json(&paths.baseline_dir.join(RAW_FILE))?;
+    Ok(normalize_example_run(&raw, provisional))
 }
 
 // ---------------------------------------------------------------------------
@@ -474,6 +564,75 @@ fn prune_stale_shapes(baseline_dir: &Path, normalized: &NormalizedRun) -> Result
     Ok(())
 }
 
+// ---------------------------------------------------------------------------
+// Specification Document Tracker orchestration (U4)
+// ---------------------------------------------------------------------------
+
+/// Run `spec-doc check`: load the committed example baseline (the **Reviewed
+/// Baseline**), obtain the staged example projection, and compare. Findings are
+/// advisory and never gate (KTD4); only a load/parse/version error exits `2`.
+///
+/// The staged side is network-free: `--staged DIR` loads a pre-projected example
+/// run (the seam for a future staged snapshot), and the default re-projects the
+/// shared committed raw (`<baseline_dir>/raw`, KTD2), so the check is a self-diff
+/// against the reviewed baseline.
+pub fn run_spec_check(paths: &Paths, staged: Option<&Path>) -> Result<SpecReport, String> {
+    let committed = load_example_baseline(&paths.spec_baseline_dir)
+        .map_err(|e| format!("committed spec-doc baseline unavailable: {e}"))?;
+    let trs = load_metadata(paths)?;
+    let staged_run = match staged {
+        Some(dir) => {
+            load_example_baseline(dir).map_err(|e| format!("staged spec-doc run unavailable: {e}"))?
+        }
+        // Re-project from the shared raw, carrying the committed baseline's
+        // provisional stance — `committed` is already loaded, so no re-read.
+        None => reproject_examples_from_raw(paths, committed.code_set.provisional)?,
+    };
+
+    // Refuse to compare across example-normalizer versions — the committed shapes
+    // were projected under different rules, so a mismatch would emit spurious
+    // findings instead of a clean diff. Re-baseline first (exit 2). Mirrors the
+    // API Drift normalizer-version guard.
+    if committed.manifest.normalizer_version != staged_run.manifest.normalizer_version {
+        return Err(format!(
+            "example normalizer version mismatch: committed v{} vs staged v{} — re-baseline first",
+            committed.manifest.normalizer_version, staged_run.manifest.normalizer_version
+        ));
+    }
+
+    Ok(compare_examples(&committed, &staged_run, &trs))
+}
+
+/// Re-project the example baseline from the shared committed raw snapshot, in
+/// place, network-free — the example re-seed path (mirrors
+/// [`renormalize_committed`]). Rewrites the code-set, manifest, and aggregated
+/// example-shapes map under `spec_baseline_dir`. No per-TR pruning is needed: the
+/// single aggregated map is fully rewritten, so a TR that lost its example simply
+/// disappears from the map.
+pub fn renormalize_examples(paths: &Paths) -> Result<ExampleRun, String> {
+    // Preserve the committed example baseline's provisional stance when one
+    // exists (else default to provisional, bootstrap).
+    let provisional = load_example_baseline(&paths.spec_baseline_dir)
+        .ok()
+        .map(|run| run.code_set.provisional)
+        .unwrap_or(true);
+    let run = reproject_examples_from_raw(paths, provisional)?;
+    write_example_baseline(&paths.spec_baseline_dir, &run).map_err(|e| e.to_string())?;
+    Ok(run)
+}
+
+/// Map a `spec-doc check` result to the tiered exit. Example findings are
+/// advisory (KTD4), so a successful comparison is always exit `0`; only a
+/// load/parse/version error exits `2`. `gates()` is consulted for parity with
+/// [`exit_for`], though it is `false` by construction.
+pub fn spec_exit_for(result: &Result<SpecReport, String>) -> Exit {
+    match result {
+        Ok(report) if report.gates() => Exit::Gated,
+        Ok(_) => Exit::Ok,
+        Err(_) => Exit::Error,
+    }
+}
+
 fn failure_report(fetched: usize, committed_len: Option<usize>, gate: &GateOutcome) -> FetchReport {
     FetchReport {
         ok: false,
@@ -580,7 +739,56 @@ pub fn dispatch(paths: &Paths, command: Command) -> Exit {
                 }
             }
         }
+        Command::SpecCheck { staged } => {
+            let result = run_spec_check(paths, staged.as_deref());
+            match &result {
+                Ok(report) => print_spec_report(report),
+                Err(e) => eprintln!("error: {e}"),
+            }
+            spec_exit_for(&result)
+        }
+        Command::SpecRenormalize => match renormalize_examples(paths) {
+            Ok(run) => {
+                println!(
+                    "re-projected {} example shape(s) at example-normalizer v{} into {}",
+                    run.shapes.len(),
+                    run.manifest.normalizer_version,
+                    paths.spec_baseline_dir.display()
+                );
+                Exit::Ok
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                Exit::Error
+            }
+        },
     }
+}
+
+/// Print an advisory example report: each finding with its support-aware severity
+/// and any maintained-artifact review pointers (R5). No finding ever gates (KTD4),
+/// so there is no `GATE` column — example changes are review candidates, not
+/// failures.
+fn print_spec_report(report: &SpecReport) {
+    if report.findings.is_empty() {
+        println!("no example findings.");
+    } else {
+        println!("{} example finding(s):", report.findings.len());
+        for f in &report.findings {
+            let pointers = if f.pointers.is_empty() {
+                " (no artifact pointer — informational)".to_string()
+            } else {
+                let pointer_paths: Vec<&str> = f.pointers.iter().map(|p| p.path.as_str()).collect();
+                format!(" → review: {}", pointer_paths.join(", "))
+            };
+            println!("  [{}] {} {:?}{pointers}", f.severity, f.tr_code, f.change);
+        }
+    }
+    let c = &report.coverage;
+    println!(
+        "coverage: {} upstream, {} carrying examples",
+        c.upstream_count, c.example_tr_count
+    );
 }
 
 fn print_report(report: &DriftReport) {
@@ -743,6 +951,7 @@ mod tests {
             baseline_dir: scratch.clone(),
             run_root: scratch.join("runs"),
             metadata_dir: repo_metadata_dir(),
+            spec_baseline_dir: scratch.join("spec-doc"),
         };
 
         let run = renormalize_committed(&paths).expect("re-normalize from committed raw");
@@ -800,6 +1009,7 @@ mod tests {
             baseline_dir: scratch.clone(),
             run_root: scratch.join("runs"),
             metadata_dir: repo_metadata_dir(),
+            spec_baseline_dir: scratch.join("spec-doc"),
         };
         let run = renormalize_committed(&paths).expect("re-normalize");
 
@@ -878,6 +1088,7 @@ mod tests {
             baseline_dir: root.join("baseline"),
             run_root: root.clone(),
             metadata_dir: root.join("metadata"),
+            spec_baseline_dir: root.join("spec-doc"),
         };
         update_latest(&paths, &run_dir).unwrap();
         let latest = fs::read_to_string(root.join("latest.txt")).unwrap();
@@ -902,6 +1113,7 @@ mod tests {
             baseline_dir: baseline.clone(),
             run_root: root.join("runs"),
             metadata_dir: metadata.clone(),
+            spec_baseline_dir: root.join("spec-doc"),
         };
 
         // Clean staged run (identical inventory) → exit 0.
@@ -995,6 +1207,7 @@ mod tests {
             baseline_dir: baseline,
             run_root: root.join("runs"),
             metadata_dir: metadata,
+            spec_baseline_dir: root.join("spec-doc"),
         };
 
         // Untracked-only degradation → exit 0 + a visible facts finding.
@@ -1075,6 +1288,164 @@ mod tests {
         );
     }
 
+    // --- spec-doc subcommand (U4) -----------------------------------------
+
+    fn example_run(trs: &[(&str, Value, Value)]) -> ExampleRun {
+        use crate::fetch::{RawGroup, RawTr};
+        let raw_trs: Vec<RawTr> = trs
+            .iter()
+            .map(|(code, req, res)| RawTr {
+                code: code.to_string(),
+                name: Some(code.to_string()),
+                is_websocket: false,
+                http_method: Some("POST".to_string()),
+                url: Some(format!("/{code}")),
+                protocol_type: Some("REST".to_string()),
+                rate_limit_per_sec: Some(1),
+                corp_rate_limit_per_sec: None,
+                description: None,
+                properties: vec![],
+                req_example: req.clone(),
+                res_example: res.clone(),
+            })
+            .collect();
+        let inv = RawInventory {
+            source_urls: vec![],
+            property_types: BTreeMap::new(),
+            groups: vec![RawGroup {
+                category_name: "c".to_string(),
+                group_id: Some("g".to_string()),
+                group_name: "그룹".to_string(),
+                is_websocket_group: false,
+                trs: raw_trs,
+            }],
+        };
+        normalize_example_run(&inv, false)
+    }
+
+    use serde_json::Value;
+
+    fn jstr(s: &str) -> Value {
+        Value::String(s.to_string())
+    }
+
+    /// `parse_args` parses `spec-doc check [--staged DIR]` and `renormalize`, and
+    /// rejects unknown `spec-doc` subcommands. `spec-drift` stays an unknown first
+    /// token (the API Drift rejection assertion is unaffected).
+    #[test]
+    fn parses_spec_doc_subcommands() {
+        assert_eq!(
+            parse_args(args(&["spec-doc", "check"])).unwrap(),
+            Command::SpecCheck { staged: None }
+        );
+        assert_eq!(
+            parse_args(args(&["spec-doc", "check", "--staged", "/tmp/run"])).unwrap(),
+            Command::SpecCheck {
+                staged: Some(PathBuf::from("/tmp/run"))
+            }
+        );
+        assert_eq!(
+            parse_args(args(&["spec-doc", "renormalize"])).unwrap(),
+            Command::SpecRenormalize
+        );
+        assert!(parse_args(args(&["spec-doc", "bogus"])).is_err());
+        assert!(
+            parse_args(args(&["spec-doc", "renormalize", "--seed"])).is_err(),
+            "renormalize takes no arguments"
+        );
+        // `spec-drift` (drift, not doc) is still an unknown first token.
+        assert!(parse_args(args(&["spec-drift", "check"])).is_err());
+    }
+
+    /// `run_spec_check` against a clean Reviewed Baseline (compared to itself) →
+    /// exit 0 with no findings.
+    #[test]
+    fn spec_check_clean_self_diff_exits_zero() {
+        let root = scratch("spec-clean");
+        let spec_dir = root.join("spec-doc");
+        let run = example_run(&[("t1102", Value::Null, jstr(r#"{"blk":{"price":1}}"#))]);
+        write_example_baseline(&spec_dir, &run).unwrap();
+        let paths = Paths {
+            baseline_dir: root.join("baseline"),
+            run_root: root.join("runs"),
+            metadata_dir: repo_metadata_dir(),
+            spec_baseline_dir: spec_dir.clone(),
+        };
+        let result = run_spec_check(&paths, Some(&spec_dir));
+        assert_eq!(spec_exit_for(&result), Exit::Ok);
+        let report = result.unwrap();
+        assert!(report.findings.is_empty(), "self-diff is clean: {:?}", report.findings);
+        assert!(!report.gates());
+    }
+
+    /// A simulated example-normalizer-version mismatch between committed and
+    /// staged refuses to compare (exit 2).
+    #[test]
+    fn spec_check_refuses_cross_version_compare() {
+        let root = scratch("spec-version");
+        let spec_dir = root.join("spec-doc");
+        let mut committed = example_run(&[("t1102", Value::Null, jstr(r#"{"a":1}"#))]);
+        committed.manifest.normalizer_version = 1;
+        write_example_baseline(&spec_dir, &committed).unwrap();
+
+        let staged_dir = root.join("staged");
+        let mut staged = example_run(&[("t1102", Value::Null, jstr(r#"{"a":1}"#))]);
+        staged.manifest.normalizer_version = 2;
+        write_example_baseline(&staged_dir, &staged).unwrap();
+
+        let paths = Paths {
+            baseline_dir: root.join("baseline"),
+            run_root: root.join("runs"),
+            metadata_dir: repo_metadata_dir(),
+            spec_baseline_dir: spec_dir,
+        };
+        let result = run_spec_check(&paths, Some(&staged_dir));
+        assert_eq!(spec_exit_for(&result), Exit::Error);
+        assert!(result.unwrap_err().contains("example normalizer version mismatch"));
+    }
+
+    /// AE1 + AE2 over the CLI: a Tracked-TR (implemented `t1102`) example change
+    /// exits 0 with a visible advisory finding carrying its doc pointers; an
+    /// untracked-only example change exits 0 with a visible finding, no pointer.
+    #[test]
+    fn spec_check_emits_advisory_findings_and_pointers_at_exit_zero() {
+        let root = scratch("spec-findings");
+        let spec_dir = root.join("spec-doc");
+        let committed = example_run(&[
+            ("t1102", Value::Null, jstr(r#"{"blk":{"price":1}}"#)),
+            ("UNTRACKED", Value::Null, jstr(r#"{"x":1}"#)),
+        ]);
+        write_example_baseline(&spec_dir, &committed).unwrap();
+
+        let staged_dir = root.join("staged");
+        let staged = example_run(&[
+            ("t1102", Value::Null, jstr(r#"{"blk":{"price":1,"qty":2}}"#)),
+            ("UNTRACKED", Value::Null, jstr(r#"{"x":1,"y":2}"#)),
+        ]);
+        write_example_baseline(&staged_dir, &staged).unwrap();
+
+        let paths = Paths {
+            baseline_dir: root.join("baseline"),
+            run_root: root.join("runs"),
+            metadata_dir: repo_metadata_dir(),
+            spec_baseline_dir: spec_dir,
+        };
+        let result = run_spec_check(&paths, Some(&staged_dir));
+        assert_eq!(spec_exit_for(&result), Exit::Ok, "advisory findings never gate");
+        let report = result.unwrap();
+        assert!(!report.gates());
+
+        let t1102 = report.findings.iter().find(|f| f.tr_code == "t1102").unwrap();
+        assert!(!t1102.pointers.is_empty(), "implemented TR carries doc pointers");
+        assert!(t1102
+            .pointers
+            .iter()
+            .any(|p| p.path == "docs/reference/t1102.md"));
+
+        let untracked = report.findings.iter().find(|f| f.tr_code == "UNTRACKED").unwrap();
+        assert!(untracked.pointers.is_empty(), "untracked TR carries no pointer");
+    }
+
     /// A normalizer-version mismatch between committed and staged refuses to
     /// compare (exit 2) rather than emitting spurious cross-version findings.
     #[test]
@@ -1098,6 +1469,7 @@ mod tests {
             baseline_dir: baseline,
             run_root: root.join("runs"),
             metadata_dir: metadata,
+            spec_baseline_dir: root.join("spec-doc"),
         };
         let result = run_check(&paths, Some(&staged));
         assert_eq!(exit_for(&result), Exit::Error);
