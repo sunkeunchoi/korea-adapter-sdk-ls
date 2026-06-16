@@ -30,6 +30,7 @@
 pub mod api_drift;
 pub mod cli;
 pub mod fetch;
+pub mod spec_doc;
 pub mod stages;
 pub mod types;
 
@@ -43,9 +44,12 @@ pub use fetch::{
     GateOutcome, MenuGroup, MenuParseError, RawGroup, RawInventory, RawTr, RetryConfig,
     DEFAULT_TRUNCATION_PROPORTION,
 };
+pub use spec_doc::{
+    normalize_example_run, ExampleManifest, ExampleRun, EXAMPLE_NORMALIZER_VERSION,
+};
 pub use stages::{classify, diff, normalize, promote, FetchNotImplemented};
 pub use types::{
     gates_for, BlockField, Change, CodeSet, CoverageSummary, Direction, DriftChange, DriftFinding,
-    FetchReport, FieldShape, Manifest, NormalizedArtifact, PromoteReport, Protocol, Severity,
-    StagedSnapshot, SupportState, TrShape, TrackerFinding,
+    ExampleFacet, ExampleShape, FetchReport, FieldShape, Manifest, NormalizedArtifact,
+    PromoteReport, Protocol, Severity, StagedSnapshot, SupportState, TrShape, TrackerFinding,
 };

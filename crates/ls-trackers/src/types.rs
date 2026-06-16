@@ -533,6 +533,89 @@ pub struct DriftFinding {
     pub possible_rename: Option<String>,
 }
 
+// ---------------------------------------------------------------------------
+// Specification Document Tracker — example projection (U1). The example facet is
+// net-new: the API Drift normalizer never reads `req_example`/`res_example`.
+// These persisted types live in the `spec-doc` baseline tree under their own
+// `EXAMPLE_NORMALIZER_VERSION` (KTD2), with `#[serde(default)]` on optional
+// fields from day one to heed the carried R-4 serde forward-compat residual
+// (KTD6).
+// ---------------------------------------------------------------------------
+
+/// One TR's normalized request/response example projection (R2), stored in the
+/// `spec-doc` baseline keyed by `tr_code`.
+///
+/// By construction it carries only structural descriptors — field-path → leaf
+/// [`FieldShape`] for JSON, the key set for form-encoded, and nothing at all for
+/// opaque/absent — never a raw example string or scalar value. The real-looking
+/// credentials embedded in the `token`/`revoke`/`S3_` examples therefore can
+/// never reach a committed baseline (KTD7): the type makes the unsafe write
+/// unrepresentable.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExampleShape {
+    pub tr_code: String,
+    #[serde(default)]
+    pub req: ExampleFacet,
+    #[serde(default)]
+    pub res: ExampleFacet,
+}
+
+impl ExampleShape {
+    /// An all-[`ExampleFacet::Absent`] shape for `tr_code` — the synthetic "other
+    /// side" when a TR's example appears or disappears across a comparison, so the
+    /// per-facet diff handles add/remove without a special case.
+    pub fn absent(tr_code: &str) -> Self {
+        ExampleShape {
+            tr_code: tr_code.to_string(),
+            req: ExampleFacet::Absent,
+            res: ExampleFacet::Absent,
+        }
+    }
+
+    /// Whether neither direction carries an example (so the TR contributes no
+    /// shape to the baseline).
+    pub fn is_absent(&self) -> bool {
+        self.req.is_absent() && self.res.is_absent()
+    }
+}
+
+/// One direction's normalized example, projected per payload class (KTD3):
+///
+/// * [`Json`](ExampleFacet::Json) — a JSON-parseable example reduced to the same
+///   field-path → leaf [`FieldShape`] map the API Drift leaf walker produces,
+///   discarding scalar sample values so value churn is not drift (R2, AE4).
+/// * [`Form`](ExampleFacet::Form) — a form-encoded example reduced to its key
+///   set, discarding values so a secret-only change is not drift (R2, AE5).
+/// * [`Opaque`](ExampleFacet::Opaque) — present but non-parseable; carries no
+///   structure, compared only by class, never shape-diffed (R2, R9).
+/// * [`Absent`](ExampleFacet::Absent) — no example in this direction.
+///
+/// `Opaque` and `Absent` carry no payload, so a non-parseable example's raw text
+/// (which may embed credentials, e.g. the untracked `UBM` request JWT) never
+/// lands in a committed baseline (KTD7).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ExampleFacet {
+    #[default]
+    Absent,
+    Json {
+        #[serde(default)]
+        shape: BTreeMap<String, FieldShape>,
+    },
+    Form {
+        #[serde(default)]
+        keys: BTreeSet<String>,
+    },
+    Opaque,
+}
+
+impl ExampleFacet {
+    /// Whether this direction carries no example at all.
+    pub fn is_absent(&self) -> bool {
+        matches!(self, ExampleFacet::Absent)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

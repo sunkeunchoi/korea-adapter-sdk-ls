@@ -58,7 +58,12 @@ pub fn normalize(snapshot: &StagedSnapshot) -> NormalizedArtifact {
 /// key (`a.b`); arrays descend element-wise with a collapsed `[]` segment
 /// (`a[].b`). Empty containers are recorded as a single `Array`/`Object` leaf so
 /// an empty-but-present field is still tracked.
-fn collect_paths(value: &Value, path: String, fields: &mut BTreeMap<String, FieldShape>) {
+///
+/// Exposed `pub(crate)` so the Specification Document Tracker's example
+/// projection ([`crate::spec_doc`]) reuses the same leaf-path walker for
+/// JSON-parseable examples (KTD3), keeping example shape-diffing identical to the
+/// API Drift leaf model rather than forking a second walker.
+pub(crate) fn collect_paths(value: &Value, path: String, fields: &mut BTreeMap<String, FieldShape>) {
     match value {
         Value::Object(map) => {
             if map.is_empty() {
