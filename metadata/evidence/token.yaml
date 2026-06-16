@@ -1,0 +1,25 @@
+# Focused Evidence — token (OAuth2 access token issuance)
+#
+# A durable, credential-free record of a genuine Paper Live Smoke that issued an
+# OAuth access token. The `line` below is captured VERBATIM from the
+# `LIVE-SMOKE` stdout of `make live-smoke`
+# (crates/ls-sdk/tests/live_smoke.rs::live_smoke_default), which is
+# credential-free and self-dated by construction (no rsp_msg, machine-emitted
+# UTC date). This file is the link between `token`'s
+# `maintenance.last_reviewed` date and the run that justifies it; no schema
+# field references it — the filename (keyed to the TR code) plus the matching
+# date is the link.
+#
+# Secret-safety: structural descriptors and lengths only — never the token,
+# appkey, secret, or account number. See
+# docs/solutions/architecture-patterns/change-tracker-baseline-clean-self-diff.md
+#
+# Integrity of THIS record: `token_len=380` (non-empty token) and `rsp_cd=00000`
+# (gateway success) confirm a genuine OAuth 200 — not a paper-guard miss (which
+# fails the test) and not a quote-contaminated 403 (see
+# docs/solutions/integration-issues/makefile-include-env-quotes-gateway-403.md).
+tr_code: token
+date: 2026-06-16
+env: paper
+target: live-smoke
+line: "LIVE-SMOKE target=live-smoke inputs=[env=paper symbol=005930 date=2026-06-16] result=[token_len=380 rsp_cd=00000 price=343000]"

@@ -8,7 +8,7 @@
 
 - Tracked: yes
 - Implemented: yes
-- Recommended: no
+- Recommended: yes
 
 ## Ownership
 
@@ -35,4 +35,4 @@
 ## Maintenance
 
 - Source spec hash: `a1b2c3d4e5f6`
-- Last reviewed: `2026-06-15`
+- Last reviewed: `2026-06-16`
