@@ -290,41 +290,35 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, String> {
     serde_json::from_slice(&bytes).map_err(|e| format!("parsing {}: {e}", path.display()))
 }
 
-/// Write an example projection to `dir`: code-set, example manifest, and per-TR
-/// example shapes (the `spec-doc` baseline layout, mirroring [`write_normalized`]
-/// but for the example facet). Deterministic, pretty JSON. The shape type is
-/// [`ExampleShape`], never a raw `serde_json::Value`, so no unprocessed example
-/// payload can be written (KTD7).
+/// The aggregated example-shapes file. Unlike the API Drift per-TR layout
+/// (`normalized/trs/{code}.json`), the **full-inventory** example baseline (KTD8)
+/// is stored as one sorted `code → ExampleShape` map. Per-TR files are lossy
+/// here: ~4 upstream codes collide case-insensitively (`S3_`/`s3_`, `K1_`/`k1_`,
+/// `S2_`/`s2_`, `YS3`/`Ys3`), so on a case-insensitive filesystem the second
+/// write of each pair would overwrite the first and silently drop a shape —
+/// breaking the clean self-diff. A single map is collision-proof and reviews as
+/// one sorted file.
+const EXAMPLES_FILE: &str = "normalized/examples.json";
+
+/// Write an example projection to `dir`: code-set, example manifest, and the
+/// aggregated example-shapes map. Deterministic, pretty JSON. The map value type
+/// is [`ExampleShape`], never a raw `serde_json::Value`, so no unprocessed
+/// example payload can be written (KTD7).
 pub fn write_example_baseline(dir: &Path, run: &ExampleRun) -> std::io::Result<()> {
-    fs::create_dir_all(dir.join(TRS_DIR))?;
+    fs::create_dir_all(dir.join("normalized"))?;
     write_json(&dir.join(CODE_SET_FILE), &run.code_set)?;
     write_json(&dir.join(MANIFEST_FILE), &run.manifest)?;
-    for (code, shape) in &run.shapes {
-        write_json(&dir.join(TRS_DIR).join(format!("{code}.json")), shape)?;
-    }
+    write_json(&dir.join(EXAMPLES_FILE), &run.shapes)?;
     Ok(())
 }
 
-/// Load an [`ExampleRun`] (code-set + example manifest + per-TR example shapes)
-/// from a `spec-doc` baseline or staged-run directory. Missing or malformed files
-/// are an error (exit `2`).
+/// Load an [`ExampleRun`] (code-set + example manifest + aggregated example
+/// shapes) from a `spec-doc` baseline or staged-run directory. Missing or
+/// malformed files are an error (exit `2`).
 pub fn load_example_baseline(dir: &Path) -> Result<ExampleRun, String> {
     let code_set: CodeSet = read_json(&dir.join(CODE_SET_FILE))?;
     let manifest: ExampleManifest = read_json(&dir.join(MANIFEST_FILE))?;
-    let mut shapes = BTreeMap::new();
-    let trs_dir = dir.join(TRS_DIR);
-    if trs_dir.is_dir() {
-        let mut entries: Vec<PathBuf> = fs::read_dir(&trs_dir)
-            .map_err(|e| format!("reading {}: {e}", trs_dir.display()))?
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().is_some_and(|x| x == "json"))
-            .collect();
-        entries.sort();
-        for path in entries {
-            let shape: ExampleShape = read_json(&path)?;
-            shapes.insert(shape.tr_code.clone(), shape);
-        }
-    }
+    let shapes: BTreeMap<String, ExampleShape> = read_json(&dir.join(EXAMPLES_FILE))?;
     Ok(ExampleRun {
         code_set,
         manifest,
@@ -613,34 +607,14 @@ pub fn run_spec_check(paths: &Paths, staged: Option<&Path>) -> Result<SpecReport
 
 /// Re-project the example baseline from the shared committed raw snapshot, in
 /// place, network-free — the example re-seed path (mirrors
-/// [`renormalize_committed`]). Rewrites the code-set / manifest / per-TR example
-/// shapes under `spec_baseline_dir` and prunes shapes for TRs that no longer
-/// carry an example.
+/// [`renormalize_committed`]). Rewrites the code-set, manifest, and aggregated
+/// example-shapes map under `spec_baseline_dir`. No per-TR pruning is needed: the
+/// single aggregated map is fully rewritten, so a TR that lost its example simply
+/// disappears from the map.
 pub fn renormalize_examples(paths: &Paths) -> Result<ExampleRun, String> {
     let run = reproject_examples_from_raw(paths)?;
     write_example_baseline(&paths.spec_baseline_dir, &run).map_err(|e| e.to_string())?;
-    prune_stale_example_shapes(&paths.spec_baseline_dir, &run)?;
     Ok(run)
-}
-
-/// Remove per-TR example-shape files whose code is no longer in the projected set
-/// (a TR that lost its example), so a ghost shape cannot linger as committed
-/// truth. Mirrors [`prune_stale_shapes`].
-fn prune_stale_example_shapes(baseline_dir: &Path, run: &ExampleRun) -> Result<(), String> {
-    let trs_dir = baseline_dir.join(TRS_DIR);
-    if !trs_dir.is_dir() {
-        return Ok(());
-    }
-    for entry in fs::read_dir(&trs_dir).map_err(|e| format!("reading {}: {e}", trs_dir.display()))? {
-        let path = entry.map_err(|e| e.to_string())?.path();
-        if path.extension().is_some_and(|x| x == "json") {
-            let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default();
-            if !run.shapes.contains_key(stem) {
-                fs::remove_file(&path).map_err(|e| format!("removing {}: {e}", path.display()))?;
-            }
-        }
-    }
-    Ok(())
 }
 
 /// Map a `spec-doc check` result to the tiered exit. Example findings are
