@@ -38,5 +38,11 @@ tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }
 dashmap           = "6"
 tokio-stream      = "0.1"
 rust_decimal      = "1.36"
+# HTML/DOM scraping for the LS `/apiservice` menu (API Drift Tracker fetch).
+# Enabled per-crate (`ls-trackers`); other crates do not pull it in.
+scraper           = "0.20"
 # Dev
 wiremock     = "0.6"
+# Synchronous HTTP mock for the blocking reqwest fetch client (ls-trackers).
+# Chosen over wiremock to avoid a tokio runtime + spawn_blocking in #[test].
+httpmock     = "0.7"

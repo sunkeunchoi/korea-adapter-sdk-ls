@@ -13,5 +13,11 @@ description = "Staged-snapshot change trackers: normalize/diff/classify LS API d
 ls-metadata = { path = "../ls-metadata" }
 serde.workspace = true
 serde_json.workspace = true
+scraper.workspace = true
+# The workspace `reqwest` pin omits `blocking`; declare the per-crate feature
+# union here so the tracker CLI uses a synchronous client (matching `ls-docgen`'s
+# no-`#[tokio::main]` shape) without touching other crates.
+reqwest = { workspace = true, features = ["blocking"] }
 
 [dev-dependencies]
+httpmock.workspace = true

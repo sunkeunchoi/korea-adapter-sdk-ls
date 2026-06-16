@@ -15,10 +15,16 @@
 //! Document Tracker exists only as the shared stage and type contract.
 
 pub mod api_drift;
+pub mod fetch;
 pub mod stages;
 pub mod types;
 
-pub use stages::{classify, diff, fetch, normalize, promote, FetchNotImplemented};
+pub use fetch::{
+    completeness_gate, parse_menu, FetchClient, FetchError, FetchInventoryError, GateOutcome,
+    MenuGroup, MenuParseError, RawGroup, RawInventory, RawTr, RetryConfig,
+    DEFAULT_TRUNCATION_PROPORTION,
+};
+pub use stages::{classify, diff, normalize, promote, FetchNotImplemented};
 pub use types::{
     gates_for, BlockField, Change, CodeSet, CoverageSummary, Direction, DriftChange, DriftFinding,
     FetchReport, FieldShape, Manifest, NormalizedArtifact, PromoteReport, Protocol, Severity,
