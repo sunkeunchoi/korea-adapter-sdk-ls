@@ -126,6 +126,44 @@ pub struct Maintenance {
     pub last_reviewed: String,
 }
 
+/// The user-facing recommendation contract for a **Recommended TR**. Carries the
+/// narrative the page cannot derive — what behavior is recommended and what the
+/// claim explicitly does *not* cover — plus a link to the Focused Evidence record
+/// backing it. The freshness date stays on [`Maintenance::last_reviewed`] and the
+/// environment level is read from the evidence record, so neither is duplicated
+/// here. Required when `support.recommended == true`, absent otherwise — enforced
+/// by the validator, not the type system.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Recommendation {
+    /// What behavior is recommended (e.g. `"Paper OAuth access-token issuance"`).
+    pub behavior: String,
+    /// What the recommendation explicitly does **not** claim. Each entry is one
+    /// excluded claim rendered verbatim into the contract's "does not claim" list.
+    #[serde(default)]
+    pub excludes: Vec<String>,
+    /// Path of the **Focused Evidence** record backing the claim, relative to the
+    /// metadata root (e.g. `evidence/token.yaml`). The validator resolves it and
+    /// cross-checks its date against `maintenance.last_reviewed`; `ls-docgen`
+    /// renders the record's environment level into the contract.
+    pub evidence_ref: String,
+}
+
+/// A **Focused Evidence** record (`metadata/evidence/<tr>.yaml`): the durable,
+/// credential-free proof backing a Recommended TR's claim. Parsed (rather than
+/// only convention-linked by filename) so the validator can cross-check `date`
+/// against `maintenance.last_reviewed` and `ls-docgen` can render the `env`
+/// level. Extra fields in the file (e.g. `target`, `line`) are ignored.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EvidenceRecord {
+    pub tr_code: String,
+    pub date: String,
+    pub env: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<String>,
+}
+
 /// The full per-TR maintenance metadata record (`metadata/trs/<tr>.yaml`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrMetadata {
@@ -138,6 +176,10 @@ pub struct TrMetadata {
     pub dependencies: Dependencies,
     pub support: Support,
     pub maintenance: Maintenance,
+    /// Present iff the TR is recommended (validator-enforced). Carries the
+    /// user-facing recommendation contract.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recommendation: Option<Recommendation>,
 }
 
 /// One routing entry in `tr-index.yaml`. Duplicates only selector fields used

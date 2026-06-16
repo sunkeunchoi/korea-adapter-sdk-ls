@@ -699,6 +699,7 @@ mod tests {
                 source_spec_hash: "deadbeef".to_string(),
                 last_reviewed: "2026-06-15".to_string(),
             },
+            recommendation: None,
         }
     }
 

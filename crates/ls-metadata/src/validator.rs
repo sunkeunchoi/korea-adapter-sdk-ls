@@ -17,7 +17,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use crate::schema::{IndexEntry, TrIndex, TrMetadata};
+use crate::schema::{EvidenceRecord, IndexEntry, TrIndex, TrMetadata};
 
 /// The conventional index filename under a metadata root.
 pub const INDEX_FILE_NAME: &str = "tr-index.yaml";
@@ -57,6 +57,26 @@ pub enum ValidationError {
         field: &'static str,
         index_value: String,
         file_value: String,
+    },
+    /// A TR is `recommended` but carries no `recommendation` contract block.
+    RecommendationMissing { tr_code: String },
+    /// A TR carries a `recommendation` block but is not `recommended`.
+    RecommendationOnUnrecommended { tr_code: String },
+    /// A recommended TR's `evidence_ref` does not resolve to a file on disk.
+    EvidenceFileMissing { tr_code: String, path: PathBuf },
+    /// A recommended TR's evidence record could not be parsed.
+    EvidenceParse {
+        tr_code: String,
+        path: PathBuf,
+        message: String,
+    },
+    /// A recommended TR's evidence `date` disagrees with its
+    /// `maintenance.last_reviewed` — they must match until enforcement wires the
+    /// link more richly (the convention guard, now a hard check).
+    EvidenceDateMismatch {
+        tr_code: String,
+        last_reviewed: String,
+        evidence_date: String,
     },
 }
 
@@ -112,6 +132,36 @@ impl fmt::Display for ValidationError {
                 f,
                 "TR `{tr_code}`: index field `{field}` is `{index_value}` but the per-TR file says `{file_value}`"
             ),
+            ValidationError::RecommendationMissing { tr_code } => write!(
+                f,
+                "TR `{tr_code}`: support.recommended is true but no `recommendation` contract block is present"
+            ),
+            ValidationError::RecommendationOnUnrecommended { tr_code } => write!(
+                f,
+                "TR `{tr_code}`: a `recommendation` block is present but support.recommended is false"
+            ),
+            ValidationError::EvidenceFileMissing { tr_code, path } => write!(
+                f,
+                "TR `{tr_code}`: recommendation.evidence_ref does not resolve — no file at {}",
+                path.display()
+            ),
+            ValidationError::EvidenceParse {
+                tr_code,
+                path,
+                message,
+            } => write!(
+                f,
+                "TR `{tr_code}`: failed to parse evidence record {}: {message}",
+                path.display()
+            ),
+            ValidationError::EvidenceDateMismatch {
+                tr_code,
+                last_reviewed,
+                evidence_date,
+            } => write!(
+                f,
+                "TR `{tr_code}`: maintenance.last_reviewed `{last_reviewed}` disagrees with evidence date `{evidence_date}`"
+            ),
         }
     }
 }
@@ -125,6 +175,10 @@ impl std::error::Error for ValidationError {}
 pub struct ValidationReport {
     pub index: TrIndex,
     pub trs: BTreeMap<String, TrMetadata>,
+    /// Parsed Focused Evidence records for recommended TRs, keyed by TR code.
+    /// Populated only for TRs that pass the recommendation/evidence checks, so a
+    /// consumer (e.g. `ls-docgen`) can render the evidence environment level.
+    pub evidence: BTreeMap<String, EvidenceRecord>,
 }
 
 impl ValidationReport {
@@ -209,6 +263,73 @@ pub fn check_routing(
     }
 }
 
+/// Check a parsed TR's recommendation contract and (when recommended) its linked
+/// Focused Evidence record, accumulating located errors. On a clean recommended
+/// TR the parsed evidence record is inserted into `evidence` so downstream
+/// consumers can render its environment level.
+///
+/// Rules: a recommended TR must carry a `recommendation` block; a non-recommended
+/// TR must not; a recommended TR's `evidence_ref` must resolve to a parseable file
+/// whose `date` equals `maintenance.last_reviewed`.
+pub fn check_recommendation(
+    metadata_root: &Path,
+    tr_code: &str,
+    meta: &TrMetadata,
+    evidence: &mut BTreeMap<String, EvidenceRecord>,
+    errors: &mut Vec<ValidationError>,
+) {
+    match (meta.support.recommended, &meta.recommendation) {
+        (true, None) => errors.push(ValidationError::RecommendationMissing {
+            tr_code: tr_code.to_string(),
+        }),
+        (false, Some(_)) => errors.push(ValidationError::RecommendationOnUnrecommended {
+            tr_code: tr_code.to_string(),
+        }),
+        (false, None) => {}
+        (true, Some(rec)) => {
+            let evidence_path = metadata_root.join(&rec.evidence_ref);
+            let yaml = match std::fs::read_to_string(&evidence_path) {
+                Ok(s) => s,
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                    errors.push(ValidationError::EvidenceFileMissing {
+                        tr_code: tr_code.to_string(),
+                        path: evidence_path,
+                    });
+                    return;
+                }
+                Err(e) => {
+                    errors.push(ValidationError::EvidenceParse {
+                        tr_code: tr_code.to_string(),
+                        path: evidence_path,
+                        message: e.to_string(),
+                    });
+                    return;
+                }
+            };
+            let record: EvidenceRecord = match serde_yaml::from_str(&yaml) {
+                Ok(r) => r,
+                Err(e) => {
+                    errors.push(ValidationError::EvidenceParse {
+                        tr_code: tr_code.to_string(),
+                        path: evidence_path,
+                        message: e.to_string(),
+                    });
+                    return;
+                }
+            };
+            if record.date != meta.maintenance.last_reviewed {
+                errors.push(ValidationError::EvidenceDateMismatch {
+                    tr_code: tr_code.to_string(),
+                    last_reviewed: meta.maintenance.last_reviewed.clone(),
+                    evidence_date: record.date.clone(),
+                });
+                return;
+            }
+            evidence.insert(tr_code.to_string(), record);
+        }
+    }
+}
+
 /// Validate a metadata directory: load `tr-index.yaml`, then load and check
 /// every per-TR file it references.
 ///
@@ -241,6 +362,7 @@ pub fn validate_dir(metadata_root: &Path) -> Result<ValidationReport, Vec<Valida
 
     let mut errors: Vec<ValidationError> = Vec::new();
     let mut trs: BTreeMap<String, TrMetadata> = BTreeMap::new();
+    let mut evidence: BTreeMap<String, EvidenceRecord> = BTreeMap::new();
 
     for (tr_code, entry) in &index.trs {
         // Per-TR `file` paths are recorded relative to the metadata root
@@ -269,6 +391,7 @@ pub fn validate_dir(metadata_root: &Path) -> Result<ValidationReport, Vec<Valida
         match parse_tr_metadata(tr_code, &tr_path, &tr_yaml) {
             Ok(meta) => {
                 check_routing(tr_code, entry, &meta, &mut errors);
+                check_recommendation(metadata_root, tr_code, &meta, &mut evidence, &mut errors);
                 trs.insert(tr_code.clone(), meta);
             }
             Err(e) => errors.push(e),
@@ -276,7 +399,11 @@ pub fn validate_dir(metadata_root: &Path) -> Result<ValidationReport, Vec<Valida
     }
 
     if errors.is_empty() {
-        Ok(ValidationReport { index, trs })
+        Ok(ValidationReport {
+            index,
+            trs,
+            evidence,
+        })
     } else {
         Err(errors)
     }
@@ -538,5 +665,131 @@ trs:
             meta.dependencies.self_continuation_fields,
             ["cts_date", "cts_time"]
         );
+    }
+
+    /// A recommended `token` per-TR file carrying a full `recommendation` block.
+    const RECOMMENDED_TOKEN: &str = r#"
+tr_code: token
+owner_class: standalone
+facets:
+  protocol: rest
+  instrument_domain: misc
+  venue_session: unspecified
+  date_sensitive: false
+  self_paginated: false
+  account_state: false
+  paper_incompatible: false
+  certification_path: automated
+  rate_bucket: auth
+  caller_supplied_identifiers: []
+support:
+  tracked: true
+  implemented: true
+  recommended: true
+maintenance:
+  source_spec_hash: aaaa1111bbbb
+  last_reviewed: 2026-06-16
+recommendation:
+  behavior: Paper OAuth access-token issuance
+  evidence_ref: evidence/token.yaml
+  excludes:
+    - Production-credential token issuance
+"#;
+
+    const TOKEN_EVIDENCE: &str = r#"
+tr_code: token
+date: 2026-06-16
+env: paper
+target: live-smoke
+line: "LIVE-SMOKE target=live-smoke result=[token_len=380 rsp_cd=00000]"
+"#;
+
+    fn meta(tr_code: &str, yaml: &str) -> TrMetadata {
+        parse_tr_metadata(tr_code, Path::new("inline"), yaml).expect("fixture parses")
+    }
+
+    #[test]
+    fn recommended_tr_with_matching_evidence_validates_and_records_env() {
+        let root = temp_metadata_root();
+        write(&root, "evidence/token.yaml", TOKEN_EVIDENCE);
+        let m = meta("token", RECOMMENDED_TOKEN);
+
+        let mut evidence = BTreeMap::new();
+        let mut errors = Vec::new();
+        check_recommendation(&root, "token", &m, &mut evidence, &mut errors);
+
+        assert!(errors.is_empty(), "clean recommended TR: {errors:?}");
+        assert_eq!(evidence["token"].env, "paper", "evidence env surfaced");
+
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn recommended_without_block_is_located_error() {
+        let root = temp_metadata_root();
+        // VALID_TOKEN is recommended:false; flip just that flag, no block added.
+        let recommended_no_block = VALID_TOKEN.replace("recommended: false", "recommended: true");
+        let m = meta("token", &recommended_no_block);
+
+        let mut errors = Vec::new();
+        check_recommendation(&root, "token", &m, &mut BTreeMap::new(), &mut errors);
+
+        assert!(errors
+            .iter()
+            .any(|e| matches!(e, ValidationError::RecommendationMissing { tr_code } if tr_code == "token")));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn recommendation_block_on_unrecommended_tr_is_error() {
+        let root = temp_metadata_root();
+        // RECOMMENDED_TOKEN has a block; flip recommended back to false.
+        let block_but_unrec = RECOMMENDED_TOKEN.replace("recommended: true", "recommended: false");
+        let m = meta("token", &block_but_unrec);
+
+        let mut errors = Vec::new();
+        check_recommendation(&root, "token", &m, &mut BTreeMap::new(), &mut errors);
+
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            ValidationError::RecommendationOnUnrecommended { tr_code } if tr_code == "token"
+        )));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn recommended_with_missing_evidence_file_is_located_error() {
+        let root = temp_metadata_root(); // no evidence/ file written
+        let m = meta("token", RECOMMENDED_TOKEN);
+
+        let mut errors = Vec::new();
+        check_recommendation(&root, "token", &m, &mut BTreeMap::new(), &mut errors);
+
+        let located = errors
+            .iter()
+            .find(|e| matches!(e, ValidationError::EvidenceFileMissing { tr_code, .. } if tr_code == "token"))
+            .expect("missing-evidence error");
+        assert!(located.to_string().contains("evidence/token.yaml"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn evidence_date_mismatch_is_located_error() {
+        let root = temp_metadata_root();
+        // Evidence dated a day off from last_reviewed (2026-06-16).
+        let stale = TOKEN_EVIDENCE.replace("date: 2026-06-16", "date: 2026-06-15");
+        write(&root, "evidence/token.yaml", &stale);
+        let m = meta("token", RECOMMENDED_TOKEN);
+
+        let mut evidence = BTreeMap::new();
+        let mut errors = Vec::new();
+        check_recommendation(&root, "token", &m, &mut evidence, &mut errors);
+
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            ValidationError::EvidenceDateMismatch { tr_code, .. } if tr_code == "token"
+        )));
+        assert!(evidence.is_empty(), "no env recorded on a mismatch");
+        std::fs::remove_dir_all(&root).ok();
     }
 }

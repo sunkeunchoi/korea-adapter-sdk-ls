@@ -12,10 +12,11 @@ pub mod validator;
 
 pub use planner::{plan_changes, plan_with_metadata, ChangeSet, PlanError, TestGroup};
 pub use schema::{
-    CertificationPath, Dependencies, Facets, IndexEntry, InstrumentDomain, Maintenance, OwnerClass,
-    Protocol, RateBucket, Support, TrIndex, TrMetadata, VenueSession,
+    CertificationPath, Dependencies, EvidenceRecord, Facets, IndexEntry, InstrumentDomain,
+    Maintenance, OwnerClass, Protocol, RateBucket, Recommendation, Support, TrIndex, TrMetadata,
+    VenueSession,
 };
 pub use validator::{
-    check_routing, parse_tr_metadata, validate_dir, ValidationError, ValidationReport,
-    INDEX_FILE_NAME,
+    check_recommendation, check_routing, parse_tr_metadata, validate_dir, ValidationError,
+    ValidationReport, INDEX_FILE_NAME,
 };

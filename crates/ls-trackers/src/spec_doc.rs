@@ -806,6 +806,7 @@ mod tests {
                 source_spec_hash: "x".to_string(),
                 last_reviewed: "2026-06-16".to_string(),
             },
+            recommendation: None,
         }
     }
 
