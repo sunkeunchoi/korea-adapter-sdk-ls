@@ -40,6 +40,14 @@ _Avoid_: raw diff severity, generator failure, CI severity
 A captured upstream LS API or documentation artifact that can be normalized and diffed before any project baseline is updated.
 _Avoid_: live fetch, generated source, pinned baseline
 
+**Reviewed Baseline**:
+The accepted upstream API or documentation state that a **Change Tracker** compares new **Staged Snapshots** against after human review.
+_Avoid_: generated source, fixture, live snapshot
+
+**Structural API Shape**:
+The normalized request and response structure of an LS transaction request, including block identity, field position, field name, field attributes, protocol, and endpoint facts.
+_Avoid_: sample payload, generated struct, leaf path
+
 **SDK Maintenance Work Item**:
 A reviewed unit of work derived from a **Tracker Finding** that asks an agent or maintainer to update, create, or remove SDK behavior.
 _Avoid_: generated diff, regeneration task, tracker result
@@ -120,7 +128,8 @@ _Avoid_: dependency, standalone prerequisite
 - **TR Dependency Docs** are derived from maintained metadata, not raw tracker output.
 - A **Change Tracker** emits advisory **Tracker Findings**.
 - A **Tracker Finding** uses **Support-Aware Severity**.
-- A **Change Tracker** compares **Staged Snapshots** to reviewed baselines.
+- A **Change Tracker** compares **Staged Snapshots** to **Reviewed Baselines**.
+- An **API Drift Tracker** normalizes upstream API data into **Structural API Shape** before diffing.
 - A **Tracker Finding** can be promoted into an **SDK Maintenance Work Item**.
 - An **SDK Maintenance Work Item** changes the **Maintained SDK Surface** only after review.
 - A **Dependency Class** owns SDK code organization.
