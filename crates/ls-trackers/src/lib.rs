@@ -38,7 +38,10 @@ pub use api_drift::{
     compare, facts_outage_decision, normalize_run, DriftReport, FactsOutage, NormalizedRun,
     NORMALIZER_VERSION,
 };
-pub use cli::{run_cli, Command, Exit, Paths};
+pub use cli::{
+    load_example_baseline, renormalize_examples, run_cli, run_spec_check, spec_exit_for,
+    write_example_baseline, Command, Exit, Paths,
+};
 pub use fetch::{
     completeness_gate, parse_menu, FetchClient, FetchError, FetchInventoryError, FetchOutcome,
     GateOutcome, MenuGroup, MenuParseError, RawGroup, RawInventory, RawTr, RetryConfig,
