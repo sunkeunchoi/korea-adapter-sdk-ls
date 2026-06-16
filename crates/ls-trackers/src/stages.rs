@@ -210,12 +210,22 @@ pub fn classify(changes: &[Change], trs: &BTreeMap<String, TrMetadata>) -> Vec<T
 /// Reference pages), so it lists the reference index as an upper bound rather
 /// than a guaranteed touch — the real, metadata-aware promote tightens it.
 pub fn promote(findings: &[TrackerFinding]) -> PromoteReport {
-    let affected: BTreeSet<&str> = findings.iter().map(|f| f.tr_code.as_str()).collect();
+    promote_targets(findings.iter().map(|f| f.tr_code.as_str()))
+}
+
+/// Enumerate the review targets a real promote would touch for the given
+/// affected TR codes, writing nothing. Shared by the PR #2 [`promote`] and the
+/// real-fetch `api-drift promote --dry-run` (U5). The baseline target is the
+/// committed Structural API Shape file under `baselines/api-drift/` — the old
+/// `tests/fixtures/{tr}_baseline.json` path was a dead reference once the real
+/// bounded baseline layout landed.
+pub fn promote_targets<'a>(affected: impl IntoIterator<Item = &'a str>) -> PromoteReport {
+    let affected: BTreeSet<&str> = affected.into_iter().collect();
 
     let mut report = PromoteReport::default();
     for tr in &affected {
         report.baseline_files.push(format!(
-            "crates/ls-trackers/tests/fixtures/{tr}_baseline.json"
+            "crates/ls-trackers/baselines/api-drift/normalized/trs/{tr}.json"
         ));
         report.metadata_fields.push(format!(
             "metadata/trs/{tr}.yaml: maintenance.source_spec_hash"

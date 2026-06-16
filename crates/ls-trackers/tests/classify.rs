@@ -164,7 +164,7 @@ fn promote_is_a_write_nothing_dry_run_that_enumerates_touches() {
     assert!(report
         .baseline_files
         .iter()
-        .any(|p| p == "crates/ls-trackers/tests/fixtures/t8412_baseline.json"));
+        .any(|p| p == "crates/ls-trackers/baselines/api-drift/normalized/trs/t8412.json"));
     assert!(report
         .metadata_fields
         .iter()

@@ -15,11 +15,13 @@
 //! Document Tracker exists only as the shared stage and type contract.
 
 pub mod api_drift;
+pub mod cli;
 pub mod fetch;
 pub mod stages;
 pub mod types;
 
 pub use api_drift::{compare, normalize_run, DriftReport, NormalizedRun, NORMALIZER_VERSION};
+pub use cli::{run_cli, Command, Exit, Paths};
 pub use fetch::{
     completeness_gate, parse_menu, FetchClient, FetchError, FetchInventoryError, GateOutcome,
     MenuGroup, MenuParseError, RawGroup, RawInventory, RawTr, RetryConfig,
