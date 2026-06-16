@@ -1,0 +1,4 @@
+{
+  "req_example": "appkey=ROTATED99&appsecretkey=NEWSECRET&grant_type=client_credentials&scope=oob&audience=trading",
+  "res_example": "{\"access_token\":\"eyJ0NEW\",\"token_type\":\"Bearer\",\"expires_in\":86400}"
+}
