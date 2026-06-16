@@ -48,9 +48,17 @@ impl Exit {
 /// A parsed `api-drift` subcommand.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Command {
-    Fetch,
-    Check { staged: Option<PathBuf> },
-    PromoteDryRun { staged: Option<PathBuf> },
+    /// `seed` marks the staged code-set `provisional: true` for the one-time
+    /// bootstrap seed (KTD-5); ordinary fetches stage a non-provisional run.
+    Fetch {
+        seed: bool,
+    },
+    Check {
+        staged: Option<PathBuf>,
+    },
+    PromoteDryRun {
+        staged: Option<PathBuf>,
+    },
 }
 
 /// Filesystem locations, injected so tests drive everything over a tempdir.
@@ -93,10 +101,14 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, Str
     let rest: Vec<String> = it.collect();
     match sub.as_deref() {
         Some("fetch") => {
-            if !rest.is_empty() {
-                return Err(format!("`fetch` takes no arguments, got {rest:?}"));
+            let mut seed = false;
+            for arg in &rest {
+                match arg.as_str() {
+                    "--seed" => seed = true,
+                    other => return Err(format!("unexpected argument `{other}`")),
+                }
             }
-            Ok(Command::Fetch)
+            Ok(Command::Fetch { seed })
         }
         Some("check") => Ok(Command::Check {
             staged: parse_staged(&rest)?,
@@ -241,7 +253,7 @@ pub fn run_check(paths: &Paths, staged: Option<&Path>) -> Result<DriftReport, St
     let trs = load_metadata(paths)?;
     let staged_run = match staged {
         Some(dir) => load_normalized(dir).map_err(|e| format!("staged run unavailable: {e}"))?,
-        None => fetch_and_stage(paths)?.1,
+        None => fetch_and_stage(paths, /* provisional */ false)?.1,
     };
     Ok(compare(&committed, &staged_run, &trs))
 }
@@ -249,7 +261,10 @@ pub fn run_check(paths: &Paths, staged: Option<&Path>) -> Result<DriftReport, St
 /// Live-fetch the inventory, apply the split completeness gate, and write a
 /// timestamped staged run. Returns the run directory and its normalized run.
 /// This is the only network path; it is not exercised under `cargo test`.
-pub fn fetch_and_stage(paths: &Paths) -> Result<(PathBuf, NormalizedRun), String> {
+pub fn fetch_and_stage(
+    paths: &Paths,
+    provisional: bool,
+) -> Result<(PathBuf, NormalizedRun), String> {
     let maintained = maintained_codes(paths)?;
     let committed_len = load_normalized(&paths.baseline_dir)
         .ok()
@@ -270,7 +285,7 @@ pub fn fetch_and_stage(paths: &Paths) -> Result<(PathBuf, NormalizedRun), String
         return Err(format!("fetch incomplete: {gate:?}"));
     }
 
-    let normalized = normalize_run(&raw, &maintained, /* provisional */ false);
+    let normalized = normalize_run(&raw, &maintained, provisional);
     let report = FetchReport {
         ok: true,
         fetched_count: fetched,
@@ -321,7 +336,7 @@ pub fn exit_for(result: &Result<DriftReport, String>) -> Exit {
 /// the tiered exit. The binary calls this and maps [`Exit::code`].
 pub fn dispatch(paths: &Paths, command: Command) -> Exit {
     match command {
-        Command::Fetch => match fetch_and_stage(paths) {
+        Command::Fetch { seed } => match fetch_and_stage(paths, seed) {
             Ok((dir, _)) => {
                 println!("staged run written to {}", dir.display());
                 Exit::Ok
@@ -427,7 +442,11 @@ mod tests {
     fn parses_all_subcommands() {
         assert_eq!(
             parse_args(args(&["api-drift", "fetch"])).unwrap(),
-            Command::Fetch
+            Command::Fetch { seed: false }
+        );
+        assert_eq!(
+            parse_args(args(&["api-drift", "fetch", "--seed"])).unwrap(),
+            Command::Fetch { seed: true }
         );
         assert_eq!(
             parse_args(args(&["api-drift", "check"])).unwrap(),
