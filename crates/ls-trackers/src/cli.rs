@@ -238,6 +238,20 @@ fn maintained_codes(paths: &Paths) -> Result<BTreeSet<String>, String> {
     Ok(load_metadata(paths)?.keys().cloned().collect())
 }
 
+/// The committed code-set size for the truncation gate's denominator, or `None`
+/// on bootstrap (no committed baseline). A baseline that is *present but
+/// unreadable* is a hard error — not silently `None`, which would disable the
+/// truncation guard and let a mass-truncated fetch stage as complete.
+fn committed_code_set_len(baseline_dir: &Path) -> Result<Option<usize>, String> {
+    if baseline_dir.join(CODE_SET_FILE).exists() {
+        let run = load_normalized(baseline_dir)
+            .map_err(|e| format!("committed baseline unreadable: {e}"))?;
+        Ok(Some(run.code_set.len()))
+    } else {
+        Ok(None)
+    }
+}
+
 fn load_metadata(paths: &Paths) -> Result<BTreeMap<String, ls_metadata::TrMetadata>, String> {
     validate_dir(&paths.metadata_dir)
         .map(|r| r.trs)
@@ -255,6 +269,15 @@ pub fn run_check(paths: &Paths, staged: Option<&Path>) -> Result<DriftReport, St
         Some(dir) => load_normalized(dir).map_err(|e| format!("staged run unavailable: {e}"))?,
         None => fetch_and_stage(paths, /* provisional */ false)?.1,
     };
+    // Refuse to compare across normalizer versions — the committed
+    // description-hashes were computed under different rules, so a mismatch would
+    // emit spurious findings instead of a clean diff. Re-baseline first (exit 2).
+    if committed.manifest.normalizer_version != staged_run.manifest.normalizer_version {
+        return Err(format!(
+            "normalizer version mismatch: committed v{} vs staged v{} — re-baseline first",
+            committed.manifest.normalizer_version, staged_run.manifest.normalizer_version
+        ));
+    }
     Ok(compare(&committed, &staged_run, &trs))
 }
 
@@ -266,9 +289,7 @@ pub fn fetch_and_stage(
     provisional: bool,
 ) -> Result<(PathBuf, NormalizedRun), String> {
     let maintained = maintained_codes(paths)?;
-    let committed_len = load_normalized(&paths.baseline_dir)
-        .ok()
-        .map(|n| n.code_set.len());
+    let committed_len = committed_code_set_len(&paths.baseline_dir)?;
 
     let client = FetchClient::new(LS_BASE_URL).map_err(|e| e.to_string())?;
     let raw = client.fetch_full_inventory().map_err(|e| e.to_string())?;
@@ -584,5 +605,58 @@ mod tests {
         assert_eq!(Exit::Ok.code(), 0);
         assert_eq!(Exit::Gated.code(), 1);
         assert_eq!(Exit::Error.code(), 2);
+    }
+
+    /// Bootstrap (absent baseline) yields `None`; a valid baseline yields its
+    /// size; a present-but-corrupt baseline is a hard error (never silent `None`,
+    /// which would disable the truncation guard).
+    #[test]
+    fn committed_code_set_len_distinguishes_bootstrap_from_corruption() {
+        let root = scratch("committed-len");
+        // Bootstrap: no baseline directory.
+        assert_eq!(committed_code_set_len(&root.join("absent")).unwrap(), None);
+
+        // Valid baseline → Some(len).
+        let good = root.join("good");
+        write_normalized(&good, &empty_run(&["a", "b", "c"])).unwrap();
+        assert_eq!(committed_code_set_len(&good).unwrap(), Some(3));
+
+        // Present but corrupt code-set.json → hard error.
+        let bad = root.join("bad");
+        write_normalized(&bad, &empty_run(&["a"])).unwrap();
+        fs::write(bad.join(CODE_SET_FILE), b"{ not json").unwrap();
+        assert!(
+            committed_code_set_len(&bad).is_err(),
+            "a corrupt baseline must not silently disable the truncation guard"
+        );
+    }
+
+    /// A normalizer-version mismatch between committed and staged refuses to
+    /// compare (exit 2) rather than emitting spurious cross-version findings.
+    #[test]
+    fn check_refuses_to_compare_across_normalizer_versions() {
+        let root = scratch("version-guard");
+        let baseline = root.join("baseline");
+        let metadata = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("metadata");
+        let mut committed = empty_run(&["t1102"]);
+        committed.manifest.normalizer_version = 1;
+        write_normalized(&baseline, &committed).unwrap();
+
+        let staged = root.join("staged");
+        let mut staged_run = empty_run(&["t1102"]);
+        staged_run.manifest.normalizer_version = 2;
+        write_normalized(&staged, &staged_run).unwrap();
+
+        let paths = Paths {
+            baseline_dir: baseline,
+            run_root: root.join("runs"),
+            metadata_dir: metadata,
+        };
+        let result = run_check(&paths, Some(&staged));
+        assert_eq!(exit_for(&result), Exit::Error);
+        assert!(result.unwrap_err().contains("normalizer version mismatch"));
     }
 }

@@ -535,12 +535,19 @@ fn diff_shapes(base: &TrShape, cand: &TrShape) -> Vec<DriftChange> {
             to: protocol_label(cand.protocol, cand.is_websocket),
         });
     }
-    if base.rate_limit_per_sec != cand.rate_limit_per_sec
-        || base.corp_rate_limit_per_sec != cand.corp_rate_limit_per_sec
-    {
+    // Retail and corporate limits are diffed independently so a corp-only change
+    // is not collapsed into a meaningless `None→None` retail finding and its
+    // restrictiveness (which drives severity) is judged on the pair that moved.
+    if base.rate_limit_per_sec != cand.rate_limit_per_sec {
         changes.push(DriftChange::RateLimitChanged {
             from: base.rate_limit_per_sec,
             to: cand.rate_limit_per_sec,
+        });
+    }
+    if base.corp_rate_limit_per_sec != cand.corp_rate_limit_per_sec {
+        changes.push(DriftChange::RateLimitChanged {
+            from: base.corp_rate_limit_per_sec,
+            to: cand.corp_rate_limit_per_sec,
         });
     }
 
@@ -734,6 +741,19 @@ fn reconcile_reorders(
                     from_index: rf.field_index,
                     to_index: af.field_index,
                 });
+                // A field that both moved and changed type/length/required would
+                // otherwise miss exact-identity matching (its index differs); emit
+                // the attribute change too so an incompatible change is not
+                // understated to a bare reorder.
+                if let Some(detail) = attribute_change_detail(rf, af) {
+                    changes.push(DriftChange::FieldChanged {
+                        direction: af.direction,
+                        block_name: af.block_name.clone(),
+                        field_index: af.field_index,
+                        field_name: af.field_name.clone(),
+                        detail,
+                    });
+                }
                 reconciled_removed.push(r[0]);
                 reconciled_added.push(a[0]);
             }
@@ -1362,6 +1382,114 @@ mod tests {
         // Both underlying findings are preserved.
         assert!(matches!(added.change, DriftChange::TrAdded));
         assert!(matches!(removed.change, DriftChange::TrRemoved));
+    }
+
+    #[test]
+    fn corp_only_rate_limit_change_emits_a_real_finding_not_none_to_none() {
+        // Retail rate unchanged (Some(1)); corp rate tightens 10 -> 5.
+        let mut base = run_of("t8412", vec![rb("OB", "A0003", Value::Null)]);
+        let mut staged = base.clone();
+        base.shapes
+            .get_mut("t8412")
+            .unwrap()
+            .corp_rate_limit_per_sec = Some(10);
+        staged
+            .shapes
+            .get_mut("t8412")
+            .unwrap()
+            .corp_rate_limit_per_sec = Some(5);
+
+        let report = compare(&base, &staged, &no_meta());
+        let rate: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| matches!(f.change, DriftChange::RateLimitChanged { .. }))
+            .collect();
+        assert_eq!(
+            rate.len(),
+            1,
+            "exactly the corp change, no spurious retail finding"
+        );
+        // The corp pair (10 -> 5) carries the real values, not None -> None.
+        assert!(matches!(
+            rate[0].change,
+            DriftChange::RateLimitChanged {
+                from: Some(10),
+                to: Some(5)
+            }
+        ));
+        // A tightening (more restrictive) is maintenance, not informational.
+        assert_eq!(rate[0].severity, Severity::Maintenance);
+    }
+
+    #[test]
+    fn reorder_plus_attribute_change_emits_both_a_reorder_and_a_field_change() {
+        let base = run_of(
+            "t8412",
+            vec![
+                prop("res_b", "OB", "OB", "A0003", Value::Null, "Y", ""),
+                prop(
+                    "res_b",
+                    "a",
+                    "라벨",
+                    "A0001",
+                    serde_json::json!("4"),
+                    "Y",
+                    "",
+                ),
+                prop(
+                    "res_b",
+                    "b",
+                    "라벨",
+                    "A0001",
+                    serde_json::json!("4"),
+                    "Y",
+                    "",
+                ),
+            ],
+        );
+        // `a` moves to index 1 AND changes length 4 -> 8.
+        let staged = run_of(
+            "t8412",
+            vec![
+                prop("res_b", "OB", "OB", "A0003", Value::Null, "Y", ""),
+                prop(
+                    "res_b",
+                    "b",
+                    "라벨",
+                    "A0001",
+                    serde_json::json!("4"),
+                    "Y",
+                    "",
+                ),
+                prop(
+                    "res_b",
+                    "a",
+                    "라벨",
+                    "A0001",
+                    serde_json::json!("8"),
+                    "Y",
+                    "",
+                ),
+            ],
+        );
+        let report = compare(&base, &staged, &no_meta());
+        assert!(
+            report.findings.iter().any(|f| matches!(
+                &f.change,
+                DriftChange::FieldReordered { field_name, .. } if field_name == "a"
+            )),
+            "the reorder is still reported"
+        );
+        assert!(
+            report.findings.iter().any(|f| matches!(
+                &f.change,
+                DriftChange::FieldChanged { field_name, detail, .. }
+                    if field_name == "a" && detail.contains("length 4→8")
+            )),
+            "the attribute change is not swallowed by the reorder: {:?}",
+            report.findings
+        );
     }
 
     #[test]
