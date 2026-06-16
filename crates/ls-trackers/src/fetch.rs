@@ -367,14 +367,24 @@ impl FetchClient {
             {
                 Ok(body) => return Ok(body),
                 Err(e) => {
-                    if attempt >= self.retry.max_retries {
+                    // A 4xx is the server rejecting the request, not a transient
+                    // fault — retrying only wastes the backoff budget before the
+                    // inevitable fetch error.
+                    let client_error = e.status().is_some_and(|s| s.is_client_error());
+                    if client_error || attempt >= self.retry.max_retries {
                         return Err(FetchError::new(format!(
                             "GET {url} failed after {} attempt(s): {e}",
                             attempt + 1
                         )));
                     }
-                    let backoff = self.retry.base_delay.saturating_mul(1u32 << attempt);
-                    let backoff = backoff.min(self.retry.max_delay);
+                    // Cap the shift so the backoff stays well-defined even if
+                    // `RetryConfig` is given a large `max_retries`; the result is
+                    // clamped to `max_delay` anyway.
+                    let backoff = self
+                        .retry
+                        .base_delay
+                        .saturating_mul(1u32 << attempt.min(31))
+                        .min(self.retry.max_delay);
                     if !backoff.is_zero() {
                         sleep(backoff);
                     }

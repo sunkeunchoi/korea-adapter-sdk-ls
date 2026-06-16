@@ -393,6 +393,12 @@ pub struct FetchReport {
     /// The committed code-set size compared against, when one exists (R12).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub committed_code_set_len: Option<usize>,
+    /// Groups whose protocol/rate facts could not be fetched (best-effort
+    /// endpoint failed). A non-zero count warns that endpoint/rate facts are
+    /// degraded — a wholesale outage would otherwise stage `ok: true` and then
+    /// surface as spurious endpoint/rate drift at compare time.
+    #[serde(default)]
+    pub facts_degraded_groups: usize,
     /// Set when `ok` is false: the gate that fired (parse failure or truncation).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failure: Option<String>,

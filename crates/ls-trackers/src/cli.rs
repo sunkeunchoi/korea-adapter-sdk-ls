@@ -306,11 +306,24 @@ pub fn fetch_and_stage(
         return Err(format!("fetch incomplete: {gate:?}"));
     }
 
+    // A group whose protocol endpoint failed has no `group_id`; a wholesale
+    // outage would otherwise stage `ok: true` and surface as spurious endpoint/
+    // rate drift at compare time. Surface the degradation at fetch time.
+    let facts_degraded_groups = raw.groups.iter().filter(|g| g.group_id.is_none()).count();
+    if facts_degraded_groups > 0 {
+        eprintln!(
+            "warning: {facts_degraded_groups} of {} group(s) returned no protocol/rate facts; \
+             endpoint/rate fields may be degraded for this run",
+            raw.groups.len()
+        );
+    }
+
     let normalized = normalize_run(&raw, &maintained, provisional);
     let report = FetchReport {
         ok: true,
         fetched_count: fetched,
         committed_code_set_len: committed_len,
+        facts_degraded_groups,
         failure: None,
     };
     write_staged_run(&run_dir, &raw, &normalized, &report).map_err(|e| e.to_string())?;
@@ -323,6 +336,7 @@ fn failure_report(fetched: usize, committed_len: Option<usize>, gate: &GateOutco
         ok: false,
         fetched_count: fetched,
         committed_code_set_len: committed_len,
+        facts_degraded_groups: 0,
         failure: Some(format!("{gate:?}")),
     }
 }
@@ -535,6 +549,7 @@ mod tests {
             ok: true,
             fetched_count: 2,
             committed_code_set_len: Some(2),
+            facts_degraded_groups: 0,
             failure: None,
         };
         write_staged_run(&run_dir, &raw, &normalized, &report).unwrap();
@@ -542,7 +557,11 @@ mod tests {
         assert!(run_dir.join(RAW_FILE).is_file());
         assert!(run_dir.join(CODE_SET_FILE).is_file());
         assert!(run_dir.join(MANIFEST_FILE).is_file());
-        assert!(run_dir.join(FETCH_REPORT_FILE).is_file());
+
+        // The fetch-report is not just present — its content round-trips (AE1).
+        let report_back: FetchReport =
+            serde_json::from_slice(&fs::read(run_dir.join(FETCH_REPORT_FILE)).unwrap()).unwrap();
+        assert_eq!(report_back, report);
 
         let reloaded = load_normalized(&run_dir).unwrap();
         assert_eq!(reloaded, normalized, "normalized layout round-trips");

@@ -715,52 +715,39 @@ fn reconcile_reorders(
     cand_fields: &[&BlockField],
     changes: &mut Vec<DriftChange>,
 ) {
-    let key = |f: &BlockField| (f.direction, f.block_name.clone(), f.field_name.clone());
-    let mut reconciled_removed = Vec::new();
-    let mut reconciled_added = Vec::new();
-
-    let groups: BTreeSet<_> = removed.iter().map(|f| key(f)).collect();
-    for g in groups {
-        // Duplicate-name guard: never positionally match a group that has more
-        // than one member on either side in the full field set (R6).
-        let base_mult = base_fields.iter().filter(|f| key(f) == g).count();
-        let cand_mult = cand_fields.iter().filter(|f| key(f) == g).count();
-        if base_mult > 1 || cand_mult > 1 {
-            continue;
-        }
-        let r: Vec<usize> = indices_matching(removed, &g, &key);
-        let a: Vec<usize> = indices_matching(added, &g, &key);
-        if r.len() == 1 && a.len() == 1 {
-            let rf = removed[r[0]];
-            let af = added[a[0]];
-            if rf.field_index != af.field_index {
-                changes.push(DriftChange::FieldReordered {
-                    direction: rf.direction,
-                    block_name: rf.block_name.clone(),
-                    field_name: rf.field_name.clone(),
-                    from_index: rf.field_index,
-                    to_index: af.field_index,
+    reconcile_pairs(
+        removed,
+        added,
+        base_fields,
+        cand_fields,
+        // Group by (direction, block, name): a reorder stays within its block.
+        |f| (f.direction, f.block_name.clone(), f.field_name.clone()),
+        // A pair is a reorder only when the index actually shifted.
+        |rf, af| rf.field_index != af.field_index,
+        |rf, af, changes| {
+            changes.push(DriftChange::FieldReordered {
+                direction: rf.direction,
+                block_name: rf.block_name.clone(),
+                field_name: rf.field_name.clone(),
+                from_index: rf.field_index,
+                to_index: af.field_index,
+            });
+            // A field that both moved and changed type/length/required would
+            // otherwise miss exact-identity matching (its index differs); emit
+            // the attribute change too so an incompatible change is not
+            // understated to a bare reorder.
+            if let Some(detail) = attribute_change_detail(rf, af) {
+                changes.push(DriftChange::FieldChanged {
+                    direction: af.direction,
+                    block_name: af.block_name.clone(),
+                    field_index: af.field_index,
+                    field_name: af.field_name.clone(),
+                    detail,
                 });
-                // A field that both moved and changed type/length/required would
-                // otherwise miss exact-identity matching (its index differs); emit
-                // the attribute change too so an incompatible change is not
-                // understated to a bare reorder.
-                if let Some(detail) = attribute_change_detail(rf, af) {
-                    changes.push(DriftChange::FieldChanged {
-                        direction: af.direction,
-                        block_name: af.block_name.clone(),
-                        field_index: af.field_index,
-                        field_name: af.field_name.clone(),
-                        detail,
-                    });
-                }
-                reconciled_removed.push(r[0]);
-                reconciled_added.push(a[0]);
             }
-        }
-    }
-    retain_except(removed, &reconciled_removed);
-    retain_except(added, &reconciled_added);
+        },
+        changes,
+    );
 }
 
 /// Cross-block move reconciliation: among the remaining leftovers, group by
@@ -773,29 +760,62 @@ fn reconcile_moves(
     cand_fields: &[&BlockField],
     changes: &mut Vec<DriftChange>,
 ) {
-    let key = |f: &BlockField| (f.direction, f.field_name.clone());
+    reconcile_pairs(
+        removed,
+        added,
+        base_fields,
+        cand_fields,
+        // Group by (direction, name): a move spans blocks, so block is excluded.
+        |f| (f.direction, f.field_name.clone()),
+        // A pair is a move only when it changed block.
+        |rf, af| rf.block_name != af.block_name,
+        |rf, af, changes| {
+            changes.push(DriftChange::FieldMovedAcrossBlock {
+                direction: rf.direction,
+                field_name: rf.field_name.clone(),
+                from_block: rf.block_name.clone(),
+                to_block: af.block_name.clone(),
+            });
+        },
+        changes,
+    );
+}
+
+/// Shared 1:1 leftover-reconciliation skeleton for both reorder and move passes.
+/// Groups leftovers by `key`; a group with full multiplicity 1 on each side
+/// (the duplicate-name guard, measured over `base_fields`/`cand_fields`, R6) and
+/// a single removed+added leftover that satisfies `is_match` is reconciled via
+/// `emit` and dropped from the raw add/remove leftovers. Groups that fail the
+/// guard or `is_match` fall through to raw add/remove.
+fn reconcile_pairs<K: Ord>(
+    removed: &mut Vec<&BlockField>,
+    added: &mut Vec<&BlockField>,
+    base_fields: &[&BlockField],
+    cand_fields: &[&BlockField],
+    key: impl Fn(&BlockField) -> K,
+    is_match: impl Fn(&BlockField, &BlockField) -> bool,
+    emit: impl Fn(&BlockField, &BlockField, &mut Vec<DriftChange>),
+    changes: &mut Vec<DriftChange>,
+) {
     let mut reconciled_removed = Vec::new();
     let mut reconciled_added = Vec::new();
 
     let groups: BTreeSet<_> = removed.iter().map(|f| key(f)).collect();
     for g in groups {
+        // Duplicate-name guard: never positionally match a group with more than
+        // one member on either side in the full field set (R6).
         let base_mult = base_fields.iter().filter(|f| key(f) == g).count();
         let cand_mult = cand_fields.iter().filter(|f| key(f) == g).count();
         if base_mult > 1 || cand_mult > 1 {
             continue;
         }
-        let r: Vec<usize> = indices_matching(removed, &g, &key);
-        let a: Vec<usize> = indices_matching(added, &g, &key);
+        let r = indices_matching(removed, &g, &key);
+        let a = indices_matching(added, &g, &key);
         if r.len() == 1 && a.len() == 1 {
             let rf = removed[r[0]];
             let af = added[a[0]];
-            if rf.block_name != af.block_name {
-                changes.push(DriftChange::FieldMovedAcrossBlock {
-                    direction: rf.direction,
-                    field_name: rf.field_name.clone(),
-                    from_block: rf.block_name.clone(),
-                    to_block: af.block_name.clone(),
-                });
+            if is_match(rf, af) {
+                emit(rf, af, changes);
                 reconciled_removed.push(r[0]);
                 reconciled_added.push(a[0]);
             }
@@ -1420,6 +1440,57 @@ mod tests {
         ));
         // A tightening (more restrictive) is maintenance, not informational.
         assert_eq!(rate[0].severity, Severity::Maintenance);
+    }
+
+    #[test]
+    fn endpoint_and_protocol_changes_are_detected() {
+        let base = run_of("t8412", vec![rb("OB", "A0003", Value::Null)]);
+        let mut staged = base.clone();
+        {
+            let s = staged.shapes.get_mut("t8412").unwrap();
+            s.endpoint_path = Some("/v2/stock/chart".to_string());
+            s.protocol = Protocol::Websocket;
+            s.is_websocket = true;
+        }
+        let report = compare(&base, &staged, &no_meta());
+        assert!(report.findings.iter().any(|f| matches!(
+            &f.change,
+            DriftChange::EndpointChanged { to, .. } if to.as_deref() == Some("/v2/stock/chart")
+        )));
+        assert!(report.findings.iter().any(|f| matches!(
+            &f.change,
+            DriftChange::ProtocolChanged { from, to } if from == "rest" && to == "websocket"
+        )));
+    }
+
+    #[test]
+    fn rate_limit_relaxation_is_informational_and_does_not_gate() {
+        // A loosened retail limit (5 -> 10) and a removed corp limit (5 -> None)
+        // are both relaxations → informational, report-only.
+        let mut base = run_of("t8412", vec![rb("OB", "A0003", Value::Null)]);
+        let mut staged = base.clone();
+        {
+            let b = base.shapes.get_mut("t8412").unwrap();
+            b.rate_limit_per_sec = Some(5);
+            b.corp_rate_limit_per_sec = Some(5);
+        }
+        {
+            let s = staged.shapes.get_mut("t8412").unwrap();
+            s.rate_limit_per_sec = Some(10);
+            s.corp_rate_limit_per_sec = None;
+        }
+        let report = compare(&base, &staged, &no_meta());
+        let rate: Vec<_> = report
+            .findings
+            .iter()
+            .filter(|f| matches!(f.change, DriftChange::RateLimitChanged { .. }))
+            .collect();
+        assert_eq!(rate.len(), 2, "retail loosen + corp removal");
+        assert!(
+            rate.iter().all(|f| f.severity == Severity::Informational),
+            "a relaxation is informational"
+        );
+        assert!(!report.gates(), "a rate relaxation does not gate");
     }
 
     #[test]

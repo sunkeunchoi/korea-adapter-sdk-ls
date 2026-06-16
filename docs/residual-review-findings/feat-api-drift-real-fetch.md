@@ -23,18 +23,19 @@ shape in both request and response bodies.
   a re-baseline (exit 2) on a normalizer mismatch, so the change is safe to land
   deliberately rather than mid-slice.
 
-## R-2 — Total facts outage stages an all-None run as complete (P2)
+## R-2 — Total facts outage stages an all-None run as complete (P2) — MITIGATED
 
 `group_protocol` is best-effort (returns empty on failure, migration-source
-parity) and `property_type_mapping` falls back on failure. A *whole-inventory*
-outage would therefore stage a run with all endpoint/protocol/rate facts `None`
-and `fetch-report.ok = true`. The completeness gate (R12) intentionally measures
-inventory *codes*, not facts, so it would not catch this.
+parity). A *whole-inventory* outage would stage a run with all endpoint/rate
+facts `None` and `fetch-report.ok = true`; the completeness gate (R12)
+intentionally measures inventory *codes*, not facts, so it would not catch this.
 
-- **Impact:** none observed — the real seed captured facts (rate limits, endpoints
-  present). The all-None case is visible in baseline review.
-- **Fix shape:** record a per-run `facts_degraded` flag in `fetch-report.json`
-  when protocol/property fetches wholly fail, and surface it at seed/review time.
+- **Mitigated** (round 2): `fetch_and_stage` now counts groups with no protocol
+  facts, records `facts_degraded_groups` in `fetch-report.json`, and warns on
+  stderr at fetch time. The operator now has the signal at fetch/review time.
+- **Still deferred:** the gate itself does not treat a wholesale facts outage as
+  exit `2` — that remains a deliberate operator-review judgment, since a partial
+  facts gap is normal and only a *total* outage is suspicious.
 
 ## R-3 — Duplicate menu group-id / same code across groups: last-wins shape (P3)
 
@@ -65,3 +66,25 @@ Persisted types could be hardened against future schema evolution:
 - **Fix shape:** add `#[serde(other)]`/`#[serde(default)]` and a stable
   `FetchReport.failure` code when forward-compat across binary versions becomes a
   real requirement (e.g. before the first normalizer bump).
+
+## R-5 — Round-2 review nits accepted as-is (P3)
+
+A second review round (reliability/testing/maintainability/project-standards
+personas) confirmed the fixes above and surfaced minor items kept as-is:
+
+- **`TrShape.protocol` + `is_websocket` redundancy** — both fields are in the
+  plan's Structural API Shape schema, so the pair is spec-driven; `protocol` is
+  derived from `is_websocket` at ingest. Kept per spec.
+- **`stages::fetch()` not-implemented stub** — retained as PR #2 compatibility
+  coverage; the `lib.rs` module doc now describes both layers accurately so the
+  stub is no longer misleading.
+- **Broad `lib.rs` re-exports / `RawTr` example fields** — the crate exposes its
+  full surface for integration tests and operator inspection; not tightened.
+- **Minor test-claim gaps** — the `gates_for` matrix omits the unreachable
+  `Critical` rows (declared out of scope this slice); a bare-array
+  `property_type_mapping` response path is covered only via the `{list:[]}` shape.
+
+Round-2 fixes that WERE applied: stale `lib.rs` fetch-stubbed doc corrected;
+retry no longer retries 4xx and caps the backoff shift; `RateLimitChanged`
+relaxation + `EndpointChanged`/`ProtocolChanged` now tested; the duplicated
+reorder/move reconcilers were consolidated into one `reconcile_pairs` helper.
