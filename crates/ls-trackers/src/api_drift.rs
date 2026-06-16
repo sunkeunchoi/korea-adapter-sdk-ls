@@ -1250,6 +1250,30 @@ mod tests {
         assert_eq!(blocks[0].field_index, 0);
     }
 
+    /// The v2 rule rests on the invariant that a genuine delimiter carries a null
+    /// length: a code==label row with ANY parseable length — including a numeric
+    /// `0` and a numeric (not string) JSON value — is a real field. Guards the
+    /// boundary the block-header heuristic depends on; if upstream ever gave a
+    /// real delimiter a numeric length this test would surface the reclassification.
+    #[test]
+    fn same_code_label_row_with_numeric_length_is_a_field() {
+        let mut raw = t8412_raw();
+        raw.properties = vec![
+            prop("res_b", "OB", "OB", "A0003", Value::Null, "Y", ""),
+            // code == label, numeric JSON length 0 → a real field, not a delimiter.
+            prop("res_b", "flag", "flag", "A0001", serde_json::json!(0), "Y", ""),
+        ];
+        let inv = inventory(vec![group_with(vec![raw])]);
+        let run = normalize_run(&inv, &maintained(&["t8412"]), false);
+        let blocks = &run.shapes["t8412"].response_blocks;
+        let flag = blocks
+            .iter()
+            .find(|f| f.field_name == "flag")
+            .expect("a numeric-length code==label row is a field");
+        assert_eq!(flag.block_name, "OB", "filed under the surrounding block");
+        assert_eq!(flag.length, Some(0));
+    }
+
     /// Duplicate field names, a reorder, a block move, a length change, a
     /// required-flag change, and a rate-limit change are each represented
     /// distinctly in the normalized shape.
