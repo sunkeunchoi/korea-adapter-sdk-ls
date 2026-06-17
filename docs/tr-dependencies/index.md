@@ -6,7 +6,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 
 | TR | Name | Owner class | Support | Page |
 |----|------|-------------|---------|------|
-| `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | implemented | [CSPAQ12200](./CSPAQ12200.md) |
+| `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | recommended | [CSPAQ12200](./CSPAQ12200.md) |
 | `CSPAT00601` | 현물 정규주문 (cash equity order submission) | `orders` | tracked | [CSPAT00601](./CSPAT00601.md) |
 | `S3_` | KOSPI 체결 실시간 시세 | `realtime` | recommended | [S3_](./S3_.md) |
 | `revoke` | 접근토큰 폐기 (OAuth2 token revoke) | `standalone` | implemented | [revoke](./revoke.md) |

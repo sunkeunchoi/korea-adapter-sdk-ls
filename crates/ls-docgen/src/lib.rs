@@ -771,7 +771,7 @@ mod tests {
         let dependency = render_dependency_docs(&report.trs, &report.index);
 
         // The still-unrecommended implemented TRs each carry the banner.
-        let banner_trs = ["CSPAQ12200", "revoke"];
+        let banner_trs = ["revoke"];
         for tr in banner_trs {
             let page = reference
                 .get(Path::new(&format!("docs/reference/{tr}.md")))
@@ -782,10 +782,10 @@ mod tests {
             );
         }
 
-        // token, t1101, t1102, t8412, and S3_ are Recommended TRs: each still renders a
-        // Reference page (all stay implemented), but the banner is gone now that they
-        // are promoted.
-        for rec in ["token", "t1101", "t1102", "t8412", "S3_"] {
+        // token, t1101, t1102, t8412, S3_, and CSPAQ12200 are Recommended TRs: each
+        // still renders a Reference page (all stay implemented), but the banner is gone
+        // now that they are promoted.
+        for rec in ["token", "t1101", "t1102", "t8412", "S3_", "CSPAQ12200"] {
             let page = reference
                 .get(Path::new(&format!("docs/reference/{rec}.md")))
                 .unwrap_or_else(|| panic!("{rec} reference page still renders (still implemented)"));
@@ -795,8 +795,9 @@ mod tests {
             );
         }
 
-        // index + 7 implemented pages (2 banner + token + t1101 + t1102 + t8412 + S3_).
-        // Promoted TRs stay implemented, so the count holds at 8 even as banners drop.
+        // index + 7 implemented pages (1 banner [revoke] + token + t1101 + t1102 +
+        // t8412 + S3_ + CSPAQ12200). Promoted TRs stay implemented, so the count holds
+        // at 8 even as banners drop.
         assert_eq!(reference.len(), 8, "index + seven implemented reference pages");
 
         // The tracked-but-unimplemented order TR is excluded from Reference …

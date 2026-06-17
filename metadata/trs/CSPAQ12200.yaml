@@ -18,7 +18,15 @@ dependencies:
 support:
   tracked: true
   implemented: true
-  recommended: false
+  recommended: true
 maintenance:
   source_spec_hash: d4e5f6a1b2c3
-  last_reviewed: 2026-06-15
+  last_reviewed: 2026-06-17
+recommendation:
+  behavior: Paper read-only cash-account balance inquiry (예수금/주문가능금액/총평가)
+  evidence_ref: evidence/CSPAQ12200.yaml
+  excludes:
+    - Order- or position-mutating account state (read-only inquiry only)
+    - Production-credential account inquiries (evidence is paper only)
+    - Balance-value correctness beyond a successful inquiry round-trip
+    - Stronger freshness automation than the stated policy (no enforcement in code today)
