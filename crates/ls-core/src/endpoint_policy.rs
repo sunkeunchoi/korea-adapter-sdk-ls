@@ -123,6 +123,20 @@ pub const T1102_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(5),
 };
 
+/// t1101 — 주식 현재가호가 조회 (market-data current-price + order book).
+pub const T1101_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1101",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(5),
+};
+
 /// t8412 — 주식 차트(N분봉) 조회 (SELF-paginated chart).
 pub const T8412_POLICY: EndpointPolicy = EndpointPolicy {
     tr_code: "t8412",
@@ -206,6 +220,7 @@ mod tests {
         for p in [
             TOKEN_POLICY,
             REVOKE_POLICY,
+            T1101_POLICY,
             T1102_POLICY,
             T8412_POLICY,
             CSPAQ12200_POLICY,

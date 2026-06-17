@@ -7,7 +7,9 @@
 //! regression, and `01900` paper-incompatible classification.
 
 use ls_core::{Inner, LsError};
-use ls_sdk::market_session::{T1102OutBlock, T1102Request, T1102Response};
+use ls_sdk::market_session::{
+    T1101OutBlock, T1101Request, T1101Response, T1102OutBlock, T1102Request, T1102Response,
+};
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
 use wiremock::matchers::{header, method, path};
@@ -16,8 +18,15 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 /// The spec-derived `t1102` response fixture (`fixtures/t1102_resp.json`).
 const T1102_FIXTURE: &str = include_str!("fixtures/t1102_resp.json");
 
+/// The spec-derived `t1101` response fixture (`fixtures/t1101_resp.json`).
+const T1101_FIXTURE: &str = include_str!("fixtures/t1101_resp.json");
+
 /// `T1102_POLICY.path` — the mounted endpoint for the quote TR.
 const T1102_PATH: &str = "/stock/market-data";
+
+/// `T1101_POLICY.path` — the mounted endpoint for the order-book TR (shared with
+/// `t1102`; the `tr_cd` header distinguishes them).
+const T1101_PATH: &str = "/stock/market-data";
 
 /// Build an `LsSdk` whose dispatch is pointed at the mock server.
 fn sdk_for(server: &MockServer) -> LsSdk {
@@ -174,4 +183,153 @@ fn response_envelope_default_is_empty() {
     let resp = T1102Response::default();
     assert_eq!(resp.rsp_cd, "");
     assert_eq!(resp.outblock.price, "");
+}
+
+// ---------------------------------------------------------------------------
+// t1101 — current-price + order-book (호가) quote. Second TR in the
+// market_session class; same dispatch shape as t1102 (single non-paginated
+// POST), distinguished on the wire by the `tr_cd` header.
+// ---------------------------------------------------------------------------
+
+/// Covers R6. The `t1101` request serializes to exactly `{"t1101InBlock":{...}}`
+/// — `shcode` only (no `exchgubun`, unlike `t1102`), and no `tr_cont`/
+/// `tr_cont_key` since `t1101` is not paginated.
+#[test]
+fn t1101_request_serializes_to_inblock_with_only_shcode() {
+    let req = T1101Request::new("078020");
+    let value = serde_json::to_value(&req).expect("serialize t1101 request");
+
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "request must have exactly one top-level key");
+    assert!(obj.contains_key("t1101InBlock"), "missing t1101InBlock key");
+
+    let inblock = &value["t1101InBlock"];
+    let inblock_obj = inblock.as_object().expect("inblock is an object");
+    assert_eq!(inblock_obj.len(), 1, "t1101InBlock carries only shcode");
+    assert_eq!(inblock["shcode"], "078020");
+
+    assert!(value.get("tr_cont").is_none(), "no tr_cont in the body");
+    assert!(
+        value.get("tr_cont_key").is_none(),
+        "no tr_cont_key in the body"
+    );
+}
+
+/// Happy path: the spec-derived fixture deserializes with the price header and
+/// the level-1 order book asserted. The fixture mixes wire types — `price`/
+/// `offerho1` as JSON numbers, `sign` and `offerrem1` as JSON strings — so this
+/// exercises `string_or_number` across the order-book fields.
+#[tokio::test]
+async fn t1101_order_book_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(T1101_PATH))
+        .and(header("tr_cd", "t1101"))
+        .and(header("tr_cont", "N"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T1101_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let req = T1101Request::new("078020");
+    let resp = sdk
+        .market_session()
+        .order_book(&req)
+        .await
+        .expect("t1101 order_book should succeed");
+
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock.price, "4535", "price (was JSON number)");
+    assert_eq!(resp.outblock.sign, "2", "sign (was JSON string)");
+    assert_eq!(resp.outblock.offerho1, "4540", "offerho1 (was JSON number)");
+    assert_eq!(resp.outblock.bidho1, "4535");
+    assert_eq!(
+        resp.outblock.offerrem1, "1200",
+        "offerrem1 (was JSON string)"
+    );
+    assert_eq!(resp.outblock.bidho10, "4490", "deepest bid level parsed");
+}
+
+/// Edge: order-book numeric fields deserialize whether they arrive as JSON
+/// numbers or strings, and a sparse out-block (missing levels) defaults cleanly.
+#[test]
+fn t1101_order_book_fields_number_or_string_and_sparse_default() {
+    let as_numbers = serde_json::json!({
+        "price": 4535,
+        "offerho1": 4540,
+        "bidho1": 4535,
+        "offerrem1": 1200
+    });
+    let out: T1101OutBlock =
+        serde_json::from_value(as_numbers).expect("number fields must deserialize");
+    assert_eq!(out.price, "4535");
+    assert_eq!(out.offerho1, "4540");
+    assert_eq!(out.offerrem1, "1200");
+
+    let as_strings = serde_json::json!({
+        "price": "4535",
+        "offerho1": "4540",
+        "bidho1": "4535",
+        "offerrem1": "1200"
+    });
+    let out_str: T1101OutBlock =
+        serde_json::from_value(as_strings).expect("string fields must deserialize");
+    assert_eq!(out_str.offerho1, out.offerho1);
+    assert_eq!(out_str.offerrem1, out.offerrem1);
+
+    // Sparse: an empty out-block defaults every field to "" without error.
+    let sparse: T1101OutBlock =
+        serde_json::from_value(serde_json::json!({})).expect("empty out-block must default");
+    assert_eq!(sparse.price, "");
+    assert_eq!(sparse.bidho10, "");
+}
+
+/// Error: a `01900` response from the order-book TR classifies as
+/// paper-incompatible — the AE2 fallback path. The exact code is preserved and
+/// the runtime helper classifies it specifically (not a generic failure).
+#[tokio::test]
+async fn t1101_code_01900_classifies_as_paper_incompatible() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(T1101_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "rsp_cd": "01900",
+            "rsp_msg": "모의투자에서는 해당업무가 제공되지 않습니다."
+        })))
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let req = T1101Request::new("078020");
+    let err = sdk
+        .market_session()
+        .order_book(&req)
+        .await
+        .expect_err("01900 must surface as an error");
+
+    match &err {
+        LsError::ApiError { code, .. } => {
+            assert_eq!(code, "01900", "exact code preserved, not collapsed");
+            assert!(
+                ls_core::is_paper_incompatible(code),
+                "01900 must classify as paper-incompatible"
+            );
+        }
+        other => panic!("expected ApiError, got {other:?}"),
+    }
+    assert!(err.is_paper_incompatible());
+}
+
+/// Compile-time guard: `T1101Response` default envelope is empty.
+#[test]
+fn t1101_response_envelope_default_is_empty() {
+    let resp = T1101Response::default();
+    assert_eq!(resp.rsp_cd, "");
+    assert_eq!(resp.outblock.offerho1, "");
 }

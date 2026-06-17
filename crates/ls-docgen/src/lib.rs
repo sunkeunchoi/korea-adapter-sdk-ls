@@ -648,12 +648,13 @@ mod tests {
         validate_dir(&metadata_root()).expect("authored metadata must validate clean")
     }
 
-    /// The seven tracked TRs in the slice.
-    const TRACKED_TRS: [&str; 7] = [
+    /// The eight tracked TRs in the slice.
+    const TRACKED_TRS: [&str; 8] = [
         "CSPAQ12200",
         "CSPAT00601",
         "S3_",
         "revoke",
+        "t1101",
         "t1102",
         "t8412",
         "token",
@@ -679,7 +680,7 @@ mod tests {
     }
 
     #[test]
-    fn every_tracked_tr_gets_a_page_and_the_index_lists_all_seven() {
+    fn every_tracked_tr_gets_a_page_and_the_index_lists_all_eight() {
         let report = authored_report();
         let files = render_dependency_docs(&report.trs, &report.index);
 
@@ -692,7 +693,7 @@ mod tests {
                 "missing page for {tr}"
             );
         }
-        assert_eq!(files.len(), TRACKED_TRS.len() + 1, "index + 7 pages");
+        assert_eq!(files.len(), TRACKED_TRS.len() + 1, "index + 8 pages");
 
         let index = files
             .get(Path::new("docs/tr-dependencies/index.md"))
@@ -764,13 +765,13 @@ mod tests {
     }
 
     #[test]
-    fn reference_covers_six_implemented_with_banner_and_omits_unimplemented() {
+    fn reference_covers_seven_implemented_with_banner_and_omits_unimplemented() {
         let report = authored_report();
         let reference = render_reference_docs(&report.trs, &report.evidence);
         let dependency = render_dependency_docs(&report.trs, &report.index);
 
-        // The five still-unrecommended implemented TRs each carry the banner.
-        let banner_trs = ["CSPAQ12200", "S3_", "revoke", "t1102", "t8412"];
+        // The six still-unrecommended implemented TRs each carry the banner.
+        let banner_trs = ["CSPAQ12200", "S3_", "revoke", "t1101", "t1102", "t8412"];
         for tr in banner_trs {
             let page = reference
                 .get(Path::new(&format!("docs/reference/{tr}.md")))
@@ -791,9 +792,9 @@ mod tests {
             "token is recommended — its reference page must not carry the banner"
         );
 
-        // index + 6 implemented pages (5 banner + token). token stays implemented,
-        // so the count holds at 7 even though it lost the banner.
-        assert_eq!(reference.len(), 7, "index + six implemented reference pages");
+        // index + 7 implemented pages (6 banner + token). token stays implemented,
+        // so the count holds at 8 even though it lost the banner.
+        assert_eq!(reference.len(), 8, "index + seven implemented reference pages");
 
         // The tracked-but-unimplemented order TR is excluded from Reference …
         assert!(!reference.contains_key(Path::new("docs/reference/CSPAT00601.md")));

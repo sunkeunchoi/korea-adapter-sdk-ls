@@ -960,7 +960,7 @@ mod tests {
             crate::api_drift::NORMALIZER_VERSION
         );
         assert_eq!(run.manifest.normalizer_version, 2);
-        assert_eq!(run.shapes.len(), 7, "seven maintained shapes");
+        assert_eq!(run.shapes.len(), 8, "eight maintained shapes");
         assert_eq!(run.code_set.len(), 365, "full inventory code-set preserved");
         assert!(
             run.code_set.provisional,
@@ -1025,7 +1025,7 @@ mod tests {
             scratch.join(TRS_DIR).join("token.json").exists(),
             "maintained shapes remain"
         );
-        assert_eq!(run.shapes.len(), 7);
+        assert_eq!(run.shapes.len(), 8);
     }
 
     fn empty_run(codes: &[&str]) -> NormalizedRun {
