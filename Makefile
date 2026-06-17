@@ -15,7 +15,7 @@
 # Export command-line / make variables (e.g. LS_LIVE_SMOKE_*) to recipe shells.
 export
 
-.PHONY: live-smoke live-smoke-chart live-smoke-account live-smoke-ws
+.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws
 
 # $(1) = exact test name in crates/ls-sdk/tests/live_smoke.rs
 define run_smoke
@@ -28,6 +28,11 @@ endef
 ## Default smoke: paper guard -> OAuth token -> one t1102 quote (no date needed).
 live-smoke:
 	$(call run_smoke,live_smoke_default)
+
+## Order-book smoke: paper guard -> OAuth token -> one t1101 호가 quote (no date
+## needed). Must run during an open KRX regular session for live depth.
+live-smoke-book:
+	$(call run_smoke,live_smoke_book)
 
 ## Chart smoke: requires LS_LIVE_SMOKE_T8412_DATE=YYYYMMDD (a real trading day).
 ##   make live-smoke-chart LS_LIVE_SMOKE_T8412_DATE=20260612

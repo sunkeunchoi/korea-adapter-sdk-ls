@@ -18,7 +18,7 @@ use chrono::{Datelike, FixedOffset, NaiveDate, Utc, Weekday};
 use futures::StreamExt;
 use ls_core::{LsConfig, LsError, LsResult};
 use ls_sdk::account::CSPAQ12200Request;
-use ls_sdk::market_session::T1102Request;
+use ls_sdk::market_session::{T1101Request, T1102Request};
 use ls_sdk::paginated::T8412Request;
 use ls_sdk::realtime::S3Trade;
 use ls_sdk::LsSdk;
@@ -146,6 +146,54 @@ async fn live_smoke_default() {
             token.len(),
             resp.rsp_cd,
             resp.outblock.price
+        ),
+    );
+}
+
+/// `make live-smoke-book`: paper guard → OAuth token → one `t1101` order-book
+/// quote. The recorded line is the Focused Evidence candidate for `t1101`
+/// (`metadata/evidence/t1101.yaml` on a green run) — credential-free and
+/// self-dated by construction. `order_book` returning `Ok` proves market-data
+/// transport; a `01900` would `Err` here and drive the AE2 paper-incompatible
+/// reclassification (`paper_incompatible: true`, stay `implemented`).
+///
+/// `symbol` is a public market ticker (Samsung by default); any
+/// `LS_LIVE_SMOKE_SHCODE` override must also be a public ticker, never an
+/// account number or internal identifier.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-book`"]
+async fn live_smoke_book() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let symbol = resolve_symbol();
+
+    let token = sdk
+        .standalone()
+        .token()
+        .await
+        .expect("OAuth token acquisition failed");
+    assert!(
+        !token.is_empty(),
+        "token must be non-empty — proves a live round-trip"
+    );
+
+    let req = T1101Request::new(&symbol);
+    let resp = sdk
+        .market_session()
+        .order_book(&req)
+        .await
+        .expect("t1101 order_book failed");
+
+    let date = Utc::now().format("%Y-%m-%d");
+    record(
+        "live-smoke-book",
+        &format!("env=paper symbol={symbol} date={date}"),
+        &format!(
+            "token_len={} rsp_cd={} price={} offerho1={} bidho1={}",
+            token.len(),
+            resp.rsp_cd,
+            resp.outblock.price,
+            resp.outblock.offerho1,
+            resp.outblock.bidho1
         ),
     );
 }
