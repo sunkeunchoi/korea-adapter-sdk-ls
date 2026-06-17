@@ -85,7 +85,7 @@ The reviewed path from an upstream change signal to accepted SDK maintenance wor
 _Avoid_: tracker flow, migration flow, automatic regeneration
 
 **Foundation Complete**:
-The state where ordinary SDK maintenance or expansion can move through review, queued work, artifact updates, verification, and any needed baseline decision without inventing a new process.
+The state where ordinary SDK maintenance or expansion can move through review, queued work, artifact updates, verification, and any needed baseline decision without inventing a new process. It is proven in two stages: first that the queue plumbing is self-consistent, then that the flow carries weight on a real SDK-facing work item. It is claimed only after the second stage.
 _Avoid_: all TRs ported, tracker perfection, migration done
 
 **Dependency Class**:
@@ -175,7 +175,7 @@ _Avoid_: dependency, standalone prerequisite
 - Accepted **SDK Maintenance Work Items** and **SDK Expansion Work Items** live in the **Maintenance Work Queue**.
 - A **Completed Maintenance Work Item** is not complete from code changes alone.
 - The **Maintenance Flow** begins with an upstream change signal and does not change the **Maintained SDK Surface** until reviewed work is accepted.
-- **Foundation Complete** means the **Maintenance Flow** can be repeated without creating a new process for each work item.
+- **Foundation Complete** means the **Maintenance Flow** can be repeated without creating a new process for each work item, and is claimed only after a real SDK-facing work item has proven the flow, not from queue plumbing alone.
 - An **SDK Maintenance Work Item** changes the **Maintained SDK Surface** only after review.
 - A **Dependency Class** owns SDK code organization.
 - **Facet Metadata** routes tests, evidence, documentation, and operator scheduling.

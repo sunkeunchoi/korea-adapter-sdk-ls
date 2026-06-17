@@ -26,14 +26,29 @@ Evidence decision. A code change alone does not complete the item; completion
 requires the selected gate to pass and the baseline/evidence decisions to be
 recorded.
 
+**Labels are the contract; the body is reviewed prose.** Labels are the only
+machine-checkable part of a queue item — they are durable and filterable. The
+issue body (the gate, baseline, and evidence decisions) is human-reviewed prose:
+the template seeds it but does not enforce it after creation, so the body can be
+edited freely. "Closed cleanly" therefore means a reviewer read the body and
+confirmed it, not that any tool verified it. Do not treat the body as a machine
+contract.
+
 ### Foundation Complete checkpoint
 
-The first proof item is
-[`#9 Prove Maintenance Work Queue end-to-end`](https://github.com/sunkeunchoi/korea-adapter-sdk-ls/issues/9).
-Closing it cleanly proves that the queue mechanics can carry one accepted item
-through labels, template fields, maintained-artifact review, gate decision,
-Baseline Promotion decision, and Focused Evidence decision. After #9 closes, the
-next proof should be one real SDK-facing maintenance or expansion issue.
+Foundation Complete is proven in **two stages**, not by one issue.
+
+- **Stage 1 — plumbing.**
+  [`#9 Prove Maintenance Work Queue end-to-end`](https://github.com/sunkeunchoi/korea-adapter-sdk-ls/issues/9)
+  proves the queue mechanics are self-consistent: labels, template fields, the
+  completion checklist, and the runbook path. Because #9 carries no real TR and
+  records Baseline Promotion and Focused Evidence as "Not needed," closing it
+  proves the form is fillable — not that the flow carries weight.
+- **Stage 2 — weight.** The next proof must be one **real** SDK-facing
+  maintenance or expansion issue: a real affected TR, a real Change-Scoped Gate
+  that runs, and genuine Baseline Promotion / Focused Evidence decisions.
+
+**Foundation Complete is claimed only after Stage 2 closes**, not at #9.
 
 ## API Drift review
 
