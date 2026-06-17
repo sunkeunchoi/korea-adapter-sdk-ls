@@ -4,10 +4,10 @@
 # single chart page for a real trading day. The `line` below is captured
 # VERBATIM from the `LIVE-SMOKE` stdout of
 # `make live-smoke-chart LS_LIVE_SMOKE_T8412_DATE=20260617`
-# (crates/ls-sdk/tests/live_smoke.rs::live_smoke_chart). After the U1 harness
-# fix the line drops `rsp_msg` (localized, account-identifying text) and carries
-# only the numeric `rsp_cd` plus a public structural `rows` count — so a verbatim
-# capture stays credential-free, matching the token/t1101 evidence shape.
+# (crates/ls-sdk/tests/live_smoke.rs::live_smoke_chart). The `record()` line
+# drops `rsp_msg` (localized, account-identifying text) and carries only the
+# numeric `rsp_cd` plus a public structural `rows` count — so a verbatim capture
+# stays credential-free, matching the token/t1101 evidence shape.
 #
 # Secret-safety: structural descriptors and public market data only — never the
 # token, appkey, secret, or account number. `symbol=005930` is a public KOSPI

@@ -4,11 +4,11 @@
 # a read-only account-balance inquiry against a provisioned paper account. The
 # `line` below is captured VERBATIM from the `LIVE-SMOKE` stdout of
 # `make live-smoke-account`
-# (crates/ls-sdk/tests/live_smoke.rs::live_smoke_account). After the U1 harness
-# fix the line drops `rsp_msg` (localized, account-identifying text) and carries
-# only the numeric `rsp_cd` plus a structural `reccnt` — never the account number
-# itself (the account is config-supplied and identified by the bearer token, not
-# echoed here).
+# (crates/ls-sdk/tests/live_smoke.rs::live_smoke_account). The `record()` line
+# drops `rsp_msg` (localized, account-identifying text) and carries only the
+# numeric `rsp_cd` plus a structural `reccnt` — never the account number itself
+# (the account is config-supplied and identified by the bearer token, not echoed
+# here).
 #
 # Secret-safety: structural descriptors only — no token, appkey, secret, account
 # number, or balance amount. `balcretp=1` is the balance-creation-type input;

@@ -5,8 +5,10 @@
 # `LIVE-SMOKE` stdout of `make live-smoke`
 # (crates/ls-sdk/tests/live_smoke.rs::live_smoke_default), which is
 # credential-free and self-dated by construction (no rsp_msg, machine-emitted
-# UTC date). The same green run is the Focused Evidence for `token` (it issues
-# the OAuth token first, then the t1102 quote); this file links t1102's
+# UTC date). The `make live-smoke` target also backs `token`'s evidence — each
+# run issues the OAuth token first, then the t1102 quote — but `token` was last
+# attested on its own prior run (see metadata/evidence/token.yaml), so the two
+# files record different dates. This file links t1102's
 # `maintenance.last_reviewed` date to the run that justifies it — the filename
 # (keyed to the TR code) plus the matching date is the link.
 #
