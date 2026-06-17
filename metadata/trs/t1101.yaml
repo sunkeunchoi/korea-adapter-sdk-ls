@@ -18,7 +18,15 @@ dependencies:
 support:
   tracked: true
   implemented: true
-  recommended: false
+  recommended: true
 maintenance:
   source_spec_hash: e5f6a1b2c3d4
   last_reviewed: 2026-06-17
+recommendation:
+  behavior: Paper current-price + 10-level order-book (호가) snapshot for one symbol
+  evidence_ref: evidence/t1101.yaml
+  excludes:
+    - Production-credential quotes (evidence is paper only)
+    - Fields outside the modeled subset (price header + 10 offer/bid levels)
+    - Order-book correctness during halts/VI or outside KRX regular session
+    - Stronger freshness automation than the stated policy (no enforcement in code today)
