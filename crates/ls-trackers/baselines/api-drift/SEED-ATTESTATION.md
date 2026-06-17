@@ -75,3 +75,15 @@ The code-set is re-attested **incrementally**: each future new-TR finding
 (exit `1`) prompts an operator decision to admit the code; the reviewed commit
 that updates `code-set.json` is the evidence trail. Clear `provisional` once an
 operator has independently attested inventory completeness.
+
+### Admission: t1101 (2026-06-17)
+
+`t1101` (주식현재가호가조회, market_session / stock) was admitted as the maintained
+SDK surface's first Stage-2 expansion TR. Its Structural API Shape was projected
+network-free via `api-drift renormalize` from the committed
+`raw/ls-openapi-full.json`; `maintained_tr_count` went 7 → 8 and only
+`normalized/trs/t1101.json` was added (no other maintained shape changed). The
+projection inherits the same `property_type` fallback caveat as the seed — the
+committed raw was fetched under the `system-codes` HTTP 500 fallback, so `t1101`'s
+type-level names are provisional until a future clean fetch resolves them. This
+admission does not clear `provisional`.

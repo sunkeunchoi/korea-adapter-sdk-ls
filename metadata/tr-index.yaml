@@ -29,6 +29,12 @@ trs:
     protocol: rest
     instrument_domain: misc
     venue_session: unspecified
+  t1101:
+    file: trs/t1101.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
   t1102:
     file: trs/t1102.yaml
     owner_class: market_session
