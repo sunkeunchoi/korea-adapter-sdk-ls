@@ -67,7 +67,7 @@ tested today.
   the backstop, emitting `Severity::Evidence`, and mapping a spec-doc finding to
   evidence-staling. A `last_reviewed`-only backstop is the cheap half and the single
   piece that would give a Recommended claim any automated revocation.
-- **Per-class freshness tightening.** With exactly one Recommended TR (`token`) the
-  policy has a single subject; the 90-day default applies and per-class tightening
-  (e.g. a shorter window for `orders`) stays deferred until those classes have
-  recommended TRs.
+- **Per-class freshness tightening.** With two Recommended TRs (`token`, `t1101`)
+  spanning two classes (standalone, market_session), the 90-day default applies
+  uniformly; per-class tightening (e.g. a shorter window for `orders`) stays
+  deferred until those classes have recommended TRs.

@@ -770,8 +770,8 @@ mod tests {
         let reference = render_reference_docs(&report.trs, &report.evidence);
         let dependency = render_dependency_docs(&report.trs, &report.index);
 
-        // The six still-unrecommended implemented TRs each carry the banner.
-        let banner_trs = ["CSPAQ12200", "S3_", "revoke", "t1101", "t1102", "t8412"];
+        // The five still-unrecommended implemented TRs each carry the banner.
+        let banner_trs = ["CSPAQ12200", "S3_", "revoke", "t1102", "t8412"];
         for tr in banner_trs {
             let page = reference
                 .get(Path::new(&format!("docs/reference/{tr}.md")))
@@ -782,15 +782,17 @@ mod tests {
             );
         }
 
-        // token is the first Recommended TR: it still renders a Reference page
-        // (it stays implemented), but the banner is gone now that it is promoted.
-        let token = reference
-            .get(Path::new("docs/reference/token.md"))
-            .expect("token reference page still renders (still implemented)");
-        assert!(
-            !token.contains("Implemented, not yet recommended"),
-            "token is recommended — its reference page must not carry the banner"
-        );
+        // token and t1101 are Recommended TRs: each still renders a Reference page
+        // (both stay implemented), but the banner is gone now that they are promoted.
+        for rec in ["token", "t1101"] {
+            let page = reference
+                .get(Path::new(&format!("docs/reference/{rec}.md")))
+                .unwrap_or_else(|| panic!("{rec} reference page still renders (still implemented)"));
+            assert!(
+                !page.contains("Implemented, not yet recommended"),
+                "{rec} is recommended — its reference page must not carry the banner"
+            );
+        }
 
         // index + 7 implemented pages (6 banner + token). token stays implemented,
         // so the count holds at 8 even though it lost the banner.
