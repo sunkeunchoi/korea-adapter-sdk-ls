@@ -132,6 +132,178 @@ pub struct T1102Response {
     pub outblock: T1102OutBlock,
 }
 
+/// Input block for `t1101` — the symbol to look up.
+///
+/// `shcode` is the 6-digit short code (단축코드). Unlike `t1102`, the `t1101`
+/// request carries no `exchgubun`: the spec's `t1101InBlock` is `shcode`-only.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1101InBlock {
+    /// Short code / 단축코드 (e.g. `"078020"`).
+    pub shcode: String,
+}
+
+/// `t1101` request — wraps the input block under the `t1101InBlock` key.
+///
+/// Serializes to `{"t1101InBlock":{"shcode":...}}`. `t1101` is a single snapshot
+/// (current price + order book), not paginated, so there are no
+/// `tr_cont`/`tr_cont_key` fields in the body.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1101Request {
+    #[serde(rename = "t1101InBlock")]
+    pub inblock: T1101InBlock,
+}
+
+impl T1101Request {
+    /// Build a `t1101` request for one symbol.
+    pub fn new(shcode: impl Into<String>) -> Self {
+        T1101Request {
+            inblock: T1101InBlock {
+                shcode: shcode.into(),
+            },
+        }
+    }
+}
+
+/// `t1101OutBlock` — current-price header plus the 10-level order book.
+///
+/// A representative, spec-grounded subset of the LS `t1101OutBlock`: the
+/// current-price header fields plus all ten offer/bid price+quantity levels.
+/// Every numeric-bearing field uses [`ls_core::string_or_number`] because the
+/// gateway sends them as either JSON numbers or JSON strings; `#[serde(default)]`
+/// on the struct lets a sparse/empty out-block deserialize cleanly. Field names
+/// mirror the LS spec (`t1101OutBlock`) verbatim.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1101OutBlock {
+    /// Korean name / 한글명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change vs. previous close / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Rate of change (%) / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Accumulated volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Previous close / 전일종가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jnilclose: String,
+    /// Offer (ask) prices, levels 1–10 / 매도호가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerho1: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerho2: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerho3: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerho4: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerho5: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerho6: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerho7: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerho8: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerho9: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerho10: String,
+    /// Bid prices, levels 1–10 / 매수호가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidho1: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidho2: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidho3: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidho4: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidho5: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidho6: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidho7: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidho8: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidho9: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidho10: String,
+    /// Offer (ask) quantities, levels 1–10 / 매도호가수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerrem1: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerrem2: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerrem3: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerrem4: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerrem5: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerrem6: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerrem7: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerrem8: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerrem9: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerrem10: String,
+    /// Bid quantities, levels 1–10 / 매수호가수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidrem1: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidrem2: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidrem3: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidrem4: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidrem5: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidrem6: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidrem7: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidrem8: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidrem9: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidrem10: String,
+    /// Total offer quantity / 총매도호가수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offer: String,
+    /// Total bid quantity / 총매수호가수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bid: String,
+}
+
+/// `t1101` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are the LS business-status fields (classified in `ls-core`
+/// dispatch before this struct is built); `outblock` is the snapshot under the
+/// `t1101OutBlock` key. All three are `#[serde(default)]` so a terse or partial
+/// envelope still deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1101Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1101OutBlock", default)]
+    pub outblock: T1101OutBlock,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -156,6 +328,19 @@ impl MarketSession {
     pub async fn quote(&self, req: &T1102Request) -> LsResult<T1102Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T1102_POLICY, req)
+            .await
+    }
+
+    /// Fetch the current-price + order-book (호가) snapshot for one symbol via
+    /// `t1101`.
+    ///
+    /// Dispatches through [`ls_core::Inner::post`] (retry + rate limit on the
+    /// MarketData bucket). `t1101` is not paginated, so this is a single,
+    /// non-continuation POST. A `01900` business code surfaces as
+    /// [`ls_core::LsError::ApiError`] and classifies as paper-incompatible.
+    pub async fn order_book(&self, req: &T1101Request) -> LsResult<T1101Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1101_POLICY, req)
             .await
     }
 }
