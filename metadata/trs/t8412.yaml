@@ -18,7 +18,15 @@ dependencies:
 support:
   tracked: true
   implemented: true
-  recommended: false
+  recommended: true
 maintenance:
   source_spec_hash: 238beb842b1a
-  last_reviewed: 2026-06-15
+  last_reviewed: 2026-06-17
+recommendation:
+  behavior: Paper N-minute chart page for one symbol on a single trading day
+  evidence_ref: evidence/t8412.yaml
+  excludes:
+    - Production-credential charts (evidence is paper only)
+    - Multi-page chart_all correctness beyond a single page
+    - Chart correctness on halts/VI days or outside KRX regular session
+    - Stronger freshness automation than the stated policy (no enforcement in code today)
