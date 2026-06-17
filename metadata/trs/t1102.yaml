@@ -18,7 +18,15 @@ dependencies:
 support:
   tracked: true
   implemented: true
-  recommended: false
+  recommended: true
 maintenance:
   source_spec_hash: c3d4e5f6a1b2
-  last_reviewed: 2026-06-15
+  last_reviewed: 2026-06-17
+recommendation:
+  behavior: Paper current-price (시세) quote for one symbol
+  evidence_ref: evidence/t1102.yaml
+  excludes:
+    - Production-credential quotes (evidence is paper only)
+    - Fields outside the modeled subset (current-price header)
+    - Quote correctness during halts/VI or outside KRX regular session
+    - Stronger freshness automation than the stated policy (no enforcement in code today)

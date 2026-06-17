@@ -11,6 +11,6 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `S3_` | KOSPI 체결 실시간 시세 | `realtime` | implemented | [S3_](./S3_.md) |
 | `revoke` | 접근토큰 폐기 (OAuth2 token revoke) | `standalone` | implemented | [revoke](./revoke.md) |
 | `t1101` | 주식 현재가호가 조회 | `market_session` | recommended | [t1101](./t1101.md) |
-| `t1102` | 주식 현재가(시세) 조회 | `market_session` | implemented | [t1102](./t1102.md) |
+| `t1102` | 주식 현재가(시세) 조회 | `market_session` | recommended | [t1102](./t1102.md) |
 | `t8412` | 주식 차트(N분봉) 조회 | `paginated` | implemented | [t8412](./t8412.md) |
 | `token` | 접근토큰 발급 (OAuth2 token issue) | `standalone` | recommended | [token](./token.md) |

@@ -10,6 +10,6 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `S3_` | KOSPI 체결 실시간 시세 | `realtime` | implemented, not yet recommended |
 | `revoke` | 접근토큰 폐기 (OAuth2 token revoke) | `standalone` | implemented, not yet recommended |
 | `t1101` | 주식 현재가호가 조회 | `market_session` | recommended |
-| `t1102` | 주식 현재가(시세) 조회 | `market_session` | implemented, not yet recommended |
+| `t1102` | 주식 현재가(시세) 조회 | `market_session` | recommended |
 | `t8412` | 주식 차트(N분봉) 조회 | `paginated` | implemented, not yet recommended |
 | `token` | 접근토큰 발급 (OAuth2 token issue) | `standalone` | recommended |
