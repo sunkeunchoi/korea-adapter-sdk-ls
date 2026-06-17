@@ -18,7 +18,16 @@ dependencies:
 support:
   tracked: true
   implemented: true
-  recommended: false
+  recommended: true
 maintenance:
   source_spec_hash: e5f6a1b2c3d4
-  last_reviewed: 2026-06-15
+  last_reviewed: 2026-06-17
+recommendation:
+  behavior: Paper websocket subscribe lifecycle reachability (connect → subscribe → unsubscribe) on the paper port
+  evidence_ref: evidence/S3_.yaml
+  excludes:
+    - Trade-data correctness (the smoke proves lifecycle, not row contents)
+    - In-session row delivery guarantees (a row is bonus, not required)
+    - Reconnection semantics after a dropped connection
+    - Production-credential feeds (evidence is paper only)
+    - Stronger freshness automation than the stated policy (no enforcement in code today)

@@ -1,0 +1,25 @@
+# Focused Evidence — S3_ (KOSPI 체결 realtime trade feed) — lifecycle-scoped
+#
+# A durable, credential-free record of a genuine Paper Live Smoke that proved the
+# websocket subscribe lifecycle. The `line` below is captured VERBATIM from the
+# `LIVE-SMOKE` stdout of `make live-smoke-ws`
+# (crates/ls-sdk/tests/live_smoke.rs::live_smoke_ws), which is credential-free by
+# construction (symbol + public WS port + a lifecycle note only — no token,
+# appkey, secret, or account number).
+#
+# Scope of THIS evidence: the blocking assertion is connect → subscribe `S3_` →
+# unsubscribe on the paper WS port (29443). A received row is bonus evidence; its
+# absence within the timebox is NOT a failure (`result=[no row within timeout]`).
+# This record therefore proves websocket lifecycle REACHABILITY only. It does
+# NOT prove trade-data correctness, in-session row delivery, or reconnection
+# semantics — those are explicitly excluded from the recommendation (see
+# metadata/trs/S3_.yaml `recommendation.excludes`).
+#
+# Integrity of THIS record: the smoke asserts the resolved WS URL carries the
+# paper port `29443` (a wrong-target run fails) and that subscribe/unsubscribe
+# both complete cleanly before the line is recorded.
+tr_code: S3_
+date: 2026-06-17
+env: paper
+target: live-smoke-ws
+line: "LIVE-SMOKE target=live-smoke-ws inputs=[symbol=005930 ws_port=29443] result=[no row within timeout (not a failure)]"

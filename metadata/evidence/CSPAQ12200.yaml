@@ -1,0 +1,29 @@
+# Focused Evidence — CSPAQ12200 (현물계좌 잔고/예수금 read-only balance inquiry)
+#
+# A durable, credential-free record of a genuine Paper Live Smoke that performed
+# a read-only account-balance inquiry against a provisioned paper account. The
+# `line` below is captured VERBATIM from the `LIVE-SMOKE` stdout of
+# `make live-smoke-account`
+# (crates/ls-sdk/tests/live_smoke.rs::live_smoke_account). The `record()` line
+# drops `rsp_msg` (localized, account-identifying text) and carries only the
+# numeric `rsp_cd` plus a structural `reccnt` — never the account number itself
+# (the account is config-supplied and identified by the bearer token, not echoed
+# here).
+#
+# Secret-safety: structural descriptors only — no token, appkey, secret, account
+# number, or balance amount. `balcretp=1` is the balance-creation-type input;
+# `reccnt` is a record count.
+#
+# Integrity of THIS record: `rsp_cd=00136` is a documented read-TR SUCCESS code —
+# 조회가 완료되었습니다 ("inquiry completed"), classified as success by
+# `ls-core::inner::rsp_cd_is_success` alongside `00000`/`00707`. Paired with
+# `reccnt=1` (a non-empty balance summary) it confirms a genuine, successful
+# read-only balance round-trip against a provisioned paper account — not an
+# account-state failure (which Errs before recording any LIVE-SMOKE line) and not
+# a 01900 paper-incompatible refusal. The claim is read-only: no order- or
+# position-mutating account state is exercised.
+tr_code: CSPAQ12200
+date: 2026-06-17
+env: paper
+target: live-smoke-account
+line: "LIVE-SMOKE target=live-smoke-account inputs=[balcretp=1] result=[rsp_cd=00136 reccnt=1]"

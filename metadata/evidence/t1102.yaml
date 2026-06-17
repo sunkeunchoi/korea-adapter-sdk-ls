@@ -1,0 +1,27 @@
+# Focused Evidence — t1102 (current-price / 시세 quote)
+#
+# A durable, credential-free record of a genuine Paper Live Smoke that fetched a
+# live current-price quote. The `line` below is captured VERBATIM from the
+# `LIVE-SMOKE` stdout of `make live-smoke`
+# (crates/ls-sdk/tests/live_smoke.rs::live_smoke_default), which is
+# credential-free and self-dated by construction (no rsp_msg, machine-emitted
+# UTC date). The `make live-smoke` target also backs `token`'s evidence — each
+# run issues the OAuth token first, then the t1102 quote — but `token` was last
+# attested on its own prior run (see metadata/evidence/token.yaml), so the two
+# files record different dates. This file links t1102's
+# `maintenance.last_reviewed` date to the run that justifies it — the filename
+# (keyed to the TR code) plus the matching date is the link.
+#
+# Secret-safety: structural descriptors and public market data only — never the
+# token, appkey, secret, or account number. `symbol=005930` is a public KOSPI
+# ticker; `price` is a public market quote.
+#
+# Integrity of THIS record: `token_len=380` (non-empty token) and `rsp_cd=00000`
+# (gateway success) confirm a genuine market-data round-trip — not a paper-guard
+# miss (which fails the test) and not a 01900 paper-incompatible refusal (which
+# would Err before recording).
+tr_code: t1102
+date: 2026-06-17
+env: paper
+target: live-smoke
+line: "LIVE-SMOKE target=live-smoke inputs=[env=paper symbol=005930 date=2026-06-17] result=[token_len=380 rsp_cd=00000 price=346500]"
