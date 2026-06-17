@@ -270,15 +270,14 @@ async fn live_smoke_chart() {
         .await
         .expect("t8412 chart_page failed (a gateway 01715 means a non-trading day)");
 
+    // Credential-free by construction: `rsp_msg` is dropped (it can carry
+    // localized, account-identifying text and is excluded from the
+    // token/t1101 evidence pattern); only the numeric `rsp_cd` proves success
+    // and `rows` is a public structural count. Mirrors `live_smoke_default`.
     record(
         "live-smoke-chart",
         &format!("symbol={symbol} date={d}"),
-        &format!(
-            "rsp_cd={} rsp_msg={} rows={}",
-            resp.rsp_cd,
-            resp.rsp_msg,
-            resp.outblock1.len()
-        ),
+        &format!("rsp_cd={} rows={}", resp.rsp_cd, resp.outblock1.len()),
     );
 }
 
@@ -297,20 +296,21 @@ async fn live_smoke_account() {
     let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
 
     match sdk.account().balance(&CSPAQ12200Request::new("1")).await {
+        // Credential-free by construction: `rsp_msg` is dropped (it can carry
+        // localized, account-identifying text); only the numeric `rsp_cd`
+        // proves success and `reccnt` is a structural record count. Mirrors
+        // `live_smoke_default`.
         Ok(resp) => record(
             "live-smoke-account",
             "balcretp=1",
-            &format!(
-                "rsp_cd={} rsp_msg={} reccnt={}",
-                resp.rsp_cd, resp.rsp_msg, resp.outblock1.reccnt
-            ),
+            &format!("rsp_cd={} reccnt={}", resp.rsp_cd, resp.outblock1.reccnt),
         ),
+        // A failed run must NOT emit a capturable `LIVE-SMOKE` line: the raw
+        // gateway error can carry account-identifying text and would otherwise
+        // pattern-match the evidence-capture recipe. Use a distinct
+        // non-`LIVE-SMOKE` prefix on stderr; the panic is unchanged.
         Err(e) => {
-            record(
-                "live-smoke-account",
-                "balcretp=1",
-                &format!("account-state failure (not transport): {e}"),
-            );
+            eprintln!("SMOKE-FAIL target=live-smoke-account account-state failure (not transport)");
             panic!("live-smoke-account failed (account-state, may be paper-account setup): {e}");
         }
     }
