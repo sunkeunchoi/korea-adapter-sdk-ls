@@ -144,6 +144,10 @@ _Avoid_: permanent tracker, maintained tooling, SDK runtime
 An old repository, document, or artifact used to seed the new maintained SDK architecture without becoming a permanent dependency.
 _Avoid_: upstream dependency, source of truth, generated owner
 
+**Decommissioned Migration Source**:
+A former **Migration Source** whose gateway, TR, runtime, and operational knowledge has been extracted or deliberately rejected so the maintained SDK no longer needs it even as read-only reference material.
+_Avoid_: archived repo, read-only source, obsolete active SDK
+
 **Instrument Domain**:
 The LS market or product area a TR belongs to, such as domestic stock, futures/options, overseas stock, or overseas futures.
 _Avoid_: ownership module, generated category
@@ -155,6 +159,10 @@ _Avoid_: simple TR, caller-supplied identifier TR, easy endpoint
 **Caller-Supplied Identifier**:
 A request identifier normally provided by the SDK caller, such as an instrument, account, market, country, or currency code.
 _Avoid_: dependency, standalone prerequisite
+
+**Prerequisite Producer TR**:
+A TR whose response supplies a required value for another TR's request, such as an order number used by a modify, cancel, inquiry, or reconciliation flow.
+_Avoid_: weak lookup TR, identifier source, nice-to-have producer
 
 ## Relationships
 
@@ -180,6 +188,7 @@ _Avoid_: dependency, standalone prerequisite
 - A **Dependency Class** owns SDK code organization.
 - **Facet Metadata** routes tests, evidence, documentation, and operator scheduling.
 - **TR Maintenance Metadata** records one owning **Dependency Class** and multiple **Facet Metadata** values.
+- **TR Maintenance Metadata** records strong **Prerequisite Producer TR** relationships separately from order identity fields.
 - A **TR Metadata Index** supports fast selection but does not replace the per-TR **TR Maintenance Metadata** record.
 - A **Tracked TR** does not have to be an **Implemented TR**.
 - An **Implemented TR** does not have to be a **Recommended TR**.
@@ -191,6 +200,8 @@ _Avoid_: dependency, standalone prerequisite
 - **Focused Evidence** is required for **Recommended TR** claims, not for every **Tracked TR** or every **Completed Maintenance Work Item**.
 - A **Bootstrap Tool** is not part of the permanent maintenance architecture.
 - A **Migration Source** does not remain a dependency after migration.
+- A **Decommissioned Migration Source** is stronger than a read-only or obsolete source: maintainers should not need to consult it for ordinary SDK maintenance or expansion.
 - An **Instrument Domain** is **Facet Metadata**, not a code ownership boundary.
 - A **Standalone TR** does not include TRs that need market/session timing, account state, date handling, pagination, order coupling, or WebSocket lifecycle.
 - A **Caller-Supplied Identifier** does not make a TR standalone by itself.
+- A **Prerequisite Producer TR** is limited to strong cross-TR prerequisites; a TR that merely helps discover a **Caller-Supplied Identifier** is not a prerequisite producer.
