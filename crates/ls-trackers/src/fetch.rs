@@ -1,8 +1,9 @@
 //! Rust-native LS fetch adapter and the D3 split completeness gate (U2).
 //!
-//! The migration source (`~/dev/korea-broker-sdk-ls/scripts/fetch_ls_specs.py`)
-//! is the endpoint/retry/fallback reference; its fixed `MIN_TR_COUNT` floor is
-//! replaced here by the *relative* mass-shrink proportion in [`completeness_gate`]
+//! Ported from the Decommissioned Migration Source `korea-broker-sdk-ls`
+//! `scripts/fetch_ls_specs.py`, which was the original endpoint/retry/fallback
+//! reference; its fixed `MIN_TR_COUNT` floor was replaced here by the *relative*
+//! mass-shrink proportion in [`completeness_gate`]
 //! (KTD-3). All decision logic ([`parse_menu`], [`completeness_gate`],
 //! [`RawInventory::code_set`]) is a pure function over parsed structures so it is
 //! unit-tested transport-independently; the [`FetchClient`] HTTP layer is
