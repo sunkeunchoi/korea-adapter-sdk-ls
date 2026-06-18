@@ -1277,3 +1277,370 @@ acceptance:
   acceptance_reason: "residual risk named"
   accepted_date: 2026-06-18
 "#;
+
+// ===========================================================================
+// Decommission boundary guard (U4 / R7–R11).
+//
+// Keeps the in-repo half of the decommission closed: the anchor marker exists
+// (R7) and no active, non-test, non-evidence file carries a LIVE dependency on
+// the old source (R8) — a filesystem path to it, or a calibrated present-tense
+// instruction to consult it for ordinary maintenance. Retained evidence
+// (`Provenance:` citations, the audit tree, the frozen ledger, and history under
+// `docs/plans/`/`docs/brainstorms/`) is excluded so the guard does not self-trip
+// (R9). The pass/fail predicates are pure functions over `(path, line)`, so the
+// negative acceptance cases are proven against in-test fixtures (the file's
+// existing discipline) and the same predicates then run over the real git tree.
+// ===========================================================================
+
+const OLD_SOURCE: &str = "korea-broker-sdk-ls";
+
+/// Calibrated present-tense / imperative consult phrases (KTD-3). Matched on
+/// whole-word boundaries (never raw substring) and only when `OLD_SOURCE` is on
+/// the same physical line. Past-tense attribution verbs (`Ported from`,
+/// `Extracted from`, `extracts … from`, `to preserve`) are deliberately ABSENT
+/// so attribution survives; bare `reference` is absent so ADR 0010's "reference
+/// documentation" stays green — only the multi-word `use as reference` trips.
+const CONSULT_PHRASES: &[&str] = &[
+    "consult",
+    "read",
+    "look at",
+    "compare against",
+    "use as reference",
+    "must remain readable",
+    "grounded by",
+];
+
+fn is_word_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || c == '_'
+}
+
+/// Case-insensitive whole-word / phrase match on ASCII word boundaries: the
+/// chars flanking the match must not be word characters. This is the single most
+/// load-bearing precision rule in the guard — it stops `read` matching inside
+/// `readiness`, `readable`, `already`, or `thread` (KTD-3). Needles are ASCII.
+fn contains_word(haystack: &str, needle: &str) -> bool {
+    if needle.is_empty() {
+        return false;
+    }
+    let h = haystack.to_lowercase();
+    let n = needle.to_lowercase();
+    let mut from = 0;
+    while let Some(rel) = h[from..].find(&n) {
+        let start = from + rel;
+        let end = start + n.len();
+        // `map_or(true, …)` (not `is_none_or`) to respect the workspace MSRV 1.75.
+        let before_ok = h[..start].chars().next_back().map_or(true, |c| !is_word_char(c));
+        let after_ok = h[end..].chars().next().map_or(true, |c| !is_word_char(c));
+        if before_ok && after_ok {
+            return true;
+        }
+        from = start + 1;
+        if from >= h.len() {
+            break;
+        }
+    }
+    false
+}
+
+/// A physical line that is a retained `Provenance:` citation (R9), skipped before
+/// the path/consult checks. This is PHYSICAL-line scoped: a citation that wraps
+/// so its `korea-broker-sdk-ls/docs/…` path lands on a continuation line is NOT
+/// recognized here — such lines stay green only via the bare-path exclusion in
+/// `live_path_hit` (no leading slash). Pinned by the wrapped-Provenance fixture.
+fn is_provenance_line(line: &str) -> bool {
+    line.contains("Provenance:")
+}
+
+/// A line carries a LIVE filesystem path to the old repo (KTD-3): `../kbsl`,
+/// `/kbsl` (covers `/Users/.../kbsl`), or `~/dev/kbsl`. Every live form places a
+/// `/` immediately before the repo name; the bare extraction-provenance form
+/// `korea-broker-sdk-ls/docs/…` (no leading slash) is deliberately NOT a live
+/// path — those are historical citations, not live dependencies.
+fn live_path_hit(line: &str) -> bool {
+    line.contains("/korea-broker-sdk-ls")
+}
+
+/// A line carries a live instruction to consult the old source: it names
+/// `OLD_SOURCE` AND contains a calibrated whole-word consult phrase. Name +
+/// phrase must co-occur on the one physical line, so attribution prose (name, no
+/// phrase) and CONTEXT.md's "consult it" (phrase, no name) both stay green.
+fn consult_hit(line: &str) -> bool {
+    if !line.contains(OLD_SOURCE) {
+        return false;
+    }
+    CONSULT_PHRASES.iter().any(|p| contains_word(line, p))
+}
+
+/// The maintained product-surface allowlist (KTD-4): `crates/**` (excluding any
+/// `/tests/` path), `docs/**`, and root-level `*.md` — minus the retained
+/// evidence and history that legitimately names the old source (R9). The
+/// `/tests/` exclusion keeps the guard file's own fixtures out of scope. The
+/// agent-harness dirs (`.claude/`, `.agents/`, `.compound-engineering/`) sit
+/// OUTSIDE the allowlist and are a known, documented residual gap — not scanned.
+fn in_scan_domain(rel: &str) -> bool {
+    let in_allowlist = (rel.starts_with("crates/") && !rel.contains("/tests/"))
+        || rel.starts_with("docs/")
+        || (!rel.contains('/') && rel.ends_with(".md"));
+    if !in_allowlist {
+        return false;
+    }
+    // Retained evidence + history excluded so the guard does not self-trip (R9).
+    let excluded = rel.starts_with("docs/plans/")
+        || rel.starts_with("docs/brainstorms/")
+        || rel.starts_with("docs/migration-source/audit/")
+        || rel == "docs/migration-source/tr-dependencies-2026-06-14.json"
+        || rel == "docs/migration-source-extraction-ledger.md";
+    !excluded
+}
+
+/// Composed per-`(path, line)` verdict: a violation kind for a line that is in
+/// the active scan domain, is not a `Provenance:` citation, and carries a live
+/// path or a calibrated consult instruction. `None` means the line is fine.
+fn line_violation(rel: &str, line: &str) -> Option<&'static str> {
+    if !in_scan_domain(rel) {
+        return None;
+    }
+    if is_provenance_line(line) {
+        return None;
+    }
+    if live_path_hit(line) {
+        return Some("live old-source filesystem path");
+    }
+    if consult_hit(line) {
+        return Some("live instruction to consult the old source");
+    }
+    None
+}
+
+/// New enumeration of every git-tracked repo-relative path — a `git ls-files`
+/// with NO path argument, distinct from `is_git_tracked`'s per-path
+/// `--error-unmatch` predicate. Parses stdout into repo-relative paths.
+fn git_tracked_files() -> Vec<String> {
+    let out = std::process::Command::new("git")
+        .arg("-C")
+        .arg(workspace_root())
+        .arg("ls-files")
+        .output()
+        .expect("run git ls-files");
+    assert!(out.status.success(), "git ls-files failed");
+    String::from_utf8(out.stdout)
+        .expect("git ls-files stdout is utf-8")
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| l.to_string())
+        .collect()
+}
+
+// ---------------------------------------------------------------------------
+// Real-tree assertion (R7/R8/R10/R11): holds after U1 (marker) + U3 (framing).
+// ---------------------------------------------------------------------------
+
+#[test]
+fn guard_marker_present_and_no_live_old_source_dependency() {
+    // R7: the anchor marker exists.
+    let marker_rel = "docs/migration-source/README.md";
+    assert!(
+        workspace_root().join(marker_rel).is_file(),
+        "anchor marker {marker_rel} must exist (R7)"
+    );
+
+    // R8/R9: no active, non-test, non-evidence file carries a live dependency.
+    let mut violations = Vec::new();
+    for rel in git_tracked_files() {
+        if !in_scan_domain(&rel) {
+            continue;
+        }
+        let abs = workspace_root().join(&rel);
+        let Ok(content) = fs::read_to_string(&abs) else {
+            continue; // binary / non-utf8 tracked file: nothing to scan
+        };
+        for (i, line) in content.lines().enumerate() {
+            if let Some(kind) = line_violation(&rel, line) {
+                violations.push(format!("{rel}:{}: {kind}: {}", i + 1, line.trim()));
+            }
+        }
+    }
+    assert!(
+        violations.is_empty(),
+        "live old-source dependency in the active surface (R8):\n{}",
+        violations.join("\n")
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Predicate logic proven against in-test fixtures (execution note): the
+// negative acceptance cases cannot mutate the real tree, so they are fixture-
+// driven, mirroring the file's gate-invariant fixtures.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn guard_fixture_ae1_live_path_in_crate_fails_then_passes() {
+    // AE1: a non-test crates/ line with a live path fails; removing it passes.
+    let rel = "crates/ls-trackers/src/example.rs";
+    assert_eq!(
+        line_violation(rel, r#"    let p = "../korea-broker-sdk-ls/x";"#),
+        Some("live old-source filesystem path")
+    );
+    assert_eq!(line_violation(rel, r#"    let p = "local/path";"#), None);
+}
+
+#[test]
+fn guard_fixture_ae2_provenance_line_passes() {
+    // AE2: a retained Provenance citation in docs/design/ is not a live dep.
+    let rel = "docs/design/ls-gateway-response-semantics.md";
+    assert_eq!(
+        line_violation(
+            rel,
+            "(Provenance: `korea-broker-sdk-ls/docs/DIAGNOSTICS_CONTRACT.md`.)"
+        ),
+        None
+    );
+}
+
+#[test]
+fn guard_fixture_ae3_audit_tree_excluded() {
+    // AE3: the audit tree is out of scan domain even though it names old docs.
+    let rel = "docs/migration-source/audit/manifest.yaml";
+    assert!(!in_scan_domain(rel));
+    assert_eq!(
+        line_violation(rel, "  - korea-broker-sdk-ls/docs/ORDER_SAFETY_DESIGN.md"),
+        None
+    );
+}
+
+#[test]
+fn guard_fixture_ae4_missing_marker_fails_existence_check() {
+    // AE4: when the marker is absent the existence assertion must fail. Proven
+    // against a known-absent path rather than deleting the real marker.
+    let absent = workspace_root().join("docs/migration-source/__absent_marker__.md");
+    assert!(
+        !absent.is_file(),
+        "the existence check is exactly what AE4 asserts would fail"
+    );
+}
+
+#[test]
+fn guard_fixture_word_boundary_readiness_stays_green() {
+    // The load-bearing precision case: the real release-readiness:4 line. A
+    // substring matcher would fail here on `read` inside `readiness`.
+    let rel = "docs/design/release-readiness-and-residual-lessons.md";
+    let line = "`korea-broker-sdk-ls` Migration Source to preserve production/readiness and";
+    assert!(!consult_hit(line), "`read` must not match inside `readiness`");
+    assert_eq!(line_violation(rel, line), None);
+    // The matcher is not vacuous: a real whole-word `read` + name does hit.
+    assert!(consult_hit("read korea-broker-sdk-ls before changing this"));
+    // Other substring traps are likewise rejected as whole tokens.
+    assert!(!consult_hit("already merged korea-broker-sdk-ls history"));
+    assert!(!consult_hit("the korea-broker-sdk-ls thread is closed"));
+    // `read` is not a whole word inside `readable` either (no `must remain` prefix).
+    assert!(!consult_hit("korea-broker-sdk-ls readable diagnostics only"));
+}
+
+#[test]
+fn guard_fixture_self_exclusion_of_guard_file() {
+    // The guard file holds the literal name and a `consult …` fixture line, yet
+    // is out of scope via its `/tests/` segment, so the guard cannot self-trip.
+    let rel = "crates/ls-trackers/tests/decommission_audit.rs";
+    assert!(!in_scan_domain(rel));
+    assert_eq!(
+        line_violation(rel, "consult korea-broker-sdk-ls before changing retry behavior"),
+        None
+    );
+}
+
+#[test]
+fn guard_fixture_wrapped_provenance_continuation_stays_green() {
+    // A citation wrapped so the path lands on a continuation line: that physical
+    // line is NOT recognized as Provenance, but the bare-path form (no leading
+    // slash) keeps it green.
+    let rel = "docs/operations/operator-diagnostics.md";
+    let cont = "`korea-broker-sdk-ls/docs/OPERATIONS_RUNBOOK.md`.)";
+    assert!(!is_provenance_line(cont), "continuation line has no `Provenance:` token");
+    assert!(!live_path_hit(cont), "bare path (no leading slash) is not a live path");
+    assert_eq!(line_violation(rel, cont), None);
+}
+
+#[test]
+fn guard_fixture_path_form_coverage() {
+    // Each of the four KTD-3 live path forms hits; the bare extraction form does not.
+    assert!(live_path_hit(r#"let p = "../korea-broker-sdk-ls/x";"#));
+    assert!(live_path_hit("/korea-broker-sdk-ls"));
+    assert!(live_path_hit("/Users/mini/dev/korea-broker-sdk-ls/scripts/fetch_ls_specs.py"));
+    assert!(live_path_hit("~/dev/korea-broker-sdk-ls/scripts/fetch_ls_specs.py"));
+    // bare extraction-provenance form (no leading slash) is NOT a live path.
+    assert!(!live_path_hit("korea-broker-sdk-ls/docs/x.md"));
+}
+
+#[test]
+fn guard_fixture_consult_positive_proves_non_path_half() {
+    // Proves the non-path half of R8: name + calibrated whole-word consult phrase.
+    let rel = "docs/design/some-note.md";
+    assert_eq!(
+        line_violation(rel, "consult korea-broker-sdk-ls before changing retry behavior"),
+        Some("live instruction to consult the old source")
+    );
+    // multi-word phrase fires only as a whole phrase.
+    assert!(consult_hit("use as reference the korea-broker-sdk-ls runbook"));
+    // a consult word WITHOUT the name does not fire (CONTEXT.md's "consult it").
+    assert!(!consult_hit("maintainers should not need to consult it"));
+    // the name WITHOUT a consult word does not fire (attribution prose).
+    assert!(!consult_hit("Ported from the Migration Source `korea-broker-sdk-ls`"));
+}
+
+#[test]
+fn guard_fixture_calibration_attribution_and_context_stay_green() {
+    // ADR 0010's "reference documentation" — bare `reference` is not in the list,
+    // so it stays green; only the multi-word `use as reference` would trip.
+    assert!(!consult_hit(
+        "the old repository will be used only as a migration source for selected code, metadata bootstrap, and reference documentation"
+    ));
+    // CONTEXT.md's "should not need to consult it" — no repo name on the line.
+    assert!(!consult_hit(
+        "A Decommissioned Migration Source: maintainers should not need to consult it"
+    ));
+    // ls-core/src/lib.rs:3 "Ported from …" attribution stays green.
+    assert_eq!(
+        line_violation(
+            "crates/ls-core/src/lib.rs",
+            "//! Ported from the Migration Source `korea-broker-sdk-ls` `crates/core`, stripped of"
+        ),
+        None
+    );
+    // extraction-attribution prose with a bare path stays green.
+    assert_eq!(
+        line_violation(
+            "docs/design/tr-dependency-inventory-snapshot.md",
+            "This note extracts the dependency knowledge from the `korea-broker-sdk-ls`"
+        ),
+        None
+    );
+}
+
+#[test]
+fn guard_fixture_ledger_excluded_from_scan_domain() {
+    // Calibration: the frozen ledger legitimately holds an absolute old-source
+    // path (the gate target); it is excluded so that path does not trip KTD-3.
+    let rel = "docs/migration-source-extraction-ledger.md";
+    assert!(!in_scan_domain(rel));
+    assert_eq!(
+        line_violation(
+            rel,
+            "This ledger is the decommission gate for `/Users/mini/dev/korea-broker-sdk-ls`."
+        ),
+        None
+    );
+}
+
+#[test]
+fn guard_fixture_scan_domain_allowlist_shape() {
+    // Allowlist members.
+    assert!(in_scan_domain("crates/ls-trackers/src/fetch.rs"));
+    assert!(in_scan_domain("docs/design/order-safety-design.md"));
+    assert!(in_scan_domain("docs/migration-source/README.md")); // the marker IS scanned
+    assert!(in_scan_domain("README.md"));
+    // Outside the allowlist.
+    assert!(!in_scan_domain("crates/ls-trackers/tests/decommission_audit.rs")); // /tests/
+    assert!(!in_scan_domain(".claude/agents/decommission-row-auditor.md")); // harness
+    assert!(!in_scan_domain(".agents/skills/audit-row/SKILL.md")); // harness
+    assert!(!in_scan_domain("Cargo.toml")); // root non-md
+}

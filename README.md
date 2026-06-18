@@ -53,8 +53,16 @@ This repository is **standalone**: it builds, tests, and ships on its own, with
 no build or runtime dependency on any other SDK repository. Every crate
 dependency is internal to this workspace.
 
-`korea-broker-sdk-ls` is a **Migration Source** only — a repository we reference
-to pull **already-generated code**, docs, and runtime lessons from so migration
-goes faster. It is **not a dependency** and not the maintained SDK; this SDK does
-not import, link, or build against it. New SDK behavior belongs here, in the
-maintained surface.
+`korea-broker-sdk-ls` is a **Decommissioned Migration Source**. Its gateway, TR,
+runtime, and operational knowledge has already been extracted into this
+maintained surface — or deliberately rejected with a recorded reason — so
+ordinary maintenance no longer needs the old repo at all. The old repo is **not
+a dependency** and not the maintained SDK; this SDK does not import, link, or
+build against it, and new SDK behavior belongs here, in the maintained surface.
+
+What is retained is **evidence, not a live dependency**: historical
+`Provenance:` citations, the frozen extraction ledger, and the audit tree may
+still cite the old repo as attribution. The decommission was authorized by a
+TRUSTWORTHY-GREEN audit of the extraction ledger; see
+[`docs/migration-source/README.md`](docs/migration-source/README.md) and ADR
+[`0014`](docs/adr/0014-migration-source-decommissioned.md).
