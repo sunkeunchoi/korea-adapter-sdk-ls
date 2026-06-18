@@ -72,10 +72,12 @@ rows:
     area: Runtime success predicate
     disposition: carried
     candidate_class: behavioral
-    target: "cargo test -p ls-core --test inner"
+    target: "cargo test -p ls-core"
     target_note: >-
       00000/empty/00136/00707 success and 01900 paper-incompatible signal are
-      modeled by ls-core::inner::rsp_cd_is_success and its inner.rs tests.
+      modeled by ls-core::inner::rsp_cd_is_success; exercised by the inner module
+      unit tests run via the ls-core lib test target (there is no separate
+      `--test inner` integration target).
     old_sources:
       - docs/certification_taxonomy.md
       - crates/core/src/inner.rs
@@ -122,11 +124,13 @@ rows:
     area: Retry and rate-limit behavior
     disposition: carried
     candidate_class: behavioral
-    target: "cargo test -p ls-core --test rate_limiter"
+    target: "cargo test -p ls-core"
     target_note: >-
       Non-order retry and rate-limit waiting are exercised by the ls-core
-      resilience/rate_limiter tests; order no-retry is design-only (sub-claim the
-      agent records knowledge/unverifiable, not behavioral).
+      inner/rate_limiter module unit tests run via the lib test target (no
+      separate `--test rate_limiter` integration target); order no-retry is
+      design-only (sub-claim the agent records knowledge/unverifiable, not
+      behavioral).
     old_sources:
       - crates/core/tests/resilience_tests.rs
       - docs/OPERATIONS_RUNBOOK.md

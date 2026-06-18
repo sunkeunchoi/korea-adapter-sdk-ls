@@ -1,0 +1,56 @@
+# Decommission audit record — L4 (Runtime success predicate)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable below.
+
+row_id: L4
+area: Runtime success predicate
+classification: behavioral
+verdict: confirmed
+bar_applied: >-
+  passing offline test (no gateway). The success-predicate behavior is exercised
+  by the inline unit tests in crates/ls-core/src/inner.rs, which run via the
+  ls-core lib test target. The manifest-named target `cargo test -p ls-core
+  --test inner` does NOT resolve (there is no integration test target `inner` in
+  ls-core; the only tests/ file is policy_index_crosscheck.rs), so the admissible
+  runnable target actually run was `cargo test -p ls-core --lib inner::`. The
+  confirm covers exactly the claims those tests assert: rsp_cd_is_success treats
+  "00000"/empty/"00136"/"00707" as success and a non-success code (e.g.
+  "IGW40013") as not-success (rsp_cd_success_classification); and "01900" is the
+  sole paper-incompatible signal — code preserved verbatim, classified via
+  is_paper_incompatible / LsError::is_paper_incompatible on both 2xx and non-2xx
+  bodies, and a different non-success code does NOT classify as paper-incompatible
+  (code_01900_classifies_as_paper_incompatible,
+  code_01900_on_non_2xx_classifies_as_paper_incompatible). The old-source
+  `is_order` / order-ack success dimension is out of L4 scope (no order runtime in
+  this slice per ADR 0008; order-ack codes are L6's knowledge row) and is NOT
+  folded into this confirm.
+evidence_pointer: crates/ls-core/src/inner.rs
+provenance:
+  # Old-source paths in the sibling checkout (korea-broker-sdk-ls), non-load-bearing:
+  - korea-broker-sdk-ls/crates/core/src/inner.rs (old rsp_cd_is_success, with the L4-out-of-scope is_order/order-ack dimension)
+  - korea-broker-sdk-ls/crates/core/tests/api_error_tests.rs
+  - korea-broker-sdk-ls/docs/certification_taxonomy.md
+
+behavioral:
+  target: "cargo test -p ls-core --lib inner::"
+  line: >-
+    cargo test -p ls-core --lib inner:: => 9 passed; 0 failed; 0 ignored.
+    rsp_cd_success_classification asserts ""/00000/00136/00707 success and
+    01900/IGW40013 not-success; code_01900_classifies_as_paper_incompatible and
+    code_01900_on_non_2xx_classifies_as_paper_incompatible assert 01900 is the
+    sole paper-incompatible signal (code preserved) on 2xx and non-2xx, and a
+    different non-success code is not paper-incompatible.
+  production_only: false
+
+# Scope note: every claim in L4's success-predicate scope (00000/empty/00136/00707
+# as success; 01900 as the sole paper-incompatible signal) is exercised by the
+# passing offline tests above. There are no L4-scope sub-claims left unexercised.
+# The order-ack success dimension present in the old source is explicitly out of
+# L4 scope (L6) and is not part of this confirm.

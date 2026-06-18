@@ -1,0 +1,95 @@
+# Decommission audit record — L6 (Order acknowledgement codes)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable below.
+
+row_id: L6
+area: Order acknowledgement codes
+classification: knowledge
+verdict: refuted
+bar_applied: completeness-vs-source (summary-plus-snapshot)
+evidence_pointer: inline
+provenance:
+  # Non-load-bearing — old source, read-only sibling checkout, will vanish on decommission.
+  - korea-broker-sdk-ls/crates/core/tests/api_error_tests.rs
+
+knowledge:
+  extraction_mode: summary-plus-snapshot
+  source_documents:
+    - crates/core/tests/api_error_tests.rs
+  claim_map:
+    - claim_text: >-
+        A successful CSPAT00601 buy order returns the order-completion code 00040
+        (not the read-only query success code 00000); the order dispatch path must
+        treat 00040 as success.
+      target_location: docs/design/ls-gateway-response-semantics.md#order-specific-codes
+      status: present
+    - claim_text: >-
+        A successful CSPAT00601 sell order (BnsTpCode "1") returns the
+        sell-completion code 00039; the order dispatch path must treat 00039 as
+        success, not an error, otherwise a retry would bypass the dedup cache and
+        place a duplicate sell.
+      target_location: docs/design/ls-gateway-response-semantics.md#order-specific-codes
+      status: present
+    - claim_text: >-
+        A successful CSPAT00701 modify order returns the modify-completion code
+        00462, empirically confirmed against the live LS paper-trading gateway on
+        2026-05-21; the order dispatch path must treat 00462 as success, not an
+        error. (The earlier assumed code 00041 was disproven and removed.)
+      target_location: (none — no target doc records the 00462 modify acknowledgement code)
+      status: missing
+    - claim_text: >-
+        A successful CSPAT00801 cancel order returns the cancel-completion code
+        00463, empirically confirmed against the live LS paper-trading gateway on
+        2026-05-21; the published LS spec example uses 00156, and both 00463 and
+        00156 are whitelisted so the SDK handles either; the order dispatch path
+        must treat them as success.
+      target_location: (none — no target doc records the 00463/00156 cancel acknowledgement codes)
+      status: missing
+    - claim_text: >-
+        A rejected CSPAT00601 order (price-band code 01427) is not an
+        acknowledgement code and must still surface as LsError::ApiError preserving
+        the broker code.
+      target_location: docs/design/ls-gateway-response-semantics.md#order-specific-codes
+      status: present
+    - claim_text: >-
+        A rejected CSPAT00701 modify (price-limit code 03181, the published LS
+        rejection example) must still surface as LsError::ApiError, not be
+        misclassified as a success.
+      target_location: (none — no target doc records the 03181 modify-rejection example)
+      status: missing
+    - claim_text: >-
+        Order-acknowledgement codes are order-scoped: 00040 (buy), 00462 (modify),
+        and 00463 (cancel) are NOT success codes for a non-order TR and must
+        surface as LsError::ApiError when returned on a non-order endpoint
+        (scope enforcement).
+      target_location: docs/design/order-safety-design.md#1-no-retry-dispatch
+      status: adapted
+    - claim_text: >-
+        A rejected order (quantity-error code 10010099) returns an error and must
+        NOT populate the order dedup cache, so a second identical submission still
+        reaches the gateway rather than returning a cached result (API-02/API-03).
+      target_location: docs/design/order-safety-design.md#2-deduplication-cache-with-opportunistic-expired-entry-sweeps
+      status: present
+
+re_disposition: extract
+gap: >-
+  The snapshot does not preserve the full enumeration of observed order
+  acknowledgement codes. The old source records four success acknowledgement
+  codes — 00040 (buy), 00039 (sell), 00462 (modify, CSPAT00701, paper-confirmed
+  2026-05-21), and 00463 (cancel, CSPAT00801, paper-confirmed 2026-05-21, with
+  00156 as the spec alternative) — plus the modify-rejection example 03181. The
+  targets capture only 00039/00040/01427. The modify (00462) and cancel
+  (00463/00156) acknowledgement codes and the 03181 modify-rejection example are
+  materially missing: they are empirically-confirmed numeric success/reject codes
+  whose loss would let the future order success predicate misclassify a completed
+  modify or cancel as an error (the same duplicate-submission hazard the 00039
+  comment calls out). Re-open as extract to record the modify/cancel
+  acknowledgement codes and the 03181 rejection example in the order-code design
+  notes.

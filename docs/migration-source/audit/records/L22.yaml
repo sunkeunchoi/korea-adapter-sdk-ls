@@ -1,0 +1,158 @@
+# Decommission audit record — L22 (Evidence buckets and residual lane)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable below.
+
+row_id: L22
+area: Evidence buckets and residual lane
+classification: knowledge
+verdict: unverifiable
+bar_applied: completeness-vs-source (summary-plus-snapshot)
+evidence_pointer: docs/design/release-readiness-and-residual-lessons.md
+provenance:
+  # non-load-bearing — old source, read-only sibling checkout korea-broker-sdk-ls
+  - docs/SIMULATION_EVIDENCE_MATRIX.md (old source)
+  - docs/certification_taxonomy.md (old source)
+
+knowledge:
+  extraction_mode: summary-plus-snapshot
+  source_documents:
+    - docs/SIMULATION_EVIDENCE_MATRIX.md (old source)
+    - docs/certification_taxonomy.md (old source)
+  claim_map:
+    # --- Evidence buckets ---
+    - claim_text: >-
+        Evidence buckets are a policy layer on top of lanes; the lane describes
+        how evidence executes (baseline, opportunity, scenario) while the bucket
+        describes the operator window or release-gate behavior that explains a
+        row.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#evidence-timing-buckets
+      status: adapted
+    - claim_text: >-
+        session_independent: no market-session window required — the control
+        bucket for always-runnable evidence.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#evidence-timing-buckets
+      status: present
+    - claim_text: >-
+        krx_regular: requires KRX regular market hours; market_closed means a
+        timed rerun or accepted dependent evidence, not certification.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#evidence-timing-buckets
+      status: present
+    - claim_text: >-
+        krx_night_derivatives: requires the KRX night derivatives session;
+        timing-bound futures/options evidence.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#evidence-timing-buckets
+      status: present
+    - claim_text: >-
+        us_market: requires the relevant US market session; timing-bound
+        overseas evidence.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#evidence-timing-buckets
+      status: present
+    - claim_text: >-
+        event_dependent: requires a relevant market/event window — event
+        opportunity evidence such as VI/futures-session/order-event channels.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#evidence-timing-buckets
+      status: present
+    - claim_text: >-
+        paper_incompatible: a behavior bucket meaning a live paper run returned
+        the LS unsupported-work signal 01900; after the 01900-only taxonomy
+        cleanup the bucket is empty and the baseline lane is a no-op, so
+        paper_incompatible rows defer only via the 01900 classifier, not a
+        row-filtered bucket.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#evidence-timing-buckets
+      status: adapted
+    - claim_text: >-
+        Bucket metadata must not silently change blocker severity: independent
+        market_closed, failed rows, and missing classifications remain hard
+        blockers even when bucket metadata is present.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#evidence-timing-buckets
+      status: present
+    - claim_text: >-
+        Bucket membership by itself never certifies a TR and never downgrades a
+        hard failure; venue/time buckets tell an operator when to rerun
+        timing-bound evidence while a behavior bucket tells the gate how to
+        explain fresh evidence that already exists.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#evidence-timing-buckets
+      status: present
+    - claim_text: >-
+        Filtered row-scope bucket artifacts are admitted only when the release
+        manifest explicitly lists the exact accepted bucket, shard, and tr_codes
+        set; a full release baseline remains the default hard gate and filtered
+        row evidence is never treated as full-shard evidence by implication.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#what-is-deliberately-not-carried
+      status: adapted
+    # --- Residual lane ---
+    - claim_text: >-
+        The 01900-only taxonomy has no waiver path; a proven residual stays a
+        failure and the gate verdict is cleared only through one narrow audited
+        lane, acknowledged_ls_defects (a release-manifest array), the only
+        mechanism permitted to clear a failed row.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#residual-discipline
+      status: adapted
+    - claim_text: >-
+        A residual must be proven by a discriminating matrix or equivalent
+        focused evidence, not by a single failed run.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#residual-discipline
+      status: present
+    - claim_text: >-
+        A residual remains a failure in ordinary classification.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#residual-discipline
+      status: present
+    - claim_text: >-
+        Admission to the acknowledged-residual lane requires a structural
+        signature match against live evidence, a content-hash-verified
+        discriminating-matrix artifact, a matrix-proven literal_pattern for
+        literal-bearing rows, and a signed manifest entry.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#residual-discipline
+      status: adapted
+    - claim_text: >-
+        The match key is the structural signature {tr_code, rsp_cd, field_id,
+        error_class} carried on the failed-evidence row, where error_class is a
+        closed taxonomy with a fail-closed unknown sentinel that matches no
+        acknowledgment (non_numeric_in_numeric_slot, gateway_routing_error,
+        non_api_error, unknown).
+      target_location: docs/design/release-readiness-and-residual-lessons.md#residual-discipline
+      status: missing
+    - claim_text: >-
+        Unknown signatures fail closed: a new literal, field, or code is not
+        covered by an old acknowledgment.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#residual-discipline
+      status: present
+    - claim_text: >-
+        Any acceptance must name the TR, code, field or behavior, evidence path,
+        date, reviewer, reason, and expiry or review trigger.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#residual-discipline
+      status: present
+    - claim_text: >-
+        A green-with-residuals run keeps verdict PASS but flips approval_ready to
+        false (and make gate-strict exits non-zero), so it is never a clean pass;
+        residual-bearing release or recommendation claims must say what is
+        excluded.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#residual-discipline
+      status: adapted
+
+unverifiable_reason: >-
+  Extraction mode is summary-plus-snapshot, but L22 spans a non-enumerable
+  union of two large old-source docs (SIMULATION_EVIDENCE_MATRIX.md and
+  certification_taxonomy.md) whose "buckets and residual lane" material extends
+  well past the buckets/residual sections audited here (lane definitions,
+  certification bars, evidence metrics, manifest policy, evidence-record fields).
+  Completeness for this row cannot be established: the target preserves the
+  bucket taxonomy and the residual-discipline rules as adapted lessons, but the
+  closed error_class match-key taxonomy ({tr_code, rsp_cd, field_id,
+  error_class} with its four named classes and unknown sentinel) is a
+  decision-relevant residual-lane fact that is NOT represented in the target
+  doc — it is named only generically ("fail closed on unknown signatures"). That
+  is a candidate material gap, but because the row's source scope is itself
+  under-enumerated (no snapshot artifact pins the exact set of carried facts),
+  the auditor cannot conclude either no-material-loss (confirmed) or a definite
+  material loss (refuted) without inventing the completeness boundary. Per the
+  knowledge bar, an unenumerable/unprovable-completeness summary-plus-snapshot
+  row is recorded unverifiable with the blocking reason rather than folded into
+  a confirm. Routed to maintainer acceptance in the roll-up.

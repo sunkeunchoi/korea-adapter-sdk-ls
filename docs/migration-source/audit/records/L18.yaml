@@ -1,0 +1,86 @@
+# Decommission audit record — L18 (WebSocket backpressure policy)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable below.
+
+row_id: L18
+area: WebSocket backpressure policy
+classification: knowledge
+verdict: confirmed
+bar_applied: completeness-vs-source (distilled-lesson)
+evidence_pointer: inline
+provenance:
+  - korea-broker-sdk-ls/docs/WEBSOCKET_BACKPRESSURE_POLICY.md   # non-load-bearing
+  - korea-broker-sdk-ls/crates/core/tests/ws_backpressure_tests.rs  # non-load-bearing
+
+knowledge:
+  extraction_mode: distilled-lesson
+  source_documents:
+    - docs/WEBSOCKET_BACKPRESSURE_POLICY.md
+  claim_map:
+    - claim_text: >-
+        Subscriber channels are bounded, with a configurable per-subscription
+        channel capacity whose recommended default is 64, preserving the
+        v1.0.0 behavior.
+      target_location: crates/ls-core/src/config.rs#ws_channel_capacity
+      status: present
+    - claim_text: >-
+        Channel capacity must reject 0; an invalid capacity of 0 fails
+        configuration resolution with a field-named error.
+      target_location: crates/ls-core/src/config_resolve.rs#resolve-rejects-zero-capacity
+      status: present
+    - claim_text: >-
+        The channel capacity value is kept per client or per subscription, not
+        as global process state.
+      target_location: crates/ls-core/src/config.rs#ws_channel_capacity
+      status: present
+    - claim_text: >-
+        DropNewest is the default overflow policy: it preserves the queued
+        frames and drops the incoming frame; it is compatible but stream state
+        can lag.
+      target_location: crates/ls-core/src/config.rs#WsOverflowPolicy-DropNewest
+      status: present
+    - claim_text: >-
+        LatestOnly is an added overflow policy: it keeps the newest frame and
+        discards stale queued data, giving better freshness but not gapless
+        delivery.
+      target_location: crates/ls-sdk/src/realtime/overflow.rs#LatestOnlyStream
+      status: present
+    - claim_text: >-
+        Block is a deferred overflow policy (backpressure the inbound task until
+        the consumer catches up; can increase latency and harm reconnect
+        behavior) — recommended to defer, not implement in this slice.
+      target_location: crates/ls-core/src/config.rs#WsOverflowPolicy
+      status: adapted
+    - claim_text: >-
+        No policy may be presented as gapless market-data delivery; operators
+        that need complete state must rebuild from read-only REST TR snapshots
+        when drops occur.
+      target_location: docs/operations/operator-diagnostics.md#websocket-backpressure
+      status: present
+    - claim_text: >-
+        Backpressure diagnostics should include tr_cd, tr_key, channel_capacity,
+        overflow_policy, a dropped-frame event or counter, and a subscriber
+        close event when relevant.
+      target_location: docs/operations/operator-diagnostics.md#diagnostic-fields
+      status: present
+    - claim_text: >-
+        Diagnostic output must include capacity and policy without any
+        credential fields, and the diagnostics contract should state how
+        operators count dropped-frame events.
+      target_location: docs/operations/operator-diagnostics.md#redaction-guarantees
+      status: present
+    - claim_text: >-
+        Deterministic test cases the policy must hold: a slow subscriber with
+        DropNewest drops incoming frames; a slow subscriber with LatestOnly
+        preserves the newest frame; reconnect replay still works after overflow;
+        the reconnect-budget-exhaustion terminal error is delivered even after
+        prior overflow.
+      target_location: crates/ls-sdk/tests/realtime_tests.rs#latest_only_yields_newest_then_terminal_none_on_unsubscribe
+      status: present

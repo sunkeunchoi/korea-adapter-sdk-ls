@@ -1,0 +1,110 @@
+# Decommission audit record — L7 (Error enum public surface)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable below.
+
+row_id: L7
+area: Error enum public surface
+classification: knowledge
+verdict: confirmed
+bar_applied: completeness-vs-source (distilled-lesson)
+evidence_pointer: inline
+provenance:
+  # old-source paths — non-load-bearing (R13), present only for traceability
+  - korea-broker-sdk-ls/crates/core/tests/error_tests.rs   # CORE-05 exhaustive LsError surface test
+  - korea-broker-sdk-ls/crates/core/src/error.rs           # old LsError enum (11 variants)
+
+knowledge:
+  # Mode applied is distilled-lesson, not the manifest seed summary-plus-snapshot
+  # (R5/R7b). The ledger L7 Notes cell commits to the distilled framing: the live
+  # public error surface is carried as ls-core code, while the order-specific
+  # variants are deferred (ADR 0008, no order runtime in this slice) with a written
+  # requirement to restore fail-closed serialization and reconsider the order error
+  # variants before order runtime ships. Under this mode the decision-relevant
+  # constraints must survive; verbatim enumeration of every deferred variant name is
+  # not the carried artifact.
+  extraction_mode: distilled-lesson
+  source_documents:
+    - korea-broker-sdk-ls/crates/core/tests/error_tests.rs
+  claim_map:
+    # --- variants live in this slice: present in the ls-core public surface ---
+    - claim_text: >-
+        LsError exposes an Auth(String) variant for authentication problems
+        (empty credentials, failed OAuth2 exchange, expired/revoked token,
+        missing credential fields); it is matchable from downstream code.
+      target_location: crates/ls-core/src/error.rs#Auth
+      status: present
+    - claim_text: >-
+        LsError exposes an Http variant that converts from the underlying HTTP
+        transport error via #[from] (timeout, TLS, DNS, connection reset, non-2xx
+        without a parseable error envelope).
+      target_location: crates/ls-core/src/error.rs#Http
+      status: present
+    - claim_text: >-
+        LsError exposes a WebSocket(String) variant for WebSocket protocol
+        errors; it is matchable from downstream code.
+      target_location: crates/ls-core/src/error.rs#WebSocket
+      status: present
+    - claim_text: >-
+        LsError exposes a Decode variant that auto-converts from a serde_json
+        decode failure via #[from] serde_json::Error; the conversion is exercised
+        by a dedicated From-based test.
+      target_location: crates/ls-core/src/error.rs#Decode
+      status: present
+    - claim_text: >-
+        LsError exposes an ApiError { code, message } struct variant with named
+        fields carrying the broker error code and message; it is matchable with
+        its named fields. Rejected orders are kept as ApiError with the broker
+        code/message preserved.
+      target_location: crates/ls-core/src/error.rs#ApiError
+      status: present
+    - claim_text: >-
+        LsError exposes a unit RateLimited variant for a rate-limiter rejection;
+        it is matchable from downstream code.
+      target_location: crates/ls-core/src/error.rs#RateLimited
+      status: present
+    - claim_text: >-
+        LsError exposes a Config(String) variant for invalid client-constructor
+        configuration; it is matchable from downstream code.
+      target_location: crates/ls-core/src/error.rs#Config
+      status: present
+    - claim_text: >-
+        LsError exposes a PaginationLimit(usize) variant carrying the page count
+        when a pagination limit is reached; it is matchable from downstream code.
+      target_location: crates/ls-core/src/error.rs#PaginationLimit
+      status: present
+    - claim_text: >-
+        LsError exposes a Parse(String) variant for numeric-string parse
+        failures (empty, malformed, or unsupported format); it is matchable from
+        downstream code.
+      target_location: crates/ls-core/src/error.rs#Parse
+      status: present
+    # --- structural surface contract ---
+    - claim_text: >-
+        Every LsError variant is exhaustively matchable from downstream code:
+        renaming, removing, or adding a variant without updating callers is a
+        compile-time failure (the CORE-05 exhaustiveness guarantee). LsResult<T>
+        is the canonical Result alias used throughout the crate.
+      target_location: crates/ls-core/src/error.rs#LsResult
+      status: present
+    # --- order-runtime variants: deferred (ADR 0008) with restoration requirement ---
+    - claim_text: >-
+        LsError exposes a DuplicateOrder unit variant signalling that order
+        deduplication rejected a duplicate submission; it is matchable from
+        downstream code.
+      target_location: docs/design/order-safety-design.md#what-ships-now-vs-later
+      status: adapted   # deferred per ADR 0008; doc records the variant is re-added with the first order runtime package
+    - claim_text: >-
+        LsError exposes a Serialize(String) variant used by the order
+        deduplicator to fail closed when a request cannot be serialized into a
+        dedup key, instead of collapsing every failure onto an empty-string key
+        (which would let distinct failed-to-serialize requests collide on one
+        cache entry).
+      target_location: docs/design/order-safety-design.md#2-deduplication-cache-with-opportunistic-expired-entry-sweeps
+      status: adapted   # variant deferred per ADR 0008; the fail-closed serialization BEHAVIOR is carried verbatim as the §2 dedup contract, with restoration of the order error variants required before order runtime ships (ledger L7 Notes)

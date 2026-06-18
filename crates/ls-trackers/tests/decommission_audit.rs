@@ -195,7 +195,14 @@ fn inline_transcribed(text: &str) -> bool {
         return false;
     }
     let low = t.to_lowercase();
-    !(low.contains("korea-broker-sdk-ls") || low.contains("old source") || low.contains("old-source"))
+    // Reject PATH-style references into the soon-to-vanish source (a claim that
+    // substitutes a pointer for its content), but allow legitimate mentions of
+    // the repo name as the claim's substance (e.g. ADR 0010: "korea-broker-sdk-ls
+    // is a migration source only").
+    !(low.contains("korea-broker-sdk-ls/")
+        || low.contains("see old source")
+        || low.contains("old source line")
+        || low.contains("old-source line"))
 }
 
 /// Evidence-pointer integrity (R13): `inline`, or a repo-relative path that is
@@ -319,8 +326,10 @@ fn record_errors(rec: &Record, resolve: &dyn Fn(&str) -> bool) -> Vec<String> {
                     // assumption-accepted knowledge row (which counts toward
                     // green), not only for `confirmed`.
                     for c in &k.claim_map {
-                        if c.target_location.trim().is_empty() {
-                            e.push(format!("{id}: a claim has no target_location (R7a)"));
+                        // A `missing` claim legitimately has no target_location (that
+                        // is why it is missing); present/adapted claims must locate.
+                        if c.status != "missing" && c.target_location.trim().is_empty() {
+                            e.push(format!("{id}: a present/adapted claim has no target_location (R7a)"));
                         }
                         if !inline_transcribed(&c.claim_text) {
                             e.push(format!("{id}: claim_text not inline-transcribed in full (R14)"));
@@ -879,6 +888,9 @@ fn pointer_integrity_cases() {
 #[test]
 fn inline_transcription_rejects_reference_and_empty() {
     assert!(inline_transcribed("01900 is paper-incompatible."));
+    // Legitimate repo-naming as claim substance (ADR 0010) is fine; only
+    // path-style references are rejected.
+    assert!(inline_transcribed("korea-broker-sdk-ls is a migration source only (ADR 0010)"));
     assert!(!inline_transcribed(""));
     assert!(!inline_transcribed("see old source line 42"));
     assert!(!inline_transcribed("korea-broker-sdk-ls/docs/x.md describes it"));

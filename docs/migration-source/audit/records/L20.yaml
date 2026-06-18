@@ -1,0 +1,78 @@
+# Decommission audit record — L20 (Operations runbook)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable below.
+
+row_id: L20
+area: Operations runbook
+classification: knowledge
+verdict: unverifiable
+bar_applied: completeness-vs-source (summary-plus-snapshot)
+evidence_pointer: inline
+provenance:
+  # non-load-bearing — old source in the read-only sibling checkout
+  - korea-broker-sdk-ls/docs/OPERATIONS_RUNBOOK.md
+
+knowledge:
+  extraction_mode: summary-plus-snapshot
+  source_documents:
+    - docs/OPERATIONS_RUNBOOK.md
+  # Partial claim-map: the operational scenarios that ARE preserved in the
+  # maintained operator guide. This is recorded for coverage transparency, NOT to
+  # support a confirm — the row is unverifiable because completeness of the
+  # summary against the full runbook cannot be established within L20's single
+  # bounded target (see unverifiable_reason).
+  claim_map:
+    - claim_text: "Auth failures present as hit=false in auth spans, token fetch errors, HTTP 401, or LsError::Auth / LsError::Http from the first request needing a token; operator action is to verify the trading environment selector, credential namespace, credential presence, and reachability of the oauth2 token endpoint."
+      target_location: docs/operations/operator-diagnostics.md#auth-failures
+      status: present
+    - claim_text: "Auth recovery is to rotate credentials through the downstream credential-management process, build a new config and client, revoke the old token when possible, drop the old client, and retry a low-risk read-only TR; do not log credentials or run multiple same-account clients without understanding their independent token caches."
+      target_location: docs/operations/operator-diagnostics.md#auth-failures
+      status: present
+    - claim_text: "LS business errors present as HTTP status 200 with a non-success rsp_cd surfaced as LsError::ApiError { code, message }; operators preserve tr_code, rsp_cd, and the broker message in redacted structured logs and classify the cause as request-shape mistake, account/permission state, market/session timing, stale fixture, or gateway rejection."
+      target_location: docs/operations/operator-diagnostics.md#ls-business-errors
+      status: present
+    - claim_text: "Business-error recovery fixes request parameters or account permissions before retrying; non-order read calls may be retried only when the error is known transient, while order calls must never be blindly retried and must be reconciled first; do not assume 00000 is the only success code."
+      target_location: docs/operations/operator-diagnostics.md#ls-business-errors
+      status: present
+    - claim_text: "Rate limiting presents as repeated rate_limiter::wait events with sustained wait_ms or LS-side HTTP 429; SDK-side throttling appears as wait events before dispatch and LS-side throttling appears as HTTP 429; immediate action is to reduce caller concurrency and pause non-essential polling for the saturated category."
+      target_location: docs/operations/operator-diagnostics.md#rate-limiting
+      status: present
+    - claim_text: "WebSocket reconnect presents as connection-lost logs, reconnect attempts carrying an attempt field, reconnect success carrying subscription_count, or the terminal LsError::WebSocket reconnect-budget-exhausted error; brief reconnects that replay subscriptions are usually transient and budget exhaustion means subscriber streams terminate and local subscription state is cleaned up."
+      target_location: docs/operations/operator-diagnostics.md#websocket-reconnect
+      status: present
+    - claim_text: "After reconnect-budget exhaustion, operators create new subscriptions and wire the new streams into downstream processing; do not manually resubscribe during an active reconnect cycle or build an unbounded external reconnect loop around the SDK's bounded reconnect behavior."
+      target_location: docs/operations/operator-diagnostics.md#websocket-reconnect
+      status: adapted
+    - claim_text: "Dropped WebSocket frames present as dropped_count or dropped-frame warnings for a (tr_cd, tr_key); state derived from the affected stream is potentially stale and should be rebuilt from a read-only REST snapshot, dropped frames are never replayed, and the backpressure policy must never be claimed gapless."
+      target_location: docs/operations/operator-diagnostics.md#websocket-backpressure
+      status: present
+    - claim_text: "Credential rotation creates a new config/client from the new credential source, revokes the old token when possible, and drops the old client; environment selection is client-side because LS REST uses the same public host for paper and production and provides no reliable REST field proving the active environment, so operators must keep paper and production credentials separate and verify the trading environment selector before any live or order-capable workflow."
+      target_location: docs/operations/operator-diagnostics.md#credential-rotation
+      status: present
+    - claim_text: "Emergency order disablement must disable all order dispatch before dedup, rate limiting, or HTTP I/O; the runbook's runtime toggle blocks all order TRs all-or-nothing and leaves non-order REST calls unaffected, and re-enabling must follow operator review and must not be done silently by a reconciliation step."
+      target_location: docs/operations/operator-diagnostics.md#emergency-order-disablement
+      status: adapted
+
+unverifiable_reason: >-
+  Completeness of the summary-plus-snapshot extraction cannot be established for
+  L20 within its bounded scope. OPERATIONS_RUNBOOK.md carries several
+  decision-relevant numeric operational defaults that are absent from the single
+  L20 target (docs/operations/operator-diagnostics.md): the default per-category
+  rate quotas (5/3/1/1 per second for MarketData/Orders/Account/Auth), the
+  bounded reconnect budget of 4 attempts with 1s/2s/3s/4s backoff, the fixed
+  WebSocket dispatch channel capacity of 64, the non-order REST retry count of up
+  to 3 with exponential backoff, and the 5-minute token-refresh expiry threshold
+  with no background refresh task. Whether these omissions are material loss for
+  L20 or are instead preserved by sibling rows (L8 retry/rate-limit behavioral,
+  L16 WS lifecycle, L18 WS backpressure policy) is cross-row coverage that cannot
+  be adjudicated from L20 alone without conflating scopes. Per the rule against
+  folding an unenumerated/unprovable completeness claim into a confirm, the row is
+  recorded unverifiable rather than confirmed or refuted; routes to maintainer
+  acceptance or to explicit sibling-coverage reconciliation in the roll-up (R7a/U6).

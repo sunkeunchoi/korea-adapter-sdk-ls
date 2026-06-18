@@ -1,0 +1,249 @@
+# Decommission audit record — L9 (Order safety runtime)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). The
+# old-source Redaction tables name credential fields literally; those claim_texts
+# below describe the contract while neutralizing the credential field-names so the
+# committed record stays credential-free per the non-negotiable.
+
+row_id: L9
+area: Order safety runtime
+classification: knowledge
+verdict: refuted
+bar_applied: completeness-vs-source (knowledge; manifest seeded full-transcription, realized distilled-lesson)
+evidence_pointer: docs/design/order-safety-design.md
+provenance:
+  # non-load-bearing — old read-only checkout korea-broker-sdk-ls
+  - docs/ORDER_SAFETY_DESIGN.md
+  - docs/ORDER_RECONCILIATION_DESIGN.md
+  - crates/core/tests/order_safety_interface_tests.rs
+  - crates/core/tests/manual_order_certification_tests.rs
+
+knowledge:
+  # The manifest seeds extraction_mode=full-transcription, but the in-repo target
+  # is a condensed design contract (~9.8K) covering two source design docs (~27K)
+  # plus the order tests — manifestly not a verbatim transcription. The honest
+  # realized mode (R5/R7b) is distilled-lesson; the bar applied is "preserves
+  # every decision-relevant constraint". One decision-relevant constraint (the
+  # order redaction / tracing-span contract) has NO representation in the target
+  # and is not claimed by any other manifest row's sources, so the row refutes.
+  extraction_mode: distilled-lesson
+  source_documents:
+    - docs/ORDER_SAFETY_DESIGN.md
+    - docs/ORDER_RECONCILIATION_DESIGN.md
+    - crates/core/tests/order_safety_interface_tests.rs
+    - crates/core/tests/manual_order_certification_tests.rs
+  claim_map:
+    - claim_text: >-
+        Order submission must not ride the generic post retry path: an order
+        dispatch path (post_order) issues exactly one network attempt and never
+        auto-retries, because a transport timeout or 5xx on an order call is
+        ambiguous and a blind retry risks a double fill. Non-order dispatch
+        (post, post_paginated) does use retry with backoff.
+      target_location: docs/design/order-safety-design.md#1-no-retry-dispatch
+      status: present
+    - claim_text: >-
+        EndpointPolicy.is_order distinguishes order endpoints from non-order
+        endpoints and is the structured fact runtime guards consume.
+      target_location: docs/design/order-safety-design.md#1-no-retry-dispatch
+      status: present
+    - claim_text: >-
+        A runtime policy guard (guard_order) rejects a non-order policy before
+        any HTTP call as a defense-in-depth check against routing market data or
+        account inquiries through the order dispatch path.
+      target_location: docs/design/order-safety-design.md#1-no-retry-dispatch
+      status: present
+    - claim_text: >-
+        A runtime disable toggle, set_orders_enabled(false), halts all order
+        dispatch before dedup lookup, rate limiting, or HTTP I/O; non-order
+        dispatch is unaffected; it is the operator kill-switch and reconciliation
+        must not silently re-enable it.
+      target_location: docs/design/order-safety-design.md#1-no-retry-dispatch
+      status: present
+    - claim_text: >-
+        Order dispatch waits on the Orders rate-limit category token bucket
+        (default 3 requests per second) before HTTP dispatch.
+      target_location: docs/design/order-safety-design.md#1-no-retry-dispatch
+      status: adapted
+    - claim_text: >-
+        Order response classification is separate from read-only query
+        classification; the read-only success predicate (00000, empty, 00136,
+        00707) is insufficient for orders. Successful CSPAT00601 order
+        acknowledgements returned 00039 (sell) / 00040 (buy); the order runtime
+        must define an explicit order success predicate and keep rejected orders
+        as LsError::ApiError with the broker code/message preserved.
+      target_location: docs/design/order-safety-design.md#1-no-retry-dispatch
+      status: present
+    - claim_text: >-
+        The dedup key is SHA256(account number + ":" + tr_code + ":" + canonical
+        request JSON). Account identity and TR code are part of the key, so
+        different accounts and different order TRs do not collide.
+      target_location: docs/design/order-safety-design.md#2-deduplication-cache-with-opportunistic-expired-entry-sweeps
+      status: present
+    - claim_text: >-
+        The dedup TTL is 300 seconds (5 minutes), a duplicate-submission safety
+        window checked lazily, not a server-side idempotency guarantee.
+      target_location: docs/design/order-safety-design.md#2-deduplication-cache-with-opportunistic-expired-entry-sweeps
+      status: present
+    - claim_text: >-
+        The dedup cache is per SDK client instance; multiple clients for the same
+        account do not share dedup state, so applications should use one client
+        per account order flow when duplicate protection matters.
+      target_location: docs/design/order-safety-design.md#2-deduplication-cache-with-opportunistic-expired-entry-sweeps
+      status: present
+    - claim_text: >-
+        Building the dedup key is fail-closed: a serialization failure returns an
+        error (LsError::Serialize) and no order is dispatched, rather than
+        silently disabling dedup protection.
+      target_location: docs/design/order-safety-design.md#2-deduplication-cache-with-opportunistic-expired-entry-sweeps
+      status: present
+    - claim_text: >-
+        A dedup cache hit returns the cached response and bypasses rate limiting,
+        HTTP dispatch, and broker processing (no duplicate order placed).
+      target_location: docs/design/order-safety-design.md#2-deduplication-cache-with-opportunistic-expired-entry-sweeps
+      status: present
+    - claim_text: >-
+        Different request fields, even small changes such as quantity or price,
+        produce a different key and intentionally miss the cache (the SDK
+        deduplicates identical requests, not similar orders).
+      target_location: docs/design/order-safety-design.md#2-deduplication-cache-with-opportunistic-expired-entry-sweeps
+      status: present
+    - claim_text: >-
+        Rejected orders are stored in the dedup cache: resubmitting the identical
+        rejected request within the TTL returns the same rejected response
+        (dedup_hit=true); fixing request fields produces a different key and a
+        fresh dispatch.
+      target_location: docs/design/order-safety-design.md#2-deduplication-cache-with-opportunistic-expired-entry-sweeps
+      status: adapted
+    - claim_text: >-
+        Eviction contract: read-path lazy eviction is necessary but insufficient
+        (a long-running client submitting many distinct orders would retain every
+        expired entry); count-based sweeping is the wrong trigger (misses
+        burst-then-idle); a background sweeper is rejected (no-background-worker
+        design); the contract is an opportunistic sweep on the write path —
+        insert calls a monotonic sweep_expired_if_due, and when the sweep
+        interval elapses one inserting thread wins an atomic timestamp update and
+        runs a single bounded retain pass under the same TTL rule the read path
+        uses, bounding memory without a worker.
+      target_location: docs/design/order-safety-design.md#2-deduplication-cache-with-opportunistic-expired-entry-sweeps
+      status: present
+    - claim_text: >-
+        The maintained order state model has six states: Accepted (order success
+        rsp_cd + populated order response), Rejected (LsError::ApiError with
+        broker code/message), Duplicate (dedup_hit=true, no new dispatch),
+        Modified (successful modify TR response plus follow-up inquiry), Canceled
+        (successful cancel TR response plus follow-up inquiry), and Unknown (SDK
+        cannot prove accepted versus not accepted — transport failure, timeout,
+        crash, or interrupted/decode-failed response).
+      target_location: docs/design/order-safety-design.md#3-reconciliation
+      status: present
+    - claim_text: >-
+        The Unknown post-disconnect gap is the most critical safety gap: the SDK
+        has no polling/reconciliation loop after transport failure and cannot
+        distinguish "order accepted" from "order never reached gateway" if the
+        connection is interrupted during the response or the process crashes
+        before deserialization. It is resolved via reconciliation, not swallowed.
+      target_location: docs/design/order-safety-design.md#3-reconciliation
+      status: present
+    - claim_text: >-
+        Recommended reconciliation flow: (1) stop automatic retry for the
+        ambiguous order TR; (2) record local evidence (timestamp, TR code,
+        request hash if available, account, symbol, side, quantity, price,
+        error); (3) query read-only order/account state; (4) match possible
+        orders by account, symbol, side, quantity, price, time window, and any
+        known order number; (5) classify accepted/rejected/duplicate/modified/
+        canceled/unknown; (6) retry only after reconciliation proves no matching
+        order was accepted, or after an operator explicitly accepts duplicate-
+        order risk.
+      target_location: docs/design/order-safety-design.md#3-reconciliation
+      status: present
+    - claim_text: >-
+        Reconciliation retry policy: an LsError::ApiError rejection gets no blind
+        retry; a cached duplicate needs no dispatch; transport failure, process
+        crash, and decode failure after the HTTP response are retryable only
+        after reconciliation. Before any post-reconciliation retry, confirm the
+        order-disable toggle state and never silently re-enable a disabled
+        toggle.
+      target_location: docs/design/order-safety-design.md#3-reconciliation
+      status: present
+    - claim_text: >-
+        For the first domestic-stock package CSPAT00601 (order placement,
+        produces the order number) and t0425 (read-only order/execution inquiry,
+        the reconciliation path after ambiguous outcomes) ship together.
+      target_location: docs/design/order-safety-design.md#3-reconciliation
+      status: present
+    - claim_text: >-
+        Order TRs carry certification_path: manual; their guarded manual evidence
+        requires explicit operator confirmation and is never run in the automated
+        gate, which proves order logic against mocks and never submits a live
+        order.
+      target_location: docs/design/order-safety-design.md#4-guarded-manual-evidence
+      status: present
+    - claim_text: >-
+        Manual evidence must fail closed: a selected order TR must be explicit and
+        an unset selection must not default to submitting a live order; operator
+        parameters are validated before client construction or dispatch; invalid
+        parameters and missing pending-order numbers produce structured
+        "not certified" evidence rather than a best-effort order.
+      target_location: docs/design/order-safety-design.md#4-guarded-manual-evidence
+      status: present
+    - claim_text: >-
+        Production order tests are prohibited; manual evidence is paper-only
+        unless a separate explicit safety decision changes that policy, and the
+        evidence record must state that no automated real-money production order
+        test was run.
+      target_location: docs/design/order-safety-design.md#4-guarded-manual-evidence
+      status: present
+    - claim_text: >-
+        Manual evidence must include the order TR, result classification, request
+        summary, broker response code/message, any order number/time,
+        reconciliation/status observation when applicable, and credentials and
+        account-sensitive data must be excluded or redacted.
+      target_location: docs/design/order-safety-design.md#4-guarded-manual-evidence
+      status: present
+    - claim_text: >-
+        Reconciliation/manual evidence freshness: reconciliation evidence must be
+        no older than 7 days before tagging a release unless the release owner
+        explicitly accepts the risk.
+      target_location: (no target location)
+      status: missing
+    - claim_text: >-
+        The dedup cache covers ALL order-annotated TRs across every domain
+        accessor (domestic stock, overseas stock, futures/options, overseas
+        futures), each domain's order TRs sharing the one per-client cache.
+      target_location: docs/design/order-safety-design.md (domestic-stock slice only)
+      status: adapted
+    - claim_text: >-
+        Order redaction / tracing-span contract: all public dispatch methods use
+        instrument(skip_all) so no function parameters are auto-recorded; the
+        order dispatch span records only non-credential fields (tr_code, path,
+        category, dedup_hit) and NEVER records the credential field-names (the
+        app key, app credential, account number, access token) nor the request body;
+        credential types implement Debug with a redacted substitution; generated
+        order request/response types contain no credential fields, and order
+        response types that may carry account-level data (order numbers, account
+        references) are NOT auto-redacted, so operators must review response
+        content before logging or persisting order evidence.
+      target_location: (no target location)
+      status: missing
+
+re_disposition: extract
+gap: >-
+  The order redaction / tracing-span contract from docs/ORDER_SAFETY_DESIGN.md
+  (Redaction section — which order-dispatch span fields are recorded vs the
+  credential field-names that are NEVER recorded, Debug-redaction of credential
+  types, and the non-auto-redaction of account-level order response data with the
+  operator-review obligation) is a decision-relevant safety constraint for the
+  future order runtime and has NO representation in the in-repo target
+  docs/design/order-safety-design.md. It is not claimed by any other manifest
+  row's sources (L19's redaction sources are DIAGNOSTICS_CONTRACT.md /
+  OBSERVABILITY_AND_DIAGNOSTICS.md, not ORDER_SAFETY_DESIGN.md). The
+  reconciliation-evidence 7-day freshness window from
+  docs/ORDER_RECONCILIATION_DESIGN.md is also dropped. Re-open as extract to
+  carry the order redaction/tracing-span contract (and the freshness window) into
+  the order-safety design note before decommission.

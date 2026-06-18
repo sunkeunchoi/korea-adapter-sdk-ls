@@ -1,0 +1,96 @@
+# Decommission audit record — L5 (Full response-code taxonomy)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable in record-format.md.
+
+row_id: L5
+area: Full response-code taxonomy
+classification: knowledge
+verdict: refuted
+bar_applied: completeness-vs-source (full-transcription)
+evidence_pointer: docs/design/ls-gateway-response-semantics.md
+provenance:
+  # non-load-bearing — old-source paths in korea-broker-sdk-ls, compared while readable
+  - docs/certification_taxonomy.md
+  - docs/releases/2026-06-09-failed-tr-remediation-verdicts.md
+
+knowledge:
+  extraction_mode: full-transcription
+  source_documents:
+    - docs/certification_taxonomy.md
+    - docs/releases/2026-06-09-failed-tr-remediation-verdicts.md
+  claim_map:
+    # --- Success codes (SDK Ok) ---
+    - claim_text: "rsp_cd 00136 (inquiry completed) classifies as SDK outcome Ok; it is an informational completion code — the gateway processed the query and returned valid, possibly empty, data blocks."
+      target_location: docs/design/ls-gateway-response-semantics.md#runtime-success-predicate
+      status: present
+    - claim_text: "rsp_cd 00707 (empty result set) classifies as SDK outcome Ok; it is an informational completion code with an empty result set, still a success because the query executed and the gateway returned a valid envelope."
+      target_location: docs/design/ls-gateway-response-semantics.md#runtime-success-predicate
+      status: present
+    - claim_text: "rsp_cd 00000 (normal success) and an empty/missing rsp_cd both classify as SDK outcome Ok."
+      target_location: docs/design/ls-gateway-response-semantics.md#runtime-success-predicate
+      status: present
+    # --- Paper-incompatible (sole) ---
+    - claim_text: "rsp_cd 01900 (not provided in mock/simulation trading) classifies as SDK outcome Err and is the single paper-incompatible signal; no other code defers as paper-incompatible — a paper_incompatible row carrying any other response text is a false classification."
+      target_location: docs/design/ls-gateway-response-semantics.md#paper-incompatible-signal
+      status: present
+    # --- Hard-failure codes ---
+    - claim_text: "rsp_cd IGW40013 (gateway data-query failure) classifies as SDK outcome Err and is a hard failure, not a paper-incompatible skip; it must be surfaced, not silently skipped."
+      target_location: docs/design/ls-gateway-response-semantics.md#hard-failure-codes-from-the-migration-source
+      status: present
+    - claim_text: "rsp_cd IGW40014 (server-side value/type error in a typed numeric slot) classifies as SDK outcome Err and is a hard failure."
+      target_location: docs/design/ls-gateway-response-semantics.md#hard-failure-codes-from-the-migration-source
+      status: present
+    - claim_text: "rsp_cd IGW50008 (gateway routing error) classifies as SDK outcome Err and is a hard failure."
+      target_location: docs/design/ls-gateway-response-semantics.md#hard-failure-codes-from-the-migration-source
+      status: present
+    - claim_text: "rsp_cd 405 (no permission / permission rejection) classifies as SDK outcome Err and is a hard failure, surfaced rather than deferred as an environment limitation."
+      target_location: docs/design/ls-gateway-response-semantics.md#hard-failure-codes-from-the-migration-source
+      status: present
+    - claim_text: "rsp_cd 80001 (account privilege/type problem) classifies as SDK outcome Err and is a hard failure (an account-state failure), surfaced rather than deferred."
+      target_location: docs/design/ls-gateway-response-semantics.md#hard-failure-codes-from-the-migration-source
+      status: present
+    - claim_text: "Any unknown/unclassified rsp_cd surfaces as SDK outcome Err (a business error / hard failure); all other rsp_cd values besides the success and 01900 codes are business errors preserving the exact code and message."
+      target_location: docs/design/ls-gateway-response-semantics.md#runtime-success-predicate
+      status: adapted
+    # --- Market-closed / session-dependent code ---
+    - claim_text: "rsp_cd 904 (market closed) classifies as SDK outcome Err but is a session-dependent market-hours rejection that the old taxonomy treats distinctly as a market_closed Skipped state (expected when markets are closed), NOT a hard failure requiring investigation."
+      target_location: "(none — 904 / market-closed not represented in any maintained doc)"
+      status: missing
+    # --- No per-TR paper_incompatible overrides ---
+    - claim_text: "There are deliberately no per-(tr_code, rsp_cd) paper_incompatible overrides: 01900 is the only code that classifies as paper-incompatible, globally; the prior decision granting five TRs narrow non-01900 paper_incompatible overrides was reversed, and those rows rejoin the failure queue. A row that genuinely becomes unavailable in simulation must return 01900 to defer."
+      target_location: docs/design/ls-gateway-response-semantics.md#paper-incompatible-signal
+      status: present
+    # --- Proven residual reasoning rule ---
+    - claim_text: "A proven residual (strongest example COSOQ00201, which returned IGW40014 with a non-numeric 002US value in a numeric field, server-derived as shown by a discriminating matrix invariant across currency, balance-type code, and the flagged count field itself) stays a failure under the strict taxonomy; the reasoning rule carried forward is that a residual must be proven by a discriminating matrix, the failure remains a failure in ordinary classification, and any decision to ship behavior with a residual must be explicit, attributed, scoped, and reviewable."
+      target_location: docs/design/ls-gateway-response-semantics.md#proven-residuals
+      status: adapted
+    # --- Date-sensitive empty-data signal ---
+    - claim_text: "rsp_cd 01715 is the gateway symptom for date-sensitive inquiries when an empty date defaults to a non-trading day; date-sensitive TRs should pin explicit trading days rather than relying on an empty today default."
+      target_location: docs/design/ls-gateway-response-semantics.md#trading-day-and-empty-data-signals
+      status: present
+    # --- Order-acknowledgement codes (deferred order runtime) ---
+    - claim_text: "Order-specific codes are deferred: the old order tests observed 00039 (sell order accepted/completed) and 00040 (buy order accepted/completed) as order-path successes, and 01427 as a rejected-order example; the read-only success predicate must not be reused blindly for orders, and the order package must define a dedicated order success predicate."
+      target_location: docs/design/ls-gateway-response-semantics.md#order-specific-codes
+      status: present
+
+re_disposition: extract
+gap: >-
+  Material response-code lost: rsp_cd 904 (market closed) is absent from every
+  maintained doc. The old certification_taxonomy.md taxonomy table classifies
+  904 as a session-dependent market_closed Skipped state (SDK Err, but expected
+  when markets are closed), explicitly distinct from the hard-failure codes. The
+  target ls-gateway-response-semantics.md enumerates the hard-failure codes
+  (IGW40013/IGW40014/IGW50008/405/80001) but never mentions 904 or market-closed,
+  so its "non-01900 gateway failures stay failures" framing silently reclassifies
+  a session-timing skip as a hard failure. For a full-transcription "Full
+  response-code taxonomy" row this is a missing material claim (a distinct code,
+  meaning, and classification a future evidence classifier would need). Re-open as
+  extract: transcribe 904 / market-closed and its session-dependent, non-hard-failure
+  treatment into the maintained gateway-semantics note.

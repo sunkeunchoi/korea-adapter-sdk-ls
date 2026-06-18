@@ -1,0 +1,166 @@
+# Decommission audit record — L12 (Strong order-number coupling matrix)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable below.
+
+row_id: L12
+area: Strong order-number coupling matrix
+classification: knowledge
+verdict: confirmed
+bar_applied: completeness-vs-source (summary-plus-snapshot)
+evidence_pointer: docs/migration-source/tr-dependencies-2026-06-14.json
+provenance:
+  # Old-source path, non-load-bearing (R13): the STRONG order-number coupling
+  # matrix and its derivation facts in korea-broker-sdk-ls.
+  - korea-broker-sdk-ls/docs/TR_DEPENDENCY_REFERENCE.md (sections 1 and 2)
+
+knowledge:
+  extraction_mode: summary-plus-snapshot
+  source_documents:
+    - docs/TR_DEPENDENCY_REFERENCE.md
+  claim_map:
+    # --- Strength definition (the decision-relevant rule that makes an edge STRONG) ---
+    - claim_text: >-
+        STRONG is defined as a cross-TR coupling where the consuming request field is
+        required: Y and is an order number sourced from another TR's response. NORMAL is
+        the same coupling but with the consuming field required: N; there are NONE in the
+        current spec — every order-number request field is required: Y. The strength scale
+        rates cross-TR couplings only; environmental dimensions (credential, market/session,
+        time) are orthogonal tags, never points on this scale.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#derivation-rules-preserved
+      status: present
+    - claim_text: >-
+        Every STRONG order-number edge in the snapshot carries strength="STRONG" with
+        required="Y"; no edge in the snapshot carries strength="NORMAL", matching the source
+        fact that the current spec contains no NORMAL order-number couplings.
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json#rows[].cross_tr_edges[].strength
+      status: present
+    # --- The headline count of the matrix ---
+    - claim_text: >-
+        There are 130 STRONG cross-TR (order-number) edges, spanning 15 consuming TRs.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#snapshot-identity
+      status: present
+    # --- The full 15-row STRONG matrix, fully enumerated in the JSON snapshot ---
+    - claim_text: >-
+        STRONG matrix row: consuming TR CSPAQ13700 (module stock), linking field SrtOrdNo2,
+        order-number producers CSPAT00601, CSPAT00701, CSPAT00801, SC0, SC1, t0425.
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json#CSPAQ13700.cross_tr_edges
+      status: present
+    - claim_text: >-
+        STRONG matrix row: consuming TR CSPAT00701 (module stock), linking field OrgOrdNo,
+        order-number producers CSPAQ13700, CSPAT00601, CSPAT00801, SC0, SC1, t0425.
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json#CSPAT00701.cross_tr_edges
+      status: present
+    - claim_text: >-
+        STRONG matrix row: consuming TR CSPAT00801 (module stock), linking field OrgOrdNo,
+        order-number producers CSPAQ13700, CSPAT00601, CSPAT00701, SC0, SC1, t0425.
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json#CSPAT00801.cross_tr_edges
+      status: present
+    - claim_text: >-
+        STRONG matrix row: consuming TR CCENQ30100 (module futures_options), linking field
+        SrtOrdNo2, order-number producers C01, C02, CCENT00100, CCENT00200, CCENT00300,
+        CFOAQ00600, CFOAT00100, CFOAT00200, CFOAT00300, H02, O02, t0434.
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json#CCENQ30100.cross_tr_edges
+      status: present
+    - claim_text: >-
+        STRONG matrix row: consuming TR CCENT00200 (module futures_options), linking field
+        OrgOrdNo, order-number producers C01, C02, CCENQ30100, CCENT00100, CCENT00300,
+        CFOAQ00600, CFOAT00100, CFOAT00200, CFOAT00300, H02, O02, t0434.
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json#CCENT00200.cross_tr_edges
+      status: present
+    - claim_text: >-
+        STRONG matrix row: consuming TR CCENT00300 (module futures_options), linking field
+        OrgOrdNo, order-number producers C01, C02, CCENQ30100, CCENT00100, CCENT00200,
+        CFOAQ00600, CFOAT00100, CFOAT00200, CFOAT00300, H02, O02, t0434.
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json#CCENT00300.cross_tr_edges
+      status: present
+    - claim_text: >-
+        STRONG matrix row: consuming TR CFOAT00200 (module futures_options), linking field
+        OrgOrdNo, order-number producers C01, C02, CCENQ30100, CCENT00100, CCENT00200,
+        CCENT00300, CFOAQ00600, CFOAT00100, CFOAT00300, H02, O02, t0434.
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json#CFOAT00200.cross_tr_edges
+      status: present
+    - claim_text: >-
+        STRONG matrix row: consuming TR CFOAT00300 (module futures_options), linking field
+        OrgOrdNo, order-number producers C01, C02, CCENQ30100, CCENT00100, CCENT00200,
+        CCENT00300, CFOAQ00600, CFOAT00100, CFOAT00200, H02, O02, t0434.
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json#CFOAT00300.cross_tr_edges
+      status: present
+    - claim_text: >-
+        STRONG matrix row: consuming TR CIDBT00900 (module overseas_futures), linking field
+        OvrsFutsOrgOrdNo, order-number producers CIDBQ01800, CIDBQ02400, CIDBT01000.
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json#CIDBT00900.cross_tr_edges
+      status: present
+    - claim_text: >-
+        STRONG matrix row: consuming TR CIDBT01000 (module overseas_futures), linking field
+        OvrsFutsOrgOrdNo, order-number producers CIDBQ01800, CIDBQ02400, CIDBT00900.
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json#CIDBT01000.cross_tr_edges
+      status: present
+    - claim_text: >-
+        STRONG matrix row: consuming TR COSAQ00102 (module overseas_stock), linking field
+        SrtOrdNo, order-number producers AS0, AS1, AS2, AS3, AS4, COSAQ01400, COSAT00301,
+        COSAT00311, COSMT00300.
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json#COSAQ00102.cross_tr_edges
+      status: present
+    - claim_text: >-
+        STRONG matrix row: consuming TR COSAT00301 (module overseas_stock), linking field
+        OrgOrdNo, order-number producers AS0, AS1, AS2, AS3, AS4, COSAQ00102, COSAQ01400,
+        COSAT00311, COSMT00300.
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json#COSAT00301.cross_tr_edges
+      status: present
+    - claim_text: >-
+        STRONG matrix row: consuming TR COSAT00311 (module overseas_stock), linking field
+        OrgOrdNo, order-number producers AS0, AS1, AS2, AS3, AS4, COSAQ00102, COSAQ01400,
+        COSAT00301, COSMT00300.
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json#COSAT00311.cross_tr_edges
+      status: present
+    - claim_text: >-
+        STRONG matrix row: consuming TR COSAT00400 (module overseas_stock), linking field
+        RsvOrdNo, order-number producers AS0, AS1, AS2, AS3, AS4, COSAQ00102, COSAQ01400,
+        COSAT00301, COSAT00311, COSMT00300.
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json#COSAT00400.cross_tr_edges
+      status: present
+    - claim_text: >-
+        STRONG matrix row: consuming TR COSMT00300 (module overseas_stock), linking field
+        OrgOrdNo, order-number producers AS0, AS1, AS2, AS3, AS4, COSAQ00102, COSAQ01400,
+        COSAT00301, COSAT00311.
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json#COSMT00300.cross_tr_edges
+      status: present
+    # --- The module-gating rule that bounds the matrix (decision-relevant constraint) ---
+    - claim_text: >-
+        STRONG order-number edges are gated to the same instrument module: OrdNo/OrgOrdNo are
+        shared raw names across stock / futures_options / overseas_stock, so the module is the
+        true domain boundary and a domestic order-modify never links to an overseas-stock order
+        number.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#derivation-rules-preserved
+      status: present
+    # --- The alias basis that defines the order-number family (preserved in the snapshot) ---
+    - claim_text: >-
+        The order-number family that produces STRONG edges is the curated alias map. concept
+        order_no covers raw names OrdNo, OrgOrdNo, PrntOrdNo, RsvOrdNo, SpareOrdNo, SrtOrdNo,
+        SrtOrdNo2, ordno, sOrdNo, sOrgOrdNo, sPrntOrdNo; concept ovrs_futs_order_no covers
+        OvrsFutsOrdNo, OvrsFutsOrdNo2, OvrsFutsOrgOrdNo, OvrsFutsOrgOrdNo2; concept
+        fund_order_no covers FundOrdNo, FundOrgOrdNo; concept fcm_order_no covers FcmOrdNo.
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json#alias_map
+      status: present
+    # --- The grounding/verification that each STRONG edge survives (decision-relevant: avoids lookalike errors) ---
+    - claim_text: >-
+        Each kept STRONG order-number coupling is verified before recording: korean_name
+        agreement (order-number koreans agree when one contains the other) and example sample
+        shape comparison. A coupling is dropped only on a positive mismatch, never because a
+        sample is absent, so legitimate STRONG couplings are not silently lost.
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json#rows[].cross_tr_edges[].korean_agrees|sample_agrees
+      status: adapted
+    # --- The summary table of STRONG consumers carried into the design snapshot ---
+    - claim_text: >-
+        The maintained snapshot index lists the 15 STRONG order-number-consuming TRs with their
+        domain, linking field, and representative producer samples, and points to the full JSON
+        for all 130 STRONG edges, as the seed for future order expansion.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#strong-order-number-consumers
+      status: present

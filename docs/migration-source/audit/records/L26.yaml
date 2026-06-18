@@ -1,0 +1,128 @@
+# Decommission audit record — L26 (Old release checklists and production-readiness docs)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable below.
+
+row_id: L26
+area: Old release checklists and production-readiness docs
+classification: knowledge
+verdict: refuted
+bar_applied: completeness-vs-source (summary-plus-snapshot)
+evidence_pointer: inline
+provenance:
+  # Non-load-bearing — old source, read-only sibling checkout, will vanish on decommission.
+  - korea-broker-sdk-ls/docs/RELEASE_CHECKLIST_TEMPLATE.md
+  - korea-broker-sdk-ls/docs/RUST_RELEASE_CONFIDENCE_PLAN.md
+
+knowledge:
+  extraction_mode: summary-plus-snapshot
+  source_documents:
+    - docs/RELEASE_CHECKLIST_TEMPLATE.md
+    - docs/RUST_RELEASE_CONFIDENCE_PLAN.md
+  claim_map:
+    - claim_text: >-
+        No automated real-money Production order test may be run for a release;
+        any Order TR evidence used for a release must come from guarded
+        manual-only Simulation testing, and live order placement is deliberately
+        excluded from release gates.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#production-readiness-lessons
+      status: present
+    - claim_text: >-
+        Paper/simulation and production credentials must stay separate; the
+        evidence run must use simulation credentials only and the repository must
+        contain no production credentials during a live run (LS REST provides no
+        reliable server-side environment-identity signal).
+      target_location: docs/design/release-readiness-and-residual-lessons.md#production-readiness-lessons
+      status: present
+    - claim_text: >-
+        Order-capable behavior requires explicit kill-switch, no-retry,
+        deduplication, and reconciliation design before runtime support; order
+        convenience helpers must not be added unless the order-safety design and
+        guarded manual Simulation order evidence already exist.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#production-readiness-lessons
+      status: present
+    - claim_text: >-
+        Live Simulation evidence is operator-initiated and credentialed release
+        evidence, not a default-CI merge blocker; slow ignored timeout tests
+        remain local/manual diagnostics rather than default merge gates.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#production-readiness-lessons
+      status: present
+    - claim_text: >-
+        Release confidence should prefer boring local checks (docs build, SemVer,
+        MSRV validation, dependency audit, publish dry-run) and explicit live
+        evidence records over implicit generated-surface promises.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#production-readiness-lessons
+      status: present
+    - claim_text: >-
+        Python/Node.js bindings (or any other language surface) need their own
+        readiness bar and are out of release scope for this milestone; Rust
+        readiness does not transfer automatically to them.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#production-readiness-lessons
+      status: present
+    - claim_text: >-
+        Release evidence is separated by the market condition needed to collect
+        it, across the buckets session_independent, krx_regular,
+        krx_night_derivatives, us_market, event_dependent, and paper_incompatible
+        (a live paper run returning LS's unsupported-work signal 01900); these
+        buckets are scheduling/interpretation aids and must not silently change a
+        row's severity.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#evidence-timing-buckets
+      status: present
+    - claim_text: >-
+        An acknowledged residual must be proven by a discriminating matrix or
+        equivalent focused evidence (not a single failed run), remains a failure
+        in ordinary classification, and any acceptance must name the TR, code,
+        field/behavior, evidence path, date, reviewer, reason, and expiry or
+        review trigger; unknown signatures fail closed (a new literal/field/code
+        is not covered by an old acknowledgment).
+      target_location: docs/design/release-readiness-and-residual-lessons.md#residual-discipline
+      status: present
+    - claim_text: >-
+        Convenience API evidence is separate from TR evidence; a helper can call
+        a proven TR and still be wrong by supplying stale defaults, losing a
+        field, or changing shape, so local deterministic tests should prove
+        request construction, default selection, and fixture freshness while live
+        smoke proves gateway behavior, and any future helper wrapping WebSocket,
+        quote, order, or account flows needs an explicit evidence seam before it
+        can become Recommended.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#convenience-api-evidence-lessons
+      status: present
+    - claim_text: >-
+        The old full generated-surface release gate is deliberately not carried
+        forward as permanent architecture: all-TR generated certification as the
+        default release gate, Python evidence-pack scripts as maintained tooling,
+        fixture-debt ratchets, release manifests as the source of truth for SDK
+        support state, and the old full generated API compatibility promise are
+        intentionally not inherited.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#what-is-deliberately-not-carried
+      status: adapted
+    - claim_text: >-
+        Live Simulation / baseline evidence admitted for a release must be no
+        older than 7 days before tagging; release tagging should verify that the
+        admitted baseline evidence freshness window (7 days) is met.
+      target_location: (none — no target doc records the 7-day live-evidence-freshness-before-tagging window)
+      status: missing
+
+re_disposition: extract
+gap: >-
+  The summary preserves the production-readiness, evidence-bucket, residual-
+  discipline, convenience-API, and deliberately-not-carried lessons, but it does
+  not preserve the old source's concrete release-evidence freshness threshold:
+  admitted Live Simulation / baseline evidence must be no older than 7 days
+  before tagging (RELEASE_CHECKLIST_TEMPLATE.md "Live Simulation Evidence passed
+  within 7 days before tagging"; RUST_RELEASE_CONFIDENCE_PLAN.md "Release tagging
+  should verify that admitted baseline evidence is no older than 7 days before
+  tagging"). This is a material numeric threshold (R7a): its loss changes a
+  release decision about how stale operator-initiated live evidence may be at
+  tagging, and it is a freshness discipline on live evidence — which the target
+  DOES carry as a lesson — not part of the generated-surface release gate that
+  is deliberately discarded. It is not listed among the target's "What Is
+  Deliberately Not Carried" items. Re-open as extract to record the 7-day
+  live-evidence freshness-before-tagging window in the release-readiness lesson
+  note.

@@ -1,0 +1,44 @@
+# Decommission audit record — L14 (Trading-day sensitivity knowledge)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable below.
+
+row_id: L14
+area: Trading-day sensitivity knowledge
+classification: knowledge
+verdict: confirmed
+bar_applied: completeness-vs-source (summary-plus-snapshot)
+evidence_pointer: docs/migration-source/tr-dependencies-2026-06-14.json
+provenance:
+  # old-source paths — non-load-bearing (R13), in korea-broker-sdk-ls
+  - docs/TR_DEPENDENCY_GUIDE.md
+  - certification runs (where the 01715 symptom was observed; no distinct
+    trading-day claims live in certification_taxonomy.md)
+knowledge:
+  extraction_mode: summary-plus-snapshot
+  source_documents:
+    - docs/TR_DEPENDENCY_GUIDE.md
+  claim_map:
+    # --- Snapshot claims: the 73-TR data set, preserved verbatim in the JSON ---
+    - claim_text: "Trading-day-sensitive (date-shaped field): 73. Inquiry TRs that take a date or date-range field are trading-day-sensitive."
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json
+      status: present
+    - claim_text: "Each of the 73 trading-day-sensitive TRs carries a date-shaped field and is associated with the 01715 symptom when that date is empty on a holiday (e.g. the per-TR guide rows reading 'trading-day date (01715 if empty on a holiday)')."
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json
+      status: present
+    # --- Summary claims: the decision-relevant semantics, preserved in the design doc ---
+    - claim_text: "An empty date defaults to 'today' and returns 01715 on a non-trading day."
+      target_location: docs/design/ls-gateway-response-semantics.md#trading-day-and-empty-data-signals
+      status: present
+    - claim_text: "Supply an explicit recent trading day to avoid holiday/weekend surprises (mitigation: pin explicit trading days rather than relying on an empty 'today' default)."
+      target_location: docs/design/ls-gateway-response-semantics.md#trading-day-and-empty-data-signals
+      status: adapted
+    - claim_text: "01715 means non-trading-day / empty date: a trading-day-sensitive date field was left empty on a holiday or weekend. Supply an explicit trading day."
+      target_location: docs/design/ls-gateway-response-semantics.md#trading-day-and-empty-data-signals
+      status: present

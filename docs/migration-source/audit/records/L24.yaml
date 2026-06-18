@@ -1,0 +1,119 @@
+# Decommission audit record — L24 (Spec drift and fetch scripts)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable below.
+
+row_id: L24
+area: Spec drift and fetch scripts
+classification: knowledge
+verdict: confirmed
+bar_applied: completeness-vs-source (distilled-lesson)
+evidence_pointer: crates/ls-trackers/src/api_drift.rs
+provenance:
+  # Non-load-bearing — old-source paths in the read-only sibling checkout
+  # korea-broker-sdk-ls, compared while still readable.
+  - docs/SPEC_DRIFT_REVIEW.md
+  - scripts/fetch_ls_specs.py
+  - scripts/change_detector.py
+
+knowledge:
+  extraction_mode: distilled-lesson
+  source_documents:
+    - docs/SPEC_DRIFT_REVIEW.md
+    - scripts/fetch_ls_specs.py
+    - scripts/change_detector.py
+  claim_map:
+    # --- Lesson framing -------------------------------------------------
+    - claim_text: >-
+        Spec Drift Review protects the generated/maintained API surface from
+        unreviewed LS shape changes: a re-fetched spec is diffed against a
+        committed baseline so block shape, field order, and duplicate field
+        identities are not lost.
+      target_location: crates/ls-trackers/src/api_drift.rs
+      status: adapted
+    # --- Core diff model (the decision-relevant constraint) -------------
+    - claim_text: >-
+        Diff model: compare fields using the tuple (direction, block_name,
+        field_index, field_name), where direction is request or response,
+        block_name is the LS block identity, field_index is the field position
+        inside that block, and field_name is the LS field name. This avoids
+        collapsing repeated field names into one dictionary entry.
+      target_location: crates/ls-trackers/src/api_drift.rs#diff_fields
+      status: present
+    - claim_text: >-
+        Duplicate (repeated) field names must be preserved distinctly rather
+        than collapsed, and a positional match must never be guessed for a
+        name appearing more than once on either side (duplicate-name guard).
+      target_location: crates/ls-trackers/src/api_drift.rs#reconcile_pairs
+      status: present
+    # --- Required structural distinctions / fixtures -------------------
+    - claim_text: >-
+        Required drift fixtures: duplicate field removed from one response
+        block; duplicate field moved to a different block; duplicate field type
+        changed at one index; duplicate field length changed at one index;
+        field reorder within the same block; response block split or merge.
+        Each distinction must be representable, not collapsed.
+      target_location: crates/ls-trackers/src/api_drift.rs#diff_shapes
+      status: present
+    - claim_text: >-
+        Removed field is treated as a potential breaking generated-surface
+        change; a type or length change is a parsing/downstream compatibility
+        risk; a block or index change is a struct-shape/serde review; a
+        same-block reorder is a lower-tier (maintenance) signal.
+      target_location: crates/ls-trackers/src/api_drift.rs#change_severity
+      status: present
+    - claim_text: >-
+        A rate-limit change (retail and corporate) is a reviewable drift
+        signal; a newly-imposed or stricter limit is weighted above a
+        relaxation or removal.
+      target_location: crates/ls-trackers/src/api_drift.rs#rate_is_more_restrictive
+      status: present
+    # --- Non-goals (the cautions the lesson must preserve) -------------
+    - claim_text: >-
+        Non-goal: do not auto-accept LS drift because tests pass, and do not
+        treat the same TR count as proof of compatibility. A pinned TR count and
+        pinned TR code set are validated, but matching counts/hashes do not
+        short-circuit structural review.
+      target_location: crates/ls-trackers/src/api_drift.rs#compare
+      status: adapted
+    # --- Fetch / scrape capability the scripts provided ----------------
+    - claim_text: >-
+        The fetch capability scrapes the LS inventory into a raw run carrying
+        per-TR protocol (REST vs websocket), endpoint URL, retail and corporate
+        rate limits, request/response header and body field rows, and
+        request/response examples, with a hardcoded property-type fallback when
+        the property-type mapping API is unavailable.
+      target_location: crates/ls-trackers/src/api_drift.rs#normalize_run
+      status: adapted
+    - claim_text: >-
+        A property-type mapping outage substitutes raw type codes whole-
+        inventory; when it affects a maintained TR the run must not silently
+        diff fields as false changes — the degraded-facts case is decided
+        before the structural compare runs.
+      target_location: crates/ls-trackers/src/api_drift.rs#facts_outage_decision
+      status: present
+    - claim_text: >-
+        Request/response examples are a distinct facet of the same scraped run;
+        example shape changes (added/removed JSON leaf paths, form key-set
+        changes) are detectable, but raw example values and credential-bearing form
+        values are discarded so a value-only rotation is not reported as drift.
+      target_location: crates/ls-trackers/src/spec_doc.rs#normalize_example_run
+      status: present
+    # --- Scoped-out: the discarded generated-surface certification gate -
+    - claim_text: >-
+        change_detector.py also performed classification-alignment checks
+        (new-TR-without-classification, removed-TR-with-lingering-override,
+        stale override entries, changed derived tr_class/shard/certification
+        fields, and per-shard count validation) against a session-classification
+        file. These belong to the full generated-surface release/certification
+        gate, which the ledger discards (rows L21/L25) as not-permanent
+        architecture; they are intentionally not carried into the maintained-SDK
+        trackers and are not a material loss of this row's carried capability.
+      target_location: docs/migration-source-extraction-ledger.md
+      status: adapted

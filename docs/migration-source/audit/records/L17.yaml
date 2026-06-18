@@ -1,0 +1,120 @@
+# Decommission audit record — L17 (Broad WebSocket certification findings)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable in record-format.md.
+
+row_id: L17
+area: Broad WebSocket certification findings
+classification: knowledge
+verdict: confirmed
+bar_applied: completeness-vs-source (full-transcription)
+evidence_pointer: docs/design/websocket-certification-findings.md
+provenance:
+  # non-load-bearing — old source, decommissioned after audit
+  - korea-broker-sdk-ls/docs/SIMULATION_EVIDENCE_MATRIX.md (WebSocket sections)
+  - korea-broker-sdk-ls/crates/core/tests/stock_ws_certification.rs (test-binary/shard names)
+  - korea-broker-sdk-ls/crates/core/tests/live_simulation_harness_tests.rs (Transport/FrameDecode levels)
+  - korea-broker-sdk-ls/crates/core/src/ws_manager/mod.rs (reconnect/replay, tx sender)
+
+knowledge:
+  extraction_mode: full-transcription
+  source_documents:
+    - docs/SIMULATION_EVIDENCE_MATRIX.md
+    - WS certification tests (crates/core/tests/*_ws_certification.rs)
+  claim_map:
+    - claim_text: >-
+        WebSocket TRs have two certification levels. Transport: the Simulation
+        WebSocket connects, subscribe succeeds for the TR/key, unsubscribe
+        succeeds, and no immediate protocol error occurs; evidence meaning is
+        that the SDK can establish and clean up the subscription lifecycle for
+        that WebSocket TR.
+      target_location: docs/design/websocket-certification-findings.md#certification-levels-from-the-migration-source
+      status: present
+    - claim_text: >-
+        FrameDecode is the second level: Transport plus at least one real LS
+        frame is received and deserializes into the generated response type
+        within the wait window (the source states a 5-second window); evidence
+        meaning is that the SDK has observed and decoded a real LS frame for
+        that WebSocket TR.
+      target_location: docs/design/websocket-certification-findings.md#certification-levels-from-the-migration-source
+      status: adapted
+    - claim_text: >-
+        Certified Transport is the hard baseline requirement; Certified
+        FrameDecode is advisory because it requires market-open runs, specific
+        market events, or guarded manual order-event scenarios. Closed-market or
+        inactive-session runs still produce valid Transport evidence, and lack
+        of a pushed frame in those runs is recorded as Transport, not a blocker.
+      target_location: docs/design/websocket-certification-findings.md#certification-levels-from-the-migration-source
+      status: present
+    - claim_text: >-
+        Phase 83/84 finding: the original theory that the LS paper trading WS
+        endpoint closed all subscription connections (causing the subscription
+        TRs to fail), which would have implied a systematic paper WS endpoint
+        limitation, was disproven.
+      target_location: docs/design/websocket-certification-findings.md#phase-8384-finding
+      status: present
+    - claim_text: >-
+        Root cause of the Phase 83/84 failures was a certification harness bug:
+        a shared WebSocket manager sender died after the first TR closed its
+        connection, so later TRs failed even though the gateway was not
+        systematically rejecting them. Using a fresh client/manager per
+        certification TR resolved the issue.
+      target_location: docs/design/websocket-certification-findings.md#phase-8384-finding
+      status: present
+    - claim_text: >-
+        Post-fix evidence: all 65 ws-stock TRs certified at Transport against
+        the paper environment; all 6 WebSocket futures/options TRs in that run
+        certified at Transport against the paper environment; SC0 (주식주문접수)
+        and SC1 (주식주문체결) reached FrameDecode from a guarded order lineage.
+      target_location: docs/design/websocket-certification-findings.md#phase-8384-finding
+      status: present
+    - claim_text: >-
+        FrameDecode residuals are market/session/event dependent, not a
+        systematic endpoint limitation: market-data channels (S3_, K3_, H1_,
+        HA_) require market-open runs; volatility-interruption / futures-session
+        channels require the relevant market event; order-event channels
+        (SC0, SC1) require a real guarded order event during the subscription
+        window; a closed-market or inactive-event run can still produce valid
+        Transport evidence.
+      target_location: docs/design/websocket-certification-findings.md#timing-and-event-residuals
+      status: present
+    - claim_text: >-
+        The maintained takeaway: do not classify broad WebSocket paper failures
+        as a gateway limitation until the harness lifecycle has been ruled out.
+        The current repo carries this lesson in the realtime code through
+        per-manager lifecycle, reconnect replay, explicit terminal errors, and
+        LatestOnly lost-wakeup tests.
+      target_location: docs/design/websocket-certification-findings.md#phase-8384-finding
+      status: present
+    - claim_text: >-
+        WebSocket certification shards: ws-stock covers the stock module with
+        65 TRs via the stock_ws_certification test binary; ws-futures-options
+        covers futures_options with 31 TRs via futures_options_ws_certification;
+        ws-combined groups overseas_futures, overseas_stock, realtime_invest,
+        misc, and sector with 20 TRs via combined_ws_certification. Total
+        WebSocket TR count is 116. These shards are not preserved as release
+        gates in this repo; the counts and grouping are preserved as migration
+        knowledge for future expansion planning.
+      target_location: docs/design/websocket-certification-findings.md#old-shard-map
+      status: present
+    - claim_text: >-
+        For future maintained WebSocket expansion: a WebSocket TR can become
+        implemented on transport lifecycle evidence, but any recommendation must
+        scope the claim — Transport proves connect/subscribe/unsubscribe
+        reachability; FrameDecode proves one live row shape; neither proves
+        gapless delivery, reconnection correctness for every venue, or
+        market-data completeness. Classify FrameDecode as timing/event-dependent
+        unless the TR naturally emits rows during the test window, use a fresh
+        or well-isolated WebSocket manager so one closed connection cannot poison
+        later TRs, record whether the claim is lifecycle-only or includes row
+        decoding, keep backpressure scope explicit (DropNewest and LatestOnly are
+        not gapless delivery guarantees), and avoid raw frame logging because
+        ACK frames can contain credential material.
+      target_location: docs/design/websocket-certification-findings.md#future-expansion-guidance
+      status: present

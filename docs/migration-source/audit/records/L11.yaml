@@ -1,0 +1,180 @@
+# Decommission audit record — L11 (Full 365-TR dependency inventory)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable below.
+
+row_id: L11
+area: Full 365-TR dependency inventory
+classification: knowledge
+verdict: confirmed
+bar_applied: completeness-vs-source (summary-plus-snapshot — snapshot preserves the data; summary preserves every decision-relevant fact)
+evidence_pointer: docs/migration-source/tr-dependencies-2026-06-14.json
+provenance:
+  # non-load-bearing — old source in the sibling korea-broker-sdk-ls checkout
+  - korea-broker-sdk-ls/docs/TR_DEPENDENCY_GUIDE.md
+  - korea-broker-sdk-ls/docs/TR_DEPENDENCY_REFERENCE.md
+  - korea-broker-sdk-ls/scripts/analysis/derive_tr_dependencies.py
+
+knowledge:
+  extraction_mode: summary-plus-snapshot
+  source_documents:
+    - korea-broker-sdk-ls/docs/TR_DEPENDENCY_GUIDE.md
+    - korea-broker-sdk-ls/docs/TR_DEPENDENCY_REFERENCE.md
+    - korea-broker-sdk-ls/scripts/analysis/derive_tr_dependencies.py
+  claim_map:
+    # ---- Snapshot identity / aggregate counts (decision-relevant numerics) ----
+    - claim_text: >-
+        The dataset is a static snapshot derived from specs/ls_openapi_specs.json
+        with spec_hash 238beb842b1a on derivation date 2026-06-14, covering a
+        total of 365 TRs.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#snapshot-identity
+      status: present
+    - claim_text: >-
+        Of the 365 TRs, 249 are REST and 116 are WebSocket.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#snapshot-identity
+      status: present
+    - claim_text: >-
+        38 TRs are Standalone (require only the universal OAuth token, no other
+        structural or environmental prerequisite).
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#snapshot-identity
+      status: present
+    - claim_text: >-
+        61 TRs carry cts_* SELF continuation fields (self-paginated).
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#snapshot-identity
+      status: present
+    - claim_text: >-
+        73 TRs are trading-day-sensitive (carry a date-shaped field that defaults
+        to today and fails on a non-trading day).
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#snapshot-identity
+      status: present
+    - claim_text: >-
+        7 TRs were observed paper-incompatible in the Migration Source dataset.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#snapshot-identity
+      status: present
+    - claim_text: >-
+        17 TRs are manual-only Order TRs.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#snapshot-identity
+      status: present
+    - claim_text: >-
+        There are 130 STRONG cross-TR order-number edges, across 15 consuming TRs.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#snapshot-identity
+      status: present
+    - claim_text: >-
+        There are 197 WEAK identifier edges.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#snapshot-identity
+      status: present
+    - claim_text: >-
+        162 TRs have at least one cross-TR edge.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#snapshot-identity
+      status: present
+    - claim_text: >-
+        Market/session distribution across all 365 TRs: session_independent 115,
+        market_session_dependent 169, us_market 51, krx_regular 4,
+        krx_night_derivatives 11, event_dependent 5, scenario_manual 3,
+        paper_incompatible 7.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#market--session-distribution
+      status: present
+    # ---- Per-TR data schema (the snapshot preserves the data) ----
+    - claim_text: >-
+        The dataset stores one row per TR carrying transport, module, group,
+        order flag, rate bucket/category, self_fields, date_fields, cross-TR
+        edges, and environmental dimensions (paper incompatibility, account state,
+        market session, trading-day sensitivity, manual_only, standalone).
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json#rows
+      status: present
+    - claim_text: >-
+        Each cross-TR edge records consuming_tr, producing_tr, linking_field,
+        concept, strength, the required flag, korean_name agreement, sample shape
+        agreement, producer_count, and a producer_sample — preserving why each
+        kept edge exists.
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json#rows[].cross_tr_edges
+      status: present
+    # ---- Derivation rules (decision-relevant constraints) ----
+    - claim_text: >-
+        Pure request-field-name to response-field-name matching yields about
+        20,000 coincidental candidate edges dominated by generic data/flag fields
+        (gubun, cnt, idx, date, volume, price, qty, time, RecCnt), which are not
+        couplings; so a cross-TR edge is recorded only when the linking field is a
+        genuine entity identifier.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#derivation-rules-preserved
+      status: present
+    - claim_text: >-
+        Order-number aliases form STRONG (required field) or NORMAL (non-required)
+        cross-TR couplings when a consuming TR needs an order number produced by a
+        same-module order/inquiry TR; the current spec has no NORMAL edges because
+        every order-number request field is required.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#derivation-rules-preserved
+      status: present
+    - claim_text: >-
+        Caller-supplied identifiers such as instrument, market, account, country,
+        and currency codes are WEAK couplings — useful discovery hints, not hard
+        prerequisites — assigned from the WEAK seed regardless of the required flag.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#derivation-rules-preserved
+      status: present
+    - claim_text: >-
+        cts_* fields are SELF continuation fields threaded from a TR's own prior
+        response, not producer/consumer cross-TR edges; SELF takes precedence over
+        the order-number alias (so cts_ordno is SELF, not a cross-TR edge).
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#derivation-rules-preserved
+      status: present
+    - claim_text: >-
+        Environmental dimensions (market session, paper incompatibility, account
+        state, trading-day sensitivity) are orthogonal facets, never points on the
+        coupling-strength scale.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#derivation-rules-preserved
+      status: present
+    - claim_text: >-
+        Order-number edges are gated to the same instrument module, because raw
+        order-number field names are shared across stock / futures_options /
+        overseas_stock; a domestic order-modify never links to an overseas order
+        number. The order-number alias_map and the WEAK seed are preserved so a
+        future maintainer can reconstruct why each edge exists.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#derivation-rules-preserved
+      status: present
+    - claim_text: >-
+        Every kept STRONG/NORMAL coupling is verified against korean_name
+        agreement and, where the producer has one, the raw example sample shape; a
+        coupling is dropped only on a positive mismatch, never because a sample is
+        absent.
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json#rows[].cross_tr_edges
+      status: present
+    # ---- Response-code / runtime semantics (decision-relevant) ----
+    - claim_text: >-
+        The runtime paper-incompatibility rule is stricter than the dataset
+        classification: a live response is paper-incompatible only when LS returns
+        01900. An empty trading-day-sensitive date returns 01715 on a non-trading
+        day.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#paper-incompatible-trs
+      status: present
+    # ---- Snapshot intent / governance (decision-relevant: how to use it) ----
+    - claim_text: >-
+        This dependency knowledge is a migration snapshot extracted without
+        reviving the old generated API surface; it is an input for future
+        SDK-expansion work items, queue planning, and order-safety work, and is
+        not the maintained SDK surface and not a promise to implement every TR.
+        For a TR to become maintained, create or update its metadata/trs/<tr>.yaml,
+        add runtime behavior if implemented, select a change-scoped gate, and make
+        an explicit focused-evidence decision.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#use-in-this-repository
+      status: present
+    # ---- Workflow prerequisites carried as the snapshot's behavioral facets ----
+    - claim_text: >-
+        Every TR except the two OAuth calls (token, revoke) requires a valid
+        OAuth access token — the one universal prerequisite shared by all
+        non-auth TRs.
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json#rows[].environmental.oauth_required
+      status: adapted
+    - claim_text: >-
+        WebSocket TRs deliver frames only after a strict connect -> authenticate
+        -> subscribe lifecycle; all subscriptions on a connection share one sender
+        and one token, and on reconnect stored subscriptions are replayed with a
+        fresh token; order-event channels additionally require a real order event
+        to fire during the subscription window.
+      target_location: docs/design/websocket-certification-findings.md
+      status: adapted

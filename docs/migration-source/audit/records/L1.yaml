@@ -1,0 +1,165 @@
+# Decommission audit record — L1 (Maintained SDK architecture)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable below.
+
+row_id: L1
+area: Maintained SDK architecture
+classification: knowledge
+verdict: confirmed
+bar_applied: completeness-vs-source (distilled-lesson)
+evidence_pointer: docs/plans/maintained-sdk-migration-plan.md
+provenance:
+  # Non-load-bearing. The distilled lesson is the deliberate departure FROM the
+  # old generated-surface architecture; the old artifacts below are the source
+  # of that departure, not a load-bearing target.
+  - korea-broker-sdk-ls/crates/ (generated Rust tree across all categories — old generated-surface architecture)
+  - korea-broker-sdk-ls/scripts/ (old Python generation/certification/evidence pipeline)
+  - korea-broker-sdk-ls/docs/improvement-plan/CODEBASE_ARCHITECTURE_PLAN_2026-05-28.md (old internal architecture review)
+  - "manifest seed `docs/plans/maintained-sdk-migration-plan.md` is in THIS repo, not the old one; manifest seed `old runtime layout` = old crates/ tree"
+
+knowledge:
+  extraction_mode: distilled-lesson
+  source_documents:
+    - korea-broker-sdk-ls/crates/ (old generated-surface architecture)
+    - korea-broker-sdk-ls/scripts/ (old Python meta-layer/pipeline)
+    - korea-broker-sdk-ls/docs/improvement-plan/CODEBASE_ARCHITECTURE_PLAN_2026-05-28.md
+  claim_map:
+    - claim_text: >-
+        The maintained Rust SDK code is the source of truth for SDK behavior;
+        generated Rust output is no longer the primary SDK surface. LS API
+        changes are infrequent and the generation pipeline was more expensive to
+        maintain than targeted SDK edits, so maintainers update the SDK directly
+        and trackers are advisory inputs only.
+      target_location: docs/adr/0001-maintained-sdk-surface.md
+      status: present
+    - claim_text: >-
+        SDK code ownership follows Dependency Class (prerequisite pattern), not
+        the old generated categories such as domestic stock or futures/options;
+        those old LS categories become Facet Metadata tags (protocol, venue or
+        session, TR code, instrument domain) used to route tests, evidence,
+        documentation, and operator scheduling.
+      target_location: docs/adr/0002-dependency-class-ownership-with-facet-routing.md
+      status: present
+    - claim_text: >-
+        The full LS TR inventory (all ~365 callable TRs) is tracked in metadata
+        from the start, but Rust SDK behavior is implemented selectively by
+        maintainability and usefulness tiers; importing all TRs as code would
+        preserve the maintenance burden the new repository exists to remove, and
+        existing old-SDK users are not a compatibility constraint.
+      target_location: docs/adr/0004-complete-tracking-selective-sdk-implementation.md
+      status: present
+    - claim_text: >-
+        Change trackers fetch upstream LS API and documentation into staged
+        snapshots, normalize and diff those against reviewed baselines, emit
+        advisory severity-classified tracker findings, and promote baselines only
+        after review; trackers do not mutate SDK code directly. A finding may be
+        promoted into a reviewed SDK Maintenance Work Item.
+      target_location: docs/adr/0005-staged-snapshots-for-change-tracking.md
+      status: present
+    - claim_text: >-
+        Old certification/generated-surface vocabulary (Generated API Surface,
+        Spec Drift Review, TR Certification, Certified TR Coverage, Evidence
+        Accountability, Fixture Coverage Debt) is retired where it overlaps new
+        concepts; maintained-surface, tracker, metadata, support-state,
+        change-scoped gate, and focused-evidence language replaces it.
+      target_location: docs/adr/0006-retire-generated-surface-certification-vocabulary.md
+      status: present
+    - claim_text: >-
+        Build a representative vertical slice that proves the maintained-SDK
+        architecture before expanding TR coverage: core auth/client/transport/
+        error/rate behavior, metadata index plus representative per-TR metadata
+        and a schema validator, and a small set of representative TRs across
+        standalone, market-session, paginated, account, and realtime classes.
+      target_location: docs/adr/0007-representative-vertical-slice-first.md
+      status: present
+    - claim_text: >-
+        Order TR public runtime is deferred until no-retry dispatch,
+        deduplication, reconciliation, and guarded focused evidence can ship
+        together; a partial order runtime port would be more dangerous than
+        leaving order execution unavailable, so the first tier tracks order TRs
+        in metadata and documents order-number coupling and reconciliation only.
+      target_location: docs/adr/0008-defer-order-runtime-until-safety-package-is-complete.md
+      status: present
+    - claim_text: >-
+        Permanent tooling for metadata validation, tracker planning, and
+        change-scoped verification is Rust-first where practical; the old
+        Python meta-layer became a maintenance burden. Python remains acceptable
+        only for one-time bootstrap scripts that migrate old specs or documents
+        into maintained project data.
+      target_location: docs/adr/0009-rust-first-permanent-tooling.md
+      status: present
+    - claim_text: >-
+        The old repository korea-broker-sdk-ls is a Migration Source only, not a
+        permanent dependency; the new repository will not depend on old scripts,
+        generated files, or release gates as permanent architecture, and exists
+        to obsolete the old generated-surface architecture.
+      target_location: docs/adr/0010-old-repository-is-migration-source-only.md
+      status: present
+    - claim_text: >-
+        Do not preserve the full generated Rust tree as the new source of truth,
+        the old Python generation pipeline as permanent architecture, the old
+        certification/release gates as the default maintenance workflow, or
+        compatibility with existing old-SDK users as a migration constraint.
+      target_location: docs/adr/0001-maintained-sdk-surface.md
+      status: present
+    - claim_text: >-
+        Default verification is a Change-Scoped Gate selected from metadata
+        facets (touched crates, owning dependency classes, TR facets such as
+        self_paginated, date_sensitive, account_state, protocol websocket,
+        owner_class orders); a Full Baseline is reserved for release or periodic
+        confidence and is not the ordinary maintenance gate.
+      target_location: docs/adr/0002-dependency-class-ownership-with-facet-routing.md
+      status: present
+    - claim_text: >-
+        Track the full LS TR inventory in per-TR metadata files with a routing
+        index (tr-index.yaml) that duplicates only routing fields; every tracked
+        TR has exactly one per-TR file and exactly one owner_class, facets are
+        multi-valued, the index is validated against per-TR files, and bootstrap
+        may generate initial metadata once after which metadata is maintained
+        project data.
+      target_location: metadata/tr-index.yaml
+      status: present
+    - claim_text: >-
+        The Rust-owned ls-metadata serde structs and validator are the single
+        validating authority for per-TR maintenance metadata: closed-set facets
+        are Rust enums so an unknown owner_class/protocol/rate_bucket/
+        instrument_domain/venue_session/certification_path is a located parse
+        error, and validate_dir enforces that every indexed TR has a per-TR file
+        and that the index routing fields equal the per-TR values. This is
+        chosen over a hand-maintained JSON Schema as the single source of truth.
+      target_location: docs/adr/0012-rust-owned-metadata-schema-authority.md
+      status: present
+    - claim_text: >-
+        The maintained workspace splits into four crates by tooling concern, not
+        by dependency class: ls-core (transport-agnostic runtime — auth, config,
+        transport, rate buckets, errors, serde wire-compat), ls-sdk (the public
+        facade with dependency classes as modules), ls-metadata (TR metadata
+        types, routing index, validator, change-scoped planner), and ls-trackers
+        (API Drift and Specification Document trackers). A dev-only
+        ls-sdk-test-support crate (publish=false) holds shared test mocks.
+      target_location: docs/adr/0011-ls-crate-layout.md
+      status: present
+    - claim_text: >-
+        The intended dependency-class organization (core, standalone,
+        paginated, account, market_session, orders, realtime,
+        paper_incompatible) is realized as ls-sdk submodules; the realized slice
+        carries standalone, market_session, paginated, account, and realtime
+        modules, with orders/paper_incompatible deferred per ADR 0008.
+      target_location: crates/ls-sdk/src/
+      status: adapted
+    - claim_text: >-
+        The maintained-SDK domain vocabulary and the maintained-surface stance
+        (Maintained SDK Surface as source of truth, Change Trackers advisory,
+        Tracked vs Implemented vs Recommended TR distinction, Migration Source /
+        Decommissioned Migration Source, Change-Scoped Gate vs Full Baseline,
+        Focused Evidence replacing certification vocabulary) is the canonical
+        language for the architecture.
+      target_location: CONTEXT.md
+      status: present
