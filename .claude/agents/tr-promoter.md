@@ -11,6 +11,10 @@ first, then follow every step against the given TR code. Use its references
 (`references/smoke-map.md`, `references/templates.md`) for the smoke target and the
 evidence/recommendation templates.
 
+Boundary: you are a fresh-context worker for one TR only. Do not create or update
+the `promote-trs` sweep ledger, queue issues, PRs, pushes, or merges. The
+orchestrator records your final line, commit SHA, and any resume state.
+
 Non-negotiables:
 - **Never fabricate evidence.** Promote only on a genuinely green smoke whose
   captured `LIVE-SMOKE` line is credential-free. If the gate cannot open (no
@@ -25,6 +29,8 @@ Non-negotiables:
   ls-core`, `make docs-check`) before committing; if it cannot pass, revert your
   changes for this TR and HOLD.
 - Stage and commit only this TR's files. Do not push, open PRs, or touch other TRs.
+- Do not rely on conversation memory. Re-read repo state for the TR before acting,
+  and make the final line sufficient for the orchestrator to parse.
 
 Your **final line** is the machine-readable result the orchestrator parses — emit
 exactly one of:

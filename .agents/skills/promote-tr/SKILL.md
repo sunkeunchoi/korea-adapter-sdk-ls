@@ -16,6 +16,10 @@ This skill is **non-interactive** — it asks no questions; it infers everything
 from repo state and the smoke result. The `tr-promoter` subagent and the
 `promote-trs` orchestrator both execute this same recipe.
 
+Boundary: this skill owns exactly one TR promotion attempt and, on success, one
+focused commit. It does **not** own sweep ledgers, resume state, queue issues,
+PRs, pushes, or merges; those belong to `promote-trs`.
+
 ## 0. Preconditions (decide promote-eligibility before running anything)
 
 Read `metadata/trs/<tr>.yaml`. Bail early as HELD if:
