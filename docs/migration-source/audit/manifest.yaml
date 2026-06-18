@@ -1,0 +1,364 @@
+# Decommission Audit Manifest — dispatch input for the `audit-carried-rows` fleet
+#
+# One entry per ledger row in `docs/migration-source-extraction-ledger.md`
+# (24 `carried` + 2 `discard` = 26). Each entry pairs a stable `id` (L1…L26)
+# with the area name and the pointers a fresh per-row auditor needs. This file is
+# the AUTHORITY for the `L<N>` <-> area mapping; the committed validator
+# (`crates/ls-trackers/tests/decommission_audit.rs`) reconciles it 1:1 against the
+# IDs parsed from the ledger table, so a future ledger reorder cannot silently
+# re-map an ID.
+#
+# `candidate_class` and `candidate_extraction_mode` SEED the auditor — they do not
+# bind it. R5 keeps the recorded classification the agent's own judgment; an agent
+# that finds a runnable test for a knowledge-seeded row (or a design-only target
+# for a behavioral-seeded row) records its own class in the row record and the
+# validator checks the record, not this seed.
+#
+# Old-source paths are in the OLD repo (`korea-broker-sdk-ls`) and are provenance
+# only — they are not load-bearing for a confirmed record (R13). Target paths are
+# in THIS repo.
+version: 1
+generated: 2026-06-18
+source_ledger: docs/migration-source-extraction-ledger.md
+counts:
+  total: 26
+  carried: 24
+  discard: 2
+  candidate_behavioral: 4
+  candidate_knowledge: 20
+  candidate_discard: 2
+
+rows:
+  - id: L1
+    area: Maintained SDK architecture
+    disposition: carried
+    candidate_class: knowledge
+    candidate_extraction_mode: distilled-lesson
+    old_sources:
+      - docs/plans/maintained-sdk-migration-plan.md
+      - old runtime layout
+    targets:
+      - docs/adr/
+      - CONTEXT.md
+      - crate layout (crates/)
+
+  - id: L2
+    area: Auth/config/runtime transport lessons
+    disposition: carried
+    candidate_class: behavioral
+    target: "cargo test -p ls-core"
+    target_note: >-
+      Token handling, env resolution, HTTP dispatch, retry, rate buckets,
+      tr_cont headers, timeout config, parse helpers — exercised by the ls-core
+      slice tests (crates/ls-core/tests/{auth,config,config_resolve,client,rate_limiter,parse,inner}.rs).
+    old_sources:
+      - crates/core/src/{auth,config,inner,client,rate_limiter,error}.rs
+      - runtime tests
+    targets:
+      - crates/ls-core/
+
+  - id: L3
+    area: Paper/production environment finding
+    disposition: carried
+    candidate_class: knowledge
+    candidate_extraction_mode: distilled-lesson
+    old_sources:
+      - docs/ENVIRONMENT_VERIFICATION_RESEARCH.md
+    targets:
+      - crates/ls-sdk/tests/live_smoke.rs (paper_guard)
+      - docs/design/release-readiness-and-residual-lessons.md
+
+  - id: L4
+    area: Runtime success predicate
+    disposition: carried
+    candidate_class: behavioral
+    target: "cargo test -p ls-core --test inner"
+    target_note: >-
+      00000/empty/00136/00707 success and 01900 paper-incompatible signal are
+      modeled by ls-core::inner::rsp_cd_is_success and its inner.rs tests.
+    old_sources:
+      - docs/certification_taxonomy.md
+      - crates/core/src/inner.rs
+      - crates/core/tests/api_error_tests.rs
+    targets:
+      - crates/ls-core/src/inner.rs
+      - crates/ls-core/tests/inner.rs
+
+  - id: L5
+    area: Full response-code taxonomy
+    disposition: carried
+    candidate_class: knowledge
+    candidate_extraction_mode: full-transcription
+    old_sources:
+      - docs/certification_taxonomy.md
+      - release remediation docs
+    targets:
+      - docs/design/ls-gateway-response-semantics.md
+
+  - id: L6
+    area: Order acknowledgement codes
+    disposition: carried
+    candidate_class: knowledge
+    candidate_extraction_mode: summary-plus-snapshot
+    classification_note: knowledge per ADR 0008 (no order runtime in this slice)
+    old_sources:
+      - crates/core/tests/api_error_tests.rs
+    targets:
+      - docs/design/ls-gateway-response-semantics.md
+      - docs/design/order-safety-design.md
+
+  - id: L7
+    area: Error enum public surface
+    disposition: carried
+    candidate_class: knowledge
+    candidate_extraction_mode: summary-plus-snapshot
+    classification_note: knowledge per ADR 0008 (no order runtime in this slice)
+    old_sources:
+      - crates/core/tests/error_tests.rs
+    targets:
+      - docs/design/order-safety-design.md
+
+  - id: L8
+    area: Retry and rate-limit behavior
+    disposition: carried
+    candidate_class: behavioral
+    target: "cargo test -p ls-core --test rate_limiter"
+    target_note: >-
+      Non-order retry and rate-limit waiting are exercised by the ls-core
+      resilience/rate_limiter tests; order no-retry is design-only (sub-claim the
+      agent records knowledge/unverifiable, not behavioral).
+    old_sources:
+      - crates/core/tests/resilience_tests.rs
+      - docs/OPERATIONS_RUNBOOK.md
+    targets:
+      - crates/ls-core/tests/rate_limiter.rs
+
+  - id: L9
+    area: Order safety runtime
+    disposition: carried
+    candidate_class: knowledge
+    candidate_extraction_mode: full-transcription
+    classification_note: design-only per ADR 0008 (no order runtime to test)
+    old_sources:
+      - docs/ORDER_SAFETY_DESIGN.md
+      - docs/ORDER_RECONCILIATION_DESIGN.md
+      - order tests
+    targets:
+      - docs/design/order-safety-design.md
+
+  - id: L10
+    area: Order dedup eviction lesson
+    disposition: carried
+    candidate_class: knowledge
+    candidate_extraction_mode: distilled-lesson
+    classification_note: design-only per ADR 0008 (no order runtime to test)
+    old_sources:
+      - docs/ORDER_SAFETY_DESIGN.md
+      - solution note referenced by current design
+    targets:
+      - docs/design/order-safety-design.md
+
+  - id: L11
+    area: Full 365-TR dependency inventory
+    disposition: carried
+    candidate_class: knowledge
+    candidate_extraction_mode: summary-plus-snapshot
+    old_sources:
+      - docs/TR_DEPENDENCY_GUIDE.md
+      - docs/TR_DEPENDENCY_REFERENCE.md
+      - scripts/analysis/derive_tr_dependencies.py
+    targets:
+      - docs/migration-source/tr-dependencies-2026-06-14.json
+      - docs/design/tr-dependency-inventory-snapshot.md
+
+  - id: L12
+    area: Strong order-number coupling matrix
+    disposition: carried
+    candidate_class: knowledge
+    candidate_extraction_mode: summary-plus-snapshot
+    old_sources:
+      - docs/TR_DEPENDENCY_REFERENCE.md
+    targets:
+      - docs/migration-source/tr-dependencies-2026-06-14.json
+      - docs/design/tr-dependency-inventory-snapshot.md
+
+  - id: L13
+    area: SELF pagination population
+    disposition: carried
+    candidate_class: knowledge
+    candidate_extraction_mode: summary-plus-snapshot
+    old_sources:
+      - docs/TR_DEPENDENCY_REFERENCE.md
+    targets:
+      - docs/migration-source/tr-dependencies-2026-06-14.json
+
+  - id: L14
+    area: Trading-day sensitivity knowledge
+    disposition: carried
+    candidate_class: knowledge
+    candidate_extraction_mode: summary-plus-snapshot
+    old_sources:
+      - docs/TR_DEPENDENCY_GUIDE.md
+      - certification runs
+    targets:
+      - docs/migration-source/tr-dependencies-2026-06-14.json
+      - docs/design/ls-gateway-response-semantics.md
+
+  - id: L15
+    area: Paper-incompatible TR set
+    disposition: carried
+    candidate_class: knowledge
+    candidate_extraction_mode: summary-plus-snapshot
+    old_sources:
+      - docs/TR_DEPENDENCY_GUIDE.md
+      - docs/SIMULATION_EVIDENCE_MATRIX.md
+      - fixture debt scripts
+    targets:
+      - docs/design/tr-dependency-inventory-snapshot.md
+      - docs/migration-source/tr-dependencies-2026-06-14.json
+
+  - id: L16
+    area: WebSocket lifecycle runtime
+    disposition: carried
+    candidate_class: behavioral
+    target: "make live-smoke-ws"
+    target_note: >-
+      S3_ -> live-smoke-ws (crates/ls-sdk/tests/live_smoke.rs::live_smoke_ws),
+      per .agents/skills/promote-tr/references/smoke-map.md — LIFECYCLE
+      REACHABILITY ONLY. Sub-claims (reconnect replay, terminal exhaustion,
+      latest-only wakeup) are not exercised by any runnable target here and are
+      recorded unverifiable, not confirmed (R6/R6a). Offline lifecycle assertions
+      live in crates/ls-sdk/tests/realtime_tests.rs.
+    live_prerequisite: "LS_TRADING_ENV=paper, credentials in .env, reachable paper WS gateway"
+    old_sources:
+      - old WS manager/tests
+      - docs/SIMULATION_EVIDENCE_MATRIX.md
+    targets:
+      - crates/ls-sdk/src/realtime/
+
+  - id: L17
+    area: Broad WebSocket certification findings
+    disposition: carried
+    candidate_class: knowledge
+    candidate_extraction_mode: full-transcription
+    old_sources:
+      - docs/SIMULATION_EVIDENCE_MATRIX.md
+      - WS certification tests
+    targets:
+      - docs/design/websocket-certification-findings.md
+
+  - id: L18
+    area: WebSocket backpressure policy
+    disposition: carried
+    candidate_class: knowledge
+    candidate_extraction_mode: distilled-lesson
+    classification_note: >-
+      seeded knowledge (policy completeness vs source + "confirm diagnostics
+      completeness separately"); an agent that finds a runnable DropNewest/
+      LatestOnly assertion (crates/ls-sdk/tests/realtime_tests.rs,
+      crates/ls-sdk/src/realtime/overflow.rs) may record behavioral.
+    old_sources:
+      - docs/WEBSOCKET_BACKPRESSURE_POLICY.md
+      - WS tests
+    targets:
+      - crates/ls-sdk/src/realtime/overflow.rs
+      - docs/operations/operator-diagnostics.md
+
+  - id: L19
+    area: Diagnostics/redaction contract
+    disposition: carried
+    candidate_class: knowledge
+    candidate_extraction_mode: full-transcription
+    old_sources:
+      - docs/DIAGNOSTICS_CONTRACT.md
+      - docs/OBSERVABILITY_AND_DIAGNOSTICS.md
+    targets:
+      - docs/operations/operator-diagnostics.md
+
+  - id: L20
+    area: Operations runbook
+    disposition: carried
+    candidate_class: knowledge
+    candidate_extraction_mode: summary-plus-snapshot
+    old_sources:
+      - docs/OPERATIONS_RUNBOOK.md
+    targets:
+      - docs/operations/operator-diagnostics.md
+
+  - id: L21
+    area: Full certification/evidence pipeline
+    disposition: discard
+    candidate_class: discard
+    reason_location: >-
+      docs/migration-source-extraction-ledger.md, row L21 "Notes" cell:
+      "Do not preserve the old full generated-surface release gate as permanent
+      architecture. Extract only reusable gateway facts, response semantics, and
+      operator lessons."
+    old_sources:
+      - docs/SIMULATION_EVIDENCE_MATRIX.md
+      - scripts/local_evidence_runner.py
+      - evidence pack scripts/tests
+
+  - id: L22
+    area: Evidence buckets and residual lane
+    disposition: carried
+    candidate_class: knowledge
+    candidate_extraction_mode: summary-plus-snapshot
+    old_sources:
+      - docs/SIMULATION_EVIDENCE_MATRIX.md
+      - docs/certification_taxonomy.md
+      - release docs
+    targets:
+      - docs/design/release-readiness-and-residual-lessons.md
+
+  - id: L23
+    area: Convenience API smoke interface
+    disposition: carried
+    candidate_class: knowledge
+    candidate_extraction_mode: distilled-lesson
+    old_sources:
+      - docs/CONVENIENCE_API_EVIDENCE_INTERFACE.md
+      - workflow tests
+    targets:
+      - docs/design/release-readiness-and-residual-lessons.md
+
+  - id: L24
+    area: Spec drift and fetch scripts
+    disposition: carried
+    candidate_class: knowledge
+    candidate_extraction_mode: distilled-lesson
+    classification_note: >-
+      knowledge: the claim is "spec-drift capability is carried via Rust trackers,
+      old Python scripts are not permanent tooling." An agent that prefers to
+      exercise the trackers (cargo test -p ls-trackers) may record behavioral.
+    old_sources:
+      - docs/SPEC_DRIFT_REVIEW.md
+      - scripts/fetch_ls_specs.py
+      - scripts/change_detector.py
+    targets:
+      - crates/ls-trackers/src/api_drift.rs
+      - crates/ls-trackers/src/spec_doc.rs
+
+  - id: L25
+    area: Old generated Rust API surface
+    disposition: discard
+    candidate_class: discard
+    reason_location: >-
+      docs/migration-source-extraction-ledger.md, row L25 "Notes" cell:
+      "The current repo intentionally rejects full generated-surface ownership and
+      compatibility. Retain only selected behavior and extracted gateway
+      knowledge."
+    old_sources:
+      - generated crates/tests for all categories
+
+  - id: L26
+    area: Old release checklists and production-readiness docs
+    disposition: carried
+    candidate_class: knowledge
+    candidate_extraction_mode: summary-plus-snapshot
+    old_sources:
+      - docs/RELEASE_CHECKLIST_TEMPLATE.md
+      - docs/RUST_RELEASE_CONFIDENCE_PLAN.md
+      - release evidence docs
+    targets:
+      - docs/design/release-readiness-and-residual-lessons.md

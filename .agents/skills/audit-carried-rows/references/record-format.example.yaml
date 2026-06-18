@@ -1,0 +1,77 @@
+# Worked decommission-audit records — ONE per class, plus an accepted variant.
+#
+# This file is deliberately OUTSIDE docs/migration-source/audit/records/ so the
+# U6 "exactly 26 records" check has nothing extra to skip. The validator's
+# per-record invariant test deserializes each `---` document below as a Record
+# and asserts the schema/pointer/credential/inline-transcription invariants — but
+# NOT ledger reconciliation or the 26-row count (those apply only to the real
+# records set). All examples use `evidence_pointer: inline` so pointer integrity
+# holds without any on-disk artifact.
+#
+# Schema: see record-format.md (this directory).
+
+# --- Example 1: behavioral row, confirmed (lifecycle reachability only) ---
+row_id: EX-behavioral
+area: WebSocket lifecycle runtime (example)
+classification: behavioral
+verdict: confirmed
+bar_applied: passing smoke (lifecycle reachability only)
+evidence_pointer: inline
+provenance:
+  - docs/SIMULATION_EVIDENCE_MATRIX.md
+behavioral:
+  target: "make live-smoke-ws"
+  line: "LIVE-SMOKE target=live-smoke-ws inputs=[symbol=005930 ws_port=29443] result=[connected subscribed unsubscribed no row within timeout (not a failure)]"
+  production_only: false
+
+---
+# --- Example 2: knowledge row, confirmed via claim-by-claim completeness ---
+row_id: EX-knowledge
+area: Runtime success predicate (example)
+classification: knowledge
+verdict: confirmed
+bar_applied: completeness-vs-source (full-transcription)
+evidence_pointer: inline
+provenance:
+  - docs/certification_taxonomy.md
+knowledge:
+  extraction_mode: full-transcription
+  source_documents:
+    - docs/certification_taxonomy.md
+  claim_map:
+    - claim_text: "rsp_cd 00000, empty, 00136, and 00707 are read-side success codes."
+      target_location: docs/design/ls-gateway-response-semantics.md#success-predicate
+      status: present
+    - claim_text: "rsp_cd 01900 is the sole paper-incompatible signal and is never a read success."
+      target_location: docs/design/ls-gateway-response-semantics.md#paper-incompatible
+      status: present
+
+---
+# --- Example 3: discard row, confirmed via presence-and-coherence ---
+row_id: EX-discard
+area: Old generated Rust API surface (example)
+classification: discard
+verdict: confirmed
+bar_applied: presence-and-coherence
+evidence_pointer: inline
+discard:
+  reason: "The current repo intentionally rejects full generated-surface ownership and compatibility; retain only selected behavior and extracted gateway knowledge."
+  coherence_note: "Internally coherent: non-carry is a deliberate architecture stance, consistent with ADR 0010 (old repo is migration source only)."
+
+---
+# --- Example 4: behavioral row, production-only -> unverifiable -> accepted ---
+row_id: EX-accepted
+area: Production order acknowledgement (example, production-only)
+classification: behavioral
+verdict: assumption-accepted
+bar_applied: production-only — no admissible test (R6a)
+evidence_pointer: inline
+behavioral:
+  target: "(none — production trading prohibited)"
+  production_only: true
+  reason: "Genuine order-ack behavior is reachable only against the production gateway; production trading tests are prohibited and a paper smoke cannot stand in."
+unverifiable_reason: "Behavior reachable only in production (R6a); no admissible test exists in this repo."
+acceptance:
+  accepted_by: "maintainer (example placeholder)"
+  acceptance_reason: "Residual risk accepted: order-ack codes 00039/00040 are design-captured but unproven at runtime; order runtime is out of this slice (ADR 0008)."
+  accepted_date: 2026-06-18
