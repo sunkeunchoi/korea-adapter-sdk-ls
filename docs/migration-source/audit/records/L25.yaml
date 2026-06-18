@@ -1,0 +1,32 @@
+# Decommission audit record — L25 (Old generated Rust API surface)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable below.
+row_id: L25
+area: Old generated Rust API surface
+classification: discard
+verdict: confirmed
+bar_applied: presence-and-coherence
+evidence_pointer: docs/migration-source-extraction-ledger.md
+provenance:
+  # Old-source paths (sibling korea-broker-sdk-ls) — non-load-bearing.
+  # The old repo carries generated crates/tests for all API categories.
+  - generated crates/tests for all categories
+discard:
+  reason: >-
+    The current repo intentionally rejects full generated-surface ownership and
+    compatibility. Retain only selected behavior and extracted gateway
+    knowledge.
+  coherence_note: >-
+    Internally coherent: the L25 ledger Notes cell records a present, deliberate
+    non-carry stance for the old generated Rust API surface (the generated
+    crates/tests for all categories), while explicitly routing the still-useful
+    portions — selected behavior and extracted gateway knowledge — to the carried
+    rows; no contradiction. The audit does not judge whether the discard decision
+    was correct.

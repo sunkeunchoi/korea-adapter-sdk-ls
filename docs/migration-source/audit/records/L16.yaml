@@ -1,0 +1,43 @@
+# Decommission audit record — L16 (WebSocket lifecycle runtime)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable below.
+
+row_id: L16
+area: WebSocket lifecycle runtime
+classification: behavioral
+verdict: confirmed
+bar_applied: >-
+  passing live smoke (make live-smoke-ws → live_smoke_ws) — LIFECYCLE
+  REACHABILITY ONLY. Confirmed: paper WS gateway reachable, S3_ connect /
+  subscribe / unsubscribe lifecycle completes cleanly, resolved WS URL carries
+  the paper port 29443. NOT exercised by this smoke and recorded unverifiable
+  (R6/R6a), never folded into the confirm: reconnect replay after a dropped
+  connection, terminal-state exhaustion, latest-only (LatestOnly) wakeup
+  semantics. Those sub-claims have no runnable live target here; offline
+  lifecycle assertions live in crates/ls-sdk/tests/realtime_tests.rs.
+evidence_pointer: inline
+provenance:
+  # Old-source paths in the sibling checkout (korea-broker-sdk-ls), non-load-bearing:
+  - korea-broker-sdk-ls/crates/core/src/ws_manager/ (old WS manager/tests)
+  - korea-broker-sdk-ls/docs/SIMULATION_EVIDENCE_MATRIX.md
+
+behavioral:
+  target: "make live-smoke-ws"
+  line: "LIVE-SMOKE target=live-smoke-ws inputs=[symbol=005930 ws_port=29443] result=[row received price=357250]"
+  production_only: false
+
+# The confirm covers ONLY the lifecycle/structural claims the smoke proves
+# (connect/auth/subscribe/unsubscribe reachability, paper WS port). The row's
+# remaining sub-claims are not exercised by any runnable target this session:
+unverifiable_reason: >-
+  Sub-claims reconnect replay, terminal-state exhaustion, and latest-only wakeup
+  are NOT exercised by the lifecycle-only live-smoke-ws and have no runnable live
+  target in this repo. They remain unverifiable (route to maintainer acceptance
+  in the roll-up); they are explicitly NOT folded into the lifecycle confirm.

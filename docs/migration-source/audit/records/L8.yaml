@@ -1,0 +1,65 @@
+# Decommission audit record — L8 (Retry and rate-limit behavior)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable below.
+
+row_id: L8
+area: Retry and rate-limit behavior
+classification: behavioral
+verdict: confirmed
+bar_applied: >-
+  passing offline test (no gateway). The non-order retry and rate-limit-waiting
+  behavior is exercised by the inline unit tests in crates/ls-core/src/inner.rs
+  (retry pipeline) and crates/ls-core/src/rate_limiter.rs (per-category buckets),
+  which run via the ls-core lib test target. The manifest-named target
+  `cargo test -p ls-core --test rate_limiter` does NOT resolve (there is no
+  integration test target `rate_limiter` in ls-core; the only tests/ file is
+  policy_index_crosscheck.rs), so the admissible runnable target actually run was
+  `cargo test -p ls-core --lib` filtered to the four resilience tests. The confirm
+  covers exactly the non-order behavior those tests assert: a retryable transport
+  error (persistent 5xx) retries up to a cap of 4 total attempts and charges the
+  rate bucket on each attempt; a non-retryable error (HTTP 400) does not retry
+  (exactly 1 attempt); a fresh GCRA market-data bucket returns promptly under the
+  configured rate; and a zero per-second rate is rejected per category with a
+  config error naming the offending field. The order no-retry dimension present in
+  the old source is DESIGN-ONLY here (no order runtime / no post_order in this
+  slice per ADR 0008) and is recorded as the unverifiable knowledge sub-claim
+  below — NOT folded into this behavioral confirm.
+evidence_pointer: crates/ls-core/src/inner.rs
+provenance:
+  # Old-source paths in the sibling checkout (korea-broker-sdk-ls), non-load-bearing:
+  - korea-broker-sdk-ls/crates/core/tests/resilience_tests.rs (old REST-03 retry + REST-04 rate-limit integration tests, incl. the order no_retry_order case that called the now-deferred post_order)
+  - korea-broker-sdk-ls/crates/core/src/rate_limiter.rs (old per-category buckets)
+  - korea-broker-sdk-ls/docs/OPERATIONS_RUNBOOK.md (operator retry/rate-limit lessons)
+
+behavioral:
+  target: "cargo test -p ls-core --lib"
+  line: >-
+    cargo test -p ls-core --lib (filtered to the four resilience tests) =>
+    4 passed; 0 failed; 0 ignored.
+    inner::tests::retryable_transport_error_retries_up_to_cap_and_charges_bucket
+    (persistent 5xx => exactly 4 total attempts, bucket charged each attempt,
+    error classifies as Http);
+    inner::tests::non_retryable_error_does_not_retry (HTTP 400 => exactly 1
+    attempt, no retry);
+    rate_limiter::tests::wait_market_data_returns_promptly_under_rate (fresh GCRA
+    bucket returns under 50ms at the configured rate);
+    rate_limiter::tests::zero_rate_limit_rejected_for_each_category (zero
+    per-second rate rejected per category with a Config error naming the field).
+  production_only: false
+
+# Out-of-scope / unverifiable behavioral sub-claim (knowledge, NOT a behavioral
+# confirm): the old source asserted that order dispatch (post_order) NEVER
+# retries — a single 5xx propagates as Err on the first attempt. This repo has no
+# order runtime and no post_order (deferred per ADR 0008
+# docs/adr/0008-defer-order-runtime-until-safety-package-is-complete.md), so the
+# order no-retry behavior is design-only and has no runnable target here. It is
+# recorded unverifiable and is explicitly NOT part of the L8 behavioral confirm
+# above; the non-order retry + rate-limit behavior is what the passing offline
+# tests exercise.

@@ -27,3 +27,8 @@ reqwest = { workspace = true, features = ["blocking"] }
 
 [dev-dependencies]
 httpmock.workspace = true
+# Decommission-audit gate validator (tests/decommission_audit.rs) deserializes
+# the per-row audit records. `serde_yaml` is already a workspace dependency
+# (used by ls-metadata) and pinned in Cargo.lock, so this adds no new transitive
+# dependency — the U6 trigger to prefer a dedicated crate is not met.
+serde_yaml.workspace = true

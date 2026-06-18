@@ -1,0 +1,84 @@
+# Decommission audit record — L13 (SELF pagination population)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable below.
+
+row_id: L13
+area: SELF pagination population
+classification: knowledge
+verdict: confirmed
+bar_applied: completeness-vs-source (summary-plus-snapshot)
+evidence_pointer: inline
+provenance:
+  # non-load-bearing — old source, soon to be decommissioned
+  - "korea-broker-sdk-ls/docs/TR_DEPENDENCY_REFERENCE.md (§ SELF (cts_*) self-pagination, lines 164-234; SELF-vs-header disambiguation note lines 167-170; cts_* precedence rule lines 76-77; at-a-glance SELF count line 30)"
+
+knowledge:
+  extraction_mode: summary-plus-snapshot
+  source_documents:
+    - "korea-broker-sdk-ls/docs/TR_DEPENDENCY_REFERENCE.md"
+  claim_map:
+    - claim_text: >-
+        SELF (cts_*) self-pagination population: 61 TRs thread a cts_*
+        continuation value from their own prior response. The full population maps
+        each TR to its module and its cts_* continuation field(s):
+        g3102 overseas_stock [cts_seq]; g3190 overseas_stock [cts_value];
+        g3202 overseas_stock [cts_seq]; g3203 overseas_stock [cts_date, cts_time];
+        g3204 overseas_stock [cts_date, cts_info];
+        o3103 overseas_futures [cts_date, cts_time]; o3108 overseas_futures [cts_date];
+        o3116 overseas_futures [cts_seq]; o3117 overseas_futures [cts_seq, cts_daygb];
+        o3123 overseas_futures [cts_date, cts_time]; o3128 overseas_futures [cts_date];
+        o3136 overseas_futures [cts_seq]; o3137 overseas_futures [cts_seq, cts_daygb];
+        o3139 overseas_futures [cts_seq, cts_daygb];
+        t0150 stock [cts_medosu, cts_expcode, cts_price, cts_middiv];
+        t0151 stock [cts_medosu, cts_expcode, cts_price, cts_middiv];
+        t0424 stock [cts_expcode]; t0425 stock [cts_ordno];
+        t0434 futures_options [cts_ordno]; t0441 futures_options [cts_expcode, cts_medocd];
+        t1301 stock [cts_time]; t1310 stock [cts_time]; t1404 stock [cts_shcode];
+        t1405 stock [cts_shcode]; t1410 stock [cts_shcode]; t1486 stock [cts_time];
+        t1514 sector [cts_date]; t1602 stock [cts_time, cts_idx];
+        t1603 stock [cts_time, cts_idx]; t1617 stock [cts_date, cts_time];
+        t1636 stock [cts_idx]; t1637 stock [cts_idx]; t1752 stock [cts_idx];
+        t1771 stock [cts_idx]; t1809 stock [cts]; t1951 stock [cts_time];
+        t1973 stock [cts_time]; t2212 futures_options [cts_time];
+        t2214 futures_options [cts_code]; t2407 futures_options [cts_time];
+        t2541 futures_options [cts_time, cts_idx]; t3401 stock [cts_date];
+        t3518 stock [cts_date, cts_time]; t4203 sector [cts_date, cts_time, cts_daygb];
+        t8404 futures_options [cts_time]; t8405 futures_options [cts_code];
+        t8410 stock [cts_date]; t8411 stock [cts_date, cts_time];
+        t8412 stock [cts_date, cts_time]; t8417 sector [cts_date, cts_time];
+        t8418 sector [cts_date, cts_time]; t8419 sector [cts_date];
+        t8451 stock [cts_date]; t8452 stock [cts_date, cts_time];
+        t8453 stock [cts_date, cts_time]; t8454 stock [cts_time];
+        t8458 futures_options [cts_time]; t8459 futures_options [cts_code];
+        t8464 futures_options [cts_date, cts_time]; t8465 futures_options [cts_date, cts_time];
+        t8466 futures_options [cts_date]. The at-a-glance SELF count is 61.
+      target_location: "docs/migration-source/tr-dependencies-2026-06-14.json (rows[].pagination_self == true, rows[].self_fields; verified 61 rows, byte-for-byte match of module + cts_* field lists vs source — 0 mismatches)"
+      status: present
+    - claim_text: >-
+        These TRs thread a cts_* continuation value from their own prior response.
+        This is a SELF dependency, distinct from any cross-TR edge (AE2): SELF is
+        not a producer/consumer cross-TR coupling.
+      target_location: "docs/migration-source/tr-dependencies-2026-06-14.json (self_fields is a row field distinct from cross_tr_edges) and docs/design/tr-dependency-inventory-snapshot.md#derivation-rules-preserved (\"cts_* fields are SELF continuation fields, not producer/consumer TR edges\")"
+      status: present
+    - claim_text: >-
+        The cts_* continuation takes precedence over the order-number alias, so
+        cts_ordno is SELF, not a cross-TR edge (e.g. t0425 cts_ordno and t0434
+        cts_ordno are SELF rows, not order-number cross-TR couplings).
+      target_location: "docs/migration-source/tr-dependencies-2026-06-14.json (t0425 / t0434: pagination_self true with self_fields=[cts_ordno]; verified neither carries any cts_ordno producer/consumer cross_tr_edge — each has only a single WEAK expcode identifier edge)"
+      status: present
+    - claim_text: >-
+        Note this is a different population from the IR has_pagination flag (the
+        tr_cont header, ~246 TRs, which excludes orders): SELF here is the cts_*
+        request-field scan. The 61-TR SELF (cts_* request field) population must
+        not be conflated with the larger ~246-TR tr_cont header continuation
+        population, the header population is driven by the tr_cont response header
+        rather than cts_* request fields, and it excludes orders.
+      target_location: "docs/design/tr-dependency-inventory-snapshot.md#derivation-rules-preserved (\"SELF cts_* continuation is a distinct population from header (tr_cont) continuation\" bullet: 61 cts_* SELF request-field TRs vs the larger ~246-TR tr_cont header-continuation population (has_pagination) which is header-driven and excludes orders; snapshot records the SELF population only and warns implementers not to assume the 61-TR SELF set is the whole pagination universe)"
+      status: present

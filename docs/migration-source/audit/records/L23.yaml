@@ -1,0 +1,69 @@
+# Decommission audit record — L23 (Convenience API smoke interface)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable below.
+
+row_id: L23
+area: Convenience API smoke interface
+classification: knowledge
+verdict: confirmed
+bar_applied: completeness-vs-source (distilled-lesson)
+evidence_pointer: docs/design/release-readiness-and-residual-lessons.md
+provenance:
+  # non-load-bearing — old-source paths in the read-only korea-broker-sdk-ls checkout
+  - docs/CONVENIENCE_API_EVIDENCE_INTERFACE.md
+  - crates/core/tests/workflow_tests.rs
+
+knowledge:
+  extraction_mode: distilled-lesson
+  source_documents:
+    - docs/CONVENIENCE_API_EVIDENCE_INTERFACE.md
+  claim_map:
+    - claim_text: >-
+        Convenience API evidence is intentionally separate from TR Certification;
+        the seam exists so each evidence source is responsible for proving a
+        distinct fact, and the two sources (local tests vs live smoke) can
+        legitimately disagree.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#convenience-api-evidence-lessons
+      status: present
+    - claim_text: >-
+        A convenience helper can call a proven TR and still be wrong because it
+        supplies stale request defaults, loses a field, or changes the request/
+        response shape; calling a certified TR does not by itself certify the
+        helper.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#convenience-api-evidence-lessons
+      status: present
+    - claim_text: >-
+        Local deterministic tests are responsible for proving helper request
+        construction (request defaults), generated-shape assumptions, and fixture
+        freshness; live smoke is responsible for proving live gateway/Simulation
+        behavior. The illustrative defaults in the source (dwmcode="D",
+        chegb="0") are examples of the request-defaults responsibility, not a
+        standalone constraint.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#convenience-api-evidence-lessons
+      status: present
+    - claim_text: >-
+        When local mocks drift from live behavior, treat the mismatch as a
+        fixture-freshness / test-data maintenance problem, NOT as a live
+        gateway/Simulation failure, unless live evidence shows the same gateway
+        behavior. The source's known stale-fixture example (daily_chart / t1305
+        mock drift, including pagination cnt-field serialization divergence) is an
+        illustration of this rule, not an independent decision constraint.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#convenience-api-evidence-lessons
+      status: present
+    - claim_text: >-
+        Any future helper that wraps WebSocket subscription, quote, order, or
+        account flows needs an explicit evidence seam before it can become
+        Recommended. The source's "do not add new convenience helpers in this
+        refactor" / one-workflow-evidence-interface design decisions are carried
+        forward as this forward-looking constraint, since the maintained SDK is
+        TR/class-oriented and does not carry the old convenience API surface as
+        compatibility.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#convenience-api-evidence-lessons
+      status: adapted

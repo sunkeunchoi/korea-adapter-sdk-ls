@@ -1,0 +1,79 @@
+# Decommission audit record — L2 (Auth/config/runtime transport lessons)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable below.
+
+row_id: L2
+area: Auth/config/runtime transport lessons
+classification: behavioral
+verdict: confirmed
+bar_applied: passing test (cargo test -p ls-core, offline; no gateway) — confirmed on exercised lessons only; timeout-firing + live-gateway sub-claims split out unverifiable
+evidence_pointer: inline
+provenance:
+  # Old-source paths compared — NON-LOAD-BEARING (R13). In korea-broker-sdk-ls:
+  - "crates/core/src/auth.rs (token cache/refresh, redaction)"
+  - "crates/core/src/config.rs + config_resolve equivalent (env resolution, timeout/rate config)"
+  - "crates/core/src/inner.rs (HTTP dispatch, tr_cont/tr_cont_key headers, retry, rsp_cd classification, pagination)"
+  - "crates/core/src/client.rs (URL/scheme validation, construction)"
+  - "crates/core/src/rate_limiter.rs (rate buckets per category)"
+  - "crates/core/src/parse.rs (numeric parse helpers)"
+  - "crates/core/src/error.rs (error surface)"
+
+behavioral:
+  target: "cargo test -p ls-core"
+  # Verbatim, credential-free result captured from the run (offline; no gateway).
+  # The named slice behaviors live as inline #[cfg(test)] modules in
+  # crates/ls-core/src/{auth,config,config_resolve,client,rate_limiter,parse,inner}.rs
+  # (the manifest target_note named tests/*.rs; the actual tests are in-module).
+  line: "cargo test -p ls-core: 93 passed, 0 failed (3 suites: 91 lib unit + 2 integration); covers auth/config/config_resolve/client/rate_limiter/parse/inner; 8.0s"
+  production_only: false
+
+# Claim split (R6/R6.x): only the transport lessons the passing tests actually
+# exercise are confirmed; lessons the suite does not cover are recorded
+# unverifiable below and NOT folded into the confirm.
+#
+# CONFIRMED — exercised by passing tests in crates/ls-core/src/*.rs #[cfg(test)]:
+#   - Token handling: single-flight refresh fetches exactly once under concurrency;
+#     caches within expiry; fail-closed on zero/negative expire_in; expire_in
+#     defaults to 24h when absent; expires_in alias accepted; revoke on OK envelope;
+#     non-OK token envelope caches nothing; token Debug redacts the secret value.
+#     (auth.rs tests)
+#   - Env resolution: paper/legacy-fallback env var resolution, primary-wins,
+#     exact missing-var error message, missing-required-var error; Debug redacts
+#     credentials. (config.rs / config_resolve.rs tests)
+#   - HTTP dispatch: POST sends tr_cd + default tr_cont="N" request headers and
+#     deserializes the JSON envelope; non-success rsp_cd on 2xx surfaces ApiError;
+#     01900 classifies as paper-incompatible on both 2xx and non-2xx.
+#     (inner.rs tests, wiremock — offline)
+#   - Retry: retryable transport/5xx error retries up to the cap and charges the
+#     rate bucket each attempt; non-retryable error does not retry. (inner.rs)
+#   - Rate buckets: manager constructs for all categories with defaults/overrides;
+#     zero rate rejected per category; first wait under rate returns promptly
+#     (GCRA). (rate_limiter.rs)
+#   - tr_cont headers: default tr_cont="N" asserted on dispatch; pagination
+#     collect_all walks two pages and returns PaginationLimit when truncated.
+#     (inner.rs)
+#   - Timeout config RESOLUTION: connect/request/ws timeout defaults and overrides
+#     resolve to the expected Durations. (config_resolve.rs)
+#   - Parse helpers: price (integer/decimal/comma), quantity, rate, signed-delta
+#     parsing incl. malformed/empty/sign rejection and precision. (parse.rs)
+#   - Client construction: rejects empty appkey field; synchronous no-IO build;
+#     URL scheme validation (rejects http non-loopback / ftp, allows loopback with
+#     flag, production https passes). (client.rs)
+#
+# UNVERIFIABLE sub-claims (named, NOT confirmed, NOT folded into the confirm):
+#   - timeout-FIRING behavior against a slow/unresponsive gateway: connect_timeout
+#     and request_timeout are wired onto the reqwest builder and their RESOLUTION
+#     is tested, but no passing offline test forces a timeout to actually elapse.
+#   - live gateway token issuance / dispatch against a real LS endpoint: the
+#     offline suite uses a mock server only.
+# These require a gateway/credential not present offline (AE5). The row verdict is
+# `confirmed` strictly on the lessons the passing tests exercise (listed above);
+# the sub-claims here are split out per the bar and routed to maintainer
+# acceptance in the roll-up, never folded into this behavioral confirm.

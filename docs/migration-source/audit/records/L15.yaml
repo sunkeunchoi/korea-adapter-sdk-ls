@@ -1,0 +1,77 @@
+# Decommission audit record — L15 (Paper-incompatible TR set)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable below.
+
+row_id: L15
+area: Paper-incompatible TR set
+classification: knowledge
+verdict: confirmed
+bar_applied: completeness-vs-source (summary-plus-snapshot)
+evidence_pointer: docs/design/tr-dependency-inventory-snapshot.md
+provenance:
+  # Old-source paths compared — non-load-bearing (R13).
+  - korea-broker-sdk-ls/docs/TR_DEPENDENCY_GUIDE.md
+  - korea-broker-sdk-ls/docs/SIMULATION_EVIDENCE_MATRIX.md
+  - korea-broker-sdk-ls/scripts/report_fixture_debt.py
+knowledge:
+  extraction_mode: summary-plus-snapshot
+  source_documents:
+    - korea-broker-sdk-ls/docs/TR_DEPENDENCY_GUIDE.md
+    - korea-broker-sdk-ls/docs/SIMULATION_EVIDENCE_MATRIX.md
+    - korea-broker-sdk-ls/scripts/report_fixture_debt.py
+  claim_map:
+    - claim_text: >-
+        Exactly 7 TRs were observed as paper-incompatible in the Migration Source
+        dataset (the at-a-glance "Paper-Incompatible (01900): 7" count and the
+        market/session distribution "paper_incompatible 7").
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#paper-incompatible-trs
+      status: present
+    - claim_text: >-
+        The seven paper-incompatible TRs are CIDBQ01400, CIDBQ01500, CIDBQ01800,
+        CIDBQ02400, CIDBQ03000, CIDBQ05300, and CIDEQ00800 — the hardcoded
+        PAPER_INCOMPATIBLE_TRS set in the fixture-debt script and the enumerated
+        Overseas Futures rows of the guide.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#paper-incompatible-trs
+      status: present
+    - claim_text: >-
+        All seven paper-incompatible TRs belong to the overseas_futures domain.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#paper-incompatible-trs
+      status: present
+    - claim_text: >-
+        Each of the seven is data-preserved in the snapshot with its Korean TR
+        name (e.g. CIDBQ01400 해외선물 체결내역개별 조회(주문가능수량); CIDEQ00800
+        일자별 미결제 잔고내역).
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#paper-incompatible-trs
+      status: present
+    - claim_text: >-
+        The signal that classifies a TR paper-incompatible is response code 01900,
+        whose meaning is 모의투자 업무 미제공 — not provided on the Simulation
+        (paper) gateway; the TR works only against Production.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#paper-incompatible-trs
+      status: present
+    - claim_text: >-
+        The runtime classification rule is stricter than the static dataset
+        label: a live response is treated as paper-incompatible only when LS
+        actually returns 01900 (the 01900-only boundary, no per-TR overrides).
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#paper-incompatible-trs
+      status: present
+    - claim_text: >-
+        01900 is the sole unsupported-work / paper-incompatible signal; every
+        other LS error code is a hard failure rather than a paper-incompatibility
+        deferral.
+      target_location: docs/design/tr-dependency-inventory-snapshot.md#paper-incompatible-trs
+      status: adapted
+    - claim_text: >-
+        In the machine-readable snapshot each of the seven rows carries the
+        environmental facets paper_incompatible=true, paper_symptom=01900,
+        market_session=paper_incompatible, and dependency_reason=account_state,
+        preserving the underlying per-TR data.
+      target_location: docs/migration-source/tr-dependencies-2026-06-14.json
+      status: present

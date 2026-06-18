@@ -1,0 +1,74 @@
+# Decommission audit record — L20 (Operations runbook)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable below.
+
+row_id: L20
+area: Operations runbook
+classification: knowledge
+verdict: confirmed
+bar_applied: completeness-vs-source (summary-plus-snapshot)
+evidence_pointer: inline
+provenance:
+  # non-load-bearing — old source in the read-only sibling checkout
+  - korea-broker-sdk-ls/docs/OPERATIONS_RUNBOOK.md
+
+knowledge:
+  extraction_mode: summary-plus-snapshot
+  source_documents:
+    - docs/OPERATIONS_RUNBOOK.md
+  # Second re-audit pass. The previous re-audit refuted on one claim — the
+  # HTTP 429 retry behavior — which was materially wrong against the maintained
+  # dispatch path. A follow-up fix corrected the Rate Limiting section of
+  # docs/operations/operator-diagnostics.md to state the maintained truth: the
+  # REST dispatch path auto-retries ONLY 5xx + transport errors and a 4xx/429 is
+  # NOT retried. Every operational fact in the target is now re-read freshly and
+  # ground-truthed against the maintained ls-core / ls-sdk source (citations
+  # below); all are present AND accurate. No material loss remains, so the row is
+  # confirmed.
+  claim_map:
+    - claim_text: "Auth failures present as hit=false in auth spans, token fetch errors, HTTP 401, or LsError::Auth / LsError::Http from the first request needing a token; operator action is to verify the trading environment selector, credential namespace, credential presence, and reachability of the oauth2 token endpoint."
+      target_location: docs/operations/operator-diagnostics.md#auth-failures
+      status: present
+    - claim_text: "Auth recovery is to rotate credentials through the downstream credential-management process, build a new config and client, revoke the old token when possible, drop the old client, and retry a low-risk read-only TR; do not log credentials or run multiple same-account clients without understanding their independent token caches."
+      target_location: docs/operations/operator-diagnostics.md#auth-failures
+      status: present
+    - claim_text: "LS business errors present as HTTP status 200 with a non-success response code surfaced as LsError::ApiError { code, message }; operators preserve tr_code, the response code, and the broker message in redacted structured logs and classify the cause as request-shape mistake, account/permission state, market/session timing, stale fixture, or gateway rejection."
+      target_location: docs/operations/operator-diagnostics.md#ls-business-errors
+      status: present
+    - claim_text: "Business-error recovery fixes request parameters or account permissions before retrying; non-order read calls may be retried only when the error is known transient, while order calls must never be blindly retried and must be reconciled first; do not assume 00000 is the only success code."
+      target_location: docs/operations/operator-diagnostics.md#ls-business-errors
+      status: present
+    - claim_text: "Rate limiting presents as repeated rate_limiter::wait events with sustained wait_ms or LS-side HTTP 429; SDK-side throttling appears as wait events before dispatch and LS-side throttling appears as HTTP 429; immediate action is to reduce caller concurrency and pause non-essential polling for the saturated category."
+      target_location: docs/operations/operator-diagnostics.md#rate-limiting
+      status: present
+    - claim_text: "Default per-category token-bucket quotas are 5/s MarketData, 3/s Orders, 1/s Account, 1/s Auth, configurable per client config. Ground-truthed: DEFAULT_MARKET_DATA_PER_SEC=5, DEFAULT_ORDERS_PER_SEC=3, DEFAULT_ACCOUNT_PER_SEC=1, DEFAULT_AUTH_PER_SEC=1 in crates/ls-core/src/config_resolve.rs (lines 37-46), applied via unwrap_or over the optional RateLimitConfig fields in ResolvedRateLimits::from_raw."
+      target_location: docs/operations/operator-diagnostics.md#rate-limiting
+      status: present
+    - claim_text: "The REST dispatch path auto-retries ONLY 5xx server errors and transport errors (up to 3 retries, at most 4 total calls); a 4xx client error — including an LS-side HTTP 429 — is NOT retried, so sustained LS-side throttling must be resolved by reducing the request rate, not by expecting the SDK to retry through it. Ground-truthed: is_retryable (crates/ls-core/src/inner.rs:69-74) returns true only when re.status().map(is_server_error).unwrap_or(true) — i.e. 5xx or a status-less transport error; a 429 is a 4xx so is_server_error() is false and it is not retried. post_with_retry (inner.rs:276-308) drives ExponentialBuilder::default() (up to 3 retries → at most 4 calls) gated by .when(is_retryable); the inner unit test non_retryable_error_does_not_retry confirms a 4xx makes exactly 1 attempt while retryable_transport_error_retries_up_to_cap_and_charges_bucket confirms exactly 4 attempts for a persistent 5xx. The old runbook's '429 retries up to 3 times' is NOT maintained behavior and the target now states the corrected rule and flags the discrepancy."
+      target_location: docs/operations/operator-diagnostics.md#rate-limiting
+      status: adapted
+    - claim_text: "WebSocket reconnect presents as connection-lost logs, reconnect attempts carrying an attempt field, reconnect success carrying subscription_count, or the terminal LsError::WebSocket reconnect-budget-exhausted error; brief reconnects that replay subscriptions are usually transient and budget exhaustion means subscriber streams terminate and local subscription state is cleaned up."
+      target_location: docs/operations/operator-diagnostics.md#websocket-reconnect
+      status: present
+    - claim_text: "Auto-reconnect is bounded at 4 attempts with 1s/2s/3s/4s backoff and on exhaustion every active subscriber receives the terminal reconnect-budget-exhausted WebSocket error; alert when more than 2 reconnects occur within a 5-minute window. Ground-truthed: RECONNECT_MAX_ATTEMPTS=4 (crates/ls-sdk/src/realtime/connection.rs:28) looped for attempt in 1..=RECONNECT_MAX_ATTEMPTS with sleep(Duration::from_secs(attempt)) (connection.rs:123-124) giving 1s/2s/3s/4s; on exhaustion the terminal LsError::WebSocket(\"reconnect budget exhausted\") is delivered (connection.rs:154-173)."
+      target_location: docs/operations/operator-diagnostics.md#websocket-reconnect
+      status: present
+    - claim_text: "After reconnect-budget exhaustion, operators create new subscriptions and wire the new streams into downstream processing; do not manually resubscribe during an active reconnect cycle or build an unbounded external reconnect loop around the SDK's bounded reconnect behavior."
+      target_location: docs/operations/operator-diagnostics.md#websocket-reconnect
+      status: adapted
+    - claim_text: "Dropped WebSocket frames present as dropped_count or dropped-frame warnings for a (tr_cd, tr_key); state derived from the affected stream is potentially stale and should be rebuilt from a read-only REST snapshot, dropped frames are never replayed, and the backpressure policy must never be claimed gapless. DropNewest preserves queued frames and loses incoming frames; LatestOnly favors freshness but is not gapless. The per-subscriber dispatch channel capacity defaults to 64, configurable via ws_channel_capacity with a minimum of 1. Ground-truthed: DEFAULT_WS_CHANNEL_CAPACITY=64 (crates/ls-core/src/config_resolve.rs:29), with from_raw rejecting ws_channel_capacity == Some(0) (config_resolve.rs:148-152), and WsOverflowPolicy::{DropNewest,LatestOnly} with DropNewest as default (crates/ls-core/src/config.rs:132-144,369-370)."
+      target_location: docs/operations/operator-diagnostics.md#websocket-backpressure
+      status: present
+    - claim_text: "Credential rotation creates a new config/client from the new credential source, revokes the old token when possible, and drops the old client; environment selection is client-side because LS REST uses the same public host for paper and production and provides no reliable REST field proving the active environment, so operators must keep paper and production credentials separate and verify the trading environment selector before any live or order-capable workflow."
+      target_location: docs/operations/operator-diagnostics.md#credential-rotation
+      status: present
+    - claim_text: "Emergency order disablement must disable all order dispatch before dedup, rate limiting, or HTTP I/O; the runbook's runtime toggle blocks all order TRs all-or-nothing and leaves non-order REST calls unaffected, and re-enabling must follow operator review and must not be done silently by a reconciliation step."
+      target_location: docs/operations/operator-diagnostics.md#emergency-order-disablement
+      status: adapted

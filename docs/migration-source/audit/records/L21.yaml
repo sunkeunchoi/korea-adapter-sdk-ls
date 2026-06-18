@@ -1,0 +1,32 @@
+# Decommission audit record — L21 (Full certification/evidence pipeline)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable below.
+row_id: L21
+area: Full certification/evidence pipeline
+classification: discard
+verdict: confirmed
+bar_applied: presence-and-coherence
+evidence_pointer: docs/migration-source-extraction-ledger.md
+provenance:
+  # Old-source paths (sibling korea-broker-sdk-ls) — non-load-bearing.
+  - docs/SIMULATION_EVIDENCE_MATRIX.md
+  - scripts/local_evidence_runner.py
+  - evidence pack scripts/tests
+discard:
+  reason: >-
+    Do not preserve the old full generated-surface release gate as permanent
+    architecture. Extract only reusable gateway facts, response semantics, and
+    operator lessons.
+  coherence_note: >-
+    Internally coherent: the L21 ledger Notes cell records a present, deliberate
+    non-carry stance for the old full certification/evidence pipeline, while
+    routing the still-useful gateway facts, response semantics, and operator
+    lessons to the carried knowledge rows; no contradiction. The audit does not
+    judge whether the discard decision was correct.

@@ -1,0 +1,77 @@
+# Decommission audit record — L3 (Paper/production environment finding)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable in record-format.md.
+
+row_id: L3
+area: Paper/production environment finding
+classification: knowledge
+verdict: confirmed
+bar_applied: completeness-vs-source (distilled-lesson)
+evidence_pointer: docs/design/release-readiness-and-residual-lessons.md
+provenance:
+  # non-load-bearing — old source, read-only sibling checkout
+  - korea-broker-sdk-ls/docs/ENVIRONMENT_VERIFICATION_RESEARCH.md
+
+knowledge:
+  extraction_mode: distilled-lesson
+  source_documents:
+    - korea-broker-sdk-ls/docs/ENVIRONMENT_VERIFICATION_RESEARCH.md
+  claim_map:
+    - claim_text: >-
+        LS REST traffic uses the same public host for both environments
+        (https://openapi.ls-sec.co.kr:8080), so there is no distinction between
+        Simulation and Production at the REST transport layer.
+      target_location: crates/ls-core/src/config.rs
+      status: present
+    - claim_text: >-
+        The OAuth token response from /oauth2/token carries no env or
+        environment field (only access_token, expire_in, scope, token_type), so
+        the token response provides no Simulation-versus-Production signal.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#production-readiness-lessons
+      status: adapted
+    - claim_text: >-
+        The WebSocket port differs by environment (Simulation 29443,
+        Production 9443), but it is a client-configured choice, not a
+        server-reported signal; it is self-confirming and is only a secondary
+        indicator for WebSocket flows.
+      target_location: crates/ls-core/src/config.rs
+      status: present
+    - claim_text: >-
+        The SDK does not automatically verify Simulation versus Production for
+        REST calls and performs no automatic environment detection during REST
+        dispatch; environment correctness is controlled by LS_TRADING_ENV and
+        the selected credentials.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#production-readiness-lessons
+      status: present
+    - claim_text: >-
+        Downstream operators must keep Simulation and Production credentials
+        separate.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#production-readiness-lessons
+      status: present
+    - claim_text: >-
+        Real-money Production usage requires explicit operator review of
+        environment variables and credential names.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#production-readiness-lessons
+      status: present
+    - claim_text: >-
+        Resolution (Phase 46 decision): the verification concern is handled by
+        documentation only — no SDK runtime environment-detection code is added,
+        because no candidate auth, account, REST TR, or WebSocket TR response
+        field exists and LS documents none.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#production-readiness-lessons
+      status: present
+    - claim_text: >-
+        Any future verification helper, if LS ever documents a stable
+        server-side environment signal, must be explicit rather than automatic
+        client mutation, must never switch environments silently, must return a
+        clear error if configured and observed environment disagree, and must be
+        covered by mock tests and Simulation evidence.
+      target_location: crates/ls-sdk/tests/live_smoke.rs
+      status: adapted

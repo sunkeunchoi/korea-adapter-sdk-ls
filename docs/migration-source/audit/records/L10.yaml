@@ -1,0 +1,85 @@
+# Decommission audit record — L10 (Order dedup eviction lesson)
+#
+# A durable, credential-free record of one ledger-row audit, captured while the
+# old source was still readable. Self-contained (R13/R14): the evidence pointer
+# resolves inside this repo or inline; old-source paths appear only as
+# non-load-bearing provenance.
+#
+# Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
+# transcribed or free-text field (line / claim_text / acceptance_reason). See the
+# credential-free non-negotiable in record-format.md.
+
+row_id: L10
+area: Order dedup eviction lesson
+classification: knowledge
+verdict: confirmed
+bar_applied: completeness-vs-source (distilled-lesson)
+evidence_pointer: docs/design/order-safety-design.md
+provenance:
+  # Old-source paths — non-load-bearing (R13). In the sibling read-only checkout
+  # korea-broker-sdk-ls.
+  - docs/solutions/performance-issues/order-dedup-cache-opportunistic-eviction.md
+  - docs/ORDER_SAFETY_DESIGN.md
+
+knowledge:
+  extraction_mode: distilled-lesson
+  source_documents:
+    - docs/solutions/performance-issues/order-dedup-cache-opportunistic-eviction.md
+    - docs/ORDER_SAFETY_DESIGN.md
+  claim_map:
+    - claim_text: >-
+        Read-path lazy (exact-key) eviction is necessary but insufficient:
+        evicting an expired entry only when its exact key is looked up again
+        keeps repeated submissions correct, but a long-running client that
+        submits many distinct orders would retain every expired entry for the
+        life of the process.
+      target_location: docs/design/order-safety-design.md#2-deduplication-cache-with-opportunistic-expired-entry-sweeps
+      status: present
+    - claim_text: >-
+        Count-based sweeping is the wrong trigger: it bounds high-volume bursts
+        but misses the burst-then-idle flow, where stale entries sit untouched
+        after activity stops.
+      target_location: docs/design/order-safety-design.md#2-deduplication-cache-with-opportunistic-expired-entry-sweeps
+      status: present
+    - claim_text: >-
+        A background sweeper is rejected: the order-safety layer has a
+        no-background-worker design; a sweeper thread is more moving parts than
+        the runtime needs and contradicts that stance.
+      target_location: docs/design/order-safety-design.md#2-deduplication-cache-with-opportunistic-expired-entry-sweeps
+      status: present
+    - claim_text: >-
+        The contract is an opportunistic sweep on the write path: insert calls a
+        monotonic sweep_expired_if_due before inserting; when the sweep interval
+        has elapsed, one inserting thread wins an atomic timestamp update and
+        runs a single bounded retain pass dropping entries outside the same TTL
+        rule the read path uses. The read path stays simple; memory is bounded
+        without a worker.
+      target_location: docs/design/order-safety-design.md#2-deduplication-cache-with-opportunistic-expired-entry-sweeps
+      status: present
+    - claim_text: >-
+        Using the same freshness/expiration predicate for read-time eviction and
+        sweep-time eviction keeps behavior aligned: a swept entry is one the read
+        path would already miss, so the sweep changes resource retention without
+        changing duplicate-order semantics.
+      target_location: docs/design/order-safety-design.md#2-deduplication-cache-with-opportunistic-expired-entry-sweeps
+      status: present
+    - claim_text: >-
+        The atomic sweep timestamp bounds concurrent work: under concurrent
+        inserts, at most one thread performs the retain pass for an elapsed
+        interval, and the rest continue without serializing on a mutex.
+      target_location: docs/design/order-safety-design.md#2-deduplication-cache-with-opportunistic-expired-entry-sweeps
+      status: present
+    - claim_text: >-
+        Existing read-path lazy eviction stays in place alongside the sweep
+        because it is still the fastest way to remove the key a caller just
+        proved stale.
+      target_location: docs/design/order-safety-design.md#2-deduplication-cache-with-opportunistic-expired-entry-sweeps
+      status: present
+    - claim_text: >-
+        The sweep must run with no DashMap entry guard held, preserving the
+        existing deadlock-avoidance rule carried over from exact-key eviction.
+        This is a decision-relevant concurrency-correctness constraint:
+        implementing the retain pass while holding a per-entry guard would
+        deadlock.
+      target_location: docs/design/order-safety-design.md#2-deduplication-cache-with-opportunistic-expired-entry-sweeps
+      status: present
