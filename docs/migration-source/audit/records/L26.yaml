@@ -12,9 +12,9 @@
 row_id: L26
 area: Old release checklists and production-readiness docs
 classification: knowledge
-verdict: refuted
+verdict: confirmed
 bar_applied: completeness-vs-source (summary-plus-snapshot)
-evidence_pointer: inline
+evidence_pointer: docs/design/release-readiness-and-residual-lessons.md
 provenance:
   # Non-load-bearing — old source, read-only sibling checkout, will vanish on decommission.
   - korea-broker-sdk-ls/docs/RELEASE_CHECKLIST_TEMPLATE.md
@@ -105,24 +105,6 @@ knowledge:
     - claim_text: >-
         Live Simulation / baseline evidence admitted for a release must be no
         older than 7 days before tagging; release tagging should verify that the
-        admitted baseline evidence freshness window (7 days) is met.
-      target_location: (none — no target doc records the 7-day live-evidence-freshness-before-tagging window)
-      status: missing
-
-re_disposition: extract
-gap: >-
-  The summary preserves the production-readiness, evidence-bucket, residual-
-  discipline, convenience-API, and deliberately-not-carried lessons, but it does
-  not preserve the old source's concrete release-evidence freshness threshold:
-  admitted Live Simulation / baseline evidence must be no older than 7 days
-  before tagging (RELEASE_CHECKLIST_TEMPLATE.md "Live Simulation Evidence passed
-  within 7 days before tagging"; RUST_RELEASE_CONFIDENCE_PLAN.md "Release tagging
-  should verify that admitted baseline evidence is no older than 7 days before
-  tagging"). This is a material numeric threshold (R7a): its loss changes a
-  release decision about how stale operator-initiated live evidence may be at
-  tagging, and it is a freshness discipline on live evidence — which the target
-  DOES carry as a lesson — not part of the generated-surface release gate that
-  is deliberately discarded. It is not listed among the target's "What Is
-  Deliberately Not Carried" items. Re-open as extract to record the 7-day
-  live-evidence freshness-before-tagging window in the release-readiness lesson
-  note.
+        admitted baseline-evidence freshness window (7 days) is met.
+      target_location: docs/design/release-readiness-and-residual-lessons.md#production-readiness-lessons
+      status: present

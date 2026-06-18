@@ -7,14 +7,14 @@
 #
 # Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
 # transcribed or free-text field (line / claim_text / acceptance_reason). The
-# old-source Redaction tables name credential fields literally; those claim_texts
+# old-source Redaction tables name credential fields literally; the claim_texts
 # below describe the contract while neutralizing the credential field-names so the
 # committed record stays credential-free per the non-negotiable.
 
 row_id: L9
 area: Order safety runtime
 classification: knowledge
-verdict: refuted
+verdict: confirmed
 bar_applied: completeness-vs-source (knowledge; manifest seeded full-transcription, realized distilled-lesson)
 evidence_pointer: docs/design/order-safety-design.md
 provenance:
@@ -26,12 +26,15 @@ provenance:
 
 knowledge:
   # The manifest seeds extraction_mode=full-transcription, but the in-repo target
-  # is a condensed design contract (~9.8K) covering two source design docs (~27K)
-  # plus the order tests — manifestly not a verbatim transcription. The honest
-  # realized mode (R5/R7b) is distilled-lesson; the bar applied is "preserves
-  # every decision-relevant constraint". One decision-relevant constraint (the
-  # order redaction / tracing-span contract) has NO representation in the target
-  # and is not claimed by any other manifest row's sources, so the row refutes.
+  # is a condensed design contract covering two source design docs plus the order
+  # tests — manifestly not a verbatim transcription. The honest realized mode
+  # (R5/R7b) is distilled-lesson; the bar applied is "preserves every
+  # decision-relevant constraint, even if prose is condensed". A re-extraction
+  # patch (commit 751e3e4) added target §5 (order redaction / tracing-span
+  # contract) and the target §4 reconciliation 7-day evidence-freshness window;
+  # both formerly-missing decision-relevant constraints were verified present
+  # against the old source on re-audit, so every material constraint now maps to a
+  # present/adapted target location and the row confirms.
   extraction_mode: distilled-lesson
   source_documents:
     - docs/ORDER_SAFETY_DESIGN.md
@@ -133,6 +136,14 @@ knowledge:
       target_location: docs/design/order-safety-design.md#2-deduplication-cache-with-opportunistic-expired-entry-sweeps
       status: present
     - claim_text: >-
+        The opportunistic sweep holds no per-entry guard: the retain pass must
+        run with no DashMap entry guard held, the deadlock-avoidance rule carried
+        over from exact-key eviction; running the retain pass while holding a
+        per-entry guard would deadlock. This is a decision-relevant concurrency-
+        correctness constraint, not implementation taste.
+      target_location: docs/design/order-safety-design.md#2-deduplication-cache-with-opportunistic-expired-entry-sweeps
+      status: present
+    - claim_text: >-
         The maintained order state model has six states: Accepted (order success
         rsp_cd + populated order response), Rejected (LsError::ApiError with
         broker code/message), Duplicate (dedup_hit=true, no new dispatch),
@@ -207,43 +218,27 @@ knowledge:
       target_location: docs/design/order-safety-design.md#4-guarded-manual-evidence
       status: present
     - claim_text: >-
-        Reconciliation/manual evidence freshness: reconciliation evidence must be
-        no older than 7 days before tagging a release unless the release owner
-        explicitly accepts the risk.
-      target_location: (no target location)
-      status: missing
+        Reconciliation/manual evidence freshness: reconciliation/manual evidence
+        must be no older than 7 days before tagging a release unless the release
+        owner explicitly accepts the risk.
+      target_location: docs/design/order-safety-design.md#4-guarded-manual-evidence
+      status: present
     - claim_text: >-
         The dedup cache covers ALL order-annotated TRs across every domain
         accessor (domestic stock, overseas stock, futures/options, overseas
         futures), each domain's order TRs sharing the one per-client cache.
-      target_location: docs/design/order-safety-design.md (domestic-stock slice only)
+      target_location: docs/design/order-safety-design.md#2-deduplication-cache-with-opportunistic-expired-entry-sweeps
       status: adapted
     - claim_text: >-
         Order redaction / tracing-span contract: all public dispatch methods use
         instrument(skip_all) so no function parameters are auto-recorded; the
-        order dispatch span records only non-credential fields (tr_code, path,
-        category, dedup_hit) and NEVER records the credential field-names (the
-        app key, app credential, account number, access token) nor the request body;
-        credential types implement Debug with a redacted substitution; generated
-        order request/response types contain no credential fields, and order
-        response types that may carry account-level data (order numbers, account
-        references) are NOT auto-redacted, so operators must review response
-        content before logging or persisting order evidence.
-      target_location: (no target location)
-      status: missing
-
-re_disposition: extract
-gap: >-
-  The order redaction / tracing-span contract from docs/ORDER_SAFETY_DESIGN.md
-  (Redaction section — which order-dispatch span fields are recorded vs the
-  credential field-names that are NEVER recorded, Debug-redaction of credential
-  types, and the non-auto-redaction of account-level order response data with the
-  operator-review obligation) is a decision-relevant safety constraint for the
-  future order runtime and has NO representation in the in-repo target
-  docs/design/order-safety-design.md. It is not claimed by any other manifest
-  row's sources (L19's redaction sources are DIAGNOSTICS_CONTRACT.md /
-  OBSERVABILITY_AND_DIAGNOSTICS.md, not ORDER_SAFETY_DESIGN.md). The
-  reconciliation-evidence 7-day freshness window from
-  docs/ORDER_RECONCILIATION_DESIGN.md is also dropped. Re-open as extract to
-  carry the order redaction/tracing-span contract (and the freshness window) into
-  the order-safety design note before decommission.
+        order dispatch span records only non-credential structural fields
+        (tr_code, path, category, dedup_hit) and NEVER records the credential
+        field-names (the app key, app credential, account number, access token)
+        nor the request body; credential types implement Debug with a redacted
+        substitution and generated order request/response types contain no
+        credential fields; order response types that may carry account-level data
+        (order numbers, account references) are NOT auto-redacted, so operators
+        must review response content before logging or persisting order evidence.
+      target_location: docs/design/order-safety-design.md#5-order-redaction-and-tracing-contract
+      status: present

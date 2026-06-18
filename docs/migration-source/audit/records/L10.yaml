@@ -12,7 +12,7 @@
 row_id: L10
 area: Order dedup eviction lesson
 classification: knowledge
-verdict: refuted
+verdict: confirmed
 bar_applied: completeness-vs-source (distilled-lesson)
 evidence_pointer: docs/design/order-safety-design.md
 provenance:
@@ -82,17 +82,4 @@ knowledge:
         implementing the retain pass while holding a per-entry guard would
         deadlock.
       target_location: docs/design/order-safety-design.md#2-deduplication-cache-with-opportunistic-expired-entry-sweeps
-      status: missing
-
-re_disposition: extract
-gap: >-
-  The distilled eviction lesson preserves the strategy (lazy-insufficient,
-  count-wrong-trigger, no-background-worker, opportunistic write-path sweep,
-  shared freshness predicate, atomic-bounded concurrency, retained lazy
-  read-path) but DROPS one decision-relevant concurrency-correctness constraint:
-  the sweep must run with no DashMap entry guard held, preserving the
-  deadlock-avoidance rule inherited from exact-key eviction. The target §2 of
-  docs/design/order-safety-design.md never states this, so a future implementer
-  could run the retain pass while holding a per-entry guard and deadlock. Re-open
-  as `extract`: add the no-entry-guard-held / deadlock-avoidance constraint to
-  the target eviction contract.
+      status: present

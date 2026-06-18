@@ -12,7 +12,7 @@
 row_id: L22
 area: Evidence buckets and residual lane
 classification: knowledge
-verdict: unverifiable
+verdict: confirmed
 bar_applied: completeness-vs-source (summary-plus-snapshot)
 evidence_pointer: docs/design/release-readiness-and-residual-lessons.md
 provenance:
@@ -118,7 +118,7 @@ knowledge:
         acknowledgment (non_numeric_in_numeric_slot, gateway_routing_error,
         non_api_error, unknown).
       target_location: docs/design/release-readiness-and-residual-lessons.md#residual-discipline
-      status: missing
+      status: present
     - claim_text: >-
         Unknown signatures fail closed: a new literal, field, or code is not
         covered by an old acknowledgment.
@@ -137,22 +137,34 @@ knowledge:
       target_location: docs/design/release-readiness-and-residual-lessons.md#residual-discipline
       status: adapted
 
-unverifiable_reason: >-
-  Extraction mode is summary-plus-snapshot, but L22 spans a non-enumerable
-  union of two large old-source docs (SIMULATION_EVIDENCE_MATRIX.md and
-  certification_taxonomy.md) whose "buckets and residual lane" material extends
-  well past the buckets/residual sections audited here (lane definitions,
-  certification bars, evidence metrics, manifest policy, evidence-record fields).
-  Completeness for this row cannot be established: the target preserves the
-  bucket taxonomy and the residual-discipline rules as adapted lessons, but the
-  closed error_class match-key taxonomy ({tr_code, rsp_cd, field_id,
-  error_class} with its four named classes and unknown sentinel) is a
-  decision-relevant residual-lane fact that is NOT represented in the target
-  doc — it is named only generically ("fail closed on unknown signatures"). That
-  is a candidate material gap, but because the row's source scope is itself
-  under-enumerated (no snapshot artifact pins the exact set of carried facts),
-  the auditor cannot conclude either no-material-loss (confirmed) or a definite
-  material loss (refuted) without inventing the completeness boundary. Per the
-  knowledge bar, an unenumerable/unprovable-completeness summary-plus-snapshot
-  row is recorded unverifiable with the blocking reason rather than folded into
-  a confirm. Routed to maintainer acceptance in the roll-up.
+# Re-audit note (2026-06-18, after the re-extraction patch to
+# release-readiness-and-residual-lessons.md#residual-discipline):
+#
+# Scope re-bounded against the ledger. L22's carried scope is precisely "timing
+# buckets, residual proof discipline, fail-closed signatures, and scoped
+# residual-bearing claims" (ledger row L22). The prior unverifiable cited
+# un-enumerated material — lane definitions, certification bars, evidence
+# metrics, manifest policy, evidence-record fields — but on fresh re-reading
+# those belong to the EXPLICITLY DISCARDED L21 "Full certification/evidence
+# pipeline" row (ledger row L21: "Do not preserve the old full generated-surface
+# release gate"), not to L22. With that conflation removed, L22's source scope is
+# enumerable: SIMULATION_EVIDENCE_MATRIX.md #Hybrid-Evidence-Buckets and
+# certification_taxonomy.md #Evidence-buckets-vs-response-code-classification +
+# #Acknowledged-residuals-the-release-gate-lane.
+#
+# The previously-named material gap is now genuinely closed: the re-extraction
+# added the closed error_class match-key taxonomy to
+# release-readiness-and-residual-lessons.md#residual-discipline — the four-tuple
+# {tr_code, rsp_cd, field_id, error_class} match key, the four named classes
+# (non_numeric_in_numeric_slot, gateway_routing_error, non_api_error, unknown),
+# the CLOSED-set property, and the fail-closed unknown sentinel that matches no
+# acknowledgment — verified claim-for-claim against certification_taxonomy.md
+# lines 75-84. That claim's status is updated missing -> present.
+#
+# Remaining condensations (paper_incompatible "empty/no-op" baseline state; the
+# filtered row-scope manifest-admission rule) are old-pipeline operational state
+# the maintained repo explicitly does not inherit ("This repository does not
+# inherit the old full certification pipeline") and are L21-discarded machinery,
+# not decision-relevant facts for L22's maintained scope. Every decision-relevant
+# fact in L22's scope now maps present/adapted: no material loss. Verdict
+# confirmed.

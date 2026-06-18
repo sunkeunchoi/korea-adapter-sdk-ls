@@ -7,137 +7,110 @@ per row) and reconciled in the serial roll-up phase. The committed validator
 frozen records under `records/` and keeps it checkable in CI after the old source
 is gone (R14).
 
-Audit run: 2026-06-18, against the sibling source `korea-broker-sdk-ls`. All 26
-rows returned a verdict; the 7 refuted rows have been re-dispositioned to
-`extract` in the ledger.
+Audit run: 2026-06-18, against the sibling source `korea-broker-sdk-ls`. The
+first pass found 7 refuted + 2 unverifiable rows (real material losses); those 9
+gaps were re-extracted into the maintained targets (normalized to maintained
+behavior, old source as provenance) and **re-audited independently** — all 9 now
+confirmed. No maintainer acceptances were used.
 
 The **trustworthy-green** verdict line below is the documented precondition the
-(out-of-scope) physical-decommission work item must cite. Decommission must not
-proceed while any row is `unverifiable`/un-accepted or an unresolved `extract`.
+(out-of-scope) physical-decommission work item must cite.
 
 ---
 
-## GATE: NOT-GREEN — 9 blocking row(s): L5, L6, L9, L10, L13, L19, L26 (refuted → extract) + L20, L22 (unverifiable, un-accepted).
+## GATE: TRUSTWORTHY-GREEN — all 26 rows confirmed, reconciled against the ledger, no unresolved extract.
 
-The audit caught **7 real material losses** in rows that read `carried` on paper,
-plus **2 rows whose completeness could not be established**. This is the audit
-working as intended — each gap was found while the old source is still readable,
-so it is a recoverable re-extraction rather than an unrecoverable post-decommission
-loss.
+Every `carried` (24) and `discard` (2) row has a recorded verdict that
+reconciles with its ledger disposition; all 26 are `confirmed`; no row is an
+unresolved `extract`; no row is an un-accepted `unverifiable`. (R15)
 
 ## Counts
 
 | State | Count | Rows |
 |---|---:|---|
-| `confirmed` | 17 | L1–L4, L7, L8, L11, L12, L14–L18, L21, L23, L24, L25 |
+| `confirmed` | 26 | L1–L26 |
 | `assumption-accepted` (counts toward green, reported apart) | 0 | — |
-| `refuted` → re-dispositioned `extract` | 7 | L5, L6, L9, L10, L13, L19, L26 |
-| `unverifiable` (un-accepted) | 2 | L20, L22 |
+| `refuted` | 0 | — |
+| `unverifiable` (un-accepted) | 0 | — |
 | missing verdict | 0 | — |
 
-A gate is *trustworthy-green* only when all 26 rows are `confirmed` or
-`assumption-accepted`, every verdict reconciles against the ledger, and no row is
-an unresolved `extract` (R15). 7 unresolved `extract` rows + 2 un-accepted
-`unverifiable` rows ⇒ NOT-GREEN.
+This gate is green **via proof**, not via acceptance: 0 of the 26 rows reached
+green through maintainer acceptance.
+
+## Audit journey (first pass → re-extraction → re-audit)
+
+The audit caught 9 real defects on the first pass — the value of running it while
+the source is still readable:
+
+| Row | First-pass finding | Resolution (re-extracted, then re-audited → confirmed) |
+|---|---|---|
+| L5 | response code `904` (market closed) dropped | added as a session-skip distinct from hard-failure / `01900` |
+| L6 | order-ack `00462`/`00463`/`00156` + `03181` missing | added to the order-specific codes table, order-scoped |
+| L9 | order redaction/tracing-span contract + reconciliation freshness | restored as order-safety §5 + §4 |
+| L10 | dedup "no DashMap entry guard" deadlock rule | restored in order-safety §2 |
+| L13 | SELF vs `tr_cont` header population conflation | disambiguation added to the snapshot derivation rules |
+| L19 | compatibility policy + Debug-redaction table collapsed | restored in operator-diagnostics |
+| L26 | 7-day baseline live-evidence freshness threshold | restored in release-readiness |
+| L20 | operational defaults absent (unverifiable) | restored as **maintained config defaults**; a first re-audit refuted a stale `429`-retry claim, which was corrected to maintained `is_retryable` behavior before re-confirming |
+| L22 | closed `error_class` match-key taxonomy (unverifiable) | restored in release-readiness; "under-enumerated scope" resolved as L21-discard territory |
+
+The L20 round-trip is the audit working on itself: the re-audit refused to
+rubber-stamp a re-extraction that reintroduced a stale implementation fact.
 
 ## All rows
 
-| ID | Area | Class | Verdict | Bar | Evidence pointer |
-|---|---|---|---|---|---|
-| L1 | Maintained SDK architecture | knowledge | confirmed | completeness (distilled-lesson) | docs/plans/maintained-sdk-migration-plan.md |
-| L2 | Auth/config/runtime transport lessons | behavioral | confirmed | `cargo test -p ls-core` (93 passed) | inline |
-| L3 | Paper/production environment finding | knowledge | confirmed | completeness (distilled-lesson) | docs/design/release-readiness-and-residual-lessons.md |
-| L4 | Runtime success predicate | behavioral | confirmed | ls-core inner tests (9 passed) | crates/ls-core/src/inner.rs |
-| L5 | Full response-code taxonomy | knowledge | **refuted → extract** | completeness (full-transcription) | docs/design/ls-gateway-response-semantics.md |
-| L6 | Order acknowledgement codes | knowledge | **refuted → extract** | completeness (summary+snapshot) | inline |
-| L7 | Error enum public surface | knowledge | confirmed | completeness (distilled-lesson) | inline |
-| L8 | Retry and rate-limit behavior | behavioral | confirmed | ls-core retry/rate-limit tests (4 passed) | crates/ls-core/src/inner.rs |
-| L9 | Order safety runtime | knowledge | **refuted → extract** | completeness (distilled-lesson) | docs/design/order-safety-design.md |
-| L10 | Order dedup eviction lesson | knowledge | **refuted → extract** | completeness (distilled-lesson) | docs/design/order-safety-design.md |
-| L11 | Full 365-TR dependency inventory | knowledge | confirmed | completeness (summary+snapshot) | docs/migration-source/tr-dependencies-2026-06-14.json |
-| L12 | Strong order-number coupling matrix | knowledge | confirmed | completeness (summary+snapshot) | docs/migration-source/tr-dependencies-2026-06-14.json |
-| L13 | SELF pagination population | knowledge | **refuted → extract** | completeness (summary+snapshot) | inline |
-| L14 | Trading-day sensitivity knowledge | knowledge | confirmed | completeness (summary+snapshot) | docs/migration-source/tr-dependencies-2026-06-14.json |
-| L15 | Paper-incompatible TR set | knowledge | confirmed | completeness (summary+snapshot) | docs/design/tr-dependency-inventory-snapshot.md |
-| L16 | WebSocket lifecycle runtime | behavioral | confirmed¹ | passing live smoke (lifecycle only) | inline |
-| L17 | Broad WebSocket certification findings | knowledge | confirmed | completeness (full-transcription) | docs/design/websocket-certification-findings.md |
-| L18 | WebSocket backpressure policy | knowledge | confirmed | completeness (distilled-lesson) | inline |
-| L19 | Diagnostics/redaction contract | knowledge | **refuted → extract** | completeness (full-transcription) | docs/operations/operator-diagnostics.md |
-| L20 | Operations runbook | knowledge | **unverifiable** | completeness (summary+snapshot) | inline |
-| L21 | Full certification/evidence pipeline | discard | confirmed | presence-and-coherence | docs/migration-source-extraction-ledger.md |
-| L22 | Evidence buckets and residual lane | knowledge | **unverifiable** | completeness (summary+snapshot) | docs/design/release-readiness-and-residual-lessons.md |
-| L23 | Convenience API smoke interface | knowledge | confirmed | completeness (distilled-lesson) | docs/design/release-readiness-and-residual-lessons.md |
-| L24 | Spec drift and fetch scripts | knowledge | confirmed | completeness (distilled-lesson) | crates/ls-trackers/src/api_drift.rs |
-| L25 | Old generated Rust API surface | discard | confirmed | presence-and-coherence | docs/migration-source-extraction-ledger.md |
-| L26 | Old release checklists and production-readiness docs | knowledge | **refuted → extract** | completeness (summary+snapshot) | inline |
+| ID | Area | Class | Verdict | Evidence pointer |
+|---|---|---|---|---|
+| L1 | Maintained SDK architecture | knowledge | confirmed | docs/plans/maintained-sdk-migration-plan.md |
+| L2 | Auth/config/runtime transport lessons | behavioral | confirmed | inline |
+| L3 | Paper/production environment finding | knowledge | confirmed | docs/design/release-readiness-and-residual-lessons.md |
+| L4 | Runtime success predicate | behavioral | confirmed | crates/ls-core/src/inner.rs |
+| L5 | Full response-code taxonomy | knowledge | confirmed | docs/design/ls-gateway-response-semantics.md |
+| L6 | Order acknowledgement codes | knowledge | confirmed | docs/design/ls-gateway-response-semantics.md |
+| L7 | Error enum public surface | knowledge | confirmed | inline |
+| L8 | Retry and rate-limit behavior | behavioral | confirmed | crates/ls-core/src/inner.rs |
+| L9 | Order safety runtime | knowledge | confirmed | docs/design/order-safety-design.md |
+| L10 | Order dedup eviction lesson | knowledge | confirmed | docs/design/order-safety-design.md |
+| L11 | Full 365-TR dependency inventory | knowledge | confirmed | docs/migration-source/tr-dependencies-2026-06-14.json |
+| L12 | Strong order-number coupling matrix | knowledge | confirmed | docs/migration-source/tr-dependencies-2026-06-14.json |
+| L13 | SELF pagination population | knowledge | confirmed | inline |
+| L14 | Trading-day sensitivity knowledge | knowledge | confirmed | docs/migration-source/tr-dependencies-2026-06-14.json |
+| L15 | Paper-incompatible TR set | knowledge | confirmed | docs/design/tr-dependency-inventory-snapshot.md |
+| L16 | WebSocket lifecycle runtime | behavioral | confirmed¹ | inline |
+| L17 | Broad WebSocket certification findings | knowledge | confirmed | docs/design/websocket-certification-findings.md |
+| L18 | WebSocket backpressure policy | knowledge | confirmed | inline |
+| L19 | Diagnostics/redaction contract | knowledge | confirmed | docs/operations/operator-diagnostics.md |
+| L20 | Operations runbook | knowledge | confirmed | inline |
+| L21 | Full certification/evidence pipeline | discard | confirmed | docs/migration-source-extraction-ledger.md |
+| L22 | Evidence buckets and residual lane | knowledge | confirmed | docs/design/release-readiness-and-residual-lessons.md |
+| L23 | Convenience API smoke interface | knowledge | confirmed | docs/design/release-readiness-and-residual-lessons.md |
+| L24 | Spec drift and fetch scripts | knowledge | confirmed | crates/ls-trackers/src/api_drift.rs |
+| L25 | Old generated Rust API surface | discard | confirmed | docs/migration-source-extraction-ledger.md |
+| L26 | Old release checklists and production-readiness docs | knowledge | confirmed | docs/design/release-readiness-and-residual-lessons.md |
 
-¹ **L16** confirms the WebSocket **lifecycle** only (paper smoke passed: connect/
-subscribe/unsubscribe reachable, port `29443`). Its sub-claims — reconnect replay,
-terminal exhaustion, latest-only wakeup — are recorded `unverifiable` inside the
-record and are **not** folded into the confirm (the live smoke is
-lifecycle-reachability only).
+¹ **L16** confirms the WebSocket **lifecycle** only (paper smoke passed). Its
+sub-claims — reconnect replay, terminal exhaustion, latest-only wakeup — are
+recorded `unverifiable` *inside* the record and are not folded into the confirm;
+the lifecycle confirm stands on the passing live smoke (R6).
 
-## Refuted rows (re-dispositioned to `extract`)
+## Refuted / unverifiable / assumption-accepted
 
-Each row's ledger disposition was changed `carried` → `extract`; each re-blocks
-the gate until separately re-extracted (out of this audit's scope).
-
-- **L5 — Full response-code taxonomy.** The old taxonomy's `904` (market closed)
-  code is absent from every maintained doc; the target's framing would silently
-  reclassify it as a hard failure. (full-transcription: a distinct code/meaning is
-  a material loss.)
-- **L6 — Order acknowledgement codes.** Targets preserve only `00039`/`00040`/`01427`;
-  the modify (`00462`), cancel (`00463`/`00156`), and the `03181` modify-rejection
-  codes are missing — numeric response codes a future order success predicate
-  would need.
-- **L9 — Order safety runtime.** The order redaction / tracing-span contract
-  (which span fields are recorded vs the credential field-names never recorded;
-  non-auto-redaction of account-level order responses) and the 7-day
-  reconciliation-evidence freshness window are unrepresented in the target.
-- **L10 — Order dedup eviction lesson.** The target omits the "sweep holds **no**
-  DashMap entry guard" deadlock-avoidance rule — a decision-relevant concurrency
-  constraint.
-- **L13 — SELF pagination population.** The 61-TR `cts_*` snapshot is exact, but
-  the caveat that this is a *distinct* population from the ~246-TR
-  header-continuation set (which excludes orders) is missing — a conflation risk.
-- **L19 — Diagnostics/redaction contract.** Under full-transcription, the target
-  collapses the compatibility policy (field removal/rename callout, additive-minor
-  rule, deprecation/alias rules), the field-meaning-change definition + examples,
-  and the Debug-redaction enforcement table to a single sentence.
-- **L26 — Old release checklists.** The concrete 7-day live-evidence
-  freshness-before-tagging threshold (a numeric release-decision constraint) is
-  carried nowhere in the target and is not among the deliberately-not-carried items.
-
-## Unverifiable rows (un-accepted — excluded from green until accepted, R4a)
-
-- **L20 — Operations runbook.** Several numeric operational defaults (rate quotas
-  5/3/1/1, reconnect budget 4 with 1s/2s/3s/4s backoff, channel capacity 64,
-  up-to-3 non-order retry, 5-minute token-refresh threshold) are absent from
-  L20's single bounded target; whether their preservation is owned by sibling rows
-  (L8/L16/L18) cannot be adjudicated from L20 alone, so completeness cannot be
-  established (not folded into a confirm).
-- **L22 — Evidence buckets and residual lane.** The closed `error_class` match-key
-  taxonomy `{tr_code, rsp_cd, field_id, error_class}` is missing from the target,
-  and the row's summary-plus-snapshot source scope is itself under-enumerated (no
-  pinned snapshot of the exact carried-fact set), so completeness cannot be
-  established either way.
-
-These two await a named maintainer's explicit acceptance (with a reason naming the
-residual risk) to become `assumption-accepted` and count toward green; the auditor
-never self-accepts.
-
-## Assumption-accepted rows
-
-_None._ No `unverifiable` row has been accepted yet.
+_None._ All first-pass refuted and unverifiable rows were resolved by
+re-extraction and independent re-audit; no row reached green via acceptance.
 
 ## Source-coverage reconciliation
 
 All 26 rows were audited claim-by-claim against the old-source documents named in
 their manifest entries; every confirmed knowledge row's claim-map maps each
-transcribed claim to a present/adapted in-repo location, and the committed
-validator enforces that mapping. The material gaps found are enumerated above (the
-7 refutals + 2 unverifiable). Note the audit's standing limitation (Risks): a
-claim-map bounds completeness to what each agent *enumerated*; the highest-risk
-rows already surfaced concrete misses (order codes L6, response codes L5,
-redaction L9/L19), which is the strongest available signal that the enumeration
-was not merely rubber-stamped.
+transcribed claim to a present/adapted in-repo location, enforced by the
+committed validator. The first-pass refutals concentrated in the highest-risk
+areas (order codes, response codes, redaction, release-evidence freshness),
+which is the strongest available signal that the enumeration was genuine rather
+than rubber-stamped — and each is now closed.
+
+## Decommission precondition
+
+This trustworthy-green verdict is the documented precondition the physical
+decommission of `korea-broker-sdk-ls` (a separate, out-of-scope work item) must
+cite. The committed validator recomputes this gate from the frozen records in CI,
+so the verdict stays defensible after the source is gone (R14).

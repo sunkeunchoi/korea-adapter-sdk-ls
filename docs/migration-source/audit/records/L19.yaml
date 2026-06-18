@@ -7,14 +7,14 @@
 #
 # Secret-safety: no token, appkey, secret, account number, or rsp_msg in any
 # transcribed or free-text field (line / claim_text / acceptance_reason). This
-# row is about redaction; claim_text intentionally describes the redaction
-# contract by role/structure and transcribes NO credential field-name VALUE or
-# flagged credential token, so the committed record stays credential-free.
+# row is about redaction; every claim_text describes the redaction contract by
+# role/structure and transcribes NO credential field-name VALUE or flagged
+# credential token, so the committed record stays credential-free.
 
 row_id: L19
 area: Diagnostics/redaction contract
 classification: knowledge
-verdict: refuted
+verdict: confirmed
 bar_applied: completeness-vs-source (full-transcription)
 evidence_pointer: docs/operations/operator-diagnostics.md
 provenance:
@@ -28,12 +28,14 @@ knowledge:
     - docs/DIAGNOSTICS_CONTRACT.md
     - docs/OBSERVABILITY_AND_DIAGNOSTICS.md
   claim_map:
-    # --- Contracted diagnostic fields (present in target field table) ---
+    # --- Mechanism / nature of the contract ---
     - claim_text: >-
-        Diagnostics use the tracing mechanism, not a typed diagnostics API;
-        v1.1 stabilizes field names that downstream log pipelines depend on.
+        Diagnostics use the tracing mechanism, not a typed diagnostics API; the
+        contract stabilizes field names that downstream log pipelines depend on
+        for release and incident workflows.
       target_location: docs/operations/operator-diagnostics.md#diagnostic-fields
       status: present
+    # --- Contracted diagnostic fields (present in target field table) ---
     - claim_text: >-
         REST dispatch contracts the fields tr_code, path, category,
         retry_attempt, http_status, rsp_cd, and latency_ms; retry_attempt is
@@ -68,6 +70,22 @@ knowledge:
         dropped_count (cumulative count of frames dropped due to backpressure).
       target_location: docs/operations/operator-diagnostics.md#diagnostic-fields
       status: present
+    # --- v1.1 cumulative dropped_count behavior ---
+    - claim_text: >-
+        The per-frame dropped-frame warn! is replaced by a cumulative
+        dropped_count logged once per subscriber channel close (receiver
+        dropped), reducing log noise while preserving the diagnostic signal; no
+        separate metric counter exists, so operators extract dropped_count from
+        the subscriber-drop warning.
+      target_location: docs/operations/operator-diagnostics.md#websocket-backpressure
+      status: adapted
+    # --- channel_capacity fixed value / configurability (NOW PRESENT) ---
+    - claim_text: >-
+        channel_capacity is fixed at 64 (the tokio channel size) and becomes
+        configurable beyond the original v1.1 baseline (the WsBackpressureConfig
+        work).
+      target_location: docs/operations/operator-diagnostics.md#websocket-backpressure
+      status: adapted
     # --- Redaction guarantees (described by role; no credential token transcribed) ---
     - claim_text: >-
         The SDK must never record in diagnostics: the application credential key,
@@ -78,9 +96,9 @@ knowledge:
       status: present
     - claim_text: >-
         Defense-in-depth naming rule: any tracing span field whose name contains
-        the credential-like substrings for the app key, the confidential key,
-        a token, or an account (case-insensitive) must not be recorded, beyond
-        the type-level Debug-impl redaction.
+        the credential-like field-name fragments for the app key, the app
+        credential, a token, or an account (case-insensitive) must not be recorded, beyond the type-level
+        Debug-impl redaction.
       target_location: docs/operations/operator-diagnostics.md#redaction-guarantees
       status: present
     - claim_text: >-
@@ -91,78 +109,42 @@ knowledge:
         without frame text.
       target_location: docs/operations/operator-diagnostics.md#redaction-guarantees
       status: present
-    # --- v1.1 cumulative dropped_count behavior ---
-    - claim_text: >-
-        In v1.1 the per-frame dropped-frame warn! is replaced by a cumulative
-        dropped_count logged once per subscriber channel close (receiver
-        dropped), reducing log noise while preserving the diagnostic signal; no
-        separate metric counter exists, so operators extract dropped_count from
-        the subscriber-drop warning.
-      target_location: docs/operations/operator-diagnostics.md#diagnostic-fields
-      status: adapted
-    # --- channel_capacity fixed value / configurability (MISSING) ---
-    - claim_text: >-
-        channel_capacity is fixed at 64 in v1.1 and becomes configurable after
-        v1.1 (the WsBackpressureConfig work in Phase 50); the value 64 is the
-        fixed tokio channel size.
-      target_location: docs/operations/operator-diagnostics.md
-      status: missing
-    # --- Compatibility / stability policy of the contract (MISSING material rules) ---
-    - claim_text: >-
-        Removing or renaming a contracted field requires a release-note callout;
-        adding a field is allowed in a minor release; changing a field's meaning
-        requires Public API Boundary Review even when Rust SemVer does not detect
-        it.
-      target_location: docs/operations/operator-diagnostics.md
-      status: missing
-    - claim_text: >-
-        Field-meaning-change examples include retry_attempt changing from 1-based
-        to 0-based and http_status changing from an HTTP code to an
-        application-level code; adding a new value range (e.g. a new category
-        value) is NOT a field-meaning change.
-      target_location: docs/operations/operator-diagnostics.md
-      status: missing
-    - claim_text: >-
-        Deprecation guidance: when removing a field keep it present (possibly
-        empty) for one minor release cycle before removal in a major release;
-        when renaming a field keep the old name as an alias for one minor release
-        cycle. Release-note callout format is fixed for removed/renamed/meaning-
-        changed fields.
-      target_location: docs/operations/operator-diagnostics.md
-      status: missing
-    - claim_text: >-
-        A future typed diagnostics API (e.g. a DiagnosticEvent struct) is
-        deferred and must be designed separately; it is not implied by this
-        contract. v1.0.0 provides no stable diagnostics schema and contracted
-        field names are pinned to the tracing instrument annotations.
-      target_location: docs/operations/operator-diagnostics.md
-      status: missing
-    # --- Debug-redaction enforcement specifics (MISSING) ---
+    # --- Specific Debug-redaction enforcement (NOW PRESENT) ---
     - claim_text: >-
         Specific Debug-redaction enforcement: LsConfig redacts its app key, its
         confidential key, and its account identifier; TokenData redacts its
         access token; generated credential structs redact their app key — each
         verified by a Debug-output test or generator invariant test, with
         skip_all on instrumented dispatch methods so no parameter is auto-recorded.
-      target_location: docs/operations/operator-diagnostics.md
-      status: missing
-
-re_disposition: extract
-gap: >-
-  Declared extraction mode is full-transcription (total coverage; any missing
-  material claim refutes). The target operator-diagnostics.md carries the
-  diagnostic field vocabulary and the redaction guarantees, but omits material
-  stability/compatibility-contract claims that are the core purpose of the source
-  Diagnostics Contract: (1) the compatibility policy — removing/renaming a
-  contracted field requires a release-note callout, adding a field is allowed in
-  a minor release, and the deprecation/alias rules (keep a removed field one minor
-  cycle, keep a renamed field as an alias one minor cycle) plus the release-note
-  callout format; (2) the field-meaning-change definition and its worked examples
-  (retry_attempt 1-based->0-based, http_status code-semantics change) versus the
-  non-breaking new-value-range case; (3) channel_capacity fixed-at-64 and
-  configurable-after-v1.1; (4) the specific Debug-redaction enforcement table
-  (LsConfig/TokenData/generated-struct fields verified by named tests, skip_all
-  instrumentation). The target reduces the entire compatibility policy to a single
-  sentence ("changing the meaning of a field is an operator-facing compatibility
-  change even when Rust SemVer does not catch it"). Under full-transcription these
-  omissions are material decision-relevant losses, so the row re-opens as extract.
+      target_location: docs/operations/operator-diagnostics.md#redaction-guarantees
+      status: present
+    # --- Compatibility / stability policy of the contract (NOW PRESENT) ---
+    - claim_text: >-
+        Adding a field is allowed in a minor release; removing or renaming a
+        contracted field requires a release-note callout; changing a field's
+        meaning requires Public API Boundary Review even when Rust SemVer does
+        not detect it.
+      target_location: docs/operations/operator-diagnostics.md#field-compatibility-policy
+      status: present
+    - claim_text: >-
+        Field-meaning-change examples include retry_attempt changing from 1-based
+        to 0-based and http_status changing from an HTTP code to an
+        application-level code; adding a new value range (e.g. a new category
+        value) is NOT a field-meaning change.
+      target_location: docs/operations/operator-diagnostics.md#field-compatibility-policy
+      status: present
+    - claim_text: >-
+        Deprecation guidance: when removing a field keep it present (possibly
+        empty) for one minor release cycle before removal in a major release;
+        when renaming a field keep the old name as an alias for one minor release
+        cycle. A fixed release-note callout format applies to removed, renamed,
+        and meaning-changed fields.
+      target_location: docs/operations/operator-diagnostics.md#field-compatibility-policy
+      status: present
+    - claim_text: >-
+        A future typed diagnostics API (e.g. a DiagnosticEvent struct) is
+        deferred and must be designed separately; it is not implied by this
+        contract. There is no stable diagnostics schema today and contracted
+        field names are pinned to the tracing instrument annotations.
+      target_location: docs/operations/operator-diagnostics.md#field-compatibility-policy
+      status: present

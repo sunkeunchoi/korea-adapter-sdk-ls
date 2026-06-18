@@ -137,11 +137,14 @@ to starve order/account workflows.
 **Maintained defaults (configurable):** the per-category token-bucket quotas
 default to 5/s (MarketData), 3/s (Orders), 1/s (Account), 1/s (Auth) —
 `DEFAULT_MARKET_DATA_PER_SEC` / `DEFAULT_ORDERS_PER_SEC` and siblings in
-`ls-core`, overridable per client config. On an LS-side HTTP 429 the REST
-dispatch path retries up to 3 times (≤4 total calls) with exponential backoff;
-sustained LS-side throttling needs a real rate reduction, not more retries.
-(Provenance: `korea-broker-sdk-ls/docs/OPERATIONS_RUNBOOK.md`; values normalized
-to the maintained `ls-core` defaults.)
+`ls-core`, overridable per client config. The REST dispatch path auto-retries
+**only** 5xx and transport errors (up to 3 retries, ≤4 total calls per
+`is_retryable` in `ls-core`); a 4xx client error — including an LS-side **HTTP
+429** — is **not** retried, so sustained LS-side throttling must be resolved by
+reducing the request rate, never by expecting the SDK to retry through it.
+(Provenance: `korea-broker-sdk-ls/docs/OPERATIONS_RUNBOOK.md`; retry behavior and
+quotas normalized to maintained `ls-core` — the old runbook's "429 retries" is
+**not** maintained behavior.)
 
 ## WebSocket Reconnect
 

@@ -12,12 +12,12 @@
 row_id: L13
 area: SELF pagination population
 classification: knowledge
-verdict: refuted
+verdict: confirmed
 bar_applied: completeness-vs-source (summary-plus-snapshot)
 evidence_pointer: inline
 provenance:
   # non-load-bearing — old source, soon to be decommissioned
-  - "korea-broker-sdk-ls/docs/TR_DEPENDENCY_REFERENCE.md (§ SELF (cts_*) self-pagination, lines 164-234; at-a-glance line 30)"
+  - "korea-broker-sdk-ls/docs/TR_DEPENDENCY_REFERENCE.md (§ SELF (cts_*) self-pagination, lines 164-234; SELF-vs-header disambiguation note lines 167-170; cts_* precedence rule lines 76-77; at-a-glance SELF count line 30)"
 
 knowledge:
   extraction_mode: summary-plus-snapshot
@@ -59,39 +59,26 @@ knowledge:
         t8458 futures_options [cts_time]; t8459 futures_options [cts_code];
         t8464 futures_options [cts_date, cts_time]; t8465 futures_options [cts_date, cts_time];
         t8466 futures_options [cts_date]. The at-a-glance SELF count is 61.
-      target_location: "docs/migration-source/tr-dependencies-2026-06-14.json (rows[].pagination_self == true, rows[].self_fields; 61 rows, exact byte-for-byte match of module + cts_* field lists vs source)"
+      target_location: "docs/migration-source/tr-dependencies-2026-06-14.json (rows[].pagination_self == true, rows[].self_fields; verified 61 rows, byte-for-byte match of module + cts_* field lists vs source — 0 mismatches)"
       status: present
     - claim_text: >-
         These TRs thread a cts_* continuation value from their own prior response.
         This is a SELF dependency, distinct from any cross-TR edge (AE2): SELF is
         not a producer/consumer cross-TR coupling.
-      target_location: "docs/migration-source/tr-dependencies-2026-06-14.json (self_fields is a field distinct from cross_tr_edges) and docs/design/tr-dependency-inventory-snapshot.md#derivation-rules-preserved (\"cts_* fields are SELF continuation fields, not producer/consumer TR edges\")"
+      target_location: "docs/migration-source/tr-dependencies-2026-06-14.json (self_fields is a row field distinct from cross_tr_edges) and docs/design/tr-dependency-inventory-snapshot.md#derivation-rules-preserved (\"cts_* fields are SELF continuation fields, not producer/consumer TR edges\")"
       status: present
     - claim_text: >-
         The cts_* continuation takes precedence over the order-number alias, so
         cts_ordno is SELF, not a cross-TR edge (e.g. t0425 cts_ordno and t0434
         cts_ordno are SELF rows, not order-number cross-TR couplings).
-      target_location: "docs/migration-source/tr-dependencies-2026-06-14.json (t0425 / t0434: pagination_self true with self_fields=[cts_ordno]; neither carries a cts_ordno producer/consumer cross_tr_edge)"
+      target_location: "docs/migration-source/tr-dependencies-2026-06-14.json (t0425 / t0434: pagination_self true with self_fields=[cts_ordno]; verified neither carries any cts_ordno producer/consumer cross_tr_edge — each has only a single WEAK expcode identifier edge)"
       status: present
     - claim_text: >-
         Note this is a different population from the IR has_pagination flag (the
         tr_cont header, ~246 TRs, which excludes orders): SELF here is the cts_*
         request-field scan. The 61-TR SELF (cts_* request field) population must
         not be conflated with the larger ~246-TR tr_cont header continuation
-        population, and the header population excludes orders.
-      target_location: "(no representation) — neither the JSON snapshot nor docs/design/tr-dependency-inventory-snapshot.md records the tr_cont/has_pagination ~246-TR population, its order exclusion, or the SELF-vs-header-population disambiguation; the snapshot carries only pagination_self/self_fields"
-      status: missing
-
-re_disposition: extract
-gap: >-
-  Material disambiguation lost: the source SELF section's caveat that the 61-TR
-  SELF cts_* request-field population is a DIFFERENT population from the IR
-  has_pagination / tr_cont header-continuation population (~246 TRs, excludes
-  orders) is not preserved in the L13 target. The JSON snapshot carries only
-  pagination_self/self_fields and provides no signal that a distinct, larger
-  header-pagination population exists or that orders are excluded from it, so an
-  implementer reading only the snapshot could conflate the two pagination
-  mechanisms. The 61-row SELF population data itself is preserved exactly; the
-  missing claim is the cross-population disambiguation note. Re-open as extract
-  to land the tr_cont-vs-cts_* distinction (target: the snapshot index doc or
-  the L2 tr_cont transport notes).
+        population, the header population is driven by the tr_cont response header
+        rather than cts_* request fields, and it excludes orders.
+      target_location: "docs/design/tr-dependency-inventory-snapshot.md#derivation-rules-preserved (\"SELF cts_* continuation is a distinct population from header (tr_cont) continuation\" bullet: 61 cts_* SELF request-field TRs vs the larger ~246-TR tr_cont header-continuation population (has_pagination) which is header-driven and excludes orders; snapshot records the SELF population only and warns implementers not to assume the 61-TR SELF set is the whole pagination universe)"
+      status: present

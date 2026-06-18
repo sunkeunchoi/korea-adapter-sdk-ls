@@ -12,7 +12,7 @@
 row_id: L5
 area: Full response-code taxonomy
 classification: knowledge
-verdict: refuted
+verdict: confirmed
 bar_applied: completeness-vs-source (full-transcription)
 evidence_pointer: docs/design/ls-gateway-response-semantics.md
 provenance:
@@ -59,10 +59,10 @@ knowledge:
     - claim_text: "Any unknown/unclassified rsp_cd surfaces as SDK outcome Err (a business error / hard failure); all other rsp_cd values besides the success and 01900 codes are business errors preserving the exact code and message."
       target_location: docs/design/ls-gateway-response-semantics.md#runtime-success-predicate
       status: adapted
-    # --- Market-closed / session-dependent code ---
-    - claim_text: "rsp_cd 904 (market closed) classifies as SDK outcome Err but is a session-dependent market-hours rejection that the old taxonomy treats distinctly as a market_closed Skipped state (expected when markets are closed), NOT a hard failure requiring investigation."
-      target_location: "(none — 904 / market-closed not represented in any maintained doc)"
-      status: missing
+    # --- Market-closed / session-dependent code (re-extraction patch closed the prior gap) ---
+    - claim_text: "rsp_cd 904 (장종료, market closed) classifies as SDK outcome Err but the old taxonomy treats it distinctly as a Skipped (market_closed) state — a session-timing/market-hours rejection for session-dependent TRs that is expected when markets are closed — NOT a hard failure requiring investigation; it must be kept distinct from the hard-failure codes (a future evidence classifier must not fold 904 into unexpected_api_error / Failed) and distinct from 01900 (a session-timing condition, not a paper incompatibility)."
+      target_location: docs/design/ls-gateway-response-semantics.md#session-closed-signal-904
+      status: present
     # --- No per-TR paper_incompatible overrides ---
     - claim_text: "There are deliberately no per-(tr_code, rsp_cd) paper_incompatible overrides: 01900 is the only code that classifies as paper-incompatible, globally; the prior decision granting five TRs narrow non-01900 paper_incompatible overrides was reversed, and those rows rejoin the failure queue. A row that genuinely becomes unavailable in simulation must return 01900 to defer."
       target_location: docs/design/ls-gateway-response-semantics.md#paper-incompatible-signal
@@ -79,18 +79,3 @@ knowledge:
     - claim_text: "Order-specific codes are deferred: the old order tests observed 00039 (sell order accepted/completed) and 00040 (buy order accepted/completed) as order-path successes, and 01427 as a rejected-order example; the read-only success predicate must not be reused blindly for orders, and the order package must define a dedicated order success predicate."
       target_location: docs/design/ls-gateway-response-semantics.md#order-specific-codes
       status: present
-
-re_disposition: extract
-gap: >-
-  Material response-code lost: rsp_cd 904 (market closed) is absent from every
-  maintained doc. The old certification_taxonomy.md taxonomy table classifies
-  904 as a session-dependent market_closed Skipped state (SDK Err, but expected
-  when markets are closed), explicitly distinct from the hard-failure codes. The
-  target ls-gateway-response-semantics.md enumerates the hard-failure codes
-  (IGW40013/IGW40014/IGW50008/405/80001) but never mentions 904 or market-closed,
-  so its "non-01900 gateway failures stay failures" framing silently reclassifies
-  a session-timing skip as a hard failure. For a full-transcription "Full
-  response-code taxonomy" row this is a missing material claim (a distinct code,
-  meaning, and classification a future evidence classifier would need). Re-open as
-  extract: transcribe 904 / market-closed and its session-dependent, non-hard-failure
-  treatment into the maintained gateway-semantics note.
