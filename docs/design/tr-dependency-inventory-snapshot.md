@@ -40,6 +40,14 @@ the extracted dataset keeps its identifier-gated rule:
   currency codes are WEAK couplings. They are useful discovery hints, not hard
   prerequisites.
 - `cts_*` fields are SELF continuation fields, not producer/consumer TR edges.
+- **SELF `cts_*` continuation is a distinct population from header (`tr_cont`)
+  continuation.** The 61 TRs with `cts_*` SELF continuation fields (the
+  request-field scan, recorded here as `pagination_self` / `self_fields`) must not
+  be conflated with the larger `tr_cont` header-continuation population
+  (`has_pagination`, ~246 TRs), which drives pagination from the `tr_cont`
+  response header rather than `cts_*` request fields and **excludes orders**. This
+  snapshot records the SELF population only; an implementer needing header-driven
+  pagination must not assume the 61-TR SELF set is the whole pagination universe.
 - Environmental dimensions such as market session, paper incompatibility,
   account state, and trading-day sensitivity are facets, not coupling strength.
 

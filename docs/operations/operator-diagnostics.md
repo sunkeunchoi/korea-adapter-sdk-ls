@@ -24,8 +24,29 @@ maintained surfaces.
 | WebSocket lifecycle | `tr_cd`, `tr_key`, `reconnect`, `subscription_count`, `attempt` | Used for subscribe, reconnect replay, and reconnect failures. |
 | WebSocket backpressure | `tr_cd`, `tr_key`, `channel_capacity`, `overflow_policy`, `dropped_count` | `dropped_count` is cumulative evidence of lost frames. |
 
-Changing the meaning of one of these fields is an operator-facing compatibility
-change even when Rust SemVer does not catch it.
+### Field Compatibility Policy
+
+These contracted field names are an operator-facing stability surface even when
+Rust SemVer does not catch a change (the SDK exposes `tracing` fields, not a
+typed diagnostics API):
+
+- **Adding** a field is allowed in a minor release.
+- **Removing or renaming** a contracted field requires a release-note callout.
+  When removing, keep the field present (possibly empty) for one minor release
+  cycle before removal in a major release; when renaming, keep the old name as an
+  alias for one minor release cycle. The release-note callout format is fixed for
+  removed / renamed / meaning-changed fields.
+- **Changing a field's meaning** requires a Public API Boundary Review even when
+  Rust SemVer does not detect it. Examples: `retry_attempt` moving from 1-based
+  to 0-based, or `http_status` changing from an HTTP code to an application-level
+  code. Adding a new value to a field's range (e.g. a new `category` value) is
+  **not** a field-meaning change.
+- A future typed diagnostics API (e.g. a `DiagnosticEvent` struct) is deferred
+  and must be designed separately — it is not implied by this contract. There is
+  no stable diagnostics schema today; contracted field names are pinned to the
+  `tracing` `instrument` annotations.
+
+(Provenance: `korea-broker-sdk-ls/docs/DIAGNOSTICS_CONTRACT.md`.)
 
 ## Redaction Guarantees
 
@@ -43,6 +64,16 @@ Use `Debug` formatting for SDK config/error types so redaction impls apply. Do
 not manually log raw config fields, raw WebSocket frames, OAuth responses, or
 account-bearing order evidence. LS WebSocket ACK frames can echo bearer tokens,
 so malformed-frame logging must use fixed messages without frame text.
+
+The redaction impls are enforced, not advisory: `LsConfig`'s `Debug` redacts its
+app key, confidential key, and account identifier; `TokenData`'s `Debug` redacts
+its access token; generated credential structs redact their app key — each
+verified by a `Debug`-output test or generator-invariant test. Instrumented
+dispatch methods use `skip_all`, so no call parameter is auto-recorded into a
+span. Note these redaction guarantees cover **credentials**, not account-level
+response data (order numbers, account references), which is not auto-redacted —
+review response content before logging or persisting it. (Provenance:
+`korea-broker-sdk-ls/docs/DIAGNOSTICS_CONTRACT.md`, `docs/OBSERVABILITY_AND_DIAGNOSTICS.md`.)
 
 ## Auth Failures
 
@@ -103,6 +134,15 @@ understood.
 **Do not:** raise local limits as a first response or allow market-data polling
 to starve order/account workflows.
 
+**Maintained defaults (configurable):** the per-category token-bucket quotas
+default to 5/s (MarketData), 3/s (Orders), 1/s (Account), 1/s (Auth) —
+`DEFAULT_MARKET_DATA_PER_SEC` / `DEFAULT_ORDERS_PER_SEC` and siblings in
+`ls-core`, overridable per client config. On an LS-side HTTP 429 the REST
+dispatch path retries up to 3 times (≤4 total calls) with exponential backoff;
+sustained LS-side throttling needs a real rate reduction, not more retries.
+(Provenance: `korea-broker-sdk-ls/docs/OPERATIONS_RUNBOOK.md`; values normalized
+to the maintained `ls-core` defaults.)
+
 ## WebSocket Reconnect
 
 **Signals:** connection-lost logs, reconnect attempts with `attempt`, reconnect
@@ -123,6 +163,14 @@ state that cannot tolerate missed frames.
 **Do not:** manually resubscribe during an active reconnect cycle or build an
 unbounded external reconnect loop around the SDK's bounded reconnect behavior.
 
+**Maintained reconnect budget:** auto-reconnect is bounded at 4 attempts with
+1s/2s/3s/4s backoff (`RECONNECT_MAX_ATTEMPTS` in `ls-sdk` realtime); on
+exhaustion every active subscriber receives the terminal
+`LsError::WebSocket("reconnect budget exhausted")`. Alert when more than 2
+reconnects occur within a 5-minute window — that indicates network or LS gateway
+instability rather than a transient blip. (Provenance:
+`korea-broker-sdk-ls/docs/OPERATIONS_RUNBOOK.md`.)
+
 ## WebSocket Backpressure
 
 **Signals:** `dropped_count` or dropped-frame warnings for a `(tr_cd, tr_key)`.
@@ -133,7 +181,9 @@ state.
 
 **Diagnosis:** repeated drops for one subscription mean the consumer is slower
 than frame arrival. `DropNewest` preserves queued frames and loses incoming
-frames; `LatestOnly` favors freshness but is not gapless.
+frames; `LatestOnly` favors freshness but is not gapless. The per-subscriber
+dispatch channel capacity defaults to 64 (`DEFAULT_WS_CHANNEL_CAPACITY` in
+`ls-core`, configurable via `ws_channel_capacity`, minimum 1).
 
 **Recovery:** move blocking work off the stream consumer, reduce subscription
 count, batch downstream processing, or use periodic REST reads when gapless

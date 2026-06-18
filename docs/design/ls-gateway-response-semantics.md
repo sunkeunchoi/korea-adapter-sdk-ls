@@ -62,6 +62,18 @@ missing account privilege, stale fixture value, market/session timing, or an LS
 gateway defect. The key rule is classification discipline: none of these become
 paper-incompatible unless LS returns `01900`.
 
+## Session-Closed Signal (`904`)
+
+`904` (`장종료`, market closed) is a **session-timing skip**, not a hard failure.
+The old certification taxonomy classified it `Err` / `Skipped (market_closed)`: a
+market-hours rejection for session-dependent TRs that is expected when markets are
+closed. The maintained SDK surfaces `904` as `LsError::ApiError` like any
+non-success code, but classification discipline must keep it distinct from the
+hard-failure codes above — a future evidence classifier must not fold `904` into
+`unexpected_api_error` / `Failed`, or a routine markets-closed run would read as a
+defect. It is also distinct from `01900`: `904` is a session-timing condition, not
+a paper incompatibility. (Provenance: `korea-broker-sdk-ls/docs/certification_taxonomy.md`.)
+
 ## Proven Residuals
 
 A **proven residual** is an LS-side or account-side behavior that remains a
@@ -108,9 +120,21 @@ using order-specific codes:
 |---|---|---|
 | `00039` | Sell order accepted/completed by the gateway | Success for the relevant order path |
 | `00040` | Buy order accepted/completed by the gateway | Success for the relevant order path |
+| `00462` | Modify order completed (CSPAT00701, `모의투자 정정주문이 완료 되었습니다`) | Success for the order **modify** path |
+| `00463` | Cancel order completed (CSPAT00801); `00156` is the spec alternative cancel-completion code | Success for the order **cancel** path |
 
-Order rejections remain errors. One old test used `01427` as a rejected-order
-example (`모의투자 상/하한가를 확인하세요`).
+These acknowledgement codes are **order-scoped**: `00040` (buy), `00462`
+(modify), and `00463`/`00156` (cancel) are not success codes for a non-order TR
+and must surface as `LsError::ApiError` there — the read-only success predicate
+above must never accept them, or a future order success predicate could
+misclassify a completed modify/cancel as an error (the duplicate-submission
+hazard). The modify/cancel codes were empirically confirmed against the live LS
+paper gateway in the old source (CSPAT00701/CSPAT00801, 2026-05-21).
+
+Order rejections remain errors. Old tests used `01427` (`모의투자 상/하한가를 확인하세요`,
+a price-band rejection) and `03181` (a modify rejection) as rejected-order
+examples; a rejection must surface as `LsError::ApiError` preserving the code,
+never as an acknowledgement. (Provenance: `korea-broker-sdk-ls/crates/core/tests/api_error_tests.rs`.)
 
 Before any order TR becomes `implemented`, the order runtime package must define
 a dedicated order success predicate, preserve order rejection codes as

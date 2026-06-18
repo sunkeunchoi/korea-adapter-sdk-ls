@@ -91,6 +91,11 @@ rather than left to implementation taste:
   single bounded `retain` pass dropping entries outside the same TTL rule the
   read path uses. The read path stays simple; memory is bounded without a
   worker.
+- **The sweep holds no per-entry guard.** The `retain` pass must run with **no
+  DashMap entry guard held** — the deadlock-avoidance rule carried over from
+  exact-key eviction. Running the retain pass while holding a per-entry guard
+  would deadlock. This is a decision-relevant concurrency-correctness constraint,
+  not implementation taste.
 
 (Grounded in the Migration Source learning
 `docs/solutions/performance-issues/order-dedup-cache-opportunistic-eviction.md`.)
@@ -168,6 +173,28 @@ Manual evidence must fail closed:
   broker `rsp_cd`/`rsp_msg`, any order number/time, reconciliation/status
   observation when applicable, and a statement that production order testing was
   not run. Credentials and account-sensitive data are excluded or redacted.
+- **Freshness:** reconciliation / manual evidence must be no older than **7 days**
+  before tagging a release, unless the release owner explicitly accepts the risk.
+  (Provenance: `korea-broker-sdk-ls/docs/ORDER_RECONCILIATION_DESIGN.md`.)
+
+## 5. Order redaction and tracing contract
+
+The future order runtime must carry the Migration Source's redaction/tracing
+contract; it is a safety constraint, not just observability hygiene. (Provenance:
+`korea-broker-sdk-ls/docs/ORDER_SAFETY_DESIGN.md` Redaction section.)
+
+- All public dispatch methods use `instrument(skip_all)`, so no function
+  parameters are auto-recorded into spans.
+- The order dispatch span records **only** non-credential structural fields
+  (`tr_code`, `path`, `category`, `dedup_hit`) and **never** records credential
+  field-names (the app key, app credential, account number, access token) nor the
+  request body.
+- Credential types implement `Debug` with a redacted substitution, and generated
+  order request/response types contain no credential fields.
+- Order **response** types that may carry account-level data (order numbers,
+  account references) are **not** auto-redacted. Operators must review response
+  content before logging or persisting order evidence — the redaction guarantee
+  covers credentials, not account-level order data.
 
 ## What ships now vs later
 

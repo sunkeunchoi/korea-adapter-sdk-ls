@@ -44,6 +44,17 @@ discipline:
 - Residual-bearing release or recommendation claims are not clean passes; the
   claim must say what is excluded.
 
+The old gate's match key for an acknowledged residual was the structural
+signature `{tr_code, rsp_cd, field_id, error_class}` carried on the
+failed-evidence row. `error_class` was a **closed** taxonomy with a fail-closed
+`unknown` sentinel that matches no acknowledgment
+(`non_numeric_in_numeric_slot`, `gateway_routing_error`, `non_api_error`,
+`unknown`). The maintained repo does not carry the acknowledgment lane, but if a
+residual-matching mechanism is ever rebuilt it must keep this shape — a closed
+error-class set plus an `unknown` sentinel that fails closed — so a new signature
+can never be silently treated as a known, accepted residual. (Provenance:
+`korea-broker-sdk-ls/docs/certification_taxonomy.md`.)
+
 This matches the extracted `COSOQ00201` lesson in
 `docs/design/ls-gateway-response-semantics.md`.
 
@@ -63,6 +74,12 @@ constraints remain valid:
   generated-surface promises.
 - Python/Node bindings or other language surfaces need their own readiness bar;
   Rust readiness does not transfer automatically.
+- Live Simulation / baseline evidence admitted for a release must be no older
+  than **7 days** before tagging; release tagging should verify that the admitted
+  baseline-evidence freshness window (7 days) is met, unless the release owner
+  explicitly accepts the staleness. (Provenance:
+  `korea-broker-sdk-ls/docs/RUST_RELEASE_CONFIDENCE_PLAN.md`,
+  `docs/RELEASE_CHECKLIST_TEMPLATE.md`.)
 
 ## Convenience API Evidence Lessons
 
