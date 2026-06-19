@@ -427,7 +427,8 @@ fn render_recommendation(meta: &TrMetadata, evidence: Option<&EvidenceRecord>) -
     // derivation of `last_reviewed` (no clock), so committed docs stay
     // byte-identical across runs. The live stale verdict is the freshness
     // evaluator's job (`make freshness-check`), not the committed page. Skipped
-    // only if `last_reviewed` is unparseable (the validator keeps it ISO).
+    // only if `last_reviewed` is unparseable — unreachable for the authored ISO
+    // dates, but a malformed date degrades to omitting the line, not a panic.
     if let Ok(review_by) = ls_metadata::review_by(
         &meta.maintenance.last_reviewed,
         ls_metadata::DEFAULT_WINDOW_DAYS,

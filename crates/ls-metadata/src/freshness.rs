@@ -43,9 +43,10 @@ impl FreshnessState {
 }
 
 /// A located freshness failure. The only failure mode is an unparseable
-/// `last_reviewed` date — the validator already enforces ISO `YYYY-MM-DD` and
-/// `evidence.date == last_reviewed`, so this is a guard against malformed
-/// authored metadata, never a silent "fresh".
+/// `last_reviewed` date. The validator cross-checks `evidence.date ==
+/// last_reviewed` by string equality but does not parse either as a date, so a
+/// malformed-but-equal pair can reach here — this is the guard that turns it into
+/// a loud error, never a silent "fresh".
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FreshnessError {
     /// `last_reviewed` was not a parseable `YYYY-MM-DD` date.

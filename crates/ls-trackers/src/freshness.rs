@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use chrono::{NaiveDate, Utc};
-use ls_metadata::{FreshnessError, FreshnessState, TrMetadata, DEFAULT_WINDOW_DAYS};
+use ls_metadata::{FreshnessState, TrMetadata, DEFAULT_WINDOW_DAYS};
 
 use crate::types::Severity;
 
@@ -46,18 +46,29 @@ impl fmt::Display for FreshnessFinding {
     }
 }
 
-/// The result of one evaluator run: the stale findings plus the count of
-/// Recommended TRs examined (the denominator for an "N of M stale" summary).
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// The result of one evaluator run: the stale findings, the count of Recommended
+/// TRs examined (the denominator for an "N of M stale" summary), and the TR codes
+/// whose `last_reviewed` could not be parsed.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FreshnessReport {
     pub findings: Vec<FreshnessFinding>,
     pub recommended_count: usize,
+    /// Recommended TRs whose `last_reviewed` was unparseable, so freshness could
+    /// not be evaluated. Collected rather than propagated, so one malformed date
+    /// does not blind the check for the rest — but a non-empty list is a loud
+    /// error (the CLI exits non-zero), never a silent pass.
+    pub unparseable: Vec<String>,
 }
 
 impl FreshnessReport {
     /// Whether any Recommended TR is stale.
     pub fn has_stale(&self) -> bool {
         !self.findings.is_empty()
+    }
+
+    /// Whether any Recommended TR had an unparseable `last_reviewed`.
+    pub fn has_errors(&self) -> bool {
+        !self.unparseable.is_empty()
     }
 }
 
@@ -74,40 +85,33 @@ pub fn today() -> NaiveDate {
 /// project them to `Implemented`). The freshness input is
 /// `maintenance.last_reviewed`; no Focused Evidence record is consumed. Iteration
 /// is over a `BTreeMap`, so findings are emitted in deterministic TR-code order.
+///
+/// A TR whose `last_reviewed` is unparseable is collected into
+/// [`FreshnessReport::unparseable`] and the scan continues — one malformed date
+/// must not blind the check for the rest. The caller treats a non-empty
+/// `unparseable` list as a loud error (non-zero exit), never a silent pass.
 pub fn evaluate_recommended(
     trs: &BTreeMap<String, TrMetadata>,
     as_of: NaiveDate,
-) -> Result<FreshnessReport, FreshnessError> {
-    let mut findings = Vec::new();
-    let mut recommended_count = 0;
+) -> FreshnessReport {
+    let mut report = FreshnessReport::default();
     for (tr_code, meta) in trs {
         if !meta.support.recommended {
             continue;
         }
-        recommended_count += 1;
-        if let FreshnessState::Stale { age_days } =
-            ls_metadata::evaluate(&meta.maintenance.last_reviewed, as_of, DEFAULT_WINDOW_DAYS)?
-        {
-            findings.push(FreshnessFinding {
+        report.recommended_count += 1;
+        match ls_metadata::evaluate(&meta.maintenance.last_reviewed, as_of, DEFAULT_WINDOW_DAYS) {
+            Ok(FreshnessState::Stale { age_days }) => report.findings.push(FreshnessFinding {
                 tr_code: tr_code.clone(),
                 last_reviewed: meta.maintenance.last_reviewed.clone(),
                 age_days,
                 severity: Severity::Evidence,
-            });
+            }),
+            Ok(FreshnessState::Fresh) => {}
+            Err(_) => report.unparseable.push(tr_code.clone()),
         }
     }
-    Ok(FreshnessReport {
-        findings,
-        recommended_count,
-    })
-}
-
-/// Evaluate against `today()` — the production default. Delegates to
-/// [`evaluate_recommended`] with a single clock read.
-pub fn evaluate_recommended_today(
-    trs: &BTreeMap<String, TrMetadata>,
-) -> Result<FreshnessReport, FreshnessError> {
-    evaluate_recommended(trs, today())
+    report
 }
 
 #[cfg(test)]
@@ -134,15 +138,16 @@ mod tests {
     fn all_recommended_fresh_emits_no_finding() {
         // AE1: as-of just after the latest last_reviewed — every Recommended TR
         // is within the 90-day window.
-        let report = evaluate_recommended(&real_trs(), date(2026, 6, 18)).unwrap();
+        let report = evaluate_recommended(&real_trs(), date(2026, 6, 18));
         assert!(report.findings.is_empty());
+        assert!(!report.has_errors());
         assert_eq!(report.recommended_count, 6);
     }
 
     #[test]
     fn stale_emits_one_evidence_finding_per_recommended_tr() {
         // AE3: as-of well past 90 days from every last_reviewed — all stale.
-        let report = evaluate_recommended(&real_trs(), date(2026, 10, 1)).unwrap();
+        let report = evaluate_recommended(&real_trs(), date(2026, 10, 1));
         assert_eq!(report.findings.len(), 6);
         assert_eq!(report.recommended_count, 6);
         for f in &report.findings {
@@ -167,7 +172,7 @@ mod tests {
     fn non_recommended_trs_are_exempt() {
         // AE5: only the six Recommended TRs are examined; implemented-but-not-
         // recommended (e.g. `revoke`) and tracked/untracked TRs never appear.
-        let report = evaluate_recommended(&real_trs(), date(2026, 10, 1)).unwrap();
+        let report = evaluate_recommended(&real_trs(), date(2026, 10, 1));
         assert_eq!(report.recommended_count, 6);
         let recommended: std::collections::BTreeSet<&str> =
             ["token", "t1101", "t1102", "t8412", "S3_", "CSPAQ12200"]
@@ -183,17 +188,15 @@ mod tests {
     }
 
     #[test]
-    fn default_today_path_delegates_to_injectable() {
-        // AE7: the no-arg path reads a real, forward-moving clock (a hardcoded
-        // past date would fail this) and delegates to the injectable evaluator.
-        // recommended_count is calendar-independent, so the comparison is
-        // midnight-safe (no two-clock-read flake on the verdict).
+    fn default_today_uses_a_real_forward_moving_clock() {
+        // AE7: the production default reads a real, forward-moving clock (a
+        // hardcoded past date would fail the first assert) and feeds it to the
+        // injectable evaluator. recommended_count is calendar-independent, so the
+        // run is midnight-safe (no two-clock-read flake on the verdict).
         assert!(today() >= date(2026, 6, 19));
-        let trs = real_trs();
-        let by_default = evaluate_recommended_today(&trs).unwrap();
-        let by_injected = evaluate_recommended(&trs, today()).unwrap();
-        assert_eq!(by_default.recommended_count, 6);
-        assert_eq!(by_default.recommended_count, by_injected.recommended_count);
+        let report = evaluate_recommended(&real_trs(), today());
+        assert_eq!(report.recommended_count, 6);
+        assert!(!report.has_errors());
     }
 
     #[test]
@@ -202,7 +205,7 @@ mod tests {
         // that as_of, re-evaluates fresh with no finding (recompute-on-invocation).
         let mut trs = real_trs();
         let as_of = date(2026, 10, 1);
-        let stale = evaluate_recommended(&trs, as_of).unwrap();
+        let stale = evaluate_recommended(&trs, as_of);
         assert!(stale.has_stale());
 
         // Re-attest every recommended TR to the as_of date.
@@ -211,8 +214,28 @@ mod tests {
                 meta.maintenance.last_reviewed = "2026-10-01".to_string();
             }
         }
-        let cleared = evaluate_recommended(&trs, as_of).unwrap();
+        let cleared = evaluate_recommended(&trs, as_of);
         assert!(!cleared.has_stale());
         assert_eq!(cleared.recommended_count, 6);
+    }
+
+    #[test]
+    fn unparseable_last_reviewed_is_collected_not_propagated() {
+        // One Recommended TR with a malformed last_reviewed must not blind the
+        // check for the rest: it lands in `unparseable` while the others still
+        // evaluate. (The validator's date check is equality-only, so a malformed
+        // last_reviewed can reach the evaluator.)
+        let mut trs = real_trs();
+        let as_of = date(2026, 10, 1);
+        if let Some(meta) = trs.get_mut("token") {
+            meta.maintenance.last_reviewed = "not-a-date".to_string();
+        }
+        let report = evaluate_recommended(&trs, as_of);
+        assert_eq!(report.recommended_count, 6);
+        assert_eq!(report.unparseable, vec!["token".to_string()]);
+        assert!(report.has_errors());
+        // The other five Recommended TRs still evaluated (stale at this as_of).
+        assert_eq!(report.findings.len(), 5);
+        assert!(report.findings.iter().all(|f| f.tr_code != "token"));
     }
 }

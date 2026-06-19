@@ -1,7 +1,7 @@
-//! The thin `ls-trackers` CLI (U5): `api-drift fetch`, `api-drift check`,
-//! `api-drift promote --dry-run`, and `api-drift renormalize`, mapping findings
-//! to the tiered exit contract (R17). Only `api-drift` subcommands are exposed
-//! (R20).
+//! The thin `ls-trackers` CLI: three command families — `api-drift`
+//! (`fetch` / `check` / `promote --dry-run` / `renormalize`), `spec-doc`
+//! (`check` / `renormalize`), and `freshness` (`check`) — each mapping findings
+//! to the tiered exit contract (R17).
 //!
 //! All logic lives here so it is unit-testable; the binary
 //! (`src/main.rs`) only maps the resolved exit code. Arg parsing, staged-run
@@ -661,15 +661,16 @@ pub fn run_freshness_check(
     as_of: chrono::NaiveDate,
 ) -> Result<crate::freshness::FreshnessReport, String> {
     let trs = load_metadata(paths)?;
-    crate::freshness::evaluate_recommended(&trs, as_of)
-        .map_err(|e| format!("freshness error: {e}"))
+    Ok(crate::freshness::evaluate_recommended(&trs, as_of))
 }
 
 /// Map a `freshness check` result to the tiered exit. Stale evidence is advisory
-/// (`Severity::Evidence` never gates), so a successful run is always exit `0`;
-/// only a metadata load/parse error exits `2`.
+/// (`Severity::Evidence` never gates), so a run with only stale findings is exit
+/// `0`. A metadata load error, or a Recommended TR whose `last_reviewed` could not
+/// be parsed (freshness genuinely could not be evaluated), exits `2`.
 pub fn freshness_exit_for(result: &Result<crate::freshness::FreshnessReport, String>) -> Exit {
     match result {
+        Ok(report) if report.has_errors() => Exit::Error,
         Ok(_) => Exit::Ok,
         Err(_) => Exit::Error,
     }
@@ -834,6 +835,13 @@ fn print_freshness_report(report: &crate::freshness::FreshnessReport) {
         for f in &report.findings {
             println!("  {f}");
         }
+    }
+    if report.has_errors() {
+        println!(
+            "error: {} Recommended TR(s) have an unparseable last_reviewed (freshness not evaluated): {}",
+            report.unparseable.len(),
+            report.unparseable.join(", ")
+        );
     }
 }
 
