@@ -30,9 +30,14 @@
 pub mod api_drift;
 pub mod cli;
 pub mod fetch;
+pub mod freshness;
 pub mod spec_doc;
 pub mod stages;
 pub mod types;
+
+pub use freshness::{
+    evaluate_recommended, evaluate_recommended_today, today, FreshnessFinding, FreshnessReport,
+};
 
 pub use api_drift::{
     compare, facts_outage_decision, normalize_run, DriftReport, FactsOutage, NormalizedRun,
