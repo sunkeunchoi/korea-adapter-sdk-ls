@@ -419,6 +419,21 @@ fn render_recommendation(meta: &TrMetadata, evidence: Option<&EvidenceRecord>) -
         "- Freshness date: `{}` (`maintenance.last_reviewed`)\n",
         meta.maintenance.last_reviewed
     ));
+    // Deterministic review-by date: freshness date + the 90-day backstop. A pure
+    // derivation of `last_reviewed` (no clock), so committed docs stay
+    // byte-identical across runs. The live stale verdict is the freshness
+    // evaluator's job (`make freshness-check`), not the committed page. Skipped
+    // only if `last_reviewed` is unparseable (the validator keeps it ISO).
+    if let Ok(review_by) = ls_metadata::review_by(
+        &meta.maintenance.last_reviewed,
+        ls_metadata::DEFAULT_WINDOW_DAYS,
+    ) {
+        out.push_str(&format!(
+            "- Review by: `{}` (freshness date + {}-day backstop)\n",
+            review_by.format("%Y-%m-%d"),
+            ls_metadata::DEFAULT_WINDOW_DAYS
+        ));
+    }
     out.push_str(&format!("- {REVOCATION_POLICY}\n\n"));
 
     out.push_str("This recommendation does not claim:\n\n");
@@ -893,6 +908,20 @@ mod tests {
     }
 
     #[test]
+    fn recommended_page_renders_deterministic_review_by_date() {
+        // The review-by date is `last_reviewed` + 90 days — a pure derivation
+        // (no clock), the docgen surface for R8/R9 as refined. token's freshness
+        // date 2026-06-15 + 90 days = 2026-09-13.
+        let (trs, evidence) = recommended_with_evidence();
+        let reference = render_reference_docs(&trs, &evidence);
+        let page = &reference[Path::new("docs/reference/token.md")];
+        assert!(
+            page.contains("Review by: `2026-09-13` (freshness date + 90-day backstop)"),
+            "recommended page must render the deterministic review-by date"
+        );
+    }
+
+    #[test]
     fn recommended_page_states_policy_not_enforcement() {
         // Covers AE4: revocation is phrased as stated policy, explicitly not
         // enforced by code — guards against an over-claiming reword.
@@ -919,6 +948,10 @@ mod tests {
         assert!(page.contains("Implemented, not yet recommended"));
         assert!(page.contains("deferred until this TR reaches"));
         assert!(!page.contains("## Recommendation"));
+        assert!(
+            !page.contains("Review by:"),
+            "a non-recommended TR carries no review-by line"
+        );
     }
 
     #[test]

@@ -12,6 +12,7 @@
 
 - Evidence: `evidence/token.yaml` (environment: `paper`)
 - Freshness date: `2026-06-16` (`maintenance.last_reviewed`)
+- Review by: `2026-09-14` (freshness date + 90-day backstop)
 - What would revoke this claim (stated policy — not enforced by code today): a maintained-TR Structural API Shape change stales the backing Focused Evidence, or the 90-day backstop elapses from the freshness date, whichever comes first. Description / `korean_name` changes are informational and do not stale it. See `metadata/EVIDENCE-FRESHNESS.md`.
 
 This recommendation does not claim:
