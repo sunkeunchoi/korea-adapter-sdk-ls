@@ -44,8 +44,8 @@ pub use api_drift::{
     NORMALIZER_VERSION,
 };
 pub use cli::{
-    load_example_baseline, renormalize_examples, run_cli, run_spec_check, spec_exit_for,
-    write_example_baseline, Command, Exit, Paths,
+    freshness_exit_for, load_example_baseline, renormalize_examples, run_cli, run_freshness_check,
+    run_spec_check, spec_exit_for, write_example_baseline, Command, Exit, Paths,
 };
 pub use fetch::{
     completeness_gate, parse_menu, FetchClient, FetchError, FetchInventoryError, FetchOutcome,

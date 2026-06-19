@@ -135,3 +135,39 @@ git diff crates/ls-trackers/baselines/spec-doc/normalized/examples.json
   field-name→leaf-type shapes — never a raw example value (KTD7).
 - `spec-doc check` never edits `metadata/`, SDK code, docs, examples, or
   baselines (R8); it is advisory.
+
+## Evidence-freshness review (90-day backstop)
+
+Check whether any **Recommended TR**'s Focused Evidence has gone stale — more than
+90 days since its `maintenance.last_reviewed`:
+
+```sh
+make freshness-check
+```
+
+This is **network-free** and **advisory**: it reads metadata, evaluates each
+Recommended TR against today (UTC), and prints any that are past the 90-day
+backstop. `Severity::Evidence` sits below `Maintenance`, so a stale finding never
+gates — `freshness-check` exits 0 even when evidence is stale; only a metadata
+load/parse error exits 2. The evaluator mutates nothing.
+
+When a TR is flagged stale, **re-attest** it (the same human flow as promotion):
+
+1. Rerun its Paper Live Smoke and capture a fresh credential-free evidence line.
+2. Update the evidence file's `date` and `maintenance.last_reviewed` (the
+   validator keeps them equal) to the new run date.
+3. Regenerate docs with `make docs`.
+
+The next `freshness-check` then finds the TR fresh. Clearing is
+recompute-on-invocation: the prior finding is not retracted, it simply is not
+re-emitted.
+
+### Notes
+
+- The backstop is the cheap half of the freshness policy
+  (`metadata/EVIDENCE-FRESHNESS.md`). Change-driven invalidation (a Structural API
+  Shape change staling evidence) is deferred and shares the same
+  `Severity::Evidence` surface.
+- Generated docs render a deterministic **review-by date** (`last_reviewed` + 90
+  days) so they stay byte-identical across runs; the live stale verdict comes from
+  `freshness-check`, not the committed page.
