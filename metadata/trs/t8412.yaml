@@ -29,4 +29,4 @@ recommendation:
     - Production-credential charts (evidence is paper only)
     - Multi-page chart_all correctness beyond a single page
     - Chart correctness on halts/VI days or outside KRX regular session
-    - Stronger freshness automation than the stated policy (no enforcement in code today)
+    - Change-driven evidence invalidation (a Structural API Shape change auto-staling evidence) — stated policy, not yet enforced
