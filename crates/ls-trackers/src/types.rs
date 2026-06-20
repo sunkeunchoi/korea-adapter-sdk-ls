@@ -293,80 +293,20 @@ pub fn gates_for(severity: Severity, support_state: SupportState, is_new_tr: boo
     is_new_tr || (support_state.is_maintained() && severity >= Severity::Maintenance)
 }
 
-/// Field traversal direction — part of field identity (R6).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Direction {
-    Request,
-    Response,
-}
-
-impl fmt::Display for Direction {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Direction::Request => "request",
-            Direction::Response => "response",
-        })
-    }
-}
-
-/// One normalized field within a request/response block (R6, R8). Field identity
-/// is `(direction, block_name, field_index, field_name)`; `description_hash` is
-/// the stable hash of the normalized long description so benign re-encoding does
-/// not register as drift.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BlockField {
-    pub direction: Direction,
-    pub block_name: String,
-    pub field_index: u32,
-    pub field_name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub korean_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub r#type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub length: Option<u32>,
-    pub required: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description_hash: Option<String>,
-}
-
-/// The committed per-TR **Structural API Shape** (maintained TRs only, R5). Long
-/// descriptions/examples are stored as `description_hash`; compact names are
-/// preserved verbatim (R8). Endpoint/protocol/rate facts are top-level (R7).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TrShape {
-    pub tr_code: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tr_name: Option<String>,
-    pub protocol: Protocol,
-    pub is_websocket: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub endpoint_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub api_group_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_group_name: Option<String>,
-    /// Request-direction blocks, ordered as upstream presents them. `field_index`
-    /// preserves position so U4's reorder reconciliation can run.
-    #[serde(default)]
-    pub request_blocks: Vec<BlockField>,
-    /// Response-direction blocks, ordered as upstream presents them.
-    #[serde(default)]
-    pub response_blocks: Vec<BlockField>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rate_limit_per_sec: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub corp_rate_limit_per_sec: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rate_source_group: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description_hash: Option<String>,
-}
-
 /// Re-exported here so callers of the trackers crate get the protocol vocabulary
 /// without depending on `ls-metadata` directly.
 pub use ls_metadata::Protocol;
+
+/// The Structural API Shape vocabulary (`TrShape`, `BlockField`, `Direction`) is
+/// owned by `ls-metadata` so the Focused-Evidence record can carry a typed frozen
+/// attested shape (KTD2). It is re-exported here (`ls_trackers::{TrShape,
+/// BlockField, Direction}`) so the drift engine and existing callers reach it
+/// unchanged through the dependency edge. The diff engine (`diff_shapes` /
+/// `DriftChange`) and the normalizer that produces a `TrShape` stay in this crate
+/// and consume the relocated types. `Direction` is a field of `DriftChange` /
+/// `SpecChange` below, so it is now metadata-owned shared field-traversal
+/// vocabulary.
+pub use ls_metadata::{BlockField, Direction, TrShape};
 
 /// Inventory facts for a normalized snapshot (R8): code-set size, source URLs,
 /// the normalizer version (so a normalizer change is auditable), and per-TR

@@ -9,9 +9,11 @@
 pub mod freshness;
 pub mod planner;
 pub mod schema;
+pub mod shape;
 pub mod validator;
 
 pub use freshness::{evaluate, review_by, FreshnessError, FreshnessState, DEFAULT_WINDOW_DAYS};
+pub use shape::{BlockField, Direction, TrShape};
 pub use planner::{plan_changes, plan_with_metadata, ChangeSet, PlanError, TestGroup};
 pub use schema::{
     CertificationPath, Dependencies, EvidenceRecord, Facets, IndexEntry, InstrumentDomain,

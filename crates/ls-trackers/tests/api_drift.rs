@@ -346,3 +346,35 @@ fn removal_via_code_set_is_support_aware() {
     );
     assert!(report.gates());
 }
+
+/// U1 wire-format guard (highest-value relocation test): every committed
+/// baseline `normalized/trs/*.json` deserializes into the relocated `TrShape`
+/// (now owned by `ls-metadata`, re-exported here) and re-serializes
+/// **byte-identically** to the committed bytes. A silent serde drift in the move
+/// — a reordered field, a changed `skip_serializing_if`, a lost rename — would
+/// corrupt every committed baseline; this catches it.
+#[test]
+fn committed_baseline_shapes_round_trip_byte_identically() {
+    let trs_dir = baseline_dir().join("normalized").join("trs");
+    let mut checked = 0;
+    for entry in std::fs::read_dir(&trs_dir).expect("committed trs dir present") {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let original = std::fs::read(&path).expect("read committed shape");
+        let shape: TrShape =
+            serde_json::from_slice(&original).expect("committed shape deserializes into TrShape");
+        // Mirror `write_json`: pretty JSON plus a trailing newline.
+        let mut reserialized = serde_json::to_vec_pretty(&shape).expect("re-serialize");
+        reserialized.push(b'\n');
+        assert_eq!(
+            original,
+            reserialized,
+            "committed baseline {} must re-serialize byte-identically after the type relocation",
+            path.display()
+        );
+        checked += 1;
+    }
+    assert!(checked >= 8, "expected at least the 8 committed shapes, saw {checked}");
+}
