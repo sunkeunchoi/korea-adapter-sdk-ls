@@ -884,6 +884,8 @@ mod tests {
                 env: "paper".to_string(),
                 target: Some("live-smoke".to_string()),
                 line: None,
+                attested_shape: None,
+                attested_normalizer_version: None,
             },
         );
         (trs, evidence)

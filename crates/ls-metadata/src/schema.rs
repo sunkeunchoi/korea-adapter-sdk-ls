@@ -14,6 +14,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::shape::TrShape;
+
 /// The dependency class that owns a TR. Exactly one per TR — enforced
 /// structurally by this being a single (non-`Vec`) field.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -162,6 +164,22 @@ pub struct EvidenceRecord {
     pub target: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub line: Option<String>,
+    /// The structural API shape this evidence was attested against — an
+    /// independent committed snapshot frozen at attestation time (R1, R4).
+    /// Change-driven staling diffs this against the current committed baseline
+    /// shape and keeps only qualifying changes (KTD1). Stored as the full
+    /// [`crate::shape::TrShape`] (never an opaque hash) so a later diff can be
+    /// classified as qualifying-or-not, and never a raw `serde_json::Value`, so
+    /// no scalar sample value can land here. The stored shape is itself a
+    /// frozen-format contract: see [`crate::shape`] on the additive-only rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attested_shape: Option<TrShape>,
+    /// The `NORMALIZER_VERSION` the [`attested_shape`](Self::attested_shape) was
+    /// captured under (R2a). A mismatch against the baseline manifest's version
+    /// triggers re-attestation rather than a stale-by-change finding — a pure
+    /// representation shift must never qualify as staling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub attested_normalizer_version: Option<u32>,
 }
 
 /// The full per-TR maintenance metadata record (`metadata/trs/<tr>.yaml`).

@@ -91,3 +91,85 @@ fn token_last_reviewed_matches_its_evidence_date() {
          — they cannot drift before an `evidence_ref` schema link exists"
     );
 }
+
+// --- U2: attested-shape fields on the evidence record ----------------------
+
+use ls_metadata::shape::{BlockField, Direction};
+use ls_metadata::{EvidenceRecord, Protocol, TrShape};
+
+/// An evidence YAML authored before the attested-shape fields existed
+/// deserializes with both new fields `None` (serde-default forward compat) — the
+/// six real records (pre-U8 backfill) parse exactly this way.
+#[test]
+fn evidence_without_attested_shape_defaults_to_none() {
+    let yaml = "\
+tr_code: token
+date: 2026-06-16
+env: paper
+target: live-smoke
+line: \"LIVE-SMOKE result=[token_len=380 rsp_cd=00000]\"
+";
+    let record: EvidenceRecord = serde_yaml::from_str(yaml).expect("legacy evidence parses");
+    assert_eq!(record.attested_shape, None);
+    assert_eq!(record.attested_normalizer_version, None);
+}
+
+/// An evidence record carrying a full attested shape + normalizer version
+/// round-trips through YAML and re-serializes equal (the captured-at-attestation
+/// contract).
+#[test]
+fn evidence_with_attested_shape_round_trips() {
+    let record = EvidenceRecord {
+        tr_code: "token".to_string(),
+        date: "2026-06-16".to_string(),
+        env: "paper".to_string(),
+        target: Some("live-smoke".to_string()),
+        line: Some("LIVE-SMOKE result=[ok]".to_string()),
+        attested_shape: Some(TrShape {
+            tr_code: "token".to_string(),
+            tr_name: Some("접근토큰 발급".to_string()),
+            protocol: Protocol::Rest,
+            is_websocket: false,
+            endpoint_path: Some("/oauth2/token".to_string()),
+            api_group_id: None,
+            source_group_name: None,
+            request_blocks: vec![BlockField {
+                direction: Direction::Request,
+                block_name: "request_body".to_string(),
+                field_index: 0,
+                field_name: "grant_type".to_string(),
+                korean_name: None,
+                r#type: Some("String".to_string()),
+                length: Some(100),
+                required: true,
+                description_hash: Some("a739607c5d7c01a1".to_string()),
+            }],
+            response_blocks: vec![],
+            rate_limit_per_sec: None,
+            corp_rate_limit_per_sec: None,
+            rate_source_group: None,
+            description_hash: None,
+        }),
+        attested_normalizer_version: Some(2),
+    };
+    let yaml = serde_yaml::to_string(&record).expect("serialize");
+    let back: EvidenceRecord = serde_yaml::from_str(&yaml).expect("round-trip parses");
+    assert_eq!(back, record, "attested-shape evidence round-trips");
+    assert_eq!(back.attested_normalizer_version, Some(2));
+}
+
+/// Unknown/extra fields in an evidence YAML are still ignored (existing behavior),
+/// so a forward-compat field added later does not break older readers.
+#[test]
+fn evidence_ignores_unknown_fields() {
+    let yaml = "\
+tr_code: token
+date: 2026-06-16
+env: paper
+some_future_field: ignored
+attested_normalizer_version: 2
+";
+    let record: EvidenceRecord = serde_yaml::from_str(yaml).expect("parses with unknown field");
+    assert_eq!(record.attested_normalizer_version, Some(2));
+    assert_eq!(record.attested_shape, None);
+}
