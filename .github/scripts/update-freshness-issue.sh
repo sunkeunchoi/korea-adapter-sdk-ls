@@ -123,37 +123,63 @@ decide_action() {
 }
 
 # Render the issue body (a silent dashboard) from the current report + marker.
+# The table is reason-aware (U9): each row shows why a TR is stale — `age` (with
+# the days past the backstop), `change` (with a one-line drifted-shape summary),
+# or both. `age_days`/`change_summary` are null when their reason is absent, so
+# the jq `// "—"` fallbacks render the cell rather than dropping the row.
 render_body() {
   local file="$1" stale="$2"
   local marker_codes
   marker_codes=$(printf '%s' "$stale" | tr '\n' ',' | sed 's/,$//')
   {
-    echo "Automated evidence-freshness dashboard for **Recommended** TRs past the"
-    echo "90-day backstop. Rewritten every scheduled run."
+    echo "Automated evidence-freshness dashboard for **Recommended** TRs whose Focused"
+    echo "Evidence is stale — past the 90-day backstop (\`age\`) or structurally diverged"
+    echo "from the attested shape (\`change\`). Rewritten every scheduled run."
     echo
     echo "> This is **not** an SDK work item. Escalation stays human (ADR 0013):"
     echo "> re-attest a flagged TR (rerun its Paper Live Smoke, refresh evidence +"
-    echo "> \`last_reviewed\`, regenerate docs) and the next run clears it."
+    echo "> \`last_reviewed\`, and re-pin its attested shape) and the next run clears it."
     echo
-    echo "| TR | last_reviewed | age (days) |"
-    echo "|----|---------------|------------|"
-    jq -r '.stale[] | "| \(.tr_code) | \(.last_reviewed) | \(.age_days) |"' "$file"
+    echo "| TR | reasons | last_reviewed | age (days) | drifted shape |"
+    echo "|----|---------|---------------|------------|---------------|"
+    jq -r '.stale[] | "| \(.tr_code) | \(.reasons | join(", ")) | \(.last_reviewed) | \(.age_days // "—") | \(.change_summary // "—") |"' "$file"
     echo
+    # Advisory: a stale committed baseline (R9a) means change-detection compares
+    # against possibly-outdated structural truth.
+    if [ "$(jq -r '.baseline_stale' "$file")" = "true" ]; then
+      echo "> ⚠️ **Baseline staleness:** the committed structural baseline is stale (refreshed \`$(jq -r '.baseline_refreshed // "never"' "$file")\`). Change-detection may compare against outdated truth — re-fetch/re-seed the baseline."
+      echo
+    fi
+    # Advisory: TRs whose change-detection was suppressed and need re-attestation
+    # (normalizer-version mismatch or a missing per-TR baseline shape).
+    local reattest
+    reattest=$(jq -r '.reattest | join(", ")' "$file")
+    if [ -n "$reattest" ]; then
+      echo "> ⚠️ **Re-attestation needed:** ${reattest} (normalizer-version mismatch or missing baseline shape) — re-pin against the current baseline."
+      echo
+    fi
     echo "_As of $(jq -r '.as_of' "$file") · window $(jq -r '.window_days' "$file") days · $(jq -r '.recommended_count' "$file") Recommended TR(s) examined._"
     echo
     echo "${MARKER_PREFIX} ${marker_codes} ${MARKER_SUFFIX}"
   }
 }
 
-# The notifying comment text for a transition into staleness. The maintainer
-# handle is validated to a plain `@user` or `@org/team` shape before use — a
-# malformed/abusive repo-variable value degrades to no mention rather than
-# injecting arbitrary markdown into the issue.
+# The notifying comment text for a transition into staleness. Reason-aware (U9):
+# the wording reflects which reasons appear across the current stale set (`age`,
+# `change`, or both) rather than hardcoding the 90-day backstop, which is wrong
+# for a change-only entry. The maintainer handle is validated to a plain `@user`
+# or `@org/team` shape before use — a malformed/abusive repo-variable value
+# degrades to no mention rather than injecting arbitrary markdown into the issue.
 render_notify_comment() {
-  local count="$1"
-  local who
+  local file="$1"
+  local who count reasons
   who=$(sanitize_handle "${FRESHNESS_MAINTAINER:-}")
-  printf '%s evidence freshness needs attention: %s Recommended TR(s) are past the 90-day backstop. See the dashboard above.' "$who" "$count"
+  count=$(jq '.stale | length' "$file")
+  # The distinct reasons present across the stale set, e.g. "age", "change",
+  # or "age and change". Empty stale set (defensive) → generic "review".
+  reasons=$(jq -r '[.stale[].reasons[]] | unique | join(" and ")' "$file")
+  [ -z "$reasons" ] && reasons="review"
+  printf '%s evidence freshness needs attention: %s Recommended TR(s) flagged (%s). See the dashboard above.' "$who" "$count" "$reasons"
 }
 
 # Echo the argument only if it is a well-formed GitHub @handle or @org/team;
@@ -202,9 +228,8 @@ main() {
     exit 2
   fi
 
-  local current stale_count
+  local current
   current=$(compute_stale_set "$findings")
-  stale_count=$(printf '%s' "$current" | grep -c . || true)
 
   local state number prior
   if $dry_run; then
@@ -246,7 +271,7 @@ main() {
       render_body "$findings" "$current" >"$BODY_FILE"
       num=$(gh issue create --label "$LABEL" --title "$TITLE" --body-file "$BODY_FILE" \
         | grep -oE '[0-9]+$' | tail -n1)
-      gh issue comment "$num" --body "$(render_notify_comment "$stale_count")"
+      gh issue comment "$num" --body "$(render_notify_comment "$findings")"
       ;;
     edit|edit+notify)
       render_body "$findings" "$current" >"$BODY_FILE"
@@ -255,14 +280,14 @@ main() {
       # silent-edit branch — the steady-state outcome — return 1 and spuriously
       # trip the workflow's R9 failure path on a perfectly healthy run.
       if [ "$action" = "edit+notify" ]; then
-        gh issue comment "$number" --body "$(render_notify_comment "$stale_count")"
+        gh issue comment "$number" --body "$(render_notify_comment "$findings")"
       fi
       ;;
     reopen+notify)
       render_body "$findings" "$current" >"$BODY_FILE"
       gh issue reopen "$number"
       gh issue edit "$number" --body-file "$BODY_FILE"
-      gh issue comment "$number" --body "$(render_notify_comment "$stale_count")"
+      gh issue comment "$number" --body "$(render_notify_comment "$findings")"
       ;;
     close)
       gh issue comment "$number" --body "All clear: every Recommended TR is within the 90-day backstop. Closing the freshness dashboard."
