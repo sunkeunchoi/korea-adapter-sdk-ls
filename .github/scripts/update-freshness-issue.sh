@@ -145,11 +145,24 @@ render_body() {
   }
 }
 
-# The notifying comment text for a transition into staleness.
+# The notifying comment text for a transition into staleness. The maintainer
+# handle is validated to a plain `@user` or `@org/team` shape before use — a
+# malformed/abusive repo-variable value degrades to no mention rather than
+# injecting arbitrary markdown into the issue.
 render_notify_comment() {
   local count="$1"
-  local who="${FRESHNESS_MAINTAINER:-}"
+  local who
+  who=$(sanitize_handle "${FRESHNESS_MAINTAINER:-}")
   printf '%s evidence freshness needs attention: %s Recommended TR(s) are past the 90-day backstop. See the dashboard above.' "$who" "$count"
+}
+
+# Echo the argument only if it is a well-formed GitHub @handle or @org/team;
+# otherwise echo nothing. Keeps an untrusted repo variable from injecting content.
+sanitize_handle() {
+  local who="$1"
+  if [[ "$who" =~ ^@[A-Za-z0-9-]+(/[A-Za-z0-9._-]+)?$ ]]; then
+    printf '%s' "$who"
+  fi
 }
 
 # --- gh I/O (live path) ----------------------------------------------------
@@ -161,21 +174,24 @@ ensure_label() {
 }
 
 resolve_issue_live() {
-  # Echo "STATE NUMBER" and set RESOLVED_BODY; STATE is lowercased.
-  local json
+  # Print "STATE NUMBER" (STATE lowercased) on line 1, then the issue body on the
+  # following lines. The caller captures the whole stream with a command
+  # substitution and an explicit status check — the body is emitted on stdout, NOT
+  # via a global, because the caller runs this function in a subshell where a
+  # global assignment would never reach the parent.
+  local json count
   json=$(gh issue list --label "$LABEL" --state all --json number,state,body --limit 1)
-  local count
   count=$(printf '%s' "$json" | jq 'length')
   if [ "$count" -eq 0 ]; then
-    RESOLVED_BODY=""
     echo "none 0"
     return 0
   fi
-  RESOLVED_BODY=$(printf '%s' "$json" | jq -r '.[0].body')
   local state number
   state=$(printf '%s' "$json" | jq -r '.[0].state' | tr '[:upper:]' '[:lower:]')
   number=$(printf '%s' "$json" | jq -r '.[0].number')
   echo "$state $number"
+  # Remaining lines = the issue body (parse_prior_stale reads its marker).
+  printf '%s' "$json" | jq -r '.[0].body'
 }
 
 # --- orchestration ---------------------------------------------------------
@@ -197,8 +213,16 @@ main() {
     prior=$(parse_prior_stale "${FRESHNESS_DRYRUN_ISSUE_BODY:-}")
   else
     ensure_label
-    read -r state number < <(resolve_issue_live)
-    prior=$(parse_prior_stale "${RESOLVED_BODY:-}")
+    # Command substitution (not `< <(...)`) so a gh/jq failure inside the resolver
+    # surfaces here as a non-zero status, and so the body it prints actually
+    # reaches us. Line 1 is "STATE NUMBER"; lines 2+ are the issue body.
+    local info
+    info=$(resolve_issue_live) || {
+      echo "error: could not resolve freshness issue state" >&2
+      exit 2
+    }
+    read -r state number <<<"$(printf '%s\n' "$info" | sed -n '1p')"
+    prior=$(parse_prior_stale "$(printf '%s\n' "$info" | tail -n +2)")
   fi
 
   local action
@@ -209,34 +233,36 @@ main() {
     return 0
   fi
 
+  # Single temp file for the rewritten body, cleaned up on every exit path
+  # (including a mid-run gh failure) so nothing leaks.
+  BODY_FILE=$(mktemp)
+  trap 'rm -f "${BODY_FILE:-}"' EXIT
+
   case "$action" in
     noop) ;;
     create+notify)
       ensure_label
-      local body_file num
-      body_file=$(mktemp)
-      render_body "$findings" "$current" >"$body_file"
-      num=$(gh issue create --label "$LABEL" --title "$TITLE" --body-file "$body_file" \
+      local num
+      render_body "$findings" "$current" >"$BODY_FILE"
+      num=$(gh issue create --label "$LABEL" --title "$TITLE" --body-file "$BODY_FILE" \
         | grep -oE '[0-9]+$' | tail -n1)
       gh issue comment "$num" --body "$(render_notify_comment "$stale_count")"
-      rm -f "$body_file"
       ;;
     edit|edit+notify)
-      local body_file
-      body_file=$(mktemp)
-      render_body "$findings" "$current" >"$body_file"
-      gh issue edit "$number" --body-file "$body_file"
-      rm -f "$body_file"
-      [ "$action" = "edit+notify" ] && gh issue comment "$number" --body "$(render_notify_comment "$stale_count")"
+      render_body "$findings" "$current" >"$BODY_FILE"
+      gh issue edit "$number" --body-file "$BODY_FILE"
+      # Explicit conditional (not `[ ] && cmd`): a false test there would make the
+      # silent-edit branch — the steady-state outcome — return 1 and spuriously
+      # trip the workflow's R9 failure path on a perfectly healthy run.
+      if [ "$action" = "edit+notify" ]; then
+        gh issue comment "$number" --body "$(render_notify_comment "$stale_count")"
+      fi
       ;;
     reopen+notify)
-      local body_file
-      body_file=$(mktemp)
-      render_body "$findings" "$current" >"$body_file"
+      render_body "$findings" "$current" >"$BODY_FILE"
       gh issue reopen "$number"
-      gh issue edit "$number" --body-file "$body_file"
+      gh issue edit "$number" --body-file "$BODY_FILE"
       gh issue comment "$number" --body "$(render_notify_comment "$stale_count")"
-      rm -f "$body_file"
       ;;
     close)
       gh issue comment "$number" --body "All clear: every Recommended TR is within the 90-day backstop. Closing the freshness dashboard."

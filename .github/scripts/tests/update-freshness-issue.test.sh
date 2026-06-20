@@ -128,5 +128,81 @@ assert_eq "core: stale+closed → reopen"      "reopen+notify" "$(decide_action 
 assert_eq "core: stale+open same → edit"     "edit"          "$(decide_action $'t1102' open $'t1102')"
 assert_eq "core: stale+open newly → notify"  "edit+notify"   "$(decide_action $'t1102\nt8412' open $'t1102')"
 
+# --- live path (real script, stubbed gh) -----------------------------------
+# These exercise the gh I/O path the dry-run tests never touch — the seam where
+# the issue body round-trips (render → resolve → parse) and where branch exit
+# codes actually reach the workflow. Without them, a subshell-scoped body or a
+# `[ ] && cmd` silent-branch exit-1 ships green.
+
+# Build a fake `gh` on PATH: echoes canned `issue list` JSON, logs every call,
+# prints a URL for `issue create`. Stored under $1/bin/gh.
+make_fake_gh() {
+  mkdir -p "$1/bin"
+  cat >"$1/bin/gh" <<'GH'
+#!/usr/bin/env bash
+echo "gh $*" >> "$GH_FAKE_LOG"
+if [ "$1" = "issue" ] && [ "$2" = "list" ]; then
+  cat "$GH_FAKE_LIST"
+elif [ "$1" = "issue" ] && [ "$2" = "create" ]; then
+  echo "https://github.com/o/r/issues/42"
+fi
+exit 0
+GH
+  chmod +x "$1/bin/gh"
+}
+
+# run_live FINDINGS LIST_JSON [MAINTAINER] → sets LIVE_RC, LIVE_LOG
+run_live() {
+  local f="$1" listjson="$2" maint="${3:-@maintainer}" tmp listfile
+  tmp=$(mktemp -d)
+  make_fake_gh "$tmp"
+  listfile="$tmp/list.json"
+  printf '%s' "$listjson" >"$listfile"
+  GH_FAKE_LOG="$tmp/log" GH_FAKE_LIST="$listfile" FRESHNESS_MAINTAINER="$maint" \
+    PATH="$tmp/bin:$PATH" bash "$SCRIPT" "$f" >/dev/null 2>&1
+  LIVE_RC=$?
+  LIVE_LOG=$(cat "$tmp/log" 2>/dev/null || true)
+}
+
+# Silent edit: open issue whose marker matches the current stale set. MUST exit 0
+# and MUST NOT comment (guards P0 subshell-body bug AND P0 silent-branch exit-1).
+f=$(fixture "t1102")
+run_live "$f" '[{"number":7,"state":"OPEN","body":"<!-- freshness-stale: t1102 -->"}]'
+assert_eq "live: silent edit exits 0" "0" "$LIVE_RC"
+case "$LIVE_LOG" in
+  *"issue edit"*) ok "live: silent edit calls issue edit" ;;
+  *) no "live: silent edit calls issue edit" "log has 'issue edit'" "$LIVE_LOG" ;;
+esac
+case "$LIVE_LOG" in
+  *"issue comment"*) no "live: silent edit does NOT notify" "no 'issue comment'" "$LIVE_LOG" ;;
+  *) ok "live: silent edit does NOT notify (no spam)" ;;
+esac
+
+# Newly-stale TR: open issue marker is a subset of the current stale set → notify.
+f=$(fixture "t1102,t8412")
+run_live "$f" '[{"number":7,"state":"OPEN","body":"<!-- freshness-stale: t1102 -->"}]'
+assert_eq "live: edit+notify exits 0" "0" "$LIVE_RC"
+case "$LIVE_LOG" in
+  *"issue comment"*) ok "live: newly-stale TR notifies" ;;
+  *) no "live: newly-stale TR notifies" "log has 'issue comment'" "$LIVE_LOG" ;;
+esac
+
+# Create: no existing issue → create + notify.
+f=$(fixture "t1102")
+run_live "$f" '[]'
+assert_eq "live: create exits 0" "0" "$LIVE_RC"
+case "$LIVE_LOG" in
+  *"issue create"*"issue comment"*) ok "live: create then notify" ;;
+  *) no "live: create then notify" "create + comment" "$LIVE_LOG" ;;
+esac
+
+# Handle sanitization: a malformed FRESHNESS_MAINTAINER must not reach the comment.
+f=$(fixture "t1102")
+run_live "$f" '[]' '@evil </b> @everyone'
+case "$LIVE_LOG" in
+  *"evil"*|*"everyone"*) no "live: malformed handle is dropped" "no injected handle" "$LIVE_LOG" ;;
+  *) ok "live: malformed handle is dropped from notification" ;;
+esac
+
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
 [ "$fail" -eq 0 ]

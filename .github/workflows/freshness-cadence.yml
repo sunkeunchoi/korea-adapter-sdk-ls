@@ -85,7 +85,11 @@ jobs:
           gh label create freshness-status --color FBCA04 \
             --description "Rolling evidence-freshness dashboard (not an SDK work item)" \
             >/dev/null 2>&1 || true
-          msg="${FRESHNESS_MAINTAINER:-} ⚠️ The scheduled evidence-freshness watcher failed (build/tooling error or exit 2): freshness could NOT be evaluated this run. Investigate: ${RUN_URL}"
+          # Accept only a well-formed @handle / @org/team; otherwise drop the
+          # mention so a malformed repo-variable value can't inject issue content.
+          who="${FRESHNESS_MAINTAINER:-}"
+          if ! [[ "$who" =~ ^@[A-Za-z0-9-]+(/[A-Za-z0-9._-]+)?$ ]]; then who=""; fi
+          msg="${who} ⚠️ The scheduled evidence-freshness watcher failed (build/tooling error or exit 2): freshness could NOT be evaluated this run. Investigate: ${RUN_URL}"
           # Reuse whatever freshness-status issue is open (the rolling dashboard or
           # a prior failure notice) so repeated failures do not pile up duplicates.
           num=$(gh issue list --label freshness-status --state open --json number --jq '.[0].number // empty' --limit 1)
