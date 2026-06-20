@@ -43,7 +43,8 @@ pub use api_drift::{
 };
 pub use cli::{
     freshness_exit_for, load_example_baseline, renormalize_examples, run_cli, run_freshness_check,
-    run_spec_check, spec_exit_for, write_example_baseline, Command, Exit, Paths,
+    run_freshness_repin, run_spec_check, spec_exit_for, write_example_baseline, Command, Exit,
+    Paths, RePinOutcome,
 };
 pub use fetch::{
     completeness_gate, parse_menu, FetchClient, FetchError, FetchInventoryError, FetchOutcome,
