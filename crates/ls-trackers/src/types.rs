@@ -322,6 +322,15 @@ pub struct Manifest {
     pub source_urls: Vec<String>,
     /// The normalizer version that produced the committed shapes.
     pub normalizer_version: u32,
+    /// The baseline-refresh date (`YYYY-MM-DD`) stamped at baseline-update time
+    /// (R9a). The deterministic, network-free liveness signal the freshness
+    /// check ages against — **not** git commit date or filesystem mtime. The pure
+    /// projection ([`crate::api_drift::normalize_run`]) leaves this empty; the
+    /// impure baseline-update paths inject the date (an `as_of`/clock seam,
+    /// mirroring the freshness evaluator). A missing/empty value (cold-start,
+    /// before the field was stamped) reads as *warn*, never silent-fresh (U5).
+    #[serde(default)]
+    pub refreshed: String,
 }
 
 /// The machine-readable outcome of a fetch attempt (`fetch-report.json`, AE1).
@@ -821,10 +830,22 @@ mod tests {
             maintained_tr_count: 7,
             source_urls: vec!["https://openapi.ls-sec.co.kr/apiservice".to_string()],
             normalizer_version: 1,
+            refreshed: "2026-06-20".to_string(),
         };
         let m1 = serde_json::to_vec(&manifest).unwrap();
         let m2 = serde_json::to_vec(&manifest).unwrap();
         assert_eq!(m1, m2, "manifest serialization is byte-stable");
+    }
+
+    /// R9a backward-compat: a manifest authored before the `refreshed` field
+    /// existed deserializes with an empty `refreshed` (serde default), which U5
+    /// reads as a never-stamped baseline (warn), never a crash.
+    #[test]
+    fn manifest_without_refreshed_defaults_to_empty() {
+        let json = r#"{"upstream_tr_count":365,"maintained_tr_count":8,"normalizer_version":2}"#;
+        let m: Manifest = serde_json::from_slice(json.as_bytes()).unwrap();
+        assert_eq!(m.refreshed, "");
+        assert_eq!(m.normalizer_version, 2);
     }
 
     /// A finding carries its support state and a stored `gates` flag consistent

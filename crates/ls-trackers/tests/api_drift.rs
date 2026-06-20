@@ -89,6 +89,7 @@ fn run(shapes: Vec<TrShape>, extra_codes: &[&str]) -> NormalizedRun {
             maintained_tr_count: shape_map.len(),
             source_urls: vec![],
             normalizer_version: 1,
+            refreshed: "2026-06-20".to_string(),
         },
         shapes: shape_map,
     }
@@ -377,4 +378,23 @@ fn committed_baseline_shapes_round_trip_byte_identically() {
         checked += 1;
     }
     assert!(checked >= 8, "expected at least the 8 committed shapes, saw {checked}");
+}
+
+/// U3 wire-format guard: the committed `normalized/manifest.json` (now carrying
+/// the R9a `refreshed` date) deserializes into `Manifest` and re-serializes
+/// byte-identically — proving the committed bytes match what `write_normalized`
+/// produces, so a later re-seed is a no-op diff on the manifest.
+#[test]
+fn committed_manifest_round_trips_byte_identically() {
+    let path = baseline_dir().join("normalized").join("manifest.json");
+    let original = std::fs::read(&path).expect("committed manifest present");
+    let manifest: Manifest =
+        serde_json::from_slice(&original).expect("committed manifest deserializes");
+    assert_eq!(manifest.refreshed, "2026-06-20", "R9a refresh date is stamped");
+    let mut reserialized = serde_json::to_vec_pretty(&manifest).expect("re-serialize");
+    reserialized.push(b'\n');
+    assert_eq!(
+        original, reserialized,
+        "committed manifest.json must re-serialize byte-identically"
+    );
 }

@@ -90,6 +90,8 @@ pub fn normalize_run(
         maintained_tr_count: shapes.len(),
         source_urls: inventory.source_urls.clone(),
         normalizer_version: NORMALIZER_VERSION,
+        // Pure projection: the impure baseline-update path injects the date (R9a).
+        refreshed: String::new(),
     };
 
     NormalizedRun {

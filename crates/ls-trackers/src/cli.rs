@@ -509,7 +509,11 @@ pub fn fetch_and_stage(
         );
     }
 
-    let normalized = normalize_run(&raw, &maintained, provisional);
+    let mut normalized = normalize_run(&raw, &maintained, provisional);
+    // Stamp the staged manifest's refresh date with today's UTC date (R9a). This
+    // is the live network path (not unit-tested), so the clock read lives here,
+    // not inside the pure projection.
+    normalized.manifest.refreshed = chrono::Utc::now().date_naive().to_string();
     let report = FetchReport {
         ok: true,
         fetched_count: fetched,
@@ -531,7 +535,11 @@ pub fn fetch_and_stage(
 /// and rewrites the code-set / manifest / per-TR shapes. Deterministic and
 /// network-free — it constructs no HTTP client. This is the reviewed re-seed path
 /// after a [`NORMALIZER_VERSION`](crate::api_drift::NORMALIZER_VERSION) bump.
-pub fn renormalize_committed(paths: &Paths) -> Result<NormalizedRun, String> {
+///
+/// `refreshed` is the baseline-refresh date stamped into the manifest (R9a) — an
+/// injected `as_of` seam, never a wall-clock read inside this network-free layer.
+/// The operator path passes today's UTC date; tests pass a fixed date.
+pub fn renormalize_committed(paths: &Paths, refreshed: &str) -> Result<NormalizedRun, String> {
     let maintained = maintained_codes(paths)?;
     let raw: RawInventory = read_json(&paths.baseline_dir.join(RAW_FILE))?;
     // Preserve the committed seed's provisional stance (KTD-6); default to
@@ -541,7 +549,9 @@ pub fn renormalize_committed(paths: &Paths) -> Result<NormalizedRun, String> {
         .as_ref()
         .map(|run| run.code_set.provisional)
         .unwrap_or(true);
-    let normalized = normalize_run(&raw, &maintained, provisional);
+    let mut normalized = normalize_run(&raw, &maintained, provisional);
+    // Stamp the injected refresh date into the manifest (R9a) before writing.
+    normalized.manifest.refreshed = refreshed.to_string();
 
     // Re-seeding re-derives the code-set from the committed raw evidence. If that
     // membership differs from the committed code-set (raw was refreshed, or codes
@@ -760,7 +770,10 @@ pub fn dispatch(paths: &Paths, command: Command) -> Exit {
             }
             exit_for(&result)
         }
-        Command::Renormalize => match renormalize_committed(paths) {
+        Command::Renormalize => match renormalize_committed(
+            paths,
+            &crate::freshness::today().to_string(),
+        ) {
             Ok(run) => {
                 println!(
                     "re-normalized {} maintained shape(s) at normalizer v{} into {}",
@@ -1054,12 +1067,18 @@ mod tests {
             spec_baseline_dir: scratch.join("spec-doc"),
         };
 
-        let run = renormalize_committed(&paths).expect("re-normalize from committed raw");
+        let run = renormalize_committed(&paths, "2026-06-20").expect("re-normalize from committed raw");
         assert_eq!(
             run.manifest.normalizer_version,
             crate::api_drift::NORMALIZER_VERSION
         );
         assert_eq!(run.manifest.normalizer_version, 2);
+        // R9a: the injected refresh date is stamped into the manifest, and the
+        // written manifest carries it (read back from disk).
+        assert_eq!(run.manifest.refreshed, "2026-06-20");
+        let written: Manifest =
+            read_json(&scratch.join(MANIFEST_FILE)).expect("written manifest reloads");
+        assert_eq!(written.refreshed, "2026-06-20");
         assert_eq!(run.shapes.len(), 8, "eight maintained shapes");
         assert_eq!(run.code_set.len(), 365, "full inventory code-set preserved");
         assert!(
@@ -1078,7 +1097,7 @@ mod tests {
 
         // Byte-stable: a second re-normalization writes identical token bytes.
         let first = fs::read(scratch.join(TRS_DIR).join("token.json")).unwrap();
-        renormalize_committed(&paths).expect("second re-normalize");
+        renormalize_committed(&paths, "2026-06-20").expect("second re-normalize");
         let second = fs::read(scratch.join(TRS_DIR).join("token.json")).unwrap();
         assert_eq!(first, second, "re-normalization is byte-stable");
     }
@@ -1111,7 +1130,7 @@ mod tests {
             metadata_dir: repo_metadata_dir(),
             spec_baseline_dir: scratch.join("spec-doc"),
         };
-        let run = renormalize_committed(&paths).expect("re-normalize");
+        let run = renormalize_committed(&paths, "2026-06-20").expect("re-normalize");
 
         assert!(
             !run.code_set.provisional,
@@ -1136,6 +1155,7 @@ mod tests {
                 maintained_tr_count: 0,
                 source_urls: vec![],
                 normalizer_version: 1,
+                refreshed: "2026-06-20".to_string(),
             },
             shapes: BTreeMap::new(),
         }
