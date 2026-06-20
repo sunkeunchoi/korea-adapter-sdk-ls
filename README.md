@@ -13,10 +13,12 @@ chosen to own, and recommends only what has current evidence behind it.
 - **Implemented ≠ Recommended.** A TR can be wired and tested without being
   recommended for use. Promotion to **Recommended** requires current
   **Focused Evidence**.
-- **`token` is currently the only Recommended TR** — Paper OAuth access-token
-  issuance, backed by a credential-free paper live-smoke record. See
-  [`docs/reference/token.md`](docs/reference/token.md) for the full contract
-  (what it claims, what evidence backs it, and what it does not claim).
+- **Six TRs are currently Recommended** (`token`, `t1101`, `t1102`, `t8412`,
+  `S3_`, `CSPAQ12200`) — each backed by a credential-free paper live-smoke
+  record. See the generated [`docs/reference/`](docs/reference/) pages for each
+  TR's full contract (what it claims, what evidence backs it, and what it does
+  not claim). A 90-day evidence-freshness backstop (`make freshness-check`) flags
+  any Recommended TR whose evidence has gone stale.
 - **Order runtime is deferred by design.** The order safety design is written
   and one order TR is tracked, but no order placement ships today; it will move
   only as a complete safety package.

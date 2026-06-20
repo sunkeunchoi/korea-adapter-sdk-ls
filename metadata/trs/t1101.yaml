@@ -29,4 +29,4 @@ recommendation:
     - Production-credential quotes (evidence is paper only)
     - Fields outside the modeled subset (price header + 10 offer/bid levels)
     - Order-book correctness during halts/VI or outside KRX regular session
-    - Stronger freshness automation than the stated policy (no enforcement in code today)
+    - Change-driven evidence invalidation (a Structural API Shape change auto-staling evidence) — stated policy, not yet enforced

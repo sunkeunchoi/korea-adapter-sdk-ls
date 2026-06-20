@@ -114,3 +114,19 @@ spec-doc-check:
 ## then review the normalized/examples.json diff.
 spec-doc-renormalize:
 	cargo run -q -p ls-trackers -- spec-doc renormalize
+
+# --- Evidence-Freshness Evaluator -------------------------------------------
+# `freshness-check` evaluates the 90-day evidence backstop over Recommended TRs:
+# it flags any whose `maintenance.last_reviewed` is more than 90 days before today
+# (UTC). Findings are ADVISORY and never gate — `Severity::Evidence` sits below
+# `Maintenance`, so this always exits 0 on stale evidence; only a metadata
+# load/parse error exits 2. The evaluator is operator-invoked, reads metadata,
+# and mutates nothing. Re-attest a stale TR by rerunning its Paper Live Smoke,
+# updating the evidence file + `last_reviewed`, and regenerating docs.
+# Network-free; excluded from default `cargo test`/CI like the other checkpoints.
+.PHONY: freshness-check
+
+## Report Recommended TRs whose Focused Evidence is past the 90-day backstop
+## (advisory; network-free; exits 0 even when stale).
+freshness-check:
+	cargo run -q -p ls-trackers -- freshness check

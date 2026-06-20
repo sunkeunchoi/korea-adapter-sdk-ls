@@ -6,35 +6,42 @@ it is enforced by code today. Every claim below is checkable against the source.
 
 ## What is operative today
 
-There is exactly one operative control: **human review discipline**, anchored on
-the manually-set per-TR `maintenance.last_reviewed` date. A maintainer attests a
-TR's evidence on a dated run and records that date; nothing else is automated.
+Two controls are operative:
 
-Concretely, **no code enforces any of the controls described in the next section**:
+1. **Human review discipline**, anchored on the manually-set per-TR
+   `maintenance.last_reviewed` date. A maintainer attests a TR's evidence on a dated
+   run and records that date.
+2. **The 90-day backstop is computed and enforced** by the evidence-freshness
+   evaluator. `make freshness-check` (`ls-trackers freshness check`) loads metadata,
+   evaluates each Recommended TR's `last_reviewed` against today (UTC), and emits an
+   advisory `Severity::Evidence` finding for any past the window — exactly `> 90` days
+   is stale; 90 is still fresh. `ls-docgen` renders the deterministic review-by date
+   (`last_reviewed` + 90 days) into each recommendation contract, so the freshness
+   bound is visible in docs without breaking byte-determinism. The evaluator mutates
+   nothing; clearing is recompute-on-invocation (re-attest, then the next run finds the
+   TR fresh).
 
-- **The 90-day backstop is not computed.** No code computes a freshness backstop
-  from `maintenance.last_reviewed` or compares it against today. (`ls-docgen` reads
-  the field only to render it verbatim into the TR Dependency Docs, and the
-  consistency test reads it only to compare it against the evidence file — neither
-  enforces freshness.) The field is an input waiting for an evaluator, not a wired
-  trigger.
-- **Change-driven evidence invalidation is not wired.** No code path emits a
-  `Severity::Evidence` finding (`crates/ls-trackers/src/types.rs` declares the variant
-  but states it is unreachable — mirror that candor). No tracker stales evidence.
-- **Spec-doc (example) findings never gate.** The Specification Document Tracker
-  emits advisory findings only (`gates: false` by construction); they do not stale
-  evidence and never will without new code.
+The backstop is **advisory, not gating**: `Severity::Evidence` sits below
+`Severity::Maintenance`, so `gates_for` never trips on it and `freshness-check` exits
+`0` even on stale evidence. It makes a lapsed recommendation *visible*; a human
+re-attests.
 
-The Specification Document Tracker and the API Drift Tracker (with their reviewed
-baselines) **do** exist and **do** see changes — that much is now true, and is why
-the previous "the tracker does not exist" framing is retracted. But seeing a change
-and *acting on it to revoke a claim* are different things, and only the former is
-wired.
+What is **not** yet wired:
+
+- **Change-driven evidence invalidation.** No code path stales evidence from a
+  maintained-TR Structural API Shape change on a Recommended TR (the heavier half —
+  deferred). The API Drift Tracker and the Specification Document Tracker (with their
+  reviewed baselines) **do** see changes, but *acting on a change to revoke a claim* is
+  not wired; only the 90-day half above acts.
+- **Spec-doc (example) findings never gate.** The Specification Document Tracker emits
+  advisory findings only (`gates: false` by construction); they do not stale evidence
+  and never will without new code.
 
 ## Intended semantics (documented intent — no enforcing code, no tests)
 
-When an evidence-freshness evaluator is built (deferred — see below), these are the
-semantics it should implement:
+These are the full intended semantics. Point 4 (the 90-day backstop) is now
+**implemented and tested** by the freshness evaluator; the change-driven points remain
+intent until that increment ships:
 
 1. **Change-driven invalidation.** A maintained-TR **Structural API Shape** change
    (API Drift Tracker) affecting a Recommended TR stales its Focused Evidence and
@@ -58,15 +65,18 @@ semantics it should implement:
    structural change fires **or** 90 days elapse from `maintenance.last_reviewed`,
    whichever comes first.
 
-These five points are intent, not behavior. None of them is enforced and none is
-tested today.
+Of these, the **90-day backstop (4) is enforced and tested today** via the freshness
+evaluator, and its `last_reviewed` arm of the combine rule (5) is live. The
+change-driven points (1, the structural arm of 5) and the advisory spec-doc point (2)
+remain intent — change-driven invalidation is not yet wired. The informational rule (3)
+holds by construction (no code stales on description / `korean_name`).
 
 ## What stays intentionally deferred
 
-- The **evidence-freshness evaluator** itself: parsing `last_reviewed`, computing
-  the backstop, emitting `Severity::Evidence`, and mapping a spec-doc finding to
-  evidence-staling. A `last_reviewed`-only backstop is the cheap half and the single
-  piece that would give a Recommended claim any automated revocation.
+- **Change-driven evidence invalidation** — the heavier half of the evaluator: mapping
+  a maintained-TR Structural API Shape change (or a spec-doc finding) to evidence-staling
+  and emitting `Severity::Evidence` on that path. The cheap `last_reviewed`-only backstop
+  is built (`make freshness-check`); this change-driven half remains deferred.
 - **Per-class freshness tightening.** With six Recommended TRs (`token`, `t1101`,
   `t1102`, `t8412`, `S3_`, `CSPAQ12200`) spanning five classes (standalone,
   market_session, paginated, realtime, account), the 90-day default applies uniformly;

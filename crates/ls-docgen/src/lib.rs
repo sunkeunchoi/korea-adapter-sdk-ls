@@ -385,14 +385,18 @@ const NOT_RECOMMENDED_BANNER: &str =
      promoted to recommended status; its surface and guidance may still change.";
 
 /// The stable revocation-policy text rendered into every Recommended TR's
-/// contract. Phrased as **stated policy, not enforced behavior** — the
-/// evidence-freshness evaluator is deferred, and this candor mirrors
-/// `metadata/EVIDENCE-FRESHNESS.md`. Do not reword to imply code enforcement.
+/// contract. **Per-clause candor** (R10), mirroring `metadata/EVIDENCE-FRESHNESS.md`:
+/// the 90-day backstop is enforced by the freshness evaluator, while change-driven
+/// invalidation stays stated-policy-not-yet-enforced until that increment ships.
+/// Keep each clause's enforcement status accurate — do not imply the
+/// change-driven half is enforced.
 const REVOCATION_POLICY: &str =
-    "What would revoke this claim (stated policy — not enforced by code today): a maintained-TR \
-     Structural API Shape change stales the backing Focused Evidence, or the 90-day backstop \
-     elapses from the freshness date, whichever comes first. Description / `korean_name` changes \
-     are informational and do not stale it. See `metadata/EVIDENCE-FRESHNESS.md`.";
+    "What would revoke this claim: the **90-day backstop is enforced** — `make freshness-check` \
+     flags this TR's Focused Evidence as stale once 90 days elapse from the freshness date (the \
+     review-by date above), and the recommendation must then be re-attested. A maintained-TR \
+     Structural API Shape change that stales the evidence is **stated policy, not yet enforced by \
+     code** (change-driven invalidation is deferred). Description / `korean_name` changes are \
+     informational and do not stale it. See `metadata/EVIDENCE-FRESHNESS.md`.";
 
 /// Render the user-facing recommendation contract for a Recommended TR (R9): the
 /// recommended behavior, the backing evidence and its environment level, the
@@ -419,6 +423,22 @@ fn render_recommendation(meta: &TrMetadata, evidence: Option<&EvidenceRecord>) -
         "- Freshness date: `{}` (`maintenance.last_reviewed`)\n",
         meta.maintenance.last_reviewed
     ));
+    // Deterministic review-by date: freshness date + the 90-day backstop. A pure
+    // derivation of `last_reviewed` (no clock), so committed docs stay
+    // byte-identical across runs. The live stale verdict is the freshness
+    // evaluator's job (`make freshness-check`), not the committed page. Skipped
+    // only if `last_reviewed` is unparseable — unreachable for the authored ISO
+    // dates, but a malformed date degrades to omitting the line, not a panic.
+    if let Ok(review_by) = ls_metadata::review_by(
+        &meta.maintenance.last_reviewed,
+        ls_metadata::DEFAULT_WINDOW_DAYS,
+    ) {
+        out.push_str(&format!(
+            "- Review by: `{}` (freshness date + {}-day backstop)\n",
+            review_by.format("%Y-%m-%d"),
+            ls_metadata::DEFAULT_WINDOW_DAYS
+        ));
+    }
     out.push_str(&format!("- {REVOCATION_POLICY}\n\n"));
 
     out.push_str("This recommendation does not claim:\n\n");
@@ -893,16 +913,36 @@ mod tests {
     }
 
     #[test]
-    fn recommended_page_states_policy_not_enforcement() {
-        // Covers AE4: revocation is phrased as stated policy, explicitly not
-        // enforced by code — guards against an over-claiming reword.
+    fn recommended_page_renders_deterministic_review_by_date() {
+        // The review-by date is `last_reviewed` + 90 days — a pure derivation
+        // (no clock), the docgen surface for R8/R9 as refined. token's freshness
+        // date 2026-06-15 + 90 days = 2026-09-13.
+        let (trs, evidence) = recommended_with_evidence();
+        let reference = render_reference_docs(&trs, &evidence);
+        let page = &reference[Path::new("docs/reference/token.md")];
+        assert!(
+            page.contains("Review by: `2026-09-13` (freshness date + 90-day backstop)"),
+            "recommended page must render the deterministic review-by date"
+        );
+    }
+
+    #[test]
+    fn recommended_page_states_policy_per_clause_candor() {
+        // Covers R10: per-clause candor — the backstop is described as enforced,
+        // the change-driven clause stays stated-policy-not-yet-enforced. Guards
+        // against both over-claiming the deferred half and under-claiming the
+        // enforced backstop.
         let (trs, evidence) = recommended_with_evidence();
         let reference = render_reference_docs(&trs, &evidence);
         let page = &reference[Path::new("docs/reference/token.md")];
 
         assert!(
-            page.contains("stated policy — not enforced by code today"),
-            "revocation text must carry the not-enforced candor"
+            page.contains("90-day backstop is enforced"),
+            "the backstop clause must read as enforced"
+        );
+        assert!(
+            page.contains("stated policy, not yet enforced by code"),
+            "the change-driven clause must keep the not-yet-enforced candor"
         );
         assert!(page.contains("EVIDENCE-FRESHNESS.md"));
     }
@@ -919,6 +959,10 @@ mod tests {
         assert!(page.contains("Implemented, not yet recommended"));
         assert!(page.contains("deferred until this TR reaches"));
         assert!(!page.contains("## Recommendation"));
+        assert!(
+            !page.contains("Review by:"),
+            "a non-recommended TR carries no review-by line"
+        );
     }
 
     #[test]

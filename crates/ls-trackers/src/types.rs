@@ -121,10 +121,13 @@ impl fmt::Display for Change {
 /// critical / breaking / maintenance / evidence / informational (most to least
 /// severe); this enum is that ladder reversed for `Ord`.
 ///
-/// This round's fixtures reach only `Informational` / `Maintenance` / `Breaking`.
-/// `Evidence` (stale focused evidence on a Recommended TR) and `Critical`
-/// (auth/order-safety changes) are defined but unreachable here — no TR is
-/// recommended and change-driven evidence invalidation is inactive.
+/// The API Drift / spec-doc fixtures reach `Informational` / `Maintenance` /
+/// `Breaking`. `Evidence` (stale focused evidence on a Recommended TR) is now
+/// reached by the freshness evaluator ([`crate::freshness`]), which fires it for
+/// a Recommended TR past the 90-day backstop; it stays below `Maintenance`, so
+/// [`gates_for`] never trips on it. `Critical` (auth/order-safety changes)
+/// remains defined but unreachable here, and change-driven evidence invalidation
+/// (a structural change staling evidence) stays deferred.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Severity {

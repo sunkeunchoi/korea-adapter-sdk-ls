@@ -148,6 +148,22 @@ _Avoid_: upstream dependency, source of truth, generated owner
 A former **Migration Source** whose gateway, TR, runtime, and operational knowledge has been extracted or deliberately rejected so the maintained SDK no longer needs it even as read-only reference material.
 _Avoid_: archived repo, read-only source, obsolete active SDK
 
+**Decommission Audit Verdict**:
+The durable outcome of reconciling the migration-source extraction ledger against retained audit records. It is not the same as a test-run count or other execution-check output.
+_Avoid_: validator count, test count, check output
+
+**Decommission Closeout Record**:
+Documentation that narrates decommission operations after the authorizing decommission posture is already established. It improves historical legibility but does not authorize or enforce the decommission.
+_Avoid_: authorizing verdict, enforcement gate, decommission precondition
+
+**Archived Historical Copy**:
+A read-only retained copy of a former migration source kept for provenance and history after decommission. It is not a source of truth for maintained SDK behavior or ordinary maintenance.
+_Avoid_: canonical historical copy, source of truth, reference repo
+
+**Decommission Follow-up Gap**:
+A tracked improvement opportunity around a decommission guard or closeout process that is not an unmet decommission precondition. It may describe a known residual gap without weakening the current decommission posture.
+_Avoid_: failed gate, unresolved precondition, untrusted decommission
+
 **Instrument Domain**:
 The LS market or product area a TR belongs to, such as domestic stock, futures/options, overseas stock, or overseas futures.
 _Avoid_: ownership module, generated category
@@ -201,6 +217,10 @@ _Avoid_: weak lookup TR, identifier source, nice-to-have producer
 - A **Bootstrap Tool** is not part of the permanent maintenance architecture.
 - A **Migration Source** does not remain a dependency after migration.
 - A **Decommissioned Migration Source** is stronger than a read-only or obsolete source: maintainers should not need to consult it for ordinary SDK maintenance or expansion.
+- A **Decommission Audit Verdict** is a durable ledger-audit result, not the number of validator tests that happened to pass in a run.
+- A **Decommission Closeout Record** is historical documentation, not an authorization gate.
+- An **Archived Historical Copy** may be retained for provenance and history, but it does not make a **Decommissioned Migration Source** ordinary reference material again.
+- A **Decommission Follow-up Gap** is tracked work, not evidence that the decommission gate failed.
 - An **Instrument Domain** is **Facet Metadata**, not a code ownership boundary.
 - A **Standalone TR** does not include TRs that need market/session timing, account state, date handling, pagination, order coupling, or WebSocket lifecycle.
 - A **Caller-Supplied Identifier** does not make a TR standalone by itself.

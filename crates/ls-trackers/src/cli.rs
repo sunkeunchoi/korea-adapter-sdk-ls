@@ -1,7 +1,7 @@
-//! The thin `ls-trackers` CLI (U5): `api-drift fetch`, `api-drift check`,
-//! `api-drift promote --dry-run`, and `api-drift renormalize`, mapping findings
-//! to the tiered exit contract (R17). Only `api-drift` subcommands are exposed
-//! (R20).
+//! The thin `ls-trackers` CLI: three command families — `api-drift`
+//! (`fetch` / `check` / `promote --dry-run` / `renormalize`), `spec-doc`
+//! (`check` / `renormalize`), and `freshness` (`check`) — each mapping findings
+//! to the tiered exit contract (R17).
 //!
 //! All logic lives here so it is unit-testable; the binary
 //! (`src/main.rs`) only maps the resolved exit code. Arg parsing, staged-run
@@ -80,6 +80,10 @@ pub enum Command {
     /// `spec-doc renormalize` — re-project the example baseline from the shared
     /// committed raw snapshot, in place, network-free (the example re-seed path).
     SpecRenormalize,
+    /// `freshness check` — evaluate the 90-day evidence backstop over Recommended
+    /// TRs, emitting advisory (non-gating) `Severity::Evidence` findings for any
+    /// past the window. Operator-invoked, mutates nothing (R7).
+    FreshnessCheck,
 }
 
 /// Filesystem locations, injected so tests drive everything over a tempdir.
@@ -121,13 +125,29 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, Str
     match family.as_deref() {
         Some("api-drift") => parse_api_drift(sub.as_deref(), &rest),
         Some("spec-doc") => parse_spec_doc(sub.as_deref(), &rest),
+        Some("freshness") => parse_freshness(sub.as_deref(), &rest),
         Some(other) => Err(format!(
-            "unknown command `{other}` (expected `api-drift` or `spec-doc`)"
+            "unknown command `{other}` (expected `api-drift`, `spec-doc`, or `freshness`)"
         )),
         None => Err(
-            "usage: ls-trackers <api-drift|spec-doc> <subcommand> [--staged DIR] [--dry-run]"
+            "usage: ls-trackers <api-drift|spec-doc|freshness> <subcommand> [--staged DIR] [--dry-run]"
                 .to_string(),
         ),
+    }
+}
+
+/// Parse a `freshness` subcommand. Only `check` is exposed — the evaluator reads
+/// metadata and reports; there is no staged-run or fetch path.
+fn parse_freshness(sub: Option<&str>, rest: &[String]) -> Result<Command, String> {
+    match sub {
+        Some("check") => {
+            if let Some(other) = rest.first() {
+                return Err(format!("unexpected argument `{other}`"));
+            }
+            Ok(Command::FreshnessCheck)
+        }
+        Some(other) => Err(format!("unknown freshness subcommand `{other}`")),
+        None => Err("usage: ls-trackers freshness <check>".to_string()),
     }
 }
 
@@ -633,6 +653,29 @@ pub fn spec_exit_for(result: &Result<SpecReport, String>) -> Exit {
     }
 }
 
+/// Run `freshness check`: load metadata and evaluate the 90-day backstop over
+/// Recommended TRs against `as_of`. Production passes today's UTC date; tests
+/// inject a fixed date. Reads only — mutates nothing (R7).
+pub fn run_freshness_check(
+    paths: &Paths,
+    as_of: chrono::NaiveDate,
+) -> Result<crate::freshness::FreshnessReport, String> {
+    let trs = load_metadata(paths)?;
+    Ok(crate::freshness::evaluate_recommended(&trs, as_of))
+}
+
+/// Map a `freshness check` result to the tiered exit. Stale evidence is advisory
+/// (`Severity::Evidence` never gates), so a run with only stale findings is exit
+/// `0`. A metadata load error, or a Recommended TR whose `last_reviewed` could not
+/// be parsed (freshness genuinely could not be evaluated), exits `2`.
+pub fn freshness_exit_for(result: &Result<crate::freshness::FreshnessReport, String>) -> Exit {
+    match result {
+        Ok(report) if report.has_errors() => Exit::Error,
+        Ok(_) => Exit::Ok,
+        Err(_) => Exit::Error,
+    }
+}
+
 fn failure_report(fetched: usize, committed_len: Option<usize>, gate: &GateOutcome) -> FetchReport {
     FetchReport {
         ok: false,
@@ -762,6 +805,43 @@ pub fn dispatch(paths: &Paths, command: Command) -> Exit {
                 Exit::Error
             }
         },
+        Command::FreshnessCheck => {
+            let result = run_freshness_check(paths, crate::freshness::today());
+            match &result {
+                Ok(report) => print_freshness_report(report),
+                Err(e) => eprintln!("error: {e}"),
+            }
+            freshness_exit_for(&result)
+        }
+    }
+}
+
+/// Print an advisory freshness report: each stale Recommended TR with its age past
+/// the 90-day backstop, plus an "N of M stale" summary. Like the spec-doc report,
+/// there is no `GATE` column — stale evidence is a re-attestation candidate, not a
+/// failure (`Severity::Evidence` never gates).
+fn print_freshness_report(report: &crate::freshness::FreshnessReport) {
+    if report.findings.is_empty() {
+        println!(
+            "no stale evidence: {} of {} Recommended TR(s) within the 90-day backstop.",
+            report.recommended_count, report.recommended_count
+        );
+    } else {
+        println!(
+            "{} of {} Recommended TR(s) stale (re-attest: rerun smoke, update evidence + last_reviewed, regenerate docs):",
+            report.findings.len(),
+            report.recommended_count
+        );
+        for f in &report.findings {
+            println!("  {f}");
+        }
+    }
+    if report.has_errors() {
+        println!(
+            "error: {} Recommended TR(s) have an unparseable last_reviewed (freshness not evaluated): {}",
+            report.unparseable.len(),
+            report.unparseable.join(", ")
+        );
     }
 }
 
@@ -1474,5 +1554,89 @@ mod tests {
         let result = run_check(&paths, Some(&staged));
         assert_eq!(exit_for(&result), Exit::Error);
         assert!(result.unwrap_err().contains("normalizer version mismatch"));
+    }
+
+    // --- freshness check (U3) ---
+
+    fn real_metadata_paths(root: &std::path::Path) -> Paths {
+        let metadata = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("..")
+            .join("..")
+            .join("metadata");
+        Paths {
+            baseline_dir: root.join("baseline"),
+            run_root: root.join("runs"),
+            metadata_dir: metadata,
+            spec_baseline_dir: root.join("spec-doc"),
+        }
+    }
+
+    #[test]
+    fn freshness_parse_accepts_check_rejects_others() {
+        assert_eq!(
+            parse_args(["freshness".to_string(), "check".to_string()]).unwrap(),
+            Command::FreshnessCheck
+        );
+        assert!(parse_args(["freshness".to_string()]).is_err());
+        assert!(parse_args(["freshness".to_string(), "wat".to_string()]).is_err());
+        assert!(parse_args([
+            "freshness".to_string(),
+            "check".to_string(),
+            "--nope".to_string()
+        ])
+        .is_err());
+    }
+
+    #[test]
+    fn freshness_check_stale_lists_findings_and_exits_zero() {
+        let root = scratch("freshness-stale");
+        let paths = real_metadata_paths(&root);
+        // Inject an as-of well past the 90-day window for every Recommended TR.
+        let result = run_freshness_check(&paths, chrono::NaiveDate::from_ymd_opt(2026, 10, 1).unwrap());
+        let report = result.as_ref().unwrap();
+        assert_eq!(report.findings.len(), 6);
+        assert_eq!(report.recommended_count, 6);
+        // Advisory — stale evidence never gates.
+        assert_eq!(freshness_exit_for(&result), Exit::Ok);
+    }
+
+    #[test]
+    fn freshness_check_all_fresh_exits_zero_with_no_findings() {
+        let root = scratch("freshness-fresh");
+        let paths = real_metadata_paths(&root);
+        let result =
+            run_freshness_check(&paths, chrono::NaiveDate::from_ymd_opt(2026, 6, 18).unwrap());
+        assert!(result.as_ref().unwrap().findings.is_empty());
+        assert_eq!(freshness_exit_for(&result), Exit::Ok);
+    }
+
+    #[test]
+    fn freshness_check_metadata_error_exits_two() {
+        let root = scratch("freshness-err");
+        let mut paths = real_metadata_paths(&root);
+        paths.metadata_dir = root.join("does-not-exist");
+        let result =
+            run_freshness_check(&paths, chrono::NaiveDate::from_ymd_opt(2026, 10, 1).unwrap());
+        assert!(result.is_err());
+        assert_eq!(freshness_exit_for(&result), Exit::Error);
+    }
+
+    #[test]
+    fn freshness_check_mutates_nothing() {
+        // AE6: the authored metadata + evidence are byte-identical after a stale run.
+        let root = scratch("freshness-nomutate");
+        let paths = real_metadata_paths(&root);
+        let token_tr = paths.metadata_dir.join("trs").join("token.yaml");
+        let token_ev = paths.metadata_dir.join("evidence").join("token.yaml");
+        let before_tr = fs::read(&token_tr).unwrap();
+        let before_ev = fs::read(&token_ev).unwrap();
+        let _ =
+            run_freshness_check(&paths, chrono::NaiveDate::from_ymd_opt(2026, 10, 1).unwrap()).unwrap();
+        assert_eq!(fs::read(&token_tr).unwrap(), before_tr, "trs/token.yaml unchanged");
+        assert_eq!(
+            fs::read(&token_ev).unwrap(),
+            before_ev,
+            "evidence/token.yaml unchanged"
+        );
     }
 }

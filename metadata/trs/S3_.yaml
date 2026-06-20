@@ -30,4 +30,4 @@ recommendation:
     - In-session row delivery guarantees (a row is bonus, not required)
     - Reconnection semantics after a dropped connection
     - Production-credential feeds (evidence is paper only)
-    - Stronger freshness automation than the stated policy (no enforcement in code today)
+    - Change-driven evidence invalidation (a Structural API Shape change auto-staling evidence) — stated policy, not yet enforced

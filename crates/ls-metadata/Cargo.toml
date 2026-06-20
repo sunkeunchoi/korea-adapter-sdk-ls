@@ -10,6 +10,7 @@ authors.workspace = true
 description = "Rust-owned TR maintenance metadata: schema types, validator, and the change-scoped test planner."
 
 [dependencies]
+chrono.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_yaml.workspace = true
