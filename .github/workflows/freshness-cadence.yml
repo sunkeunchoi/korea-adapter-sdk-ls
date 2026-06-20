@@ -1,0 +1,97 @@
+# Scheduled evidence-freshness cadence — the repository's FIRST automation.
+#
+# Runs the network-free `freshness check --json` on a monthly timer and maintains
+# a single rolling "Evidence freshness status" issue (via
+# .github/scripts/update-freshness-issue.sh). It is non-gating: stale evidence
+# never fails the job — `Severity::Evidence` sits below `Maintenance`, so the check
+# exits 0 whether stale or fresh. A *failure* here means a build/tooling/infra
+# error or exit 2 (an unparseable `last_reviewed`), i.e. the check genuinely could
+# not run — that, and only that, trips the liveness notification (R9).
+#
+# Posture: network-free in the LS sense (ADR 0009 — no LS API call, no LS
+# credentials); the only token is the automatic GITHUB_TOKEN. The schedule IS the
+# trigger; no operator has to remember to run it.
+#
+# Residual gap (documented, not solved here): GitHub silently disables scheduled
+# workflows after 60 days of repo inactivity (public repos) and can drop runs
+# under load; neither emits a run or a failure event, so the in-workflow liveness
+# step below cannot catch them. An external dead-man's-switch is deferred
+# follow-up — see docs/MAINTENANCE_RUNBOOK.md.
+
+name: Freshness cadence
+
+on:
+  schedule:
+    # 07:17 UTC on the 1st of each month — off the top-of-hour high-load window
+    # to dodge dropped scheduled runs. Monthly is ample inside the 90-day
+    # backstop (~60 days of lead before a lapse).
+    - cron: "17 7 1 * *"
+  # Manual trigger for testing and recovery (re-run after a fix, walk the issue
+  # lifecycle on a scratch run).
+  workflow_dispatch:
+
+# Minimal scope: read the repo to build, write issues for the rolling dashboard.
+# No other permission, and no LS secret anywhere in this file (R5).
+permissions:
+  contents: read
+  issues: write
+
+# At most one cadence run at a time; a manual dispatch never races a scheduled one
+# into a duplicate issue.
+concurrency:
+  group: freshness-cadence
+  cancel-in-progress: false
+
+jobs:
+  freshness:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # No build cache by design: at monthly cadence GitHub's 7-day cache eviction
+      # guarantees a miss, so caching would be pure overhead.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # Run the JSON form of the check directly. The plain `make freshness-check`
+      # target emits human text and stays the operator-facing command; the
+      # workflow consumes the same evaluation's `--json` contract. A non-zero exit
+      # (build error, or exit 2 on an unparseable date) fails this step and skips
+      # straight to the liveness notification — the issue update never runs on a
+      # check that could not produce a trustworthy result.
+      - name: Run freshness check (JSON)
+        run: cargo run -q -p ls-trackers -- freshness check --json > findings.json
+
+      - name: Update rolling freshness issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FRESHNESS_MAINTAINER: ${{ vars.FRESHNESS_MAINTAINER }}
+        run: .github/scripts/update-freshness-issue.sh findings.json
+
+      # R9 liveness: if anything above failed (build/tooling error or exit 2), make
+      # the watcher's own death visible to a human — not just the single-recipient
+      # built-in failure email (which goes only to the last cron editor and is
+      # account-deletion-fragile). Comment on the open freshness-status issue if one
+      # exists, otherwise open one, @mentioning the maintainer with the run link.
+      - name: Notify on watcher failure (R9 liveness)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FRESHNESS_MAINTAINER: ${{ vars.FRESHNESS_MAINTAINER }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          gh label create freshness-status --color FBCA04 \
+            --description "Rolling evidence-freshness dashboard (not an SDK work item)" \
+            >/dev/null 2>&1 || true
+          msg="${FRESHNESS_MAINTAINER:-} ⚠️ The scheduled evidence-freshness watcher failed (build/tooling error or exit 2): freshness could NOT be evaluated this run. Investigate: ${RUN_URL}"
+          # Reuse whatever freshness-status issue is open (the rolling dashboard or
+          # a prior failure notice) so repeated failures do not pile up duplicates.
+          num=$(gh issue list --label freshness-status --state open --json number --jq '.[0].number // empty' --limit 1)
+          if [ -n "$num" ]; then
+            gh issue comment "$num" --body "$msg"
+          else
+            gh issue create --label freshness-status \
+              --title "Evidence freshness watcher failed" --body "$msg"
+          fi
