@@ -1050,6 +1050,17 @@ fn print_freshness_report(report: &crate::freshness::FreshnessReport) {
             println!("  {f}");
         }
     }
+    if report.baseline.stale {
+        let detail = match report.baseline.age_days {
+            Some(age) => format!("{age} days old (refreshed {})", report.baseline.refreshed),
+            None if report.baseline.refreshed.is_empty() => "never stamped".to_string(),
+            None => format!("unparseable refresh date `{}`", report.baseline.refreshed),
+        };
+        println!(
+            "advisory: committed baseline is stale ({detail}); change-detection compares against \
+             possibly-outdated structural truth — re-fetch/re-seed the baseline."
+        );
+    }
     if report.has_reattest() {
         println!(
             "advisory: {} Recommended TR(s) need re-attestation (normalizer-version mismatch or \

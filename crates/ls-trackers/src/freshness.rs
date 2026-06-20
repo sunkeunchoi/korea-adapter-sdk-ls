@@ -54,6 +54,28 @@ impl Reason {
     }
 }
 
+/// The threshold past which the committed baseline's `refreshed` date warrants an
+/// advisory baseline-staleness warning (R9a). Defaults to the same 90 days as the
+/// evidence backstop. A stale baseline means change-detection is comparing against
+/// possibly-outdated structural truth — visible, but non-gating.
+pub const BASELINE_STALE_DAYS: i64 = DEFAULT_WINDOW_DAYS;
+
+/// The committed baseline's liveness status (R9a). Reuses the single-sourced
+/// [`ls_metadata::evaluate`] date rule — no new date arithmetic. A missing or
+/// unparseable `refreshed` reads as *stale* (warn), surfacing the never-stamped
+/// baseline, never a silent fresh.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct BaselineStatus {
+    /// The stamped refresh date (`""` when the manifest predates the field).
+    pub refreshed: String,
+    /// Age in days past `refreshed` — `Some` only when stale and parseable; `None`
+    /// when fresh, missing, or unparseable.
+    pub age_days: Option<i64>,
+    /// `true` when the baseline is past the threshold OR its date is
+    /// missing/unparseable (both warn).
+    pub stale: bool,
+}
+
 /// One stale-evidence finding for a Recommended TR — a per-TR entry merged from
 /// the age and change streams (KTD3). `reasons` distinguishes `age` from `change`
 /// (a both-stale TR carries both); `age_days` is `Some` only when stale-by-age;
@@ -117,6 +139,8 @@ pub struct FreshnessReport {
     /// baseline manifest (R2a/KTD4), or a missing/unreadable per-TR baseline shape
     /// (KTD8). Advisory and loud — surfaced, never a silent fresh-by-change.
     pub reattest: Vec<String>,
+    /// The committed baseline's liveness (R9a). Advisory — never affects exit.
+    pub baseline: BaselineStatus,
 }
 
 impl FreshnessReport {
@@ -328,11 +352,41 @@ fn merge(age: FreshnessReport, change: ChangeDrift) -> FreshnessReport {
         recommended_count: age.recommended_count,
         unparseable: age.unparseable,
         reattest: change.reattest,
+        // evaluate_freshness overwrites this with the real baseline status; a bare
+        // merge (no baseline context) defaults to fresh/never-stamped.
+        baseline: BaselineStatus::default(),
     }
 }
 
-/// Evaluate both the age and change rules and merge them into one report
-/// (KTD8). The single entry point the CLI calls.
+/// Evaluate the committed baseline's liveness against an injected `as_of` (R9a),
+/// reusing the single-sourced [`ls_metadata::evaluate`] date rule (its parse, its
+/// `>` boundary, its `FreshnessError`) — no new date arithmetic. A missing or
+/// unparseable `refreshed` reads as *stale* (warn), surfacing the never-stamped
+/// baseline rather than silently passing.
+fn evaluate_baseline_staleness(refreshed: &str, as_of: NaiveDate) -> BaselineStatus {
+    match ls_metadata::evaluate(refreshed, as_of, BASELINE_STALE_DAYS) {
+        Ok(FreshnessState::Stale { age_days }) => BaselineStatus {
+            refreshed: refreshed.to_string(),
+            age_days: Some(age_days),
+            stale: true,
+        },
+        Ok(FreshnessState::Fresh) => BaselineStatus {
+            refreshed: refreshed.to_string(),
+            age_days: None,
+            stale: false,
+        },
+        // Missing (empty, serde-default) or unparseable date → warn, never silent.
+        Err(_) => BaselineStatus {
+            refreshed: refreshed.to_string(),
+            age_days: None,
+            stale: true,
+        },
+    }
+}
+
+/// Evaluate both the age and change rules, merge them into one report (KTD8), and
+/// attach the committed baseline's liveness (R9a). The single entry point the CLI
+/// calls.
 pub fn evaluate_freshness(
     trs: &BTreeMap<String, TrMetadata>,
     baseline: &NormalizedRun,
@@ -341,7 +395,9 @@ pub fn evaluate_freshness(
 ) -> FreshnessReport {
     let age = evaluate_recommended(trs, as_of);
     let change = evaluate_change_drift(trs, baseline, evidence);
-    merge(age, change)
+    let mut report = merge(age, change);
+    report.baseline = evaluate_baseline_staleness(&baseline.manifest.refreshed, as_of);
+    report
 }
 
 // ---------------------------------------------------------------------------
@@ -384,6 +440,14 @@ struct FreshnessReportJson<'a> {
     stale: Vec<FreshnessFindingJson<'a>>,
     reattest: &'a [String],
     unparseable: &'a [String],
+    /// The committed baseline's stamped refresh date (`""` when never stamped).
+    baseline_refreshed: &'a str,
+    /// Baseline age in days past `refreshed` — `null` when fresh, missing, or
+    /// unparseable (the key is always present).
+    baseline_age_days: Option<i64>,
+    /// `true` when the baseline is past the threshold or its date is
+    /// missing/unparseable (advisory warning, R9a).
+    baseline_stale: bool,
 }
 
 /// Serialize a [`FreshnessReport`] to the pinned JSON contract the scheduled
@@ -411,6 +475,9 @@ pub fn report_to_json(report: &FreshnessReport, as_of: NaiveDate, window_days: i
             .collect(),
         reattest: &report.reattest,
         unparseable: &report.unparseable,
+        baseline_refreshed: &report.baseline.refreshed,
+        baseline_age_days: report.baseline.age_days,
+        baseline_stale: report.baseline.stale,
     };
     serde_json::to_string_pretty(&dto).expect("freshness report DTO serializes")
 }
@@ -950,6 +1017,57 @@ recommendation:
         assert_eq!(report.findings[0].severity, Severity::Evidence);
     }
 
+    // --- baseline staleness (U5, R9a) ---------------------------------------
+
+    #[test]
+    fn baseline_at_threshold_is_fresh() {
+        // 2026-06-17 + 90 days = 2026-09-15 → still fresh (inherited `>` boundary).
+        let b = evaluate_baseline_staleness("2026-06-17", date(2026, 9, 15));
+        assert!(!b.stale);
+        assert_eq!(b.refreshed, "2026-06-17");
+        assert!(b.age_days.is_none());
+    }
+
+    #[test]
+    fn baseline_one_day_past_threshold_is_stale_with_age() {
+        let b = evaluate_baseline_staleness("2026-06-17", date(2026, 9, 16));
+        assert!(b.stale);
+        assert_eq!(b.age_days, Some(91));
+    }
+
+    #[test]
+    fn missing_baseline_refreshed_warns() {
+        // Empty (serde-default for a pre-R9a manifest) → warn, never silent fresh.
+        let b = evaluate_baseline_staleness("", date(2026, 9, 16));
+        assert!(b.stale, "a never-stamped baseline warns");
+        assert!(b.age_days.is_none());
+    }
+
+    #[test]
+    fn unparseable_baseline_refreshed_warns() {
+        let b = evaluate_baseline_staleness("not-a-date", date(2026, 9, 16));
+        assert!(b.stale);
+        assert!(b.age_days.is_none());
+    }
+
+    #[test]
+    fn baseline_staleness_does_not_affect_exit_or_findings() {
+        // A stale baseline (old refreshed) with otherwise fresh evidence yields an
+        // advisory baseline warning but no stale findings — exit stays clean.
+        let s = shape("t1102", vec![field(Direction::Response, "Out", 0, "price", "Decimal", 8)]);
+        let mut base = baseline(vec![s.clone()], 2);
+        base.manifest.refreshed = "2026-01-01".to_string(); // long stale
+        let report = evaluate_freshness(
+            &trs_of(&["t1102"]),
+            &base,
+            &ev_map(vec![evidence("t1102", Some(s), Some(2))]),
+            date(2026, 6, 18),
+        );
+        assert!(report.baseline.stale, "old baseline warns");
+        assert!(report.findings.is_empty(), "no evidence findings");
+        assert!(!report.has_errors(), "baseline staleness is not an error");
+    }
+
     // --- JSON contract ------------------------------------------------------
 
     fn parse_json(s: &str) -> serde_json::Value {
@@ -1002,6 +1120,23 @@ recommendation:
     }
 
     #[test]
+    fn json_carries_baseline_staleness_fields() {
+        let s = shape("t1102", vec![field(Direction::Response, "Out", 0, "price", "Decimal", 8)]);
+        let mut base = baseline(vec![s.clone()], 2);
+        base.manifest.refreshed = "2026-01-01".to_string();
+        let report = evaluate_freshness(
+            &trs_of(&["t1102"]),
+            &base,
+            &ev_map(vec![evidence("t1102", Some(s), Some(2))]),
+            date(2026, 6, 18),
+        );
+        let v = parse_json(&report_to_json(&report, date(2026, 6, 18), DEFAULT_WINDOW_DAYS));
+        assert_eq!(v["baseline_refreshed"], serde_json::json!("2026-01-01"));
+        assert_eq!(v["baseline_stale"], serde_json::json!(true));
+        assert!(v["baseline_age_days"].as_i64().unwrap() > 90);
+    }
+
+    #[test]
     fn json_field_names_are_pinned() {
         // The emitted object's keys ARE the workflow contract.
         let report = evaluate_recommended(&real_trs(), date(2026, 10, 1));
@@ -1012,6 +1147,9 @@ recommendation:
             top,
             [
                 "as_of",
+                "baseline_age_days",
+                "baseline_refreshed",
+                "baseline_stale",
                 "has_errors",
                 "reattest",
                 "recommended_count",
