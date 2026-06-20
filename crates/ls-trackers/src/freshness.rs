@@ -1120,6 +1120,32 @@ recommendation:
     }
 
     #[test]
+    fn json_both_reasons_entry_carries_age_and_change() {
+        // AE6 at the contract layer: a TR stale for both reasons serializes one
+        // entry with reasons ["age","change"] and both age_days and change_summary
+        // non-null.
+        let attested = shape("t1102", vec![field(Direction::Response, "Out", 0, "price", "Decimal", 8)]);
+        let base = shape(
+            "t1102",
+            vec![
+                field(Direction::Response, "Out", 0, "price", "Decimal", 8),
+                field(Direction::Response, "Out", 1, "volume", "Long", 12),
+            ],
+        );
+        let report = evaluate_freshness(
+            &trs_of(&["t1102"]),
+            &baseline(vec![base], 2),
+            &ev_map(vec![evidence("t1102", Some(attested), Some(2))]),
+            date(2026, 12, 1),
+        );
+        let v = parse_json(&report_to_json(&report, date(2026, 12, 1), DEFAULT_WINDOW_DAYS));
+        let entry = &v["stale"][0];
+        assert_eq!(entry["reasons"], serde_json::json!(["age", "change"]));
+        assert!(entry["age_days"].as_i64().unwrap() > 90);
+        assert!(entry["change_summary"].as_str().unwrap().contains("volume"));
+    }
+
+    #[test]
     fn json_carries_baseline_staleness_fields() {
         let s = shape("t1102", vec![field(Direction::Response, "Out", 0, "price", "Decimal", 8)]);
         let mut base = baseline(vec![s.clone()], 2);
