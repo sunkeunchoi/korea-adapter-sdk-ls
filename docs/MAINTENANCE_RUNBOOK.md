@@ -4,12 +4,28 @@ Recurring, operator-run maintenance steps for the LS adapter SDK. These are
 **opt-in** and network-touching; the default `cargo test` and CI gates stay
 network-free (ADR 0009, R18).
 
-> **Checkpoint-host gap (U7 / R19).** This repo does not yet have a pre-existing
-> recurring operator checkpoint (release checklist / periodic review) to host
-> the API Drift check. This runbook *is* that host for now. When a release
-> checklist or scheduled review is introduced, fold the "API Drift review" step
-> below into it and link back here. No cron/CI scheduling is added (R19) — the
-> trigger is an operator running the step at this checkpoint.
+> **Checkpoint-host split (U7 / R19).** The maintenance checks now have **two**
+> hosts, by trigger posture:
+>
+> - **Evidence freshness is on a timer.** Its cadence gap is closed by a scheduled,
+>   non-gating GitHub Actions workflow
+>   ([`.github/workflows/freshness-cadence.yml`](../.github/workflows/freshness-cadence.yml)) —
+>   the repo's first automation. See [Scheduled freshness cadence](#scheduled-freshness-cadence)
+>   below. Freshness qualifies because it is network-free (ADR 0009) and advisory
+>   (`Severity::Evidence` never gates).
+> - **API Drift and Specification Document stay operator-run.** This runbook is
+>   their host. Run them at a maintenance checkpoint with
+>   [`make maintenance-sweep`](#manual-maintenance-sweep) (or each target
+>   individually). `api-drift` stays off any timer under **R19** — it makes a live
+>   LS fetch, whose credentials, rate limits, and failure handling need separate
+>   justification before scheduling. `spec-doc` is network-free and *could* be
+>   scheduled like freshness; it stays operator-run **this increment by scope
+>   choice**, not by an R19 constraint.
+>
+> R19 is therefore scoped to the network-touching `api-drift` fetch, not a blanket
+> prohibition: scheduling the network-free freshness check operates outside R19's
+> intent rather than overturning it. When a release checklist or broader scheduled
+> review is introduced, fold the operator-run steps into it and link back here.
 
 ## Maintenance Work Queue
 
@@ -50,10 +66,31 @@ Foundation Complete is proven in **two stages**, not by one issue.
 
 **Foundation Complete is claimed only after Stage 2 closes**, not at #9.
 
+## Manual maintenance sweep
+
+The two operator-run checks — API Drift and Specification Document — are
+aggregated behind one target so a checkpoint is a single command:
+
+```sh
+make maintenance-sweep
+```
+
+It runs `api-drift-check` then `spec-doc-check` in sequence (both always run, even
+if the first is non-zero) and exits with the **worst** outcome of the two: `0`
+clean, `1` a finding gated (api-drift review needed), `2` an error. Evidence
+freshness is **deliberately not** part of the sweep — it runs on its own schedule
+(see [Scheduled freshness cadence](#scheduled-freshness-cadence)); bundling it
+here would re-introduce the "forgot to run it" gap the schedule exists to close.
+Run `make freshness-check` standalone for offline convenience.
+
+The individual sections below document each check's exit semantics and the action
+each finding calls for.
+
 ## API Drift review
 
 Detects upstream LS Open API changes against the committed bounded baseline and
-the reviewed code-set. Run at each maintenance checkpoint:
+the reviewed code-set. Run at each maintenance checkpoint (or via
+[`make maintenance-sweep`](#manual-maintenance-sweep)):
 
 ```sh
 make api-drift-check
@@ -161,6 +198,54 @@ When a TR is flagged stale, **re-attest** it (the same human flow as promotion):
 The next `freshness-check` then finds the TR fresh. Clearing is
 recompute-on-invocation: the prior finding is not retracted, it simply is not
 re-emitted.
+
+### Scheduled freshness cadence
+
+Unlike the operator-run checks above, evidence freshness also runs **on a timer**
+so a lapse surfaces without anyone remembering to check. The workflow
+[`.github/workflows/freshness-cadence.yml`](../.github/workflows/freshness-cadence.yml)
+— the repository's first automation — runs monthly (`cron: '17 7 1 * *'`, plus a
+`workflow_dispatch` for manual test/recovery) and:
+
+- Runs the same evaluation as `make freshness-check`, in its `--json` form, and
+  drives a single rolling **"Evidence freshness status"** issue (carrying the
+  dedicated `freshness-status` label): opened/updated when Recommended TRs are
+  stale, closed when all are fresh. The issue body is rewritten every run as a
+  silent dashboard; a notifying comment that @mentions the maintainer is posted
+  only on a transition *into* staleness (first appearance, a newly-stale TR, or a
+  reopen after a manual close), so same-set re-runs do not spam.
+- Is **non-gating**: stale evidence never fails the job (the check exits 0 whether
+  stale or fresh). A *failure* means a build/tooling error or exit 2 — the check
+  genuinely could not run.
+- Is **credential-free**: network-free in the LS sense (no LS API call, no LS
+  secret), using only the automatic `GITHUB_TOKEN` with `issues: write`.
+- Is **not** a Maintenance Work Queue item. The rolling issue deliberately avoids
+  the `[SDK work item]:` title prefix and every `queue:*`/`source:*`/`class:*`/
+  `support:*`/`gate:*` label; **escalation stays human** (R4, ADR 0013) — the
+  issue prompts a maintainer to re-attest, it never auto-files SDK work.
+
+The maintainer handle @mentioned on a transition comes from the `FRESHNESS_MAINTAINER`
+repository variable (not a secret); leave it unset to post without a mention.
+
+**Watcher-liveness residual gap (R9).** An `if: failure()` step makes the watcher's
+own death-by-failure visible — on a build/tooling error or exit 2 it posts an
+@mentioning comment with the run link, rather than relying on GitHub's built-in
+failure email (which reaches only the last cron editor and is account-deletion-
+fragile). Three silent-death vectors remain **uncovered in-repo**, because none
+emits a run or a failure event:
+
+1. **60-day-inactivity disable** — GitHub disables scheduled workflows on a public
+   repo after 60 days without repo activity.
+2. **Dropped runs** — a scheduled run can be silently skipped under platform load.
+3. **Schedule-disabling edit** — a later malformed-YAML / workflow-syntax error
+   that disables the schedule with no run and no failure event.
+
+`actionlint` on the workflow is the only in-repo guard, and it covers **only**
+vector 3. Vectors 1 and 2 are catchable only by an **external dead-man's-switch
+(heartbeat)**, which is deferred follow-up: it requires an external service and a
+heartbeat-URL secret, denting the credential-free posture. Monthly maintainer
+commits keep the timer alive in practice, but the gap is real and stated here
+honestly rather than papered over.
 
 ### Notes
 

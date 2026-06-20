@@ -130,3 +130,32 @@ spec-doc-renormalize:
 ## (advisory; network-free; exits 0 even when stale).
 freshness-check:
 	cargo run -q -p ls-trackers -- freshness check
+
+# ---------------------------------------------------------------------------
+# Manual maintenance sweep — aggregates the two checks that stay OPERATOR-RUN:
+# `api-drift-check` (network-touching, R19 — no live fetch on a timer) and
+# `spec-doc-check` (network-free, operator-run this increment by scope choice).
+# Run by hand at a maintenance checkpoint (see docs/MAINTENANCE_RUNBOOK.md).
+#
+# `freshness-check` is DELIBERATELY EXCLUDED (R7): it has its own scheduled
+# trigger (.github/workflows/freshness-cadence.yml), so bundling it here would
+# duplicate the cadence and re-introduce the "forgot to run the sweep" gap the
+# schedule exists to close. Run `make freshness-check` standalone for offline
+# convenience.
+#
+# Exit code is the worst outcome of the two checks (0 clean, 1 a finding gated,
+# 2 an error), so the operator sees a single clear pass/fail. Both checks run
+# even if the first is non-zero — the sweep reports the whole picture, not just
+# the first failure.
+.PHONY: maintenance-sweep
+
+## Run the operator-run checks (api-drift + spec-doc); exit reflects the worst.
+maintenance-sweep:
+	@echo "== maintenance sweep: operator-run checks (freshness runs on a schedule, not here) =="
+	@rc=0; \
+	echo "-- api-drift check --"; \
+	$(MAKE) --no-print-directory api-drift-check || rc=$$?; \
+	echo "-- spec-doc check --"; \
+	$(MAKE) --no-print-directory spec-doc-check || { sc=$$?; [ $$sc -gt $$rc ] && rc=$$sc; }; \
+	echo "== sweep exit: $$rc =="; \
+	exit $$rc
