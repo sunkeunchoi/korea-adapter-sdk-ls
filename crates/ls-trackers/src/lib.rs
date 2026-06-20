@@ -35,7 +35,9 @@ pub mod spec_doc;
 pub mod stages;
 pub mod types;
 
-pub use freshness::{evaluate_recommended, today, FreshnessFinding, FreshnessReport};
+pub use freshness::{
+    evaluate_freshness, evaluate_recommended, today, FreshnessFinding, FreshnessReport, Reason,
+};
 
 pub use api_drift::{
     compare, facts_outage_decision, normalize_run, DriftReport, FactsOutage, NormalizedRun,

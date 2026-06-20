@@ -700,15 +700,29 @@ pub fn spec_exit_for(result: &Result<SpecReport, String>) -> Exit {
     }
 }
 
-/// Run `freshness check`: load metadata and evaluate the 90-day backstop over
-/// Recommended TRs against `as_of`. Production passes today's UTC date; tests
-/// inject a fixed date. Reads only — mutates nothing (R7).
+/// Run `freshness check`: evaluate the age backstop **and** change-driven staling
+/// over Recommended TRs against `as_of`. Loads the validated metadata (for the
+/// recommendation + attested-shape evidence map) and the committed baseline (for
+/// the per-TR shapes + manifest normalizer version), then runs both rules and
+/// merges them (KTD8). Production passes today's UTC date; tests inject a fixed
+/// date. Reads only — mutates nothing (R7).
+///
+/// A whole-run baseline that is absent or unreadable is a loud error (exit 2),
+/// never a silent fresh-by-change (KTD8); a missing *per-TR* shape surfaces as a
+/// re-attestation advisory inside the evaluator.
 pub fn run_freshness_check(
     paths: &Paths,
     as_of: chrono::NaiveDate,
 ) -> Result<crate::freshness::FreshnessReport, String> {
-    let trs = load_metadata(paths)?;
-    Ok(crate::freshness::evaluate_recommended(&trs, as_of))
+    let report = validate_dir(&paths.metadata_dir).map_err(|e| format!("metadata error: {e:?}"))?;
+    let baseline = load_normalized(&paths.baseline_dir)
+        .map_err(|e| format!("committed baseline unavailable: {e}"))?;
+    Ok(crate::freshness::evaluate_freshness(
+        &report.trs,
+        &baseline,
+        &report.evidence,
+        as_of,
+    ))
 }
 
 /// Map a `freshness check` result to the tiered exit. Stale evidence is advisory
@@ -1035,6 +1049,14 @@ fn print_freshness_report(report: &crate::freshness::FreshnessReport) {
         for f in &report.findings {
             println!("  {f}");
         }
+    }
+    if report.has_reattest() {
+        println!(
+            "advisory: {} Recommended TR(s) need re-attestation (normalizer-version mismatch or \
+             missing baseline shape; re-pin against the current baseline): {}",
+            report.reattest.len(),
+            report.reattest.join(", ")
+        );
     }
     if report.has_errors() {
         println!(
@@ -1771,7 +1793,10 @@ mod tests {
             .join("..")
             .join("metadata");
         Paths {
-            baseline_dir: root.join("baseline"),
+            // The real committed baseline: change-driven detection diffs the
+            // backfilled attested shapes against it (attested == baseline, so the
+            // six start fresh-by-change; only the age rule varies by as_of).
+            baseline_dir: committed_baseline_dir(),
             run_root: root.join("runs"),
             metadata_dir: metadata,
             spec_baseline_dir: root.join("spec-doc"),

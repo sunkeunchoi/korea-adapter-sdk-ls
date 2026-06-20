@@ -293,6 +293,27 @@ pub fn gates_for(severity: Severity, support_state: SupportState, is_new_tr: boo
     is_new_tr || (support_state.is_maintained() && severity >= Severity::Maintenance)
 }
 
+/// The **single source** of the R2 change-driven staling allow-list: a structural
+/// change qualifies as staling a Recommended TR's Focused Evidence iff it is a
+/// field add/remove/change or an endpoint/protocol change. `FieldReordered`,
+/// `FieldMovedAcrossBlock`, `RateLimitChanged`, `TrAdded`, `TrRemoved`,
+/// `DescriptionChanged`, and `FactsDegraded` never stale (R2). This is a separate
+/// lens from [`gates_for`]/`change_severity` (which weigh *API breakage* by
+/// support state): the same change that classifies `Breaking` in `api-drift
+/// compare` qualifies here purely as *evidence staleness*, regardless of severity.
+/// Kept beside [`DriftChange`] as the one-copy classification rule (no second
+/// allow-list elsewhere).
+pub fn is_qualifying(change: &DriftChange) -> bool {
+    matches!(
+        change,
+        DriftChange::FieldAdded { .. }
+            | DriftChange::FieldRemoved { .. }
+            | DriftChange::FieldChanged { .. }
+            | DriftChange::EndpointChanged { .. }
+            | DriftChange::ProtocolChanged { .. }
+    )
+}
+
 /// Re-exported here so callers of the trackers crate get the protocol vocabulary
 /// without depending on `ls-metadata` directly.
 pub use ls_metadata::Protocol;
@@ -761,6 +782,68 @@ mod tests {
         // Untracked (known TR) never gates on a change — only on discovery.
         assert!(!gates_for(Maintenance, Untracked, false)); // TR removed, no metadata
         assert!(!gates_for(Informational, Untracked, false)); // shape changed, no metadata
+    }
+
+    /// R2: exactly field add/remove/change and endpoint/protocol change qualify
+    /// as change-driven staling; reorder, cross-block move, rate-limit,
+    /// description, and TR add/remove never do.
+    #[test]
+    fn is_qualifying_matches_the_r2_allow_list() {
+        let req = || Direction::Request;
+        assert!(is_qualifying(&DriftChange::FieldAdded {
+            direction: req(),
+            block_name: "b".into(),
+            field_index: 0,
+            field_name: "f".into()
+        }));
+        assert!(is_qualifying(&DriftChange::FieldRemoved {
+            direction: req(),
+            block_name: "b".into(),
+            field_index: 0,
+            field_name: "f".into()
+        }));
+        assert!(is_qualifying(&DriftChange::FieldChanged {
+            direction: req(),
+            block_name: "b".into(),
+            field_index: 0,
+            field_name: "f".into(),
+            detail: "type String→Long".into()
+        }));
+        assert!(is_qualifying(&DriftChange::EndpointChanged {
+            from: Some("/a".into()),
+            to: Some("/b".into())
+        }));
+        assert!(is_qualifying(&DriftChange::ProtocolChanged {
+            from: "rest".into(),
+            to: "websocket".into()
+        }));
+
+        // Non-qualifying.
+        assert!(!is_qualifying(&DriftChange::FieldReordered {
+            direction: req(),
+            block_name: "b".into(),
+            field_name: "f".into(),
+            from_index: 0,
+            to_index: 1
+        }));
+        assert!(!is_qualifying(&DriftChange::FieldMovedAcrossBlock {
+            direction: req(),
+            field_name: "f".into(),
+            from_block: "a".into(),
+            to_block: "b".into()
+        }));
+        assert!(!is_qualifying(&DriftChange::RateLimitChanged {
+            from: Some(1),
+            to: Some(2)
+        }));
+        assert!(!is_qualifying(&DriftChange::DescriptionChanged {
+            location: "tr".into()
+        }));
+        assert!(!is_qualifying(&DriftChange::TrAdded));
+        assert!(!is_qualifying(&DriftChange::TrRemoved));
+        assert!(!is_qualifying(&DriftChange::FactsDegraded {
+            detail: "x".into()
+        }));
     }
 
     /// A code-set round-trips deterministically with the `provisional` seed flag,

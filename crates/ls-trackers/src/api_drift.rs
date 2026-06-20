@@ -631,7 +631,13 @@ fn make_finding(
 
 /// Diff two Structural API Shapes into structural changes (no severity yet).
 /// Top-level facts first (endpoint/protocol/rate/description), then per-field.
-fn diff_shapes(base: &TrShape, cand: &TrShape) -> Vec<DriftChange> {
+///
+/// `pub(crate)` (not `pub`) so the change-driven freshness evaluator
+/// ([`crate::freshness`]) can diff a frozen attested shape against the current
+/// committed baseline shape and filter the result through [`crate::is_qualifying`]
+/// (KTD1) — reusing this engine's reorder/move/description reconciliation rather
+/// than re-deriving it, without widening the crate's public surface.
+pub(crate) fn diff_shapes(base: &TrShape, cand: &TrShape) -> Vec<DriftChange> {
     let mut changes = Vec::new();
 
     if base.endpoint_path != cand.endpoint_path {

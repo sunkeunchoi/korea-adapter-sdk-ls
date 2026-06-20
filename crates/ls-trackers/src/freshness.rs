@@ -1,68 +1,126 @@
-//! Evidence-Freshness Evaluator — the operative 90-day backstop over Recommended
-//! TRs.
+//! Evidence-Freshness Evaluator — the 90-day age backstop **and** change-driven
+//! staling over Recommended TRs.
 //!
-//! This is the live consumer of [`ls_metadata::freshness`]: it selects every
-//! Recommended TR, evaluates its `maintenance.last_reviewed` against an injected
-//! as-of date, and emits a [`FreshnessFinding`] at [`Severity::Evidence`] for each
-//! one past the backstop. The finding is **advisory and non-gating** — `Evidence`
-//! sits below `Maintenance`, so [`crate::gates_for`] never trips on it (R6).
+//! Two independent rules feed one per-TR report:
 //!
-//! The evaluator **mutates nothing** (R7): it reads metadata and returns a report;
-//! it never writes metadata, evidence, baselines, or docs. Clearing is
-//! recompute-on-invocation — re-attestation updates `last_reviewed`, and the next
-//! run simply finds the TR fresh (R12).
+//! * [`evaluate_recommended`] — the age rule. It selects every Recommended TR,
+//!   evaluates `maintenance.last_reviewed` against an injected as-of date, and
+//!   emits an `age` reason for each one past the 90-day backstop.
+//! * [`evaluate_change_drift`] — the change rule (R1/R2). Per Recommended TR it
+//!   diffs the frozen attested [`TrShape`](ls_metadata::TrShape) (from the
+//!   evidence record) against the current committed baseline shape, keeps only
+//!   changes in the R2 allow-list ([`crate::is_qualifying`]), and emits a `change`
+//!   reason with a short drifted-shape summary when any survive. A normalizer
+//!   version mismatch (R2a) or a missing per-TR baseline shape is a loud
+//!   re-attestation advisory, never a silent fresh-by-change.
 //!
-//! Production passes `as_of = today()` (UTC); tests inject a fixed date so the
-//! verdict is deterministic and stale behaviour is proven without wall-clock
-//! waiting.
+//! [`evaluate_freshness`] runs both and merges them by `tr_code` into one entry
+//! per TR (KTD8): a TR stale for both age and change is one entry carrying
+//! `reasons: [age, change]`, clearing independently (R10). Every finding is
+//! [`Severity::Evidence`] — **advisory and non-gating** ([`crate::gates_for`]
+//! never trips on it, R8), and the evaluator **mutates nothing** (R7): clearing
+//! is recompute-on-invocation.
+//!
+//! Production passes `as_of = today()` (UTC); tests inject a fixed date.
 
 use std::collections::BTreeMap;
 use std::fmt;
 
 use chrono::{NaiveDate, Utc};
-use ls_metadata::{FreshnessState, TrMetadata, DEFAULT_WINDOW_DAYS};
+use ls_metadata::{EvidenceRecord, FreshnessState, TrMetadata, DEFAULT_WINDOW_DAYS};
 use serde::Serialize;
 
-use crate::types::Severity;
+use crate::api_drift::{diff_shapes, NormalizedRun};
+use crate::types::{is_qualifying, DriftChange, Severity};
 
-/// One stale-evidence finding for a Recommended TR past the 90-day backstop. The
-/// payload carries only structural descriptors — TR code, the freshness date, and
-/// the age in days — never raw evidence content. `severity` is always
+/// Why a Recommended TR's Focused Evidence is stale. The two reasons clear
+/// independently (R10): refreshing `last_reviewed` clears `Age`, re-pinning the
+/// attested shape clears `Change`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reason {
+    /// Past the 90-day `last_reviewed` backstop.
+    Age,
+    /// The committed baseline structurally diverged from the attested shape.
+    Change,
+}
+
+impl Reason {
+    /// The pinned lowercase token the `--json` contract and the rolling issue read.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Reason::Age => "age",
+            Reason::Change => "change",
+        }
+    }
+}
+
+/// One stale-evidence finding for a Recommended TR — a per-TR entry merged from
+/// the age and change streams (KTD3). `reasons` distinguishes `age` from `change`
+/// (a both-stale TR carries both); `age_days` is `Some` only when stale-by-age;
+/// `change_summary` is `Some` only when stale-by-change. The payload carries only
+/// structural descriptors — never raw evidence content. `severity` is always
 /// [`Severity::Evidence`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FreshnessFinding {
     pub tr_code: String,
     pub last_reviewed: String,
-    pub age_days: i64,
+    /// `[Age]`, `[Change]`, or `[Age, Change]` (age first), never empty.
+    pub reasons: Vec<Reason>,
+    /// Age past the backstop in days — `Some` iff `reasons` contains `Age`.
+    pub age_days: Option<i64>,
+    /// A short summary of what structurally drifted — `Some` iff `reasons`
+    /// contains `Change`.
+    pub change_summary: Option<String>,
     pub severity: Severity,
+}
+
+impl FreshnessFinding {
+    /// Whether this entry is stale by age.
+    pub fn is_age(&self) -> bool {
+        self.reasons.contains(&Reason::Age)
+    }
+
+    /// Whether this entry is stale by change.
+    pub fn is_change(&self) -> bool {
+        self.reasons.contains(&Reason::Change)
+    }
 }
 
 impl fmt::Display for FreshnessFinding {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "[{}] {} {}d past review (last_reviewed {})",
-            self.severity, self.tr_code, self.age_days, self.last_reviewed
-        )
+        let reasons: Vec<&str> = self.reasons.iter().map(|r| r.as_str()).collect();
+        write!(f, "[{}] {} ({})", self.severity, self.tr_code, reasons.join(","))?;
+        if let Some(age) = self.age_days {
+            write!(f, " {age}d past review (last_reviewed {})", self.last_reviewed)?;
+        }
+        if let Some(summary) = &self.change_summary {
+            write!(f, " · {summary}")?;
+        }
+        Ok(())
     }
 }
 
-/// The result of one evaluator run: the stale findings, the count of Recommended
-/// TRs examined (the denominator for an "N of M stale" summary), and the TR codes
-/// whose `last_reviewed` could not be parsed.
+/// The result of one evaluator run: the merged stale findings, the count of
+/// Recommended TRs examined, the TR codes whose `last_reviewed` could not be
+/// parsed, and the TR codes needing re-attestation (normalizer-version mismatch
+/// or a missing per-TR baseline shape).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FreshnessReport {
     pub findings: Vec<FreshnessFinding>,
     pub recommended_count: usize,
-    /// Recommended TRs whose `last_reviewed` was unparseable, so freshness could
-    /// not be evaluated. Collected rather than propagated, so one malformed date
-    /// does not blind the check for the rest — but a non-empty list is a loud
-    /// error (the CLI exits non-zero), never a silent pass.
+    /// Recommended TRs whose `last_reviewed` was unparseable, so age-freshness
+    /// could not be evaluated. A non-empty list is a loud error (non-zero exit),
+    /// never a silent pass.
     pub unparseable: Vec<String>,
+    /// Recommended TRs whose change-detection was suppressed and need
+    /// re-attestation: an `attested_normalizer_version` that differs from the
+    /// baseline manifest (R2a/KTD4), or a missing/unreadable per-TR baseline shape
+    /// (KTD8). Advisory and loud — surfaced, never a silent fresh-by-change.
+    pub reattest: Vec<String>,
 }
 
 impl FreshnessReport {
-    /// Whether any Recommended TR is stale.
+    /// Whether any Recommended TR is stale (by age, change, or both).
     pub fn has_stale(&self) -> bool {
         !self.findings.is_empty()
     }
@@ -70,6 +128,11 @@ impl FreshnessReport {
     /// Whether any Recommended TR had an unparseable `last_reviewed`.
     pub fn has_errors(&self) -> bool {
         !self.unparseable.is_empty()
+    }
+
+    /// Whether any Recommended TR needs re-attestation (advisory).
+    pub fn has_reattest(&self) -> bool {
+        !self.reattest.is_empty()
     }
 }
 
@@ -79,82 +142,14 @@ pub fn today() -> NaiveDate {
     Utc::now().date_naive()
 }
 
-// ---------------------------------------------------------------------------
-// JSON contract (the scheduled-cadence workflow's machine-readable interface).
-//
-// A **dedicated serialization DTO**, not a bare `#[derive(Serialize)]` on
-// `FreshnessReport`: the domain struct's field names and shape do not match the
-// contract the workflow consumes (`jq .stale[].tr_code`, the rolling-issue marker
-// diff), so the DTO performs four explicit transformations — rename `findings` →
-// `stale`, materialize `has_errors` (a *method* on the report, not a field), thread
-// in `as_of` + `window_days` (neither is stored on the report), and serialize the
-// `Severity` enum to its lowercase string. The field names below are load-bearing:
-// they *are* the workflow contract and are pinned by `json_field_names_are_pinned`.
-// ---------------------------------------------------------------------------
-
-/// One stale entry in the JSON contract — a borrowed view of a [`FreshnessFinding`]
-/// with the pinned key set the workflow reads.
-#[derive(Debug, Serialize)]
-struct FreshnessFindingJson<'a> {
-    tr_code: &'a str,
-    last_reviewed: &'a str,
-    age_days: i64,
-    /// Reuses the `Severity` `#[serde(rename_all = "snake_case")]` derive, which
-    /// already emits `"evidence"` — no new serialization impl.
-    severity: Severity,
-}
-
-/// The top-level JSON contract object. `findings` is renamed to `stale`; `as_of`
-/// and `window_days` are threaded in at construction (neither lives on the report).
-#[derive(Debug, Serialize)]
-struct FreshnessReportJson<'a> {
-    as_of: String,
-    window_days: i64,
-    recommended_count: usize,
-    has_errors: bool,
-    stale: Vec<FreshnessFindingJson<'a>>,
-    unparseable: &'a [String],
-}
-
-/// Serialize a [`FreshnessReport`] to the pinned JSON contract the scheduled
-/// freshness-cadence workflow consumes. `as_of` and `window_days` are supplied by
-/// the caller (the dispatch site passes today's UTC date and
-/// [`DEFAULT_WINDOW_DAYS`]); `stale[]` preserves the report's deterministic
-/// TR-code order. Pretty-printed for human-readable run logs; `jq`-parseable as a
-/// single object. Exit semantics are unchanged — this only formats output.
-pub fn report_to_json(report: &FreshnessReport, as_of: NaiveDate, window_days: i64) -> String {
-    let dto = FreshnessReportJson {
-        as_of: as_of.to_string(),
-        window_days,
-        recommended_count: report.recommended_count,
-        has_errors: report.has_errors(),
-        stale: report
-            .findings
-            .iter()
-            .map(|f| FreshnessFindingJson {
-                tr_code: &f.tr_code,
-                last_reviewed: &f.last_reviewed,
-                age_days: f.age_days,
-                severity: f.severity,
-            })
-            .collect(),
-        unparseable: &report.unparseable,
-    };
-    serde_json::to_string_pretty(&dto).expect("freshness report DTO serializes")
-}
-
-/// Evaluate every Recommended TR against an **injected** `as_of` date.
-///
-/// Selection is `support.recommended == true` (recommended TRs are also
-/// implemented, so reading the boolean is correct where `SupportState` would
-/// project them to `Implemented`). The freshness input is
-/// `maintenance.last_reviewed`; no Focused Evidence record is consumed. Iteration
-/// is over a `BTreeMap`, so findings are emitted in deterministic TR-code order.
-///
-/// A TR whose `last_reviewed` is unparseable is collected into
+/// Evaluate the **age** rule over every Recommended TR against an injected
+/// `as_of`. Selection is `support.recommended == true`; the freshness input is
+/// `maintenance.last_reviewed`. Iteration over a `BTreeMap` gives deterministic
+/// TR-code order. A TR whose `last_reviewed` is unparseable lands in
 /// [`FreshnessReport::unparseable`] and the scan continues — one malformed date
-/// must not blind the check for the rest. The caller treats a non-empty
-/// `unparseable` list as a loud error (non-zero exit), never a silent pass.
+/// must not blind the check for the rest. This is the age-only rule; change
+/// detection lives in [`evaluate_change_drift`] and is merged by
+/// [`evaluate_freshness`].
 pub fn evaluate_recommended(
     trs: &BTreeMap<String, TrMetadata>,
     as_of: NaiveDate,
@@ -169,7 +164,9 @@ pub fn evaluate_recommended(
             Ok(FreshnessState::Stale { age_days }) => report.findings.push(FreshnessFinding {
                 tr_code: tr_code.clone(),
                 last_reviewed: meta.maintenance.last_reviewed.clone(),
-                age_days,
+                reasons: vec![Reason::Age],
+                age_days: Some(age_days),
+                change_summary: None,
                 severity: Severity::Evidence,
             }),
             Ok(FreshnessState::Fresh) => {}
@@ -179,9 +176,249 @@ pub fn evaluate_recommended(
     report
 }
 
+/// One stale-by-change entry produced by the change rule, before merge.
+struct ChangeEntry {
+    tr_code: String,
+    last_reviewed: String,
+    change_summary: String,
+}
+
+/// The change rule's output: stale-by-change entries plus the re-attestation
+/// advisory set.
+struct ChangeDrift {
+    findings: Vec<ChangeEntry>,
+    reattest: Vec<String>,
+}
+
+/// Evaluate the **change** rule over every Recommended TR. Per TR (KTD1/KTD8):
+///
+/// * No evidence record or no `attested_shape` → no stale-by-change (the U7
+///   validator backstops absence).
+/// * `attested_normalizer_version` != the baseline manifest version → no
+///   stale-by-change; the TR joins the re-attestation advisory set (R2a/KTD4).
+/// * No per-TR baseline shape → re-attestation advisory, never silent
+///   fresh-by-change (KTD8).
+/// * Otherwise diff the attested shape against the baseline shape and keep only
+///   [`crate::is_qualifying`] changes (R2); if any survive, emit a change entry.
+fn evaluate_change_drift(
+    trs: &BTreeMap<String, TrMetadata>,
+    baseline: &NormalizedRun,
+    evidence: &BTreeMap<String, EvidenceRecord>,
+) -> ChangeDrift {
+    let manifest_version = baseline.manifest.normalizer_version;
+    let mut findings = Vec::new();
+    let mut reattest = Vec::new();
+    for (tr_code, meta) in trs {
+        if !meta.support.recommended {
+            continue;
+        }
+        let Some(record) = evidence.get(tr_code) else {
+            continue; // U7 validator catches a missing evidence record
+        };
+        let Some(attested) = record.attested_shape.as_ref() else {
+            continue; // U7 validator catches a never-captured attested shape
+        };
+        if record.attested_normalizer_version != Some(manifest_version) {
+            // R2a: a representation shift under a different normalizer version is
+            // not a structural change — route to re-attestation, never stale.
+            reattest.push(tr_code.clone());
+            continue;
+        }
+        let Some(base_shape) = baseline.shapes.get(tr_code) else {
+            // Missing per-TR baseline shape — loud advisory, never silent fresh.
+            reattest.push(tr_code.clone());
+            continue;
+        };
+        // Attested is the frozen "base"; the current committed baseline is the
+        // "candidate" that may have moved ahead of it (R1).
+        let changes = diff_shapes(attested, base_shape);
+        let qualifying: Vec<&DriftChange> = changes.iter().filter(|c| is_qualifying(c)).collect();
+        if !qualifying.is_empty() {
+            findings.push(ChangeEntry {
+                tr_code: tr_code.clone(),
+                last_reviewed: meta.maintenance.last_reviewed.clone(),
+                change_summary: summarize_drift(&qualifying),
+            });
+        }
+    }
+    ChangeDrift { findings, reattest }
+}
+
+/// Render a one-line drifted-shape summary from the surviving qualifying changes.
+/// Structural descriptors only — never a scalar sample value (KTD7).
+fn summarize_drift(changes: &[&DriftChange]) -> String {
+    let parts: Vec<String> = changes.iter().map(|c| summarize_one(c)).collect();
+    format!("{} qualifying change(s): {}", parts.len(), parts.join("; "))
+}
+
+fn summarize_one(change: &DriftChange) -> String {
+    match change {
+        DriftChange::FieldAdded {
+            direction,
+            block_name,
+            field_name,
+            ..
+        } => format!("added {direction} field {block_name}.{field_name}"),
+        DriftChange::FieldRemoved {
+            direction,
+            block_name,
+            field_name,
+            ..
+        } => format!("removed {direction} field {block_name}.{field_name}"),
+        DriftChange::FieldChanged {
+            direction,
+            block_name,
+            field_name,
+            detail,
+            ..
+        } => format!("{direction} field {block_name}.{field_name} {detail}"),
+        DriftChange::EndpointChanged { from, to } => format!(
+            "endpoint {}→{}",
+            from.as_deref().unwrap_or("?"),
+            to.as_deref().unwrap_or("?")
+        ),
+        DriftChange::ProtocolChanged { from, to } => format!("protocol {from}→{to}"),
+        // Non-qualifying variants never reach here (filtered by is_qualifying);
+        // a debug fallback keeps the summary total rather than panicking.
+        other => format!("{other:?}"),
+    }
+}
+
+/// Merge the age report and the change-drift output into one report, joined by
+/// `tr_code` (KTD8). A TR present in both streams becomes one entry with
+/// `reasons: [Age, Change]`. The three-way reconciliation with `unparseable`
+/// (KTD8): an unparseable-date TR has no age finding (it went to `unparseable`),
+/// so a co-occurring change surfaces as a standalone `[Change]` entry while the
+/// TR remains in the loud `unparseable` set.
+fn merge(age: FreshnessReport, change: ChangeDrift) -> FreshnessReport {
+    let mut by_code: BTreeMap<String, FreshnessFinding> = age
+        .findings
+        .into_iter()
+        .map(|f| (f.tr_code.clone(), f))
+        .collect();
+    for entry in change.findings {
+        let ChangeEntry {
+            tr_code,
+            last_reviewed,
+            change_summary,
+        } = entry;
+        match by_code.get_mut(&tr_code) {
+            Some(existing) => {
+                existing.reasons.push(Reason::Change);
+                existing.change_summary = Some(change_summary);
+            }
+            None => {
+                by_code.insert(
+                    tr_code.clone(),
+                    FreshnessFinding {
+                        tr_code,
+                        last_reviewed,
+                        reasons: vec![Reason::Change],
+                        age_days: None,
+                        change_summary: Some(change_summary),
+                        severity: Severity::Evidence,
+                    },
+                );
+            }
+        }
+    }
+    FreshnessReport {
+        // BTreeMap → deterministic TR-code order.
+        findings: by_code.into_values().collect(),
+        recommended_count: age.recommended_count,
+        unparseable: age.unparseable,
+        reattest: change.reattest,
+    }
+}
+
+/// Evaluate both the age and change rules and merge them into one report
+/// (KTD8). The single entry point the CLI calls.
+pub fn evaluate_freshness(
+    trs: &BTreeMap<String, TrMetadata>,
+    baseline: &NormalizedRun,
+    evidence: &BTreeMap<String, EvidenceRecord>,
+    as_of: NaiveDate,
+) -> FreshnessReport {
+    let age = evaluate_recommended(trs, as_of);
+    let change = evaluate_change_drift(trs, baseline, evidence);
+    merge(age, change)
+}
+
+// ---------------------------------------------------------------------------
+// JSON contract (the scheduled-cadence workflow's machine-readable interface).
+//
+// A **dedicated serialization DTO**, not a bare `#[derive(Serialize)]` on
+// `FreshnessReport`: the contract renames `findings` → `stale`, materializes
+// `has_errors` (a method, not a field), threads in `as_of`/`window_days`,
+// serializes `reasons` to their pinned lowercase tokens, and serializes
+// `age_days`/`change_summary` as `null` when absent (the keys are always present
+// so the `jq`/shell consumer sees a stable key set). The field names are
+// load-bearing — they ARE the workflow contract, pinned by
+// `json_field_names_are_pinned`.
+// ---------------------------------------------------------------------------
+
+/// One stale entry in the JSON contract — a borrowed view of a [`FreshnessFinding`]
+/// with the pinned key set. `age_days`/`change_summary` are `null` when their
+/// reason is absent (key always present, never `skip_serializing_if`).
+#[derive(Debug, Serialize)]
+struct FreshnessFindingJson<'a> {
+    tr_code: &'a str,
+    last_reviewed: &'a str,
+    reasons: Vec<&'static str>,
+    age_days: Option<i64>,
+    change_summary: Option<&'a str>,
+    /// Reuses the `Severity` `#[serde(rename_all = "snake_case")]` derive, which
+    /// already emits `"evidence"` — no new serialization impl.
+    severity: Severity,
+}
+
+/// The top-level JSON contract object. `findings` is renamed to `stale`; `as_of`
+/// and `window_days` are threaded in at construction; `reattest` lists the TRs
+/// needing re-attestation (advisory).
+#[derive(Debug, Serialize)]
+struct FreshnessReportJson<'a> {
+    as_of: String,
+    window_days: i64,
+    recommended_count: usize,
+    has_errors: bool,
+    stale: Vec<FreshnessFindingJson<'a>>,
+    reattest: &'a [String],
+    unparseable: &'a [String],
+}
+
+/// Serialize a [`FreshnessReport`] to the pinned JSON contract the scheduled
+/// freshness-cadence workflow consumes. `as_of` and `window_days` are supplied by
+/// the caller; `stale[]` preserves the report's deterministic TR-code order.
+/// Pretty-printed for human-readable run logs; `jq`-parseable as a single object.
+/// Exit semantics are unchanged — this only formats output.
+pub fn report_to_json(report: &FreshnessReport, as_of: NaiveDate, window_days: i64) -> String {
+    let dto = FreshnessReportJson {
+        as_of: as_of.to_string(),
+        window_days,
+        recommended_count: report.recommended_count,
+        has_errors: report.has_errors(),
+        stale: report
+            .findings
+            .iter()
+            .map(|f| FreshnessFindingJson {
+                tr_code: &f.tr_code,
+                last_reviewed: &f.last_reviewed,
+                reasons: f.reasons.iter().map(|r| r.as_str()).collect(),
+                age_days: f.age_days,
+                change_summary: f.change_summary.as_deref(),
+                severity: f.severity,
+            })
+            .collect(),
+        reattest: &report.reattest,
+        unparseable: &report.unparseable,
+    };
+    serde_json::to_string_pretty(&dto).expect("freshness report DTO serializes")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::types::{BlockField, CodeSet, Direction, Manifest, Protocol, TrShape};
     use crate::{gates_for, SupportState};
     use std::path::PathBuf;
 
@@ -199,10 +436,10 @@ mod tests {
         NaiveDate::from_ymd_opt(y, m, d).expect("valid test date")
     }
 
+    // --- age rule (carried from the 90-day backstop) ------------------------
+
     #[test]
     fn all_recommended_fresh_emits_no_finding() {
-        // AE1: as-of just after the latest last_reviewed — every Recommended TR
-        // is within the 90-day window.
         let report = evaluate_recommended(&real_trs(), date(2026, 6, 18));
         assert!(report.findings.is_empty());
         assert!(!report.has_errors());
@@ -211,15 +448,15 @@ mod tests {
 
     #[test]
     fn stale_emits_one_evidence_finding_per_recommended_tr() {
-        // AE3: as-of well past 90 days from every last_reviewed — all stale.
         let report = evaluate_recommended(&real_trs(), date(2026, 10, 1));
         assert_eq!(report.findings.len(), 6);
         assert_eq!(report.recommended_count, 6);
         for f in &report.findings {
             assert_eq!(f.severity, Severity::Evidence);
-            assert!(f.age_days > 90);
+            assert_eq!(f.reasons, vec![Reason::Age]);
+            assert!(f.age_days.unwrap() > 90);
+            assert!(f.change_summary.is_none());
         }
-        // Deterministic TR-code order.
         let codes: Vec<&str> = report.findings.iter().map(|f| f.tr_code.as_str()).collect();
         let mut sorted = codes.clone();
         sorted.sort_unstable();
@@ -228,15 +465,11 @@ mod tests {
 
     #[test]
     fn evidence_severity_never_gates() {
-        // AE3: Severity::Evidence is below Maintenance, so the exit gate is false
-        // even for a recommended TR.
         assert!(!gates_for(Severity::Evidence, SupportState::Recommended, false));
     }
 
     #[test]
     fn non_recommended_trs_are_exempt() {
-        // AE5: only the six Recommended TRs are examined; implemented-but-not-
-        // recommended (e.g. `revoke`) and tracked/untracked TRs never appear.
         let report = evaluate_recommended(&real_trs(), date(2026, 10, 1));
         assert_eq!(report.recommended_count, 6);
         let recommended: std::collections::BTreeSet<&str> =
@@ -254,10 +487,6 @@ mod tests {
 
     #[test]
     fn default_today_uses_a_real_forward_moving_clock() {
-        // AE7: the production default reads a real, forward-moving clock (a
-        // hardcoded past date would fail the first assert) and feeds it to the
-        // injectable evaluator. recommended_count is calendar-independent, so the
-        // run is midnight-safe (no two-clock-read flake on the verdict).
         assert!(today() >= date(2026, 6, 19));
         let report = evaluate_recommended(&real_trs(), today());
         assert_eq!(report.recommended_count, 6);
@@ -266,14 +495,10 @@ mod tests {
 
     #[test]
     fn re_attestation_clears_the_finding() {
-        // AE4: a TR stale at an injected as_of, after advancing last_reviewed to
-        // that as_of, re-evaluates fresh with no finding (recompute-on-invocation).
         let mut trs = real_trs();
         let as_of = date(2026, 10, 1);
         let stale = evaluate_recommended(&trs, as_of);
         assert!(stale.has_stale());
-
-        // Re-attest every recommended TR to the as_of date.
         for meta in trs.values_mut() {
             if meta.support.recommended {
                 meta.maintenance.last_reviewed = "2026-10-01".to_string();
@@ -284,98 +509,8 @@ mod tests {
         assert_eq!(cleared.recommended_count, 6);
     }
 
-    // --- JSON contract (U1) -------------------------------------------------
-
-    fn parse_json(s: &str) -> serde_json::Value {
-        serde_json::from_str(s).expect("emitted JSON is a single valid object")
-    }
-
-    #[test]
-    fn json_all_fresh_emits_empty_stale_and_no_errors() {
-        // AE4: all fresh → stale [], has_errors false, correct denominator; the
-        // process exits 0 (the dispatch path maps Ok-without-errors to Exit::Ok).
-        let report = evaluate_recommended(&real_trs(), date(2026, 6, 18));
-        let v = parse_json(&report_to_json(&report, date(2026, 6, 18), DEFAULT_WINDOW_DAYS));
-        assert_eq!(v["stale"].as_array().unwrap().len(), 0);
-        assert_eq!(v["has_errors"], serde_json::json!(false));
-        assert_eq!(v["recommended_count"], serde_json::json!(6));
-        assert_eq!(v["window_days"], serde_json::json!(90));
-        assert_eq!(v["as_of"], serde_json::json!("2026-06-18"));
-    }
-
-    #[test]
-    fn json_stale_lists_entries_in_deterministic_tr_code_order() {
-        // AE1, AE4: every Recommended TR stale at this as-of → stale[] carries all
-        // six in sorted TR-code order with correct age_days/last_reviewed; severity
-        // serializes to the lowercase "evidence" string.
-        let as_of = date(2026, 10, 1);
-        let report = evaluate_recommended(&real_trs(), as_of);
-        let v = parse_json(&report_to_json(&report, as_of, DEFAULT_WINDOW_DAYS));
-        let stale = v["stale"].as_array().unwrap();
-        assert_eq!(stale.len(), 6);
-        let codes: Vec<&str> = stale.iter().map(|e| e["tr_code"].as_str().unwrap()).collect();
-        let mut sorted = codes.clone();
-        sorted.sort_unstable();
-        assert_eq!(codes, sorted, "stale[] preserves deterministic TR-code order");
-        for e in stale {
-            assert_eq!(e["severity"], serde_json::json!("evidence"));
-            assert!(e["age_days"].as_i64().unwrap() > 90);
-            assert!(e["last_reviewed"].as_str().unwrap().len() == 10);
-        }
-    }
-
-    #[test]
-    fn json_unparseable_sets_has_errors_and_lists_offender() {
-        // AE10: an unparseable last_reviewed surfaces has_errors true with the
-        // offending code in unparseable[] — the tooling-error signal the workflow
-        // reads (the dispatch path maps this to exit 2).
-        let mut trs = real_trs();
-        let as_of = date(2026, 10, 1);
-        if let Some(meta) = trs.get_mut("token") {
-            meta.maintenance.last_reviewed = "not-a-date".to_string();
-        }
-        let report = evaluate_recommended(&trs, as_of);
-        let v = parse_json(&report_to_json(&report, as_of, DEFAULT_WINDOW_DAYS));
-        assert_eq!(v["has_errors"], serde_json::json!(true));
-        assert_eq!(v["unparseable"], serde_json::json!(["token"]));
-    }
-
-    #[test]
-    fn json_field_names_are_pinned() {
-        // The emitted object's keys ARE the workflow contract. A bare derive on
-        // FreshnessReport would emit "findings" and fail this — the test guards U2's
-        // `jq .stale[].tr_code` and the marker diff against a silent rename.
-        let as_of = date(2026, 10, 1);
-        let report = evaluate_recommended(&real_trs(), as_of);
-        let v = parse_json(&report_to_json(&report, as_of, DEFAULT_WINDOW_DAYS));
-        let top: std::collections::BTreeSet<&str> =
-            v.as_object().unwrap().keys().map(String::as_str).collect();
-        assert_eq!(
-            top,
-            ["as_of", "has_errors", "recommended_count", "stale", "unparseable", "window_days"]
-                .into_iter()
-                .collect()
-        );
-        let entry: std::collections::BTreeSet<&str> = v["stale"][0]
-            .as_object()
-            .unwrap()
-            .keys()
-            .map(String::as_str)
-            .collect();
-        assert_eq!(
-            entry,
-            ["age_days", "last_reviewed", "severity", "tr_code"]
-                .into_iter()
-                .collect()
-        );
-    }
-
     #[test]
     fn unparseable_last_reviewed_is_collected_not_propagated() {
-        // One Recommended TR with a malformed last_reviewed must not blind the
-        // check for the rest: it lands in `unparseable` while the others still
-        // evaluate. (The validator's date check is equality-only, so a malformed
-        // last_reviewed can reach the evaluator.)
         let mut trs = real_trs();
         let as_of = date(2026, 10, 1);
         if let Some(meta) = trs.get_mut("token") {
@@ -385,8 +520,519 @@ mod tests {
         assert_eq!(report.recommended_count, 6);
         assert_eq!(report.unparseable, vec!["token".to_string()]);
         assert!(report.has_errors());
-        // The other five Recommended TRs still evaluated (stale at this as_of).
         assert_eq!(report.findings.len(), 5);
         assert!(report.findings.iter().all(|f| f.tr_code != "token"));
+    }
+
+    // --- change rule (U4) ---------------------------------------------------
+
+    /// A minimal Recommended TR metadata fixture, parsed from YAML so the full
+    /// schema stays consistent. `last_reviewed` is fresh (2026-06-16) so the age
+    /// rule contributes nothing — isolating change detection.
+    fn rec_meta(code: &str) -> TrMetadata {
+        let yaml = format!(
+            "\
+tr_code: {code}
+owner_class: standalone
+facets:
+  protocol: rest
+  instrument_domain: misc
+  venue_session: unspecified
+  date_sensitive: false
+  self_paginated: false
+  account_state: false
+  paper_incompatible: false
+  certification_path: automated
+  rate_bucket: auth
+  caller_supplied_identifiers: []
+support:
+  tracked: true
+  implemented: true
+  recommended: true
+maintenance:
+  source_spec_hash: aaaa1111bbbb
+  last_reviewed: 2026-06-16
+recommendation:
+  behavior: x
+  evidence_ref: evidence/{code}.yaml
+  excludes: []
+"
+        );
+        ls_metadata::parse_tr_metadata(code, std::path::Path::new("inline"), &yaml)
+            .expect("fixture parses")
+    }
+
+    fn field(dir: Direction, block: &str, index: u32, name: &str, ty: &str, len: u32) -> BlockField {
+        BlockField {
+            direction: dir,
+            block_name: block.to_string(),
+            field_index: index,
+            field_name: name.to_string(),
+            korean_name: Some("라벨".to_string()),
+            r#type: Some(ty.to_string()),
+            length: Some(len),
+            required: true,
+            description_hash: None,
+        }
+    }
+
+    fn shape(code: &str, response: Vec<BlockField>) -> TrShape {
+        TrShape {
+            tr_code: code.to_string(),
+            tr_name: None,
+            protocol: Protocol::Rest,
+            is_websocket: false,
+            endpoint_path: Some(format!("/{code}")),
+            api_group_id: None,
+            source_group_name: None,
+            request_blocks: vec![],
+            response_blocks: response,
+            rate_limit_per_sec: None,
+            corp_rate_limit_per_sec: None,
+            rate_source_group: None,
+            description_hash: None,
+        }
+    }
+
+    fn baseline(shapes: Vec<TrShape>, version: u32) -> NormalizedRun {
+        let map: BTreeMap<String, TrShape> =
+            shapes.into_iter().map(|s| (s.tr_code.clone(), s)).collect();
+        NormalizedRun {
+            code_set: CodeSet::new(map.keys().cloned(), false),
+            manifest: Manifest {
+                upstream_tr_count: map.len(),
+                maintained_tr_count: map.len(),
+                source_urls: vec![],
+                normalizer_version: version,
+                refreshed: "2026-06-20".to_string(),
+            },
+            shapes: map,
+        }
+    }
+
+    fn evidence(code: &str, attested: Option<TrShape>, version: Option<u32>) -> EvidenceRecord {
+        EvidenceRecord {
+            tr_code: code.to_string(),
+            date: "2026-06-16".to_string(),
+            env: "paper".to_string(),
+            target: None,
+            line: None,
+            attested_shape: attested,
+            attested_normalizer_version: version,
+        }
+    }
+
+    fn trs_of(codes: &[&str]) -> BTreeMap<String, TrMetadata> {
+        codes.iter().map(|c| (c.to_string(), rec_meta(c))).collect()
+    }
+
+    fn ev_map(records: Vec<EvidenceRecord>) -> BTreeMap<String, EvidenceRecord> {
+        records
+            .into_iter()
+            .map(|r| (r.tr_code.clone(), r))
+            .collect()
+    }
+
+    /// Evaluate change drift at a fresh-by-age as-of so only change reasons appear.
+    fn change_only(
+        trs: &BTreeMap<String, TrMetadata>,
+        base: &NormalizedRun,
+        ev: &BTreeMap<String, EvidenceRecord>,
+    ) -> FreshnessReport {
+        evaluate_freshness(trs, base, ev, date(2026, 6, 18))
+    }
+
+    /// AE1: a baseline with a field the attested shape lacks (FieldAdded) → a
+    /// `change` reason with a non-empty summary.
+    #[test]
+    fn field_added_in_baseline_is_stale_by_change() {
+        let attested = shape("t1102", vec![field(Direction::Response, "Out", 0, "price", "Decimal", 8)]);
+        let base = shape(
+            "t1102",
+            vec![
+                field(Direction::Response, "Out", 0, "price", "Decimal", 8),
+                field(Direction::Response, "Out", 1, "volume", "Long", 12),
+            ],
+        );
+        let trs = trs_of(&["t1102"]);
+        let ev = ev_map(vec![evidence("t1102", Some(attested), Some(2))]);
+        let report = change_only(&trs, &baseline(vec![base], 2), &ev);
+        assert_eq!(report.findings.len(), 1);
+        let f = &report.findings[0];
+        assert!(f.is_change() && !f.is_age());
+        assert_eq!(f.reasons, vec![Reason::Change]);
+        assert!(f.age_days.is_none());
+        assert!(f.change_summary.as_ref().unwrap().contains("volume"));
+        assert_eq!(f.severity, Severity::Evidence);
+        assert!(report.reattest.is_empty());
+    }
+
+    /// FieldRemoved, FieldChanged (type), EndpointChanged, ProtocolChanged each
+    /// independently mark stale-by-change.
+    #[test]
+    fn each_qualifying_change_marks_stale() {
+        // FieldRemoved.
+        let attested = shape(
+            "t1102",
+            vec![
+                field(Direction::Response, "Out", 0, "price", "Decimal", 8),
+                field(Direction::Response, "Out", 1, "volume", "Long", 12),
+            ],
+        );
+        let base = shape("t1102", vec![field(Direction::Response, "Out", 0, "price", "Decimal", 8)]);
+        let r = change_only(
+            &trs_of(&["t1102"]),
+            &baseline(vec![base], 2),
+            &ev_map(vec![evidence("t1102", Some(attested), Some(2))]),
+        );
+        assert!(r.findings.iter().any(|f| f.is_change()), "FieldRemoved stales");
+
+        // FieldChanged (type) — same identity, different type.
+        let attested = shape("t1102", vec![field(Direction::Response, "Out", 0, "price", "Decimal", 8)]);
+        let base = shape("t1102", vec![field(Direction::Response, "Out", 0, "price", "Long", 8)]);
+        let r = change_only(
+            &trs_of(&["t1102"]),
+            &baseline(vec![base], 2),
+            &ev_map(vec![evidence("t1102", Some(attested), Some(2))]),
+        );
+        assert!(r.findings.iter().any(|f| f.is_change()), "FieldChanged stales");
+
+        // EndpointChanged.
+        let mut attested = shape("t1102", vec![]);
+        attested.endpoint_path = Some("/old".to_string());
+        let mut base = shape("t1102", vec![]);
+        base.endpoint_path = Some("/new".to_string());
+        let r = change_only(
+            &trs_of(&["t1102"]),
+            &baseline(vec![base], 2),
+            &ev_map(vec![evidence("t1102", Some(attested), Some(2))]),
+        );
+        assert!(r.findings.iter().any(|f| f.is_change()), "EndpointChanged stales");
+
+        // ProtocolChanged.
+        let attested = shape("t1102", vec![]);
+        let mut base = shape("t1102", vec![]);
+        base.protocol = Protocol::Websocket;
+        base.is_websocket = true;
+        let r = change_only(
+            &trs_of(&["t1102"]),
+            &baseline(vec![base], 2),
+            &ev_map(vec![evidence("t1102", Some(attested), Some(2))]),
+        );
+        assert!(r.findings.iter().any(|f| f.is_change()), "ProtocolChanged stales");
+    }
+
+    /// AE2: a description-only divergence does not stale (filtered out).
+    #[test]
+    fn description_only_change_does_not_stale() {
+        let mut attested = shape("t1102", vec![field(Direction::Response, "Out", 0, "price", "Decimal", 8)]);
+        attested.description_hash = Some("aaaa".to_string());
+        let mut base = shape("t1102", vec![field(Direction::Response, "Out", 0, "price", "Decimal", 8)]);
+        base.description_hash = Some("bbbb".to_string()); // TR description changed only
+        let report = change_only(
+            &trs_of(&["t1102"]),
+            &baseline(vec![base], 2),
+            &ev_map(vec![evidence("t1102", Some(attested), Some(2))]),
+        );
+        assert!(report.findings.is_empty(), "DescriptionChanged must not stale");
+    }
+
+    /// AE3: a rate-limit-only divergence does not stale.
+    #[test]
+    fn rate_limit_only_change_does_not_stale() {
+        let mut attested = shape("t1102", vec![field(Direction::Response, "Out", 0, "price", "Decimal", 8)]);
+        attested.rate_limit_per_sec = Some(1);
+        let mut base = shape("t1102", vec![field(Direction::Response, "Out", 0, "price", "Decimal", 8)]);
+        base.rate_limit_per_sec = Some(5);
+        let report = change_only(
+            &trs_of(&["t1102"]),
+            &baseline(vec![base], 2),
+            &ev_map(vec![evidence("t1102", Some(attested), Some(2))]),
+        );
+        assert!(report.findings.is_empty(), "RateLimitChanged must not stale");
+    }
+
+    /// A same-block reorder (unique names) reconciles to FieldReordered and is
+    /// filtered out — not a raw remove+add mass-stale.
+    #[test]
+    fn reorder_does_not_stale() {
+        let attested = shape(
+            "t1102",
+            vec![
+                field(Direction::Response, "Out", 0, "a", "String", 4),
+                field(Direction::Response, "Out", 1, "b", "String", 4),
+            ],
+        );
+        let base = shape(
+            "t1102",
+            vec![
+                field(Direction::Response, "Out", 0, "b", "String", 4),
+                field(Direction::Response, "Out", 1, "a", "String", 4),
+            ],
+        );
+        let report = change_only(
+            &trs_of(&["t1102"]),
+            &baseline(vec![base], 2),
+            &ev_map(vec![evidence("t1102", Some(attested), Some(2))]),
+        );
+        assert!(report.findings.is_empty(), "a reorder must not stale (R1/R2)");
+    }
+
+    /// R1 representation-invariance: an identical attested-vs-baseline shape under
+    /// the same version yields zero qualifying changes (fresh-by-change) — proving
+    /// detection rides on diff_shapes+filter, not raw TrShape equality over
+    /// field_index/description_hash.
+    #[test]
+    fn identical_shape_same_version_is_fresh_by_change() {
+        let s = shape("t1102", vec![field(Direction::Response, "Out", 0, "price", "Decimal", 8)]);
+        let report = change_only(
+            &trs_of(&["t1102"]),
+            &baseline(vec![s.clone()], 2),
+            &ev_map(vec![evidence("t1102", Some(s), Some(2))]),
+        );
+        assert!(report.findings.is_empty());
+        assert!(report.reattest.is_empty());
+    }
+
+    /// R2a (dual outcome): an attested normalizer version that differs from the
+    /// baseline manifest → no stale-by-change AND the TR appears in `reattest`,
+    /// even when the shapes structurally diverge.
+    #[test]
+    fn version_mismatch_suppresses_change_and_advises_reattest() {
+        let attested = shape("t1102", vec![field(Direction::Response, "Out", 0, "price", "Decimal", 8)]);
+        let base = shape(
+            "t1102",
+            vec![
+                field(Direction::Response, "Out", 0, "price", "Decimal", 8),
+                field(Direction::Response, "Out", 1, "volume", "Long", 12),
+            ],
+        );
+        let report = change_only(
+            &trs_of(&["t1102"]),
+            &baseline(vec![base], 2),
+            &ev_map(vec![evidence("t1102", Some(attested), Some(1))]), // attested v1 vs manifest v2
+        );
+        assert!(report.findings.is_empty(), "version mismatch suppresses stale-by-change");
+        assert_eq!(report.reattest, vec!["t1102".to_string()]);
+    }
+
+    /// Name-reprojection guard: a same-version baseline whose only difference is a
+    /// field-name re-projection (no upstream change) surfaces as stale-by-change —
+    /// the intended loud signal that a NORMALIZER_VERSION bump was missed (KTD4),
+    /// not a silent mass-stale.
+    #[test]
+    fn field_name_reprojection_same_version_surfaces_as_change() {
+        let attested = shape("t1102", vec![field(Direction::Response, "Out", 0, "oldname", "String", 4)]);
+        let base = shape("t1102", vec![field(Direction::Response, "Out", 0, "newname", "String", 4)]);
+        let report = change_only(
+            &trs_of(&["t1102"]),
+            &baseline(vec![base], 2),
+            &ev_map(vec![evidence("t1102", Some(attested), Some(2))]),
+        );
+        assert!(
+            report.findings.iter().any(|f| f.is_change()),
+            "an un-versioned name re-projection is a loud caught discipline failure"
+        );
+    }
+
+    /// Baseline-absent: a Recommended TR with no per-TR baseline shape → a
+    /// re-attestation advisory, never a silent fresh-by-change.
+    #[test]
+    fn missing_per_tr_baseline_is_reattest_advisory() {
+        let attested = shape("t1102", vec![field(Direction::Response, "Out", 0, "price", "Decimal", 8)]);
+        // Baseline has version 2 but NO shape for t1102.
+        let base = NormalizedRun {
+            code_set: CodeSet::new(["t1102".to_string()], false),
+            manifest: Manifest {
+                upstream_tr_count: 1,
+                maintained_tr_count: 0,
+                source_urls: vec![],
+                normalizer_version: 2,
+                refreshed: "2026-06-20".to_string(),
+            },
+            shapes: BTreeMap::new(),
+        };
+        let report = change_only(
+            &trs_of(&["t1102"]),
+            &base,
+            &ev_map(vec![evidence("t1102", Some(attested), Some(2))]),
+        );
+        assert!(report.findings.is_empty());
+        assert_eq!(report.reattest, vec!["t1102".to_string()]);
+    }
+
+    /// attested_shape: None → no stale-by-change (no panic); the U7 validator owns
+    /// the absence error.
+    #[test]
+    fn attested_none_is_not_stale_by_change() {
+        let base = shape("t1102", vec![field(Direction::Response, "Out", 0, "price", "Decimal", 8)]);
+        let report = change_only(
+            &trs_of(&["t1102"]),
+            &baseline(vec![base], 2),
+            &ev_map(vec![evidence("t1102", None, None)]),
+        );
+        assert!(report.findings.is_empty());
+        assert!(report.reattest.is_empty());
+    }
+
+    /// A TR stale for both age and change → one merged entry with reasons
+    /// [Age, Change], age_days set, change_summary set (AE6).
+    #[test]
+    fn both_reasons_merge_into_one_entry() {
+        let attested = shape("t1102", vec![field(Direction::Response, "Out", 0, "price", "Decimal", 8)]);
+        let base = shape(
+            "t1102",
+            vec![
+                field(Direction::Response, "Out", 0, "price", "Decimal", 8),
+                field(Direction::Response, "Out", 1, "volume", "Long", 12),
+            ],
+        );
+        // as_of well past the 90-day backstop → also age-stale.
+        let report = evaluate_freshness(
+            &trs_of(&["t1102"]),
+            &baseline(vec![base], 2),
+            &ev_map(vec![evidence("t1102", Some(attested), Some(2))]),
+            date(2026, 12, 1),
+        );
+        assert_eq!(report.findings.len(), 1, "one merged entry, not two");
+        let f = &report.findings[0];
+        assert_eq!(f.reasons, vec![Reason::Age, Reason::Change]);
+        assert!(f.age_days.unwrap() > 90);
+        assert!(f.change_summary.is_some());
+    }
+
+    /// Three-way merge: a TR that is both unparseable-date and stale-by-change →
+    /// a standalone change entry (reasons [Change], age_days None) AND membership
+    /// in the loud `unparseable` set (KTD8).
+    #[test]
+    fn unparseable_and_change_reconcile_three_way() {
+        let mut trs = trs_of(&["t1102"]);
+        trs.get_mut("t1102").unwrap().maintenance.last_reviewed = "not-a-date".to_string();
+        let attested = shape("t1102", vec![field(Direction::Response, "Out", 0, "price", "Decimal", 8)]);
+        let base = shape(
+            "t1102",
+            vec![
+                field(Direction::Response, "Out", 0, "price", "Decimal", 8),
+                field(Direction::Response, "Out", 1, "volume", "Long", 12),
+            ],
+        );
+        let report = evaluate_freshness(
+            &trs,
+            &baseline(vec![base], 2),
+            &ev_map(vec![evidence("t1102", Some(attested), Some(2))]),
+            date(2026, 12, 1),
+        );
+        assert_eq!(report.unparseable, vec!["t1102".to_string()], "stays in loud error set");
+        assert!(report.has_errors());
+        assert_eq!(report.findings.len(), 1);
+        let f = &report.findings[0];
+        assert_eq!(f.reasons, vec![Reason::Change], "change entry, no age (unparseable)");
+        assert!(f.age_days.is_none());
+    }
+
+    /// Two-lens severity: a change that would classify `Breaking` in api-drift
+    /// compare (a removed field on an implemented TR) surfaces as `Evidence` here.
+    #[test]
+    fn change_drift_emits_evidence_not_breaking() {
+        let attested = shape(
+            "t1102",
+            vec![
+                field(Direction::Response, "Out", 0, "price", "Decimal", 8),
+                field(Direction::Response, "Out", 1, "volume", "Long", 12),
+            ],
+        );
+        let base = shape("t1102", vec![field(Direction::Response, "Out", 0, "price", "Decimal", 8)]);
+        let report = change_only(
+            &trs_of(&["t1102"]),
+            &baseline(vec![base], 2),
+            &ev_map(vec![evidence("t1102", Some(attested), Some(2))]),
+        );
+        assert_eq!(report.findings[0].severity, Severity::Evidence);
+    }
+
+    // --- JSON contract ------------------------------------------------------
+
+    fn parse_json(s: &str) -> serde_json::Value {
+        serde_json::from_str(s).expect("emitted JSON is a single valid object")
+    }
+
+    #[test]
+    fn json_all_fresh_emits_empty_stale_and_no_errors() {
+        let report = evaluate_recommended(&real_trs(), date(2026, 6, 18));
+        let v = parse_json(&report_to_json(&report, date(2026, 6, 18), DEFAULT_WINDOW_DAYS));
+        assert_eq!(v["stale"].as_array().unwrap().len(), 0);
+        assert_eq!(v["has_errors"], serde_json::json!(false));
+        assert_eq!(v["recommended_count"], serde_json::json!(6));
+        assert_eq!(v["window_days"], serde_json::json!(90));
+        assert_eq!(v["as_of"], serde_json::json!("2026-06-18"));
+        assert_eq!(v["reattest"], serde_json::json!([]));
+    }
+
+    #[test]
+    fn json_age_only_entry_has_null_change_summary() {
+        let report = evaluate_recommended(&real_trs(), date(2026, 10, 1));
+        let v = parse_json(&report_to_json(&report, date(2026, 10, 1), DEFAULT_WINDOW_DAYS));
+        let entry = &v["stale"][0];
+        assert_eq!(entry["reasons"], serde_json::json!(["age"]));
+        assert!(entry["age_days"].as_i64().unwrap() > 90);
+        assert_eq!(entry["change_summary"], serde_json::Value::Null);
+        assert_eq!(entry["severity"], serde_json::json!("evidence"));
+    }
+
+    #[test]
+    fn json_change_only_entry_has_null_age_days() {
+        let attested = shape("t1102", vec![field(Direction::Response, "Out", 0, "price", "Decimal", 8)]);
+        let base = shape(
+            "t1102",
+            vec![
+                field(Direction::Response, "Out", 0, "price", "Decimal", 8),
+                field(Direction::Response, "Out", 1, "volume", "Long", 12),
+            ],
+        );
+        let report = change_only(
+            &trs_of(&["t1102"]),
+            &baseline(vec![base], 2),
+            &ev_map(vec![evidence("t1102", Some(attested), Some(2))]),
+        );
+        let v = parse_json(&report_to_json(&report, date(2026, 6, 18), DEFAULT_WINDOW_DAYS));
+        let entry = &v["stale"][0];
+        assert_eq!(entry["reasons"], serde_json::json!(["change"]));
+        assert_eq!(entry["age_days"], serde_json::Value::Null);
+        assert!(entry["change_summary"].as_str().unwrap().contains("volume"));
+    }
+
+    #[test]
+    fn json_field_names_are_pinned() {
+        // The emitted object's keys ARE the workflow contract.
+        let report = evaluate_recommended(&real_trs(), date(2026, 10, 1));
+        let v = parse_json(&report_to_json(&report, date(2026, 10, 1), DEFAULT_WINDOW_DAYS));
+        let top: std::collections::BTreeSet<&str> =
+            v.as_object().unwrap().keys().map(String::as_str).collect();
+        assert_eq!(
+            top,
+            [
+                "as_of",
+                "has_errors",
+                "reattest",
+                "recommended_count",
+                "stale",
+                "unparseable",
+                "window_days"
+            ]
+            .into_iter()
+            .collect()
+        );
+        let entry: std::collections::BTreeSet<&str> = v["stale"][0]
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        assert_eq!(
+            entry,
+            ["age_days", "change_summary", "last_reviewed", "reasons", "severity", "tr_code"]
+                .into_iter()
+                .collect()
+        );
     }
 }
