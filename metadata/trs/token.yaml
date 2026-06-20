@@ -29,4 +29,4 @@ recommendation:
     - Production-credential token issuance (evidence is paper only)
     - Broader OAuth edge-case coverage (refresh, revoke-races, error taxonomy)
     - Non-auth authorization or session semantics beyond token issuance
-    - Change-driven evidence invalidation (a Structural API Shape change auto-staling evidence) — stated policy, not yet enforced
+    - Auto-revoking the recommendation on a change-driven structural change — change-driven *detection* ships (a qualifying Structural API Shape change stales the evidence, surfaced advisory by the freshness check); auto-revoke of support.recommended stays deferred

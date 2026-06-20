@@ -173,31 +173,77 @@ git diff crates/ls-trackers/baselines/spec-doc/normalized/examples.json
 - `spec-doc check` never edits `metadata/`, SDK code, docs, examples, or
   baselines (R8); it is advisory.
 
-## Evidence-freshness review (90-day backstop)
+## Evidence-freshness review (age backstop + change-driven staling)
 
-Check whether any **Recommended TR**'s Focused Evidence has gone stale — more than
-90 days since its `maintenance.last_reviewed`:
+Check whether any **Recommended TR**'s Focused Evidence has gone stale — either
+more than 90 days since its `maintenance.last_reviewed` (**age**), or structurally
+diverged from the shape it was attested against (**change**):
 
 ```sh
 make freshness-check
 ```
 
-This is **network-free** and **advisory**: it reads metadata, evaluates each
-Recommended TR against today (UTC), and prints any that are past the 90-day
-backstop. `Severity::Evidence` sits below `Maintenance`, so a stale finding never
-gates — `freshness-check` exits 0 even when evidence is stale; only a metadata
-load/parse error exits 2. The evaluator mutates nothing.
+This is **network-free** and **advisory**: it reads committed metadata and the
+committed baseline, evaluates each Recommended TR against today (UTC), and prints
+any stale entry with its `reasons` (`age`, `change`, or both). `Severity::Evidence`
+sits below `Maintenance`, so a stale finding never gates — `freshness-check` exits 0
+even when evidence is stale; only a metadata load/parse error or an
+absent/unreadable committed baseline exits 2. The evaluator mutates nothing.
+
+The two reasons clear **independently** (R10):
+
+- **Age-stale** clears by refreshing the review date.
+- **Change-stale** clears by re-pinning the attested shape to the current baseline.
+- Refreshing the date does **not** clear change-staleness, and re-pinning does
+  **not** clear age-staleness. A both-stale TR needs both.
 
 When a TR is flagged stale, **re-attest** it (the same human flow as promotion):
 
 1. Rerun its Paper Live Smoke and capture a fresh credential-free evidence line.
 2. Update the evidence file's `date` and `maintenance.last_reviewed` (the
-   validator keeps them equal) to the new run date.
-3. Regenerate docs with `make docs`.
+   validator keeps them equal) to the new run date. *(Clears `age`.)*
+3. **If stale by `change`** (or after any baseline refresh): re-pin the attested
+   shape to the current committed baseline. *(Clears `change`.)*
+   ```sh
+   make freshness-re-pin TR=<tr> FORCE=1   # FORCE overwrites the standing attested shape
+   ```
+   Re-pin is **populate-if-absent** by default — it refuses to overwrite an
+   existing attested shape (which would silently clear a genuine stale-by-change
+   signal); `FORCE=1` is required during a real re-attestation. **Always re-pin
+   against a freshly-fetched baseline** (run `make api-drift-fetch` and review/commit
+   the baseline first) — re-pinning against a stale baseline bakes in
+   `attested == stale baseline`, the silent-green this feature exists to remove.
+4. Regenerate docs with `make docs`.
 
 The next `freshness-check` then finds the TR fresh. Clearing is
 recompute-on-invocation: the prior finding is not retracted, it simply is not
 re-emitted.
+
+### Baseline staleness and re-attestation advisories
+
+The check surfaces two advisory signals beyond stale findings:
+
+- **Baseline staleness (R9a).** When the committed baseline's stamped `refreshed`
+  date is older than 90 days (or missing), the check warns that change-detection is
+  comparing against possibly-outdated structural truth. Clear it by refreshing the
+  baseline (`make api-drift-fetch`, review, commit) — its manifest is stamped with
+  the refresh date at write time. A never-stamped baseline reads as a warning, never
+  a silent pass.
+- **Re-attestation advisory.** A TR whose `attested_normalizer_version` differs from
+  the baseline manifest's `normalizer_version`, or whose per-TR baseline shape is
+  missing, is reported as needing re-attestation — its change-detection is suppressed
+  (never a silent fresh-by-change), so re-pin it against the current baseline.
+
+**Normalizer-version bumps (R2a).** A `NORMALIZER_VERSION` bump re-projects every
+baseline shape, so every Recommended TR's `attested_normalizer_version` will mismatch
+and route to the re-attestation advisory — detection is **blind** for those TRs until
+they are re-pinned. To bound that blind window, **re-attest all six Recommended TRs
+within 7 days of any `NORMALIZER_VERSION` bump** (re-seed the baseline with
+`make api-drift-renormalize`, then `make freshness-re-pin TR=<tr> FORCE=1` for each of
+`token`, `t1101`, `t1102`, `t8412`, `S3_`, `CSPAQ12200`). Any normalizer change that
+can alter field-name or block-name projection **must** bump `NORMALIZER_VERSION` — a
+projection change shipped without a bump surfaces as a (correct, but spurious-looking)
+mass stale-by-change instead of routing through re-attestation.
 
 ### Scheduled freshness cadence
 
@@ -249,10 +295,11 @@ honestly rather than papered over.
 
 ### Notes
 
-- The backstop is the cheap half of the freshness policy
-  (`metadata/EVIDENCE-FRESHNESS.md`). Change-driven invalidation (a Structural API
-  Shape change staling evidence) is deferred and shares the same
-  `Severity::Evidence` surface.
+- The age backstop and change-driven staling are both enforced by the freshness
+  evaluator (`metadata/EVIDENCE-FRESHNESS.md`), sharing the same `Severity::Evidence`
+  surface and the same rolling issue (distinguished by `reasons`). Only the
+  *auto-revoke* arm (flipping `support.recommended` on a detected change) stays
+  deferred — staling is advisory; a human re-attests or demotes.
 - Generated docs render a deterministic **review-by date** (`last_reviewed` + 90
   days) so they stay byte-identical across runs; the live stale verdict comes from
   `freshness-check`, not the committed page.
