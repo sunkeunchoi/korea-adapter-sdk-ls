@@ -82,8 +82,12 @@ pub enum Command {
     SpecRenormalize,
     /// `freshness check` — evaluate the 90-day evidence backstop over Recommended
     /// TRs, emitting advisory (non-gating) `Severity::Evidence` findings for any
-    /// past the window. Operator-invoked, mutates nothing (R7).
-    FreshnessCheck,
+    /// past the window. Operator-invoked, mutates nothing (R7). `--json` swaps the
+    /// human printer for the pinned machine-readable contract the scheduled-cadence
+    /// workflow consumes; exit semantics are unchanged.
+    FreshnessCheck {
+        json: bool,
+    },
 }
 
 /// Filesystem locations, injected so tests drive everything over a tempdir.
@@ -137,17 +141,22 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Command, Str
 }
 
 /// Parse a `freshness` subcommand. Only `check` is exposed — the evaluator reads
-/// metadata and reports; there is no staged-run or fetch path.
+/// metadata and reports; there is no staged-run or fetch path. `check` accepts an
+/// optional `--json` flag selecting the machine-readable contract output.
 fn parse_freshness(sub: Option<&str>, rest: &[String]) -> Result<Command, String> {
     match sub {
         Some("check") => {
-            if let Some(other) = rest.first() {
-                return Err(format!("unexpected argument `{other}`"));
+            let mut json = false;
+            for arg in rest {
+                match arg.as_str() {
+                    "--json" => json = true,
+                    other => return Err(format!("unexpected argument `{other}`")),
+                }
             }
-            Ok(Command::FreshnessCheck)
+            Ok(Command::FreshnessCheck { json })
         }
         Some(other) => Err(format!("unknown freshness subcommand `{other}`")),
-        None => Err("usage: ls-trackers freshness <check>".to_string()),
+        None => Err("usage: ls-trackers freshness <check [--json]>".to_string()),
     }
 }
 
@@ -805,10 +814,21 @@ pub fn dispatch(paths: &Paths, command: Command) -> Exit {
                 Exit::Error
             }
         },
-        Command::FreshnessCheck => {
-            let result = run_freshness_check(paths, crate::freshness::today());
+        Command::FreshnessCheck { json } => {
+            let as_of = crate::freshness::today();
+            let result = run_freshness_check(paths, as_of);
             match &result {
+                Ok(report) if json => print!(
+                    "{}",
+                    crate::freshness::report_to_json(
+                        report,
+                        as_of,
+                        ls_metadata::DEFAULT_WINDOW_DAYS
+                    )
+                ),
                 Ok(report) => print_freshness_report(report),
+                // A metadata load error has no report to serialize; the workflow
+                // reads the non-zero exit, not stdout, as the failure signal.
                 Err(e) => eprintln!("error: {e}"),
             }
             freshness_exit_for(&result)
@@ -1575,7 +1595,17 @@ mod tests {
     fn freshness_parse_accepts_check_rejects_others() {
         assert_eq!(
             parse_args(["freshness".to_string(), "check".to_string()]).unwrap(),
-            Command::FreshnessCheck
+            Command::FreshnessCheck { json: false }
+        );
+        // `--json` is accepted and threaded through (the workflow contract).
+        assert_eq!(
+            parse_args([
+                "freshness".to_string(),
+                "check".to_string(),
+                "--json".to_string()
+            ])
+            .unwrap(),
+            Command::FreshnessCheck { json: true }
         );
         assert!(parse_args(["freshness".to_string()]).is_err());
         assert!(parse_args(["freshness".to_string(), "wat".to_string()]).is_err());
