@@ -35,7 +35,9 @@ pub mod spec_doc;
 pub mod stages;
 pub mod types;
 
-pub use freshness::{evaluate_recommended, today, FreshnessFinding, FreshnessReport};
+pub use freshness::{
+    evaluate_freshness, evaluate_recommended, today, FreshnessFinding, FreshnessReport, Reason,
+};
 
 pub use api_drift::{
     compare, facts_outage_decision, normalize_run, DriftReport, FactsOutage, NormalizedRun,
@@ -43,7 +45,8 @@ pub use api_drift::{
 };
 pub use cli::{
     freshness_exit_for, load_example_baseline, renormalize_examples, run_cli, run_freshness_check,
-    run_spec_check, spec_exit_for, write_example_baseline, Command, Exit, Paths,
+    run_freshness_repin, run_spec_check, spec_exit_for, write_example_baseline, Command, Exit,
+    Paths, RePinOutcome,
 };
 pub use fetch::{
     completeness_gate, parse_menu, FetchClient, FetchError, FetchInventoryError, FetchOutcome,

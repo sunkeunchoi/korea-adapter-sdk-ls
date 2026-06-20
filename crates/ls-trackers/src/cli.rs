@@ -88,6 +88,17 @@ pub enum Command {
     FreshnessCheck {
         json: bool,
     },
+    /// `freshness re-pin <tr> [--force]` — capture the current committed baseline
+    /// shape into the named Recommended TR's evidence record as its attested
+    /// shape, the permanent R11 re-attestation interface. **Populate-if-absent**:
+    /// refuses to overwrite an existing attested shape (which would silently clear
+    /// a standing stale-by-change signal) unless `--force` is passed during a real
+    /// re-attestation. Mutates exactly one evidence file; no network, no metadata
+    /// flip.
+    FreshnessRePin {
+        tr_code: String,
+        force: bool,
+    },
 }
 
 /// Filesystem locations, injected so tests drive everything over a tempdir.
@@ -155,8 +166,25 @@ fn parse_freshness(sub: Option<&str>, rest: &[String]) -> Result<Command, String
             }
             Ok(Command::FreshnessCheck { json })
         }
+        Some("re-pin") => {
+            let mut tr_code: Option<String> = None;
+            let mut force = false;
+            for arg in rest {
+                match arg.as_str() {
+                    "--force" => force = true,
+                    other if other.starts_with('-') => {
+                        return Err(format!("unexpected argument `{other}`"))
+                    }
+                    other if tr_code.is_none() => tr_code = Some(other.to_string()),
+                    other => return Err(format!("unexpected argument `{other}`")),
+                }
+            }
+            let tr_code =
+                tr_code.ok_or_else(|| "`re-pin` requires a TR code argument".to_string())?;
+            Ok(Command::FreshnessRePin { tr_code, force })
+        }
         Some(other) => Err(format!("unknown freshness subcommand `{other}`")),
-        None => Err("usage: ls-trackers freshness <check [--json]>".to_string()),
+        None => Err("usage: ls-trackers freshness <check [--json] | re-pin <tr> [--force]>".to_string()),
     }
 }
 
@@ -509,7 +537,11 @@ pub fn fetch_and_stage(
         );
     }
 
-    let normalized = normalize_run(&raw, &maintained, provisional);
+    let mut normalized = normalize_run(&raw, &maintained, provisional);
+    // Stamp the staged manifest's refresh date with today's UTC date (R9a). This
+    // is the live network path (not unit-tested), so the clock read lives here,
+    // not inside the pure projection.
+    normalized.manifest.refreshed = chrono::Utc::now().date_naive().to_string();
     let report = FetchReport {
         ok: true,
         fetched_count: fetched,
@@ -531,7 +563,11 @@ pub fn fetch_and_stage(
 /// and rewrites the code-set / manifest / per-TR shapes. Deterministic and
 /// network-free — it constructs no HTTP client. This is the reviewed re-seed path
 /// after a [`NORMALIZER_VERSION`](crate::api_drift::NORMALIZER_VERSION) bump.
-pub fn renormalize_committed(paths: &Paths) -> Result<NormalizedRun, String> {
+///
+/// `refreshed` is the baseline-refresh date stamped into the manifest (R9a) — an
+/// injected `as_of` seam, never a wall-clock read inside this network-free layer.
+/// The operator path passes today's UTC date; tests pass a fixed date.
+pub fn renormalize_committed(paths: &Paths, refreshed: &str) -> Result<NormalizedRun, String> {
     let maintained = maintained_codes(paths)?;
     let raw: RawInventory = read_json(&paths.baseline_dir.join(RAW_FILE))?;
     // Preserve the committed seed's provisional stance (KTD-6); default to
@@ -541,7 +577,9 @@ pub fn renormalize_committed(paths: &Paths) -> Result<NormalizedRun, String> {
         .as_ref()
         .map(|run| run.code_set.provisional)
         .unwrap_or(true);
-    let normalized = normalize_run(&raw, &maintained, provisional);
+    let mut normalized = normalize_run(&raw, &maintained, provisional);
+    // Stamp the injected refresh date into the manifest (R9a) before writing.
+    normalized.manifest.refreshed = refreshed.to_string();
 
     // Re-seeding re-derives the code-set from the committed raw evidence. If that
     // membership differs from the committed code-set (raw was refreshed, or codes
@@ -662,15 +700,29 @@ pub fn spec_exit_for(result: &Result<SpecReport, String>) -> Exit {
     }
 }
 
-/// Run `freshness check`: load metadata and evaluate the 90-day backstop over
-/// Recommended TRs against `as_of`. Production passes today's UTC date; tests
-/// inject a fixed date. Reads only — mutates nothing (R7).
+/// Run `freshness check`: evaluate the age backstop **and** change-driven staling
+/// over Recommended TRs against `as_of`. Loads the validated metadata (for the
+/// recommendation + attested-shape evidence map) and the committed baseline (for
+/// the per-TR shapes + manifest normalizer version), then runs both rules and
+/// merges them (KTD8). Production passes today's UTC date; tests inject a fixed
+/// date. Reads only — mutates nothing (R7).
+///
+/// A whole-run baseline that is absent or unreadable is a loud error (exit 2),
+/// never a silent fresh-by-change (KTD8); a missing *per-TR* shape surfaces as a
+/// re-attestation advisory inside the evaluator.
 pub fn run_freshness_check(
     paths: &Paths,
     as_of: chrono::NaiveDate,
 ) -> Result<crate::freshness::FreshnessReport, String> {
-    let trs = load_metadata(paths)?;
-    Ok(crate::freshness::evaluate_recommended(&trs, as_of))
+    let report = validate_dir(&paths.metadata_dir).map_err(|e| format!("metadata error: {e:?}"))?;
+    let baseline = load_normalized(&paths.baseline_dir)
+        .map_err(|e| format!("committed baseline unavailable: {e}"))?;
+    Ok(crate::freshness::evaluate_freshness(
+        &report.trs,
+        &baseline,
+        &report.evidence,
+        as_of,
+    ))
 }
 
 /// Map a `freshness check` result to the tiered exit. Stale evidence is advisory
@@ -683,6 +735,130 @@ pub fn freshness_exit_for(result: &Result<crate::freshness::FreshnessReport, Str
         Ok(_) => Exit::Ok,
         Err(_) => Exit::Error,
     }
+}
+
+/// The outcome of a `freshness re-pin` run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RePinOutcome {
+    /// The attested shape was (re)written from the current committed baseline.
+    Pinned { tr_code: String },
+    /// The TR already carried an attested shape and `--force` was not given —
+    /// left untouched so a standing stale-by-change signal is not silently cleared.
+    AlreadyPinned { tr_code: String },
+}
+
+/// Run `freshness re-pin <tr>`: capture the current committed baseline shape +
+/// manifest `normalizer_version` into the named Recommended TR's Focused Evidence
+/// record as its attested shape (R11). Reads only the committed baseline and the
+/// metadata tree — no network. **Populate-if-absent**: refuses to overwrite an
+/// existing attested shape unless `force` is set, so a routine re-run never clears
+/// a genuine, intentionally-standing stale-by-change signal.
+pub fn run_freshness_repin(
+    paths: &Paths,
+    tr_code: &str,
+    force: bool,
+) -> Result<RePinOutcome, String> {
+    let baseline = load_normalized(&paths.baseline_dir)
+        .map_err(|e| format!("committed baseline unavailable: {e}"))?;
+    let shape = baseline.shapes.get(tr_code).ok_or_else(|| {
+        format!(
+            "no committed baseline shape for `{tr_code}` — re-fetch/re-seed the baseline before re-pinning"
+        )
+    })?;
+    let version = baseline.manifest.normalizer_version;
+
+    // Resolve the evidence path by reading just this TR's file (not the whole
+    // metadata tree). Re-pin must NOT depend on `validate_dir`: the U7 validator
+    // requires a recommended TR to already carry an attested shape, and re-pin is
+    // the tool that *populates* it — routing through validation would make pinning
+    // a never-pinned TR (backfill, recovery) impossible.
+    let tr_path = paths.metadata_dir.join("trs").join(format!("{tr_code}.yaml"));
+    let tr_yaml = fs::read_to_string(&tr_path)
+        .map_err(|e| format!("reading {}: {e}", tr_path.display()))?;
+    let meta = ls_metadata::parse_tr_metadata(tr_code, &tr_path, &tr_yaml)
+        .map_err(|e| format!("parsing {}: {e}", tr_path.display()))?;
+    if !meta.support.recommended {
+        return Err(format!(
+            "TR `{tr_code}` is not Recommended — re-pin applies to Recommended TRs only"
+        ));
+    }
+    let rec = meta
+        .recommendation
+        .as_ref()
+        .ok_or_else(|| format!("TR `{tr_code}` has no recommendation block"))?;
+    let evidence_path = paths.metadata_dir.join(&rec.evidence_ref);
+
+    let original = fs::read_to_string(&evidence_path)
+        .map_err(|e| format!("reading {}: {e}", evidence_path.display()))?;
+    let record: ls_metadata::EvidenceRecord = serde_yaml::from_str(&original)
+        .map_err(|e| format!("parsing {}: {e}", evidence_path.display()))?;
+
+    if record.attested_shape.is_some() && !force {
+        return Ok(RePinOutcome::AlreadyPinned {
+            tr_code: tr_code.to_string(),
+        });
+    }
+
+    let updated = upsert_attested_fields(&original, shape, version)?;
+    fs::write(&evidence_path, updated)
+        .map_err(|e| format!("writing {}: {e}", evidence_path.display()))?;
+    Ok(RePinOutcome::Pinned {
+        tr_code: tr_code.to_string(),
+    })
+}
+
+/// Rewrite an evidence YAML's `attested_shape` + `attested_normalizer_version`
+/// fields, preserving every other line (including the secret-safety comment
+/// header) verbatim. Any pre-existing attested fields are stripped first (the
+/// force-replace path), then the fresh pair is appended — so a re-pin is
+/// idempotent in structure and never accumulates stale blocks.
+fn upsert_attested_fields(
+    original: &str,
+    shape: &TrShape,
+    version: u32,
+) -> Result<String, String> {
+    // Drop any existing attested fields, keeping all other lines untouched.
+    let mut kept = String::new();
+    let mut in_shape_block = false;
+    for line in original.lines() {
+        if in_shape_block {
+            // The `attested_shape:` value is an indented block; consume its
+            // indented (and blank) lines until a column-0 line ends it.
+            if line.is_empty() || line.starts_with(char::is_whitespace) {
+                continue;
+            }
+            in_shape_block = false; // fall through to handle this column-0 line
+        }
+        if line.starts_with("attested_shape:") {
+            in_shape_block = true;
+            continue;
+        }
+        if line.starts_with("attested_normalizer_version:") {
+            continue;
+        }
+        kept.push_str(line);
+        kept.push('\n');
+    }
+    let kept = kept.trim_end();
+
+    // Serialize the shape and indent it two spaces under `attested_shape:`.
+    let shape_yaml =
+        serde_yaml::to_string(shape).map_err(|e| format!("serializing attested shape: {e}"))?;
+    let shape_yaml = shape_yaml.strip_prefix("---\n").unwrap_or(&shape_yaml);
+    let mut indented = String::new();
+    for line in shape_yaml.lines() {
+        if line.is_empty() {
+            indented.push('\n');
+        } else {
+            indented.push_str("  ");
+            indented.push_str(line);
+            indented.push('\n');
+        }
+    }
+
+    Ok(format!(
+        "{kept}\n\nattested_normalizer_version: {version}\nattested_shape:\n{indented}"
+    ))
 }
 
 fn failure_report(fetched: usize, committed_len: Option<usize>, gate: &GateOutcome) -> FetchReport {
@@ -760,7 +936,10 @@ pub fn dispatch(paths: &Paths, command: Command) -> Exit {
             }
             exit_for(&result)
         }
-        Command::Renormalize => match renormalize_committed(paths) {
+        Command::Renormalize => match renormalize_committed(
+            paths,
+            &crate::freshness::today().to_string(),
+        ) {
             Ok(run) => {
                 println!(
                     "re-normalized {} maintained shape(s) at normalizer v{} into {}",
@@ -833,6 +1012,25 @@ pub fn dispatch(paths: &Paths, command: Command) -> Exit {
             }
             freshness_exit_for(&result)
         }
+        Command::FreshnessRePin { tr_code, force } => match run_freshness_repin(paths, &tr_code, force) {
+            Ok(RePinOutcome::Pinned { tr_code }) => {
+                println!(
+                    "re-pinned attested shape for `{tr_code}` to the current committed baseline."
+                );
+                Exit::Ok
+            }
+            Ok(RePinOutcome::AlreadyPinned { tr_code }) => {
+                println!(
+                    "`{tr_code}` already has an attested shape; left unchanged (pass --force to \
+                     re-pin during a real re-attestation)."
+                );
+                Exit::Ok
+            }
+            Err(e) => {
+                eprintln!("error: {e}");
+                Exit::Error
+            }
+        },
     }
 }
 
@@ -855,6 +1053,25 @@ fn print_freshness_report(report: &crate::freshness::FreshnessReport) {
         for f in &report.findings {
             println!("  {f}");
         }
+    }
+    if report.baseline.stale {
+        let detail = match report.baseline.age_days {
+            Some(age) => format!("{age} days old (refreshed {})", report.baseline.refreshed),
+            None if report.baseline.refreshed.is_empty() => "never stamped".to_string(),
+            None => format!("unparseable refresh date `{}`", report.baseline.refreshed),
+        };
+        println!(
+            "advisory: committed baseline is stale ({detail}); change-detection compares against \
+             possibly-outdated structural truth — re-fetch/re-seed the baseline."
+        );
+    }
+    if report.has_reattest() {
+        println!(
+            "advisory: {} Recommended TR(s) need re-attestation (normalizer-version mismatch or \
+             missing baseline shape; re-pin against the current baseline): {}",
+            report.reattest.len(),
+            report.reattest.join(", ")
+        );
     }
     if report.has_errors() {
         println!(
@@ -1054,12 +1271,18 @@ mod tests {
             spec_baseline_dir: scratch.join("spec-doc"),
         };
 
-        let run = renormalize_committed(&paths).expect("re-normalize from committed raw");
+        let run = renormalize_committed(&paths, "2026-06-20").expect("re-normalize from committed raw");
         assert_eq!(
             run.manifest.normalizer_version,
             crate::api_drift::NORMALIZER_VERSION
         );
         assert_eq!(run.manifest.normalizer_version, 2);
+        // R9a: the injected refresh date is stamped into the manifest, and the
+        // written manifest carries it (read back from disk).
+        assert_eq!(run.manifest.refreshed, "2026-06-20");
+        let written: Manifest =
+            read_json(&scratch.join(MANIFEST_FILE)).expect("written manifest reloads");
+        assert_eq!(written.refreshed, "2026-06-20");
         assert_eq!(run.shapes.len(), 8, "eight maintained shapes");
         assert_eq!(run.code_set.len(), 365, "full inventory code-set preserved");
         assert!(
@@ -1078,7 +1301,7 @@ mod tests {
 
         // Byte-stable: a second re-normalization writes identical token bytes.
         let first = fs::read(scratch.join(TRS_DIR).join("token.json")).unwrap();
-        renormalize_committed(&paths).expect("second re-normalize");
+        renormalize_committed(&paths, "2026-06-20").expect("second re-normalize");
         let second = fs::read(scratch.join(TRS_DIR).join("token.json")).unwrap();
         assert_eq!(first, second, "re-normalization is byte-stable");
     }
@@ -1111,7 +1334,7 @@ mod tests {
             metadata_dir: repo_metadata_dir(),
             spec_baseline_dir: scratch.join("spec-doc"),
         };
-        let run = renormalize_committed(&paths).expect("re-normalize");
+        let run = renormalize_committed(&paths, "2026-06-20").expect("re-normalize");
 
         assert!(
             !run.code_set.provisional,
@@ -1136,6 +1359,7 @@ mod tests {
                 maintained_tr_count: 0,
                 source_urls: vec![],
                 normalizer_version: 1,
+                refreshed: "2026-06-20".to_string(),
             },
             shapes: BTreeMap::new(),
         }
@@ -1584,7 +1808,10 @@ mod tests {
             .join("..")
             .join("metadata");
         Paths {
-            baseline_dir: root.join("baseline"),
+            // The real committed baseline: change-driven detection diffs the
+            // backfilled attested shapes against it (attested == baseline, so the
+            // six start fresh-by-change; only the age rule varies by as_of).
+            baseline_dir: committed_baseline_dir(),
             run_root: root.join("runs"),
             metadata_dir: metadata,
             spec_baseline_dir: root.join("spec-doc"),
@@ -1668,5 +1895,174 @@ mod tests {
             before_ev,
             "evidence/token.yaml unchanged"
         );
+    }
+
+    // --- U8: re-pin mechanism -----------------------------------------------
+
+    #[test]
+    fn parses_freshness_re_pin() {
+        assert_eq!(
+            parse_args(args(&["freshness", "re-pin", "token"])).unwrap(),
+            Command::FreshnessRePin {
+                tr_code: "token".to_string(),
+                force: false
+            }
+        );
+        assert_eq!(
+            parse_args(args(&["freshness", "re-pin", "token", "--force"])).unwrap(),
+            Command::FreshnessRePin {
+                tr_code: "token".to_string(),
+                force: true
+            }
+        );
+        assert!(
+            parse_args(args(&["freshness", "re-pin"])).is_err(),
+            "re-pin needs a TR code"
+        );
+    }
+
+    /// A recommended `token` TR fixture whose `last_reviewed` matches the minimal
+    /// evidence date below, so the validator passes over the scratch metadata.
+    const REPIN_TOKEN_TR: &str = r#"
+tr_code: token
+owner_class: standalone
+facets:
+  protocol: rest
+  instrument_domain: misc
+  venue_session: unspecified
+  date_sensitive: false
+  self_paginated: false
+  account_state: false
+  paper_incompatible: false
+  certification_path: automated
+  rate_bucket: auth
+  caller_supplied_identifiers: []
+support:
+  tracked: true
+  implemented: true
+  recommended: true
+maintenance:
+  source_spec_hash: aaaa1111bbbb
+  last_reviewed: 2026-06-16
+recommendation:
+  behavior: Paper OAuth access-token issuance
+  evidence_ref: evidence/token.yaml
+  excludes:
+    - Production-credential token issuance
+"#;
+
+    /// U8: re-pin captures the committed baseline shape + manifest version into the
+    /// evidence record (attested == baseline at backfill), is populate-if-absent on
+    /// a re-run, overwrites under `--force`, and never accumulates attested blocks.
+    /// The secret-safety comment header survives every rewrite.
+    #[test]
+    fn re_pin_captures_baseline_shape_populate_if_absent_and_force_overwrites() {
+        let root = scratch("repin");
+        let baseline = root.join("baseline");
+        let metadata = root.join("metadata");
+
+        // Minimal committed baseline with one recommended TR shape.
+        let shape = TrShape {
+            tr_code: "token".to_string(),
+            tr_name: None,
+            protocol: crate::types::Protocol::Rest,
+            is_websocket: false,
+            endpoint_path: Some("/oauth2/token".to_string()),
+            api_group_id: None,
+            source_group_name: None,
+            request_blocks: vec![crate::types::BlockField {
+                direction: crate::types::Direction::Request,
+                block_name: "request_body".to_string(),
+                field_index: 0,
+                field_name: "grant_type".to_string(),
+                korean_name: None,
+                r#type: Some("String".to_string()),
+                length: Some(100),
+                required: true,
+                description_hash: Some("abc".to_string()),
+            }],
+            response_blocks: vec![],
+            rate_limit_per_sec: None,
+            corp_rate_limit_per_sec: None,
+            rate_source_group: None,
+            description_hash: None,
+        };
+        let mut shapes = BTreeMap::new();
+        shapes.insert("token".to_string(), shape.clone());
+        let run = NormalizedRun {
+            code_set: CodeSet::new(["token".to_string()], false),
+            manifest: Manifest {
+                upstream_tr_count: 1,
+                maintained_tr_count: 1,
+                source_urls: vec![],
+                normalizer_version: 2,
+                refreshed: "2026-06-20".to_string(),
+            },
+            shapes,
+        };
+        write_normalized(&baseline, &run).unwrap();
+
+        // Minimal metadata tree: index + recommended token + commented evidence.
+        fs::create_dir_all(metadata.join("trs")).unwrap();
+        fs::create_dir_all(metadata.join("evidence")).unwrap();
+        fs::write(
+            metadata.join("tr-index.yaml"),
+            "version: 1\ntrs:\n  token:\n    file: trs/token.yaml\n    owner_class: standalone\n    protocol: rest\n    instrument_domain: misc\n    venue_session: unspecified\n",
+        )
+        .unwrap();
+        fs::write(metadata.join("trs/token.yaml"), REPIN_TOKEN_TR).unwrap();
+        fs::write(
+            metadata.join("evidence/token.yaml"),
+            "# secret-safety header — must survive re-pin\ntr_code: token\ndate: 2026-06-16\nenv: paper\n",
+        )
+        .unwrap();
+
+        let paths = Paths {
+            baseline_dir: baseline,
+            run_root: root.join("runs"),
+            metadata_dir: metadata.clone(),
+            spec_baseline_dir: root.join("spec"),
+        };
+        let ev_path = metadata.join("evidence/token.yaml");
+
+        // First re-pin populates from the baseline.
+        assert_eq!(
+            run_freshness_repin(&paths, "token", false).unwrap(),
+            RePinOutcome::Pinned { tr_code: "token".to_string() }
+        );
+        let ev: ls_metadata::EvidenceRecord =
+            serde_yaml::from_str(&fs::read_to_string(&ev_path).unwrap()).unwrap();
+        assert_eq!(ev.attested_normalizer_version, Some(2));
+        assert_eq!(ev.attested_shape.as_ref(), Some(&shape), "attested == baseline");
+        assert!(
+            fs::read_to_string(&ev_path).unwrap().contains("secret-safety header"),
+            "comment header preserved"
+        );
+
+        // Populate-if-absent: a re-run without --force is a no-op.
+        assert_eq!(
+            run_freshness_repin(&paths, "token", false).unwrap(),
+            RePinOutcome::AlreadyPinned { tr_code: "token".to_string() }
+        );
+
+        // --force overwrites and does not accumulate a second attested block.
+        assert_eq!(
+            run_freshness_repin(&paths, "token", true).unwrap(),
+            RePinOutcome::Pinned { tr_code: "token".to_string() }
+        );
+        let text = fs::read_to_string(&ev_path).unwrap();
+        assert_eq!(
+            text.matches("attested_shape:").count(),
+            1,
+            "force re-pin replaces, never accumulates"
+        );
+        assert_eq!(
+            text.matches("attested_normalizer_version:").count(),
+            1,
+            "single normalizer-version line after force re-pin"
+        );
+
+        // A non-recommended / unknown TR is rejected loudly.
+        assert!(run_freshness_repin(&paths, "nope", false).is_err());
     }
 }

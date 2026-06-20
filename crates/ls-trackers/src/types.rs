@@ -293,80 +293,41 @@ pub fn gates_for(severity: Severity, support_state: SupportState, is_new_tr: boo
     is_new_tr || (support_state.is_maintained() && severity >= Severity::Maintenance)
 }
 
-/// Field traversal direction — part of field identity (R6).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum Direction {
-    Request,
-    Response,
-}
-
-impl fmt::Display for Direction {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(match self {
-            Direction::Request => "request",
-            Direction::Response => "response",
-        })
-    }
-}
-
-/// One normalized field within a request/response block (R6, R8). Field identity
-/// is `(direction, block_name, field_index, field_name)`; `description_hash` is
-/// the stable hash of the normalized long description so benign re-encoding does
-/// not register as drift.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BlockField {
-    pub direction: Direction,
-    pub block_name: String,
-    pub field_index: u32,
-    pub field_name: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub korean_name: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub r#type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub length: Option<u32>,
-    pub required: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description_hash: Option<String>,
-}
-
-/// The committed per-TR **Structural API Shape** (maintained TRs only, R5). Long
-/// descriptions/examples are stored as `description_hash`; compact names are
-/// preserved verbatim (R8). Endpoint/protocol/rate facts are top-level (R7).
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TrShape {
-    pub tr_code: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tr_name: Option<String>,
-    pub protocol: Protocol,
-    pub is_websocket: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub endpoint_path: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub api_group_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub source_group_name: Option<String>,
-    /// Request-direction blocks, ordered as upstream presents them. `field_index`
-    /// preserves position so U4's reorder reconciliation can run.
-    #[serde(default)]
-    pub request_blocks: Vec<BlockField>,
-    /// Response-direction blocks, ordered as upstream presents them.
-    #[serde(default)]
-    pub response_blocks: Vec<BlockField>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rate_limit_per_sec: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub corp_rate_limit_per_sec: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub rate_source_group: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub description_hash: Option<String>,
+/// The **single source** of the R2 change-driven staling allow-list: a structural
+/// change qualifies as staling a Recommended TR's Focused Evidence iff it is a
+/// field add/remove/change or an endpoint/protocol change. `FieldReordered`,
+/// `FieldMovedAcrossBlock`, `RateLimitChanged`, `TrAdded`, `TrRemoved`,
+/// `DescriptionChanged`, and `FactsDegraded` never stale (R2). This is a separate
+/// lens from [`gates_for`]/`change_severity` (which weigh *API breakage* by
+/// support state): the same change that classifies `Breaking` in `api-drift
+/// compare` qualifies here purely as *evidence staleness*, regardless of severity.
+/// Kept beside [`DriftChange`] as the one-copy classification rule (no second
+/// allow-list elsewhere).
+pub fn is_qualifying(change: &DriftChange) -> bool {
+    matches!(
+        change,
+        DriftChange::FieldAdded { .. }
+            | DriftChange::FieldRemoved { .. }
+            | DriftChange::FieldChanged { .. }
+            | DriftChange::EndpointChanged { .. }
+            | DriftChange::ProtocolChanged { .. }
+    )
 }
 
 /// Re-exported here so callers of the trackers crate get the protocol vocabulary
 /// without depending on `ls-metadata` directly.
 pub use ls_metadata::Protocol;
+
+/// The Structural API Shape vocabulary (`TrShape`, `BlockField`, `Direction`) is
+/// owned by `ls-metadata` so the Focused-Evidence record can carry a typed frozen
+/// attested shape (KTD2). It is re-exported here (`ls_trackers::{TrShape,
+/// BlockField, Direction}`) so the drift engine and existing callers reach it
+/// unchanged through the dependency edge. The diff engine (`diff_shapes` /
+/// `DriftChange`) and the normalizer that produces a `TrShape` stay in this crate
+/// and consume the relocated types. `Direction` is a field of `DriftChange` /
+/// `SpecChange` below, so it is now metadata-owned shared field-traversal
+/// vocabulary.
+pub use ls_metadata::{BlockField, Direction, TrShape};
 
 /// Inventory facts for a normalized snapshot (R8): code-set size, source URLs,
 /// the normalizer version (so a normalizer change is auditable), and per-TR
@@ -382,6 +343,15 @@ pub struct Manifest {
     pub source_urls: Vec<String>,
     /// The normalizer version that produced the committed shapes.
     pub normalizer_version: u32,
+    /// The baseline-refresh date (`YYYY-MM-DD`) stamped at baseline-update time
+    /// (R9a). The deterministic, network-free liveness signal the freshness
+    /// check ages against — **not** git commit date or filesystem mtime. The pure
+    /// projection ([`crate::api_drift::normalize_run`]) leaves this empty; the
+    /// impure baseline-update paths inject the date (an `as_of`/clock seam,
+    /// mirroring the freshness evaluator). A missing/empty value (cold-start,
+    /// before the field was stamped) reads as *warn*, never silent-fresh (U5).
+    #[serde(default)]
+    pub refreshed: String,
 }
 
 /// The machine-readable outcome of a fetch attempt (`fetch-report.json`, AE1).
@@ -814,6 +784,68 @@ mod tests {
         assert!(!gates_for(Informational, Untracked, false)); // shape changed, no metadata
     }
 
+    /// R2: exactly field add/remove/change and endpoint/protocol change qualify
+    /// as change-driven staling; reorder, cross-block move, rate-limit,
+    /// description, and TR add/remove never do.
+    #[test]
+    fn is_qualifying_matches_the_r2_allow_list() {
+        let req = || Direction::Request;
+        assert!(is_qualifying(&DriftChange::FieldAdded {
+            direction: req(),
+            block_name: "b".into(),
+            field_index: 0,
+            field_name: "f".into()
+        }));
+        assert!(is_qualifying(&DriftChange::FieldRemoved {
+            direction: req(),
+            block_name: "b".into(),
+            field_index: 0,
+            field_name: "f".into()
+        }));
+        assert!(is_qualifying(&DriftChange::FieldChanged {
+            direction: req(),
+            block_name: "b".into(),
+            field_index: 0,
+            field_name: "f".into(),
+            detail: "type String→Long".into()
+        }));
+        assert!(is_qualifying(&DriftChange::EndpointChanged {
+            from: Some("/a".into()),
+            to: Some("/b".into())
+        }));
+        assert!(is_qualifying(&DriftChange::ProtocolChanged {
+            from: "rest".into(),
+            to: "websocket".into()
+        }));
+
+        // Non-qualifying.
+        assert!(!is_qualifying(&DriftChange::FieldReordered {
+            direction: req(),
+            block_name: "b".into(),
+            field_name: "f".into(),
+            from_index: 0,
+            to_index: 1
+        }));
+        assert!(!is_qualifying(&DriftChange::FieldMovedAcrossBlock {
+            direction: req(),
+            field_name: "f".into(),
+            from_block: "a".into(),
+            to_block: "b".into()
+        }));
+        assert!(!is_qualifying(&DriftChange::RateLimitChanged {
+            from: Some(1),
+            to: Some(2)
+        }));
+        assert!(!is_qualifying(&DriftChange::DescriptionChanged {
+            location: "tr".into()
+        }));
+        assert!(!is_qualifying(&DriftChange::TrAdded));
+        assert!(!is_qualifying(&DriftChange::TrRemoved));
+        assert!(!is_qualifying(&DriftChange::FactsDegraded {
+            detail: "x".into()
+        }));
+    }
+
     /// A code-set round-trips deterministically with the `provisional` seed flag,
     /// sorting and de-duplicating input order.
     #[test]
@@ -881,10 +913,22 @@ mod tests {
             maintained_tr_count: 7,
             source_urls: vec!["https://openapi.ls-sec.co.kr/apiservice".to_string()],
             normalizer_version: 1,
+            refreshed: "2026-06-20".to_string(),
         };
         let m1 = serde_json::to_vec(&manifest).unwrap();
         let m2 = serde_json::to_vec(&manifest).unwrap();
         assert_eq!(m1, m2, "manifest serialization is byte-stable");
+    }
+
+    /// R9a backward-compat: a manifest authored before the `refreshed` field
+    /// existed deserializes with an empty `refreshed` (serde default), which U5
+    /// reads as a never-stamped baseline (warn), never a crash.
+    #[test]
+    fn manifest_without_refreshed_defaults_to_empty() {
+        let json = r#"{"upstream_tr_count":365,"maintained_tr_count":8,"normalizer_version":2}"#;
+        let m: Manifest = serde_json::from_slice(json.as_bytes()).unwrap();
+        assert_eq!(m.refreshed, "");
+        assert_eq!(m.normalizer_version, 2);
     }
 
     /// A finding carries its support state and a stored `gates` flag consistent

@@ -24,11 +24,10 @@ chrono.workspace = true
 # union here so the tracker CLI uses a synchronous client (matching `ls-docgen`'s
 # no-`#[tokio::main]` shape) without touching other crates.
 reqwest = { workspace = true, features = ["blocking"] }
+# The `freshness re-pin` path reads and rewrites the per-TR Focused Evidence YAML
+# to upsert the attested shape (R11). Already a workspace dependency (ls-metadata),
+# pinned in Cargo.lock, so this adds no new transitive dependency.
+serde_yaml.workspace = true
 
 [dev-dependencies]
 httpmock.workspace = true
-# Decommission-audit gate validator (tests/decommission_audit.rs) deserializes
-# the per-row audit records. `serde_yaml` is already a workspace dependency
-# (used by ls-metadata) and pinned in Cargo.lock, so this adds no new transitive
-# dependency — the U6 trigger to prefer a dedicated crate is not met.
-serde_yaml.workspace = true

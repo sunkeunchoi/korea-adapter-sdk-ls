@@ -26,7 +26,8 @@ assert_eq() { # desc expected actual
 }
 
 # Write a findings.json fixture with the given stale TR codes (comma-separated,
-# or empty for all-fresh) and echo the path.
+# or empty for all-fresh) as AGE-only entries, and echo the path. Carries the full
+# U6 contract (reasons/change_summary/nullable age_days, reattest, baseline_*).
 fixture() { # "t1102,token" -> path
   local codes="$1" f
   f=$(mktemp)
@@ -34,12 +35,43 @@ fixture() { # "t1102,token" -> path
   if [ -n "$codes" ]; then
     local IFS=','
     for c in $codes; do
-      entries+="{\"tr_code\":\"$c\",\"last_reviewed\":\"2026-03-01\",\"age_days\":111,\"severity\":\"evidence\"},"
+      entries+="{\"tr_code\":\"$c\",\"last_reviewed\":\"2026-03-01\",\"reasons\":[\"age\"],\"age_days\":111,\"change_summary\":null,\"severity\":\"evidence\"},"
     done
     entries="${entries%,}"
   fi
   cat >"$f" <<EOF
-{"as_of":"2026-06-20","window_days":90,"recommended_count":6,"has_errors":false,"stale":[$entries],"unparseable":[]}
+{"as_of":"2026-06-20","window_days":90,"recommended_count":6,"has_errors":false,"stale":[$entries],"reattest":[],"unparseable":[],"baseline_refreshed":"2026-06-20","baseline_age_days":null,"baseline_stale":false}
+EOF
+  echo "$f"
+}
+
+# Write a fixture whose single stale entry is CHANGE-only (age_days null) with a
+# drifted-shape summary, and echo the path.
+fixture_change() { # tr_code summary -> path
+  local code="$1" summary="$2" f
+  f=$(mktemp)
+  cat >"$f" <<EOF
+{"as_of":"2026-06-20","window_days":90,"recommended_count":6,"has_errors":false,"stale":[{"tr_code":"$code","last_reviewed":"2026-03-01","reasons":["change"],"age_days":null,"change_summary":"$summary","severity":"evidence"}],"reattest":[],"unparseable":[],"baseline_refreshed":"2026-06-20","baseline_age_days":null,"baseline_stale":false}
+EOF
+  echo "$f"
+}
+
+# Write a fixture whose single stale entry is stale for BOTH reasons, and echo path.
+fixture_both() { # tr_code summary -> path
+  local code="$1" summary="$2" f
+  f=$(mktemp)
+  cat >"$f" <<EOF
+{"as_of":"2026-06-20","window_days":90,"recommended_count":6,"has_errors":false,"stale":[{"tr_code":"$code","last_reviewed":"2026-03-01","reasons":["age","change"],"age_days":111,"change_summary":"$summary","severity":"evidence"}],"reattest":[],"unparseable":[],"baseline_refreshed":"2026-06-20","baseline_age_days":null,"baseline_stale":false}
+EOF
+  echo "$f"
+}
+
+# Write an all-fresh fixture whose baseline is stale (R9a advisory), echo path.
+fixture_baseline_stale() {
+  local f
+  f=$(mktemp)
+  cat >"$f" <<EOF
+{"as_of":"2026-06-20","window_days":90,"recommended_count":6,"has_errors":false,"stale":[],"reattest":["t1102"],"unparseable":[],"baseline_refreshed":"2026-01-01","baseline_age_days":170,"baseline_stale":true}
 EOF
   echo "$f"
 }
@@ -202,6 +234,92 @@ run_live "$f" '[]' '@evil </b> @everyone'
 case "$LIVE_LOG" in
   *"evil"*|*"everyone"*) no "live: malformed handle is dropped" "no injected handle" "$LIVE_LOG" ;;
   *) ok "live: malformed handle is dropped from notification" ;;
+esac
+
+# --- U9: reason-aware rendering --------------------------------------------
+
+# A change-only entry renders the drifted shape and the `change` reason; the
+# null age_days renders as a dash rather than dropping the row.
+f=$(fixture_change "t1102" "1 qualifying change(s): added response field Out.volume")
+body=$(render_body "$f" "$(compute_stale_set "$f")")
+case "$body" in
+  *"added response field Out.volume"*) ok "U9 change row shows the drifted shape" ;;
+  *) no "U9 change row shows the drifted shape" "contains summary" "$body" ;;
+esac
+case "$body" in
+  *"| t1102 | change |"*) ok "U9 change row shows the change reason" ;;
+  *) no "U9 change row shows the change reason" "reasons column = change" "$body" ;;
+esac
+# The null age_days must render (dash), not drop the row.
+case "$body" in
+  *"| change | 2026-03-01 | — |"*) ok "U9 null age_days renders as a dash" ;;
+  *) no "U9 null age_days renders as a dash" "row with — for age" "$body" ;;
+esac
+
+# A both-reasons entry renders both the age and the drifted shape in one row.
+f=$(fixture_both "t1102" "1 qualifying change(s): removed response field Out.price")
+body=$(render_body "$f" "$(compute_stale_set "$f")")
+case "$body" in
+  *"age, change"*"111"*"removed response field Out.price"*)
+    ok "U9 both-reasons row shows age and drifted shape" ;;
+  *) no "U9 both-reasons row shows age and drifted shape" "age + change in one row" "$body" ;;
+esac
+
+# Baseline-staleness + re-attestation advisories render as advisory lines.
+f=$(fixture_baseline_stale)
+body=$(render_body "$f" "")
+case "$body" in
+  *"Baseline staleness"*) ok "U9 baseline-stale advisory renders" ;;
+  *) no "U9 baseline-stale advisory renders" "contains Baseline staleness" "$body" ;;
+esac
+case "$body" in
+  *"Re-attestation needed"*"t1102"*) ok "U9 re-attestation advisory renders" ;;
+  *) no "U9 re-attestation advisory renders" "contains Re-attestation needed" "$body" ;;
+esac
+
+# An age-only set still renders the age column unchanged (no regression).
+f=$(fixture "t1102")
+body=$(render_body "$f" "$(compute_stale_set "$f")")
+case "$body" in
+  *"| t1102 | age | 2026-03-01 | 111 | — |"*) ok "U9 age-only row unchanged (no regression)" ;;
+  *) no "U9 age-only row unchanged" "age row with 111 and — summary" "$body" ;;
+esac
+
+# The notify comment is reason-aware: a change-only set says "change", not the
+# 90-day backstop wording.
+f=$(fixture_change "t1102" "1 qualifying change(s): added response field Out.volume")
+comment=$(render_notify_comment "$f")
+case "$comment" in
+  *"change"*) ok "U9 notify comment is reason-aware (change)" ;;
+  *) no "U9 notify comment is reason-aware (change)" "mentions change" "$comment" ;;
+esac
+case "$comment" in
+  *"90-day backstop"*) no "U9 notify comment drops hardcoded backstop wording" "no backstop phrase" "$comment" ;;
+  *) ok "U9 notify comment drops hardcoded backstop wording" ;;
+esac
+
+# --- U9 live path: change-stale TR (stubbed gh) ----------------------------
+# A newly change-stale TR with no existing issue → create + notify, exit 0.
+f=$(fixture_change "t1102" "1 qualifying change(s): added response field Out.volume")
+run_live "$f" '[]'
+assert_eq "live: change-stale create exits 0" "0" "$LIVE_RC"
+case "$LIVE_LOG" in
+  *"issue create"*"issue comment"*) ok "live: change-stale creates then notifies" ;;
+  *) no "live: change-stale creates then notifies" "create + comment" "$LIVE_LOG" ;;
+esac
+
+# Reason changes but the TR stays in the stale set (marker already has t1102):
+# silent edit, exit 0, NO notify (KTD6 keys on tr_code, not reason).
+f=$(fixture_change "t1102" "1 qualifying change(s): added response field Out.volume")
+run_live "$f" '[{"number":7,"state":"OPEN","body":"<!-- freshness-stale: t1102 -->"}]'
+assert_eq "live: reason-change same-set silent edit exits 0" "0" "$LIVE_RC"
+case "$LIVE_LOG" in
+  *"issue edit"*) ok "live: reason-change same-set calls issue edit" ;;
+  *) no "live: reason-change same-set calls issue edit" "log has issue edit" "$LIVE_LOG" ;;
+esac
+case "$LIVE_LOG" in
+  *"issue comment"*) no "live: reason-change same-set does NOT re-notify (KTD6)" "no issue comment" "$LIVE_LOG" ;;
+  *) ok "live: reason-change same-set does NOT re-notify (KTD6)" ;;
 esac
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"

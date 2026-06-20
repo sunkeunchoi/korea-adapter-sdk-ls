@@ -30,4 +30,4 @@ recommendation:
     - In-session row delivery guarantees (a row is bonus, not required)
     - Reconnection semantics after a dropped connection
     - Production-credential feeds (evidence is paper only)
-    - Change-driven evidence invalidation (a Structural API Shape change auto-staling evidence) — stated policy, not yet enforced
+    - Auto-revoking the recommendation on a change-driven structural change — change-driven *detection* ships (a qualifying Structural API Shape change stales the evidence, surfaced advisory by the freshness check); auto-revoke of support.recommended stays deferred

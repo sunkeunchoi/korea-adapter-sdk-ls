@@ -131,6 +131,18 @@ spec-doc-renormalize:
 freshness-check:
 	cargo run -q -p ls-trackers -- freshness check
 
+.PHONY: freshness-re-pin
+
+## Re-pin a Recommended TR's attested shape to the current committed baseline —
+## the R11 re-attestation interface (populate-if-absent; pass FORCE=1 to overwrite
+## during a real re-attestation). Run AFTER refreshing the baseline (api-drift
+## fetch/renormalize), never against a stale baseline.
+##   make freshness-re-pin TR=token            # populate if absent
+##   make freshness-re-pin TR=token FORCE=1     # overwrite during re-attestation
+freshness-re-pin:
+	@test -n "$(TR)" || { echo "usage: make freshness-re-pin TR=<tr_code> [FORCE=1]"; exit 2; }
+	cargo run -q -p ls-trackers -- freshness re-pin $(TR) $(if $(FORCE),--force,)
+
 # ---------------------------------------------------------------------------
 # Manual maintenance sweep — aggregates the two checks that stay OPERATOR-RUN:
 # `api-drift-check` (network-touching, R19 — no live fetch on a timer) and

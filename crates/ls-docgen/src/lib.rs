@@ -386,17 +386,19 @@ const NOT_RECOMMENDED_BANNER: &str =
 
 /// The stable revocation-policy text rendered into every Recommended TR's
 /// contract. **Per-clause candor** (R10), mirroring `metadata/EVIDENCE-FRESHNESS.md`:
-/// the 90-day backstop is enforced by the freshness evaluator, while change-driven
-/// invalidation stays stated-policy-not-yet-enforced until that increment ships.
-/// Keep each clause's enforcement status accurate — do not imply the
-/// change-driven half is enforced.
+/// both the 90-day backstop and change-driven staling *detection* are enforced by
+/// the freshness evaluator; only the *auto-revoke* arm (flipping
+/// `support.recommended`) stays deferred. Keep each clause's enforcement status
+/// accurate.
 const REVOCATION_POLICY: &str =
     "What would revoke this claim: the **90-day backstop is enforced** — `make freshness-check` \
      flags this TR's Focused Evidence as stale once 90 days elapse from the freshness date (the \
-     review-by date above), and the recommendation must then be re-attested. A maintained-TR \
-     Structural API Shape change that stales the evidence is **stated policy, not yet enforced by \
-     code** (change-driven invalidation is deferred). Description / `korean_name` changes are \
-     informational and do not stale it. See `metadata/EVIDENCE-FRESHNESS.md`.";
+     review-by date above), and the recommendation must then be re-attested. **Change-driven \
+     staling is also enforced** — a qualifying Structural API Shape change (field add/remove/change \
+     or endpoint/protocol change) diverging from the attested shape stales the evidence (advisory, \
+     surfaced by the same check); only *auto-revoke* of the recommendation is deferred (a human \
+     re-attests or demotes). Description / `korean_name` / rate-limit / reorder changes are \
+     non-qualifying and do not stale it. See `metadata/EVIDENCE-FRESHNESS.md`.";
 
 /// Render the user-facing recommendation contract for a Recommended TR (R9): the
 /// recommended behavior, the backing evidence and its environment level, the
@@ -884,6 +886,8 @@ mod tests {
                 env: "paper".to_string(),
                 target: Some("live-smoke".to_string()),
                 line: None,
+                attested_shape: None,
+                attested_normalizer_version: None,
             },
         );
         (trs, evidence)
@@ -928,10 +932,10 @@ mod tests {
 
     #[test]
     fn recommended_page_states_policy_per_clause_candor() {
-        // Covers R10: per-clause candor — the backstop is described as enforced,
-        // the change-driven clause stays stated-policy-not-yet-enforced. Guards
-        // against both over-claiming the deferred half and under-claiming the
-        // enforced backstop.
+        // Covers R10: per-clause candor — both the backstop and change-driven
+        // staling detection read as enforced, while only the auto-revoke arm reads
+        // as deferred. Guards against both over-claiming auto-revoke and
+        // under-claiming the enforced detection.
         let (trs, evidence) = recommended_with_evidence();
         let reference = render_reference_docs(&trs, &evidence);
         let page = &reference[Path::new("docs/reference/token.md")];
@@ -941,8 +945,12 @@ mod tests {
             "the backstop clause must read as enforced"
         );
         assert!(
-            page.contains("stated policy, not yet enforced by code"),
-            "the change-driven clause must keep the not-yet-enforced candor"
+            page.contains("Change-driven staling is also enforced"),
+            "the change-driven detection clause must read as enforced"
+        );
+        assert!(
+            page.contains("auto-revoke") && page.contains("deferred"),
+            "only the auto-revoke arm stays deferred"
         );
         assert!(page.contains("EVIDENCE-FRESHNESS.md"));
     }

@@ -78,6 +78,13 @@ pub enum ValidationError {
         last_reviewed: String,
         evidence_date: String,
     },
+    /// A recommended TR's evidence record is missing its attested structural shape
+    /// or the normalizer version it was captured under (R11). Change-driven staling
+    /// cannot evaluate a TR with no frozen attested shape; this presence backstop
+    /// catches "never captured" intra-metadata (the version-coupling check lives in
+    /// the freshness path, which loads the manifest — KTD7). Clear it with
+    /// `ls-trackers freshness re-pin <tr>`.
+    AttestedShapeMissing { tr_code: String },
 }
 
 impl fmt::Display for ValidationError {
@@ -161,6 +168,10 @@ impl fmt::Display for ValidationError {
             } => write!(
                 f,
                 "TR `{tr_code}`: maintenance.last_reviewed `{last_reviewed}` disagrees with evidence date `{evidence_date}`"
+            ),
+            ValidationError::AttestedShapeMissing { tr_code } => write!(
+                f,
+                "TR `{tr_code}`: recommended evidence record is missing `attested_shape` / `attested_normalizer_version` — re-pin with `ls-trackers freshness re-pin {tr_code}`"
             ),
         }
     }
@@ -322,6 +333,16 @@ pub fn check_recommendation(
                     tr_code: tr_code.to_string(),
                     last_reviewed: meta.maintenance.last_reviewed.clone(),
                     evidence_date: record.date.clone(),
+                });
+                return;
+            }
+            // Presence backstop (R11): a recommended TR's evidence must carry the
+            // attested shape + the version it was captured under, or change-driven
+            // staling has no frozen baseline to diff. Presence-only here; the
+            // version-coupling check lives in the freshness path (KTD7).
+            if record.attested_shape.is_none() || record.attested_normalizer_version.is_none() {
+                errors.push(ValidationError::AttestedShapeMissing {
+                    tr_code: tr_code.to_string(),
                 });
                 return;
             }
@@ -702,6 +723,11 @@ date: 2026-06-16
 env: paper
 target: live-smoke
 line: "LIVE-SMOKE target=live-smoke result=[token_len=380 rsp_cd=00000]"
+attested_normalizer_version: 2
+attested_shape:
+  tr_code: token
+  protocol: rest
+  is_websocket: false
 "#;
 
     fn meta(tr_code: &str, yaml: &str) -> TrMetadata {
@@ -790,6 +816,75 @@ line: "LIVE-SMOKE target=live-smoke result=[token_len=380 rsp_cd=00000]"
             ValidationError::EvidenceDateMismatch { tr_code, .. } if tr_code == "token"
         )));
         assert!(evidence.is_empty(), "no env recorded on a mismatch");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// U7: a recommended TR whose evidence record lacks `attested_shape` fails with
+    /// a located `AttestedShapeMissing` and is not recorded in the evidence map.
+    #[test]
+    fn recommended_without_attested_shape_is_located_error() {
+        let root = temp_metadata_root();
+        // Date matches last_reviewed (2026-06-16) but no attested_shape fields.
+        let no_attested = "\
+tr_code: token
+date: 2026-06-16
+env: paper
+";
+        write(&root, "evidence/token.yaml", no_attested);
+        let m = meta("token", RECOMMENDED_TOKEN);
+
+        let mut evidence = BTreeMap::new();
+        let mut errors = Vec::new();
+        check_recommendation(&root, "token", &m, &mut evidence, &mut errors);
+
+        let located = errors
+            .iter()
+            .find(|e| matches!(e, ValidationError::AttestedShapeMissing { tr_code } if tr_code == "token"))
+            .expect("attested-shape-missing error");
+        assert!(located.to_string().contains("re-pin"));
+        assert!(evidence.is_empty(), "no env recorded when attested shape missing");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// U7: a recommended TR carrying `attested_shape` but no
+    /// `attested_normalizer_version` is also an error (both fields are required).
+    #[test]
+    fn recommended_without_attested_version_is_located_error() {
+        let root = temp_metadata_root();
+        let shape_no_version = "\
+tr_code: token
+date: 2026-06-16
+env: paper
+attested_shape:
+  tr_code: token
+  protocol: rest
+  is_websocket: false
+";
+        write(&root, "evidence/token.yaml", shape_no_version);
+        let m = meta("token", RECOMMENDED_TOKEN);
+
+        let mut errors = Vec::new();
+        check_recommendation(&root, "token", &m, &mut BTreeMap::new(), &mut errors);
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            ValidationError::AttestedShapeMissing { tr_code } if tr_code == "token"
+        )));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    /// U7: a fully-populated recommended TR (attested shape + version present, post
+    /// backfill) validates clean and records its env.
+    #[test]
+    fn recommended_with_attested_shape_validates_clean() {
+        let root = temp_metadata_root();
+        write(&root, "evidence/token.yaml", TOKEN_EVIDENCE);
+        let m = meta("token", RECOMMENDED_TOKEN);
+
+        let mut evidence = BTreeMap::new();
+        let mut errors = Vec::new();
+        check_recommendation(&root, "token", &m, &mut evidence, &mut errors);
+        assert!(errors.is_empty(), "fully-attested recommended TR: {errors:?}");
+        assert_eq!(evidence["token"].attested_normalizer_version, Some(2));
         std::fs::remove_dir_all(&root).ok();
     }
 }

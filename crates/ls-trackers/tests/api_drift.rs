@@ -89,6 +89,7 @@ fn run(shapes: Vec<TrShape>, extra_codes: &[&str]) -> NormalizedRun {
             maintained_tr_count: shape_map.len(),
             source_urls: vec![],
             normalizer_version: 1,
+            refreshed: "2026-06-20".to_string(),
         },
         shapes: shape_map,
     }
@@ -345,4 +346,55 @@ fn removal_via_code_set_is_support_aware() {
         "a maintained baselined TR removal gates (exit 1)"
     );
     assert!(report.gates());
+}
+
+/// U1 wire-format guard (highest-value relocation test): every committed
+/// baseline `normalized/trs/*.json` deserializes into the relocated `TrShape`
+/// (now owned by `ls-metadata`, re-exported here) and re-serializes
+/// **byte-identically** to the committed bytes. A silent serde drift in the move
+/// — a reordered field, a changed `skip_serializing_if`, a lost rename — would
+/// corrupt every committed baseline; this catches it.
+#[test]
+fn committed_baseline_shapes_round_trip_byte_identically() {
+    let trs_dir = baseline_dir().join("normalized").join("trs");
+    let mut checked = 0;
+    for entry in std::fs::read_dir(&trs_dir).expect("committed trs dir present") {
+        let path = entry.unwrap().path();
+        if path.extension().and_then(|e| e.to_str()) != Some("json") {
+            continue;
+        }
+        let original = std::fs::read(&path).expect("read committed shape");
+        let shape: TrShape =
+            serde_json::from_slice(&original).expect("committed shape deserializes into TrShape");
+        // Mirror `write_json`: pretty JSON plus a trailing newline.
+        let mut reserialized = serde_json::to_vec_pretty(&shape).expect("re-serialize");
+        reserialized.push(b'\n');
+        assert_eq!(
+            original,
+            reserialized,
+            "committed baseline {} must re-serialize byte-identically after the type relocation",
+            path.display()
+        );
+        checked += 1;
+    }
+    assert!(checked >= 8, "expected at least the 8 committed shapes, saw {checked}");
+}
+
+/// U3 wire-format guard: the committed `normalized/manifest.json` (now carrying
+/// the R9a `refreshed` date) deserializes into `Manifest` and re-serializes
+/// byte-identically — proving the committed bytes match what `write_normalized`
+/// produces, so a later re-seed is a no-op diff on the manifest.
+#[test]
+fn committed_manifest_round_trips_byte_identically() {
+    let path = baseline_dir().join("normalized").join("manifest.json");
+    let original = std::fs::read(&path).expect("committed manifest present");
+    let manifest: Manifest =
+        serde_json::from_slice(&original).expect("committed manifest deserializes");
+    assert_eq!(manifest.refreshed, "2026-06-20", "R9a refresh date is stamped");
+    let mut reserialized = serde_json::to_vec_pretty(&manifest).expect("re-serialize");
+    reserialized.push(b'\n');
+    assert_eq!(
+        original, reserialized,
+        "committed manifest.json must re-serialize byte-identically"
+    );
 }
