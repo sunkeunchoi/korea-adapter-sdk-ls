@@ -767,12 +767,16 @@ pub fn run_freshness_repin(
     })?;
     let version = baseline.manifest.normalizer_version;
 
-    // Resolve the evidence path through metadata so re-pin is scoped to Recommended
-    // TRs and honors the recommendation's `evidence_ref` rather than guessing.
-    let trs = load_metadata(paths)?;
-    let meta = trs
-        .get(tr_code)
-        .ok_or_else(|| format!("no metadata for TR `{tr_code}`"))?;
+    // Resolve the evidence path by reading just this TR's file (not the whole
+    // metadata tree). Re-pin must NOT depend on `validate_dir`: the U7 validator
+    // requires a recommended TR to already carry an attested shape, and re-pin is
+    // the tool that *populates* it — routing through validation would make pinning
+    // a never-pinned TR (backfill, recovery) impossible.
+    let tr_path = paths.metadata_dir.join("trs").join(format!("{tr_code}.yaml"));
+    let tr_yaml = fs::read_to_string(&tr_path)
+        .map_err(|e| format!("reading {}: {e}", tr_path.display()))?;
+    let meta = ls_metadata::parse_tr_metadata(tr_code, &tr_path, &tr_yaml)
+        .map_err(|e| format!("parsing {}: {e}", tr_path.display()))?;
     if !meta.support.recommended {
         return Err(format!(
             "TR `{tr_code}` is not Recommended — re-pin applies to Recommended TRs only"
