@@ -275,9 +275,9 @@ async fn live_smoke_t8425() {
             );
         }
         Err(e) => {
-            // No capturable LIVE-SMOKE line on failure (R3a) — distinct stderr
-            // prefix mirrors `live_smoke_account`'s SMOKE-FAIL.
-            debug_assert!(smoke_result(Err(&e), "themes").is_none());
+            // No capturable LIVE-SMOKE line on failure (R3a): the Err arm never
+            // calls record(); the smoke_result(Err) -> None contract is proven by
+            // the offline test `smoke_result_err_path_emits_no_live_smoke_line`.
             eprintln!("SMOKE-FAIL target=live-smoke-t8425 market-data failure (not evidence)");
             panic!("live-smoke-t8425 failed: {e}");
         }
@@ -321,7 +321,6 @@ async fn live_smoke_t8436() {
             );
         }
         Err(e) => {
-            debug_assert!(smoke_result(Err(&e), "stocks").is_none());
             eprintln!("SMOKE-FAIL target=live-smoke-t8436 market-data failure (not evidence)");
             panic!("live-smoke-t8436 failed: {e}");
         }
@@ -351,10 +350,17 @@ async fn live_smoke_t1531() {
         .all_themes(&T8425Request::new())
         .await
         .expect("t8425 all_themes (theme input source) failed");
-    let theme = themes
-        .outblock
-        .first()
-        .expect("at least one theme to key t1531");
+    // all_themes returns Ok with an empty out-block on a 00707 (success-but-empty);
+    // surface that as a credential-safe SMOKE-FAIL with the rsp_cd, not an opaque
+    // .expect() panic, so an off-session empty is distinguishable from a defect.
+    if themes.outblock.is_empty() {
+        eprintln!(
+            "SMOKE-FAIL target=live-smoke-t1531 t8425 theme source empty (rsp_cd={})",
+            themes.rsp_cd
+        );
+        panic!("live-smoke-t1531: no theme to key the read");
+    }
+    let theme = &themes.outblock[0];
     let (tmname, tmcode) = (theme.tmname.clone(), theme.tmcode.clone());
 
     let date = Utc::now().format("%Y-%m-%d");
@@ -373,7 +379,6 @@ async fn live_smoke_t1531() {
             );
         }
         Err(e) => {
-            debug_assert!(smoke_result(Err(&e), "rows").is_none());
             eprintln!("SMOKE-FAIL target=live-smoke-t1531 market-data failure (not evidence)");
             panic!("live-smoke-t1531 failed: {e}");
         }
@@ -394,12 +399,14 @@ async fn live_smoke_t1537() {
         .all_themes(&T8425Request::new())
         .await
         .expect("t8425 all_themes (theme input source) failed");
-    let tmcode = themes
-        .outblock
-        .first()
-        .expect("at least one theme to key t1537")
-        .tmcode
-        .clone();
+    if themes.outblock.is_empty() {
+        eprintln!(
+            "SMOKE-FAIL target=live-smoke-t1537 t8425 theme source empty (rsp_cd={})",
+            themes.rsp_cd
+        );
+        panic!("live-smoke-t1537: no theme to key the read");
+    }
+    let tmcode = themes.outblock[0].tmcode.clone();
 
     let date = Utc::now().format("%Y-%m-%d");
     match sdk
@@ -417,7 +424,6 @@ async fn live_smoke_t1537() {
             );
         }
         Err(e) => {
-            debug_assert!(smoke_result(Err(&e), "rows").is_none());
             eprintln!("SMOKE-FAIL target=live-smoke-t1537 market-data failure (not evidence)");
             panic!("live-smoke-t1537 failed: {e}");
         }
@@ -536,7 +542,6 @@ async fn live_smoke_t1452() {
             );
         }
         Err(e) => {
-            debug_assert!(smoke_result(Err(&e), "rows").is_none());
             eprintln!("SMOKE-FAIL target=live-smoke-t1452 market-data failure (not evidence)");
             panic!("live-smoke-t1452 failed: {e}");
         }
@@ -565,10 +570,10 @@ async fn live_smoke_t1403() {
         Ok(resp) => record(
             "live-smoke-t1403",
             &format!("env=paper range=202401-202612 idx=0 date={date}"),
-            &smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows").unwrap(),
+            &smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line"),
         ),
         Err(e) => {
-            debug_assert!(smoke_result(Err(&e), "rows").is_none());
             eprintln!("SMOKE-FAIL target=live-smoke-t1403 market-data failure (not evidence)");
             panic!("live-smoke-t1403 failed: {e}");
         }
@@ -589,10 +594,10 @@ async fn live_smoke_t1441() {
         Ok(resp) => record(
             "live-smoke-t1441",
             &format!("env=paper idx=0 date={date}"),
-            &smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows").unwrap(),
+            &smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line"),
         ),
         Err(e) => {
-            debug_assert!(smoke_result(Err(&e), "rows").is_none());
             eprintln!("SMOKE-FAIL target=live-smoke-t1441 market-data failure (not evidence)");
             panic!("live-smoke-t1441 failed: {e}");
         }
@@ -613,10 +618,10 @@ async fn live_smoke_t1463() {
         Ok(resp) => record(
             "live-smoke-t1463",
             &format!("env=paper idx=0 date={date}"),
-            &smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows").unwrap(),
+            &smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line"),
         ),
         Err(e) => {
-            debug_assert!(smoke_result(Err(&e), "rows").is_none());
             eprintln!("SMOKE-FAIL target=live-smoke-t1463 market-data failure (not evidence)");
             panic!("live-smoke-t1463 failed: {e}");
         }
@@ -637,10 +642,10 @@ async fn live_smoke_t1466() {
         Ok(resp) => record(
             "live-smoke-t1466",
             &format!("env=paper idx=0 date={date}"),
-            &smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows").unwrap(),
+            &smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line"),
         ),
         Err(e) => {
-            debug_assert!(smoke_result(Err(&e), "rows").is_none());
             eprintln!("SMOKE-FAIL target=live-smoke-t1466 market-data failure (not evidence)");
             panic!("live-smoke-t1466 failed: {e}");
         }
@@ -661,10 +666,10 @@ async fn live_smoke_t1489() {
         Ok(resp) => record(
             "live-smoke-t1489",
             &format!("env=paper idx=0 date={date}"),
-            &smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows").unwrap(),
+            &smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line"),
         ),
         Err(e) => {
-            debug_assert!(smoke_result(Err(&e), "rows").is_none());
             eprintln!("SMOKE-FAIL target=live-smoke-t1489 market-data failure (not evidence)");
             panic!("live-smoke-t1489 failed: {e}");
         }
@@ -685,10 +690,10 @@ async fn live_smoke_t1492() {
         Ok(resp) => record(
             "live-smoke-t1492",
             &format!("env=paper idx=0 date={date}"),
-            &smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows").unwrap(),
+            &smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line"),
         ),
         Err(e) => {
-            debug_assert!(smoke_result(Err(&e), "rows").is_none());
             eprintln!("SMOKE-FAIL target=live-smoke-t1492 market-data failure (not evidence)");
             panic!("live-smoke-t1492 failed: {e}");
         }
@@ -832,7 +837,13 @@ async fn raw_http_probe() {
         ls_core::config::Environment::resolve_base_url(&config),
         path
     );
-    let client = reqwest::Client::new();
+    // Bound the probe like the SDK client (Inner uses 10s connect / 30s request)
+    // so a slow/unreachable gateway can't hang `make raw-probe` indefinitely.
+    let client = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
+        .build()
+        .expect("probe client builds");
     let result = client
         .post(url)
         .bearer_auth(&token)

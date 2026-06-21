@@ -100,7 +100,7 @@ See `references/templates.md` for worked `excludes` lists per class.
 ## 6. Update the docgen banner test
 
 In `crates/ls-docgen/src/lib.rs`, function
-`reference_covers_seven_implemented_with_banner_and_omits_unimplemented`:
+`reference_covers_implemented_with_banner_and_omits_unimplemented`:
 - remove `<tr>` from the `banner_trs` array,
 - add `<tr>` to the recommended-no-banner `for rec in [...]` loop,
 - update the count comment to match (the `reference.len()` assertion is unchanged

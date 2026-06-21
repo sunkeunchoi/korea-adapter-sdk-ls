@@ -37,15 +37,17 @@ Read `metadata/trs/<tr>.yaml`. Bail early as HELD if:
 - The TR is paper-incompatible, account-state, an order, or realtime/WebSocket
   → `HELD <tr> — out of scope (<reason>)`. This recipe covers read-only,
   paper-compatible REST reads only.
-- The TR has an unresolved structural blocker recorded in the ledger or plan
+- The TR has an unresolved structural blocker recorded in
+  `metadata/PROVISIONALITY-LEDGER.md` or an open `docs/plans/` document for this TR
   (e.g. `t8430`'s array-shape blocker) → `HELD <tr> — blocked: <reason>; needs ce-plan`.
 
 ## 1. Author callable Rust
 
-Author into the owner-class module (`market_session` for non-paginated reads,
-`paginated` for `self_paginated` reads). See `references/author-patterns.md` for
-the per-class skeletons; mirror the closest existing TR (`T1102` non-paginated,
-`T8412` paginated single-page).
+Route by reading `facets.self_paginated` from `metadata/trs/<tr>.yaml`:
+`false` → the `market_session` module (non-paginated reads); `true` → the
+`paginated` module (single-page body-`idx` reads). See
+`references/author-patterns.md` for the per-class skeletons; mirror the closest
+existing TR (`T1102` non-paginated, `T8412`/`T1452` paginated single-page).
 
 - **Request:** an `InBlock` struct + a request wrapper that `#[serde(rename)]`s
   the in-block under the `{tr}InBlock` key, plus a `::new(...)` constructor.

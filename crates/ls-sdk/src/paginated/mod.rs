@@ -1,10 +1,24 @@
-//! Paginated dependency class — `t8412` 주식차트(N분) (N-minute stock chart).
+//! Paginated dependency class — `t8412` 주식차트(N분) and the single-page
+//! body-`idx` rank/screen TRs.
 //!
-//! This is the *paginated* class: SELF-paginated market-data TRs that thread an
-//! LS continuation through `tr_cont`/`tr_cont_key`. `t8412` returns a chart whose
-//! candle rows (`t8412OutBlock1[]`) span more pages than fit one response; the
-//! gateway signals "more rows available" via the `tr_cont`/`tr_cont_key` HTTP
-//! response headers, and the caller walks pages until that header goes empty.
+//! This module hosts two distinct continuation shapes:
+//!
+//! 1. **`t8412` — header-cursor pagination (multi-page).** SELF-paginated
+//!    market-data that threads an LS continuation through the `tr_cont`/
+//!    `tr_cont_key` HTTP headers. `t8412` returns a chart whose candle rows
+//!    (`t8412OutBlock1[]`) span more pages than fit one response; the gateway
+//!    signals "more rows available" via the response headers, and `chart_all`
+//!    walks pages until that header goes empty.
+//! 2. **Body-`idx` rank/screen TRs — single-page only.** `t1452`, `t1403`,
+//!    `t1441`, `t1463`, `t1466`, `t1489`, `t1492` carry a request-BODY `idx`
+//!    continuation cursor, for which `ls-core` has no multi-page machinery. They
+//!    are promoted at single-page scope: `idx` is an ordinary in-block field
+//!    (serialized as a JSON number) and dispatch is ONE `post_paginated` call
+//!    with empty header cursors. See the block comment above their structs for
+//!    the full sub-pattern; multi-page body-`idx` collection is deferred
+//!    follow-up work.
+//!
+//! The rest of this doc describes the `t8412` header-cursor mechanism.
 //!
 //! ## Continuation rides as HTTP headers, never in the body
 //!

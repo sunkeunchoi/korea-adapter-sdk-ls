@@ -558,6 +558,20 @@ fn t8436_empty_result_set_deserializes_as_empty() {
     assert!(empty.outblock.is_empty());
 }
 
+/// Covers R2. A single out-block object (not an array) is tolerated as a
+/// one-element Vec via `de_vec_or_single` (the gateway collapses a one-row
+/// result to a bare object).
+#[test]
+fn t8436_single_out_row_tolerated_as_array() {
+    let single: T8436Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8436OutBlock": { "hname": "단일", "shcode": "000660" }
+    }))
+    .expect("single out-block object must deserialize as a one-element Vec");
+    assert_eq!(single.outblock.len(), 1);
+    assert_eq!(single.outblock[0].shcode, "000660");
+}
+
 /// Compile-time guard: `T8436Response` default envelope is empty.
 #[test]
 fn t8436_response_envelope_default_is_empty() {
@@ -627,6 +641,19 @@ fn t1531_empty_result_set_deserializes_as_empty() {
     .expect("empty result set must deserialize");
     assert_eq!(empty.rsp_cd, "00707");
     assert!(empty.outblock.is_empty());
+}
+
+/// Covers R2. A single `t1531` out-block object is tolerated as a one-element Vec
+/// via `de_vec_or_single`.
+#[test]
+fn t1531_single_out_row_tolerated_as_array() {
+    let single: T1531Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1531OutBlock": { "tmname": "단일", "tmcode": "0001" }
+    }))
+    .expect("single out-block object must deserialize as a one-element Vec");
+    assert_eq!(single.outblock.len(), 1);
+    assert_eq!(single.outblock[0].tmcode, "0001");
 }
 
 // ---------------------------------------------------------------------------
