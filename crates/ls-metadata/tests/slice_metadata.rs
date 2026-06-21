@@ -56,10 +56,22 @@ fn authored_slice_metadata_validates_clean() {
         );
     }
 
-    // t8430 is excluded (blocked upstream, R3) — it must not appear.
+    // t8430 is now tracked-only: the array-shape blocker gates *implementation*
+    // (Item 2), not *tracking* — tracking pulls shape from the committed raw,
+    // which already carries t8430. It must be present in metadata but neither
+    // implemented nor recommended (the not-implemented intent is preserved).
+    let t8430 = report
+        .trs
+        .get("t8430")
+        .expect("t8430 is tracked-only and must be present in the slice metadata");
+    assert!(t8430.support.tracked, "t8430 is tracked");
     assert!(
-        !report.trs.contains_key("t8430"),
-        "t8430 is blocked upstream and must not be in the slice metadata"
+        !t8430.support.implemented,
+        "t8430 is not implemented (array-shape blocker, Item 2)"
+    );
+    assert!(
+        !t8430.support.recommended,
+        "t8430 is not recommended (tracked-only)"
     );
 }
 
