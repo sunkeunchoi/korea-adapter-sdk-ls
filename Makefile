@@ -87,7 +87,9 @@ api-drift-renormalize:
 api-drift-check:
 	cargo run -q -p ls-trackers -- api-drift check
 
-## Report what a real promote would touch (writes nothing).
+## Preview a Baseline Promotion of the latest staged run (writes nothing). Pins
+## the run named by `latest.txt` — run `api-drift-fetch` first; it never live-
+## fetches. Tiered exit mirrors `check`: 0 clean, 1 gated findings, 2 error.
 api-drift-promote-dry-run:
 	cargo run -q -p ls-trackers -- api-drift promote --dry-run
 
