@@ -12,7 +12,11 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use ls_core::{Inner, LsConfig, LsError};
-use ls_sdk::paginated::{T1452Request, T1452Response, T8412OutBlock1, T8412Request, T8412Response};
+use ls_sdk::paginated::{
+    T1403Request, T1403Response, T1441Request, T1441Response, T1452Request, T1452Response,
+    T1463Request, T1463Response, T1466Request, T1466Response, T1489Request, T1489Response,
+    T1492Request, T1492Response, T8412OutBlock1, T8412Request, T8412Response,
+};
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
 use wiremock::matchers::{header, method, path};
@@ -405,4 +409,95 @@ fn t1452_single_or_array_and_empty_pending() {
     .expect("empty result set deserializes");
     assert_eq!(empty.rsp_cd, "00707");
     assert!(empty.outblock1.is_empty(), "empty is the pending case, not a flip");
+}
+
+// ---------------------------------------------------------------------------
+// Remaining single-page paginated TRs (t1403/t1441/t1463/t1466/t1489/t1492).
+// They share t1452's sub-pattern; these compact offline tests guard each TR's
+// per-TR serde(rename) keys (a typo there silently drops the out-rows) and the
+// idx-in-block-as-number request shape.
+// ---------------------------------------------------------------------------
+
+/// A representative ranked-row JSON object (mixed wire types).
+fn rank_row_json() -> serde_json::Value {
+    serde_json::json!({
+        "hname": "삼성전자", "shcode": "005930", "price": 71500,
+        "sign": "2", "change": 800, "diff": "1.13", "volume": "12345678"
+    })
+}
+
+/// Each remaining paginated Response deserializes a one-row single-page body
+/// under its OWN `txxxxOutBlock1` rename key, with the row's fields populated —
+/// guarding against a per-TR rename typo that would silently drop the rows.
+#[test]
+fn remaining_paginated_responses_deserialize_with_correct_rename_keys() {
+    let r = rank_row_json();
+
+    let t1403: T1403Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "t1403OutBlock": { "idx": 10 }, "t1403OutBlock1": [r.clone()]
+    })).expect("t1403 body");
+    assert_eq!(t1403.outblock1.len(), 1);
+    assert_eq!(t1403.outblock1[0].shcode, "005930");
+    assert_eq!(t1403.outblock.idx, "10");
+
+    let t1441: T1441Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "t1441OutBlock": { "idx": 10 }, "t1441OutBlock1": [r.clone()]
+    })).expect("t1441 body");
+    assert_eq!(t1441.outblock1[0].price, "71500");
+
+    let t1463: T1463Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "t1463OutBlock": { "idx": 10 }, "t1463OutBlock1": [r.clone()]
+    })).expect("t1463 body");
+    assert_eq!(t1463.outblock1[0].volume, "12345678");
+
+    let t1466: T1466Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "t1466OutBlock": { "hhmm": "1530", "idx": 10 },
+        "t1466OutBlock1": [r.clone()]
+    })).expect("t1466 body");
+    assert_eq!(t1466.outblock.hhmm, "1530", "t1466 summary carries hhmm");
+    assert_eq!(t1466.outblock1[0].shcode, "005930");
+
+    let t1489: T1489Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "t1489OutBlock": { "idx": 10 }, "t1489OutBlock1": [r.clone()]
+    })).expect("t1489 body");
+    assert_eq!(t1489.outblock1[0].hname, "삼성전자");
+
+    let t1492: T1492Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "t1492OutBlock": { "idx": 10 }, "t1492OutBlock1": [r.clone()]
+    })).expect("t1492 body");
+    assert_eq!(t1492.outblock1[0].shcode, "005930");
+
+    // A single out-row object (not array) is tolerated, and an empty set is the
+    // pending case — spot-checked on t1441.
+    let single: T1441Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "t1441OutBlock": { "idx": 0 }, "t1441OutBlock1": r
+    })).expect("single row");
+    assert_eq!(single.outblock1.len(), 1);
+    let empty: T1492Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t1492OutBlock1": []
+    })).expect("empty");
+    assert!(empty.outblock1.is_empty());
+}
+
+/// Each remaining paginated request serializes its `idx` cursor as a JSON number
+/// INSIDE its in-block, with the header cursors absent from the body.
+#[test]
+fn remaining_paginated_requests_serialize_idx_in_block() {
+    let cases: Vec<(&str, serde_json::Value)> = vec![
+        ("t1403InBlock", serde_json::to_value(T1403Request::new("0", "202401", "202612")).unwrap()),
+        ("t1441InBlock", serde_json::to_value(T1441Request::new("0","1","1","0","0","0","0","0","1")).unwrap()),
+        ("t1463InBlock", serde_json::to_value(T1463Request::new("0","0","0","0","0","0","0","1")).unwrap()),
+        ("t1466InBlock", serde_json::to_value(T1466Request::new("0","1","1","0","0","0","0","0","1")).unwrap()),
+        ("t1489InBlock", serde_json::to_value(T1489Request::new("0","0","000000000000","0","0","0")).unwrap()),
+        ("t1492InBlock", serde_json::to_value(T1492Request::new("0","1","0","0")).unwrap()),
+    ];
+    for (key, value) in cases {
+        let obj = value.as_object().expect("request object");
+        assert_eq!(obj.len(), 1, "{key}: exactly one top-level key");
+        let inblock = &value[key];
+        assert!(inblock["idx"].is_number(), "{key}: idx serializes as a number");
+        assert_eq!(inblock["idx"], 0, "{key}: idx at first-page convention");
+        assert!(value.get("tr_cont").is_none(), "{key}: no tr_cont in body");
+        assert!(value.get("tr_cont_key").is_none(), "{key}: no tr_cont_key in body");
+    }
 }

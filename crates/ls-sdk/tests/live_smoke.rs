@@ -21,7 +21,10 @@ use ls_sdk::account::CSPAQ12200Request;
 use ls_sdk::market_session::{
     T1101Request, T1102Request, T1531Request, T1537Request, T8425Request, T8436Request,
 };
-use ls_sdk::paginated::{T1452Request, T8412Request};
+use ls_sdk::paginated::{
+    T1403Request, T1441Request, T1452Request, T1463Request, T1466Request, T1489Request,
+    T1492Request, T8412Request,
+};
 use ls_sdk::realtime::S3Trade;
 use ls_sdk::LsSdk;
 use tokio::time::timeout;
@@ -536,6 +539,158 @@ async fn live_smoke_t1452() {
             debug_assert!(smoke_result(Err(&e), "rows").is_none());
             eprintln!("SMOKE-FAIL target=live-smoke-t1452 market-data failure (not evidence)");
             panic!("live-smoke-t1452 failed: {e}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// t1403 / t1441 / t1463 / t1466 / t1489 / t1492 — the remaining single-page
+// body-`idx` paginated rank/screen TRs. Same sub-pattern as t1452. Intraday
+// rank screens may return an empty success (00707) outside a session → PENDING.
+// ---------------------------------------------------------------------------
+
+/// `make live-smoke-t1403`: single-page `t1403` newly-listed stocks over a wide
+/// listing-month range (a historical range query, non-empty off-session).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1403`"]
+async fn live_smoke_t1403() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    // Wide listing-month range to maximize hits regardless of session.
+    let req = T1403Request::new("0", "202401", "202612");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.paginated().new_listings(&req).await {
+        Ok(resp) => record(
+            "live-smoke-t1403",
+            &format!("env=paper range=202401-202612 idx=0 date={date}"),
+            &smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows").unwrap(),
+        ),
+        Err(e) => {
+            debug_assert!(smoke_result(Err(&e), "rows").is_none());
+            eprintln!("SMOKE-FAIL target=live-smoke-t1403 market-data failure (not evidence)");
+            panic!("live-smoke-t1403 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1441`: single-page `t1441` top change-rate (up, today, KRX).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1441`"]
+async fn live_smoke_t1441() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T1441Request::new("0", "1", "1", "0", "0", "0", "0", "0", "1");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.paginated().top_change_rate(&req).await {
+        Ok(resp) => record(
+            "live-smoke-t1441",
+            &format!("env=paper idx=0 date={date}"),
+            &smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows").unwrap(),
+        ),
+        Err(e) => {
+            debug_assert!(smoke_result(Err(&e), "rows").is_none());
+            eprintln!("SMOKE-FAIL target=live-smoke-t1441 market-data failure (not evidence)");
+            panic!("live-smoke-t1441 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1463`: single-page `t1463` top trading value (KRX).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1463`"]
+async fn live_smoke_t1463() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T1463Request::new("0", "0", "0", "0", "0", "0", "0", "1");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.paginated().top_value(&req).await {
+        Ok(resp) => record(
+            "live-smoke-t1463",
+            &format!("env=paper idx=0 date={date}"),
+            &smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows").unwrap(),
+        ),
+        Err(e) => {
+            debug_assert!(smoke_result(Err(&e), "rows").is_none());
+            eprintln!("SMOKE-FAIL target=live-smoke-t1463 market-data failure (not evidence)");
+            panic!("live-smoke-t1463 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1466`: single-page `t1466` volume-surge screen (KRX).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1466`"]
+async fn live_smoke_t1466() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T1466Request::new("0", "1", "1", "0", "0", "0", "0", "0", "1");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.paginated().volume_surge(&req).await {
+        Ok(resp) => record(
+            "live-smoke-t1466",
+            &format!("env=paper idx=0 date={date}"),
+            &smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows").unwrap(),
+        ),
+        Err(e) => {
+            debug_assert!(smoke_result(Err(&e), "rows").is_none());
+            eprintln!("SMOKE-FAIL target=live-smoke-t1466 market-data failure (not evidence)");
+            panic!("live-smoke-t1466 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1489`: single-page `t1489` top expected-execution volume.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1489`"]
+async fn live_smoke_t1489() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T1489Request::new("0", "0", "000000000000", "0", "0", "0");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.paginated().top_expected_volume(&req).await {
+        Ok(resp) => record(
+            "live-smoke-t1489",
+            &format!("env=paper idx=0 date={date}"),
+            &smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows").unwrap(),
+        ),
+        Err(e) => {
+            debug_assert!(smoke_result(Err(&e), "rows").is_none());
+            eprintln!("SMOKE-FAIL target=live-smoke-t1489 market-data failure (not evidence)");
+            panic!("live-smoke-t1489 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1492`: single-page `t1492` single-price expected change rate.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1492`"]
+async fn live_smoke_t1492() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T1492Request::new("0", "1", "0", "0");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.paginated().single_price_expected(&req).await {
+        Ok(resp) => record(
+            "live-smoke-t1492",
+            &format!("env=paper idx=0 date={date}"),
+            &smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows").unwrap(),
+        ),
+        Err(e) => {
+            debug_assert!(smoke_result(Err(&e), "rows").is_none());
+            eprintln!("SMOKE-FAIL target=live-smoke-t1492 market-data failure (not evidence)");
+            panic!("live-smoke-t1492 failed: {e}");
         }
     }
 }

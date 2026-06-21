@@ -17,6 +17,12 @@ this map has no harness that exercises it — promotion needs a new smoke first
 | `t1531` | `live-smoke-t1531` | `live_smoke_t1531` | open session; self-sources a theme from `t8425` | paper theme-constituents read (Implemented, not recommended) |
 | `t1537` | `live-smoke-t1537` | `live_smoke_t1537` | open session; self-sources a theme from `t8425` | paper theme per-stock quotes (Implemented, not recommended) |
 | `t1452` | `live-smoke-t1452` | `live_smoke_t1452` | open session; single-page (idx=0) | paper top-volume rank, single page (Implemented, not recommended) |
+| `t1403` | `live-smoke-t1403` | `live_smoke_t1403` | single-page; listing-month range | paper newly-listed stocks, single page (Implemented, not recommended) |
+| `t1441` | `live-smoke-t1441` | `live_smoke_t1441` | open session; single-page | paper top change-rate, single page (Implemented, not recommended) |
+| `t1463` | `live-smoke-t1463` | `live_smoke_t1463` | open session; single-page | paper top trading-value, single page (Implemented, not recommended) |
+| `t1466` | `live-smoke-t1466` | `live_smoke_t1466` | open session; single-page | paper volume-surge, single page (Implemented, not recommended) |
+| `t1489` | `live-smoke-t1489` | `live_smoke_t1489` | open session; single-page (auction/expected — may be empty off-session) | paper expected-execution-volume, single page (Implemented, not recommended) |
+| `t1492` | `live-smoke-t1492` | `live_smoke_t1492` | open session; single-page (single-price/expected — may be empty off-session) | paper single-price expected-change, single page (Implemented, not recommended) |
 
 Notes:
 - `live-smoke` (default) issues the OAuth token *then* a `t1102` quote in one run,

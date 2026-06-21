@@ -835,7 +835,10 @@ mod tests {
         let dependency = render_dependency_docs(&report.trs, &report.index);
 
         // The still-unrecommended implemented TRs each carry the banner.
-        let banner_trs = ["revoke", "t1452", "t1531", "t1537", "t8425", "t8436"];
+        let banner_trs = [
+            "revoke", "t1403", "t1441", "t1452", "t1463", "t1466", "t1489", "t1492", "t1531",
+            "t1537", "t8425", "t8436",
+        ];
         for tr in banner_trs {
             let page = reference
                 .get(Path::new(&format!("docs/reference/{tr}.md")))
@@ -861,12 +864,12 @@ mod tests {
             );
         }
 
-        // index + 12 implemented pages (6 banner [revoke, t1452, t1531, t1537,
-        // t8425, t8436] + token + t1101 + t1102 + t8412 + S3_ + CSPAQ12200).
-        // Promoted TRs stay implemented, so the count only grows as TRs implement.
+        // index + 18 implemented pages (12 banner [revoke + the 11 wave TRs] +
+        // token + t1101 + t1102 + t8412 + S3_ + CSPAQ12200). Promoted TRs stay
+        // implemented, so the count only grows as TRs implement.
         assert_eq!(
             reference.len(),
-            13,
+            19,
             "index + the implemented reference pages"
         );
 
