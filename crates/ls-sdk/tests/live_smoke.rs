@@ -556,6 +556,15 @@ async fn live_smoke_t1452() {
 
 /// `make live-smoke-t1403`: single-page `t1403` newly-listed stocks over a wide
 /// listing-month range (a historical range query, non-empty off-session).
+///
+/// NOT trading-day-gated: despite `facets.date_sensitive: true`, `t1403`'s inputs
+/// are listing MONTHS (`styymm`/`enyymm`, `YYYYMM`), not a trading DAY, so the
+/// `01715` non-trading-day error structurally cannot apply — verified live across
+/// weekday/weekend/future ranges (it never returns `01715`). Unlike `t8412`, this
+/// smoke needs no weekday pin and no `01715` prior-weekday retry. A wide range is
+/// used so past listings keep it non-empty regardless of when it runs; a TR-level
+/// `IGW00201` gateway error is transient throttling (clears on retry / spacing),
+/// classified environmental by the R6 probe, never a TR defect.
 #[tokio::test]
 #[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1403`"]
 async fn live_smoke_t1403() {
@@ -563,7 +572,8 @@ async fn live_smoke_t1403() {
     let token = sdk.standalone().token().await.expect("OAuth token failed");
     assert!(!token.is_empty(), "token must be non-empty");
 
-    // Wide listing-month range to maximize hits regardless of session.
+    // Wide listing-month range so past listings keep it non-empty regardless of
+    // when it runs (no trading-day/01715 concept applies — see fn doc).
     let req = T1403Request::new("0", "202401", "202612");
     let date = Utc::now().format("%Y-%m-%d");
     match sdk.paginated().new_listings(&req).await {
