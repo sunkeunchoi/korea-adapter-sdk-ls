@@ -25,7 +25,6 @@ use crate::fetch::{
 use crate::spec_doc::{
     compare_examples, normalize_example_run, ExampleManifest, ExampleRun, SpecReport,
 };
-use crate::stages::promote_targets;
 use crate::types::{CodeSet, DriftChange, ExampleShape, FetchReport, Manifest, TrShape};
 
 /// The live LS Open API base URL (`api-drift fetch` / default `check`).
@@ -65,6 +64,16 @@ pub enum Command {
     },
     PromoteDryRun {
         staged: Option<PathBuf>,
+    },
+    /// `promote --attest <operator-or-issue>` — the mutating Baseline Promotion
+    /// (R1, R4). Replaces the committed raw with the pinned staged run's raw,
+    /// re-derives the normalized baselines, and appends one promotion-log record.
+    /// `--attest` is the only path that writes; its value is the free-form, non-empty
+    /// attested-by string (KTD6). `--staged DIR` pins an explicit run; otherwise the
+    /// `latest.txt` pointer selects the most recent (R2).
+    Promote {
+        staged: Option<PathBuf>,
+        attest: String,
     },
     /// `renormalize` re-derives the committed normalized layout from the
     /// committed reviewed raw evidence, in place, without a live fetch (KTD-2) —
@@ -204,21 +213,7 @@ fn parse_api_drift(sub: Option<&str>, rest: &[String]) -> Result<Command, String
         Some("check") => Ok(Command::Check {
             staged: parse_staged(rest)?,
         }),
-        Some("promote") => {
-            if !rest.iter().any(|a| a == "--dry-run") {
-                return Err(
-                    "`promote` requires `--dry-run` (mutating promote is out of scope)".to_string(),
-                );
-            }
-            let staged = parse_staged(
-                &rest
-                    .iter()
-                    .filter(|a| *a != "--dry-run")
-                    .cloned()
-                    .collect::<Vec<_>>(),
-            )?;
-            Ok(Command::PromoteDryRun { staged })
-        }
+        Some("promote") => parse_promote(rest),
         Some("renormalize") => {
             if let Some(other) = rest.first() {
                 return Err(format!("unexpected argument `{other}`"));
@@ -227,8 +222,62 @@ fn parse_api_drift(sub: Option<&str>, rest: &[String]) -> Result<Command, String
         }
         Some(other) => Err(format!("unknown api-drift subcommand `{other}`")),
         None => Err(
-            "usage: ls-trackers api-drift <fetch|check|promote --dry-run|renormalize>".to_string(),
+            "usage: ls-trackers api-drift <fetch|check|promote (--dry-run | --attest <operator-or-issue>) [--staged DIR]|renormalize>".to_string(),
         ),
+    }
+}
+
+/// Parse `promote [--dry-run] [--attest <operator-or-issue>] [--staged DIR]`.
+///
+/// `--dry-run` is the non-mutating preview; `--attest <value>` is the only path
+/// that mutates (R4). Invoking promote with **neither** flag is a usage error that
+/// writes nothing (AE6). `--dry-run` takes precedence when both are present, so a
+/// cautious `promote --dry-run --attest X` still only previews. The attest value
+/// must be a non-empty operator/issue string (KTD6); a missing value, or one that
+/// looks like the next flag, is rejected.
+fn parse_promote(rest: &[String]) -> Result<Command, String> {
+    let mut dry_run = false;
+    let mut attest: Option<String> = None;
+    let mut staged: Option<PathBuf> = None;
+    let mut i = 0;
+    while i < rest.len() {
+        match rest[i].as_str() {
+            "--dry-run" => {
+                dry_run = true;
+                i += 1;
+            }
+            "--attest" => {
+                let value = rest.get(i + 1).ok_or_else(|| {
+                    "`--attest` requires an operator-or-issue value".to_string()
+                })?;
+                if value.is_empty() || value.starts_with("--") {
+                    return Err(
+                        "`--attest` requires a non-empty operator-or-issue value".to_string()
+                    );
+                }
+                attest = Some(value.clone());
+                i += 2;
+            }
+            "--staged" => {
+                let dir = rest
+                    .get(i + 1)
+                    .filter(|d| !d.starts_with("--"))
+                    .ok_or_else(|| "`--staged` requires a directory argument".to_string())?;
+                staged = Some(PathBuf::from(dir));
+                i += 2;
+            }
+            other => return Err(format!("unexpected argument `{other}`")),
+        }
+    }
+    if dry_run {
+        Ok(Command::PromoteDryRun { staged })
+    } else if let Some(attest) = attest {
+        Ok(Command::Promote { staged, attest })
+    } else {
+        Err(
+            "`promote` requires `--dry-run` (preview) or `--attest <operator-or-issue>` (mutate); neither was given"
+                .to_string(),
+        )
     }
 }
 
@@ -313,6 +362,38 @@ fn write_json<T: serde::Serialize>(path: &Path, value: &T) -> std::io::Result<()
     let mut bytes = serde_json::to_vec_pretty(value)?;
     bytes.push(b'\n');
     fs::write(path, bytes)
+}
+
+/// The committed append-only promotion log (R14), beside `SEED-ATTESTATION.md`.
+const PROMOTION_LOG_FILE: &str = "promotion-log.jsonl";
+
+/// Append exactly one [`PromotionRecord`](crate::types::PromotionRecord) as a
+/// single JSONL line (R14), preserving every prior record. This is the crate's
+/// **first append-mode writer** — every other write is whole-file [`fs::write`].
+/// The whole record is serialized through `serde_json::to_string`, so any newline
+/// or JSON metacharacter in an operator-supplied field is escaped and cannot
+/// inject a second line. The append is the *last* step of a promote (after the
+/// baseline files are durable, KTD2), so a missing record on an advanced baseline
+/// is a detectable, re-appendable inconsistency rather than a silent loss.
+fn append_promotion_record(
+    paths: &Paths,
+    record: &crate::types::PromotionRecord,
+) -> Result<(), String> {
+    use std::io::Write;
+    let path = paths.baseline_dir.join(PROMOTION_LOG_FILE);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|e| format!("creating {}: {e}", parent.display()))?;
+    }
+    let mut line =
+        serde_json::to_string(record).map_err(|e| format!("serializing promotion record: {e}"))?;
+    line.push('\n');
+    let mut file = fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+        .map_err(|e| format!("opening {}: {e}", path.display()))?;
+    file.write_all(line.as_bytes())
+        .map_err(|e| format!("appending {}: {e}", path.display()))
 }
 
 /// Load a normalized run (code-set + manifest + per-TR shapes) from a staged-run
@@ -631,6 +712,180 @@ fn prune_stale_shapes(baseline_dir: &Path, normalized: &NormalizedRun) -> Result
     Ok(())
 }
 
+/// The outcome of a mutating `api-drift promote`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PromoteOutcome {
+    /// The committed baseline was advanced and one promotion record appended.
+    Promoted {
+        /// Maintained shapes re-derived into the committed baseline.
+        maintained_shapes: usize,
+        /// Whether the promoted run carried gated findings (accepted via attest).
+        gated: bool,
+    },
+    /// The staged run gates and no attestation was given — the mutation was refused
+    /// and nothing was written (R6, AE2). Maps to exit `1`. Unreachable through the
+    /// CLI (parse guarantees a non-empty attest in the `Promote` arm); the
+    /// defensive guard is reached only by a direct call with an empty attest.
+    RefusedGated,
+}
+
+/// Run a mutating `api-drift promote` (R1, R5). Pins the staged run, runs the drift
+/// gate, and — on a clean diff or an attested gated diff — replaces the committed
+/// raw with the staged raw, re-derives the normalized baselines, prunes stale
+/// shapes, stamps `manifest.refreshed`, and appends one promotion record **last**
+/// (KTD2 ordering).
+///
+/// **Derive-then-write:** the re-derivation is computed and validated *before* any
+/// committed file is written, so a derive/validation failure aborts with zero
+/// mutation (exit 2). The multi-file baseline write that follows is per-file
+/// [`fs::write`] (not crash-atomic); a crash mid-write is recovered via the git
+/// working tree, not in-process rollback. `as_of` is an injected clock seam (the
+/// manifest refresh date and the record timestamp; operator passes today, tests
+/// pass a fixed date). Promote is assumed single-operator-serial.
+pub fn promote_committed(
+    paths: &Paths,
+    staged: Option<&Path>,
+    attest: &str,
+    as_of: &str,
+) -> Result<PromoteOutcome, String> {
+    // 1. Pin the staged run and gate against it (facts-outage gate, version guard,
+    //    compare — KTD1). Never a live fetch.
+    let run_dir = resolve_staged_run(paths, staged)?;
+    let report = run_check(paths, Some(&run_dir))?;
+
+    // 2. Attestation is the only mutation go-ahead (R4/R7), and an empty attest
+    //    never writes: on a gated run it is the documented refusal (R6, AE2); on a
+    //    clean run it is a misuse. The CLI parse guarantees a non-empty attest in
+    //    the Promote arm, so both empty-attest paths are reachable only by a direct
+    //    call — but neither is allowed to advance the baseline.
+    if attest.is_empty() {
+        return if report.gates() {
+            Ok(PromoteOutcome::RefusedGated)
+        } else {
+            Err("promote requires a non-empty `--attest <operator-or-issue>` value".to_string())
+        };
+    }
+
+    // 3. Whole-raw hash over the on-disk staged raw bytes, captured at resolve time
+    //    (the value recorded in the log; KTD3/KTD4). The gate reads normalized
+    //    shapes, not the raw, so promote computes this digest itself.
+    let raw_path = run_dir.join(RAW_FILE);
+    let raw_bytes =
+        fs::read(&raw_path).map_err(|e| format!("reading {}: {e}", raw_path.display()))?;
+    let raw_hash = crate::api_drift::whole_raw_hash(&raw_bytes);
+
+    // 4. Derive + validate the re-derivation in memory — no committed write yet.
+    let staged_raw: RawInventory = serde_json::from_slice(&raw_bytes)
+        .map_err(|e| format!("parsing staged raw {}: {e}", raw_path.display()))?;
+    let maintained = maintained_codes(paths)?;
+    // Preserve the committed code-set's provisional stance (KTD-6); bootstrap=true.
+    let provisional = load_normalized(&paths.baseline_dir)
+        .ok()
+        .map(|run| run.code_set.provisional)
+        .unwrap_or(true);
+    let mut normalized = normalize_run(&staged_raw, &maintained, provisional);
+    normalized.manifest.refreshed = as_of.to_string();
+    // Validate: the in-memory re-derivation reproduces the staged run's *persisted*
+    // normalized layout — both the code-set and the shapes the gate evaluated and
+    // the operator reviewed. Comparing the code-set (not just shapes) is what
+    // catches a staged run whose `code-set.json` diverges from its raw (a stale or
+    // hand-edited staged run): the gate decided on the persisted code-set, so
+    // committing a different raw-derived code-set would advance a baseline the
+    // operator never reviewed and record findings that do not match it. A staged
+    // run normalized under a different normalizer version also fails here, because
+    // the current re-derivation's shapes will not match the older projection.
+    // (This is *not* "diff against the old baseline is clean" — that is false by
+    // construction for an attested breaking promote, whose new baseline differs.)
+    let staged_run = load_normalized(&run_dir)
+        .map_err(|e| format!("staged run normalized layout unavailable: {e}"))?;
+    if normalized.code_set != staged_run.code_set || normalized.shapes != staged_run.shapes {
+        return Err(
+            "re-derived code-set/shapes differ from the staged run's reviewed normalized layout — \
+             refusing to promote a baseline that diverges from what the gate evaluated"
+                .to_string(),
+        );
+    }
+
+    // 5. Re-read the pinned raw and confirm it is unchanged since resolve (guards
+    //    an in-process TOCTOU on the pinned file). Mismatch → zero mutation.
+    let raw_bytes_now =
+        fs::read(&raw_path).map_err(|e| format!("re-reading {}: {e}", raw_path.display()))?;
+    if crate::api_drift::whole_raw_hash(&raw_bytes_now) != raw_hash {
+        return Err(
+            "staged raw changed between gating and write — aborting with zero mutation".to_string(),
+        );
+    }
+
+    // 6. Write the committed baseline: raw, then re-derived normalized + prune.
+    //    Per-file writes; not crash-atomic — recovery is git + re-run (KTD2).
+    fs::create_dir_all(paths.baseline_dir.join("raw")).map_err(|e| e.to_string())?;
+    fs::write(paths.baseline_dir.join(RAW_FILE), &raw_bytes_now)
+        .map_err(|e| format!("writing committed raw: {e}"))?;
+    write_normalized(&paths.baseline_dir, &normalized).map_err(|e| e.to_string())?;
+    prune_stale_shapes(&paths.baseline_dir, &normalized)?;
+
+    // 7. Append exactly one promotion record — last, after the baseline is durable.
+    let accepted: Vec<crate::types::AcceptedFinding> = report
+        .findings
+        .iter()
+        .filter(|f| f.gates)
+        .map(|f| crate::types::AcceptedFinding {
+            tr_code: f.tr_code.clone(),
+            kind: change_kind(&f.change).to_string(),
+            severity: f.severity,
+        })
+        .collect();
+    let affected_codes: Vec<String> = promote_affected_codes(&report)
+        .into_iter()
+        .map(|c| c.to_string())
+        .collect();
+    let source_run = match staged {
+        Some(p) => p.display().to_string(),
+        None => run_dir
+            .strip_prefix(&paths.run_root)
+            .map(|r| r.display().to_string())
+            .unwrap_or_else(|_| run_dir.display().to_string()),
+    };
+    let gated = report.gates();
+    let record = crate::types::PromotionRecord {
+        promoted_at: as_of.to_string(),
+        source_run,
+        raw_hash,
+        attested_by: attest.to_string(),
+        accepted_findings: accepted,
+        affected_codes,
+        note: None,
+    };
+    append_promotion_record(paths, &record)?;
+
+    Ok(PromoteOutcome::Promoted {
+        maintained_shapes: normalized.shapes.len(),
+        gated,
+    })
+}
+
+/// The `DriftChange` kind label (e.g. `field_removed`) for the promotion record
+/// (R8/R14) — a structural descriptor, never a payload value. A total match (no
+/// wildcard) so a new `DriftChange` variant is a compile error here rather than
+/// silently writing a wrong label into the durable audit log. The strings mirror
+/// the `#[serde(tag = "kind", rename_all = "snake_case")]` tags on `DriftChange`.
+fn change_kind(change: &DriftChange) -> &'static str {
+    match change {
+        DriftChange::TrAdded => "tr_added",
+        DriftChange::TrRemoved => "tr_removed",
+        DriftChange::FieldAdded { .. } => "field_added",
+        DriftChange::FieldRemoved { .. } => "field_removed",
+        DriftChange::FieldReordered { .. } => "field_reordered",
+        DriftChange::FieldMovedAcrossBlock { .. } => "field_moved_across_block",
+        DriftChange::FieldChanged { .. } => "field_changed",
+        DriftChange::EndpointChanged { .. } => "endpoint_changed",
+        DriftChange::ProtocolChanged { .. } => "protocol_changed",
+        DriftChange::RateLimitChanged { .. } => "rate_limit_changed",
+        DriftChange::DescriptionChanged { .. } => "description_changed",
+        DriftChange::FactsDegraded { .. } => "facts_degraded",
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Specification Document Tracker orchestration (U4)
 // ---------------------------------------------------------------------------
@@ -888,13 +1143,55 @@ fn load_fetch_report(dir: &Path) -> Result<Option<FetchReport>, String> {
     }
 }
 
+/// The portable pointer `fetch` writes (and `promote` now reads) to select the
+/// most recent staged run by default (R2).
+const LATEST_FILE: &str = "latest.txt";
+
+/// Resolve the staged run a promote (or its dry-run) pins and acts on (R2). An
+/// explicit `--staged DIR` wins; otherwise the net-new reader follows the
+/// `latest.txt` pointer (`runs/{name}`) under the run root. Promote **pins** — it
+/// never live-fetches — so a missing/empty pointer or a run lacking its raw
+/// evidence is a hard error, not a silent fall-back to the network. The resolved
+/// directory is handed to [`run_check`] so the gate and the write act on the same
+/// bytes.
+fn resolve_staged_run(paths: &Paths, staged: Option<&Path>) -> Result<PathBuf, String> {
+    let dir = match staged {
+        Some(d) => d.to_path_buf(),
+        None => {
+            let latest = paths.run_root.join(LATEST_FILE);
+            let pointer = fs::read_to_string(&latest).map_err(|e| {
+                format!(
+                    "no staged run selected: reading {}: {e} — run `api-drift fetch` first or pass `--staged DIR`",
+                    latest.display()
+                )
+            })?;
+            let rel = pointer.trim();
+            if rel.is_empty() {
+                return Err(format!(
+                    "{} is empty — no staged run to promote",
+                    latest.display()
+                ));
+            }
+            paths.run_root.join(rel)
+        }
+    };
+    if !dir.join(RAW_FILE).is_file() {
+        return Err(format!(
+            "staged run `{}` has no `{}` — not a complete staged run",
+            dir.display(),
+            RAW_FILE
+        ));
+    }
+    Ok(dir)
+}
+
 /// Write `latest.txt` pointing at the most recent run (a portable relative path).
 fn update_latest(paths: &Paths, run_dir: &Path) -> Result<(), String> {
     let name = run_dir
         .file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_default();
-    let latest = paths.run_root.join("latest.txt");
+    let latest = paths.run_root.join(LATEST_FILE);
     if let Some(parent) = latest.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
@@ -955,14 +1252,57 @@ pub fn dispatch(paths: &Paths, command: Command) -> Exit {
             }
         },
         Command::PromoteDryRun { staged } => {
-            let result = run_check(paths, staged.as_deref());
-            match &result {
-                Ok(report) => {
-                    let affected = promote_affected_codes(report);
-                    let targets = promote_targets(affected.iter().copied());
-                    print_promote(&targets);
-                    // A dry-run reports and writes nothing; it does not gate.
+            // Pin the same run a real promote would (R3) — never a live fetch — and
+            // apply the gate before reporting, so dry-run mirrors `check`/`fetch`.
+            match resolve_staged_run(paths, staged.as_deref()) {
+                Ok(run_dir) => {
+                    let result = run_check(paths, Some(&run_dir));
+                    match &result {
+                        Ok(report) => {
+                            let raw_hash = fs::read(run_dir.join(RAW_FILE))
+                                .ok()
+                                .map(|b| crate::api_drift::whole_raw_hash(&b));
+                            print_promote_dry_run(&run_dir, raw_hash.as_deref(), report);
+                        }
+                        Err(e) => eprintln!("error: {e}"),
+                    }
+                    // Writes nothing, but the exit code follows the gate (R3).
+                    exit_for(&result)
+                }
+                Err(e) => {
+                    eprintln!("error: {e}");
+                    Exit::Error
+                }
+            }
+        }
+        Command::Promote { staged, attest } => {
+            match promote_committed(
+                paths,
+                staged.as_deref(),
+                &attest,
+                &crate::freshness::today().to_string(),
+            ) {
+                Ok(PromoteOutcome::Promoted {
+                    maintained_shapes,
+                    gated,
+                }) => {
+                    println!(
+                        "promoted: committed baseline advanced ({maintained_shapes} maintained \
+                         shape(s){}); 1 promotion record appended.",
+                        if gated {
+                            ", gated findings attested"
+                        } else {
+                            ""
+                        }
+                    );
                     Exit::Ok
+                }
+                Ok(PromoteOutcome::RefusedGated) => {
+                    eprintln!(
+                        "refused: staged run gates on Tracker Findings; pass \
+                         `--attest <operator-or-issue>` to acknowledge and promote"
+                    );
+                    Exit::Gated
                 }
                 Err(e) => {
                     eprintln!("error: {e}");
@@ -1152,16 +1492,36 @@ fn promote_affected_codes(report: &DriftReport) -> BTreeSet<&str> {
         .collect()
 }
 
-fn print_promote(targets: &crate::types::PromoteReport) {
-    println!("promote --dry-run (writes nothing). A real promote would touch:");
-    for f in &targets.baseline_files {
-        println!("  baseline: {f}");
+/// Print the `promote --dry-run` preview (R3): the pinned staged run, its whole-raw
+/// digest, the gated findings a real promote would attest, and the TR codes that
+/// carry drift. Writes nothing; the caller's exit code follows the gate. This
+/// reports what a real (narrowed) promote actually changes — raw + normalized — not
+/// the wider advisory `promote_targets` superset (metadata/docs are human
+/// follow-up, KTD7).
+fn print_promote_dry_run(run_dir: &Path, raw_hash: Option<&str>, report: &DriftReport) {
+    println!(
+        "promote --dry-run (writes nothing). Pinned staged run: {}",
+        run_dir.display()
+    );
+    if let Some(h) = raw_hash {
+        println!("  raw hash: {h}");
     }
-    for f in &targets.metadata_fields {
-        println!("  metadata: {f}");
+    let gated: Vec<&crate::types::DriftFinding> =
+        report.findings.iter().filter(|f| f.gates).collect();
+    if gated.is_empty() {
+        println!("  gated findings: none — a real promote would proceed cleanly under --attest.");
+    } else {
+        println!("  gated findings ({}):", gated.len());
+        for f in &gated {
+            println!("    [{}] {} {:?}", f.severity, f.tr_code, f.change);
+        }
     }
-    for d in &targets.generated_docs {
-        println!("  docs:     {d}");
+    let affected = promote_affected_codes(report);
+    if affected.is_empty() {
+        println!("  TR codes with drift: none");
+    } else {
+        let codes: Vec<&str> = affected.into_iter().collect();
+        println!("  TR codes with drift: {}", codes.join(", "));
     }
 }
 
@@ -1212,6 +1572,52 @@ mod tests {
         assert_eq!(
             parse_args(args(&["api-drift", "renormalize"])).unwrap(),
             Command::Renormalize
+        );
+    }
+
+    /// U1 (R4, AE6): promote parses `--attest <value>` into the mutating variant,
+    /// threads `--staged`, lets `--dry-run` win when both are present, and treats
+    /// "neither flag" / an empty-or-flag-shaped attest value as a usage error.
+    #[test]
+    fn parses_promote_attest_and_rejects_bare_invocation() {
+        assert_eq!(
+            parse_args(args(&["api-drift", "promote", "--attest", "ENG-123"])).unwrap(),
+            Command::Promote {
+                staged: None,
+                attest: "ENG-123".to_string()
+            }
+        );
+        assert_eq!(
+            parse_args(args(&[
+                "api-drift", "promote", "--attest", "ENG-123", "--staged", "/tmp/run"
+            ]))
+            .unwrap(),
+            Command::Promote {
+                staged: Some(PathBuf::from("/tmp/run")),
+                attest: "ENG-123".to_string()
+            }
+        );
+        // --dry-run wins over --attest (cautious preview).
+        assert_eq!(
+            parse_args(args(&["api-drift", "promote", "--dry-run", "--attest", "ENG-1"])).unwrap(),
+            Command::PromoteDryRun { staged: None }
+        );
+        // AE6: neither flag → usage error, no command produced.
+        assert!(
+            parse_args(args(&["api-drift", "promote"])).is_err(),
+            "neither --dry-run nor --attest is a usage error"
+        );
+        // --attest with no value, or a flag-shaped value, is rejected.
+        assert!(parse_args(args(&["api-drift", "promote", "--attest"])).is_err());
+        assert!(
+            parse_args(args(&["api-drift", "promote", "--attest", "--staged", "/x"])).is_err(),
+            "a flag-shaped attest value is rejected"
+        );
+        // --staged must not swallow a following flag (e.g. the --dry-run safety flag).
+        assert!(
+            parse_args(args(&["api-drift", "promote", "--attest", "E", "--staged", "--dry-run"]))
+                .is_err(),
+            "a flag-shaped --staged value is rejected, not swallowed"
         );
     }
 
@@ -2064,5 +2470,444 @@ recommendation:
 
         // A non-recommended / unknown TR is rejected loudly.
         assert!(run_freshness_repin(&paths, "nope", false).is_err());
+    }
+
+    // --- U4: promotion log writer -------------------------------------------
+
+    fn promo_paths(scratch: &Path) -> Paths {
+        Paths {
+            baseline_dir: scratch.to_path_buf(),
+            run_root: scratch.join("runs"),
+            metadata_dir: repo_metadata_dir(),
+            spec_baseline_dir: scratch.join("spec-doc"),
+        }
+    }
+
+    fn sample_record(attested_by: &str) -> crate::types::PromotionRecord {
+        crate::types::PromotionRecord {
+            promoted_at: "2026-06-21".to_string(),
+            source_run: "runs/2026-06-21T00-00-00Z".to_string(),
+            raw_hash: "0123456789abcdef".to_string(),
+            attested_by: attested_by.to_string(),
+            accepted_findings: vec![crate::types::AcceptedFinding {
+                tr_code: "t1102".to_string(),
+                kind: "field_removed".to_string(),
+                severity: crate::types::Severity::Breaking,
+            }],
+            affected_codes: vec!["t1102".to_string()],
+            note: None,
+        }
+    }
+
+    /// U4 (R14): the writer creates the log on first append, preserves prior lines
+    /// on subsequent appends (no accumulation into existing records), every line
+    /// round-trips back into a `PromotionRecord`, and a clean record carries an
+    /// empty accepted-findings list rather than a fabricated entry.
+    #[test]
+    fn promotion_log_appends_one_line_and_preserves_prior() {
+        let scratch = scratch("promo-log");
+        let paths = promo_paths(&scratch);
+        let log = scratch.join(PROMOTION_LOG_FILE);
+
+        append_promotion_record(&paths, &sample_record("ENG-1")).unwrap();
+        let first = fs::read_to_string(&log).unwrap();
+        assert_eq!(first.lines().count(), 1, "first append creates exactly one line");
+
+        append_promotion_record(&paths, &sample_record("ENG-2")).unwrap();
+        let second = fs::read_to_string(&log).unwrap();
+        assert_eq!(second.lines().count(), 2, "second append yields two lines");
+        assert!(
+            second.starts_with(&first),
+            "the first record's bytes are preserved verbatim by the second append"
+        );
+
+        // Every line round-trips into a PromotionRecord (the JSONL contract).
+        for line in second.lines() {
+            let _: crate::types::PromotionRecord =
+                serde_json::from_str(line).expect("each JSONL line round-trips");
+        }
+
+        // A clean promote's record serializes an empty accepted-findings list, not
+        // a fabricated entry.
+        let mut clean = sample_record("ENG-3");
+        clean.accepted_findings.clear();
+        append_promotion_record(&paths, &clean).unwrap();
+        let last: crate::types::PromotionRecord =
+            serde_json::from_str(fs::read_to_string(&log).unwrap().lines().last().unwrap()).unwrap();
+        assert!(last.accepted_findings.is_empty());
+    }
+
+    /// U4 (injection resistance + secret-safety): an `attested_by` value carrying
+    /// an embedded newline and JSON metacharacters serializes as exactly one valid
+    /// JSONL line that round-trips cleanly — serde escaping is the one-line-per-record
+    /// guarantee — and a value that looks like a credential lands only inside the
+    /// escaped `attested_by` field, never as a structural value that could leak
+    /// elsewhere.
+    #[test]
+    fn promotion_log_escapes_metacharacters_into_one_line() {
+        let scratch = scratch("promo-inject");
+        let paths = promo_paths(&scratch);
+        let log = scratch.join(PROMOTION_LOG_FILE);
+
+        let nasty = "ENG-9\n{\"injected\":true}\t\"quoted\"";
+        append_promotion_record(&paths, &sample_record(nasty)).unwrap();
+
+        let text = fs::read_to_string(&log).unwrap();
+        assert_eq!(
+            text.lines().count(),
+            1,
+            "an embedded newline does not split the record into two log lines"
+        );
+        let back: crate::types::PromotionRecord =
+            serde_json::from_str(text.lines().next().unwrap()).unwrap();
+        assert_eq!(back.attested_by, nasty, "the value round-trips exactly");
+    }
+
+    // --- U5 / U6: mutating promote + dry-run --------------------------------
+
+    /// The maintained TR set from the real repo metadata (the keys promote
+    /// re-derives shapes for).
+    fn maintained_set() -> BTreeSet<String> {
+        ls_metadata::validate_dir(&repo_metadata_dir())
+            .unwrap()
+            .trs
+            .keys()
+            .cloned()
+            .collect()
+    }
+
+    /// Write a self-consistent staged run (`raw` + its `normalize_run` projection +
+    /// an ok fetch-report) so promote's re-derivation matches the staged normalized.
+    /// Returns the on-disk staged raw bytes (the bytes a promote should copy).
+    fn write_staged_from_raw(dir: &Path, raw: &RawInventory) -> Vec<u8> {
+        let maintained = maintained_set();
+        let mut normalized = normalize_run(raw, &maintained, true);
+        normalized.manifest.refreshed = "2026-06-21".to_string();
+        let report = FetchReport {
+            ok: true,
+            fetched_count: normalized.code_set.len(),
+            committed_code_set_len: Some(normalized.code_set.len()),
+            facts_degraded_groups: 0,
+            degraded_tr_codes: BTreeSet::new(),
+            property_type_fallback_served: false,
+            failure: None,
+        };
+        write_staged_run(dir, raw, &normalized, &report).unwrap();
+        fs::read(dir.join(RAW_FILE)).unwrap()
+    }
+
+    /// The committed baseline's real raw inventory.
+    fn committed_raw() -> RawInventory {
+        serde_json::from_slice(&fs::read(committed_baseline_dir().join(RAW_FILE)).unwrap()).unwrap()
+    }
+
+    /// A minimal untracked `RawTr` used to inject a new upstream TR (gates).
+    fn new_raw_tr(code: &str) -> crate::fetch::RawTr {
+        crate::fetch::RawTr {
+            code: code.to_string(),
+            name: Some(code.to_string()),
+            is_websocket: false,
+            http_method: Some("POST".to_string()),
+            url: Some(format!("/{code}")),
+            protocol_type: Some("REST".to_string()),
+            rate_limit_per_sec: Some(1),
+            corp_rate_limit_per_sec: None,
+            description: None,
+            properties: vec![],
+            req_example: Value::Null,
+            res_example: Value::Null,
+        }
+    }
+
+    /// Covers AE1 / R1 / R6. A clean staged run + `--attest` advances the committed
+    /// baseline: the gate runs before any write, the committed raw is replaced
+    /// byte-for-byte by the staged raw, the normalized layout is re-derived (with
+    /// `refreshed` stamped) and a stale shape is pruned, and exactly one promotion
+    /// record (no accepted findings) is appended. The post-promote self-diff is
+    /// clean.
+    #[test]
+    fn promote_clean_run_advances_baseline_and_appends_record() {
+        let scratch = scratch("promote-clean");
+        let staged = scratch.join("staged");
+        let raw_bytes = write_staged_from_raw(&staged, &committed_raw());
+
+        let paths = Paths {
+            baseline_dir: scratch.join("baseline"),
+            run_root: scratch.join("runs"),
+            metadata_dir: repo_metadata_dir(),
+            spec_baseline_dir: scratch.join("spec"),
+        };
+        // Seed committed normalized from the staged run (clean self-diff), plus a
+        // sentinel committed raw (different) to prove promote replaces it, and a
+        // ghost shape to prove the prune pass runs.
+        let staged_run = load_normalized(&staged).unwrap();
+        write_normalized(&paths.baseline_dir, &staged_run).unwrap();
+        fs::create_dir_all(paths.baseline_dir.join("raw")).unwrap();
+        fs::write(paths.baseline_dir.join(RAW_FILE), b"{\"sentinel\":true}\n").unwrap();
+        fs::write(
+            paths.baseline_dir.join(TRS_DIR).join("ghost.json"),
+            br#"{"tr_code":"ghost","protocol":"rest","is_websocket":false}"#,
+        )
+        .unwrap();
+
+        // An empty attest on a clean run is a misuse: it errors and writes nothing
+        // (no empty-`attested_by` record can ever be committed, even off the CLI).
+        assert!(promote_committed(&paths, Some(&staged), "", "2026-06-21").is_err());
+        assert!(!paths.baseline_dir.join(PROMOTION_LOG_FILE).exists());
+
+        let outcome = promote_committed(&paths, Some(&staged), "ENG-1", "2026-06-21").unwrap();
+        assert!(
+            matches!(outcome, PromoteOutcome::Promoted { gated: false, maintained_shapes } if maintained_shapes == 8)
+        );
+
+        // Raw replaced byte-for-byte by the staged raw (R1, R9).
+        assert_eq!(fs::read(paths.baseline_dir.join(RAW_FILE)).unwrap(), raw_bytes);
+        // Normalized re-derived with the injected refresh date (KTD8); ghost pruned.
+        let committed = load_normalized(&paths.baseline_dir).unwrap();
+        assert_eq!(committed.manifest.refreshed, "2026-06-21");
+        assert_eq!(committed.shapes.len(), 8);
+        assert!(
+            !paths.baseline_dir.join(TRS_DIR).join("ghost.json").exists(),
+            "a stale shape is pruned by promote (R10)"
+        );
+        // Exactly one promotion record, no accepted findings on a clean promote.
+        let log = fs::read_to_string(paths.baseline_dir.join(PROMOTION_LOG_FILE)).unwrap();
+        assert_eq!(log.lines().count(), 1);
+        let rec: crate::types::PromotionRecord =
+            serde_json::from_str(log.lines().next().unwrap()).unwrap();
+        assert_eq!(rec.attested_by, "ENG-1");
+        assert!(rec.accepted_findings.is_empty());
+        assert_eq!(rec.raw_hash, crate::api_drift::whole_raw_hash(&raw_bytes));
+
+        // Self-diff invariant (clean path): re-checking the staged run is clean.
+        assert!(!run_check(&paths, Some(&staged)).unwrap().gates());
+
+        // No-accumulation: a second identical promote appends a second line and
+        // leaves one raw/manifest, not duplicates.
+        promote_committed(&paths, Some(&staged), "ENG-2", "2026-06-21").unwrap();
+        let log2 = fs::read_to_string(paths.baseline_dir.join(PROMOTION_LOG_FILE)).unwrap();
+        assert_eq!(log2.lines().count(), 2);
+        assert_eq!(fs::read(paths.baseline_dir.join(RAW_FILE)).unwrap(), raw_bytes);
+    }
+
+    /// Covers AE2 / R6. A staged run that gates on a new TR, with no attestation,
+    /// is refused: nothing is written and the committed baseline is byte-identical.
+    #[test]
+    fn promote_gated_without_attest_refuses_and_writes_nothing() {
+        let scratch = scratch("promote-refuse");
+        let paths = Paths {
+            baseline_dir: scratch.join("baseline"),
+            run_root: scratch.join("runs"),
+            metadata_dir: repo_metadata_dir(),
+            spec_baseline_dir: scratch.join("spec"),
+        };
+        write_normalized(&paths.baseline_dir, &empty_run(&["t1102"])).unwrap();
+        // Staged run discovers a new TR → gates.
+        let staged = scratch.join("staged");
+        write_normalized(&staged, &empty_run(&["t1102", "BRANDNEW"])).unwrap();
+        fs::create_dir_all(staged.join("raw")).unwrap();
+        fs::write(
+            staged.join(RAW_FILE),
+            b"{\"source_urls\":[],\"property_types\":{},\"groups\":[]}\n",
+        )
+        .unwrap();
+
+        let manifest_before = fs::read(paths.baseline_dir.join(MANIFEST_FILE)).unwrap();
+        let codeset_before = fs::read(paths.baseline_dir.join(CODE_SET_FILE)).unwrap();
+
+        let outcome = promote_committed(&paths, Some(&staged), "", "2026-06-21").unwrap();
+        assert_eq!(outcome, PromoteOutcome::RefusedGated);
+
+        assert_eq!(
+            fs::read(paths.baseline_dir.join(MANIFEST_FILE)).unwrap(),
+            manifest_before
+        );
+        assert_eq!(
+            fs::read(paths.baseline_dir.join(CODE_SET_FILE)).unwrap(),
+            codeset_before
+        );
+        assert!(
+            !paths.baseline_dir.join(PROMOTION_LOG_FILE).exists(),
+            "no log line is written on a refusal"
+        );
+    }
+
+    /// Covers AE3 / AE4 / R8 / R11 / R12. A gated run (new upstream TR) promoted
+    /// with `--attest` proceeds: the record's accepted-findings names the gated
+    /// TR alongside the attested-by value, the new TR lands in the committed raw +
+    /// code-set but is not admitted to the maintained shapes, and the real metadata
+    /// + evidence files are left byte-identical (promote touches neither).
+    #[test]
+    fn promote_gated_with_attest_proceeds_and_records_accepted_findings() {
+        let scratch = scratch("promote-attest");
+        let staged = scratch.join("staged");
+        let mut raw = committed_raw();
+        raw.groups[0].trs.push(new_raw_tr("BRANDNEW"));
+        let raw_bytes = write_staged_from_raw(&staged, &raw);
+
+        let paths = Paths {
+            baseline_dir: scratch.join("baseline"),
+            run_root: scratch.join("runs"),
+            metadata_dir: repo_metadata_dir(),
+            spec_baseline_dir: scratch.join("spec"),
+        };
+        // Committed baseline = the real raw re-derived (no BRANDNEW), so the staged
+        // run gates on the new TR.
+        let committed_norm = normalize_run(&committed_raw(), &maintained_set(), true);
+        write_normalized(&paths.baseline_dir, &committed_norm).unwrap();
+
+        // Snapshot real metadata + evidence to prove promote touches neither (R12).
+        let tr_token = repo_metadata_dir().join("trs").join("token.yaml");
+        let ev_token = repo_metadata_dir().join("evidence").join("token.yaml");
+        let tr_before = fs::read(&tr_token).unwrap();
+        let ev_before = fs::read(&ev_token).unwrap();
+
+        let outcome = promote_committed(&paths, Some(&staged), "ops@team", "2026-06-21").unwrap();
+        assert!(matches!(outcome, PromoteOutcome::Promoted { gated: true, .. }));
+
+        // The record names the gated new TR and the attested-by value (R8).
+        let log = fs::read_to_string(paths.baseline_dir.join(PROMOTION_LOG_FILE)).unwrap();
+        let rec: crate::types::PromotionRecord =
+            serde_json::from_str(log.lines().next().unwrap()).unwrap();
+        assert_eq!(rec.attested_by, "ops@team");
+        assert!(
+            rec.accepted_findings.iter().any(|f| f.tr_code == "BRANDNEW"),
+            "the accepted-findings field names the gated new TR: {:?}",
+            rec.accepted_findings
+        );
+        assert_eq!(rec.raw_hash, crate::api_drift::whole_raw_hash(&raw_bytes));
+
+        // AE4: BRANDNEW is in the committed raw + code-set but not a maintained
+        // shape, and still surfaces as a finding on the next check.
+        let committed = load_normalized(&paths.baseline_dir).unwrap();
+        assert!(committed.code_set.contains("BRANDNEW"));
+        assert!(!committed.shapes.contains_key("BRANDNEW"));
+        assert!(fs::read_to_string(paths.baseline_dir.join(RAW_FILE))
+            .unwrap()
+            .contains("BRANDNEW"));
+
+        // R12 / AE5: promote touched no TR metadata or evidence.
+        assert_eq!(fs::read(&tr_token).unwrap(), tr_before, "trs/token.yaml unchanged");
+        assert_eq!(fs::read(&ev_token).unwrap(), ev_before, "evidence/token.yaml unchanged");
+    }
+
+    /// Covers R5. A staged run whose raw is malformed JSON passes the gate (which
+    /// reads normalized, not raw) but fails the in-memory re-derivation, so promote
+    /// aborts with the committed baseline byte-identical and no log line.
+    #[test]
+    fn promote_derive_failure_aborts_with_zero_mutation() {
+        let scratch = scratch("promote-derive-fail");
+        let paths = Paths {
+            baseline_dir: scratch.join("baseline"),
+            run_root: scratch.join("runs"),
+            metadata_dir: repo_metadata_dir(),
+            spec_baseline_dir: scratch.join("spec"),
+        };
+        write_normalized(&paths.baseline_dir, &empty_run(&["t1102"])).unwrap();
+        let manifest_before = fs::read(paths.baseline_dir.join(MANIFEST_FILE)).unwrap();
+
+        // Staged: clean normalized (no gate) but a malformed raw.
+        let staged = scratch.join("staged");
+        write_normalized(&staged, &empty_run(&["t1102"])).unwrap();
+        fs::create_dir_all(staged.join("raw")).unwrap();
+        fs::write(staged.join(RAW_FILE), b"{ not json").unwrap();
+
+        let result = promote_committed(&paths, Some(&staged), "ENG-1", "2026-06-21");
+        assert!(result.is_err(), "a malformed staged raw aborts the promote");
+        assert_eq!(
+            fs::read(paths.baseline_dir.join(MANIFEST_FILE)).unwrap(),
+            manifest_before,
+            "committed baseline is byte-identical after an aborted promote"
+        );
+        assert!(!paths.baseline_dir.join(PROMOTION_LOG_FILE).exists());
+    }
+
+    /// U2 / R2: resolution prefers an explicit `--staged`, falls back to the
+    /// `latest.txt` pointer, and errors loudly with neither (no live-fetch
+    /// fallback).
+    #[test]
+    fn resolve_staged_run_uses_explicit_then_latest_then_errors() {
+        let scratch = scratch("resolve-staged");
+        let paths = Paths {
+            baseline_dir: scratch.join("baseline"),
+            run_root: scratch.join("runs"),
+            metadata_dir: repo_metadata_dir(),
+            spec_baseline_dir: scratch.join("spec"),
+        };
+        // No latest.txt and no --staged → error.
+        assert!(resolve_staged_run(&paths, None).is_err());
+
+        // Stage a run and point latest.txt at it (relative `runs/{name}`).
+        let run = paths.run_root.join("runs").join("2026-06-21T00-00-00Z");
+        write_staged_from_raw(&run, &committed_raw());
+        update_latest(&paths, &run).unwrap();
+        let resolved = resolve_staged_run(&paths, None).unwrap();
+        assert_eq!(resolved, run, "default resolution follows latest.txt");
+
+        // Explicit --staged overrides.
+        let explicit = scratch.join("explicit");
+        write_staged_from_raw(&explicit, &committed_raw());
+        assert_eq!(
+            resolve_staged_run(&paths, Some(&explicit)).unwrap(),
+            explicit
+        );
+
+        // A --staged path without a raw is rejected.
+        let bare = scratch.join("bare");
+        fs::create_dir_all(&bare).unwrap();
+        assert!(resolve_staged_run(&paths, Some(&bare)).is_err());
+    }
+
+    /// U6 / F4 / R3: `promote --dry-run` pins the run, reports without writing, and
+    /// maps the exit to the gate — exit 0 on a clean run (default-selected via
+    /// latest.txt), exit 1 on a gated run.
+    #[test]
+    fn promote_dry_run_reports_and_follows_the_gate_without_writing() {
+        let scratch = scratch("promote-dry");
+        let paths = Paths {
+            baseline_dir: scratch.join("baseline"),
+            run_root: scratch.join("runs"),
+            metadata_dir: repo_metadata_dir(),
+            spec_baseline_dir: scratch.join("spec"),
+        };
+        // Clean staged run (default-selected via latest.txt); committed seeded to
+        // match so the diff is clean.
+        let run = paths.run_root.join("runs").join("2026-06-21T00-00-00Z");
+        write_staged_from_raw(&run, &committed_raw());
+        update_latest(&paths, &run).unwrap();
+        write_normalized(&paths.baseline_dir, &load_normalized(&run).unwrap()).unwrap();
+        let baseline_before = fs::read(paths.baseline_dir.join(MANIFEST_FILE)).unwrap();
+
+        assert_eq!(
+            dispatch(&paths, Command::PromoteDryRun { staged: None }),
+            Exit::Ok,
+            "clean dry-run via latest.txt exits 0"
+        );
+        assert_eq!(
+            fs::read(paths.baseline_dir.join(MANIFEST_FILE)).unwrap(),
+            baseline_before,
+            "dry-run writes nothing"
+        );
+        assert!(!paths.baseline_dir.join(PROMOTION_LOG_FILE).exists());
+
+        // Gated staged run → exit 1, still writes nothing.
+        let gated = scratch.join("gated");
+        let mut raw = committed_raw();
+        raw.groups[0].trs.push(new_raw_tr("BRANDNEW"));
+        write_staged_from_raw(&gated, &raw);
+        assert_eq!(
+            dispatch(
+                &paths,
+                Command::PromoteDryRun {
+                    staged: Some(gated)
+                }
+            ),
+            Exit::Gated,
+            "gated dry-run exits 1"
+        );
+        assert_eq!(
+            fs::read(paths.baseline_dir.join(MANIFEST_FILE)).unwrap(),
+            baseline_before
+        );
     }
 }

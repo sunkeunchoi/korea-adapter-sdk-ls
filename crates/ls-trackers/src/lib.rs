@@ -59,8 +59,8 @@ pub use spec_doc::{
 };
 pub use stages::{classify, diff, normalize, promote, FetchNotImplemented};
 pub use types::{
-    gates_for, ArtifactKind, ArtifactRef, BlockField, Change, CodeSet, CoverageSummary, Direction,
-    DriftChange, DriftFinding, ExampleFacet, ExampleShape, FetchReport, FieldShape, Manifest,
-    NormalizedArtifact, PromoteReport, Protocol, Severity, ShapePathChange, SpecChange, SpecFinding,
-    StagedSnapshot, SupportState, TrShape, TrackerFinding,
+    gates_for, AcceptedFinding, ArtifactKind, ArtifactRef, BlockField, Change, CodeSet,
+    CoverageSummary, Direction, DriftChange, DriftFinding, ExampleFacet, ExampleShape, FetchReport,
+    FieldShape, Manifest, NormalizedArtifact, PromoteReport, PromotionRecord, Protocol, Severity,
+    ShapePathChange, SpecChange, SpecFinding, StagedSnapshot, SupportState, TrShape, TrackerFinding,
 };

@@ -1006,14 +1006,32 @@ fn coverage_summary(staged: &CodeSet, trs: &BTreeMap<String, TrMetadata>) -> Cov
 /// hash needs. A collision would at worst miss an informational description
 /// change — never a gating finding.
 fn fnv1a_hex(s: &str) -> String {
+    fnv1a_hex_bytes(s.as_bytes())
+}
+
+/// FNV-1a 64-bit over raw bytes (the byte-level core of [`fnv1a_hex`]), shared by
+/// the whole-raw digest below so both use the one deterministic-hash convention.
+pub(crate) fn fnv1a_hex_bytes(bytes: &[u8]) -> String {
     const OFFSET: u64 = 0xcbf29ce484222325;
     const PRIME: u64 = 0x100000001b3;
     let mut hash = OFFSET;
-    for byte in s.as_bytes() {
+    for byte in bytes {
         hash ^= *byte as u64;
         hash = hash.wrapping_mul(PRIME);
     }
     format!("{hash:016x}")
+}
+
+/// The whole-raw snapshot digest (R14): FNV-1a-hex over the **on-disk bytes** of a
+/// staged `raw/ls-openapi-full.json`. Hashes file content rather than a
+/// re-serialization of [`RawInventory`] — whose `groups`/`trs` are insertion-ordered
+/// `Vec`s, so re-serializing would be order-sensitive — keeping the digest stable
+/// regardless of in-memory ordering and equal to the bytes a promote writes
+/// (KTD4). Distinct from the per-field `description_hash` and the hand-authored
+/// `maintenance.source_spec_hash`; an audit/integrity digest, not a security
+/// control.
+pub(crate) fn whole_raw_hash(raw_bytes: &[u8]) -> String {
+    fnv1a_hex_bytes(raw_bytes)
 }
 
 #[cfg(test)]
@@ -1393,6 +1411,36 @@ mod tests {
         assert_eq!(fnv1a_hex("hello"), fnv1a_hex("hello"));
         assert_ne!(fnv1a_hex("hello"), fnv1a_hex("hellp"));
         assert_eq!(fnv1a_hex("hello").len(), 16);
+    }
+
+    /// U3 (R14): the whole-raw digest hashes the on-disk file bytes — deterministic,
+    /// sensitive to a single byte, and taken from content (not a struct
+    /// re-serialization), so a reordered in-memory `RawInventory` that serializes
+    /// the same bytes still hashes the same. It is also distinct from a per-field
+    /// `description_hash`, documenting that the two hash kinds never collide by
+    /// construction of their inputs.
+    #[test]
+    fn whole_raw_hash_is_content_stable_and_distinct() {
+        let bytes = br#"{"source_urls":[],"property_types":{},"groups":[]}"#;
+        // Deterministic over the same bytes.
+        assert_eq!(whole_raw_hash(bytes), whole_raw_hash(bytes));
+        assert_eq!(whole_raw_hash(bytes).len(), 16);
+
+        // Sensitive to a one-byte change.
+        let mutated = br#"{"source_urls":[],"property_types":{},"groups":[ ]}"#;
+        assert_ne!(whole_raw_hash(bytes), whole_raw_hash(mutated));
+
+        // Content-stable: the hash is over the literal bytes handed in, so two
+        // byte-identical files hash identically regardless of how an in-memory
+        // `RawInventory` would have ordered its `Vec`s on re-serialization.
+        let same_content = br#"{"source_urls":[],"property_types":{},"groups":[]}"#;
+        assert_eq!(whole_raw_hash(bytes), whole_raw_hash(same_content));
+
+        // Distinct from a per-field description hash for the same logical TR — the
+        // two digests have different inputs (whole file vs. one normalized
+        // description), so conflating them is impossible.
+        let desc = hash_description(Some("groups")).unwrap();
+        assert_ne!(whole_raw_hash(bytes), desc);
     }
 
     /// The normalized run serializes deterministically (sorted shapes map).

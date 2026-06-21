@@ -179,6 +179,49 @@ pub struct PromoteReport {
     pub generated_docs: Vec<String>,
 }
 
+/// One accepted gated finding recorded in a [`PromotionRecord`] (R8, R14): the
+/// affected TR code, the finding-kind label (the `DriftChange` serde tag, e.g.
+/// `field_removed`), and its Support-Aware Severity. Structural descriptors only —
+/// never a raw payload value (KTD7).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AcceptedFinding {
+    pub tr_code: String,
+    pub kind: String,
+    pub severity: Severity,
+}
+
+/// One append-only promotion-log record (R14) — the durable trace of a Baseline
+/// Promotion, serialized as a single JSONL line via append-mode I/O. Every field
+/// is a typed value serialized **only** through `serde_json` (never manual string
+/// concatenation), so an operator-supplied `attested_by`/`note` containing a
+/// newline or JSON metacharacter is escaped and cannot inject a spurious log line.
+/// Carries only codes / kind labels / severities, never raw payload values (KTD7).
+/// `SEED-ATTESTATION.md` is a separate, untouched bootstrap narrative (R15).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PromotionRecord {
+    /// Promotion timestamp (the injected `as_of` date; an operator-path clock seam,
+    /// fixed in tests).
+    pub promoted_at: String,
+    /// The promoted staged-run identity — the `runs/{name}` relative pointer, or
+    /// the explicit `--staged` path.
+    pub source_run: String,
+    /// The whole-raw snapshot digest (R14/KTD4), distinct from per-TR hashes.
+    pub raw_hash: String,
+    /// The `--attest <operator-or-issue>` value (free-form, non-empty; KTD6).
+    pub attested_by: String,
+    /// The gated findings the attestation accepted, auto-derived from the drift
+    /// report (R8). Empty on a clean promote.
+    #[serde(default)]
+    pub accepted_findings: Vec<AcceptedFinding>,
+    /// The maintained TR codes whose committed shape this promotion advanced.
+    #[serde(default)]
+    pub affected_codes: Vec<String>,
+    /// Optional free-form operator note (no CLI flag feeds it yet; reserved for
+    /// forward-compat, always serialized through serde when present).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
 // ---------------------------------------------------------------------------
 // API Drift signal model (D1, D2 — the bounded-baseline + support-aware exit
 // contract). These types supersede the PR #2 sample-payload leaf-path model for
