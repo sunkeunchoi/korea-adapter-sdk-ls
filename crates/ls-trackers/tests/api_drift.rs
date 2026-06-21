@@ -103,7 +103,7 @@ fn committed_token_shape_exposes_scope_under_v2() {
     let manifest: Manifest = read_committed("normalized/manifest.json");
     assert_eq!(manifest.normalizer_version, 2, "re-seeded at normalizer v2");
     assert_eq!(manifest.upstream_tr_count, 365);
-    assert_eq!(manifest.maintained_tr_count, 8);
+    assert_eq!(manifest.maintained_tr_count, 44);
 
     let code_set: CodeSet = read_committed("code-set.json");
     assert_eq!(code_set.len(), 365, "full inventory code-set preserved");
@@ -377,7 +377,10 @@ fn committed_baseline_shapes_round_trip_byte_identically() {
         );
         checked += 1;
     }
-    assert!(checked >= 8, "expected at least the 8 committed shapes, saw {checked}");
+    assert!(
+        checked >= 44,
+        "expected at least the 44 committed shapes, saw {checked}"
+    );
 }
 
 /// U3 wire-format guard: the committed `normalized/manifest.json` (now carrying
@@ -390,7 +393,10 @@ fn committed_manifest_round_trips_byte_identically() {
     let original = std::fs::read(&path).expect("committed manifest present");
     let manifest: Manifest =
         serde_json::from_slice(&original).expect("committed manifest deserializes");
-    assert_eq!(manifest.refreshed, "2026-06-20", "R9a refresh date is stamped");
+    assert_eq!(
+        manifest.refreshed, "2026-06-21",
+        "R9a refresh date is stamped"
+    );
     let mut reserialized = serde_json::to_vec_pretty(&manifest).expect("re-serialize");
     reserialized.push(b'\n');
     assert_eq!(

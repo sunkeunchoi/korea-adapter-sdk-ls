@@ -1,0 +1,24 @@
+tr_code: t1640
+name: 프로그램매매종합조회(미니)
+owner_class: standalone
+facets:
+  protocol: rest
+  instrument_domain: stock
+  venue_session: krx_regular
+  date_sensitive: false
+  self_paginated: false
+  account_state: false
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: market_data
+  caller_supplied_identifiers: []
+dependencies:
+  self_continuation_fields: []
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: false
+  recommended: false
+maintenance:
+  source_spec_hash: af7fc34fd7d5
+  last_reviewed: 2026-06-21

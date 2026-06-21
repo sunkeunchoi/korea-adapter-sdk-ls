@@ -670,15 +670,53 @@ mod tests {
         validate_dir(&metadata_root()).expect("authored metadata must validate clean")
     }
 
-    /// The eight tracked TRs in the slice.
-    const TRACKED_TRS: [&str; 8] = [
+    /// The tracked TRs in the slice. The original eight (`token`, `revoke`,
+    /// `t1101`, `t1102`, `t8412`, `CSPAQ12200`, `S3_`, `CSPAT00601`) plus the 36
+    /// read-only stock TRs brought into tracked-only maintenance ownership.
+    const TRACKED_TRS: [&str; 44] = [
         "CSPAQ12200",
         "CSPAT00601",
         "S3_",
         "revoke",
         "t1101",
         "t1102",
+        "t1403",
+        "t1441",
+        "t1452",
+        "t1463",
+        "t1466",
+        "t1481",
+        "t1482",
+        "t1489",
+        "t1492",
+        "t1531",
+        "t1537",
+        "t1601",
+        "t1615",
+        "t1640",
+        "t1662",
+        "t1664",
+        "t1825",
+        "t1826",
+        "t1852",
+        "t1856",
+        "t1859",
+        "t1860",
+        "t1866",
+        "t1958",
+        "t1964",
+        "t1988",
+        "t3102",
+        "t3320",
+        "t3341",
         "t8412",
+        "t8425",
+        "t8430",
+        "t8431",
+        "t8436",
+        "t9905",
+        "t9907",
+        "t9942",
         "token",
     ];
 
@@ -702,7 +740,7 @@ mod tests {
     }
 
     #[test]
-    fn every_tracked_tr_gets_a_page_and_the_index_lists_all_eight() {
+    fn every_tracked_tr_gets_a_page_and_the_index_lists_all_tracked() {
         let report = authored_report();
         let files = render_dependency_docs(&report.trs, &report.index);
 
@@ -715,7 +753,11 @@ mod tests {
                 "missing page for {tr}"
             );
         }
-        assert_eq!(files.len(), TRACKED_TRS.len() + 1, "index + 8 pages");
+        assert_eq!(
+            files.len(),
+            TRACKED_TRS.len() + 1,
+            "index + one page per tracked TR"
+        );
 
         let index = files
             .get(Path::new("docs/tr-dependencies/index.md"))
@@ -810,7 +852,9 @@ mod tests {
         for rec in ["token", "t1101", "t1102", "t8412", "S3_", "CSPAQ12200"] {
             let page = reference
                 .get(Path::new(&format!("docs/reference/{rec}.md")))
-                .unwrap_or_else(|| panic!("{rec} reference page still renders (still implemented)"));
+                .unwrap_or_else(|| {
+                    panic!("{rec} reference page still renders (still implemented)")
+                });
             assert!(
                 !page.contains("Implemented, not yet recommended"),
                 "{rec} is recommended — its reference page must not carry the banner"
@@ -820,7 +864,11 @@ mod tests {
         // index + 7 implemented pages (1 banner [revoke] + token + t1101 + t1102 +
         // t8412 + S3_ + CSPAQ12200). Promoted TRs stay implemented, so the count holds
         // at 8 even as banners drop.
-        assert_eq!(reference.len(), 8, "index + seven implemented reference pages");
+        assert_eq!(
+            reference.len(),
+            8,
+            "index + seven implemented reference pages"
+        );
 
         // The tracked-but-unimplemented order TR is excluded from Reference …
         assert!(!reference.contains_key(Path::new("docs/reference/CSPAT00601.md")));
@@ -866,8 +914,10 @@ mod tests {
     }
 
     /// Build a recommended TR (with a contract block) plus its evidence record.
-    fn recommended_with_evidence() -> (BTreeMap<String, TrMetadata>, BTreeMap<String, EvidenceRecord>)
-    {
+    fn recommended_with_evidence() -> (
+        BTreeMap<String, TrMetadata>,
+        BTreeMap<String, EvidenceRecord>,
+    ) {
         let mut meta = sample_meta("token", true, true);
         meta.recommendation = Some(Recommendation {
             behavior: "Paper OAuth access-token issuance".to_string(),
@@ -978,7 +1028,10 @@ mod tests {
         let (trs, evidence) = recommended_with_evidence();
         let a = render_reference_docs(&trs, &evidence);
         let b = render_reference_docs(&trs, &evidence);
-        assert_eq!(a, b, "identical metadata + evidence yields identical output");
+        assert_eq!(
+            a, b,
+            "identical metadata + evidence yields identical output"
+        );
     }
 
     /// A unique tempdir under the OS temp root (no external crate), mirroring the

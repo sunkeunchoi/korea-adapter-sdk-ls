@@ -1,0 +1,413 @@
+{
+  "tr_code": "t1988",
+  "tr_name": "기초자산리스트조회",
+  "protocol": "rest",
+  "is_websocket": false,
+  "endpoint_path": "/stock/elw",
+  "api_group_id": "3d58c125-8b45-46b4-baf2-6f98d0373131",
+  "source_group_name": "[주식] ELW",
+  "request_blocks": [
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 1,
+      "field_name": "authorization",
+      "korean_name": "접근토큰",
+      "type": "String",
+      "length": 1000,
+      "required": true,
+      "description_hash": "62956eed2a6e506a"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 2,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 3,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 4,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 5,
+      "field_name": "mac_address",
+      "korean_name": "MAC 주소",
+      "type": "String",
+      "length": 12,
+      "required": true,
+      "description_hash": "1d2213655779faf2"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1988InBlock",
+      "field_index": 0,
+      "field_name": "mkt_gb",
+      "korean_name": "시장구분(0:전체1:코스피2:코스닥)",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "cb09238818e69b16"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1988InBlock",
+      "field_index": 1,
+      "field_name": "chk_price",
+      "korean_name": "가격설정(0:전체1:조건설정)",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t1988InBlock",
+      "field_index": 2,
+      "field_name": "from_price",
+      "korean_name": "가격1",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t1988InBlock",
+      "field_index": 3,
+      "field_name": "to_price",
+      "korean_name": "가격2",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t1988InBlock",
+      "field_index": 4,
+      "field_name": "chk_vol",
+      "korean_name": "거래량설정(0:전체1:조건설정)",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t1988InBlock",
+      "field_index": 5,
+      "field_name": "from_vol",
+      "korean_name": "거래량1",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t1988InBlock",
+      "field_index": 6,
+      "field_name": "to_vol",
+      "korean_name": "거래량2",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t1988InBlock",
+      "field_index": 7,
+      "field_name": "chk_rate",
+      "korean_name": "등락율설정(0:전체1:조건설정)",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t1988InBlock",
+      "field_index": 8,
+      "field_name": "from_rate",
+      "korean_name": "등락율1",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t1988InBlock",
+      "field_index": 9,
+      "field_name": "to_rate",
+      "korean_name": "등락율2",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t1988InBlock",
+      "field_index": 10,
+      "field_name": "chk_amt",
+      "korean_name": "거래대금설정(0:전체1:조건설정)",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t1988InBlock",
+      "field_index": 11,
+      "field_name": "from_amt",
+      "korean_name": "거래대금1",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t1988InBlock",
+      "field_index": 12,
+      "field_name": "to_amt",
+      "korean_name": "거래대금2",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t1988InBlock",
+      "field_index": 13,
+      "field_name": "chk_up",
+      "korean_name": "양봉설정(0:전체1:조건설정)",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t1988InBlock",
+      "field_index": 14,
+      "field_name": "chk_down",
+      "korean_name": "음봉설정(0:전체1:조건설정)",
+      "type": "String",
+      "length": 1,
+      "required": true
+    }
+  ],
+  "response_blocks": [
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 1,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 2,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 3,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "response",
+      "block_name": "t1988OutBlock",
+      "field_index": 0,
+      "field_name": "ksp_cnt",
+      "korean_name": "코스피종목건수",
+      "type": "String",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1988OutBlock",
+      "field_index": 1,
+      "field_name": "ksd_cnt",
+      "korean_name": "코스닥종목건수",
+      "type": "String",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1988OutBlock",
+      "field_index": 2,
+      "field_name": "t1988OutBlock1",
+      "korean_name": "t1988OutBlock1\n",
+      "type": "Binary",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1988OutBlock",
+      "field_index": 3,
+      "field_name": "shcode",
+      "korean_name": "단축코드",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1988OutBlock",
+      "field_index": 4,
+      "field_name": "expcode",
+      "korean_name": "표준코드",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1988OutBlock",
+      "field_index": 5,
+      "field_name": "hname",
+      "korean_name": "종목명",
+      "type": "String",
+      "length": 20,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1988OutBlock",
+      "field_index": 6,
+      "field_name": "price",
+      "korean_name": "현재가",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1988OutBlock",
+      "field_index": 7,
+      "field_name": "sign",
+      "korean_name": "부호",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1988OutBlock",
+      "field_index": 8,
+      "field_name": "change",
+      "korean_name": "대비",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1988OutBlock",
+      "field_index": 9,
+      "field_name": "rate",
+      "korean_name": "등락율",
+      "type": "Decimal",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1988OutBlock",
+      "field_index": 10,
+      "field_name": "volume",
+      "korean_name": "누적거래량(주)",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1988OutBlock",
+      "field_index": 11,
+      "field_name": "value",
+      "korean_name": "누적거래대금(백만)",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1988OutBlock",
+      "field_index": 12,
+      "field_name": "mkt_gb",
+      "korean_name": "시장구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1988OutBlock",
+      "field_index": 13,
+      "field_name": "jvolume",
+      "korean_name": "전일동시간대거래량(주)",
+      "type": "String",
+      "length": 12,
+      "required": true
+    }
+  ],
+  "rate_limit_per_sec": 2,
+  "corp_rate_limit_per_sec": 3,
+  "rate_source_group": "3d58c125-8b45-46b4-baf2-6f98d0373131"
+}

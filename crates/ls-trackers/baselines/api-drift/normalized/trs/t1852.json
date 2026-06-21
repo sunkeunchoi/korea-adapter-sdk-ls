@@ -1,0 +1,223 @@
+{
+  "tr_code": "t1852",
+  "tr_name": "파일저장종목 실시간검색",
+  "protocol": "rest",
+  "is_websocket": false,
+  "endpoint_path": "/stock/item-search",
+  "api_group_id": "6b67369a-dc7a-4cc7-8c33-71bb6336b6bf",
+  "source_group_name": "[주식] 종목검색",
+  "request_blocks": [
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 1,
+      "field_name": "authorization",
+      "korean_name": "접근토큰",
+      "type": "String",
+      "length": 1000,
+      "required": true,
+      "description_hash": "62956eed2a6e506a"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 2,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 3,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 4,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 5,
+      "field_name": "mac_address",
+      "korean_name": "MAC 주소",
+      "type": "String",
+      "length": 12,
+      "required": true,
+      "description_hash": "1d2213655779faf2"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1852InBlock",
+      "field_index": 0,
+      "field_name": "flag",
+      "korean_name": "등록구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "8dcd222dae685f29"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1852InBlock",
+      "field_index": 1,
+      "field_name": "sservergb",
+      "korean_name": "서버구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "0517d3c908aac147"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1852InBlock",
+      "field_index": 2,
+      "field_name": "sFileData",
+      "korean_name": "sFileData",
+      "type": "String",
+      "length": 26779,
+      "required": true,
+      "description_hash": "7573525f12fc6d3a"
+    }
+  ],
+  "response_blocks": [
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 1,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 2,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 3,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "response",
+      "block_name": "t1852OutBlock",
+      "field_index": 0,
+      "field_name": "sysfalg",
+      "korean_name": "전략구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "75e4c6c6423eb55d"
+    },
+    {
+      "direction": "response",
+      "block_name": "t1852OutBlock",
+      "field_index": 1,
+      "field_name": "flag",
+      "korean_name": "등록구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "e1a53f74810bebdf"
+    },
+    {
+      "direction": "response",
+      "block_name": "t1852OutBlock",
+      "field_index": 2,
+      "field_name": "sresultflag",
+      "korean_name": "결과값",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "c1566b592cc6d457"
+    },
+    {
+      "direction": "response",
+      "block_name": "t1852OutBlock",
+      "field_index": 3,
+      "field_name": "time",
+      "korean_name": "등록시간",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1852OutBlock",
+      "field_index": 4,
+      "field_name": "alertnum",
+      "korean_name": "신호번호",
+      "type": "String",
+      "length": 11,
+      "required": true,
+      "description_hash": "a3ab0c82c4cd2f5a"
+    },
+    {
+      "direction": "response",
+      "block_name": "t1852OutBlock",
+      "field_index": 5,
+      "field_name": "errmsg",
+      "korean_name": "메시지",
+      "type": "String",
+      "length": 40,
+      "required": true
+    }
+  ],
+  "rate_limit_per_sec": 1,
+  "corp_rate_limit_per_sec": 1,
+  "rate_source_group": "6b67369a-dc7a-4cc7-8c33-71bb6336b6bf"
+}

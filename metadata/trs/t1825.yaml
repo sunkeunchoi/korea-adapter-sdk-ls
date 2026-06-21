@@ -1,0 +1,24 @@
+tr_code: t1825
+name: 종목Q클릭검색(씽큐스마트)
+owner_class: standalone
+facets:
+  protocol: rest
+  instrument_domain: stock
+  venue_session: krx_regular
+  date_sensitive: false
+  self_paginated: false
+  account_state: false
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: market_data
+  caller_supplied_identifiers: [search_cd]
+dependencies:
+  self_continuation_fields: []
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: false
+  recommended: false
+maintenance:
+  source_spec_hash: b66b5ebc0332
+  last_reviewed: 2026-06-21
