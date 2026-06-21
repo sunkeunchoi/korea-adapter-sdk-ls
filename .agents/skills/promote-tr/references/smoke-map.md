@@ -24,7 +24,7 @@ TR marked `ready` is a promote-tr candidate.
 | `t1531` | `live-smoke-t1531` | `live_smoke_t1531` | open session; self-sources a theme from `t8425` | implemented-only | paper theme-constituents read |
 | `t1537` | `live-smoke-t1537` | `live_smoke_t1537` | open session; self-sources a theme from `t8425` | implemented-only | paper theme per-stock quotes |
 | `t1452` | `live-smoke-t1452` | `live_smoke_t1452` | open session; single-page (idx=0) | implemented-only | paper top-volume rank, single page |
-| `t1403` | `live-smoke-t1403` | `live_smoke_t1403` | single-page; listing-month range | implemented-only | paper newly-listed stocks, single page |
+| `t1403` | `live-smoke-t1403` | `live_smoke_t1403` | single-page; listing-MONTH range; NOT trading-day-gated (no `01715`) | implemented-only | paper newly-listed stocks, single page |
 | `t1441` | `live-smoke-t1441` | `live_smoke_t1441` | open session; single-page | implemented-only | paper top change-rate, single page |
 | `t1463` | `live-smoke-t1463` | `live_smoke_t1463` | open session; single-page | implemented-only | paper top trading-value, single page |
 | `t1466` | `live-smoke-t1466` | `live_smoke_t1466` | open session; single-page | implemented-only | paper volume-surge, single page |
@@ -40,6 +40,14 @@ Notes:
   smoke (revoke invalidates the session token). Not a recipe-run.
 - All targets call `paper_guard()` first and require `LS_TRADING_ENV=paper`
   explicitly. They hit the real paper gateway with real credentials from `.env`.
+- `t1403` (신규상장종목조회) is **date-range-filtered, not trading-day-gated**.
+  Its inputs are listing MONTHS (`styymm`/`enyymm`, `YYYYMM`), so the `01715`
+  non-trading-day error cannot apply (no day field) — confirmed live across
+  weekday/weekend/future ranges. Do NOT add `t8412`-style weekday-pin / `01715`
+  retry handling for it. Use a wide month range (the smoke uses `202401-202612`)
+  so past listings keep it non-empty. A transient `IGW00201` gateway error under
+  rapid successive calls is environmental throttling (clears on retry), not a TR
+  defect — classify via the R6 raw-HTTP probe, never flip on it.
 
 ## Discovery query (for the orchestrator)
 
