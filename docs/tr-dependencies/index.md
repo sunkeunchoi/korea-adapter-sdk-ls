@@ -45,7 +45,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t8425` | 전체테마 | `market_session` | implemented | [t8425](./t8425.md) |
 | `t8430` | 주식종목조회 | `standalone` | tracked | [t8430](./t8430.md) |
 | `t8431` | ELW종목조회 | `standalone` | tracked | [t8431](./t8431.md) |
-| `t8436` | 주식종목조회 API용 | `standalone` | tracked | [t8436](./t8436.md) |
+| `t8436` | 주식종목조회 API용 | `market_session` | implemented | [t8436](./t8436.md) |
 | `t9905` | 기초자산리스트조회 | `standalone` | tracked | [t9905](./t9905.md) |
 | `t9907` | 만기월조회 | `standalone` | tracked | [t9907](./t9907.md) |
 | `t9942` | ELW마스터조회API용 | `standalone` | tracked | [t9942](./t9942.md) |

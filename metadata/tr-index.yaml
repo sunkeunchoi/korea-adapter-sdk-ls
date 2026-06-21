@@ -259,7 +259,7 @@ trs:
     venue_session: krx_regular
   t8436:
     file: trs/t8436.yaml
-    owner_class: standalone
+    owner_class: market_session
     protocol: rest
     instrument_domain: stock
     venue_session: krx_regular

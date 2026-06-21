@@ -9,7 +9,7 @@
 use ls_core::{Inner, LsError};
 use ls_sdk::market_session::{
     T1101OutBlock, T1101Request, T1101Response, T1102OutBlock, T1102Request, T1102Response,
-    T8425Request, T8425Response,
+    T8425Request, T8425Response, T8436Request, T8436Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
@@ -27,6 +27,12 @@ const T8425_FIXTURE: &str = include_str!("fixtures/t8425_resp.json");
 
 /// `T8425_POLICY.path` — the mounted endpoint for the all-themes read.
 const T8425_PATH: &str = "/stock/sector";
+
+/// The spec-derived `t8436` stock-list response fixture (`fixtures/t8436_resp.json`).
+const T8436_FIXTURE: &str = include_str!("fixtures/t8436_resp.json");
+
+/// `T8436_POLICY.path` — the mounted endpoint for the stock-master read.
+const T8436_PATH: &str = "/stock/etc";
 
 /// `T1102_POLICY.path` — the mounted endpoint for the quote TR.
 const T1102_PATH: &str = "/stock/market-data";
@@ -462,6 +468,89 @@ fn t8425_empty_result_set_deserializes_as_empty() {
 #[test]
 fn t8425_response_envelope_default_is_empty() {
     let resp = T8425Response::default();
+    assert_eq!(resp.rsp_cd, "");
+    assert!(resp.outblock.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// t8436 — 주식종목조회 (stock master list). market_session, non-paginated, takes
+// a `gubun` market-segment filter; array out-block.
+// ---------------------------------------------------------------------------
+
+/// Covers R5. The `t8436` request serializes to exactly `{"t8436InBlock":{...}}`
+/// with only the `gubun` filter — no continuation fields.
+#[test]
+fn t8436_request_serializes_to_inblock_with_only_gubun() {
+    let req = T8436Request::new("0");
+    let value = serde_json::to_value(&req).expect("serialize t8436 request");
+
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "request must have exactly one top-level key");
+    let inblock = &value["t8436InBlock"];
+    let inblock_obj = inblock.as_object().expect("inblock is an object");
+    assert_eq!(inblock_obj.len(), 1, "t8436InBlock carries only gubun");
+    assert_eq!(inblock["gubun"], "0");
+    assert!(value.get("tr_cont").is_none(), "no tr_cont in the body");
+}
+
+/// Covers R2, R5. The spec-derived fixture deserializes through REAL dispatch:
+/// the stock-master array round-trips with real `hname`/`shcode` values, and
+/// numeric fields arriving as JSON numbers (row 0) or strings (row 1) both parse
+/// via `string_or_number`.
+#[tokio::test]
+async fn stock_list_deserializes_spec_fixture_with_real_values() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(T8436_PATH))
+        .and(header("tr_cd", "t8436"))
+        .and(header("tr_cont", "N"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T8436_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let resp = sdk
+        .market_session()
+        .stock_list(&T8436Request::new("0"))
+        .await
+        .expect("t8436 stock_list should succeed");
+
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock.len(), 2, "both stock rows round-trip");
+    assert_eq!(resp.outblock[0].hname, "삼성전자", "real non-default hname");
+    assert_eq!(resp.outblock[0].shcode, "005930");
+    assert_eq!(
+        resp.outblock[0].uplmtprice, "92900",
+        "uplmtprice coerced from a JSON number"
+    );
+    assert_eq!(
+        resp.outblock[1].uplmtprice, "300000",
+        "uplmtprice parsed from a JSON string"
+    );
+}
+
+/// Covers R2. An empty result set (`00707`, empty array) deserializes and is
+/// recognized as the empty/pending case.
+#[test]
+fn t8436_empty_result_set_deserializes_as_empty() {
+    let empty: T8436Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707",
+        "t8436OutBlock": []
+    }))
+    .expect("empty result set must deserialize");
+    assert_eq!(empty.rsp_cd, "00707");
+    assert!(empty.outblock.is_empty());
+}
+
+/// Compile-time guard: `T8436Response` default envelope is empty.
+#[test]
+fn t8436_response_envelope_default_is_empty() {
+    let resp = T8436Response::default();
     assert_eq!(resp.rsp_cd, "");
     assert!(resp.outblock.is_empty());
 }

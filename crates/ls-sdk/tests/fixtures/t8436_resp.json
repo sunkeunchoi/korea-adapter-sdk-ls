@@ -1,0 +1,26 @@
+{
+  "rsp_cd": "00000",
+  "rsp_msg": "정상처리 되었습니다.",
+  "t8436OutBlock": [
+    {
+      "hname": "삼성전자",
+      "shcode": "005930",
+      "expcode": "KR7005930003",
+      "etfgubun": "0",
+      "uplmtprice": 92900,
+      "dnlmtprice": 50100,
+      "jnilclose": 71500,
+      "gubun": "1"
+    },
+    {
+      "hname": "에코프로비엠",
+      "shcode": "247540",
+      "expcode": "KR7247540008",
+      "etfgubun": "0",
+      "uplmtprice": "300000",
+      "dnlmtprice": "162000",
+      "jnilclose": "231000",
+      "gubun": "2"
+    }
+  ]
+}

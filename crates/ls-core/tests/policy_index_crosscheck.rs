@@ -9,7 +9,7 @@ use std::path::PathBuf;
 
 use ls_core::endpoint_policy::{
     CSPAQ12200_POLICY, REVOKE_POLICY, S3_POLICY, T1101_POLICY, T1102_POLICY, T8412_POLICY,
-    T8425_POLICY, TOKEN_POLICY,
+    T8425_POLICY, T8436_POLICY, TOKEN_POLICY,
 };
 use ls_core::{EndpointPolicy, Protocol, RateLimitCategory};
 use ls_metadata::{validate_dir, Protocol as MetaProtocol, RateBucket};
@@ -50,6 +50,7 @@ fn slice_policies_mirror_metadata_index() {
         T1102_POLICY,
         T8412_POLICY,
         T8425_POLICY,
+        T8436_POLICY,
         CSPAQ12200_POLICY,
         S3_POLICY,
     ];

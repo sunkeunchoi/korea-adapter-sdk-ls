@@ -384,6 +384,93 @@ pub struct T8425Response {
     pub outblock: Vec<T8425OutBlock>,
 }
 
+/// Input block for `t8436` — 주식종목조회 (stock master list).
+///
+/// `gubun` is a market-segment FILTER (구분: `"0"` 전체 / `"1"` 코스피 /
+/// `"2"` 코스닥), not an instrument identifier — the read returns the whole list
+/// for the chosen segment.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8436InBlock {
+    /// Market-segment filter / 구분 (`"0"` all / `"1"` KOSPI / `"2"` KOSDAQ).
+    pub gubun: String,
+}
+
+/// `t8436` request — wraps the input block under the `t8436InBlock` key.
+///
+/// Serializes to `{"t8436InBlock":{"gubun":"0"}}`. `t8436` is not paginated, so
+/// there are no continuation fields in the body; `gubun` is a filter selector.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8436Request {
+    #[serde(rename = "t8436InBlock")]
+    pub inblock: T8436InBlock,
+}
+
+impl T8436Request {
+    /// Build a `t8436` stock-list request for one market segment (`gubun`).
+    pub fn new(gubun: impl Into<String>) -> Self {
+        T8436Request {
+            inblock: T8436InBlock {
+                gubun: gubun.into(),
+            },
+        }
+    }
+}
+
+/// `t8436OutBlock` — one stock-master row.
+///
+/// The `t8436OutBlock` response block is a repeated array (the spec marks the
+/// block `Binary`), so [`T8436Response`] holds a `Vec` tolerated as single-or-
+/// array via [`ls_core::de_vec_or_single`]. A representative, spec-grounded
+/// subset; every field uses [`ls_core::string_or_number`] for wire-type
+/// tolerance and `#[serde(default)]` lets a sparse row deserialize cleanly.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8436OutBlock {
+    /// Korean name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Short code / 단축코드 (6-digit).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Extended code / 확장코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub expcode: String,
+    /// ETF distinction / ETF구분 (`"1"` ETF / `"2"` ETN).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub etfgubun: String,
+    /// Upper limit price / 상한가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub uplmtprice: String,
+    /// Lower limit price / 하한가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dnlmtprice: String,
+    /// Previous close / 전일가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jnilclose: String,
+    /// Market segment / 구분 (`"1"` KOSPI / `"2"` KOSDAQ).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gubun: String,
+}
+
+/// `t8436` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are the LS business-status fields; `outblock` is the
+/// stock-master array under the `t8436OutBlock` key, tolerated as single-or-array
+/// via [`ls_core::de_vec_or_single`]. All `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8436Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t8436OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T8436OutBlock>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -436,6 +523,20 @@ impl MarketSession {
     pub async fn all_themes(&self, req: &T8425Request) -> LsResult<T8425Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T8425_POLICY, req)
+            .await
+    }
+
+    /// Fetch the stock master list (주식종목조회) for one market segment via
+    /// `t8436`.
+    ///
+    /// Dispatches through [`ls_core::Inner::post`] (retry + rate limit on the
+    /// MarketData bucket). `t8436` is not paginated; `gubun` is a market-segment
+    /// filter (`"0"` all / `"1"` KOSPI / `"2"` KOSDAQ), not an instrument
+    /// identifier. A `01900` business code surfaces as
+    /// [`ls_core::LsError::ApiError`] and classifies as paper-incompatible.
+    pub async fn stock_list(&self, req: &T8436Request) -> LsResult<T8436Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8436_POLICY, req)
             .await
     }
 }

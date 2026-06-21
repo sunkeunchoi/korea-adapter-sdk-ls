@@ -18,7 +18,7 @@ use chrono::{Datelike, FixedOffset, NaiveDate, Utc, Weekday};
 use futures::StreamExt;
 use ls_core::{LsConfig, LsError, LsResult};
 use ls_sdk::account::CSPAQ12200Request;
-use ls_sdk::market_session::{T1101Request, T1102Request, T8425Request};
+use ls_sdk::market_session::{T1101Request, T1102Request, T8425Request, T8436Request};
 use ls_sdk::paginated::T8412Request;
 use ls_sdk::realtime::S3Trade;
 use ls_sdk::LsSdk;
@@ -203,16 +203,17 @@ async fn live_smoke_book() {
 // non-paginated, no caller input, reliably non-empty.
 // ---------------------------------------------------------------------------
 
-/// Map a `t8425` outcome to the optional credential-free `LIVE-SMOKE` result
-/// fragment. `Ok((rsp_cd, themes))` → `Some(line)`; any `Err` → `None`.
+/// Map a smoke outcome to the optional credential-free `LIVE-SMOKE` result
+/// fragment. `Ok((rsp_cd, count))` → `Some(line)`; any `Err` → `None`.
 ///
-/// This is the offline-testable seam for the R3a Err-path guarantee: on failure
-/// the function yields `None`, so the smoke fn never calls [`record`] and no
-/// `LIVE-SMOKE` line can be captured from a failed run. The fragment carries only
-/// the business `rsp_cd` and a public structural count — never `rsp_msg`.
-fn t8425_smoke_result(outcome: Result<(String, usize), &LsError>) -> Option<String> {
+/// This is the offline-testable seam for the R3a Err-path guarantee, shared by
+/// every `implement-tr` market_session smoke: on failure it yields `None`, so the
+/// smoke fn never calls [`record`] and no `LIVE-SMOKE` line can be captured from a
+/// failed run. The fragment carries only the business `rsp_cd` and a public
+/// structural count under `count_label` — never `rsp_msg`.
+fn smoke_result(outcome: Result<(String, usize), &LsError>, count_label: &str) -> Option<String> {
     match outcome {
-        Ok((rsp_cd, themes)) => Some(format!("rsp_cd={rsp_cd} themes={themes}")),
+        Ok((rsp_cd, count)) => Some(format!("rsp_cd={rsp_cd} {count_label}={count}")),
         Err(_) => None,
     }
 }
@@ -222,13 +223,13 @@ fn t8425_smoke_result(outcome: Result<(String, usize), &LsError>) -> Option<Stri
 /// Covers R3a: a simulated gateway error yields no `LIVE-SMOKE` line, while the
 /// success path yields a credential-free fragment.
 #[test]
-fn t8425_err_path_emits_no_live_smoke_line() {
+fn smoke_result_err_path_emits_no_live_smoke_line() {
     let err = LsError::Config("simulated gateway error".into());
     assert!(
-        t8425_smoke_result(Err(&err)).is_none(),
+        smoke_result(Err(&err), "themes").is_none(),
         "an Err outcome must not build a LIVE-SMOKE line"
     );
-    let line = t8425_smoke_result(Ok(("00000".into(), 42))).expect("Ok yields a line");
+    let line = smoke_result(Ok(("00000".into(), 42)), "themes").expect("Ok yields a line");
     assert_eq!(line, "rsp_cd=00000 themes=42");
     assert!(!line.contains("rsp_msg"), "result fragment must not carry rsp_msg");
 }
@@ -260,7 +261,7 @@ async fn live_smoke_t8425() {
     let date = Utc::now().format("%Y-%m-%d");
     match sdk.market_session().all_themes(&req).await {
         Ok(resp) => {
-            let line = t8425_smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())))
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "themes")
                 .expect("an Ok outcome yields a result line");
             record(
                 "live-smoke-t8425",
@@ -271,9 +272,53 @@ async fn live_smoke_t8425() {
         Err(e) => {
             // No capturable LIVE-SMOKE line on failure (R3a) — distinct stderr
             // prefix mirrors `live_smoke_account`'s SMOKE-FAIL.
-            debug_assert!(t8425_smoke_result(Err(&e)).is_none());
+            debug_assert!(smoke_result(Err(&e), "themes").is_none());
             eprintln!("SMOKE-FAIL target=live-smoke-t8425 market-data failure (not evidence)");
             panic!("live-smoke-t8425 failed: {e}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// t8436 — 주식종목조회 (stock master list). market_session, non-paginated; takes
+// a `gubun` market-segment filter (not an instrument identifier).
+// ---------------------------------------------------------------------------
+
+/// `make live-smoke-t8436`: paper guard → OAuth token → one `t8436` stock-list
+/// read for `gubun="0"` (전체/all segments).
+///
+/// `stock_list` returning `Ok` with a non-empty `outblock` proves the read is
+/// callable and the row shape round-trips. The recorded line is credential-free
+/// (only `rsp_cd` + a public row count) and self-dated; a failed run emits a
+/// distinct `SMOKE-FAIL` stderr line, never a capturable `LIVE-SMOKE` line.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8436`"]
+async fn live_smoke_t8436() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+
+    let token = sdk
+        .standalone()
+        .token()
+        .await
+        .expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T8436Request::new("0");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().stock_list(&req).await {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "stocks")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t8436",
+                &format!("env=paper gubun=0 date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            debug_assert!(smoke_result(Err(&e), "stocks").is_none());
+            eprintln!("SMOKE-FAIL target=live-smoke-t8436 market-data failure (not evidence)");
+            panic!("live-smoke-t8436 failed: {e}");
         }
     }
 }
