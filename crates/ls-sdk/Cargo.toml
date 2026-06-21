@@ -28,3 +28,6 @@ ls-sdk-test-support = { path = "../ls-sdk-test-support" }
 wiremock.workspace = true
 tokio.workspace = true
 serde_json.workspace = true
+# Used only by the credential-safe raw-HTTP failure-classifier probe in
+# tests/live_smoke.rs (`raw_http_probe`); bypasses the SDK's typed deserialize.
+reqwest.workspace = true

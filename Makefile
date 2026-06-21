@@ -15,7 +15,7 @@
 # Export command-line / make variables (e.g. LS_LIVE_SMOKE_*) to recipe shells.
 export
 
-.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws
+.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws raw-probe
 
 # $(1) = exact test name in crates/ls-sdk/tests/live_smoke.rs
 define run_smoke
@@ -46,6 +46,14 @@ live-smoke-account:
 ## WebSocket smoke: S3_ connect/subscribe/unsubscribe lifecycle (timeboxed).
 live-smoke-ws:
 	$(call run_smoke,live_smoke_ws)
+
+## Failure classifier (implement-tr R6): one credential-safe raw-HTTP POST that
+## bypasses the SDK's typed deserialize. Requires LS_PROBE_TR_CD, LS_PROBE_PATH,
+## and LS_PROBE_BODY. Prints a RAW-PROBE line (never a LIVE-SMOKE evidence line).
+##   make raw-probe LS_PROBE_TR_CD=t8425 LS_PROBE_PATH=/stock/sector \
+##     LS_PROBE_BODY='{"t8425InBlock":{"dummy":""}}'
+raw-probe:
+	$(call run_smoke,raw_http_probe)
 
 # ---------------------------------------------------------------------------
 # Docs generation — ls-docgen projects TR Dependency Docs and SDK Reference

@@ -371,3 +371,89 @@ async fn live_smoke_ws() {
         &row_note,
     );
 }
+
+// ---------------------------------------------------------------------------
+// Failure classifier — credential-safe raw-HTTP probe (implement-tr R6)
+// ---------------------------------------------------------------------------
+
+/// `make raw-probe`: classify a smoke failure as environmental vs TR-defect.
+///
+/// Acquires the OAuth token through the SDK (never a hand-built auth header),
+/// then issues ONE bare `reqwest` POST mirroring `dispatch_once`'s headers —
+/// deliberately BYPASSING the SDK's typed deserialize. If this raw POST returns
+/// a business `rsp_cd` but the typed smoke failed, the failure is a TR defect
+/// (struct shape); if the raw POST also fails, the failure is environmental.
+///
+/// Driven by env so it works for any TR without a per-TR test:
+/// - `LS_PROBE_TR_CD` — the `tr_cd` header (e.g. `t8425`)
+/// - `LS_PROBE_PATH`  — the REST path (e.g. `/stock/sector`)
+/// - `LS_PROBE_BODY`  — the raw JSON request body
+///
+/// The recorded line uses a distinct `RAW-PROBE` prefix — never `LIVE-SMOKE` —
+/// so the classifier output can never be mistaken for Focused Evidence. It is
+/// credential-free by construction: only the HTTP status, the business `rsp_cd`,
+/// and body lengths are printed — never the token, `rsp_msg`, or body content.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials + LS_PROBE_* env; run via `make raw-probe`"]
+async fn raw_http_probe() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let config = LsConfig::from_env().expect("config from env");
+
+    let tr_cd = std::env::var("LS_PROBE_TR_CD").expect("LS_PROBE_TR_CD is required for the probe");
+    let path = std::env::var("LS_PROBE_PATH").expect("LS_PROBE_PATH is required for the probe");
+    let body = std::env::var("LS_PROBE_BODY").expect("LS_PROBE_BODY is required for the probe");
+
+    // Token via the SDK's real OAuth path — not a hand-built auth header (which
+    // would risk the credential leaks R3a guards).
+    let token = match sdk.standalone().token().await {
+        Ok(t) if !t.is_empty() => t,
+        _ => {
+            eprintln!("SMOKE-FAIL target=raw-probe token acquisition failed (not evidence)");
+            panic!("raw-probe could not acquire an OAuth token");
+        }
+    };
+
+    let url = format!(
+        "{}{}",
+        ls_core::config::Environment::resolve_base_url(&config),
+        path
+    );
+    let client = reqwest::Client::new();
+    let result = client
+        .post(url)
+        .bearer_auth(&token)
+        .header("tr_cd", &tr_cd)
+        .header("tr_cont", "N")
+        .header("tr_cont_key", "")
+        .header("content-type", "application/json; charset=utf-8")
+        .body(body.clone())
+        .send()
+        .await;
+
+    match result {
+        Ok(resp) => {
+            let status = resp.status().as_u16();
+            let text = resp.text().await.unwrap_or_default();
+            // Parse ONLY rsp_cd; never surface rsp_msg or the raw body content.
+            let rsp_cd = serde_json::from_str::<serde_json::Value>(&text)
+                .ok()
+                .and_then(|v| v.get("rsp_cd").and_then(|c| c.as_str()).map(String::from))
+                .unwrap_or_default();
+            println!(
+                "RAW-PROBE target=raw-probe inputs=[tr_cd={tr_cd} path={path} body_len={}] \
+                 result=[http={status} rsp_cd={rsp_cd} body_len={}]",
+                body.len(),
+                text.len()
+            );
+        }
+        // A transport failure here is the environmental signal. Emit no
+        // capturable evidence line; the distinct stderr prefix mirrors
+        // `live_smoke_account`'s `SMOKE-FAIL`.
+        Err(_) => {
+            eprintln!(
+                "SMOKE-FAIL target=raw-probe transport failure (environmental, not evidence)"
+            );
+            panic!("raw-probe transport failed — classify as environmental");
+        }
+    }
+}
