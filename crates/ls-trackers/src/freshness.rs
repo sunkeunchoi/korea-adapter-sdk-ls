@@ -293,9 +293,12 @@ fn summarize_one(change: &DriftChange) -> String {
             direction,
             block_name,
             field_name,
-            detail,
+            attributes,
             ..
-        } => format!("{direction} field {block_name}.{field_name} {detail}"),
+        } => format!(
+            "{direction} field {block_name}.{field_name} {}",
+            crate::types::render_attribute_deltas(attributes)
+        ),
         DriftChange::EndpointChanged { from, to } => format!(
             "endpoint {}→{}",
             from.as_deref().unwrap_or("?"),

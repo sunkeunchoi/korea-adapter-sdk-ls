@@ -20,8 +20,9 @@ use serde_json::Value;
 use crate::fetch::RawInventory;
 use crate::stages::{classify, diff, normalize};
 use crate::types::{
-    gates_for, BlockField, CodeSet, CoverageSummary, Direction, DriftChange, DriftFinding,
-    Manifest, Protocol, Severity, StagedSnapshot, SupportState, TrShape, TrackerFinding,
+    gates_for, AttributeDelta, BlockField, CodeSet, CoverageSummary, Direction, DriftChange,
+    DriftFinding, FieldAttribute, Manifest, Protocol, Severity, StagedSnapshot, SupportState,
+    TrShape, TrackerFinding,
 };
 
 /// The normalizer version recorded in the [`Manifest`] (R8). Bump when the
@@ -421,6 +422,95 @@ pub fn facts_outage_decision(
     FactsOutage::None
 }
 
+/// The decision of the type-only promotion gate (U2): whether the
+/// maintained-shape drift in a checked report is admissible for an opt-in
+/// `--type-only` promote (R1–R3).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypeOnlyDecision {
+    /// Every maintained finding is a pure-type `FieldChanged` or a
+    /// `DescriptionChanged` — the clean type-wave refresh the gate exists to admit.
+    Admit,
+    /// At least one maintained finding is inadmissible; the string names the first
+    /// blocker for the operator's refusal message.
+    Block(String),
+}
+
+/// The **single source** of the type-only promotion gate rule (U2, R1–R3): the
+/// maintained-shape drift is admissible for a `--type-only` promote iff every
+/// finding on a maintained TR is either a [`DescriptionChanged`] (benign text
+/// noise, admitted by explicit rule) or a [`FieldChanged`] whose every attribute
+/// delta is a pure type change. Any other [`DriftChange`] kind — or a
+/// `FieldChanged` carrying a length/required component — blocks (R2).
+///
+/// Untracked-TR findings (including the appended [`FactsDegraded`] notice) never
+/// constrain the gate (R1): only `support_state.is_maintained()` findings are
+/// considered. The fallback precondition is **not** re-checked here — it is left
+/// to the upstream facts-outage gate (R4/KTD3), which exit-2s a fallback-served
+/// run with a maintained TR before promote proceeds.
+///
+/// Pure and total: both the [`DriftChange`] kinds and the [`FieldAttribute`] kinds
+/// are matched exhaustively (no wildcard), so a future variant forces a deliberate
+/// admit/block choice here rather than slipping through. Mirrors the single-source
+/// convention of [`gates_for`](crate::gates_for) / [`facts_outage_decision`].
+///
+/// [`DescriptionChanged`]: DriftChange::DescriptionChanged
+/// [`FieldChanged`]: DriftChange::FieldChanged
+/// [`FactsDegraded`]: DriftChange::FactsDegraded
+pub fn type_only_gate(findings: &[DriftFinding]) -> TypeOnlyDecision {
+    for f in findings {
+        // Only maintained-TR drift constrains the gate (R1); untracked drift —
+        // including the synthetic `(facts)` FactsDegraded notice — is ignored.
+        if !f.support_state.is_maintained() {
+            continue;
+        }
+        let blocker = match &f.change {
+            // Benign text noise, admitted by explicit rule (R3/R5). `gates_for`
+            // already returns false for it, so it must be admitted here rather
+            // than skipped by filter omission.
+            DriftChange::DescriptionChanged { .. } => None,
+            // Admitted only when every attribute delta is a type change (R2). The
+            // attribute kinds are matched exhaustively so a future attribute kind
+            // forces a deliberate decision.
+            DriftChange::FieldChanged { attributes, .. } => {
+                let carries_non_type = attributes.iter().any(|d| match d.attribute {
+                    FieldAttribute::Type => false,
+                    FieldAttribute::Length | FieldAttribute::Required => true,
+                });
+                if carries_non_type {
+                    Some(format!(
+                        "maintained TR `{}` has a field change carrying a non-type component \
+                         ({}); only pure-type field changes are admissible",
+                        f.tr_code,
+                        crate::types::render_attribute_deltas(attributes)
+                    ))
+                } else {
+                    None
+                }
+            }
+            // Every other structural kind blocks a type-only promotion (R4). Listed
+            // exhaustively (no wildcard) so a new variant is a compile error here.
+            DriftChange::TrAdded
+            | DriftChange::TrRemoved
+            | DriftChange::FieldAdded { .. }
+            | DriftChange::FieldRemoved { .. }
+            | DriftChange::FieldReordered { .. }
+            | DriftChange::FieldMovedAcrossBlock { .. }
+            | DriftChange::EndpointChanged { .. }
+            | DriftChange::ProtocolChanged { .. }
+            | DriftChange::RateLimitChanged { .. }
+            | DriftChange::FactsDegraded { .. } => Some(format!(
+                "maintained TR `{}` has a `{}` change, which a type-only promotion does not admit",
+                f.tr_code,
+                crate::types::change_kind(&f.change)
+            )),
+        };
+        if let Some(reason) = blocker {
+            return TypeOnlyDecision::Block(reason);
+        }
+    }
+    TypeOnlyDecision::Admit
+}
+
 /// Build the visible, non-gating finding for an untracked-only facts outage
 /// ([`FactsOutage::UntrackedOnly`]). `tr_code` is a whole-inventory marker since
 /// the degradation is not pinned to a single maintained TR.
@@ -726,13 +816,14 @@ fn diff_fields(base: &TrShape, cand: &TrShape, changes: &mut Vec<DriftChange>) {
     // Exact-identity matches → attribute/description changes.
     for (key, bf) in &base_by {
         if let Some(cf) = cand_by.get(key) {
-            if let Some(detail) = attribute_change_detail(bf, cf) {
+            let attributes = field_attribute_deltas(bf, cf);
+            if !attributes.is_empty() {
                 changes.push(DriftChange::FieldChanged {
                     direction: bf.direction,
                     block_name: bf.block_name.clone(),
                     field_index: bf.field_index,
                     field_name: bf.field_name.clone(),
-                    detail,
+                    attributes,
                 });
             } else if bf.description_hash != cf.description_hash || bf.korean_name != cf.korean_name
             {
@@ -788,32 +879,35 @@ fn diff_fields(base: &TrShape, cand: &TrShape, changes: &mut Vec<DriftChange>) {
     }
 }
 
-/// A type / length / required change on an identity-stable field, rendered as a
-/// human-readable detail. `None` when those attributes are unchanged.
-fn attribute_change_detail(base: &BlockField, cand: &BlockField) -> Option<String> {
-    let mut parts = Vec::new();
+/// The type / length / required changes on an identity-stable field, as
+/// structured [`AttributeDelta`]s in the canonical type→length→required order.
+/// Empty when those attributes are unchanged. The structured form is the single
+/// source the gate classifies on; the legacy human-readable detail is its derived
+/// view via [`render_attribute_deltas`] (KTD1).
+fn field_attribute_deltas(base: &BlockField, cand: &BlockField) -> Vec<AttributeDelta> {
+    let mut deltas = Vec::new();
     if base.r#type != cand.r#type {
-        parts.push(format!(
-            "type {}→{}",
-            base.r#type.as_deref().unwrap_or("?"),
-            cand.r#type.as_deref().unwrap_or("?")
-        ));
+        deltas.push(AttributeDelta {
+            attribute: FieldAttribute::Type,
+            from: base.r#type.as_deref().unwrap_or("?").to_string(),
+            to: cand.r#type.as_deref().unwrap_or("?").to_string(),
+        });
     }
     if base.length != cand.length {
-        parts.push(format!(
-            "length {}→{}",
-            opt_u32(base.length),
-            opt_u32(cand.length)
-        ));
+        deltas.push(AttributeDelta {
+            attribute: FieldAttribute::Length,
+            from: opt_u32(base.length),
+            to: opt_u32(cand.length),
+        });
     }
     if base.required != cand.required {
-        parts.push(format!("required {}→{}", base.required, cand.required));
+        deltas.push(AttributeDelta {
+            attribute: FieldAttribute::Required,
+            from: base.required.to_string(),
+            to: cand.required.to_string(),
+        });
     }
-    if parts.is_empty() {
-        None
-    } else {
-        Some(parts.join(", "))
-    }
+    deltas
 }
 
 fn opt_u32(v: Option<u32>) -> String {
@@ -853,13 +947,14 @@ fn reconcile_reorders(
             // otherwise miss exact-identity matching (its index differs); emit
             // the attribute change too so an incompatible change is not
             // understated to a bare reorder.
-            if let Some(detail) = attribute_change_detail(rf, af) {
+            let attributes = field_attribute_deltas(rf, af);
+            if !attributes.is_empty() {
                 changes.push(DriftChange::FieldChanged {
                     direction: af.direction,
                     block_name: af.block_name.clone(),
                     field_index: af.field_index,
                     field_name: af.field_name.clone(),
-                    detail,
+                    attributes,
                 });
             }
         },
@@ -1049,6 +1144,73 @@ mod tests {
             "requireYn": req,
             "description": desc,
         })
+    }
+
+    /// A `BlockField` with the given type / length / required, for exercising
+    /// [`field_attribute_deltas`] directly.
+    fn block_field(ty: Option<&str>, length: Option<u32>, required: bool) -> BlockField {
+        BlockField {
+            direction: Direction::Response,
+            block_name: "b".to_string(),
+            field_index: 0,
+            field_name: "f".to_string(),
+            korean_name: None,
+            r#type: ty.map(str::to_string),
+            length,
+            required,
+            description_hash: None,
+        }
+    }
+
+    /// U1 happy path: a field whose only change is its type yields a single
+    /// type-attribute delta and nothing else, rendering byte-identically to the
+    /// legacy `type X→Y` detail.
+    #[test]
+    fn field_attribute_deltas_marks_type_only() {
+        let deltas = field_attribute_deltas(
+            &block_field(Some("String"), Some(6), true),
+            &block_field(Some("Long"), Some(6), true),
+        );
+        assert_eq!(deltas.len(), 1);
+        assert_eq!(deltas[0].attribute, FieldAttribute::Type);
+        assert_eq!(
+            crate::types::render_attribute_deltas(&deltas),
+            "type String→Long"
+        );
+    }
+
+    /// U1 edge: type and length both change → both attributes, in canonical
+    /// type→length order, rendering `type X→Y, length A→B` unchanged.
+    #[test]
+    fn field_attribute_deltas_marks_type_and_length() {
+        let deltas = field_attribute_deltas(
+            &block_field(Some("String"), Some(4), true),
+            &block_field(Some("Long"), Some(8), true),
+        );
+        assert_eq!(
+            deltas.iter().map(|d| d.attribute).collect::<Vec<_>>(),
+            vec![FieldAttribute::Type, FieldAttribute::Length]
+        );
+        assert_eq!(
+            crate::types::render_attribute_deltas(&deltas),
+            "type String→Long, length 4→8"
+        );
+    }
+
+    /// U1 edge: a required-flag flip with the type unchanged marks `required`
+    /// only — the discriminator the type-only gate (U2) blocks on.
+    #[test]
+    fn field_attribute_deltas_marks_required_only() {
+        let deltas = field_attribute_deltas(
+            &block_field(Some("String"), Some(6), true),
+            &block_field(Some("String"), Some(6), false),
+        );
+        assert_eq!(deltas.len(), 1);
+        assert_eq!(deltas[0].attribute, FieldAttribute::Required);
+        assert_eq!(
+            crate::types::render_attribute_deltas(&deltas),
+            "required true→false"
+        );
     }
 
     fn t8412_raw() -> RawTr {
@@ -1823,12 +1985,250 @@ mod tests {
         assert!(
             report.findings.iter().any(|f| matches!(
                 &f.change,
-                DriftChange::FieldChanged { field_name, detail, .. }
-                    if field_name == "a" && detail.contains("length 4→8")
+                DriftChange::FieldChanged { field_name, attributes, .. }
+                    if field_name == "a"
+                        && crate::types::render_attribute_deltas(attributes).contains("length 4→8")
             )),
             "the attribute change is not swallowed by the reorder: {:?}",
             report.findings
         );
+    }
+
+    // --- U2 type-only promotion gate (pure, single-sourced) ----------------
+
+    fn gate_finding(tr: &str, change: DriftChange, support: SupportState) -> DriftFinding {
+        DriftFinding {
+            tr_code: tr.to_string(),
+            change,
+            // Severity/gates are irrelevant to the type-only gate (it reads
+            // structure, not severity); fixed here to a plausible value.
+            severity: Severity::Maintenance,
+            support_state: support,
+            is_new_tr: false,
+            gates: false,
+            possible_rename: None,
+        }
+    }
+
+    fn type_delta() -> Vec<AttributeDelta> {
+        vec![AttributeDelta {
+            attribute: FieldAttribute::Type,
+            from: "String".into(),
+            to: "Long".into(),
+        }]
+    }
+
+    fn pure_type_change(tr: &str, support: SupportState) -> DriftFinding {
+        gate_finding(
+            tr,
+            DriftChange::FieldChanged {
+                direction: Direction::Response,
+                block_name: "b".into(),
+                field_index: 0,
+                field_name: "f".into(),
+                attributes: type_delta(),
+            },
+            support,
+        )
+    }
+
+    fn description_change(tr: &str, support: SupportState) -> DriftFinding {
+        gate_finding(
+            tr,
+            DriftChange::DescriptionChanged {
+                location: "tr".into(),
+            },
+            support,
+        )
+    }
+
+    /// Happy path: pure-type `FieldChanged` across maintained TRs plus a
+    /// `DescriptionChanged` is admitted (R1, R3).
+    #[test]
+    fn type_only_gate_admits_pure_type_wave_plus_description() {
+        let findings = vec![
+            pure_type_change("t1481", SupportState::Implemented),
+            pure_type_change("t8430", SupportState::Tracked),
+            description_change("t1481", SupportState::Implemented),
+        ];
+        assert_eq!(type_only_gate(&findings), TypeOnlyDecision::Admit);
+    }
+
+    /// Edge: zero maintained drift admits — a clean fetch still resolves
+    /// provisionality even with no field-type drift (origin F4).
+    #[test]
+    fn type_only_gate_admits_empty_drift() {
+        assert_eq!(type_only_gate(&[]), TypeOnlyDecision::Admit);
+    }
+
+    /// Edge: a maintained `DescriptionChanged` alone is admitted by the explicit
+    /// rule, not by filter omission.
+    #[test]
+    fn type_only_gate_admits_maintained_description_alone() {
+        let findings = vec![description_change("t1481", SupportState::Recommended)];
+        assert_eq!(type_only_gate(&findings), TypeOnlyDecision::Admit);
+    }
+
+    /// Edge: an untracked-TR `FieldAdded` co-present with pure-type maintained
+    /// drift is admitted — untracked drift never constrains the gate (R1).
+    #[test]
+    fn type_only_gate_ignores_untracked_structural_drift() {
+        let findings = vec![
+            pure_type_change("t1481", SupportState::Implemented),
+            gate_finding(
+                "UNTRACKED",
+                DriftChange::FieldAdded {
+                    direction: Direction::Request,
+                    block_name: "b".into(),
+                    field_index: 0,
+                    field_name: "new".into(),
+                },
+                SupportState::Untracked,
+            ),
+        ];
+        assert_eq!(type_only_gate(&findings), TypeOnlyDecision::Admit);
+    }
+
+    /// Every non-(type FieldChanged | DescriptionChanged) `DriftChange` kind on a
+    /// maintained TR blocks (R4). Each kind is asserted explicitly so the gate's
+    /// admit/block decision is pinned per variant.
+    #[test]
+    fn type_only_gate_blocks_every_structural_kind_on_maintained_tr() {
+        let dir = Direction::Response;
+        let blocking: Vec<DriftChange> = vec![
+            DriftChange::TrAdded,
+            DriftChange::TrRemoved,
+            DriftChange::FieldAdded {
+                direction: dir,
+                block_name: "b".into(),
+                field_index: 0,
+                field_name: "f".into(),
+            },
+            DriftChange::FieldRemoved {
+                direction: dir,
+                block_name: "b".into(),
+                field_index: 0,
+                field_name: "f".into(),
+            },
+            DriftChange::FieldReordered {
+                direction: dir,
+                block_name: "b".into(),
+                field_name: "f".into(),
+                from_index: 0,
+                to_index: 1,
+            },
+            DriftChange::FieldMovedAcrossBlock {
+                direction: dir,
+                field_name: "f".into(),
+                from_block: "a".into(),
+                to_block: "b".into(),
+            },
+            DriftChange::EndpointChanged {
+                from: Some("/a".into()),
+                to: Some("/b".into()),
+            },
+            DriftChange::ProtocolChanged {
+                from: "rest".into(),
+                to: "websocket".into(),
+            },
+            DriftChange::RateLimitChanged {
+                from: Some(1),
+                to: Some(2),
+            },
+            DriftChange::FactsDegraded {
+                detail: "x".into(),
+            },
+        ];
+        for change in blocking {
+            let label = crate::types::change_kind(&change).to_string();
+            let findings = vec![gate_finding("t1481", change, SupportState::Implemented)];
+            assert!(
+                matches!(type_only_gate(&findings), TypeOnlyDecision::Block(r) if r.contains(&label)),
+                "expected `{label}` on a maintained TR to block"
+            );
+        }
+    }
+
+    /// Block: a `FieldChanged` whose detail is a required-flag change blocks —
+    /// required is not benign noise (AE4).
+    #[test]
+    fn type_only_gate_blocks_required_flag_field_change() {
+        let findings = vec![gate_finding(
+            "t1481",
+            DriftChange::FieldChanged {
+                direction: Direction::Response,
+                block_name: "b".into(),
+                field_index: 0,
+                field_name: "f".into(),
+                attributes: vec![AttributeDelta {
+                    attribute: FieldAttribute::Required,
+                    from: "true".into(),
+                    to: "false".into(),
+                }],
+            },
+            SupportState::Implemented,
+        )];
+        assert!(matches!(
+            type_only_gate(&findings),
+            TypeOnlyDecision::Block(_)
+        ));
+    }
+
+    /// Block: a `FieldChanged` whose detail is a length change blocks — a length
+    /// change is a semantic contract change, not fallback cleanup (AE4).
+    #[test]
+    fn type_only_gate_blocks_length_field_change() {
+        let findings = vec![gate_finding(
+            "t1481",
+            DriftChange::FieldChanged {
+                direction: Direction::Response,
+                block_name: "b".into(),
+                field_index: 0,
+                field_name: "f".into(),
+                attributes: vec![AttributeDelta {
+                    attribute: FieldAttribute::Length,
+                    from: "4".into(),
+                    to: "8".into(),
+                }],
+            },
+            SupportState::Implemented,
+        )];
+        assert!(matches!(
+            type_only_gate(&findings),
+            TypeOnlyDecision::Block(_)
+        ));
+    }
+
+    /// Block: a combined type+required `FieldChanged` blocks — a finding admits
+    /// only when its attribute set is a *pure* type change (R2).
+    #[test]
+    fn type_only_gate_blocks_combined_type_and_required_change() {
+        let findings = vec![gate_finding(
+            "t1481",
+            DriftChange::FieldChanged {
+                direction: Direction::Response,
+                block_name: "b".into(),
+                field_index: 0,
+                field_name: "f".into(),
+                attributes: vec![
+                    AttributeDelta {
+                        attribute: FieldAttribute::Type,
+                        from: "String".into(),
+                        to: "Long".into(),
+                    },
+                    AttributeDelta {
+                        attribute: FieldAttribute::Required,
+                        from: "true".into(),
+                        to: "false".into(),
+                    },
+                ],
+            },
+            SupportState::Implemented,
+        )];
+        assert!(matches!(
+            type_only_gate(&findings),
+            TypeOnlyDecision::Block(r) if r.contains("non-type")
+        ));
     }
 
     // --- U5 facts-outage decision (pure, single-sourced) ------------------

@@ -16,8 +16,8 @@ use std::path::{Path, PathBuf};
 use ls_metadata::validate_dir;
 
 use crate::api_drift::{
-    compare, facts_degraded_finding, facts_outage_decision, normalize_run, DriftReport,
-    FactsOutage, NormalizedRun,
+    compare, facts_degraded_finding, facts_outage_decision, normalize_run, type_only_gate,
+    DriftReport, FactsOutage, NormalizedRun, TypeOnlyDecision,
 };
 use crate::fetch::{
     completeness_gate, FetchClient, GateOutcome, RawInventory, DEFAULT_TRUNCATION_PROPORTION,
@@ -64,6 +64,10 @@ pub enum Command {
     },
     PromoteDryRun {
         staged: Option<PathBuf>,
+        /// Preview the opt-in type-only promotion gate (R1) alongside the drift
+        /// review — reports whether a `--type-only --attest` promote would be
+        /// admitted or blocked, writing nothing.
+        type_only: bool,
     },
     /// `promote --attest <operator-or-issue>` — the mutating Baseline Promotion
     /// (R1, R4). Replaces the committed raw with the pinned staged run's raw,
@@ -74,6 +78,11 @@ pub enum Command {
     Promote {
         staged: Option<PathBuf>,
         attest: String,
+        /// Opt-in type-only promotion gate (R1, R3): refuse with exit 2 (zero
+        /// mutation) unless the maintained-shape drift is a pure field-type wave
+        /// plus `DescriptionChanged`. Independent of `--attest` — attesting cannot
+        /// satisfy it (R3).
+        type_only: bool,
     },
     /// `renormalize` re-derives the committed normalized layout from the
     /// committed reviewed raw evidence, in place, without a live fetch (KTD-2) —
@@ -222,7 +231,7 @@ fn parse_api_drift(sub: Option<&str>, rest: &[String]) -> Result<Command, String
         }
         Some(other) => Err(format!("unknown api-drift subcommand `{other}`")),
         None => Err(
-            "usage: ls-trackers api-drift <fetch|check|promote (--dry-run | --attest <operator-or-issue>) [--staged DIR]|renormalize>".to_string(),
+            "usage: ls-trackers api-drift <fetch|check|promote (--dry-run | --attest <operator-or-issue>) [--type-only] [--staged DIR]|renormalize>".to_string(),
         ),
     }
 }
@@ -239,11 +248,16 @@ fn parse_promote(rest: &[String]) -> Result<Command, String> {
     let mut dry_run = false;
     let mut attest: Option<String> = None;
     let mut staged: Option<PathBuf> = None;
+    let mut type_only = false;
     let mut i = 0;
     while i < rest.len() {
         match rest[i].as_str() {
             "--dry-run" => {
                 dry_run = true;
+                i += 1;
+            }
+            "--type-only" => {
+                type_only = true;
                 i += 1;
             }
             "--attest" => {
@@ -270,9 +284,13 @@ fn parse_promote(rest: &[String]) -> Result<Command, String> {
         }
     }
     if dry_run {
-        Ok(Command::PromoteDryRun { staged })
+        Ok(Command::PromoteDryRun { staged, type_only })
     } else if let Some(attest) = attest {
-        Ok(Command::Promote { staged, attest })
+        Ok(Command::Promote {
+            staged,
+            attest,
+            type_only,
+        })
     } else {
         Err(
             "`promote` requires `--dry-run` (preview) or `--attest <operator-or-issue>` (mutate); neither was given"
@@ -727,6 +745,12 @@ pub enum PromoteOutcome {
     /// CLI (parse guarantees a non-empty attest in the `Promote` arm); the
     /// defensive guard is reached only by a direct call with an empty attest.
     RefusedGated,
+    /// `--type-only` was set and the maintained-shape drift carried a non-(pure-type
+    /// `FieldChanged` | `DescriptionChanged`) change (U3, R1–R3). The mutation was
+    /// refused with **zero mutation** before any write; the string is the gate's
+    /// block reason. Maps to exit `2` (a non-attestable refusal, not `Exit::Gated`),
+    /// independent of `--attest` (R3).
+    RefusedTypeOnly(String),
 }
 
 /// Run a mutating `api-drift promote` (R1, R5). Pins the staged run, runs the drift
@@ -746,12 +770,24 @@ pub fn promote_committed(
     paths: &Paths,
     staged: Option<&Path>,
     attest: &str,
+    type_only: bool,
     as_of: &str,
 ) -> Result<PromoteOutcome, String> {
     // 1. Pin the staged run and gate against it (facts-outage gate, version guard,
     //    compare — KTD1). Never a live fetch.
     let run_dir = resolve_staged_run(paths, staged)?;
     let report = run_check(paths, Some(&run_dir))?;
+
+    // 1b. Opt-in type-only gate (U3, R1–R3): admit only a pure field-type wave
+    //     (+ DescriptionChanged) on maintained TRs. Refuses with zero mutation
+    //     before step 2, independently of --attest (R3 — attesting cannot satisfy
+    //     it). The clean-fetch precondition (R4) is already enforced by run_check's
+    //     facts-outage gate above, so it is not re-checked here.
+    if type_only {
+        if let TypeOnlyDecision::Block(reason) = type_only_gate(&report.findings) {
+            return Ok(PromoteOutcome::RefusedTypeOnly(reason));
+        }
+    }
 
     // 2. Attestation is the only mutation go-ahead (R4/R7), and an empty attest
     //    never writes: on a gated run it is the documented refusal (R6, AE2); on a
@@ -831,7 +867,7 @@ pub fn promote_committed(
         .filter(|f| f.gates)
         .map(|f| crate::types::AcceptedFinding {
             tr_code: f.tr_code.clone(),
-            kind: change_kind(&f.change).to_string(),
+            kind: crate::types::change_kind(&f.change).to_string(),
             severity: f.severity,
         })
         .collect();
@@ -862,28 +898,6 @@ pub fn promote_committed(
         maintained_shapes: normalized.shapes.len(),
         gated,
     })
-}
-
-/// The `DriftChange` kind label (e.g. `field_removed`) for the promotion record
-/// (R8/R14) — a structural descriptor, never a payload value. A total match (no
-/// wildcard) so a new `DriftChange` variant is a compile error here rather than
-/// silently writing a wrong label into the durable audit log. The strings mirror
-/// the `#[serde(tag = "kind", rename_all = "snake_case")]` tags on `DriftChange`.
-fn change_kind(change: &DriftChange) -> &'static str {
-    match change {
-        DriftChange::TrAdded => "tr_added",
-        DriftChange::TrRemoved => "tr_removed",
-        DriftChange::FieldAdded { .. } => "field_added",
-        DriftChange::FieldRemoved { .. } => "field_removed",
-        DriftChange::FieldReordered { .. } => "field_reordered",
-        DriftChange::FieldMovedAcrossBlock { .. } => "field_moved_across_block",
-        DriftChange::FieldChanged { .. } => "field_changed",
-        DriftChange::EndpointChanged { .. } => "endpoint_changed",
-        DriftChange::ProtocolChanged { .. } => "protocol_changed",
-        DriftChange::RateLimitChanged { .. } => "rate_limit_changed",
-        DriftChange::DescriptionChanged { .. } => "description_changed",
-        DriftChange::FactsDegraded { .. } => "facts_degraded",
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1251,7 +1265,7 @@ pub fn dispatch(paths: &Paths, command: Command) -> Exit {
                 Exit::Error
             }
         },
-        Command::PromoteDryRun { staged } => {
+        Command::PromoteDryRun { staged, type_only } => {
             // Pin the same run a real promote would (R3) — never a live fetch — and
             // apply the gate before reporting, so dry-run mirrors `check`/`fetch`.
             match resolve_staged_run(paths, staged.as_deref()) {
@@ -1266,7 +1280,28 @@ pub fn dispatch(paths: &Paths, command: Command) -> Exit {
                         }
                         Err(e) => eprintln!("error: {e}"),
                     }
-                    // Writes nothing, but the exit code follows the gate (R3).
+                    // With --type-only, also preview the type-only gate decision
+                    // (U3): a block would refuse a real promote with exit 2, so the
+                    // dry-run surfaces it as exit 2 too; otherwise the exit follows
+                    // the drift gate (the type wave itself gates → exit 1, the
+                    // operator's signal to pass --attest). Writes nothing either way.
+                    if type_only {
+                        if let Ok(report) = &result {
+                            match type_only_gate(&report.findings) {
+                                TypeOnlyDecision::Admit => {
+                                    println!(
+                                        "type-only gate: ADMIT — maintained drift is a pure \
+                                         field-type wave (+ description changes); a \
+                                         `--type-only --attest` promote would proceed."
+                                    );
+                                }
+                                TypeOnlyDecision::Block(reason) => {
+                                    eprintln!("type-only gate: BLOCKED — {reason}");
+                                    return Exit::Error;
+                                }
+                            }
+                        }
+                    }
                     exit_for(&result)
                 }
                 Err(e) => {
@@ -1275,11 +1310,16 @@ pub fn dispatch(paths: &Paths, command: Command) -> Exit {
                 }
             }
         }
-        Command::Promote { staged, attest } => {
+        Command::Promote {
+            staged,
+            attest,
+            type_only,
+        } => {
             match promote_committed(
                 paths,
                 staged.as_deref(),
                 &attest,
+                type_only,
                 &crate::freshness::today().to_string(),
             ) {
                 Ok(PromoteOutcome::Promoted {
@@ -1303,6 +1343,14 @@ pub fn dispatch(paths: &Paths, command: Command) -> Exit {
                          `--attest <operator-or-issue>` to acknowledge and promote"
                     );
                     Exit::Gated
+                }
+                Ok(PromoteOutcome::RefusedTypeOnly(reason)) => {
+                    eprintln!(
+                        "refused: --type-only promotion blocked ({reason}); the drift is not a \
+                         pure field-type wave — route the non-type drift to a separate \
+                         Maintenance Review Decision (attesting cannot satisfy this gate)"
+                    );
+                    Exit::Error
                 }
                 Err(e) => {
                     eprintln!("error: {e}");
@@ -1567,7 +1615,10 @@ mod tests {
         );
         assert_eq!(
             parse_args(args(&["api-drift", "promote", "--dry-run"])).unwrap(),
-            Command::PromoteDryRun { staged: None }
+            Command::PromoteDryRun {
+                staged: None,
+                type_only: false
+            }
         );
         assert_eq!(
             parse_args(args(&["api-drift", "renormalize"])).unwrap(),
@@ -1584,7 +1635,8 @@ mod tests {
             parse_args(args(&["api-drift", "promote", "--attest", "ENG-123"])).unwrap(),
             Command::Promote {
                 staged: None,
-                attest: "ENG-123".to_string()
+                attest: "ENG-123".to_string(),
+                type_only: false
             }
         );
         assert_eq!(
@@ -1594,13 +1646,17 @@ mod tests {
             .unwrap(),
             Command::Promote {
                 staged: Some(PathBuf::from("/tmp/run")),
-                attest: "ENG-123".to_string()
+                attest: "ENG-123".to_string(),
+                type_only: false
             }
         );
         // --dry-run wins over --attest (cautious preview).
         assert_eq!(
             parse_args(args(&["api-drift", "promote", "--dry-run", "--attest", "ENG-1"])).unwrap(),
-            Command::PromoteDryRun { staged: None }
+            Command::PromoteDryRun {
+                staged: None,
+                type_only: false
+            }
         );
         // AE6: neither flag → usage error, no command produced.
         assert!(
@@ -1618,6 +1674,48 @@ mod tests {
             parse_args(args(&["api-drift", "promote", "--attest", "E", "--staged", "--dry-run"]))
                 .is_err(),
             "a flag-shaped --staged value is rejected, not swallowed"
+        );
+    }
+
+    /// U3 (R1): `--type-only` is a value-less opt-in flag that composes with both
+    /// `--attest` (mutate) and `--dry-run` (preview), and defaults off.
+    #[test]
+    fn parses_promote_type_only_flag() {
+        assert_eq!(
+            parse_args(args(&["api-drift", "promote", "--type-only", "--attest", "ENG-1"])).unwrap(),
+            Command::Promote {
+                staged: None,
+                attest: "ENG-1".to_string(),
+                type_only: true
+            }
+        );
+        assert_eq!(
+            parse_args(args(&["api-drift", "promote", "--type-only", "--dry-run"])).unwrap(),
+            Command::PromoteDryRun {
+                staged: None,
+                type_only: true
+            }
+        );
+        // Flag order is irrelevant; --type-only composes with --staged too.
+        assert_eq!(
+            parse_args(args(&[
+                "api-drift", "promote", "--attest", "ENG-1", "--type-only", "--staged", "/tmp/run"
+            ]))
+            .unwrap(),
+            Command::Promote {
+                staged: Some(PathBuf::from("/tmp/run")),
+                attest: "ENG-1".to_string(),
+                type_only: true
+            }
+        );
+        // Defaults off when absent.
+        assert_eq!(
+            parse_args(args(&["api-drift", "promote", "--attest", "ENG-1"])).unwrap(),
+            Command::Promote {
+                staged: None,
+                attest: "ENG-1".to_string(),
+                type_only: false
+            }
         );
     }
 
@@ -2652,10 +2750,10 @@ recommendation:
 
         // An empty attest on a clean run is a misuse: it errors and writes nothing
         // (no empty-`attested_by` record can ever be committed, even off the CLI).
-        assert!(promote_committed(&paths, Some(&staged), "", "2026-06-21").is_err());
+        assert!(promote_committed(&paths, Some(&staged), "", false, "2026-06-21").is_err());
         assert!(!paths.baseline_dir.join(PROMOTION_LOG_FILE).exists());
 
-        let outcome = promote_committed(&paths, Some(&staged), "ENG-1", "2026-06-21").unwrap();
+        let outcome = promote_committed(&paths, Some(&staged), "ENG-1", false, "2026-06-21").unwrap();
         assert!(
             matches!(outcome, PromoteOutcome::Promoted { gated: false, maintained_shapes } if maintained_shapes == 44)
         );
@@ -2684,7 +2782,7 @@ recommendation:
 
         // No-accumulation: a second identical promote appends a second line and
         // leaves one raw/manifest, not duplicates.
-        promote_committed(&paths, Some(&staged), "ENG-2", "2026-06-21").unwrap();
+        promote_committed(&paths, Some(&staged), "ENG-2", false, "2026-06-21").unwrap();
         let log2 = fs::read_to_string(paths.baseline_dir.join(PROMOTION_LOG_FILE)).unwrap();
         assert_eq!(log2.lines().count(), 2);
         assert_eq!(fs::read(paths.baseline_dir.join(RAW_FILE)).unwrap(), raw_bytes);
@@ -2715,7 +2813,7 @@ recommendation:
         let manifest_before = fs::read(paths.baseline_dir.join(MANIFEST_FILE)).unwrap();
         let codeset_before = fs::read(paths.baseline_dir.join(CODE_SET_FILE)).unwrap();
 
-        let outcome = promote_committed(&paths, Some(&staged), "", "2026-06-21").unwrap();
+        let outcome = promote_committed(&paths, Some(&staged), "", false, "2026-06-21").unwrap();
         assert_eq!(outcome, PromoteOutcome::RefusedGated);
 
         assert_eq!(
@@ -2762,7 +2860,7 @@ recommendation:
         let tr_before = fs::read(&tr_token).unwrap();
         let ev_before = fs::read(&ev_token).unwrap();
 
-        let outcome = promote_committed(&paths, Some(&staged), "ops@team", "2026-06-21").unwrap();
+        let outcome = promote_committed(&paths, Some(&staged), "ops@team", false, "2026-06-21").unwrap();
         assert!(matches!(outcome, PromoteOutcome::Promoted { gated: true, .. }));
 
         // The record names the gated new TR and the attested-by value (R8).
@@ -2812,12 +2910,148 @@ recommendation:
         fs::create_dir_all(staged.join("raw")).unwrap();
         fs::write(staged.join(RAW_FILE), b"{ not json").unwrap();
 
-        let result = promote_committed(&paths, Some(&staged), "ENG-1", "2026-06-21");
+        let result = promote_committed(&paths, Some(&staged), "ENG-1", false, "2026-06-21");
         assert!(result.is_err(), "a malformed staged raw aborts the promote");
         assert_eq!(
             fs::read(paths.baseline_dir.join(MANIFEST_FILE)).unwrap(),
             manifest_before,
             "committed baseline is byte-identical after an aborted promote"
+        );
+        assert!(!paths.baseline_dir.join(PROMOTION_LOG_FILE).exists());
+    }
+
+    /// Seed a committed baseline equal to the staged run, then mutate one
+    /// maintained field so the staged run shows exactly one drift on a maintained
+    /// TR. `mutate` receives the first field of the first non-empty block of the
+    /// first maintained shape (request blocks first, then response). Returns the
+    /// staged dir and the prepared `Paths`.
+    fn stage_with_one_maintained_field_change(
+        name: &str,
+        mutate: impl FnOnce(&mut ls_metadata::BlockField),
+    ) -> (PathBuf, Paths) {
+        let scratch = scratch(name);
+        let staged = scratch.join("staged");
+        write_staged_from_raw(&staged, &committed_raw());
+
+        let paths = Paths {
+            baseline_dir: scratch.join("baseline"),
+            run_root: scratch.join("runs"),
+            metadata_dir: repo_metadata_dir(),
+            spec_baseline_dir: scratch.join("spec"),
+        };
+        // Committed baseline starts byte-equal to the staged run (clean self-diff),
+        // then one maintained field is mutated so the staged run drifts against it.
+        let mut committed = load_normalized(&staged).unwrap();
+        let shape = committed
+            .shapes
+            .values_mut()
+            .find(|s| !s.request_blocks.is_empty() || !s.response_blocks.is_empty())
+            .expect("a maintained shape with at least one field");
+        let field = shape
+            .request_blocks
+            .iter_mut()
+            .chain(shape.response_blocks.iter_mut())
+            .next()
+            .expect("a field to mutate");
+        mutate(field);
+        write_normalized(&paths.baseline_dir, &committed).unwrap();
+        (staged, paths)
+    }
+
+    /// Covers R1 / R6 (admit-path). A staged run whose only maintained-shape drift
+    /// is a pure field-`type` change, promoted with `--type-only --attest`, passes
+    /// the type-only gate and performs the normal whole-raw promote: raw replaced,
+    /// one record appended.
+    #[test]
+    fn type_only_promote_admits_pure_type_change() {
+        let (staged, paths) = stage_with_one_maintained_field_change(
+            "type-only-admit",
+            // Committed carries an old type; the staged run's real type differs →
+            // a pure-type FieldChanged on a maintained TR.
+            |f| f.r#type = Some("__OLD_TYPE__".to_string()),
+        );
+        let raw_bytes = fs::read(staged.join(RAW_FILE)).unwrap();
+
+        let outcome =
+            promote_committed(&paths, Some(&staged), "ENG-1", true, "2026-06-21").unwrap();
+        assert!(
+            matches!(outcome, PromoteOutcome::Promoted { gated: true, .. }),
+            "a pure-type wave gates (Breaking/Maintenance) and is attested through: {outcome:?}"
+        );
+        // Whole-raw promote happened: committed raw replaced by the staged raw.
+        assert_eq!(fs::read(paths.baseline_dir.join(RAW_FILE)).unwrap(), raw_bytes);
+        let log = fs::read_to_string(paths.baseline_dir.join(PROMOTION_LOG_FILE)).unwrap();
+        assert_eq!(log.lines().count(), 1, "exactly one promotion record");
+        // Post-promote self-diff is clean.
+        assert!(!run_check(&paths, Some(&staged)).unwrap().gates());
+    }
+
+    /// Covers R1 / R3 (block-path). A staged run that changes a field's identity on
+    /// a maintained TR (surfacing non-type structural drift) is refused by the
+    /// type-only gate with zero mutation — and `--attest` cannot satisfy it (R3).
+    #[test]
+    fn type_only_promote_blocks_non_type_drift_with_zero_mutation() {
+        let (staged, paths) = stage_with_one_maintained_field_change(
+            "type-only-block",
+            // Rename the committed field so the staged run's real field has no
+            // identity match → it surfaces as added/removed (non-type drift).
+            |f| f.field_name = format!("{}__renamed_so_staged_adds", f.field_name),
+        );
+        // Seed a sentinel committed raw to prove the blocked promote never replaces it.
+        fs::create_dir_all(paths.baseline_dir.join("raw")).unwrap();
+        fs::write(paths.baseline_dir.join(RAW_FILE), b"{\"sentinel\":true}\n").unwrap();
+        let raw_before = fs::read(paths.baseline_dir.join(RAW_FILE)).unwrap();
+        let manifest_before = fs::read(paths.baseline_dir.join(MANIFEST_FILE)).unwrap();
+
+        let outcome =
+            promote_committed(&paths, Some(&staged), "ops@team", true, "2026-06-21").unwrap();
+        assert!(
+            matches!(&outcome, PromoteOutcome::RefusedTypeOnly(_)),
+            "non-type drift on a maintained TR is refused: {outcome:?}"
+        );
+        // Zero mutation: committed raw + manifest byte-identical, no log line.
+        assert_eq!(
+            fs::read(paths.baseline_dir.join(RAW_FILE)).unwrap(),
+            raw_before
+        );
+        assert_eq!(
+            fs::read(paths.baseline_dir.join(MANIFEST_FILE)).unwrap(),
+            manifest_before
+        );
+        assert!(!paths.baseline_dir.join(PROMOTION_LOG_FILE).exists());
+    }
+
+    /// Covers AE1. A fallback-served staged run with a maintained TR is rejected by
+    /// the existing facts-outage gate (exit 2 / Err) *before* the type-only gate is
+    /// reached — `--type-only` adds no new fallback path. Zero mutation.
+    #[test]
+    fn type_only_promote_fallback_served_rejected_by_facts_gate() {
+        let scratch = scratch("type-only-fallback");
+        let staged = scratch.join("staged");
+        write_staged_from_raw(&staged, &committed_raw());
+        // Re-stamp the fetch report as fallback-served (maintained TRs are present
+        // in the committed raw, so the facts-outage gate fires MaintainedAffected).
+        write_facts_report(&staged, &[], true);
+
+        let paths = Paths {
+            baseline_dir: scratch.join("baseline"),
+            run_root: scratch.join("runs"),
+            metadata_dir: repo_metadata_dir(),
+            spec_baseline_dir: scratch.join("spec"),
+        };
+        let committed = load_normalized(&staged).unwrap();
+        write_normalized(&paths.baseline_dir, &committed).unwrap();
+        let manifest_before = fs::read(paths.baseline_dir.join(MANIFEST_FILE)).unwrap();
+
+        let result = promote_committed(&paths, Some(&staged), "ENG-1", true, "2026-06-21");
+        assert!(
+            result.is_err(),
+            "a fallback-served run is rejected by the facts-outage gate before the type-only gate"
+        );
+        assert_eq!(
+            fs::read(paths.baseline_dir.join(MANIFEST_FILE)).unwrap(),
+            manifest_before,
+            "zero mutation on the fallback-rejected path"
         );
         assert!(!paths.baseline_dir.join(PROMOTION_LOG_FILE).exists());
     }
@@ -2879,7 +3113,13 @@ recommendation:
         let baseline_before = fs::read(paths.baseline_dir.join(MANIFEST_FILE)).unwrap();
 
         assert_eq!(
-            dispatch(&paths, Command::PromoteDryRun { staged: None }),
+            dispatch(
+                &paths,
+                Command::PromoteDryRun {
+                    staged: None,
+                    type_only: false
+                }
+            ),
             Exit::Ok,
             "clean dry-run via latest.txt exits 0"
         );
@@ -2899,7 +3139,8 @@ recommendation:
             dispatch(
                 &paths,
                 Command::PromoteDryRun {
-                    staged: Some(gated)
+                    staged: Some(gated),
+                    type_only: false
                 }
             ),
             Exit::Gated,

@@ -357,6 +357,30 @@ pub fn is_qualifying(change: &DriftChange) -> bool {
     )
 }
 
+/// The `DriftChange` kind label (e.g. `field_removed`) — the **single source** of
+/// the structural kind strings, mirroring the `#[serde(tag = "kind",
+/// rename_all = "snake_case")]` tags on [`DriftChange`]. Used both by the
+/// promotion record (R8/R14, a structural descriptor never a payload value) and by
+/// the type-only gate's block reasons (U2). A total match (no wildcard) so a new
+/// `DriftChange` variant is a compile error here rather than a silently-wrong
+/// label.
+pub fn change_kind(change: &DriftChange) -> &'static str {
+    match change {
+        DriftChange::TrAdded => "tr_added",
+        DriftChange::TrRemoved => "tr_removed",
+        DriftChange::FieldAdded { .. } => "field_added",
+        DriftChange::FieldRemoved { .. } => "field_removed",
+        DriftChange::FieldReordered { .. } => "field_reordered",
+        DriftChange::FieldMovedAcrossBlock { .. } => "field_moved_across_block",
+        DriftChange::FieldChanged { .. } => "field_changed",
+        DriftChange::EndpointChanged { .. } => "endpoint_changed",
+        DriftChange::ProtocolChanged { .. } => "protocol_changed",
+        DriftChange::RateLimitChanged { .. } => "rate_limit_changed",
+        DriftChange::DescriptionChanged { .. } => "description_changed",
+        DriftChange::FactsDegraded { .. } => "facts_degraded",
+    }
+}
+
 /// Re-exported here so callers of the trackers crate get the protocol vocabulary
 /// without depending on `ls-metadata` directly.
 pub use ls_metadata::Protocol;
@@ -452,6 +476,62 @@ pub struct CoverageSummary {
     pub upstream_missing_metadata: Vec<String>,
 }
 
+/// Which attribute of an identity-stable field changed on a
+/// [`FieldChanged`](DriftChange::FieldChanged). Carried as structured data so a
+/// consumer (the type-only promotion gate) classifies a pure-type change without
+/// parsing the human-readable `detail` string (KTD1). The variants are the three
+/// attributes [`attribute_change_detail`](crate::api_drift) compares; a consumer
+/// destructures this enum exhaustively, so a future fourth attribute forces a
+/// deliberate gate decision rather than being silently absorbed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FieldAttribute {
+    Type,
+    Length,
+    Required,
+}
+
+impl fmt::Display for FieldAttribute {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            FieldAttribute::Type => "type",
+            FieldAttribute::Length => "length",
+            FieldAttribute::Required => "required",
+        };
+        f.write_str(s)
+    }
+}
+
+/// One attribute delta on a [`FieldChanged`](DriftChange::FieldChanged): which
+/// attribute moved plus its pre-rendered `from`/`to` display values. The rendered
+/// values let [`render_attribute_deltas`] reproduce the legacy `detail` string
+/// byte-for-byte while the typed [`attribute`](AttributeDelta::attribute) drives
+/// structural classification (KTD1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttributeDelta {
+    pub attribute: FieldAttribute,
+    pub from: String,
+    pub to: String,
+}
+
+impl fmt::Display for AttributeDelta {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} {}→{}", self.attribute, self.from, self.to)
+    }
+}
+
+/// Render a `FieldChanged`'s structured attribute deltas back into the
+/// human-readable `detail` string (e.g. `type String→Long, length 4→8`) — the
+/// **single source** of the display view (KTD1), so the gate reads structure and
+/// every printer reads this. Mirrors the legacy `", "`-joined formatting exactly.
+pub fn render_attribute_deltas(deltas: &[AttributeDelta]) -> String {
+    deltas
+        .iter()
+        .map(|d| d.to_string())
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
 /// One structural change in the API Drift signal model. `tr_code` lives on the
 /// [`DriftFinding`] that wraps a change, so variants carry only the change's own
 /// locating fields. Field-level variants use the `(direction, block, index,
@@ -493,12 +573,16 @@ pub enum DriftChange {
         to_block: String,
     },
     /// Type / length / required-flag change on a field present on both sides.
+    /// The changed attributes are carried as structured [`AttributeDelta`]s (not
+    /// a parsed `detail` string) so the type-only gate classifies a pure-type
+    /// change reliably (KTD1); the display string is derived via
+    /// [`render_attribute_deltas`]. Always non-empty when emitted.
     FieldChanged {
         direction: Direction,
         block_name: String,
         field_index: u32,
         field_name: String,
-        detail: String,
+        attributes: Vec<AttributeDelta>,
     },
     EndpointChanged {
         from: Option<String>,
@@ -850,7 +934,11 @@ mod tests {
             block_name: "b".into(),
             field_index: 0,
             field_name: "f".into(),
-            detail: "type String→Long".into()
+            attributes: vec![AttributeDelta {
+                attribute: FieldAttribute::Type,
+                from: "String".into(),
+                to: "Long".into(),
+            }],
         }));
         assert!(is_qualifying(&DriftChange::EndpointChanged {
             from: Some("/a".into()),
