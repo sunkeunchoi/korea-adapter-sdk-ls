@@ -29,6 +29,10 @@ Read `metadata/trs/<tr>.yaml`. Bail early as HELD if:
 - The TR has **no smoke target** in `references/smoke-map.md` (e.g. `revoke`) →
   `HELD <tr> — no smoke harness; route to ce-plan for a new smoke`. Do not
   fabricate evidence.
+- The TR's smoke-map **Promotion** column is `implemented-only` (not `ready`) →
+  `HELD <tr> — implemented-only; not cleared for recommendation`. A passing smoke
+  is not a recommendation mandate; the `ready` signal must be set deliberately
+  first. Do not promote.
 
 ## 1. Run the smoke and capture the line
 

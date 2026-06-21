@@ -91,7 +91,11 @@ harness to run it. Build all three:
 - a `live_smoke_<tr>` test fn in `crates/ls-sdk/tests/live_smoke.rs`,
 - a `live-smoke-<tr>` `make` target (+ `.PHONY` entry) in the `Makefile`,
 - a row in `.agents/skills/promote-tr/references/smoke-map.md` (the single shared
-  registry — do NOT duplicate it under this skill).
+  registry — do NOT duplicate it under this skill). Set the row's **Promotion**
+  column to `implemented-only` — this recipe stops at Implemented, so the TR is
+  NOT yet cleared for the Recommended tier. Clearing it (flipping Promotion to
+  `ready`) is `promote-tr`'s separate, deliberate step; leaving it
+  `implemented-only` keeps a future `promote-trs` sweep from auto-promoting it.
 
 The smoke fn opens with `paper_sdk()` (never `paper_guard()` alone —
 `paper_sdk()` adds the resolved-environment defense-in-depth check). It calls the
