@@ -118,7 +118,10 @@ pub const T1102_POLICY: EndpointPolicy = EndpointPolicy {
     protocol: Protocol::Rest,
     category: RateLimitCategory::MarketData,
     is_order: false,
-    has_pagination: true,
+    // t1102 is structurally non-paginated (no `HasPagination` impl; dispatches via
+    // plain `post`). The flag is the runtime mirror of `facets.self_paginated:
+    // false`, so it must be false too — the prior `true` was stale.
+    has_pagination: false,
     rate_limit_per_sec: Some(10),
     corp_rate_limit_per_sec: Some(5),
 };
@@ -190,6 +193,20 @@ pub const T1537_POLICY: EndpointPolicy = EndpointPolicy {
     is_order: false,
     has_pagination: false,
     rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1452 — 거래량상위 (top trading volume; single-page body-`idx` paginated).
+pub const T1452_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1452",
+    path: "/stock/high-item",
+    module: "stock",
+    group: "[주식] 상위종목",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(2),
     corp_rate_limit_per_sec: Some(3),
 };
 
@@ -283,6 +300,7 @@ mod tests {
             T8436_POLICY,
             T1531_POLICY,
             T1537_POLICY,
+            T1452_POLICY,
             CSPAQ12200_POLICY,
         ] {
             assert!(!p.is_order, "{} must not be an order endpoint", p.tr_code);

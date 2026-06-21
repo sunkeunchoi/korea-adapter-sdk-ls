@@ -12,7 +12,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 use ls_core::{Inner, LsConfig, LsError};
-use ls_sdk::paginated::{T8412OutBlock1, T8412Request, T8412Response};
+use ls_sdk::paginated::{T1452Request, T1452Response, T8412OutBlock1, T8412Request, T8412Response};
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
 use wiremock::matchers::{header, method, path};
@@ -23,6 +23,17 @@ const T8412_FIXTURE: &str = include_str!("fixtures/t8412_resp.json");
 
 /// `T8412_POLICY.path` — the mounted endpoint for the chart TR.
 const T8412_PATH: &str = "/stock/chart";
+
+/// The spec-derived `t1452` single-page response fixture (`fixtures/t1452_resp.json`).
+const T1452_FIXTURE: &str = include_str!("fixtures/t1452_resp.json");
+
+/// `T1452_POLICY.path` — the mounted endpoint for the rank-screen TRs.
+const HIGH_ITEM_PATH: &str = "/stock/high-item";
+
+/// Build a single-page `t1452` top-volume request with permissive filters.
+fn t1452_req() -> T1452Request {
+    T1452Request::new("0", "0", "0", "0", "0", "0", "0", "0")
+}
 
 /// An explicitly pinned trading day (a Friday). Empty date fields default to
 /// "today" on the gateway and fail on weekends with a misleading `01715`, so every
@@ -307,4 +318,91 @@ async fn chart_all_truncates_at_max_pages() {
         2,
         "exactly max_pages HTTP calls"
     );
+}
+
+// ---------------------------------------------------------------------------
+// t1452 — 거래량상위 (top trading volume). The single-page body-`idx` paginated
+// sub-pattern: `idx` is an ordinary in-block field (a JSON number), NOT a
+// `#[serde(skip)]` header cursor; dispatch is one `post_paginated` with empty
+// `tr_cont`/`tr_cont_key` headers; out-rows tolerate single-or-array.
+// ---------------------------------------------------------------------------
+
+/// Covers R5. The `t1452` request serializes the body `idx` cursor INSIDE
+/// `t1452InBlock` as a JSON number at the first-page convention (`0`), and the
+/// `tr_cont`/`tr_cont_key` header cursors are `#[serde(skip)]` — absent from the
+/// body (the divergence from `t8412` the single-page sub-pattern depends on).
+#[test]
+fn t1452_request_serializes_idx_in_block_and_no_continuation_in_body() {
+    let value = serde_json::to_value(t1452_req()).expect("serialize t1452 request");
+
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "exactly one top-level key (the in-block)");
+    let inblock = &value["t1452InBlock"];
+
+    // idx rides IN the body, as a JSON number, at the first-page convention.
+    assert_eq!(inblock["idx"], 0, "idx serializes as a number in the in-block");
+    assert!(inblock["idx"].is_number(), "idx is a JSON number, not a string");
+
+    // The header cursors never serialize into the body.
+    assert!(value.get("tr_cont").is_none(), "tr_cont not in the body");
+    assert!(value.get("tr_cont_key").is_none(), "tr_cont_key not in the body");
+    assert!(inblock.get("tr_cont").is_none(), "tr_cont not in the in-block");
+}
+
+/// Covers R2, R5. A single page deserializes through REAL `post_paginated`
+/// dispatch: the request sends `tr_cont: N` (empty cursor) and the response's
+/// summary `idx` + ranked-row array round-trip with mixed number/string wire types.
+#[tokio::test]
+async fn top_volume_deserializes_single_page() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(HIGH_ITEM_PATH))
+        .and(header("tr_cd", "t1452"))
+        .and(header("tr_cont", "N"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T1452_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let resp = sdk
+        .paginated()
+        .top_volume(&t1452_req())
+        .await
+        .expect("t1452 top_volume single page should succeed");
+
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock.idx, "20", "summary next-page idx round-trips");
+    assert_eq!(resp.outblock1.len(), 2, "both ranked rows round-trip");
+    assert_eq!(resp.outblock1[0].shcode, "005930");
+    assert_eq!(resp.outblock1[0].price, "71500", "price (from number)");
+    assert_eq!(resp.outblock1[1].price, "185000", "price (from string)");
+}
+
+/// Covers R2. A single ranked row (not an array) is tolerated as a one-element
+/// Vec via `de_vec_or_single`; an empty result set (`00707`) deserializes as the
+/// pending case.
+#[test]
+fn t1452_single_or_array_and_empty_pending() {
+    let single: T1452Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1452OutBlock": { "idx": 1 },
+        "t1452OutBlock1": { "hname": "단일", "shcode": "000660", "price": 100 }
+    }))
+    .expect("single row tolerated as a one-element Vec");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].shcode, "000660");
+
+    let empty: T1452Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707",
+        "t1452OutBlock": { "idx": 0 },
+        "t1452OutBlock1": []
+    }))
+    .expect("empty result set deserializes");
+    assert_eq!(empty.rsp_cd, "00707");
+    assert!(empty.outblock1.is_empty(), "empty is the pending case, not a flip");
 }

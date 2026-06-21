@@ -21,7 +21,7 @@ use ls_sdk::account::CSPAQ12200Request;
 use ls_sdk::market_session::{
     T1101Request, T1102Request, T1531Request, T1537Request, T8425Request, T8436Request,
 };
-use ls_sdk::paginated::T8412Request;
+use ls_sdk::paginated::{T1452Request, T8412Request};
 use ls_sdk::realtime::S3Trade;
 use ls_sdk::LsSdk;
 use tokio::time::timeout;
@@ -502,6 +502,42 @@ async fn live_smoke_chart() {
         &format!("symbol={symbol} date={d}"),
         &format!("rsp_cd={} rows={}", resp.rsp_cd, resp.outblock1.len()),
     );
+}
+
+// ---------------------------------------------------------------------------
+// t1452 — 거래량상위 (top trading volume). First single-page body-`idx` paginated
+// TR (the implement-tr second-freeze sub-pattern). Intraday rank screen: on a
+// non-trading day the gateway returns an empty success (00707) → PENDING.
+// ---------------------------------------------------------------------------
+
+/// `make live-smoke-t1452`: paper guard → token → one single-page `t1452`
+/// top-volume read (all-segment, permissive filters, first-page `idx`).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1452`"]
+async fn live_smoke_t1452() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    // All-segment, no price/volume/change-rate filter, first page.
+    let req = T1452Request::new("0", "0", "0", "0", "0", "0", "0", "0");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.paginated().top_volume(&req).await {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t1452",
+                &format!("env=paper gubun=0 idx=0 date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            debug_assert!(smoke_result(Err(&e), "rows").is_none());
+            eprintln!("SMOKE-FAIL target=live-smoke-t1452 market-data failure (not evidence)");
+            panic!("live-smoke-t1452 failed: {e}");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

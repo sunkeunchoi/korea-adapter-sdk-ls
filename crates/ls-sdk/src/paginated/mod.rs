@@ -284,6 +284,167 @@ pub struct T8412Response {
 // to fetch another.
 ls_core::impl_has_pagination!(T8412Response);
 
+// ===========================================================================
+// Single-page body-`idx` paginated TRs (the implement-tr "second freeze"
+// sub-pattern).
+//
+// These stock rank/screen TRs carry a request-BODY `idx` continuation cursor,
+// for which `ls-core` has NO multi-page machinery (it only threads the header
+// `tr_cont`/`tr_cont_key` cursor that `t8412` uses). They are therefore promoted
+// at SINGLE-PAGE scope:
+//   - `idx` is an ordinary serialized in-block field (a JSON number on the wire,
+//     via `string_as_number`) at its first-page convention (`"0"`) — NOT
+//     `#[serde(skip)]` (that attribute is only for `t8412`'s header cursors);
+//   - dispatch is ONE `post_paginated` call with EMPTY `tr_cont`/`tr_cont_key`
+//     headers (the request still impls `HasPagination` because `post_paginated`
+//     requires it, but the cursors stay empty);
+//   - out-rows tolerate single-or-array via `de_vec_or_single`.
+// Multi-page collection over body-`idx` (a `chart_all`-equivalent) is deferred
+// follow-up work — it needs a new `ls-core` body-continuation contract.
+// ===========================================================================
+
+/// Input block for `t1452` — 거래량상위 (top trading volume).
+///
+/// A rank-screen filter. Numeric fields serialize as JSON numbers
+/// (`string_as_number`) per the spec's request shape; `idx` is the body
+/// continuation cursor (first page = `"0"`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1452InBlock {
+    /// Market division / 구분.
+    pub gubun: String,
+    /// Prior-day division / 전일구분.
+    pub jnilgubun: String,
+    /// Start change-rate / 시작등락율.
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub sdiff: String,
+    /// End change-rate / 종료등락율.
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub ediff: String,
+    /// Exclusion flags / 대상제외.
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub jc_num: String,
+    /// Start price / 시작가격.
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub sprice: String,
+    /// End price / 종료가격.
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub eprice: String,
+    /// Min volume / 거래량.
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub volume: String,
+    /// Body continuation cursor / IDX (first page = `"0"`; serialized as a number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub idx: String,
+}
+
+/// `t1452` request — wraps the input block under the `t1452InBlock` key.
+///
+/// `idx` rides IN the body (an ordinary in-block field). The
+/// `tr_cont`/`tr_cont_key` fields are `#[serde(skip)]` and stay empty for the
+/// single-page call; they exist only to satisfy the `HasPagination` bound on
+/// `post_paginated`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1452Request {
+    #[serde(rename = "t1452InBlock")]
+    pub inblock: T1452InBlock,
+    #[serde(skip)]
+    pub tr_cont: String,
+    #[serde(skip)]
+    pub tr_cont_key: String,
+}
+
+ls_core::impl_has_pagination!(T1452Request);
+
+impl T1452Request {
+    /// Build a single-page `t1452` top-volume request. `idx` defaults to the
+    /// first-page convention (`"0"`); `tr_cont`/`tr_cont_key` start empty.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        gubun: impl Into<String>,
+        jnilgubun: impl Into<String>,
+        sdiff: impl Into<String>,
+        ediff: impl Into<String>,
+        jc_num: impl Into<String>,
+        sprice: impl Into<String>,
+        eprice: impl Into<String>,
+        volume: impl Into<String>,
+    ) -> Self {
+        T1452Request {
+            inblock: T1452InBlock {
+                gubun: gubun.into(),
+                jnilgubun: jnilgubun.into(),
+                sdiff: sdiff.into(),
+                ediff: ediff.into(),
+                jc_num: jc_num.into(),
+                sprice: sprice.into(),
+                eprice: eprice.into(),
+                volume: volume.into(),
+                idx: "0".to_string(),
+            },
+            tr_cont: String::new(),
+            tr_cont_key: String::new(),
+        }
+    }
+}
+
+/// `t1452OutBlock` — the rank-screen summary block (carries the next-page `idx`).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1452OutBlock {
+    /// Returned continuation cursor / IDX.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub idx: String,
+}
+
+/// `t1452OutBlock1` — one ranked stock row. Representative subset; every field
+/// via [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1452OutBlock1 {
+    /// Korean name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Short code / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change vs. previous close / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Rate of change / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Accumulated volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+}
+
+/// `t1452` response envelope (single page).
+///
+/// `outblock` is the summary (with the next-page `idx`); `outblock1` is the
+/// ranked-row array under the `t1452OutBlock1` key, tolerated as single-or-array
+/// via [`ls_core::de_vec_or_single`]. All `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1452Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1452OutBlock", default)]
+    pub outblock: T1452OutBlock,
+    #[serde(
+        rename = "t1452OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1452OutBlock1>,
+}
+
 /// Paginated operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -333,6 +494,18 @@ impl Paginated {
                         .await
                 }
             })
+            .await
+    }
+
+    /// Fetch a SINGLE page of the `t1452` top-volume rank screen.
+    ///
+    /// Dispatches through [`ls_core::Inner::post_paginated`] with empty
+    /// `tr_cont`/`tr_cont_key` headers; the body `idx` cursor carries the page
+    /// position. Single-page scope only — no multi-page body-`idx` collection
+    /// (deferred follow-up work).
+    pub async fn top_volume(&self, req: &T1452Request) -> LsResult<T1452Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1452_POLICY, req)
             .await
     }
 }

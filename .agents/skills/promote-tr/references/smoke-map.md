@@ -16,6 +16,7 @@ this map has no harness that exercises it — promotion needs a new smoke first
 | `t8436` | `live-smoke-t8436` | `live_smoke_t8436` | open session | paper stock-master list, gubun=0 (Implemented, not recommended) |
 | `t1531` | `live-smoke-t1531` | `live_smoke_t1531` | open session; self-sources a theme from `t8425` | paper theme-constituents read (Implemented, not recommended) |
 | `t1537` | `live-smoke-t1537` | `live_smoke_t1537` | open session; self-sources a theme from `t8425` | paper theme per-stock quotes (Implemented, not recommended) |
+| `t1452` | `live-smoke-t1452` | `live_smoke_t1452` | open session; single-page (idx=0) | paper top-volume rank, single page (Implemented, not recommended) |
 
 Notes:
 - `live-smoke` (default) issues the OAuth token *then* a `t1102` quote in one run,
