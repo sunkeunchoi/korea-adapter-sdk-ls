@@ -118,6 +118,118 @@ anything:
 make api-drift-promote-dry-run
 ```
 
+### Field-type re-pin (clean baseline refresh)
+
+A one-time, type-scoped Baseline Promotion that resolves the HTTP-500-seeded
+field-`type` provisionality recorded in
+[`metadata/PROVISIONALITY-LEDGER.md` §4](../metadata/PROVISIONALITY-LEDGER.md):
+the 36 normalized shapes' `type` values were derived from the hardcoded
+property-type fallback the seed snapshot was fetched under, not a live
+`system-codes` mapping. Re-deriving them requires a clean fetch plus a reviewed
+promote, guarded by the opt-in **type-only gate** so unrelated structural drift
+cannot ride into the Reviewed Baseline. Background:
+[the re-pin brainstorm](brainstorms/2026-06-21-field-type-repin-clean-baseline-refresh-requirements.md).
+
+The gate is opt-in: this procedure is the only flow that passes `--type-only`.
+General baseline promotion (`promote --attest` without `--type-only`) is
+unaffected.
+
+1. **Fetch cleanly.** Re-fetch while `system-codes` is healthy and confirm the
+   fetch report shows `property_type_fallback_served == false`:
+
+   ```sh
+   make api-drift-fetch   # writes a timestamped staged run + latest.txt
+   ```
+
+   A `false` flag proves the mapping *source* was live. It does **not** guarantee
+   every field resolved — a live mapping missing a particular property-type code
+   still falls back to the raw code for that field, which is why retirement is
+   evaluated per facet at step 6, not assumed from the flag. If the fetch was
+   served the fallback, the next step's gate (and `api-drift check`) exits `2`
+   with *"facts outage affects a maintained TR … re-fetch before comparing"* —
+   read that as "`system-codes` was unhealthy, retry the fetch", **not** a
+   type-only-gate failure. Wait for `system-codes` to recover and re-fetch.
+
+2. **Preview the type-only gate.** Review the drift and the gate decision without
+   writing anything:
+
+   ```sh
+   cargo run -q -p ls-trackers -- api-drift promote --type-only --dry-run
+   ```
+
+   The preview prints the drift report plus a `type-only gate: ADMIT` or
+   `type-only gate: BLOCKED — <reason>` line. The maintained type wave itself
+   gates (Breaking for implemented/recommended TRs, Maintenance for tracked-only),
+   so an admitted run still exits `1` — that is the signal that `--attest` is
+   required, not a block.
+
+3. **If the gate blocks, stop.** A `BLOCKED` decision means the clean fetch
+   carried non-type drift on a maintained TR (a new/removed/reordered/moved
+   field, a length or required-flag change, an endpoint/protocol/rate change, or a
+   new/removed TR). Do **not** force it — `--attest` cannot satisfy the type-only
+   gate. Open a separate Maintenance Review Decision for that drift and re-run the
+   re-pin once it is resolved.
+
+4. **Promote (attested).** On an admitted gate, perform the type-only promote:
+
+   ```sh
+   cargo run -q -p ls-trackers -- api-drift promote --type-only --attest <operator-or-issue>
+   ```
+
+   This runs the normal whole-raw promote: the committed raw is replaced by the
+   clean staged run's raw, the normalized baselines are re-derived from the
+   staged mapping (no live re-resolution at promote time), and one promotion
+   record is appended. Exit `0` on success; exit `2` with zero mutation if the
+   gate blocks.
+
+5. **Confirm a clean self-diff.** Re-check the just-promoted baseline to confirm
+   the refresh did not break the zero-finding self-diff invariant:
+
+   ```sh
+   make api-drift-check
+   ```
+
+   Expect exit `0` (no gating findings) over the maintained inventory.
+
+6. **Retire ledger §4 per facet.** Hand-edit
+   [`metadata/PROVISIONALITY-LEDGER.md` §4](../metadata/PROVISIONALITY-LEDGER.md),
+   replacing the batch-wide row with the explicit Retired / Still-provisional
+   split below. Retire **only** the facets the clean fetch concretely resolved;
+   every residual names its exact reason. Leave no batch-wide "all 36 provisional"
+   claim and no mixed-state ambiguity.
+
+   ```markdown
+   ## 4. Field-level `type` facets — re-pinned from clean `system-codes` (YYYY-MM-DD)
+
+   Re-derived from a clean `system-codes` fetch (`property_type_fallback_served ==
+   false`) via an attested type-only Baseline Promotion (promotion record
+   `<attested-by>`, raw_hash `<hash>`). The HTTP-500 seed framing is retired;
+   field `type` provisionality is now tracked per facet.
+
+   **Retired** — type resolved by a non-fallback `system-codes` mapping:
+
+   | TR / facet | Resolved type source |
+   |---|---|
+   | <tNNNN> (all fields) | live `system-codes` mapping, clean fetch YYYY-MM-DD |
+   | … | … |
+
+   **Still-provisional** — not resolved by the clean fetch; each names its reason:
+
+   | TR / facet | Reason (untyped / raw-coded after clean fetch / blocked path) |
+   |---|---|
+   | <tNNNN>.<field> | live mapping had no entry for the property-type code → still raw-coded |
+   | … | … |
+   ```
+
+   Mirror ledger §5's `End state` framing: a decided, per-facet split with a
+   credential-free basis line. If the clean fetch resolved every facet, the
+   Still-provisional table is empty and §4 is fully retired.
+
+> The live re-pin run itself (fetch against live `system-codes`, the attested
+> `--type-only` promote, and the data-dependent §4 edit) is operator-executed and
+> intentionally deferred — the gate, this procedure, and the §4 template are the
+> shipped capability.
+
 ### Notes
 
 - The committed bounded baseline lives at
