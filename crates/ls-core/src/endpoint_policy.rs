@@ -151,6 +151,20 @@ pub const T8412_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+/// t8425 — 전체테마 조회 (all-themes list; non-paginated market read).
+pub const T8425_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8425",
+    path: "/stock/sector",
+    module: "stock",
+    group: "[주식] 섹터",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// CSPAQ12200 — 계좌 잔고/예수금 조회 (account balance inquiry).
 pub const CSPAQ12200_POLICY: EndpointPolicy = EndpointPolicy {
     tr_code: "CSPAQ12200",
@@ -223,6 +237,7 @@ mod tests {
             T1101_POLICY,
             T1102_POLICY,
             T8412_POLICY,
+            T8425_POLICY,
             CSPAQ12200_POLICY,
         ] {
             assert!(!p.is_order, "{} must not be an order endpoint", p.tr_code);

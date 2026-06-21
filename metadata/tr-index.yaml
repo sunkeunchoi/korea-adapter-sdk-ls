@@ -241,7 +241,7 @@ trs:
     venue_session: krx_regular
   t8425:
     file: trs/t8425.yaml
-    owner_class: standalone
+    owner_class: market_session
     protocol: rest
     instrument_domain: stock
     venue_session: krx_regular

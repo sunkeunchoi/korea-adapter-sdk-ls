@@ -9,6 +9,7 @@
 use ls_core::{Inner, LsError};
 use ls_sdk::market_session::{
     T1101OutBlock, T1101Request, T1101Response, T1102OutBlock, T1102Request, T1102Response,
+    T8425Request, T8425Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
@@ -20,6 +21,12 @@ const T1102_FIXTURE: &str = include_str!("fixtures/t1102_resp.json");
 
 /// The spec-derived `t1101` response fixture (`fixtures/t1101_resp.json`).
 const T1101_FIXTURE: &str = include_str!("fixtures/t1101_resp.json");
+
+/// The spec-derived `t8425` all-themes response fixture (`fixtures/t8425_resp.json`).
+const T8425_FIXTURE: &str = include_str!("fixtures/t8425_resp.json");
+
+/// `T8425_POLICY.path` — the mounted endpoint for the all-themes read.
+const T8425_PATH: &str = "/stock/sector";
 
 /// `T1102_POLICY.path` — the mounted endpoint for the quote TR.
 const T1102_PATH: &str = "/stock/market-data";
@@ -332,4 +339,129 @@ fn t1101_response_envelope_default_is_empty() {
     let resp = T1101Response::default();
     assert_eq!(resp.rsp_cd, "");
     assert_eq!(resp.outblock.offerho1, "");
+}
+
+// ---------------------------------------------------------------------------
+// t8425 — 전체테마 (all-themes) read. Third TR in the market_session class and
+// the implement-tr pilot: non-paginated, NO caller input, an array out-block.
+// ---------------------------------------------------------------------------
+
+/// Covers R5. The `t8425` request serializes to exactly `{"t8425InBlock":{...}}`
+/// with only the `dummy` placeholder — no caller-supplied fields leak, and no
+/// `tr_cont`/`tr_cont_key` (t8425 is not paginated).
+#[test]
+fn t8425_request_serializes_to_inblock_with_only_dummy() {
+    let req = T8425Request::new();
+    let value = serde_json::to_value(&req).expect("serialize t8425 request");
+
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "request must have exactly one top-level key");
+    assert!(obj.contains_key("t8425InBlock"), "missing t8425InBlock key");
+
+    let inblock = &value["t8425InBlock"];
+    let inblock_obj = inblock.as_object().expect("inblock is an object");
+    assert_eq!(inblock_obj.len(), 1, "t8425InBlock carries only the dummy field");
+    assert_eq!(inblock["dummy"], "", "dummy is an empty placeholder (no caller input)");
+
+    assert!(value.get("tr_cont").is_none(), "no tr_cont in the body");
+    assert!(
+        value.get("tr_cont_key").is_none(),
+        "no tr_cont_key in the body"
+    );
+}
+
+/// Covers R2, R5. The spec-derived fixture deserializes through REAL dispatch:
+/// the all-themes array round-trips, a real (non-default) `tmname`/`tmcode` is
+/// populated, and `tmcode` arriving as a JSON number (`1234`) still parses via
+/// `string_or_number` — proving the representative subset round-trips, not just
+/// that `serde(default)` returned `Ok`.
+#[tokio::test]
+async fn all_themes_deserializes_spec_fixture_with_real_values() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(T8425_PATH))
+        .and(header("tr_cd", "t8425"))
+        .and(header("tr_cont", "N"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T8425_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let resp = sdk
+        .market_session()
+        .all_themes(&T8425Request::new())
+        .await
+        .expect("t8425 all_themes should succeed");
+
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock.len(), 3, "all three theme rows round-trip");
+    assert_eq!(resp.outblock[0].tmname, "2차전지", "real non-default tmname");
+    assert_eq!(resp.outblock[0].tmcode, "0050", "tmcode (was JSON string)");
+    assert_eq!(
+        resp.outblock[1].tmcode, "1234",
+        "tmcode coerced from a JSON number"
+    );
+}
+
+/// Covers R2, R5. `tmcode` deserializes whether it arrives as a JSON string or a
+/// JSON number — the `string_or_number` round-trip guarantee, proven directly.
+#[test]
+fn t8425_tmcode_number_or_string_yields_same_value() {
+    let as_number: T8425Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8425OutBlock": [{ "tmname": "반도체", "tmcode": 1234 }]
+    }))
+    .expect("number tmcode must deserialize");
+    let as_string: T8425Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8425OutBlock": [{ "tmname": "반도체", "tmcode": "1234" }]
+    }))
+    .expect("string tmcode must deserialize");
+    assert_eq!(as_number.outblock[0].tmcode, "1234");
+    assert_eq!(as_number.outblock[0].tmcode, as_string.outblock[0].tmcode);
+}
+
+/// Covers R2. A single out-block object (not an array) is tolerated as a
+/// one-element Vec via `de_vec_or_single` — the gateway collapses a one-row
+/// result to a bare object.
+#[test]
+fn t8425_single_out_row_tolerated_as_array() {
+    let single: T8425Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8425OutBlock": { "tmname": "단일", "tmcode": "0001" }
+    }))
+    .expect("single out-block object must deserialize as a one-element Vec");
+    assert_eq!(single.outblock.len(), 1);
+    assert_eq!(single.outblock[0].tmcode, "0001");
+}
+
+/// Covers R2. An empty result set (`rsp_cd 00707`, empty out-block array)
+/// deserializes without error and is recognized as the empty/pending case — the
+/// implement-tr gate records this as PENDING (callable but shape-unconfirmed),
+/// never a flip.
+#[test]
+fn t8425_empty_result_set_deserializes_as_empty() {
+    let empty: T8425Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707",
+        "t8425OutBlock": []
+    }))
+    .expect("empty result set must deserialize");
+    assert_eq!(empty.rsp_cd, "00707");
+    assert!(
+        empty.outblock.is_empty(),
+        "an empty out-block is the pending case, not a flip"
+    );
+}
+
+/// Compile-time guard: `T8425Response` default envelope is empty.
+#[test]
+fn t8425_response_envelope_default_is_empty() {
+    let resp = T8425Response::default();
+    assert_eq!(resp.rsp_cd, "");
+    assert!(resp.outblock.is_empty());
 }

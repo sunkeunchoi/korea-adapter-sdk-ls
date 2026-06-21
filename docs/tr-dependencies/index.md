@@ -42,7 +42,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t3320` | FNG_요약 | `standalone` | tracked | [t3320](./t3320.md) |
 | `t3341` | 재무순위종합 | `paginated` | tracked | [t3341](./t3341.md) |
 | `t8412` | 주식 차트(N분봉) 조회 | `paginated` | recommended | [t8412](./t8412.md) |
-| `t8425` | 전체테마 | `standalone` | tracked | [t8425](./t8425.md) |
+| `t8425` | 전체테마 | `market_session` | implemented | [t8425](./t8425.md) |
 | `t8430` | 주식종목조회 | `standalone` | tracked | [t8430](./t8430.md) |
 | `t8431` | ELW종목조회 | `standalone` | tracked | [t8431](./t8431.md) |
 | `t8436` | 주식종목조회 API용 | `standalone` | tracked | [t8436](./t8436.md) |

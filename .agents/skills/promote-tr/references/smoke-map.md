@@ -12,6 +12,7 @@ this map has no harness that exercises it — promotion needs a new smoke first
 | `t8412` | `live-smoke-chart` | `live_smoke_chart` | `LS_LIVE_SMOKE_T8412_DATE=<trading day YYYYMMDD>`; gateway `01715` = non-trading day | paper single chart page |
 | `CSPAQ12200` | `live-smoke-account` | `live_smoke_account` | provisioned paper account (else SMOKE-FAIL) | paper read-only balance inquiry |
 | `S3_` | `live-smoke-ws` | `live_smoke_ws` | paper WS port reachable | **websocket lifecycle reachability only** |
+| `t8425` | `live-smoke-t8425` | `live_smoke_t8425` | open session | paper all-themes read (Implemented, not recommended) |
 
 Notes:
 - `live-smoke` (default) issues the OAuth token *then* a `t1102` quote in one run,

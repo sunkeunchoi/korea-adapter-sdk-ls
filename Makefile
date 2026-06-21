@@ -15,7 +15,7 @@
 # Export command-line / make variables (e.g. LS_LIVE_SMOKE_*) to recipe shells.
 export
 
-.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws raw-probe
+.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-t8425 raw-probe
 
 # $(1) = exact test name in crates/ls-sdk/tests/live_smoke.rs
 define run_smoke
@@ -46,6 +46,10 @@ live-smoke-account:
 ## WebSocket smoke: S3_ connect/subscribe/unsubscribe lifecycle (timeboxed).
 live-smoke-ws:
 	$(call run_smoke,live_smoke_ws)
+
+## t8425 (전체테마) smoke: paper guard -> OAuth token -> one all-themes read.
+live-smoke-t8425:
+	$(call run_smoke,live_smoke_t8425)
 
 ## Failure classifier (implement-tr R6): one credential-safe raw-HTTP POST that
 ## bypasses the SDK's typed deserialize. Requires LS_PROBE_TR_CD, LS_PROBE_PATH,

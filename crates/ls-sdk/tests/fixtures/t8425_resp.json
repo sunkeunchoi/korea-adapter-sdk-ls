@@ -1,0 +1,9 @@
+{
+  "rsp_cd": "00000",
+  "rsp_msg": "정상처리 되었습니다.",
+  "t8425OutBlock": [
+    { "tmname": "2차전지", "tmcode": "0050" },
+    { "tmname": "반도체", "tmcode": 1234 },
+    { "tmname": "자동차", "tmcode": "0712" }
+  ]
+}

@@ -304,6 +304,86 @@ pub struct T1101Response {
     pub outblock: T1101OutBlock,
 }
 
+/// Input block for `t8425` — 전체테마 (all themes).
+///
+/// `t8425` is a no-caller-input read: the spec's `t8425InBlock` carries a single
+/// length-1 `dummy` placeholder (단축코드-style filler), so callers supply
+/// nothing. Modeled after `T1102InBlock` *minus* every caller identifier.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8425InBlock {
+    /// Dummy placeholder / Dummy (length-1; the read takes no caller input).
+    pub dummy: String,
+}
+
+/// `t8425` request — wraps the input block under the `t8425InBlock` key.
+///
+/// Serializes to `{"t8425InBlock":{"dummy":""}}`. `t8425` is not paginated and
+/// takes no caller identifier, so there are no continuation fields and no
+/// caller-supplied fields in the body.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8425Request {
+    #[serde(rename = "t8425InBlock")]
+    pub inblock: T8425InBlock,
+}
+
+impl T8425Request {
+    /// Build a `t8425` all-themes request. Takes no caller input; the `dummy`
+    /// placeholder serializes as an empty string.
+    pub fn new() -> Self {
+        T8425Request {
+            inblock: T8425InBlock {
+                dummy: String::new(),
+            },
+        }
+    }
+}
+
+impl Default for T8425Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `t8425OutBlock` — one theme row.
+///
+/// The `t8425OutBlock` response block is a repeated array of theme rows (the spec
+/// marks the block itself `Binary`, the array marker), so [`T8425Response`] holds
+/// a `Vec` of these tolerated as single-or-array via [`ls_core::de_vec_or_single`].
+/// Both fields use [`ls_core::string_or_number`] for wire-type tolerance and
+/// `#[serde(default)]` lets a sparse row deserialize cleanly. Field names mirror
+/// the LS spec verbatim.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8425OutBlock {
+    /// Theme name / 테마명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tmname: String,
+    /// Theme code / 테마코드 (the representative caller input for `t1531`/`t1537`).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tmcode: String,
+}
+
+/// `t8425` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are the LS business-status fields (classified in `ls-core`
+/// dispatch before this struct is built); `outblock` is the all-themes array
+/// under the `t8425OutBlock` key, tolerated as a single object OR an array via
+/// [`ls_core::de_vec_or_single`]. All three are `#[serde(default)]` so a terse or
+/// empty envelope still deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8425Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t8425OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T8425OutBlock>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -341,6 +421,21 @@ impl MarketSession {
     pub async fn order_book(&self, req: &T1101Request) -> LsResult<T1101Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T1101_POLICY, req)
+            .await
+    }
+
+    /// Fetch the full theme list (전체테마) via `t8425`.
+    ///
+    /// Dispatches through [`ls_core::Inner::post`] (retry + rate limit on the
+    /// MarketData bucket). `t8425` is not paginated and takes no caller input, so
+    /// this is a single, non-continuation POST returning every theme's
+    /// name + code. The returned `tmcode` values are the representative caller
+    /// inputs for theme-keyed reads (`t1531`/`t1537`). A `01900` business code
+    /// surfaces as [`ls_core::LsError::ApiError`] and classifies as
+    /// paper-incompatible.
+    pub async fn all_themes(&self, req: &T8425Request) -> LsResult<T8425Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8425_POLICY, req)
             .await
     }
 }

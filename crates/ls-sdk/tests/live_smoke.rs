@@ -18,7 +18,7 @@ use chrono::{Datelike, FixedOffset, NaiveDate, Utc, Weekday};
 use futures::StreamExt;
 use ls_core::{LsConfig, LsError, LsResult};
 use ls_sdk::account::CSPAQ12200Request;
-use ls_sdk::market_session::{T1101Request, T1102Request};
+use ls_sdk::market_session::{T1101Request, T1102Request, T8425Request};
 use ls_sdk::paginated::T8412Request;
 use ls_sdk::realtime::S3Trade;
 use ls_sdk::LsSdk;
@@ -196,6 +196,86 @@ async fn live_smoke_book() {
             resp.outblock.bidho1
         ),
     );
+}
+
+// ---------------------------------------------------------------------------
+// t8425 — 전체테마 (all-themes) smoke. First implement-tr pilot: market_session,
+// non-paginated, no caller input, reliably non-empty.
+// ---------------------------------------------------------------------------
+
+/// Map a `t8425` outcome to the optional credential-free `LIVE-SMOKE` result
+/// fragment. `Ok((rsp_cd, themes))` → `Some(line)`; any `Err` → `None`.
+///
+/// This is the offline-testable seam for the R3a Err-path guarantee: on failure
+/// the function yields `None`, so the smoke fn never calls [`record`] and no
+/// `LIVE-SMOKE` line can be captured from a failed run. The fragment carries only
+/// the business `rsp_cd` and a public structural count — never `rsp_msg`.
+fn t8425_smoke_result(outcome: Result<(String, usize), &LsError>) -> Option<String> {
+    match outcome {
+        Ok((rsp_cd, themes)) => Some(format!("rsp_cd={rsp_cd} themes={themes}")),
+        Err(_) => None,
+    }
+}
+
+/// Err-path safety + line shape, exercised without the network (non-ignored).
+///
+/// Covers R3a: a simulated gateway error yields no `LIVE-SMOKE` line, while the
+/// success path yields a credential-free fragment.
+#[test]
+fn t8425_err_path_emits_no_live_smoke_line() {
+    let err = LsError::Config("simulated gateway error".into());
+    assert!(
+        t8425_smoke_result(Err(&err)).is_none(),
+        "an Err outcome must not build a LIVE-SMOKE line"
+    );
+    let line = t8425_smoke_result(Ok(("00000".into(), 42))).expect("Ok yields a line");
+    assert_eq!(line, "rsp_cd=00000 themes=42");
+    assert!(!line.contains("rsp_msg"), "result fragment must not carry rsp_msg");
+}
+
+/// `make live-smoke-t8425`: paper guard → OAuth token → one `t8425` all-themes
+/// read. The pilot for the `tracked → implemented` recipe.
+///
+/// `all_themes` returning `Ok` with a non-empty `outblock` proves the read is
+/// callable and the response shape round-trips. The recorded line is
+/// credential-free by construction (only `rsp_cd` + a public theme count; no
+/// `rsp_msg`, token, or account text) and self-dated. A failed run emits a
+/// distinct `SMOKE-FAIL` stderr line — never a capturable `LIVE-SMOKE` line.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8425`"]
+async fn live_smoke_t8425() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+
+    let token = sdk
+        .standalone()
+        .token()
+        .await
+        .expect("OAuth token acquisition failed");
+    assert!(
+        !token.is_empty(),
+        "token must be non-empty — proves a live round-trip"
+    );
+
+    let req = T8425Request::new();
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().all_themes(&req).await {
+        Ok(resp) => {
+            let line = t8425_smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())))
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t8425",
+                &format!("env=paper date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            // No capturable LIVE-SMOKE line on failure (R3a) — distinct stderr
+            // prefix mirrors `live_smoke_account`'s SMOKE-FAIL.
+            debug_assert!(t8425_smoke_result(Err(&e)).is_none());
+            eprintln!("SMOKE-FAIL target=live-smoke-t8425 market-data failure (not evidence)");
+            panic!("live-smoke-t8425 failed: {e}");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
