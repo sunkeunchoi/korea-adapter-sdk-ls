@@ -511,6 +511,50 @@ pub fn type_only_gate(findings: &[DriftFinding]) -> TypeOnlyDecision {
     TypeOnlyDecision::Admit
 }
 
+/// The companion structural guard for the type-only gate (U3). [`type_only_gate`]
+/// reasons only over [`compare`] findings, and `compare` diffs **only** TRs whose
+/// shape is present on **both** sides — so a maintained TR whose shape is in the
+/// staged run but absent from the committed baseline (a newly-maintained,
+/// not-yet-baselined TR) — or dropped from it — produces *no finding* the gate
+/// could catch, yet its whole shape would ride into the Reviewed Baseline
+/// un-evaluated. This guard blocks when the maintained shape-key set differs at
+/// all, keeping a `--type-only` promote scoped to field-`type` changes **within the
+/// existing maintained shapes** (the §4 batch). Returns the block reason, or `None`
+/// when the two shape-key sets match.
+pub fn type_only_shape_set_block(
+    committed: &NormalizedRun,
+    staged: &NormalizedRun,
+) -> Option<String> {
+    let added: Vec<&str> = staged
+        .shapes
+        .keys()
+        .filter(|k| !committed.shapes.contains_key(*k))
+        .map(String::as_str)
+        .collect();
+    let removed: Vec<&str> = committed
+        .shapes
+        .keys()
+        .filter(|k| !staged.shapes.contains_key(*k))
+        .map(String::as_str)
+        .collect();
+    if added.is_empty() && removed.is_empty() {
+        return None;
+    }
+    let mut parts = Vec::new();
+    if !added.is_empty() {
+        parts.push(format!("introduces maintained shape(s) [{}]", added.join(", ")));
+    }
+    if !removed.is_empty() {
+        parts.push(format!("drops maintained shape(s) [{}]", removed.join(", ")));
+    }
+    Some(format!(
+        "staged run {} not present in the committed baseline; a type-only promotion admits only \
+         field-type changes within the existing maintained shapes — route the shape-set change to \
+         a separate Maintenance Review Decision",
+        parts.join(" and ")
+    ))
+}
+
 /// Build the visible, non-gating finding for an untracked-only facts outage
 /// ([`FactsOutage::UntrackedOnly`]). `tr_code` is a whole-inventory marker since
 /// the degradation is not pinned to a single maintained TR.
@@ -1194,6 +1238,22 @@ mod tests {
         assert_eq!(
             crate::types::render_attribute_deltas(&deltas),
             "type String→Long, length 4→8"
+        );
+    }
+
+    /// U1 regression: a type going to/from absent renders with the legacy `?`
+    /// fallback (`type String→?`) byte-for-byte, and is still classified type-only.
+    #[test]
+    fn field_attribute_deltas_renders_absent_type_with_question_mark() {
+        let deltas = field_attribute_deltas(
+            &block_field(Some("String"), Some(6), true),
+            &block_field(None, Some(6), true),
+        );
+        assert_eq!(deltas.len(), 1);
+        assert_eq!(deltas[0].attribute, FieldAttribute::Type);
+        assert_eq!(
+            crate::types::render_attribute_deltas(&deltas),
+            "type String→?"
         );
     }
 
@@ -2229,6 +2289,70 @@ mod tests {
             type_only_gate(&findings),
             TypeOnlyDecision::Block(r) if r.contains("non-type")
         ));
+    }
+
+    fn minimal_shape(code: &str) -> TrShape {
+        TrShape {
+            tr_code: code.to_string(),
+            tr_name: None,
+            protocol: Protocol::Rest,
+            is_websocket: false,
+            endpoint_path: None,
+            api_group_id: None,
+            source_group_name: None,
+            request_blocks: vec![],
+            response_blocks: vec![],
+            rate_limit_per_sec: None,
+            corp_rate_limit_per_sec: None,
+            rate_source_group: None,
+            description_hash: None,
+        }
+    }
+
+    fn run_with_shape_codes(codes: &[&str]) -> NormalizedRun {
+        NormalizedRun {
+            code_set: CodeSet::new(codes.iter().map(|c| c.to_string()), false),
+            manifest: Manifest {
+                upstream_tr_count: codes.len(),
+                maintained_tr_count: codes.len(),
+                source_urls: vec![],
+                normalizer_version: NORMALIZER_VERSION,
+                refreshed: String::new(),
+            },
+            shapes: codes
+                .iter()
+                .map(|c| (c.to_string(), minimal_shape(c)))
+                .collect(),
+        }
+    }
+
+    /// The companion shape-set guard admits an identical maintained shape-key set
+    /// (the §4 case: same TRs, only field types differ) and blocks any added or
+    /// dropped maintained shape — the un-gated structural drift `compare` cannot
+    /// surface.
+    #[test]
+    fn type_only_shape_set_block_catches_added_and_dropped_shapes() {
+        let base = run_with_shape_codes(&["t1481", "t8430"]);
+
+        // Identical key set → admitted (None).
+        assert_eq!(
+            type_only_shape_set_block(&base, &run_with_shape_codes(&["t1481", "t8430"])),
+            None
+        );
+
+        // A newly-maintained shape in the staged run → block naming it.
+        let added = type_only_shape_set_block(&base, &run_with_shape_codes(&["t1481", "t8430", "t9999"]));
+        assert!(
+            matches!(&added, Some(r) if r.contains("introduces") && r.contains("t9999")),
+            "got {added:?}"
+        );
+
+        // A maintained shape dropped from the staged run → block naming it.
+        let dropped = type_only_shape_set_block(&base, &run_with_shape_codes(&["t1481"]));
+        assert!(
+            matches!(&dropped, Some(r) if r.contains("drops") && r.contains("t8430")),
+            "got {dropped:?}"
+        );
     }
 
     // --- U5 facts-outage decision (pure, single-sourced) ------------------

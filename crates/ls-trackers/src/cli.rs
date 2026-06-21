@@ -787,6 +787,20 @@ pub fn promote_committed(
         if let TypeOnlyDecision::Block(reason) = type_only_gate(&report.findings) {
             return Ok(PromoteOutcome::RefusedTypeOnly(reason));
         }
+        // The findings-based gate cannot see a maintained shape present in the
+        // staged run but absent from the committed baseline (compare() diffs only
+        // the shared set), so a newly-maintained-but-unbaselined TR would otherwise
+        // ride in un-evaluated. Block any maintained shape-set change so the promote
+        // stays scoped to field-type changes within the existing shapes.
+        let committed_baseline = load_normalized(&paths.baseline_dir)
+            .map_err(|e| format!("committed baseline unavailable: {e}"))?;
+        let staged_normalized = load_normalized(&run_dir)
+            .map_err(|e| format!("staged run normalized layout unavailable: {e}"))?;
+        if let Some(reason) =
+            crate::api_drift::type_only_shape_set_block(&committed_baseline, &staged_normalized)
+        {
+            return Ok(PromoteOutcome::RefusedTypeOnly(reason));
+        }
     }
 
     // 2. Attestation is the only mutation go-ahead (R4/R7), and an empty attest
@@ -3052,6 +3066,92 @@ recommendation:
             fs::read(paths.baseline_dir.join(MANIFEST_FILE)).unwrap(),
             manifest_before,
             "zero mutation on the fallback-rejected path"
+        );
+        assert!(!paths.baseline_dir.join(PROMOTION_LOG_FILE).exists());
+    }
+
+    /// Covers the shape-set guard (U3). A maintained TR present in the staged run
+    /// but absent from the committed baseline (newly-maintained, not-yet-baselined)
+    /// produces no `compare` finding the findings-gate could catch — so the
+    /// companion shape-set guard must refuse with zero mutation rather than
+    /// silently writing its never-evaluated shape.
+    #[test]
+    fn type_only_promote_blocks_newly_maintained_shape_with_zero_mutation() {
+        let scratch = scratch("type-only-new-shape");
+        let staged = scratch.join("staged");
+        write_staged_from_raw(&staged, &committed_raw());
+
+        let paths = Paths {
+            baseline_dir: scratch.join("baseline"),
+            run_root: scratch.join("runs"),
+            metadata_dir: repo_metadata_dir(),
+            spec_baseline_dir: scratch.join("spec"),
+        };
+        // Committed baseline = staged minus one maintained shape, so the staged run
+        // re-introduces that shape with no finding (compare only diffs the shared
+        // set). The findings-gate admits; the shape-set guard must block.
+        let mut committed = load_normalized(&staged).unwrap();
+        let dropped = committed
+            .shapes
+            .keys()
+            .next()
+            .expect("at least one maintained shape")
+            .clone();
+        committed.shapes.remove(&dropped);
+        write_normalized(&paths.baseline_dir, &committed).unwrap();
+        fs::create_dir_all(paths.baseline_dir.join("raw")).unwrap();
+        fs::write(paths.baseline_dir.join(RAW_FILE), b"{\"sentinel\":true}\n").unwrap();
+        let raw_before = fs::read(paths.baseline_dir.join(RAW_FILE)).unwrap();
+
+        // Sanity: the findings-gate alone does NOT catch the re-introduced shape
+        // (the gap the companion guard closes).
+        let report = run_check(&paths, Some(&staged)).unwrap();
+        assert_eq!(
+            crate::api_drift::type_only_gate(&report.findings),
+            crate::api_drift::TypeOnlyDecision::Admit,
+            "findings-gate cannot see the un-diffed newly-maintained shape"
+        );
+
+        let outcome =
+            promote_committed(&paths, Some(&staged), "ENG-1", true, "2026-06-21").unwrap();
+        assert!(
+            matches!(&outcome, PromoteOutcome::RefusedTypeOnly(r) if r.contains(&dropped)),
+            "the shape-set guard refuses the re-introduced maintained shape: {outcome:?}"
+        );
+        assert_eq!(
+            fs::read(paths.baseline_dir.join(RAW_FILE)).unwrap(),
+            raw_before,
+            "zero mutation: committed raw byte-identical"
+        );
+        assert!(!paths.baseline_dir.join(PROMOTION_LOG_FILE).exists());
+    }
+
+    /// Dispatch (U3): `promote --type-only --dry-run` over a blocking staged run
+    /// surfaces the gate block as exit 2 and writes nothing; an admitted type wave
+    /// follows the drift gate (exit 1, the signal to pass `--attest`).
+    #[test]
+    fn dispatch_type_only_dry_run_block_exits_error_writes_nothing() {
+        // Blocking: a renamed maintained field surfaces as non-type structural drift.
+        let (staged, paths) = stage_with_one_maintained_field_change(
+            "type-only-dry-block",
+            |f| f.field_name = format!("{}__renamed", f.field_name),
+        );
+        let manifest_before = fs::read(paths.baseline_dir.join(MANIFEST_FILE)).unwrap();
+        assert_eq!(
+            dispatch(
+                &paths,
+                Command::PromoteDryRun {
+                    staged: Some(staged),
+                    type_only: true
+                }
+            ),
+            Exit::Error,
+            "a blocked type-only dry-run exits 2"
+        );
+        assert_eq!(
+            fs::read(paths.baseline_dir.join(MANIFEST_FILE)).unwrap(),
+            manifest_before,
+            "dry-run writes nothing even on a block"
         );
         assert!(!paths.baseline_dir.join(PROMOTION_LOG_FILE).exists());
     }
