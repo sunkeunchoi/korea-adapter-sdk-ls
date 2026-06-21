@@ -131,3 +131,47 @@ values as type-level ground truth.
 | Scope | Provisional value | Source basis | Re-verify before implementation |
 |---|---|---|---|
 | All 36 TRs (field-level `type`) | normalized shape `type` codes served under the `system-codes` HTTP-500 fallback | committed raw fetched while `system-codes` returned HTTP 500 (SEED-ATTESTATION) | resolved batch-wide by the separate field-`type` re-pin PR after a clean `system-codes` fetch — not per-TR work |
+
+---
+
+## 5. Consumer-bound Implemented Expansion wave — close-out (2026-06-21)
+
+The `tracked → implemented` wave (plan
+`docs/plans/2026-06-21-003-feat-consumer-bound-implemented-expansion-plan.md`)
+promoted 11 consumer-bound read-only stock TRs to **Implemented** (callable Rust,
+gated by a Paper Live Smoke; each stays **non-recommended** — no Focused Evidence,
+no recommendation block, no `EVIDENCE-FRESHNESS.md` edit). Every one of the 11
+reached a decided end state: **all 11 implemented**, none dropped or pended.
+
+| TR | Class | End state | Smoke gate (credential-free) |
+|---|---|---|---|
+| t8425 | market_session | implemented | `rsp_cd=00000 themes=265` |
+| t8436 | market_session | implemented | `rsp_cd=00000 stocks=4290` |
+| t1531 | market_session | implemented | `rsp_cd=00000 rows=1` (theme tmcode=0008) |
+| t1537 | market_session | implemented | `rsp_cd=00000 rows=10` (theme tmcode=0008) |
+| t1452 | paginated (single-page) | implemented | `rsp_cd=00000 rows=40` |
+| t1403 | paginated (single-page) | implemented | `rsp_cd=00000 rows=20` |
+| t1441 | paginated (single-page) | implemented | `rsp_cd=00000 rows=50` |
+| t1463 | paginated (single-page) | implemented | `rsp_cd=00000 rows=50` |
+| t1466 | paginated (single-page) | implemented | `rsp_cd=00000 rows=50` |
+| t1489 | paginated (single-page) | implemented | `rsp_cd=00000 rows=20` |
+| t1492 | paginated (single-page) | implemented | `rsp_cd=00000 rows=21` |
+
+Classification key (none used this wave): TR-defect (raw HTTP ok, SDK deserialize
+fails → dropped), environmental-pending (failure reproduces outside the TR; no
+in-window recovery → pending), input-unresolved (no representative caller input).
+
+**Residual provisionality (NOT retired by this wave):**
+- `t1489` / `t1492` `venue_session`: still provisional (kept in §1). Both are
+  call-auction / expected-execution screens flagged possibly `krx_extended`; the
+  smokes ran off-session (a Sunday, returning last-session data), which confirms
+  callability but **cannot** resolve `krx_regular` vs `krx_extended`. Re-verify
+  against live in-session behavior before any Recommended promotion.
+- Field-level `type` facets (§4): unchanged for all 36 — a clean deserialize does
+  not confirm the HTTP-500-seeded types. Stays with the separate field-`type`
+  re-pin PR.
+- Multi-page collection over body-`idx` for the 7 paginated TRs: deferred
+  follow-up (these are Implemented at single-page scope only).
+
+Recommended tier untouched: `EVIDENCE-FRESHNESS.md` stays at six Recommended TRs;
+no `metadata/evidence/<tr>.yaml` exists for any of the 11.
