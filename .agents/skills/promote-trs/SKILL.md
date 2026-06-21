@@ -16,11 +16,20 @@ not a failure.
 ## 1. Discover candidates
 
 A TR is a **recipe-candidate** iff `support.implemented: true`,
-`support.recommended: false`, and its code appears in
-`.agents/skills/promote-tr/references/smoke-map.md`. List candidates by reading
-`metadata/trs/*.yaml`. Any `implemented && !recommended` TR *not* in the smoke map
-(e.g. `revoke`) is recorded immediately as **HELD — needs ce-plan (no smoke
-harness)**; do not attempt it.
+`support.recommended: false`, its code appears in
+`.agents/skills/promote-tr/references/smoke-map.md`, **and** its **Promotion**
+column there is `ready`. List candidates by reading `metadata/trs/*.yaml` and
+cross-checking the smoke-map. Presence in the smoke-map plus a passing smoke is
+NOT a recommendation mandate — the explicit `ready` signal is required.
+
+Record immediately (do not attempt) as discovery-time holds:
+- An `implemented && !recommended` TR *not* in the smoke map (e.g. `revoke`) →
+  **HELD — needs ce-plan (no smoke harness)**.
+- An `implemented && !recommended` TR in the smoke map but marked
+  `implemented-only` → **HELD — implemented-only; not cleared for recommendation**.
+  These are Implemented-not-Recommended by intent (e.g. the consumer-bound
+  expansion wave's 11 TRs); clearing one is a deliberate flip of its Promotion
+  cell to `ready`, not something the sweep decides.
 
 Keep the discovered recipe-candidates and discovery-time holds for the sweep
 ledger. Once the ledger exists, persist them to `state/candidates.json` and append

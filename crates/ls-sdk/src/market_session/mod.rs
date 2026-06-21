@@ -304,6 +304,338 @@ pub struct T1101Response {
     pub outblock: T1101OutBlock,
 }
 
+/// Input block for `t8425` — 전체테마 (all themes).
+///
+/// `t8425` is a no-caller-input read: the spec's `t8425InBlock` carries a single
+/// length-1 `dummy` placeholder (단축코드-style filler), so callers supply
+/// nothing. Modeled after `T1102InBlock` *minus* every caller identifier.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8425InBlock {
+    /// Dummy placeholder / Dummy (length-1; the read takes no caller input).
+    pub dummy: String,
+}
+
+/// `t8425` request — wraps the input block under the `t8425InBlock` key.
+///
+/// Serializes to `{"t8425InBlock":{"dummy":""}}`. `t8425` is not paginated and
+/// takes no caller identifier, so there are no continuation fields and no
+/// caller-supplied fields in the body.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8425Request {
+    #[serde(rename = "t8425InBlock")]
+    pub inblock: T8425InBlock,
+}
+
+impl T8425Request {
+    /// Build a `t8425` all-themes request. Takes no caller input; the `dummy`
+    /// placeholder serializes as an empty string.
+    pub fn new() -> Self {
+        T8425Request {
+            inblock: T8425InBlock {
+                dummy: String::new(),
+            },
+        }
+    }
+}
+
+impl Default for T8425Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `t8425OutBlock` — one theme row.
+///
+/// The `t8425OutBlock` response block is a repeated array of theme rows (the spec
+/// marks the block itself `Binary`, the array marker), so [`T8425Response`] holds
+/// a `Vec` of these tolerated as single-or-array via [`ls_core::de_vec_or_single`].
+/// Both fields use [`ls_core::string_or_number`] for wire-type tolerance and
+/// `#[serde(default)]` lets a sparse row deserialize cleanly. Field names mirror
+/// the LS spec verbatim.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8425OutBlock {
+    /// Theme name / 테마명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tmname: String,
+    /// Theme code / 테마코드 (the representative caller input for `t1531`/`t1537`).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tmcode: String,
+}
+
+/// `t8425` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are the LS business-status fields (classified in `ls-core`
+/// dispatch before this struct is built); `outblock` is the all-themes array
+/// under the `t8425OutBlock` key, tolerated as a single object OR an array via
+/// [`ls_core::de_vec_or_single`]. All three are `#[serde(default)]` so a terse or
+/// empty envelope still deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8425Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t8425OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T8425OutBlock>,
+}
+
+/// Input block for `t8436` — 주식종목조회 (stock master list).
+///
+/// `gubun` is a market-segment FILTER (구분: `"0"` 전체 / `"1"` 코스피 /
+/// `"2"` 코스닥), not an instrument identifier — the read returns the whole list
+/// for the chosen segment.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8436InBlock {
+    /// Market-segment filter / 구분 (`"0"` all / `"1"` KOSPI / `"2"` KOSDAQ).
+    pub gubun: String,
+}
+
+/// `t8436` request — wraps the input block under the `t8436InBlock` key.
+///
+/// Serializes to `{"t8436InBlock":{"gubun":"0"}}`. `t8436` is not paginated, so
+/// there are no continuation fields in the body; `gubun` is a filter selector.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8436Request {
+    #[serde(rename = "t8436InBlock")]
+    pub inblock: T8436InBlock,
+}
+
+impl T8436Request {
+    /// Build a `t8436` stock-list request for one market segment (`gubun`).
+    pub fn new(gubun: impl Into<String>) -> Self {
+        T8436Request {
+            inblock: T8436InBlock {
+                gubun: gubun.into(),
+            },
+        }
+    }
+}
+
+/// `t8436OutBlock` — one stock-master row.
+///
+/// The `t8436OutBlock` response block is a repeated array (the spec marks the
+/// block `Binary`), so [`T8436Response`] holds a `Vec` tolerated as single-or-
+/// array via [`ls_core::de_vec_or_single`]. A representative, spec-grounded
+/// subset; every field uses [`ls_core::string_or_number`] for wire-type
+/// tolerance and `#[serde(default)]` lets a sparse row deserialize cleanly.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8436OutBlock {
+    /// Korean name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Short code / 단축코드 (6-digit).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Extended code / 확장코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub expcode: String,
+    /// ETF distinction / ETF구분 (`"1"` ETF / `"2"` ETN).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub etfgubun: String,
+    /// Upper limit price / 상한가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub uplmtprice: String,
+    /// Lower limit price / 하한가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dnlmtprice: String,
+    /// Previous close / 전일가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jnilclose: String,
+    /// Market segment / 구분 (`"1"` KOSPI / `"2"` KOSDAQ).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gubun: String,
+}
+
+/// `t8436` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are the LS business-status fields; `outblock` is the
+/// stock-master array under the `t8436OutBlock` key, tolerated as single-or-array
+/// via [`ls_core::de_vec_or_single`]. All `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8436Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t8436OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T8436OutBlock>,
+}
+
+/// Input block for `t1531` — 테마별종목 (stocks in a theme).
+///
+/// The spec marks BOTH `tmname` (테마명) and `tmcode` (테마코드) required, so
+/// callers pass a matched name+code pair (e.g. a row from [`MarketSession::all_themes`]).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1531InBlock {
+    /// Theme name / 테마명.
+    pub tmname: String,
+    /// Theme code / 테마코드 (4-digit).
+    pub tmcode: String,
+}
+
+/// `t1531` request — wraps the input block under the `t1531InBlock` key.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1531Request {
+    #[serde(rename = "t1531InBlock")]
+    pub inblock: T1531InBlock,
+}
+
+impl T1531Request {
+    /// Build a `t1531` request for one theme (name + code, both required).
+    pub fn new(tmname: impl Into<String>, tmcode: impl Into<String>) -> Self {
+        T1531Request {
+            inblock: T1531InBlock {
+                tmname: tmname.into(),
+                tmcode: tmcode.into(),
+            },
+        }
+    }
+}
+
+/// `t1531OutBlock` — one theme-constituent row.
+///
+/// The `t1531OutBlock` response block is a repeated array (the spec marks it
+/// `Binary`), so [`T1531Response`] holds a `Vec` tolerated as single-or-array via
+/// [`ls_core::de_vec_or_single`]. Every field uses [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1531OutBlock {
+    /// Theme name / 테마명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tmname: String,
+    /// Average rate of change / 평균등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub avgdiff: String,
+    /// Theme code / 테마코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tmcode: String,
+}
+
+/// `t1531` response envelope. `outblock` is the theme-row array under the
+/// `t1531OutBlock` key, tolerated as single-or-array. All `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1531Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t1531OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T1531OutBlock>,
+}
+
+/// Input block for `t1537` — 테마종목별시세조회 (quotes for a theme's stocks).
+///
+/// Keyed by `tmcode` (테마코드) alone.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1537InBlock {
+    /// Theme code / 테마코드 (4-digit).
+    pub tmcode: String,
+}
+
+/// `t1537` request — wraps the input block under the `t1537InBlock` key.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1537Request {
+    #[serde(rename = "t1537InBlock")]
+    pub inblock: T1537InBlock,
+}
+
+impl T1537Request {
+    /// Build a `t1537` request for one theme code.
+    pub fn new(tmcode: impl Into<String>) -> Self {
+        T1537Request {
+            inblock: T1537InBlock {
+                tmcode: tmcode.into(),
+            },
+        }
+    }
+}
+
+/// `t1537OutBlock` — the theme summary block (single object).
+///
+/// Carries the theme-level aggregates; the per-stock rows are in
+/// [`T1537OutBlock1`]. Every field uses [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1537OutBlock {
+    /// Advancing-issue count / 상승종목수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub upcnt: String,
+    /// Theme issue count / 테마종목수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tmcnt: String,
+    /// Advancing-issue ratio / 상승종목비율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub uprate: String,
+    /// Theme name / 테마명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tmname: String,
+}
+
+/// `t1537OutBlock1` — one per-stock quote row within the theme.
+///
+/// The repeated row block (`t1537OutBlock1[]`); a representative subset of the
+/// spec fields, every one via [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1537OutBlock1 {
+    /// Korean name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Short code / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change vs. previous close / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Rate of change / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Accumulated volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+}
+
+/// `t1537` response envelope.
+///
+/// `outblock` is the theme summary; `outblock1` is the per-stock quote array
+/// under the `t1537OutBlock1` key, tolerated as single-or-array via
+/// [`ls_core::de_vec_or_single`]. All `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1537Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1537OutBlock", default)]
+    pub outblock: T1537OutBlock,
+    #[serde(
+        rename = "t1537OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1537OutBlock1>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -341,6 +673,56 @@ impl MarketSession {
     pub async fn order_book(&self, req: &T1101Request) -> LsResult<T1101Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T1101_POLICY, req)
+            .await
+    }
+
+    /// Fetch the full theme list (전체테마) via `t8425`.
+    ///
+    /// Dispatches through [`ls_core::Inner::post`] (retry + rate limit on the
+    /// MarketData bucket). `t8425` is not paginated and takes no caller input, so
+    /// this is a single, non-continuation POST returning every theme's
+    /// name + code. The returned `tmcode` values are the representative caller
+    /// inputs for theme-keyed reads (`t1531`/`t1537`). A `01900` business code
+    /// surfaces as [`ls_core::LsError::ApiError`] and classifies as
+    /// paper-incompatible.
+    pub async fn all_themes(&self, req: &T8425Request) -> LsResult<T8425Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8425_POLICY, req)
+            .await
+    }
+
+    /// Fetch the stock master list (주식종목조회) for one market segment via
+    /// `t8436`.
+    ///
+    /// Dispatches through [`ls_core::Inner::post`] (retry + rate limit on the
+    /// MarketData bucket). `t8436` is not paginated; `gubun` is a market-segment
+    /// filter (`"0"` all / `"1"` KOSPI / `"2"` KOSDAQ), not an instrument
+    /// identifier. A `01900` business code surfaces as
+    /// [`ls_core::LsError::ApiError`] and classifies as paper-incompatible.
+    pub async fn stock_list(&self, req: &T8436Request) -> LsResult<T8436Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8436_POLICY, req)
+            .await
+    }
+
+    /// Fetch the constituent stocks of one theme (테마별종목) via `t1531`.
+    ///
+    /// Dispatches through [`ls_core::Inner::post`] (non-paginated). The theme is
+    /// identified by a matched `tmname`+`tmcode` pair (both required by the spec);
+    /// source one from [`MarketSession::all_themes`].
+    pub async fn theme_stocks(&self, req: &T1531Request) -> LsResult<T1531Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1531_POLICY, req)
+            .await
+    }
+
+    /// Fetch per-stock quotes for one theme (테마종목별시세조회) via `t1537`.
+    ///
+    /// Dispatches through [`ls_core::Inner::post`] (non-paginated). Keyed by
+    /// `tmcode`; the response carries a theme summary plus a per-stock quote array.
+    pub async fn theme_quotes(&self, req: &T1537Request) -> LsResult<T1537Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1537_POLICY, req)
             .await
     }
 }

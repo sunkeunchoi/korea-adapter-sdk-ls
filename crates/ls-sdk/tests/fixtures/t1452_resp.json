@@ -1,0 +1,25 @@
+{
+  "rsp_cd": "00000",
+  "rsp_msg": "정상처리 되었습니다.",
+  "t1452OutBlock": { "idx": 20 },
+  "t1452OutBlock1": [
+    {
+      "hname": "삼성전자",
+      "shcode": "005930",
+      "price": 71500,
+      "sign": "2",
+      "change": 800,
+      "diff": "1.13",
+      "volume": 12345678
+    },
+    {
+      "hname": "SK하이닉스",
+      "shcode": "000660",
+      "price": "185000",
+      "sign": "5",
+      "change": "-2000",
+      "diff": "-1.07",
+      "volume": "9876543"
+    }
+  ]
+}

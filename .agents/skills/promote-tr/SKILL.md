@@ -29,6 +29,10 @@ Read `metadata/trs/<tr>.yaml`. Bail early as HELD if:
 - The TR has **no smoke target** in `references/smoke-map.md` (e.g. `revoke`) →
   `HELD <tr> — no smoke harness; route to ce-plan for a new smoke`. Do not
   fabricate evidence.
+- The TR's smoke-map **Promotion** column is `implemented-only` (not `ready`) →
+  `HELD <tr> — implemented-only; not cleared for recommendation`. A passing smoke
+  is not a recommendation mandate; the `ready` signal must be set deliberately
+  first. Do not promote.
 
 ## 1. Run the smoke and capture the line
 
@@ -100,7 +104,7 @@ See `references/templates.md` for worked `excludes` lists per class.
 ## 6. Update the docgen banner test
 
 In `crates/ls-docgen/src/lib.rs`, function
-`reference_covers_seven_implemented_with_banner_and_omits_unimplemented`:
+`reference_covers_implemented_with_banner_and_omits_unimplemented`:
 - remove `<tr>` from the `banner_trs` array,
 - add `<tr>` to the recommended-no-banner `for rec in [...]` loop,
 - update the count comment to match (the `reference.len()` assertion is unchanged

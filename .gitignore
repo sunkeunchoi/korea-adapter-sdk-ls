@@ -2,3 +2,6 @@
 .compound-engineering/*.local.yaml
 .compound-engineering/runs/
 .env
+.env.*
+!.env.example
+

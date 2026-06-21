@@ -32,7 +32,7 @@ When promoting a TR from `tracked` to `implemented`:
 
 ---
 
-## 1. `venue_session` (all 36)
+## 1. `venue_session` (authored for all 36; rows retire as TRs implement)
 
 `venue_session` is authored best-effort as `krx_regular` for every TR and duplicated
 into the routing index (validator cross-check). It is provisional for the whole batch:
@@ -41,17 +41,10 @@ call-auction screens are the most likely to differ (`krx_extended`).
 
 | TR | Provisional value | Source basis | Re-verify before implementation |
 |---|---|---|---|
-| t1403 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
-| t1441 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
-| t1452 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
-| t1463 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
-| t1466 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t1481 | `krx_regular` | `시간외`/단일가 (after-hours / call-auction) screen — likely spans an extended session | confirm `krx_extended` vs `krx_regular` against live session behavior |
 | t1482 | `krx_regular` | `시간외`/단일가 (after-hours / call-auction) screen — likely spans an extended session | confirm `krx_extended` vs `krx_regular` against live session behavior |
 | t1489 | `krx_regular` | `시간외`/단일가 (after-hours / call-auction) screen — likely spans an extended session | confirm `krx_extended` vs `krx_regular` against live session behavior |
 | t1492 | `krx_regular` | `시간외`/단일가 (after-hours / call-auction) screen — likely spans an extended session | confirm `krx_extended` vs `krx_regular` against live session behavior |
-| t1531 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
-| t1537 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t1601 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t1615 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t1640 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
@@ -70,10 +63,8 @@ call-auction screens are the most likely to differ (`krx_extended`).
 | t3102 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t3320 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t3341 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
-| t8425 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t8430 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t8431 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
-| t8436 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t9905 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t9907 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t9942 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
@@ -86,17 +77,8 @@ it is recorded. The true required-input set is confirmed at implementation.
 
 | TR | Provisional value | Source basis | Re-verify before implementation |
 |---|---|---|---|
-| t1403 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
-| t1441 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
-| t1452 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
-| t1463 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
-| t1466 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
 | t1481 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
 | t1482 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
-| t1489 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
-| t1492 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
-| t1531 | `[tmcode]` | best-effort: request-shape input fields that look like instrument/record identifiers | confirm the true caller-supplied identifier set against a live request |
-| t1537 | `[tmcode]` | best-effort: request-shape input fields that look like instrument/record identifiers | confirm the true caller-supplied identifier set against a live request |
 | t1601 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
 | t1615 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
 | t1640 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
@@ -115,10 +97,8 @@ it is recorded. The true required-input set is confirmed at implementation.
 | t3102 | `[sNewsno]` | best-effort: request-shape input fields that look like instrument/record identifiers | confirm the true caller-supplied identifier set against a live request |
 | t3320 | `[gicode]` | best-effort: request-shape input fields that look like instrument/record identifiers | confirm the true caller-supplied identifier set against a live request |
 | t3341 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
-| t8425 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
 | t8430 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
 | t8431 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
-| t8436 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
 | t9905 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
 | t9907 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
 | t9942 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
@@ -151,3 +131,47 @@ values as type-level ground truth.
 | Scope | Provisional value | Source basis | Re-verify before implementation |
 |---|---|---|---|
 | All 36 TRs (field-level `type`) | normalized shape `type` codes served under the `system-codes` HTTP-500 fallback | committed raw fetched while `system-codes` returned HTTP 500 (SEED-ATTESTATION) | resolved batch-wide by the separate field-`type` re-pin PR after a clean `system-codes` fetch — not per-TR work |
+
+---
+
+## 5. Consumer-bound Implemented Expansion wave — close-out (2026-06-21)
+
+The `tracked → implemented` wave (plan
+`docs/plans/2026-06-21-003-feat-consumer-bound-implemented-expansion-plan.md`)
+promoted 11 consumer-bound read-only stock TRs to **Implemented** (callable Rust,
+gated by a Paper Live Smoke; each stays **non-recommended** — no Focused Evidence,
+no recommendation block, no `EVIDENCE-FRESHNESS.md` edit). Every one of the 11
+reached a decided end state: **all 11 implemented**, none dropped or pended.
+
+| TR | Class | End state | Smoke gate (credential-free) |
+|---|---|---|---|
+| t8425 | market_session | implemented | `rsp_cd=00000 themes=265` |
+| t8436 | market_session | implemented | `rsp_cd=00000 stocks=4290` |
+| t1531 | market_session | implemented | `rsp_cd=00000 rows=1` (theme tmcode=0008) |
+| t1537 | market_session | implemented | `rsp_cd=00000 rows=10` (theme tmcode=0008) |
+| t1452 | paginated (single-page) | implemented | `rsp_cd=00000 rows=40` |
+| t1403 | paginated (single-page) | implemented | `rsp_cd=00000 rows=20` |
+| t1441 | paginated (single-page) | implemented | `rsp_cd=00000 rows=50` |
+| t1463 | paginated (single-page) | implemented | `rsp_cd=00000 rows=50` |
+| t1466 | paginated (single-page) | implemented | `rsp_cd=00000 rows=50` |
+| t1489 | paginated (single-page) | implemented | `rsp_cd=00000 rows=20` |
+| t1492 | paginated (single-page) | implemented | `rsp_cd=00000 rows=21` |
+
+Classification key (none used this wave): TR-defect (raw HTTP ok, SDK deserialize
+fails → dropped), environmental-pending (failure reproduces outside the TR; no
+in-window recovery → pending), input-unresolved (no representative caller input).
+
+**Residual provisionality (NOT retired by this wave):**
+- `t1489` / `t1492` `venue_session`: still provisional (kept in §1). Both are
+  call-auction / expected-execution screens flagged possibly `krx_extended`; the
+  smokes ran off-session (a Sunday, returning last-session data), which confirms
+  callability but **cannot** resolve `krx_regular` vs `krx_extended`. Re-verify
+  against live in-session behavior before any Recommended promotion.
+- Field-level `type` facets (§4): unchanged for all 36 — a clean deserialize does
+  not confirm the HTTP-500-seeded types. Stays with the separate field-`type`
+  re-pin PR.
+- Multi-page collection over body-`idx` for the 7 paginated TRs: deferred
+  follow-up (these are Implemented at single-page scope only).
+
+Recommended tier untouched: `EVIDENCE-FRESHNESS.md` stays at six Recommended TRs;
+no `metadata/evidence/<tr>.yaml` exists for any of the 11.

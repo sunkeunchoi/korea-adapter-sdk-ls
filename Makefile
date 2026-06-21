@@ -15,7 +15,7 @@
 # Export command-line / make variables (e.g. LS_LIVE_SMOKE_*) to recipe shells.
 export
 
-.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws
+.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 raw-probe
 
 # $(1) = exact test name in crates/ls-sdk/tests/live_smoke.rs
 define run_smoke
@@ -46,6 +46,48 @@ live-smoke-account:
 ## WebSocket smoke: S3_ connect/subscribe/unsubscribe lifecycle (timeboxed).
 live-smoke-ws:
 	$(call run_smoke,live_smoke_ws)
+
+## t8425 (전체테마) smoke: paper guard -> OAuth token -> one all-themes read.
+live-smoke-t8425:
+	$(call run_smoke,live_smoke_t8425)
+
+## t8436 (주식종목조회) smoke: paper guard -> OAuth token -> one stock-list read.
+live-smoke-t8436:
+	$(call run_smoke,live_smoke_t8436)
+
+## t1531 (테마별종목) smoke: token -> t8425 theme -> one theme-constituents read.
+live-smoke-t1531:
+	$(call run_smoke,live_smoke_t1531)
+
+## t1537 (테마종목별시세) smoke: token -> t8425 theme -> one per-stock-quotes read.
+live-smoke-t1537:
+	$(call run_smoke,live_smoke_t1537)
+
+## t1452 (거래량상위) smoke: token -> one single-page top-volume read.
+live-smoke-t1452:
+	$(call run_smoke,live_smoke_t1452)
+
+## Remaining single-page paginated rank/screen smokes (one post_paginated each).
+live-smoke-t1403:
+	$(call run_smoke,live_smoke_t1403)
+live-smoke-t1441:
+	$(call run_smoke,live_smoke_t1441)
+live-smoke-t1463:
+	$(call run_smoke,live_smoke_t1463)
+live-smoke-t1466:
+	$(call run_smoke,live_smoke_t1466)
+live-smoke-t1489:
+	$(call run_smoke,live_smoke_t1489)
+live-smoke-t1492:
+	$(call run_smoke,live_smoke_t1492)
+
+## Failure classifier (implement-tr R6): one credential-safe raw-HTTP POST that
+## bypasses the SDK's typed deserialize. Requires LS_PROBE_TR_CD, LS_PROBE_PATH,
+## and LS_PROBE_BODY. Prints a RAW-PROBE line (never a LIVE-SMOKE evidence line).
+##   make raw-probe LS_PROBE_TR_CD=t8425 LS_PROBE_PATH=/stock/sector \
+##     LS_PROBE_BODY='{"t8425InBlock":{"dummy":""}}'
+raw-probe:
+	$(call run_smoke,raw_http_probe)
 
 # ---------------------------------------------------------------------------
 # Docs generation — ls-docgen projects TR Dependency Docs and SDK Reference

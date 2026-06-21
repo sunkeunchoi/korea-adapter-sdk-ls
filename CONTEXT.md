@@ -68,6 +68,14 @@ _Avoid_: generated diff, regeneration task, tracker result
 A reviewed unit of work that asks maintainers to start owning additional SDK behavior that is not already part of the **Maintained SDK Surface**.
 _Avoid_: migration task, generated port, backlog item
 
+**Tracked-Only Expansion Work Item**:
+An **SDK Expansion Work Item** that adds TR maintenance ownership without adding callable SDK behavior.
+_Avoid_: implemented expansion, generated coverage, full SDK port
+
+**Implemented Expansion Work Item**:
+An **SDK Expansion Work Item** that adds callable SDK behavior for one or more TRs.
+_Avoid_: tracked-only expansion, generated coverage, full SDK port
+
 **Completed Maintenance Work Item**:
 An **SDK Maintenance Work Item** whose affected maintained artifacts have been updated and whose selected **Change-Scoped Gate** has passed.
 _Avoid_: merged patch, closed issue, generated update
@@ -196,6 +204,8 @@ _Avoid_: weak lookup TR, identifier source, nice-to-have producer
 - A **Maintenance Review Decision** determines whether a **Tracker Finding** or **Manual Maintenance Input** becomes SDK work.
 - A **Tracker Finding** can be promoted into an **SDK Maintenance Work Item**.
 - A **SDK Expansion Work Item** is a decision to own additional SDK behavior, not a reaction to behavior already owned by the **Maintained SDK Surface**.
+- A **Tracked-Only Expansion Work Item** expands maintenance ownership but does not make a TR an **Implemented TR**.
+- An **Implemented Expansion Work Item** makes a TR an **Implemented TR** but not automatically a **Recommended TR**.
 - Accepted **SDK Maintenance Work Items** and **SDK Expansion Work Items** live in the **Maintenance Work Queue**.
 - A **Completed Maintenance Work Item** is not complete from code changes alone.
 - The **Maintenance Flow** begins with an upstream change signal and does not change the **Maintained SDK Surface** until reviewed work is accepted.

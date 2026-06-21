@@ -8,8 +8,9 @@
 use std::path::PathBuf;
 
 use ls_core::endpoint_policy::{
-    CSPAQ12200_POLICY, REVOKE_POLICY, S3_POLICY, T1101_POLICY, T1102_POLICY, T8412_POLICY,
-    TOKEN_POLICY,
+    CSPAQ12200_POLICY, REVOKE_POLICY, S3_POLICY, T1101_POLICY, T1102_POLICY, T1403_POLICY,
+    T1441_POLICY, T1452_POLICY, T1463_POLICY, T1466_POLICY, T1489_POLICY, T1492_POLICY,
+    T1531_POLICY, T1537_POLICY, T8412_POLICY, T8425_POLICY, T8436_POLICY, TOKEN_POLICY,
 };
 use ls_core::{EndpointPolicy, Protocol, RateLimitCategory};
 use ls_metadata::{validate_dir, Protocol as MetaProtocol, RateBucket};
@@ -49,6 +50,17 @@ fn slice_policies_mirror_metadata_index() {
         T1101_POLICY,
         T1102_POLICY,
         T8412_POLICY,
+        T8425_POLICY,
+        T8436_POLICY,
+        T1531_POLICY,
+        T1537_POLICY,
+        T1452_POLICY,
+        T1403_POLICY,
+        T1441_POLICY,
+        T1463_POLICY,
+        T1466_POLICY,
+        T1489_POLICY,
+        T1492_POLICY,
         CSPAQ12200_POLICY,
         S3_POLICY,
     ];
@@ -80,5 +92,20 @@ fn slice_policies_mirror_metadata_index() {
             policy.category,
             meta.facets.rate_bucket
         );
+
+        // self_paginated ⟹ has_pagination: a TR whose result self-paginates MUST
+        // have the policy thread the `tr_cont`/`tr_cont_key` continuation, else a
+        // paginated TR ships with single-page dispatch silently. This is a one-way
+        // implication, NOT equality: `CSPAQ12200` threads the header cursor
+        // defensively (has_pagination=true) while its balance result is single-page
+        // (self_paginated=false), and both are intentional.
+        if meta.facets.self_paginated {
+            assert!(
+                policy.has_pagination,
+                "TR `{}`: facets.self_paginated is true but runtime has_pagination is false \
+                 — a self-paginating TR must thread continuation",
+                policy.tr_code
+            );
+        }
     }
 }

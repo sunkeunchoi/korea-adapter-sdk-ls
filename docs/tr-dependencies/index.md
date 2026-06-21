@@ -12,17 +12,17 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `revoke` | 접근토큰 폐기 (OAuth2 token revoke) | `standalone` | implemented | [revoke](./revoke.md) |
 | `t1101` | 주식 현재가호가 조회 | `market_session` | recommended | [t1101](./t1101.md) |
 | `t1102` | 주식 현재가(시세) 조회 | `market_session` | recommended | [t1102](./t1102.md) |
-| `t1403` | 신규상장종목조회 | `paginated` | tracked | [t1403](./t1403.md) |
-| `t1441` | 등락율상위 | `paginated` | tracked | [t1441](./t1441.md) |
-| `t1452` | 거래량상위 | `paginated` | tracked | [t1452](./t1452.md) |
-| `t1463` | 거래대금상위 | `paginated` | tracked | [t1463](./t1463.md) |
-| `t1466` | 전일동시간대비거래급증 | `paginated` | tracked | [t1466](./t1466.md) |
+| `t1403` | 신규상장종목조회 | `paginated` | implemented | [t1403](./t1403.md) |
+| `t1441` | 등락율상위 | `paginated` | implemented | [t1441](./t1441.md) |
+| `t1452` | 거래량상위 | `paginated` | implemented | [t1452](./t1452.md) |
+| `t1463` | 거래대금상위 | `paginated` | implemented | [t1463](./t1463.md) |
+| `t1466` | 전일동시간대비거래급증 | `paginated` | implemented | [t1466](./t1466.md) |
 | `t1481` | 시간외등락율상위 | `paginated` | tracked | [t1481](./t1481.md) |
 | `t1482` | 시간외거래량상위 | `paginated` | tracked | [t1482](./t1482.md) |
-| `t1489` | 예상체결량상위조회 | `paginated` | tracked | [t1489](./t1489.md) |
-| `t1492` | 단일가예상등락율상위 | `paginated` | tracked | [t1492](./t1492.md) |
-| `t1531` | 테마별종목 | `standalone` | tracked | [t1531](./t1531.md) |
-| `t1537` | 테마종목별시세조회 | `standalone` | tracked | [t1537](./t1537.md) |
+| `t1489` | 예상체결량상위조회 | `paginated` | implemented | [t1489](./t1489.md) |
+| `t1492` | 단일가예상등락율상위 | `paginated` | implemented | [t1492](./t1492.md) |
+| `t1531` | 테마별종목 | `market_session` | implemented | [t1531](./t1531.md) |
+| `t1537` | 테마종목별시세조회 | `market_session` | implemented | [t1537](./t1537.md) |
 | `t1601` | 투자자별종합 | `standalone` | tracked | [t1601](./t1601.md) |
 | `t1615` | 투자자매매종합1 | `standalone` | tracked | [t1615](./t1615.md) |
 | `t1640` | 프로그램매매종합조회(미니) | `standalone` | tracked | [t1640](./t1640.md) |
@@ -42,10 +42,10 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t3320` | FNG_요약 | `standalone` | tracked | [t3320](./t3320.md) |
 | `t3341` | 재무순위종합 | `paginated` | tracked | [t3341](./t3341.md) |
 | `t8412` | 주식 차트(N분봉) 조회 | `paginated` | recommended | [t8412](./t8412.md) |
-| `t8425` | 전체테마 | `standalone` | tracked | [t8425](./t8425.md) |
+| `t8425` | 전체테마 | `market_session` | implemented | [t8425](./t8425.md) |
 | `t8430` | 주식종목조회 | `standalone` | tracked | [t8430](./t8430.md) |
 | `t8431` | ELW종목조회 | `standalone` | tracked | [t8431](./t8431.md) |
-| `t8436` | 주식종목조회 API용 | `standalone` | tracked | [t8436](./t8436.md) |
+| `t8436` | 주식종목조회 API용 | `market_session` | implemented | [t8436](./t8436.md) |
 | `t9905` | 기초자산리스트조회 | `standalone` | tracked | [t9905](./t9905.md) |
 | `t9907` | 만기월조회 | `standalone` | tracked | [t9907](./t9907.md) |
 | `t9942` | ELW마스터조회API용 | `standalone` | tracked | [t9942](./t9942.md) |

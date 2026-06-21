@@ -118,7 +118,10 @@ pub const T1102_POLICY: EndpointPolicy = EndpointPolicy {
     protocol: Protocol::Rest,
     category: RateLimitCategory::MarketData,
     is_order: false,
-    has_pagination: true,
+    // t1102 is structurally non-paginated (no `HasPagination` impl; dispatches via
+    // plain `post`). The flag is the runtime mirror of `facets.self_paginated:
+    // false`, so it must be false too — the prior `true` was stale.
+    has_pagination: false,
     rate_limit_per_sec: Some(10),
     corp_rate_limit_per_sec: Some(5),
 };
@@ -149,6 +152,160 @@ pub const T8412_POLICY: EndpointPolicy = EndpointPolicy {
     has_pagination: true,
     rate_limit_per_sec: Some(1),
     corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8425 — 전체테마 조회 (all-themes list; non-paginated market read).
+pub const T8425_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8425",
+    path: "/stock/sector",
+    module: "stock",
+    group: "[주식] 섹터",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1531 — 테마별종목 (stocks in a theme; non-paginated market read).
+pub const T1531_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1531",
+    path: "/stock/sector",
+    module: "stock",
+    group: "[주식] 섹터",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1537 — 테마종목별시세조회 (per-stock quotes for a theme; non-paginated).
+pub const T1537_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1537",
+    path: "/stock/sector",
+    module: "stock",
+    group: "[주식] 섹터",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1452 — 거래량상위 (top trading volume; single-page body-`idx` paginated).
+pub const T1452_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1452",
+    path: "/stock/high-item",
+    module: "stock",
+    group: "[주식] 상위종목",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1403 — 신규상장종목조회 (newly-listed stocks; single-page body-`idx` paginated).
+pub const T1403_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1403",
+    path: "/stock/etc",
+    module: "stock",
+    group: "[주식] 기타",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
+/// t1441 — 등락율상위 (top change rate; single-page body-`idx` paginated).
+pub const T1441_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1441",
+    path: "/stock/high-item",
+    module: "stock",
+    group: "[주식] 상위종목",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
+/// t1463 — 거래대금상위 (top trading value; single-page body-`idx` paginated).
+pub const T1463_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1463",
+    path: "/stock/high-item",
+    module: "stock",
+    group: "[주식] 상위종목",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
+/// t1466 — 전일동시간대비거래급증 (volume surge; single-page body-`idx` paginated).
+pub const T1466_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1466",
+    path: "/stock/high-item",
+    module: "stock",
+    group: "[주식] 상위종목",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
+/// t1489 — 예상체결량상위조회 (top expected-execution volume; single-page paginated).
+pub const T1489_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1489",
+    path: "/stock/high-item",
+    module: "stock",
+    group: "[주식] 상위종목",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
+/// t1492 — 단일가예상등락율상위 (single-price expected change rate; single-page).
+pub const T1492_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1492",
+    path: "/stock/high-item",
+    module: "stock",
+    group: "[주식] 상위종목",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
+/// t8436 — 주식종목조회 (stock master list; non-paginated market read).
+pub const T8436_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8436",
+    path: "/stock/etc",
+    module: "stock",
+    group: "[주식] 기타",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(5),
 };
 
 /// CSPAQ12200 — 계좌 잔고/예수금 조회 (account balance inquiry).
@@ -223,6 +380,17 @@ mod tests {
             T1101_POLICY,
             T1102_POLICY,
             T8412_POLICY,
+            T8425_POLICY,
+            T8436_POLICY,
+            T1531_POLICY,
+            T1537_POLICY,
+            T1452_POLICY,
+            T1403_POLICY,
+            T1441_POLICY,
+            T1463_POLICY,
+            T1466_POLICY,
+            T1489_POLICY,
+            T1492_POLICY,
             CSPAQ12200_POLICY,
         ] {
             assert!(!p.is_order, "{} must not be an order endpoint", p.tr_code);

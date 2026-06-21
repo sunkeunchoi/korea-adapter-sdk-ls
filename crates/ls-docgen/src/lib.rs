@@ -829,13 +829,16 @@ mod tests {
     }
 
     #[test]
-    fn reference_covers_seven_implemented_with_banner_and_omits_unimplemented() {
+    fn reference_covers_implemented_with_banner_and_omits_unimplemented() {
         let report = authored_report();
         let reference = render_reference_docs(&report.trs, &report.evidence);
         let dependency = render_dependency_docs(&report.trs, &report.index);
 
         // The still-unrecommended implemented TRs each carry the banner.
-        let banner_trs = ["revoke"];
+        let banner_trs = [
+            "revoke", "t1403", "t1441", "t1452", "t1463", "t1466", "t1489", "t1492", "t1531",
+            "t1537", "t8425", "t8436",
+        ];
         for tr in banner_trs {
             let page = reference
                 .get(Path::new(&format!("docs/reference/{tr}.md")))
@@ -861,13 +864,13 @@ mod tests {
             );
         }
 
-        // index + 7 implemented pages (1 banner [revoke] + token + t1101 + t1102 +
-        // t8412 + S3_ + CSPAQ12200). Promoted TRs stay implemented, so the count holds
-        // at 8 even as banners drop.
+        // index + 18 implemented pages (12 banner [revoke + the 11 wave TRs] +
+        // token + t1101 + t1102 + t8412 + S3_ + CSPAQ12200). Promoted TRs stay
+        // implemented, so the count only grows as TRs implement.
         assert_eq!(
             reference.len(),
-            8,
-            "index + seven implemented reference pages"
+            19,
+            "index + the implemented reference pages"
         );
 
         // The tracked-but-unimplemented order TR is excluded from Reference …
