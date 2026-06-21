@@ -165,6 +165,34 @@ pub const T8425_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+/// t1531 — 테마별종목 (stocks in a theme; non-paginated market read).
+pub const T1531_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1531",
+    path: "/stock/sector",
+    module: "stock",
+    group: "[주식] 섹터",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1537 — 테마종목별시세조회 (per-stock quotes for a theme; non-paginated).
+pub const T1537_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1537",
+    path: "/stock/sector",
+    module: "stock",
+    group: "[주식] 섹터",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// t8436 — 주식종목조회 (stock master list; non-paginated market read).
 pub const T8436_POLICY: EndpointPolicy = EndpointPolicy {
     tr_code: "t8436",
@@ -253,6 +281,8 @@ mod tests {
             T8412_POLICY,
             T8425_POLICY,
             T8436_POLICY,
+            T1531_POLICY,
+            T1537_POLICY,
             CSPAQ12200_POLICY,
         ] {
             assert!(!p.is_order, "{} must not be an order endpoint", p.tr_code);

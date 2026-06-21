@@ -1,6 +1,6 @@
 tr_code: t1531
 name: 테마별종목
-owner_class: standalone
+owner_class: market_session
 facets:
   protocol: rest
   instrument_domain: stock
@@ -11,13 +11,13 @@ facets:
   paper_incompatible: false
   certification_path: none
   rate_bucket: market_data
-  caller_supplied_identifiers: [tmcode]
+  caller_supplied_identifiers: [tmname, tmcode]
 dependencies:
   self_continuation_fields: []
   strong_order_fields: []
 support:
   tracked: true
-  implemented: false
+  implemented: true
   recommended: false
 maintenance:
   source_spec_hash: 7a964bfc4fa7

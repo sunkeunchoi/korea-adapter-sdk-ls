@@ -15,7 +15,7 @@
 # Export command-line / make variables (e.g. LS_LIVE_SMOKE_*) to recipe shells.
 export
 
-.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-t8425 live-smoke-t8436 raw-probe
+.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 raw-probe
 
 # $(1) = exact test name in crates/ls-sdk/tests/live_smoke.rs
 define run_smoke
@@ -54,6 +54,14 @@ live-smoke-t8425:
 ## t8436 (주식종목조회) smoke: paper guard -> OAuth token -> one stock-list read.
 live-smoke-t8436:
 	$(call run_smoke,live_smoke_t8436)
+
+## t1531 (테마별종목) smoke: token -> t8425 theme -> one theme-constituents read.
+live-smoke-t1531:
+	$(call run_smoke,live_smoke_t1531)
+
+## t1537 (테마종목별시세) smoke: token -> t8425 theme -> one per-stock-quotes read.
+live-smoke-t1537:
+	$(call run_smoke,live_smoke_t1537)
 
 ## Failure classifier (implement-tr R6): one credential-safe raw-HTTP POST that
 ## bypasses the SDK's typed deserialize. Requires LS_PROBE_TR_CD, LS_PROBE_PATH,

@@ -21,8 +21,8 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t1482` | 시간외거래량상위 | `paginated` | tracked | [t1482](./t1482.md) |
 | `t1489` | 예상체결량상위조회 | `paginated` | tracked | [t1489](./t1489.md) |
 | `t1492` | 단일가예상등락율상위 | `paginated` | tracked | [t1492](./t1492.md) |
-| `t1531` | 테마별종목 | `standalone` | tracked | [t1531](./t1531.md) |
-| `t1537` | 테마종목별시세조회 | `standalone` | tracked | [t1537](./t1537.md) |
+| `t1531` | 테마별종목 | `market_session` | implemented | [t1531](./t1531.md) |
+| `t1537` | 테마종목별시세조회 | `market_session` | implemented | [t1537](./t1537.md) |
 | `t1601` | 투자자별종합 | `standalone` | tracked | [t1601](./t1601.md) |
 | `t1615` | 투자자매매종합1 | `standalone` | tracked | [t1615](./t1615.md) |
 | `t1640` | 프로그램매매종합조회(미니) | `standalone` | tracked | [t1640](./t1640.md) |

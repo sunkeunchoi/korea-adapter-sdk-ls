@@ -121,13 +121,13 @@ trs:
     venue_session: krx_regular
   t1531:
     file: trs/t1531.yaml
-    owner_class: standalone
+    owner_class: market_session
     protocol: rest
     instrument_domain: stock
     venue_session: krx_regular
   t1537:
     file: trs/t1537.yaml
-    owner_class: standalone
+    owner_class: market_session
     protocol: rest
     instrument_domain: stock
     venue_session: krx_regular

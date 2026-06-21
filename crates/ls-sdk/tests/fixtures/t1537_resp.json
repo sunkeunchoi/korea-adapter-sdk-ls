@@ -1,0 +1,30 @@
+{
+  "rsp_cd": "00000",
+  "rsp_msg": "정상처리 되었습니다.",
+  "t1537OutBlock": {
+    "upcnt": 12,
+    "tmcnt": 20,
+    "uprate": "60.00",
+    "tmname": "2차전지"
+  },
+  "t1537OutBlock1": [
+    {
+      "hname": "에코프로비엠",
+      "shcode": "247540",
+      "price": 231000,
+      "sign": "2",
+      "change": 5000,
+      "diff": "2.21",
+      "volume": 123456
+    },
+    {
+      "hname": "엘앤에프",
+      "shcode": "066970",
+      "price": "150000",
+      "sign": "5",
+      "change": "-2000",
+      "diff": "-1.32",
+      "volume": "78900"
+    }
+  ]
+}

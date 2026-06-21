@@ -1,0 +1,8 @@
+{
+  "rsp_cd": "00000",
+  "rsp_msg": "정상처리 되었습니다.",
+  "t1531OutBlock": [
+    { "tmname": "2차전지", "avgdiff": "1.23", "tmcode": "0050" },
+    { "tmname": "2차전지", "avgdiff": -0.45, "tmcode": 50 }
+  ]
+}

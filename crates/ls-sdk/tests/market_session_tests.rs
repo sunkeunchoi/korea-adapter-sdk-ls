@@ -9,7 +9,8 @@
 use ls_core::{Inner, LsError};
 use ls_sdk::market_session::{
     T1101OutBlock, T1101Request, T1101Response, T1102OutBlock, T1102Request, T1102Response,
-    T8425Request, T8425Response, T8436Request, T8436Response,
+    T1531Request, T1531Response, T1537Request, T1537Response, T8425Request, T8425Response,
+    T8436Request, T8436Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
@@ -33,6 +34,16 @@ const T8436_FIXTURE: &str = include_str!("fixtures/t8436_resp.json");
 
 /// `T8436_POLICY.path` — the mounted endpoint for the stock-master read.
 const T8436_PATH: &str = "/stock/etc";
+
+/// The spec-derived `t1531` response fixture (`fixtures/t1531_resp.json`).
+const T1531_FIXTURE: &str = include_str!("fixtures/t1531_resp.json");
+
+/// The spec-derived `t1537` response fixture (`fixtures/t1537_resp.json`).
+const T1537_FIXTURE: &str = include_str!("fixtures/t1537_resp.json");
+
+/// `T1531_POLICY.path` / `T1537_POLICY.path` — both theme reads share the sector
+/// endpoint (distinguished on the wire by the `tr_cd` header), like `t8425`.
+const SECTOR_PATH: &str = "/stock/sector";
 
 /// `T1102_POLICY.path` — the mounted endpoint for the quote TR.
 const T1102_PATH: &str = "/stock/market-data";
@@ -553,4 +564,139 @@ fn t8436_response_envelope_default_is_empty() {
     let resp = T8436Response::default();
     assert_eq!(resp.rsp_cd, "");
     assert!(resp.outblock.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// t1531 — 테마별종목 (stocks in a theme). market_session, non-paginated; keyed by
+// a required tmname+tmcode pair (AE4 caller-supplied identifiers).
+// ---------------------------------------------------------------------------
+
+/// Covers R5, AE4. The `t1531` request serializes to `{"t1531InBlock":{...}}`
+/// carrying BOTH required identifiers `tmname` and `tmcode` in the correct block.
+#[test]
+fn t1531_request_serializes_with_tmname_and_tmcode() {
+    let req = T1531Request::new("2차전지", "0050");
+    let value = serde_json::to_value(&req).expect("serialize t1531 request");
+
+    let inblock = &value["t1531InBlock"];
+    let inblock_obj = inblock.as_object().expect("inblock is an object");
+    assert_eq!(inblock_obj.len(), 2, "tmname + tmcode");
+    assert_eq!(inblock["tmname"], "2차전지");
+    assert_eq!(inblock["tmcode"], "0050");
+    assert!(value.get("tr_cont").is_none());
+}
+
+/// Covers R2. The fixture deserializes through REAL dispatch; rows round-trip and
+/// `tmcode`/`avgdiff` parse whether they arrive as JSON strings (row 0) or
+/// numbers (row 1).
+#[tokio::test]
+async fn theme_stocks_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(SECTOR_PATH))
+        .and(header("tr_cd", "t1531"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T1531_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let resp = sdk
+        .market_session()
+        .theme_stocks(&T1531Request::new("2차전지", "0050"))
+        .await
+        .expect("t1531 theme_stocks should succeed");
+
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock.len(), 2);
+    assert_eq!(resp.outblock[0].tmcode, "0050", "tmcode (string form)");
+    assert_eq!(resp.outblock[1].tmcode, "50", "tmcode coerced from number");
+    assert_eq!(resp.outblock[0].avgdiff, "1.23");
+}
+
+/// Covers R2. An empty result set (`00707`) deserializes as the pending case.
+#[test]
+fn t1531_empty_result_set_deserializes_as_empty() {
+    let empty: T1531Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t1531OutBlock": []
+    }))
+    .expect("empty result set must deserialize");
+    assert_eq!(empty.rsp_cd, "00707");
+    assert!(empty.outblock.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// t1537 — 테마종목별시세조회 (per-stock quotes for a theme). market_session,
+// non-paginated; keyed by tmcode. Summary out-block + per-stock row array.
+// ---------------------------------------------------------------------------
+
+/// Covers R5. The `t1537` request serializes to `{"t1537InBlock":{"tmcode":...}}`.
+#[test]
+fn t1537_request_serializes_with_only_tmcode() {
+    let req = T1537Request::new("0050");
+    let value = serde_json::to_value(&req).expect("serialize t1537 request");
+    let inblock = &value["t1537InBlock"];
+    assert_eq!(inblock.as_object().expect("object").len(), 1);
+    assert_eq!(inblock["tmcode"], "0050");
+}
+
+/// Covers R2. The fixture deserializes through REAL dispatch: the summary block
+/// and the per-stock row array both round-trip, with mixed number/string wire
+/// types parsed via `string_or_number`.
+#[tokio::test]
+async fn theme_quotes_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(SECTOR_PATH))
+        .and(header("tr_cd", "t1537"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T1537_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let resp = sdk
+        .market_session()
+        .theme_quotes(&T1537Request::new("0050"))
+        .await
+        .expect("t1537 theme_quotes should succeed");
+
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock.tmcnt, "20", "summary tmcnt (from number)");
+    assert_eq!(resp.outblock.tmname, "2차전지");
+    assert_eq!(resp.outblock1.len(), 2, "both per-stock rows round-trip");
+    assert_eq!(resp.outblock1[0].shcode, "247540");
+    assert_eq!(resp.outblock1[0].price, "231000", "price (from number)");
+    assert_eq!(resp.outblock1[1].price, "150000", "price (from string)");
+}
+
+/// Covers R2. A single per-stock row (not an array) is tolerated as a
+/// one-element Vec via `de_vec_or_single`.
+#[test]
+fn t1537_single_out_row_tolerated_as_array() {
+    let single: T1537Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1537OutBlock": { "tmname": "단일", "tmcnt": 1 },
+        "t1537OutBlock1": { "hname": "종목", "shcode": "000660", "price": 100 }
+    }))
+    .expect("single out-row object must deserialize as a one-element Vec");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].shcode, "000660");
+}
+
+/// Compile-time guard: `T1537Response` default envelope is empty.
+#[test]
+fn t1537_response_envelope_default_is_empty() {
+    let resp = T1537Response::default();
+    assert_eq!(resp.rsp_cd, "");
+    assert!(resp.outblock1.is_empty());
+    assert_eq!(resp.outblock.tmname, "");
 }

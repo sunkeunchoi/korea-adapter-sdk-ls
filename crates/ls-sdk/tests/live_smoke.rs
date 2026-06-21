@@ -18,7 +18,9 @@ use chrono::{Datelike, FixedOffset, NaiveDate, Utc, Weekday};
 use futures::StreamExt;
 use ls_core::{LsConfig, LsError, LsResult};
 use ls_sdk::account::CSPAQ12200Request;
-use ls_sdk::market_session::{T1101Request, T1102Request, T8425Request, T8436Request};
+use ls_sdk::market_session::{
+    T1101Request, T1102Request, T1531Request, T1537Request, T8425Request, T8436Request,
+};
 use ls_sdk::paginated::T8412Request;
 use ls_sdk::realtime::S3Trade;
 use ls_sdk::LsSdk;
@@ -319,6 +321,102 @@ async fn live_smoke_t8436() {
             debug_assert!(smoke_result(Err(&e), "stocks").is_none());
             eprintln!("SMOKE-FAIL target=live-smoke-t8436 market-data failure (not evidence)");
             panic!("live-smoke-t8436 failed: {e}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// t1531 / t1537 — theme-keyed reads. market_session, non-paginated. Each smoke
+// self-sources a representative theme from t8425 (the plan's "one-off t8425 call"
+// input source), so it needs no hardcoded theme code.
+// ---------------------------------------------------------------------------
+
+/// `make live-smoke-t1531`: paper guard → token → fetch one theme via `t8425` →
+/// one `t1531` theme-constituents read for that theme.
+///
+/// `tmcode` is public theme reference data (printed); `tmname` is not printed.
+/// Credential-free, self-dated; failure emits SMOKE-FAIL, never a LIVE-SMOKE line.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1531`"]
+async fn live_smoke_t1531() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let themes = sdk
+        .market_session()
+        .all_themes(&T8425Request::new())
+        .await
+        .expect("t8425 all_themes (theme input source) failed");
+    let theme = themes
+        .outblock
+        .first()
+        .expect("at least one theme to key t1531");
+    let (tmname, tmcode) = (theme.tmname.clone(), theme.tmcode.clone());
+
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .market_session()
+        .theme_stocks(&T1531Request::new(&tmname, &tmcode))
+        .await
+    {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t1531",
+                &format!("env=paper tmcode={tmcode} date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            debug_assert!(smoke_result(Err(&e), "rows").is_none());
+            eprintln!("SMOKE-FAIL target=live-smoke-t1531 market-data failure (not evidence)");
+            panic!("live-smoke-t1531 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1537`: paper guard → token → fetch one theme via `t8425` →
+/// one `t1537` per-stock-quotes read for that theme code.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1537`"]
+async fn live_smoke_t1537() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let themes = sdk
+        .market_session()
+        .all_themes(&T8425Request::new())
+        .await
+        .expect("t8425 all_themes (theme input source) failed");
+    let tmcode = themes
+        .outblock
+        .first()
+        .expect("at least one theme to key t1537")
+        .tmcode
+        .clone();
+
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .market_session()
+        .theme_quotes(&T1537Request::new(&tmcode))
+        .await
+    {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t1537",
+                &format!("env=paper tmcode={tmcode} date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            debug_assert!(smoke_result(Err(&e), "rows").is_none());
+            eprintln!("SMOKE-FAIL target=live-smoke-t1537 market-data failure (not evidence)");
+            panic!("live-smoke-t1537 failed: {e}");
         }
     }
 }
