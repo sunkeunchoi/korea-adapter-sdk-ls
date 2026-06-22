@@ -23,7 +23,7 @@ use ls_sdk::market_session::{
 };
 use ls_sdk::paginated::{
     T1403Request, T1441Request, T1452Request, T1463Request, T1466Request, T1489Request,
-    T1492Request, T8412Request,
+    T1492Request, T1866Request, T8412Request,
 };
 use ls_sdk::realtime::S3Trade;
 use ls_sdk::LsSdk;
@@ -706,6 +706,53 @@ async fn live_smoke_t1492() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t1492 market-data failure (not evidence)");
             panic!("live-smoke-t1492 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1866`: paper guard → server-saved condition list (the
+/// saved-condition spine producer). `user_id` comes from `LS_PAPER_USER_ID`
+/// (never the caller, never recorded — it is account-identifying). The recorded
+/// line carries only `rsp_cd` and the structural condition count; an empty list
+/// (no seeded condition) surfaces as a credential-safe `SMOKE-FAIL` so it is
+/// distinguishable from a defect.
+#[tokio::test]
+#[ignore = "live smoke: needs LS_PAPER_USER_ID + a seeded server-saved condition; run via `make live-smoke-t1866`"]
+async fn live_smoke_t1866() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let user_id = match std::env::var("LS_PAPER_USER_ID") {
+        Ok(u) if !u.is_empty() => u,
+        _ => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1866 LS_PAPER_USER_ID unset (not evidence)");
+            panic!("live-smoke-t1866: LS_PAPER_USER_ID required (the LS login id)");
+        }
+    };
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .paginated()
+        .saved_conditions(&T1866Request::new(user_id))
+        .await
+    {
+        Ok(resp) if resp.outblock1.is_empty() => {
+            // Success transport but no saved condition exists → spine-input-unavailable.
+            eprintln!(
+                "SMOKE-FAIL target=live-smoke-t1866 no saved condition (rsp_cd={})",
+                resp.rsp_cd
+            );
+            panic!("live-smoke-t1866: no server-saved condition to yield a query_index");
+        }
+        Ok(resp) => record(
+            "live-smoke-t1866",
+            &format!("env=paper gb=0 date={date}"),
+            &smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "conditions")
+                .expect("an Ok outcome yields a result line"),
+        ),
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1866 market-data failure (not evidence)");
+            panic!("live-smoke-t1866 failed: {e}");
         }
     }
 }

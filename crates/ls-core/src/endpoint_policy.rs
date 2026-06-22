@@ -294,6 +294,22 @@ pub const T1492_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(1),
 };
 
+/// `t1866` — 서버저장조건 리스트조회 (server-saved condition list; the saved-condition
+/// spine producer). Body-cursor single-page; `has_pagination` mirrors
+/// `facets.self_paginated: true`.
+pub const T1866_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1866",
+    path: "/stock/item-search",
+    module: "stock",
+    group: "[주식] 종목검색",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
 /// t8436 — 주식종목조회 (stock master list; non-paginated market read).
 pub const T8436_POLICY: EndpointPolicy = EndpointPolicy {
     tr_code: "t8436",
@@ -391,6 +407,7 @@ mod tests {
             T1466_POLICY,
             T1489_POLICY,
             T1492_POLICY,
+            T1866_POLICY,
             CSPAQ12200_POLICY,
         ] {
             assert!(!p.is_order, "{} must not be an order endpoint", p.tr_code);
