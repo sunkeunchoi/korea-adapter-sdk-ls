@@ -30,6 +30,8 @@ TR marked `ready` is a promote-tr candidate.
 | `t1466` | `live-smoke-t1466` | `live_smoke_t1466` | open session; single-page | implemented-only | paper volume-surge, single page |
 | `t1489` | `live-smoke-t1489` | `live_smoke_t1489` | open session; single-page (auction/expected — may be empty off-session) | implemented-only | paper expected-execution-volume, single page |
 | `t1492` | `live-smoke-t1492` | `live_smoke_t1492` | open session; single-page (single-price/expected — may be empty off-session) | implemented-only | paper single-price expected-change, single page |
+| `t1866` | `live-smoke-t1866` | `live_smoke_t1866` | `LS_PAPER_USER_ID=<LS login id>` + ≥1 seeded server-saved condition (else SMOKE-FAIL: spine-input-unavailable) | implemented-only | paper server-saved condition list (spine producer), single page |
+| `t1859` | `live-smoke-t1859` | `live_smoke_t1859` | `LS_PAPER_USER_ID=<LS login id>`; chained — self-sources a `query_index` from `t1866` (else SMOKE-FAIL: spine-input-unavailable) | implemented-only | paper server-saved condition search (spine consumer) |
 
 Notes:
 - `live-smoke` (default) issues the OAuth token *then* a `t1102` quote in one run,

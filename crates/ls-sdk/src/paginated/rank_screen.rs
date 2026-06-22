@@ -1,10 +1,11 @@
-//! Single-page body-`idx` paginated TRs (the implement-tr "second freeze"
+//! Single-page body-cursor paginated TRs (the implement-tr "second freeze"
 //! sub-pattern).
 //!
-//! These stock rank/screen TRs carry a request-BODY `idx` continuation cursor,
-//! for which `ls-core` has NO multi-page machinery (it only threads the header
-//! `tr_cont`/`tr_cont_key` cursor that `t8412` uses). They are therefore promoted
-//! at SINGLE-PAGE scope:
+//! These stock rank/screen TRs carry a request-BODY continuation cursor — most
+//! a numeric `idx`, plus `t1866` (saved-condition list) whose cursor is the
+//! string pair `cont`/`cont_key` — for which `ls-core` has NO multi-page
+//! machinery (it only threads the header `tr_cont`/`tr_cont_key` cursor that
+//! `t8412` uses). They are therefore promoted at SINGLE-PAGE scope:
 //!   - `idx` is an ordinary serialized in-block field (a JSON number on the wire,
 //!     via `string_as_number`) at its first-page convention (`"0"`) — NOT
 //!     `#[serde(skip)]` (that attribute is only for `t8412`'s header cursors);
@@ -694,4 +695,111 @@ pub struct T1492Response {
         deserialize_with = "ls_core::de_vec_or_single"
     )]
     pub outblock1: Vec<T1492OutBlock1>,
+}
+
+// --- t1866 — 서버저장조건 리스트조회 (server-saved condition list) ------------
+// The saved-condition spine PRODUCER: each returned row carries a `query_index`
+// that keys a `t1859`/`t1860` condition search. Body-cursor single-page like the
+// rank screens, but its cursor is the string pair `cont`/`cont_key` (not a
+// numeric `idx`), and it takes caller inputs (`user_id`/`gb`/`group_name`).
+
+/// Input block for `t1866` — server-saved condition list.
+///
+/// `user_id` is the LS login id; `gb`/`group_name` select the condition set
+/// (`gb = "0"`, empty `group_name` = all groups). `cont`/`cont_key` are the
+/// request-BODY continuation cursor (string-typed, empty on the first page).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1866InBlock {
+    /// LS login id / 사용자 ID.
+    pub user_id: String,
+    /// Division / 구분.
+    pub gb: String,
+    /// Condition group name / 그룹명 (empty = all groups).
+    pub group_name: String,
+    /// Body continuation cursor / 연속 (first page = empty).
+    pub cont: String,
+    /// Body continuation key / 연속키 (first page = empty).
+    pub cont_key: String,
+}
+
+/// `t1866` request — wraps the in-block under the `t1866InBlock` key.
+///
+/// `cont`/`cont_key` ride IN the body as the continuation cursor. The
+/// `tr_cont`/`tr_cont_key` fields are `#[serde(skip)]` and stay empty for the
+/// single-page call; they exist only to satisfy the `HasPagination` bound on
+/// `post_paginated`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1866Request {
+    #[serde(rename = "t1866InBlock")]
+    pub inblock: T1866InBlock,
+    #[serde(skip)]
+    pub tr_cont: String,
+    #[serde(skip)]
+    pub tr_cont_key: String,
+}
+ls_core::impl_has_pagination!(T1866Request);
+impl T1866Request {
+    /// Build a single-page `t1866` saved-condition-list request for `user_id`,
+    /// listing all groups (`gb = "0"`, empty `group_name`). Cursors start empty.
+    pub fn new(user_id: impl Into<String>) -> Self {
+        T1866Request {
+            inblock: T1866InBlock {
+                user_id: user_id.into(),
+                gb: "0".to_string(),
+                group_name: String::new(),
+                cont: String::new(),
+                cont_key: String::new(),
+            },
+            tr_cont: String::new(),
+            tr_cont_key: String::new(),
+        }
+    }
+}
+
+/// `t1866OutBlock` — summary block (result count + returned continuation cursor).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1866OutBlock {
+    /// Result count / 건수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub result_count: String,
+    /// Returned continuation cursor / 연속.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cont: String,
+    /// Returned continuation key / 연속키.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cont_key: String,
+}
+
+/// `t1866OutBlock1` — one server-saved condition. `query_index` keys the
+/// `t1859`/`t1860` condition search (the modeled cross-TR discovery edge).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1866OutBlock1 {
+    /// Saved-condition index / 질의 인덱스 — keys the t1859/t1860 search.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub query_index: String,
+    /// Condition group name / 그룹명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub group_name: String,
+    /// Condition name / 질의명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub query_name: String,
+}
+
+/// `t1866` response (single page). `outblock1` is the saved-condition array.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1866Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1866OutBlock", default)]
+    pub outblock: T1866OutBlock,
+    #[serde(
+        rename = "t1866OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1866OutBlock1>,
 }

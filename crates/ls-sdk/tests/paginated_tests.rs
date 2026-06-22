@@ -15,7 +15,8 @@ use ls_core::{Inner, LsConfig, LsError};
 use ls_sdk::paginated::{
     T1403Request, T1403Response, T1441Request, T1441Response, T1452Request, T1452Response,
     T1463Request, T1463Response, T1466Request, T1466Response, T1489Request, T1489Response,
-    T1492Request, T1492Response, T8412OutBlock1, T8412Request, T8412Response,
+    T1492Request, T1492Response, T1866Request, T1866Response, T8412OutBlock1, T8412Request,
+    T8412Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
@@ -409,6 +410,66 @@ fn t1452_single_or_array_and_empty_pending() {
     .expect("empty result set deserializes");
     assert_eq!(empty.rsp_cd, "00707");
     assert!(empty.outblock1.is_empty(), "empty is the pending case, not a flip");
+}
+
+// ---------------------------------------------------------------------------
+// t1866 — 서버저장조건 리스트조회 (saved-condition spine producer). Body-cursor
+// single-page; the cursor is the STRING pair cont/cont_key (not a numeric idx),
+// and it takes caller inputs (user_id/gb/group_name). Its out-rows carry the
+// query_index that keys the t1859/t1860 condition search.
+// ---------------------------------------------------------------------------
+
+/// Covers R5/R7. `t1866::new` serializes its caller inputs and the body cursor
+/// INSIDE `t1866InBlock`, with the `tr_cont`/`tr_cont_key` header cursors
+/// `#[serde(skip)]` — absent from the body (the single-page convention).
+#[test]
+fn t1866_request_serializes_inputs_in_block_and_skips_header_cursors() {
+    let value = serde_json::to_value(T1866Request::new("d00000")).expect("serialize t1866 request");
+
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "exactly one top-level key (the in-block)");
+    let inblock = &value["t1866InBlock"];
+
+    assert_eq!(inblock["user_id"], "d00000", "user_id rides in the in-block");
+    assert_eq!(inblock["gb"], "0", "gb defaults to list-all");
+    assert_eq!(inblock["group_name"], "", "group_name empty = all groups");
+    // Body cursor present and EMPTY on the first page.
+    assert_eq!(inblock["cont"], "", "first-page cont is empty");
+    assert_eq!(inblock["cont_key"], "", "first-page cont_key is empty");
+    // Header cursors never serialize into the body.
+    assert!(value.get("tr_cont").is_none(), "tr_cont not in the body");
+    assert!(inblock.get("tr_cont").is_none(), "tr_cont not in the in-block");
+}
+
+/// Covers R5/R8. A success body with one saved condition deserializes under the
+/// `t1866OutBlock1` rename key with `query_index` populated (the value the
+/// t1859/t1860 chain consumes); an empty `00707` deserializes as the pending
+/// (spine-input-unavailable) case, not a flip.
+#[test]
+fn t1866_deserializes_query_index_rows_and_empty_pending() {
+    let single: T1866Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1866OutBlock": { "result_count": 1, "cont": "N", "cont_key": "" },
+        "t1866OutBlock1": { "query_index": "000000000001", "group_name": "그룹", "query_name": "조건1" }
+    }))
+    .expect("single saved-condition row tolerated as a one-element Vec");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(
+        single.outblock1[0].query_index, "000000000001",
+        "query_index populated — the modeled discovery-edge value"
+    );
+
+    let empty: T1866Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707",
+        "t1866OutBlock": { "result_count": 0, "cont": "N", "cont_key": "" },
+        "t1866OutBlock1": []
+    }))
+    .expect("empty result set deserializes");
+    assert_eq!(empty.rsp_cd, "00707");
+    assert!(
+        empty.outblock1.is_empty(),
+        "no saved condition = spine-input-unavailable pending, not a flip"
+    );
 }
 
 // ---------------------------------------------------------------------------

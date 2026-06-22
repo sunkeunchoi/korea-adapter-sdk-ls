@@ -19,11 +19,12 @@ use futures::StreamExt;
 use ls_core::{LsConfig, LsError, LsResult};
 use ls_sdk::account::CSPAQ12200Request;
 use ls_sdk::market_session::{
-    T1101Request, T1102Request, T1531Request, T1537Request, T8425Request, T8436Request,
+    T1101Request, T1102Request, T1531Request, T1537Request, T1859Request, T8425Request,
+    T8436Request,
 };
 use ls_sdk::paginated::{
     T1403Request, T1441Request, T1452Request, T1463Request, T1466Request, T1489Request,
-    T1492Request, T8412Request,
+    T1492Request, T1866Request, T8412Request,
 };
 use ls_sdk::realtime::S3Trade;
 use ls_sdk::LsSdk;
@@ -706,6 +707,111 @@ async fn live_smoke_t1492() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t1492 market-data failure (not evidence)");
             panic!("live-smoke-t1492 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1866`: paper guard → server-saved condition list (the
+/// saved-condition spine producer). `user_id` comes from `LS_PAPER_USER_ID`
+/// (never the caller, never recorded — it is account-identifying). The recorded
+/// line carries only `rsp_cd` and the structural condition count; an empty list
+/// (no seeded condition) surfaces as a credential-safe `SMOKE-FAIL` so it is
+/// distinguishable from a defect.
+#[tokio::test]
+#[ignore = "live smoke: needs LS_PAPER_USER_ID + a seeded server-saved condition; run via `make live-smoke-t1866`"]
+async fn live_smoke_t1866() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let user_id = match std::env::var("LS_PAPER_USER_ID") {
+        Ok(u) if !u.is_empty() => u,
+        _ => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1866 LS_PAPER_USER_ID unset (not evidence)");
+            panic!("live-smoke-t1866: LS_PAPER_USER_ID required (the LS login id)");
+        }
+    };
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .paginated()
+        .saved_conditions(&T1866Request::new(user_id))
+        .await
+    {
+        Ok(resp) if resp.outblock1.is_empty() => {
+            // Success transport but no saved condition exists → spine-input-unavailable.
+            eprintln!(
+                "SMOKE-FAIL target=live-smoke-t1866 no saved condition (rsp_cd={})",
+                resp.rsp_cd
+            );
+            panic!("live-smoke-t1866: no server-saved condition to yield a query_index");
+        }
+        Ok(resp) => record(
+            "live-smoke-t1866",
+            &format!("env=paper gb=0 date={date}"),
+            &smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "conditions")
+                .expect("an Ok outcome yields a result line"),
+        ),
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1866 market-data failure (not evidence)");
+            panic!("live-smoke-t1866 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1859`: paper guard → token → `t1866` saved-condition list →
+/// `t1859` condition search keyed by the first saved condition's `query_index`.
+///
+/// CHAINED, self-sourcing (R8): the consumer never receives a fabricated
+/// `query_index` — it is read from a live `t1866` call (mirrors `live_smoke_t1531`
+/// self-sourcing a `tmcode` from `t8425`). `LS_PAPER_USER_ID` (the LS login id) is
+/// required and never recorded; the `query_index` itself is account-saved-condition
+/// data and is NOT printed. An empty `t1866` (no seeded condition) surfaces as a
+/// credential-safe `SMOKE-FAIL` (spine-input-unavailable), never a fabricated key.
+#[tokio::test]
+#[ignore = "live smoke: needs LS_PAPER_USER_ID + a seeded server-saved condition; run via `make live-smoke-t1859`"]
+async fn live_smoke_t1859() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let user_id = match std::env::var("LS_PAPER_USER_ID") {
+        Ok(u) if !u.is_empty() => u,
+        _ => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1859 LS_PAPER_USER_ID unset (not evidence)");
+            panic!("live-smoke-t1859: LS_PAPER_USER_ID required (the LS login id)");
+        }
+    };
+
+    // Self-source the query_index from a live t1866 saved-condition list.
+    let conditions = sdk
+        .paginated()
+        .saved_conditions(&T1866Request::new(user_id))
+        .await
+        .expect("t1866 saved_conditions (query_index source) failed");
+    if conditions.outblock1.is_empty() {
+        eprintln!(
+            "SMOKE-FAIL target=live-smoke-t1859 t1866 spine source empty (rsp_cd={})",
+            conditions.rsp_cd
+        );
+        panic!("live-smoke-t1859: no server-saved condition to key the search");
+    }
+    let query_index = conditions.outblock1[0].query_index.clone();
+
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .market_session()
+        .condition_search(&T1859Request::new(query_index))
+        .await
+    {
+        Ok(resp) => {
+            // The query_index is NOT recorded — it is account-saved-condition data.
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1859", &format!("env=paper date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1859 market-data failure (not evidence)");
+            panic!("live-smoke-t1859 failed: {e}");
         }
     }
 }

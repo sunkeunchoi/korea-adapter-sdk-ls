@@ -127,4 +127,15 @@ impl Paginated {
             .post_paginated(&ls_core::endpoint_policy::T1492_POLICY, req)
             .await
     }
+
+    /// List the account's server-saved screening conditions (`t1866`).
+    ///
+    /// Each returned `outblock1` row carries a `query_index` that keys a
+    /// `t1859`/`t1860` condition search — the saved-condition spine producer.
+    /// Single-page (body `cont`/`cont_key` cursor empty).
+    pub async fn saved_conditions(&self, req: &T1866Request) -> LsResult<T1866Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1866_POLICY, req)
+            .await
+    }
 }

@@ -15,7 +15,7 @@
 # Export command-line / make variables (e.g. LS_LIVE_SMOKE_*) to recipe shells.
 export
 
-.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 raw-probe
+.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1866 live-smoke-t1859 raw-probe
 
 # $(1) = exact test name in crates/ls-sdk/tests/live_smoke.rs
 define run_smoke
@@ -80,6 +80,17 @@ live-smoke-t1489:
 	$(call run_smoke,live_smoke_t1489)
 live-smoke-t1492:
 	$(call run_smoke,live_smoke_t1492)
+
+## t1866 (서버저장조건 리스트조회) smoke: token -> server-saved condition list (the
+## saved-condition spine producer). Requires LS_PAPER_USER_ID + a seeded condition.
+live-smoke-t1866:
+	$(call run_smoke,live_smoke_t1866)
+
+## t1859 (서버저장조건 조건검색) smoke: token -> t1866 saved-condition list ->
+## one condition search keyed by the first query_index (chained, self-sourcing).
+## Requires LS_PAPER_USER_ID + a seeded condition (else SMOKE-FAIL).
+live-smoke-t1859:
+	$(call run_smoke,live_smoke_t1859)
 
 ## Failure classifier (implement-tr R6): one credential-safe raw-HTTP POST that
 ## bypasses the SDK's typed deserialize. Requires LS_PROBE_TR_CD, LS_PROBE_PATH,

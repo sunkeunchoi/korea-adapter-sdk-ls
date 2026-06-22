@@ -32,9 +32,9 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t1826` | 종목Q클릭검색리스트조회(씽큐스마트) | `standalone` | tracked | [t1826](./t1826.md) |
 | `t1852` | 파일저장종목 실시간검색 | `standalone` | tracked | [t1852](./t1852.md) |
 | `t1856` | 파일저장종목검색 | `standalone` | tracked | [t1856](./t1856.md) |
-| `t1859` | 서버저장조건 조건검색 | `standalone` | tracked | [t1859](./t1859.md) |
+| `t1859` | 서버저장조건 조건검색 | `market_session` | implemented | [t1859](./t1859.md) |
 | `t1860` | 서버저장조건 실시간검색 | `standalone` | tracked | [t1860](./t1860.md) |
-| `t1866` | 서버저장조건 리스트조회 | `paginated` | tracked | [t1866](./t1866.md) |
+| `t1866` | 서버저장조건 리스트조회 | `paginated` | implemented | [t1866](./t1866.md) |
 | `t1958` | ELW종목비교 | `standalone` | tracked | [t1958](./t1958.md) |
 | `t1964` | ELW전광판 | `standalone` | tracked | [t1964](./t1964.md) |
 | `t1988` | 기초자산리스트조회 | `standalone` | tracked | [t1988](./t1988.md) |

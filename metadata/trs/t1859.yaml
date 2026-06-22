@@ -1,6 +1,6 @@
 tr_code: t1859
 name: 서버저장조건 조건검색
-owner_class: standalone
+owner_class: market_session
 facets:
   protocol: rest
   instrument_domain: stock
@@ -17,8 +17,8 @@ dependencies:
   strong_order_fields: []
 support:
   tracked: true
-  implemented: false
+  implemented: true
   recommended: false
 maintenance:
   source_spec_hash: 52bd06b005dd
-  last_reviewed: 2026-06-21
+  last_reviewed: 2026-06-22
