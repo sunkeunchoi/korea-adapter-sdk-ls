@@ -192,3 +192,38 @@ in-window recovery → pending), input-unresolved (no representative caller inpu
 
 Recommended tier untouched: `EVIDENCE-FRESHNESS.md` stays at six Recommended TRs;
 no `metadata/evidence/<tr>.yaml` exists for any of the 11.
+
+---
+
+## 6. Saved-Condition Screening wave — spine (U3/U4) progress (2026-06-22)
+
+The `tracked → implemented` saved-condition screening wave (plan
+`docs/plans/2026-06-22-001-feat-saved-condition-screening-expansion-plan.md`)
+completes the `t1866 → t1859/t1860` server-saved-condition `query_index` spine.
+Each implemented TR stays **non-recommended** (no Focused Evidence, no
+recommendation block, no `EVIDENCE-FRESHNESS.md` edit).
+
+| TR | Class | End state | Smoke gate (credential-free) |
+|---|---|---|---|
+| t1866 | paginated (single-page) | implemented | `rsp_cd=00000 conditions=1` (spine producer) |
+| t1859 | market_session | implemented | `rsp_cd=00000 rows=934` (chained off t1866; `query_index` accepted) |
+| t1860 | market_session | **HELD — out of scope (realtime registration)** | not smoked (see below) |
+
+The spine is proven end-to-end: a live `t1866` list supplies a `query_index`
+that `t1859`'s chained smoke accepts (a non-empty success), so the
+`t1866 → t1859` discovery edge (§3) is retired and `t1859`'s `venue_session`
+(§1, `krx_regular`) and `caller_supplied_identifiers` (§2, `[query_index]`) retire.
+
+**t1860 — HELD, not implemented (recorded reason).** The raw spec
+(`crates/ls-trackers/baselines/api-drift/raw/ls-openapi-full.json`) resolves
+t1860's fields as a **side-effectful realtime-subscription control**, not a
+read: `sFlag` is `'E'`=register / `'D'`=stop, `sSysUserFlag` is `'U'` fixed, and
+an `'E'` register **allocates a server-side realtime alert slot** whose returned
+`sAlertNum` is the `gsRealKey` input to the separate **AFR (사용자조건검색실시간)
+realtime TR** — i.e. registering opens a realtime push channel that must later be
+torn down with a matching `'D'` + `sAlertNum` call. This is the recipe's §0
+"realtime/WebSocket → HELD out of scope" precondition: t1860 is not a read-only
+REST read, and a paper smoke would leave a dangling realtime registration (or
+require a custom register/deregister lifecycle outside this read-only wave).
+t1860 ships tracked-only; its §1/§2/§3 ledger rows are **retained** (unconfirmed).
+A future realtime/subscription wave that models the AFR channel should pick it up.
