@@ -9,8 +9,8 @@
 use ls_core::{Inner, LsError};
 use ls_sdk::market_session::{
     T1101OutBlock, T1101Request, T1101Response, T1102OutBlock, T1102Request, T1102Response,
-    T1531Request, T1531Response, T1537Request, T1537Response, T8425Request, T8425Response,
-    T8436Request, T8436Response,
+    T1531Request, T1531Response, T1537Request, T1537Response, T1859OutBlock1, T1859Request,
+    T1859Response, T8425Request, T8425Response, T8436Request, T8436Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
@@ -726,4 +726,122 @@ fn t1537_response_envelope_default_is_empty() {
     assert_eq!(resp.rsp_cd, "");
     assert!(resp.outblock1.is_empty());
     assert_eq!(resp.outblock.tmname, "");
+}
+
+// ---------------------------------------------------------------------------
+// t1859 — 서버저장조건 조건검색 (server-saved condition search). market_session,
+// non-paginated; the saved-condition spine CONSUMER. Keyed by a `query_index`
+// self-sourced from t1866 (the modeled cross-TR discovery edge — never
+// fabricated). Summary out-block + matched-issue row array.
+// ---------------------------------------------------------------------------
+
+/// Covers R5, R8. The `t1859` request serializes to exactly
+/// `{"t1859InBlock":{"query_index":...}}` — the `query_index` rides in the
+/// in-block under the correct key, and no `tr_cont`/`tr_cont_key` leak (t1859 is
+/// not paginated).
+#[test]
+fn t1859_request_serializes_with_query_index_in_inblock() {
+    let req = T1859Request::new("000000000123");
+    let value = serde_json::to_value(&req).expect("serialize t1859 request");
+
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "request must have exactly one top-level key");
+    assert!(obj.contains_key("t1859InBlock"), "missing t1859InBlock key");
+
+    let inblock = &value["t1859InBlock"];
+    let inblock_obj = inblock.as_object().expect("inblock is an object");
+    assert_eq!(inblock_obj.len(), 1, "t1859InBlock carries only query_index");
+    assert_eq!(inblock["query_index"], "000000000123");
+
+    assert!(value.get("tr_cont").is_none(), "no tr_cont in the body");
+    assert!(
+        value.get("tr_cont_key").is_none(),
+        "no tr_cont_key in the body"
+    );
+}
+
+/// Covers R5. A representative success response deserializes through the typed
+/// path: the summary `result_count` (a modeled non-key field) holds a real
+/// non-default value, the matched-issue array round-trips, and numeric fields
+/// parse whether they arrive as JSON numbers (row 0) or strings (row 1) via
+/// `string_or_number` — proving the subset round-trips, not just `serde(default)`.
+#[test]
+fn t1859_deserializes_success_with_real_values() {
+    let resp: T1859Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1859OutBlock": { "result_count": 2, "result_time": "153000", "text": "전략" },
+        "t1859OutBlock1": [
+            { "shcode": "005930", "hname": "삼성전자", "price": 71000, "sign": "2",
+              "change": 500, "diff": 0.71, "volume": 1000000 },
+            { "shcode": "000660", "hname": "SK하이닉스", "price": "150000", "sign": "5",
+              "change": "-1000", "diff": "-0.66", "volume": "500000" }
+        ]
+    }))
+    .expect("representative t1859 success must deserialize");
+
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock.result_count, "2", "non-key summary field populated");
+    assert_eq!(resp.outblock1.len(), 2, "both matched-issue rows round-trip");
+    assert_eq!(resp.outblock1[0].shcode, "005930");
+    assert_eq!(resp.outblock1[0].price, "71000", "price (from JSON number)");
+    assert_eq!(resp.outblock1[1].price, "150000", "price (from JSON string)");
+}
+
+/// Covers R5. An empty result set (`rsp_cd 00707`, empty out-block) deserializes
+/// and is recognized as the empty/pending case — the implement-tr gate records
+/// this as PENDING, never a flip.
+#[test]
+fn t1859_empty_result_set_deserializes_as_empty() {
+    let empty: T1859Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707",
+        "t1859OutBlock": { "result_count": 0 },
+        "t1859OutBlock1": []
+    }))
+    .expect("empty result set must deserialize");
+    assert_eq!(empty.rsp_cd, "00707");
+    assert!(
+        empty.outblock1.is_empty(),
+        "an empty matched-issue array is the pending case, not a flip"
+    );
+}
+
+/// Covers R5. A single matched-issue row (not an array) is tolerated as a
+/// one-element Vec via `de_vec_or_single` (the gateway collapses a one-row result
+/// to a bare object).
+#[test]
+fn t1859_single_out_row_tolerated_as_array() {
+    let single: T1859Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1859OutBlock": { "result_count": 1 },
+        "t1859OutBlock1": { "shcode": "005930", "hname": "삼성전자", "price": 71000 }
+    }))
+    .expect("single out-row object must deserialize as a one-element Vec");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].shcode, "005930");
+}
+
+/// Covers R5. The matched-issue row fields parse whether `price` arrives as a
+/// JSON number or string — the `string_or_number` round-trip guarantee proven
+/// directly against `T1859OutBlock1`.
+#[test]
+fn t1859_row_price_number_or_string_yields_same_value() {
+    let as_number: T1859OutBlock1 = serde_json::from_value(serde_json::json!({
+        "shcode": "005930", "price": 71000
+    }))
+    .expect("number price must deserialize");
+    let as_string: T1859OutBlock1 = serde_json::from_value(serde_json::json!({
+        "shcode": "005930", "price": "71000"
+    }))
+    .expect("string price must deserialize");
+    assert_eq!(as_number.price, "71000");
+    assert_eq!(as_number.price, as_string.price);
+}
+
+/// Compile-time guard: `T1859Response` default envelope is empty.
+#[test]
+fn t1859_response_envelope_default_is_empty() {
+    let resp = T1859Response::default();
+    assert_eq!(resp.rsp_cd, "");
+    assert!(resp.outblock1.is_empty());
+    assert_eq!(resp.outblock.result_count, "");
 }

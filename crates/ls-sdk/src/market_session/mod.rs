@@ -636,6 +636,109 @@ pub struct T1537Response {
     pub outblock1: Vec<T1537OutBlock1>,
 }
 
+/// Input block for `t1859` — 서버저장조건 조건검색 (server-saved condition search).
+///
+/// Keyed by `query_index` (서버저장인덱스), the saved-condition index produced by
+/// `t1866` (`t1866OutBlock1.query_index`) — the modeled cross-TR discovery edge.
+/// The caller never fabricates it; it is self-sourced from a `t1866` list call.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1859InBlock {
+    /// Server-saved condition index / 서버저장인덱스 (from `t1866`).
+    pub query_index: String,
+}
+
+/// `t1859` request — wraps the input block under the `t1859InBlock` key.
+///
+/// Serializes to `{"t1859InBlock":{"query_index":...}}`. `t1859` is not paginated,
+/// so there are no `tr_cont`/`tr_cont_key` fields in the body.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1859Request {
+    #[serde(rename = "t1859InBlock")]
+    pub inblock: T1859InBlock,
+}
+
+impl T1859Request {
+    /// Build a `t1859` condition-search request for one saved-condition
+    /// `query_index` (source it from [`crate::paginated::T1866Response`]).
+    pub fn new(query_index: impl Into<String>) -> Self {
+        T1859Request {
+            inblock: T1859InBlock {
+                query_index: query_index.into(),
+            },
+        }
+    }
+}
+
+/// `t1859OutBlock` — the condition-search summary block (single object).
+///
+/// `result_count` (검색종목수) is the modeled non-key signal proving a populated
+/// response. Every field uses [`ls_core::string_or_number`] for wire-type
+/// tolerance; `#[serde(default)]` lets a sparse/empty out-block deserialize.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1859OutBlock {
+    /// Matched-issue count / 검색종목수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub result_count: String,
+    /// Capture time / 포착시간.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub result_time: String,
+    /// Strategy description / 전략설명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub text: String,
+}
+
+/// `t1859OutBlock1` — one matched-issue row.
+///
+/// The repeated row block (`t1859OutBlock1[]`); a representative subset of the
+/// spec fields, every one via [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1859OutBlock1 {
+    /// Short code / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Korean name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change vs. previous close / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Rate of change / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Volume / 거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+}
+
+/// `t1859` response envelope.
+///
+/// `outblock` is the search summary; `outblock1` is the matched-issue array under
+/// the `t1859OutBlock1` key, tolerated as single-or-array via
+/// [`ls_core::de_vec_or_single`]. All `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1859Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1859OutBlock", default)]
+    pub outblock: T1859OutBlock,
+    #[serde(
+        rename = "t1859OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1859OutBlock1>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -723,6 +826,19 @@ impl MarketSession {
     pub async fn theme_quotes(&self, req: &T1537Request) -> LsResult<T1537Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T1537_POLICY, req)
+            .await
+    }
+
+    /// Run a server-saved condition search (서버저장조건 조건검색) via `t1859`.
+    ///
+    /// Dispatches through [`ls_core::Inner::post`] (non-paginated). Keyed by a
+    /// `query_index` produced by `t1866` ([`crate::paginated::Paginated::saved_conditions`]);
+    /// the response carries a search summary plus the matched-issue array. A
+    /// `01900` business code surfaces as [`ls_core::LsError::ApiError`] and
+    /// classifies as paper-incompatible.
+    pub async fn condition_search(&self, req: &T1859Request) -> LsResult<T1859Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1859_POLICY, req)
             .await
     }
 }
