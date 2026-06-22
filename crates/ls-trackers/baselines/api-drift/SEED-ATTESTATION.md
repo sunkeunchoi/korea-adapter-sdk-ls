@@ -19,11 +19,21 @@ directory is the attestation trail; this file summarizes what was checked.
   provisional**, with re-attestation flowing through the D5 new-TR review loop
   (see below). Independent operator attestation is a deliberate de-scope for a
   solo-maintainer project.
-- **Property-type mapping:** the LS `system-codes` endpoint returned HTTP 500 at
-  fetch time; the fetch used the hardcoded fallback mapping and continued (a
-  recoverable, warning-only path). Property-type *display names* on some fields
-  therefore fall back to raw type codes until a future fetch resolves them; this
-  does not affect the code-set, the completeness gate, or field identity.
+- **Property-type mapping:** the property-type fetch returned HTTP 500 at fetch
+  time; the fetch used the hardcoded fallback mapping and continued (a recoverable,
+  warning-only path). Property-type *display names* on some fields therefore fell
+  back to raw type codes until a future fetch resolved them; this does not affect
+  the code-set, the completeness gate, or field identity.
+  - **Correction (2026-06-22):** the "chronic `system-codes` HTTP 500" was a
+    **misdiagnosis** — not an upstream outage but a wrong endpoint in
+    `crates/ls-trackers/src/fetch.rs`. It called
+    `/api/codes/public/system-codes?groupCode=property_type` (500s for everyone);
+    the live portal endpoint is `GET /api/codes/public/property_type`. The response
+    parser and the hardcoded fallback values were also wrong (e.g. `A0004` was
+    `Decimal`, really `Number`; `A0005` was `Binary`, really `Object Array`), so the
+    seed's field types were genuinely incorrect. Fixed 2026-06-22; the committed raw
+    has since been re-pinned from a clean fetch via an attested type-only promote
+    (`PROVISIONALITY-LEDGER.md` §4 — retired).
   - **Update (normalizer v2, R3):** a property-type mapping fallback is no longer
     silent at *check* time. The support-aware facts-outage gate now treats it as
     a whole-inventory degradation — `api-drift check` exits `2` whenever the
@@ -82,8 +92,9 @@ operator has independently attested inventory completeness.
 SDK surface's first Stage-2 expansion TR. Its Structural API Shape was projected
 network-free via `api-drift renormalize` from the committed
 `raw/ls-openapi-full.json`; `maintained_tr_count` went 7 → 8 and only
-`normalized/trs/t1101.json` was added (no other maintained shape changed). The
-projection inherits the same `property_type` fallback caveat as the seed — the
-committed raw was fetched under the `system-codes` HTTP 500 fallback, so `t1101`'s
-type-level names are provisional until a future clean fetch resolves them. This
+`normalized/trs/t1101.json` was added (no other maintained shape changed). At
+admission time `t1101`'s type-level names inherited the seed's property-type
+fallback caveat; that caveat was **retired on 2026-06-22** when the wrong-endpoint
+bug was fixed and the committed raw was re-pinned from a clean `property_type`
+fetch (see the 2026-06-22 correction above and `PROVISIONALITY-LEDGER.md` §4). This
 admission does not clear `provisional`.

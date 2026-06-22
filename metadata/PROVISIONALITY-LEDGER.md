@@ -114,23 +114,45 @@ order-coupling fields).
 | t1859 | `query_index` ← `t1866OutBlock1.query_index` | request field `query_index` is documented as sourced from `t1866`'s output — a cross-TR discovery dependency, not modelled in `dependencies` | model the `t1866 → t1859` discovery edge when either TR is implemented |
 | t1860 | `query_index` ← `t1866OutBlock1.query_index` | request field `query_index` is documented as sourced from `t1866`'s output — a cross-TR discovery dependency, not modelled in `dependencies` | model the `t1866 → t1860` discovery edge when either TR is implemented |
 
-## 4. Field-level `type` facets — HTTP-500 system-codes seed (all 36)
+## 4. Field-level `type` facets — re-pinned from clean `property_type` (2026-06-22) — RETIRED
 
-Every one of the 36 normalized baselines inherits the **system-codes HTTP-500
-property-type fallback** that the committed raw snapshot was fetched under (see
-`crates/ls-trackers/baselines/api-drift/SEED-ATTESTATION.md`). Field-level `type`
-values in the normalized shapes therefore fall back to raw type codes and are
-provisional for the whole batch.
+Re-derived from a clean property-type fetch (`property_type_fallback_served == false`)
+via an attested type-only Baseline Promotion (promotion record `attested_by:
+sunkeunchoi:property_type-endpoint-fix-2026-06-22`, `raw_hash c652649aed4da411`, source
+run `2026-06-22T02-37-27Z`). The post-promote self-diff is clean (`api-drift check`
+exits `0`). Field `type` provisionality is **fully retired**: the Still-provisional
+table below is empty.
 
-This is **not** re-pinned in this batch. The field-`type` re-pin lands as a **separate
-later PR** after a clean `system-codes` fetch resolves the real type names and emits a
-planned one-time `type` drift wave (see `docs/MAINTENANCE_RUNBOOK.md` and the plan's
-Key Technical Decisions). Until then, do not treat any of the 36 shapes' field `type`
-values as type-level ground truth.
+**Root-cause correction (the "HTTP-500 outage" was a bug, not upstream).** The original
+seed framing — that the LS `system-codes` endpoint suffered a chronic HTTP 500 — was a
+**misdiagnosis**. `crates/ls-trackers/src/fetch.rs` called the wrong URL
+(`/api/codes/public/system-codes?groupCode=property_type`, which 500s for everyone) and
+parsed the wrong response shape; the live portal endpoint is
+`GET /api/codes/public/property_type` (returns `{ "codes": [ { "key", "value" } ] }`).
+The hardcoded fallback table was *also* wrong, so the seed's field types were genuinely
+incorrect, not merely "provisional display names":
 
-| Scope | Provisional value | Source basis | Re-verify before implementation |
-|---|---|---|---|
-| All 36 TRs (field-level `type`) | normalized shape `type` codes served under the `system-codes` HTTP-500 fallback | committed raw fetched while `system-codes` returned HTTP 500 (SEED-ATTESTATION) | resolved batch-wide by the separate field-`type` re-pin PR after a clean `system-codes` fetch — not per-TR work |
+| code | wrong fallback (seed) | live value (re-pinned) |
+|---|---|---|
+| A0001 | String | String |
+| A0002 | *(absent)* | Array |
+| A0003 | Long | **Object** |
+| A0004 | Decimal | **Number** |
+| A0005 | Binary | **Object Array** |
+
+The 2026-06-22 fix corrected the URL, the parser, and the fallback values; the re-pin
+drift wave was a pure field-`type` change (`Decimal→Number`, `Binary→Object Array`,
+`Long→Object`), gated by the opt-in type-only gate.
+
+**Retired** — type resolved by the live `property_type` mapping:
+
+| TR / facet | Resolved type source |
+|---|---|
+| All maintained shapes (field-level `type`) | live `GET /api/codes/public/property_type` mapping, clean fetch 2026-06-22 |
+
+**Still-provisional** — none. Every `property_type` code in the committed raw inventory
+(`A0001`–`A0005`) is defined by the live mapping, and the committed normalized baseline
+contains zero raw-coded (`A00xx`) types.
 
 ---
 
@@ -167,9 +189,9 @@ in-window recovery → pending), input-unresolved (no representative caller inpu
   smokes ran off-session (a Sunday, returning last-session data), which confirms
   callability but **cannot** resolve `krx_regular` vs `krx_extended`. Re-verify
   against live in-session behavior before any Recommended promotion.
-- Field-level `type` facets (§4): unchanged for all 36 — a clean deserialize does
-  not confirm the HTTP-500-seeded types. Stays with the separate field-`type`
-  re-pin PR.
+- Field-level `type` facets (§4): **now retired** (2026-06-22). The "HTTP-500 seed"
+  was a wrong-endpoint bug in fetch, not an upstream outage; once corrected, the
+  clean `property_type` fetch re-pinned every facet. See §4.
 - Multi-page collection over body-`idx` for the 7 paginated TRs: deferred
   follow-up (these are Implemented at single-page scope only).
 
