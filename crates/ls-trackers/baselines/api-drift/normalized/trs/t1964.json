@@ -246,7 +246,7 @@
       "field_index": 0,
       "field_name": "t1964OutBlock1",
       "korean_name": "t1964OutBlock1\n",
-      "type": "Binary",
+      "type": "Object Array",
       "required": true
     },
     {
@@ -315,7 +315,7 @@
       "field_index": 7,
       "field_name": "price",
       "korean_name": "현재가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -335,7 +335,7 @@
       "field_index": 9,
       "field_name": "change",
       "korean_name": "전일대비",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -345,7 +345,7 @@
       "field_index": 10,
       "field_name": "diff",
       "korean_name": "등락율",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -354,7 +354,7 @@
       "field_index": 11,
       "field_name": "volume",
       "korean_name": "거래량",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -364,7 +364,7 @@
       "field_index": 12,
       "field_name": "elwexec",
       "korean_name": "행사가",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -373,7 +373,7 @@
       "field_index": 13,
       "field_name": "jandatecnt",
       "korean_name": "잔존일수",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -383,7 +383,7 @@
       "field_index": 14,
       "field_name": "convrate",
       "korean_name": "전환비율",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -422,7 +422,7 @@
       "field_index": 18,
       "field_name": "listing",
       "korean_name": "발행수량",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -442,7 +442,7 @@
       "field_index": 20,
       "field_name": "parity",
       "korean_name": "패리티",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -451,7 +451,7 @@
       "field_index": 21,
       "field_name": "preminum",
       "korean_name": "프리미엄",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -460,7 +460,7 @@
       "field_index": 22,
       "field_name": "spread",
       "korean_name": "스프래드",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -469,7 +469,7 @@
       "field_index": 23,
       "field_name": "berate",
       "korean_name": "손익분기율",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -478,7 +478,7 @@
       "field_index": 24,
       "field_name": "capt",
       "korean_name": "자본지지율",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -487,7 +487,7 @@
       "field_index": 25,
       "field_name": "gearing",
       "korean_name": "기어링",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -496,7 +496,7 @@
       "field_index": 26,
       "field_name": "egearing",
       "korean_name": "e기어링",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -505,7 +505,7 @@
       "field_index": 27,
       "field_name": "itemprice",
       "korean_name": "기초자산현재가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -525,7 +525,7 @@
       "field_index": 29,
       "field_name": "itemchange",
       "korean_name": "기초자산전일대비",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -535,7 +535,7 @@
       "field_index": 30,
       "field_name": "itemdiff",
       "korean_name": "기초자산등락율",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -544,7 +544,7 @@
       "field_index": 31,
       "field_name": "itemvolume",
       "korean_name": "기초자산거래량",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -554,7 +554,7 @@
       "field_index": 32,
       "field_name": "jnilvolume",
       "korean_name": "전일거래량",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -564,7 +564,7 @@
       "field_index": 33,
       "field_name": "theoryprice",
       "korean_name": "이론가",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -573,7 +573,7 @@
       "field_index": 34,
       "field_name": "lp_rate",
       "korean_name": "LP보유비율",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -582,7 +582,7 @@
       "field_index": 35,
       "field_name": "impv",
       "korean_name": "내재변동성",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -591,7 +591,7 @@
       "field_index": 36,
       "field_name": "delta",
       "korean_name": "델타",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -600,7 +600,7 @@
       "field_index": 37,
       "field_name": "theta",
       "korean_name": "쎄타",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     }
   ],

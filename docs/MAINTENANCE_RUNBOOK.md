@@ -120,14 +120,23 @@ make api-drift-promote-dry-run
 
 ### Field-type re-pin (clean baseline refresh)
 
-A one-time, type-scoped Baseline Promotion that resolves the HTTP-500-seeded
-field-`type` provisionality recorded in
+> **Executed 2026-06-22 — §4 retired.** This procedure has been run once; the
+> field-`type` provisionality is retired (`metadata/PROVISIONALITY-LEDGER.md` §4).
+> The steps below remain the reusable procedure for any future type-only re-pin.
+> **Root-cause note:** the original "chronic `system-codes` HTTP 500" was a
+> *misdiagnosis* — `crates/ls-trackers/src/fetch.rs` called the wrong URL, not an
+> upstream outage. The live endpoint is `GET /api/codes/public/property_type`
+> (not `/api/codes/public/system-codes?groupCode=property_type`). The fix (correct
+> URL + parser + fallback values) is what unblocked the re-pin.
+
+A one-time, type-scoped Baseline Promotion that resolves the field-`type`
+provisionality recorded in
 [`metadata/PROVISIONALITY-LEDGER.md` §4](../metadata/PROVISIONALITY-LEDGER.md):
-the 36 normalized shapes' `type` values were derived from the hardcoded
-property-type fallback the seed snapshot was fetched under, not a live
-`system-codes` mapping. Re-deriving them requires a clean fetch plus a reviewed
-promote, guarded by the opt-in **type-only gate** so unrelated structural drift
-cannot ride into the Reviewed Baseline. Background:
+the normalized shapes' `type` values were derived from a hardcoded property-type
+fallback (with wrong values) rather than the live property-type mapping. Re-deriving
+them requires a clean fetch plus a reviewed promote, guarded by the opt-in
+**type-only gate** so unrelated structural drift cannot ride into the Reviewed
+Baseline. Background:
 [the re-pin brainstorm](brainstorms/2026-06-21-field-type-repin-clean-baseline-refresh-requirements.md).
 
 The gate is opt-in: this procedure is the only flow that passes `--type-only`.
@@ -147,8 +156,13 @@ unaffected.
    evaluated per facet at step 6, not assumed from the flag. If the fetch was
    served the fallback, the next step's gate (and `api-drift check`) exits `2`
    with *"facts outage affects a maintained TR … re-fetch before comparing"* —
-   read that as "`system-codes` was unhealthy, retry the fetch", **not** a
-   type-only-gate failure. Wait for `system-codes` to recover and re-fetch.
+   read that as "the property-type fetch was unhealthy, retry the fetch", **not** a
+   type-only-gate failure. Before assuming an outage, confirm the endpoint is
+   actually reachable:
+   `curl -s -o /dev/null -w "%{http_code}\n" https://openapi.ls-sec.co.kr/api/codes/public/property_type`
+   should return `200`. A persistent fallback may signal a fetch **bug** (a wrong
+   URL/parser), not an upstream outage — that is exactly what the original
+   `system-codes` misdiagnosis turned out to be.
 
 2. **Preview the type-only gate.** Review the drift and the gate decision without
    writing anything:
@@ -225,10 +239,11 @@ unaffected.
    credential-free basis line. If the clean fetch resolved every facet, the
    Still-provisional table is empty and §4 is fully retired.
 
-> The live re-pin run itself (fetch against live `system-codes`, the attested
-> `--type-only` promote, and the data-dependent §4 edit) is operator-executed and
-> intentionally deferred — the gate, this procedure, and the §4 template are the
-> shipped capability.
+> The live re-pin run was **executed 2026-06-22** (attested `--type-only` promote,
+> raw_hash `c652649aed4da411`, source run `2026-06-22T02-37-27Z`; §4 retired). It was
+> unblocked by fixing a wrong-endpoint bug in `fetch.rs` (the property-type call had
+> always 500'd, which read as an upstream outage). The gate, this procedure, and the
+> §4 template remain the shipped capability for future re-pins.
 
 ### Notes
 

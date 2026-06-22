@@ -21,7 +21,7 @@ support:
   recommended: true
 maintenance:
   source_spec_hash: e5f6a1b2c3d4
-  last_reviewed: 2026-06-17
+  last_reviewed: 2026-06-22
 recommendation:
   behavior: Paper current-price + 10-level order-book (호가) snapshot for one symbol
   evidence_ref: evidence/t1101.yaml

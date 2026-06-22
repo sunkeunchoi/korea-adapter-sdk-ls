@@ -205,7 +205,7 @@
       "field_index": 6,
       "field_name": "elwexec",
       "korean_name": "행사가",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -214,7 +214,7 @@
       "field_index": 7,
       "field_name": "convrate",
       "korean_name": "전환비율",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -223,7 +223,7 @@
       "field_index": 8,
       "field_name": "listing",
       "korean_name": "발행수량",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -253,7 +253,7 @@
       "field_index": 11,
       "field_name": "nofdays",
       "korean_name": "거래잔존일수",
-      "type": "Decimal",
+      "type": "Number",
       "length": 4,
       "required": true
     },
@@ -273,7 +273,7 @@
       "field_index": 13,
       "field_name": "parity",
       "korean_name": "패리티",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -282,7 +282,7 @@
       "field_index": 14,
       "field_name": "premium",
       "korean_name": "프리미엄",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -291,7 +291,7 @@
       "field_index": 15,
       "field_name": "berate",
       "korean_name": "손익분기",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -300,7 +300,7 @@
       "field_index": 16,
       "field_name": "capt",
       "korean_name": "자본지지",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -309,7 +309,7 @@
       "field_index": 17,
       "field_name": "gearing",
       "korean_name": "기어링",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -318,7 +318,7 @@
       "field_index": 18,
       "field_name": "egearing",
       "korean_name": "e.기어링",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -327,7 +327,7 @@
       "field_index": 19,
       "field_name": "price",
       "korean_name": "가격",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -337,7 +337,7 @@
       "field_index": 20,
       "field_name": "volume",
       "korean_name": "거래량",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -347,7 +347,7 @@
       "field_index": 21,
       "field_name": "diff",
       "korean_name": "등락율",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -416,7 +416,7 @@
       "field_index": 6,
       "field_name": "elwexec",
       "korean_name": "행사가",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -425,7 +425,7 @@
       "field_index": 7,
       "field_name": "convrate",
       "korean_name": "전환비율",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -434,7 +434,7 @@
       "field_index": 8,
       "field_name": "listing",
       "korean_name": "발행수량",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -464,7 +464,7 @@
       "field_index": 11,
       "field_name": "nofdays",
       "korean_name": "거래잔존일수",
-      "type": "Decimal",
+      "type": "Number",
       "length": 4,
       "required": true
     },
@@ -484,7 +484,7 @@
       "field_index": 13,
       "field_name": "parity",
       "korean_name": "패리티",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -493,7 +493,7 @@
       "field_index": 14,
       "field_name": "premium",
       "korean_name": "프리미엄",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -502,7 +502,7 @@
       "field_index": 15,
       "field_name": "berate",
       "korean_name": "손익분기",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -511,7 +511,7 @@
       "field_index": 16,
       "field_name": "capt",
       "korean_name": "자본지지",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -520,7 +520,7 @@
       "field_index": 17,
       "field_name": "gearing",
       "korean_name": "기어링",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -529,7 +529,7 @@
       "field_index": 18,
       "field_name": "egearing",
       "korean_name": "e.기어링",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -538,7 +538,7 @@
       "field_index": 19,
       "field_name": "price",
       "korean_name": "가격",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -548,7 +548,7 @@
       "field_index": 20,
       "field_name": "volume",
       "korean_name": "거래량",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -558,7 +558,7 @@
       "field_index": 21,
       "field_name": "diff",
       "korean_name": "등락율",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -627,7 +627,7 @@
       "field_index": 6,
       "field_name": "elwexeccmp",
       "korean_name": "행사가비교",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -636,7 +636,7 @@
       "field_index": 7,
       "field_name": "convcmp",
       "korean_name": "전환비율비교",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -645,7 +645,7 @@
       "field_index": 8,
       "field_name": "listingcmp",
       "korean_name": "발행수량비교",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -695,7 +695,7 @@
       "field_index": 13,
       "field_name": "paritycmp",
       "korean_name": "패리티비교",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -704,7 +704,7 @@
       "field_index": 14,
       "field_name": "premiumcmp",
       "korean_name": "프리미엄비교",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -713,7 +713,7 @@
       "field_index": 15,
       "field_name": "beratecmp",
       "korean_name": "손익분기비교",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -722,7 +722,7 @@
       "field_index": 16,
       "field_name": "captcmp",
       "korean_name": "자본지지비교",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -731,7 +731,7 @@
       "field_index": 17,
       "field_name": "gearingcmp",
       "korean_name": "기어링비교",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -740,7 +740,7 @@
       "field_index": 18,
       "field_name": "egearingcmp",
       "korean_name": "e.기어링비교",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -749,7 +749,7 @@
       "field_index": 19,
       "field_name": "pricecmp",
       "korean_name": "가격비교",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -759,7 +759,7 @@
       "field_index": 20,
       "field_name": "volumecmp",
       "korean_name": "거래량비교",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -769,7 +769,7 @@
       "field_index": 21,
       "field_name": "diffcmp",
       "korean_name": "등락율비교",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     }
   ],

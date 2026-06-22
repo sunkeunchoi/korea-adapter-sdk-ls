@@ -394,8 +394,8 @@ fn committed_manifest_round_trips_byte_identically() {
     let manifest: Manifest =
         serde_json::from_slice(&original).expect("committed manifest deserializes");
     assert_eq!(
-        manifest.refreshed, "2026-06-21",
-        "R9a refresh date is stamped"
+        manifest.refreshed, "2026-06-22",
+        "R9a refresh date is stamped (field-type re-pin, 2026-06-22)"
     );
     let mut reserialized = serde_json::to_vec_pretty(&manifest).expect("re-serialize");
     reserialized.push(b'\n');

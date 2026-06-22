@@ -146,7 +146,7 @@
       "field_index": 1,
       "field_name": "OutFieldCount",
       "korean_name": "OutFieldCount",
-      "type": "Decimal",
+      "type": "Number",
       "length": 2,
       "required": true
     },
@@ -156,7 +156,7 @@
       "field_index": 2,
       "field_name": "sOutListPacketSize",
       "korean_name": "한종목크기",
-      "type": "Decimal",
+      "type": "Number",
       "length": 4,
       "required": true
     },
@@ -176,7 +176,7 @@
       "field_index": 4,
       "field_name": "sTotalJongCnt",
       "korean_name": "결과종목수",
-      "type": "Decimal",
+      "type": "Number",
       "length": 4,
       "required": true
     },
@@ -206,7 +206,7 @@
       "field_index": 2,
       "field_name": "price",
       "korean_name": "현재가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 9,
       "required": true
     },
@@ -226,7 +226,7 @@
       "field_index": 4,
       "field_name": "change",
       "korean_name": "전일대비",
-      "type": "Decimal",
+      "type": "Number",
       "length": 9,
       "required": true
     },
@@ -236,7 +236,7 @@
       "field_index": 5,
       "field_name": "diff",
       "korean_name": "등락율",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -245,7 +245,7 @@
       "field_index": 6,
       "field_name": "volume",
       "korean_name": "거래량",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },

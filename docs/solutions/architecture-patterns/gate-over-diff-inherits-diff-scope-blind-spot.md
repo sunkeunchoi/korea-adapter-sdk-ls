@@ -133,6 +133,29 @@ if let Some(r) = shape_set_block(base, cand)     { return Refused(r); }
 
 Test discipline that catches it: at least one fixture where `committed` and `staged` have **different key sets** — see `type_only_shape_set_block_catches_added_and_dropped_shapes` and `type_only_promote_blocks_newly_maintained_shape_with_zero_mutation` in `crates/ls-trackers`, which deliberately break the byte-equal-baseline assumption the earlier tests all shared.
 
+## Second instance (2026-06-22): a re-derivation check compared a field the writer overrides
+
+The same family of bug surfaced again in the same `promote_committed` path — and was
+hidden the same way. The post-gate integrity check re-derives
+`normalize_run(staged_raw, maintained, provisional)` and asserted
+`normalized.code_set == staged_run.code_set`. But promote **intentionally** re-derives
+`provisional` from the *committed* baseline's stance (KTD-6), so for any ordinary
+(non-provisional) staged run promoted onto a still-provisional committed baseline, the
+flag differs by construction and the check refused **every** such promote. The live
+field-`type` re-pin is exactly that shape (provisional seed + clean non-provisional
+fetch), so the first real promote it ever faced was refused.
+
+Why it stayed hidden: **every** promote test staged its run and seeded the committed
+baseline from the *same* `normalize_run(raw, maintained, true)` call — both sides
+`provisional=true`, so the compared flag was always equal. Symmetric fixtures again
+(`promote_clean_run_advances_baseline_and_appends_record` and siblings). The fix:
+compare `code_set.codes` and `shapes` — the reviewed substance the gate evaluated — and
+**not** a field the writer deliberately overrides. Regression test:
+`promote_succeeds_when_staged_nonprovisional_but_committed_provisional` deliberately
+makes the two stances differ. Lesson extension: an equality check over a struct silently
+inherits *every* field, including ones a sibling code path intends to diverge — assert
+on the specific fields that encode "what was reviewed", not the whole value.
+
 ## Related
 
 - [`change-tracker-baseline-clean-self-diff.md`](change-tracker-baseline-clean-self-diff.md) — sibling pattern on the same tracker. That doc covers the baseline-side invariant (the committed baseline must *self-diff clean*); this one covers the gate-side coverage gap. A clean self-diff (same inventory on both sides) does **not** imply complete gate coverage when the staged and committed inventories differ.

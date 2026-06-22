@@ -268,6 +268,17 @@ impl CodeSet {
     pub fn contains(&self, code: &str) -> bool {
         self.codes.contains(code)
     }
+
+    /// Whether two code-sets carry the same reviewed TR membership, **ignoring the
+    /// `provisional` stance**. Use this — not `==` / `PartialEq` — wherever the
+    /// question is "are these the same reviewed codes?", because `provisional` is a
+    /// governance flag that callers (e.g. `promote_committed`, KTD-6) deliberately
+    /// re-derive independently of the staged run; comparing the whole struct there
+    /// is the KTD-6 bug. `PartialEq` stays derived for tests/round-trips that do
+    /// want exact equality.
+    pub fn codes_match(&self, other: &CodeSet) -> bool {
+        self.codes == other.codes
+    }
 }
 
 /// The maintained-SDK support state of a TR, projected from `ls_metadata::Support`

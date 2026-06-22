@@ -1359,9 +1359,10 @@ mod tests {
 
     fn inventory(groups: Vec<RawGroup>) -> RawInventory {
         let mut property_types = BTreeMap::new();
+        // Mirror the live `property_type` mapping (and PROPERTY_TYPE_FALLBACK).
         property_types.insert("A0001".to_string(), "String".to_string());
-        property_types.insert("A0003".to_string(), "Long".to_string());
-        property_types.insert("A0004".to_string(), "Decimal".to_string());
+        property_types.insert("A0003".to_string(), "Object".to_string());
+        property_types.insert("A0004".to_string(), "Number".to_string());
         RawInventory {
             source_urls: vec!["https://openapi.ls-sec.co.kr/apiservice".to_string()],
             property_types,

@@ -156,7 +156,7 @@
       "field_index": 1,
       "field_name": "price",
       "korean_name": "현재가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -176,7 +176,7 @@
       "field_index": 3,
       "field_name": "change",
       "korean_name": "전일대비",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -186,7 +186,7 @@
       "field_index": 4,
       "field_name": "diff",
       "korean_name": "등락율",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -195,7 +195,7 @@
       "field_index": 5,
       "field_name": "volume",
       "korean_name": "누적거래량",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -205,7 +205,7 @@
       "field_index": 6,
       "field_name": "recprice",
       "korean_name": "기준가(평가가격)",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -215,7 +215,7 @@
       "field_index": 7,
       "field_name": "avg",
       "korean_name": "가중평균",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -225,7 +225,7 @@
       "field_index": 8,
       "field_name": "uplmtprice",
       "korean_name": "상한가(최고호가가격)",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -235,7 +235,7 @@
       "field_index": 9,
       "field_name": "dnlmtprice",
       "korean_name": "하한가(최저호가가격)",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -245,7 +245,7 @@
       "field_index": 10,
       "field_name": "jnilvolume",
       "korean_name": "전일거래량",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -255,7 +255,7 @@
       "field_index": 11,
       "field_name": "volumediff",
       "korean_name": "거래량차",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -265,7 +265,7 @@
       "field_index": 12,
       "field_name": "open",
       "korean_name": "시가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -285,7 +285,7 @@
       "field_index": 14,
       "field_name": "high",
       "korean_name": "고가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -305,7 +305,7 @@
       "field_index": 16,
       "field_name": "low",
       "korean_name": "저가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -325,7 +325,7 @@
       "field_index": 18,
       "field_name": "high52w",
       "korean_name": "52최고가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -345,7 +345,7 @@
       "field_index": 20,
       "field_name": "low52w",
       "korean_name": "52최저가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -365,7 +365,7 @@
       "field_index": 22,
       "field_name": "exhratio",
       "korean_name": "소진율",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -374,7 +374,7 @@
       "field_index": 23,
       "field_name": "per",
       "korean_name": "PER",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -383,7 +383,7 @@
       "field_index": 24,
       "field_name": "pbrx",
       "korean_name": "PBRX",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -392,7 +392,7 @@
       "field_index": 25,
       "field_name": "listing",
       "korean_name": "상장주식수(천)",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -402,7 +402,7 @@
       "field_index": 26,
       "field_name": "jkrate",
       "korean_name": "증거금율",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -462,7 +462,7 @@
       "field_index": 32,
       "field_name": "dvol1",
       "korean_name": "총매도수량1",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -472,7 +472,7 @@
       "field_index": 33,
       "field_name": "svol1",
       "korean_name": "총매수수량1",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -482,7 +482,7 @@
       "field_index": 34,
       "field_name": "dcha1",
       "korean_name": "매도증감1",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -492,7 +492,7 @@
       "field_index": 35,
       "field_name": "scha1",
       "korean_name": "매수증감1",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -502,7 +502,7 @@
       "field_index": 36,
       "field_name": "ddiff1",
       "korean_name": "매도비율1",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -511,7 +511,7 @@
       "field_index": 37,
       "field_name": "sdiff1",
       "korean_name": "매수비율1",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -560,7 +560,7 @@
       "field_index": 42,
       "field_name": "dvol2",
       "korean_name": "총매도수량2",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -570,7 +570,7 @@
       "field_index": 43,
       "field_name": "svol2",
       "korean_name": "총매수수량2",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -580,7 +580,7 @@
       "field_index": 44,
       "field_name": "dcha2",
       "korean_name": "매도증감2",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -590,7 +590,7 @@
       "field_index": 45,
       "field_name": "scha2",
       "korean_name": "매수증감2",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -600,7 +600,7 @@
       "field_index": 46,
       "field_name": "ddiff2",
       "korean_name": "매도비율2",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -609,7 +609,7 @@
       "field_index": 47,
       "field_name": "sdiff2",
       "korean_name": "매수비율2",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -658,7 +658,7 @@
       "field_index": 52,
       "field_name": "dvol3",
       "korean_name": "총매도수량3",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -668,7 +668,7 @@
       "field_index": 53,
       "field_name": "svol3",
       "korean_name": "총매수수량3",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -678,7 +678,7 @@
       "field_index": 54,
       "field_name": "dcha3",
       "korean_name": "매도증감3",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -688,7 +688,7 @@
       "field_index": 55,
       "field_name": "scha3",
       "korean_name": "매수증감3",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -698,7 +698,7 @@
       "field_index": 56,
       "field_name": "ddiff3",
       "korean_name": "매도비율3",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -707,7 +707,7 @@
       "field_index": 57,
       "field_name": "sdiff3",
       "korean_name": "매수비율3",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -756,7 +756,7 @@
       "field_index": 62,
       "field_name": "dvol4",
       "korean_name": "총매도수량4",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -766,7 +766,7 @@
       "field_index": 63,
       "field_name": "svol4",
       "korean_name": "총매수수량4",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -776,7 +776,7 @@
       "field_index": 64,
       "field_name": "dcha4",
       "korean_name": "매도증감4",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -786,7 +786,7 @@
       "field_index": 65,
       "field_name": "scha4",
       "korean_name": "매수증감4",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -796,7 +796,7 @@
       "field_index": 66,
       "field_name": "ddiff4",
       "korean_name": "매도비율4",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -805,7 +805,7 @@
       "field_index": 67,
       "field_name": "sdiff4",
       "korean_name": "매수비율4",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -854,7 +854,7 @@
       "field_index": 72,
       "field_name": "dvol5",
       "korean_name": "총매도수량5",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -864,7 +864,7 @@
       "field_index": 73,
       "field_name": "svol5",
       "korean_name": "총매수수량5",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -874,7 +874,7 @@
       "field_index": 74,
       "field_name": "dcha5",
       "korean_name": "매도증감5",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -884,7 +884,7 @@
       "field_index": 75,
       "field_name": "scha5",
       "korean_name": "매수증감5",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -894,7 +894,7 @@
       "field_index": 76,
       "field_name": "ddiff5",
       "korean_name": "매도비율5",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -903,7 +903,7 @@
       "field_index": 77,
       "field_name": "sdiff5",
       "korean_name": "매수비율5",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -912,7 +912,7 @@
       "field_index": 78,
       "field_name": "fwdvl",
       "korean_name": "외국계매도합계수량",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -922,7 +922,7 @@
       "field_index": 79,
       "field_name": "ftradmdcha",
       "korean_name": "외국계매도직전대비",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -932,7 +932,7 @@
       "field_index": 80,
       "field_name": "ftradmddiff",
       "korean_name": "외국계매도비율",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -941,7 +941,7 @@
       "field_index": 81,
       "field_name": "fwsvl",
       "korean_name": "외국계매수합계수량",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -951,7 +951,7 @@
       "field_index": 82,
       "field_name": "ftradmscha",
       "korean_name": "외국계매수직전대비",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -961,7 +961,7 @@
       "field_index": 83,
       "field_name": "ftradmsdiff",
       "korean_name": "외국계매수비율",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -970,7 +970,7 @@
       "field_index": 84,
       "field_name": "vol",
       "korean_name": "회전율",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -989,7 +989,7 @@
       "field_index": 86,
       "field_name": "value",
       "korean_name": "누적거래대금",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -999,7 +999,7 @@
       "field_index": 87,
       "field_name": "jvolume",
       "korean_name": "전일동시간거래량",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -1009,7 +1009,7 @@
       "field_index": 88,
       "field_name": "highyear",
       "korean_name": "연중최고가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -1029,7 +1029,7 @@
       "field_index": 90,
       "field_name": "lowyear",
       "korean_name": "연중최저가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -1049,7 +1049,7 @@
       "field_index": 92,
       "field_name": "target",
       "korean_name": "목표가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -1059,7 +1059,7 @@
       "field_index": 93,
       "field_name": "capital",
       "korean_name": "자본금",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -1069,7 +1069,7 @@
       "field_index": 94,
       "field_name": "abscnt",
       "korean_name": "유동주식수",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -1079,7 +1079,7 @@
       "field_index": 95,
       "field_name": "parprice",
       "korean_name": "액면가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -1099,7 +1099,7 @@
       "field_index": 97,
       "field_name": "subprice",
       "korean_name": "대용가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -1109,7 +1109,7 @@
       "field_index": 98,
       "field_name": "total",
       "korean_name": "시가총액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -1139,7 +1139,7 @@
       "field_index": 101,
       "field_name": "bfsales",
       "korean_name": "전분기매출액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -1149,7 +1149,7 @@
       "field_index": 102,
       "field_name": "bfoperatingincome",
       "korean_name": "전분기영업이익",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -1159,7 +1159,7 @@
       "field_index": 103,
       "field_name": "bfordinaryincome",
       "korean_name": "전분기경상이익",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -1169,7 +1169,7 @@
       "field_index": 104,
       "field_name": "bfnetincome",
       "korean_name": "전분기순이익",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -1179,7 +1179,7 @@
       "field_index": 105,
       "field_name": "bfeps",
       "korean_name": "전분기EPS",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -1198,7 +1198,7 @@
       "field_index": 107,
       "field_name": "bfsales2",
       "korean_name": "전전분기매출액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -1208,7 +1208,7 @@
       "field_index": 108,
       "field_name": "bfoperatingincome2",
       "korean_name": "전전분기영업이익",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -1218,7 +1218,7 @@
       "field_index": 109,
       "field_name": "bfordinaryincome2",
       "korean_name": "전전분기경상이익",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -1228,7 +1228,7 @@
       "field_index": 110,
       "field_name": "bfnetincome2",
       "korean_name": "전전분기순이익",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -1238,7 +1238,7 @@
       "field_index": 111,
       "field_name": "bfeps2",
       "korean_name": "전전분기EPS",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -1247,7 +1247,7 @@
       "field_index": 112,
       "field_name": "salert",
       "korean_name": "전년대비매출액",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -1256,7 +1256,7 @@
       "field_index": 113,
       "field_name": "opert",
       "korean_name": "전년대비영업이익",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -1265,7 +1265,7 @@
       "field_index": 114,
       "field_name": "ordrt",
       "korean_name": "전년대비경상이익",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -1274,7 +1274,7 @@
       "field_index": 115,
       "field_name": "netrt",
       "korean_name": "전년대비순이익",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -1283,7 +1283,7 @@
       "field_index": 116,
       "field_name": "epsrt",
       "korean_name": "전년대비EPS",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -1342,7 +1342,7 @@
       "field_index": 122,
       "field_name": "t_per",
       "korean_name": "T.PER",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -1361,7 +1361,7 @@
       "field_index": 124,
       "field_name": "dval1",
       "korean_name": "총매도대금1",
-      "type": "Decimal",
+      "type": "Number",
       "length": 18,
       "required": true
     },
@@ -1371,7 +1371,7 @@
       "field_index": 125,
       "field_name": "sval1",
       "korean_name": "총매수대금1",
-      "type": "Decimal",
+      "type": "Number",
       "length": 18,
       "required": true
     },
@@ -1381,7 +1381,7 @@
       "field_index": 126,
       "field_name": "dval2",
       "korean_name": "총매도대금2",
-      "type": "Decimal",
+      "type": "Number",
       "length": 18,
       "required": true
     },
@@ -1391,7 +1391,7 @@
       "field_index": 127,
       "field_name": "sval2",
       "korean_name": "총매수대금2",
-      "type": "Decimal",
+      "type": "Number",
       "length": 18,
       "required": true
     },
@@ -1401,7 +1401,7 @@
       "field_index": 128,
       "field_name": "dval3",
       "korean_name": "총매도대금3",
-      "type": "Decimal",
+      "type": "Number",
       "length": 18,
       "required": true
     },
@@ -1411,7 +1411,7 @@
       "field_index": 129,
       "field_name": "sval3",
       "korean_name": "총매수대금3",
-      "type": "Decimal",
+      "type": "Number",
       "length": 18,
       "required": true
     },
@@ -1421,7 +1421,7 @@
       "field_index": 130,
       "field_name": "dval4",
       "korean_name": "총매도대금4",
-      "type": "Decimal",
+      "type": "Number",
       "length": 18,
       "required": true
     },
@@ -1431,7 +1431,7 @@
       "field_index": 131,
       "field_name": "sval4",
       "korean_name": "총매수대금4",
-      "type": "Decimal",
+      "type": "Number",
       "length": 18,
       "required": true
     },
@@ -1441,7 +1441,7 @@
       "field_index": 132,
       "field_name": "dval5",
       "korean_name": "총매도대금5",
-      "type": "Decimal",
+      "type": "Number",
       "length": 18,
       "required": true
     },
@@ -1451,7 +1451,7 @@
       "field_index": 133,
       "field_name": "sval5",
       "korean_name": "총매수대금5",
-      "type": "Decimal",
+      "type": "Number",
       "length": 18,
       "required": true
     },
@@ -1461,7 +1461,7 @@
       "field_index": 134,
       "field_name": "davg1",
       "korean_name": "총매도평단가1",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -1471,7 +1471,7 @@
       "field_index": 135,
       "field_name": "savg1",
       "korean_name": "총매수평단가1",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -1481,7 +1481,7 @@
       "field_index": 136,
       "field_name": "davg2",
       "korean_name": "총매도평단가2",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -1491,7 +1491,7 @@
       "field_index": 137,
       "field_name": "savg2",
       "korean_name": "총매수평단가2",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -1501,7 +1501,7 @@
       "field_index": 138,
       "field_name": "davg3",
       "korean_name": "총매도평단가3",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -1511,7 +1511,7 @@
       "field_index": 139,
       "field_name": "savg3",
       "korean_name": "총매수평단가3",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -1521,7 +1521,7 @@
       "field_index": 140,
       "field_name": "davg4",
       "korean_name": "총매도평단가4",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -1531,7 +1531,7 @@
       "field_index": 141,
       "field_name": "savg4",
       "korean_name": "총매수평단가4",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -1541,7 +1541,7 @@
       "field_index": 142,
       "field_name": "davg5",
       "korean_name": "총매도평단가5",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -1551,7 +1551,7 @@
       "field_index": 143,
       "field_name": "savg5",
       "korean_name": "총매수평단가5",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -1561,7 +1561,7 @@
       "field_index": 144,
       "field_name": "ftradmdval",
       "korean_name": "외국계매도대금",
-      "type": "Decimal",
+      "type": "Number",
       "length": 18,
       "required": true
     },
@@ -1571,7 +1571,7 @@
       "field_index": 145,
       "field_name": "ftradmsval",
       "korean_name": "외국계매수대금",
-      "type": "Decimal",
+      "type": "Number",
       "length": 18,
       "required": true
     },
@@ -1581,7 +1581,7 @@
       "field_index": 146,
       "field_name": "ftradmdvag",
       "korean_name": "외국계매도평단가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -1591,7 +1591,7 @@
       "field_index": 147,
       "field_name": "ftradmsvag",
       "korean_name": "외국계매수평단가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -1621,7 +1621,7 @@
       "field_index": 150,
       "field_name": "issueprice",
       "korean_name": "발행가격",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -1661,7 +1661,7 @@
       "field_index": 154,
       "field_name": "svi_uplmtprice",
       "korean_name": "정적VI상한가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -1671,7 +1671,7 @@
       "field_index": 155,
       "field_name": "svi_dnlmtprice",
       "korean_name": "정적VI하한가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -1741,7 +1741,7 @@
       "field_index": 162,
       "field_name": "nxt_svi_uplmtprice",
       "korean_name": "NXT정적VI상한가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -1751,7 +1751,7 @@
       "field_index": 163,
       "field_name": "nxt_svi_dnlmtprice",
       "korean_name": "NXT정적VI하한가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },

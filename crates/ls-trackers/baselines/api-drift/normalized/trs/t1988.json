@@ -160,7 +160,7 @@
       "field_index": 8,
       "field_name": "from_rate",
       "korean_name": "등락율1",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -169,7 +169,7 @@
       "field_index": 9,
       "field_name": "to_rate",
       "korean_name": "등락율2",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -294,7 +294,7 @@
       "field_index": 2,
       "field_name": "t1988OutBlock1",
       "korean_name": "t1988OutBlock1\n",
-      "type": "Binary",
+      "type": "Object Array",
       "required": true
     },
     {
@@ -363,7 +363,7 @@
       "field_index": 9,
       "field_name": "rate",
       "korean_name": "등락율",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
