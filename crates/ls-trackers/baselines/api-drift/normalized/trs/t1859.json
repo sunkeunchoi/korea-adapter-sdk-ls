@@ -136,7 +136,7 @@
       "field_index": 0,
       "field_name": "result_count",
       "korean_name": "검색종목수",
-      "type": "Decimal",
+      "type": "Number",
       "length": 5,
       "required": true
     },
@@ -186,7 +186,7 @@
       "field_index": 2,
       "field_name": "price",
       "korean_name": "현재가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 9,
       "required": true
     },
@@ -206,7 +206,7 @@
       "field_index": 4,
       "field_name": "change",
       "korean_name": "전일대비",
-      "type": "Decimal",
+      "type": "Number",
       "length": 9,
       "required": true
     },
@@ -216,7 +216,7 @@
       "field_index": 5,
       "field_name": "diff",
       "korean_name": "등락율",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -225,7 +225,7 @@
       "field_index": 6,
       "field_name": "volume",
       "korean_name": "거래량",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     }

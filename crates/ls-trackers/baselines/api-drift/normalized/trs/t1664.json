@@ -112,7 +112,7 @@
       "field_index": 3,
       "field_name": "cnt",
       "korean_name": "조회건수",
-      "type": "Long",
+      "type": "Object",
       "length": 3,
       "required": true
     },
@@ -189,7 +189,7 @@
       "field_index": 1,
       "field_name": "tjj01",
       "korean_name": "증권순매수",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -199,7 +199,7 @@
       "field_index": 2,
       "field_name": "tjj02",
       "korean_name": "보험순매수",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -209,7 +209,7 @@
       "field_index": 3,
       "field_name": "tjj03",
       "korean_name": "투신순매수",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -219,7 +219,7 @@
       "field_index": 4,
       "field_name": "tjj04",
       "korean_name": "은행순매수",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -229,7 +229,7 @@
       "field_index": 5,
       "field_name": "tjj05",
       "korean_name": "종금순매수",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -239,7 +239,7 @@
       "field_index": 6,
       "field_name": "tjj06",
       "korean_name": "기금순매수",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -249,7 +249,7 @@
       "field_index": 7,
       "field_name": "tjj07",
       "korean_name": "기타순매수",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -259,7 +259,7 @@
       "field_index": 8,
       "field_name": "tjj08",
       "korean_name": "개인순매수",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -269,7 +269,7 @@
       "field_index": 9,
       "field_name": "tjj17",
       "korean_name": "외국인순매수",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -279,7 +279,7 @@
       "field_index": 10,
       "field_name": "tjj18",
       "korean_name": "기관순매수",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -289,7 +289,7 @@
       "field_index": 11,
       "field_name": "cha",
       "korean_name": "차익순매수",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -299,7 +299,7 @@
       "field_index": 12,
       "field_name": "bicha",
       "korean_name": "비차익순매수",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -309,7 +309,7 @@
       "field_index": 13,
       "field_name": "totcha",
       "korean_name": "종합순매수",
-      "type": "Decimal",
+      "type": "Number",
       "length": 12,
       "required": true
     },
@@ -319,7 +319,7 @@
       "field_index": 14,
       "field_name": "basis",
       "korean_name": "베이시스",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     }
   ],

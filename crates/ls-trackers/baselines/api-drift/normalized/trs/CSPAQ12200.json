@@ -136,7 +136,7 @@
       "field_index": 0,
       "field_name": "RecCnt",
       "korean_name": "레코드갯수",
-      "type": "Decimal",
+      "type": "Number",
       "length": 5,
       "required": true
     },
@@ -186,7 +186,7 @@
       "field_index": 0,
       "field_name": "RecCnt",
       "korean_name": "레코드갯수",
-      "type": "Decimal",
+      "type": "Number",
       "length": 5,
       "required": true
     },
@@ -216,7 +216,7 @@
       "field_index": 3,
       "field_name": "MnyOrdAbleAmt",
       "korean_name": "현금주문가능금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -226,7 +226,7 @@
       "field_index": 4,
       "field_name": "MnyoutAbleAmt",
       "korean_name": "출금가능금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -236,7 +236,7 @@
       "field_index": 5,
       "field_name": "SeOrdAbleAmt",
       "korean_name": "거래소금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -246,7 +246,7 @@
       "field_index": 6,
       "field_name": "KdqOrdAbleAmt",
       "korean_name": "코스닥금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -256,7 +256,7 @@
       "field_index": 7,
       "field_name": "BalEvalAmt",
       "korean_name": "잔고평가금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -266,7 +266,7 @@
       "field_index": 8,
       "field_name": "RcvblAmt",
       "korean_name": "미수금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -276,7 +276,7 @@
       "field_index": 9,
       "field_name": "DpsastTotamt",
       "korean_name": "예탁자산총액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -286,7 +286,7 @@
       "field_index": 10,
       "field_name": "PnlRat",
       "korean_name": "손익율",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -295,7 +295,7 @@
       "field_index": 11,
       "field_name": "InvstOrgAmt",
       "korean_name": "투자원금",
-      "type": "Decimal",
+      "type": "Number",
       "length": 20,
       "required": true
     },
@@ -305,7 +305,7 @@
       "field_index": 12,
       "field_name": "InvstPlAmt",
       "korean_name": "투자손익금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -315,7 +315,7 @@
       "field_index": 13,
       "field_name": "CrdtPldgOrdAmt",
       "korean_name": "신용담보주문금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -325,7 +325,7 @@
       "field_index": 14,
       "field_name": "Dps",
       "korean_name": "예수금",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -335,7 +335,7 @@
       "field_index": 15,
       "field_name": "SubstAmt",
       "korean_name": "대용금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -345,7 +345,7 @@
       "field_index": 16,
       "field_name": "D1Dps",
       "korean_name": "D1예수금",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -355,7 +355,7 @@
       "field_index": 17,
       "field_name": "D2Dps",
       "korean_name": "D2예수금",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -365,7 +365,7 @@
       "field_index": 18,
       "field_name": "MnyrclAmt",
       "korean_name": "현금미수금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -375,7 +375,7 @@
       "field_index": 19,
       "field_name": "MgnMny",
       "korean_name": "증거금현금",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -385,7 +385,7 @@
       "field_index": 20,
       "field_name": "MgnSubst",
       "korean_name": "증거금대용",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -395,7 +395,7 @@
       "field_index": 21,
       "field_name": "ChckAmt",
       "korean_name": "수표금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -405,7 +405,7 @@
       "field_index": 22,
       "field_name": "SubstOrdAbleAmt",
       "korean_name": "대용주문가능금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -415,7 +415,7 @@
       "field_index": 23,
       "field_name": "MgnRat100pctOrdAbleAmt",
       "korean_name": "증거금률100퍼센트주문가능금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -425,7 +425,7 @@
       "field_index": 24,
       "field_name": "MgnRat35ordAbleAmt",
       "korean_name": "증거금률35%주문가능금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -435,7 +435,7 @@
       "field_index": 25,
       "field_name": "MgnRat50ordAbleAmt",
       "korean_name": "증거금률50%주문가능금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -445,7 +445,7 @@
       "field_index": 26,
       "field_name": "PrdaySellAdjstAmt",
       "korean_name": "전일매도정산금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -455,7 +455,7 @@
       "field_index": 27,
       "field_name": "PrdayBuyAdjstAmt",
       "korean_name": "전일매수정산금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -465,7 +465,7 @@
       "field_index": 28,
       "field_name": "CrdaySellAdjstAmt",
       "korean_name": "금일매도정산금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -475,7 +475,7 @@
       "field_index": 29,
       "field_name": "CrdayBuyAdjstAmt",
       "korean_name": "금일매수정산금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -485,7 +485,7 @@
       "field_index": 30,
       "field_name": "D1ovdRepayRqrdAmt",
       "korean_name": "D1연체변제소요금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -495,7 +495,7 @@
       "field_index": 31,
       "field_name": "D2ovdRepayRqrdAmt",
       "korean_name": "D2연체변제소요금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -505,7 +505,7 @@
       "field_index": 32,
       "field_name": "D1PrsmptWthdwAbleAmt",
       "korean_name": "D1추정인출가능금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -515,7 +515,7 @@
       "field_index": 33,
       "field_name": "D2PrsmptWthdwAbleAmt",
       "korean_name": "D2추정인출가능금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -525,7 +525,7 @@
       "field_index": 34,
       "field_name": "DpspdgLoanAmt",
       "korean_name": "예탁담보대출금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -535,7 +535,7 @@
       "field_index": 35,
       "field_name": "Imreq",
       "korean_name": "신용설정보증금",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -545,7 +545,7 @@
       "field_index": 36,
       "field_name": "MloanAmt",
       "korean_name": "융자금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -555,7 +555,7 @@
       "field_index": 37,
       "field_name": "ChgAfPldgRat",
       "korean_name": "변경후담보비율",
-      "type": "Decimal",
+      "type": "Number",
       "required": true
     },
     {
@@ -564,7 +564,7 @@
       "field_index": 38,
       "field_name": "OrgPldgAmt",
       "korean_name": "원담보금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -574,7 +574,7 @@
       "field_index": 39,
       "field_name": "SubPldgAmt",
       "korean_name": "부담보금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -584,7 +584,7 @@
       "field_index": 40,
       "field_name": "RqrdPldgAmt",
       "korean_name": "소요담보금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -594,7 +594,7 @@
       "field_index": 41,
       "field_name": "OrgPdlckAmt",
       "korean_name": "원담보부족금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -604,7 +604,7 @@
       "field_index": 42,
       "field_name": "PdlckAmt",
       "korean_name": "담보부족금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -614,7 +614,7 @@
       "field_index": 43,
       "field_name": "AddPldgMny",
       "korean_name": "추가담보현금",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -624,7 +624,7 @@
       "field_index": 44,
       "field_name": "D1OrdAbleAmt",
       "korean_name": "D1주문가능금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -634,7 +634,7 @@
       "field_index": 45,
       "field_name": "CrdtIntdltAmt",
       "korean_name": "신용이자미납금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -644,7 +644,7 @@
       "field_index": 46,
       "field_name": "EtclndAmt",
       "korean_name": "기타대여금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -654,7 +654,7 @@
       "field_index": 47,
       "field_name": "NtdayPrsmptCvrgAmt",
       "korean_name": "익일추정반대매매금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -664,7 +664,7 @@
       "field_index": 48,
       "field_name": "OrgPldgSumAmt",
       "korean_name": "원담보합계금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -674,7 +674,7 @@
       "field_index": 49,
       "field_name": "CrdtOrdAbleAmt",
       "korean_name": "신용주문가능금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -684,7 +684,7 @@
       "field_index": 50,
       "field_name": "SubPldgSumAmt",
       "korean_name": "부담보합계금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -694,7 +694,7 @@
       "field_index": 51,
       "field_name": "CrdtPldgAmtMny",
       "korean_name": "신용담보금현금",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -704,7 +704,7 @@
       "field_index": 52,
       "field_name": "CrdtPldgSubstAmt",
       "korean_name": "신용담보대용금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -714,7 +714,7 @@
       "field_index": 53,
       "field_name": "AddCrdtPldgMny",
       "korean_name": "추가신용담보현금",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -724,7 +724,7 @@
       "field_index": 54,
       "field_name": "CrdtPldgRuseAmt",
       "korean_name": "신용담보재사용금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -734,7 +734,7 @@
       "field_index": 55,
       "field_name": "AddCrdtPldgSubst",
       "korean_name": "추가신용담보대용",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -744,7 +744,7 @@
       "field_index": 56,
       "field_name": "CslLoanAmtdt1",
       "korean_name": "매도대금담보대출금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -754,7 +754,7 @@
       "field_index": 57,
       "field_name": "DpslRestrcAmt",
       "korean_name": "처분제한금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     },
@@ -764,7 +764,7 @@
       "field_index": 58,
       "field_name": "RcvblUablOrdAbleAmt",
       "korean_name": "미수불가주문가능금액",
-      "type": "Decimal",
+      "type": "Number",
       "length": 16,
       "required": true
     }

@@ -135,7 +135,7 @@
       "field_index": 0,
       "field_name": "t8436OutBlock",
       "korean_name": "t8436OutBlock\n",
-      "type": "Binary",
+      "type": "Object Array",
       "required": true
     },
     {
@@ -184,7 +184,7 @@
       "field_index": 5,
       "field_name": "uplmtprice",
       "korean_name": "상한가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -194,7 +194,7 @@
       "field_index": 6,
       "field_name": "dnlmtprice",
       "korean_name": "하한가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -204,7 +204,7 @@
       "field_index": 7,
       "field_name": "jnilclose",
       "korean_name": "전일가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
@@ -224,7 +224,7 @@
       "field_index": 9,
       "field_name": "recprice",
       "korean_name": "기준가",
-      "type": "Decimal",
+      "type": "Number",
       "length": 8,
       "required": true
     },
