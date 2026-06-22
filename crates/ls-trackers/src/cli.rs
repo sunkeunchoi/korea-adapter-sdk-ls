@@ -853,7 +853,7 @@ pub fn promote_committed(
     // the committed baseline above (KTD-6), so it is expected to differ from an
     // ordinary (non-provisional) staged run and must NOT be compared here; doing
     // so made every attested promote onto a still-provisional baseline diverge.
-    if normalized.code_set.codes != staged_run.code_set.codes
+    if !normalized.code_set.codes_match(&staged_run.code_set)
         || normalized.shapes != staged_run.shapes
     {
         return Err(
@@ -2869,6 +2869,50 @@ recommendation:
         assert!(
             load_normalized(&paths.baseline_dir).unwrap().code_set.provisional,
             "committed provisional stance is preserved across promote"
+        );
+    }
+
+    /// Negative companion to the narrowed `codes_match` check: a staged run whose
+    /// persisted `code-set.json` membership diverges from what its raw re-derives
+    /// (a stale or hand-edited staged run) must still be REFUSED with zero mutation.
+    /// The narrowing dropped only the `provisional` flag — set divergence still trips
+    /// the guard via `code_set.codes`.
+    #[test]
+    fn promote_refuses_when_staged_codes_diverge_from_re_derivation() {
+        let scratch = scratch("promote-codes-diverge");
+        let staged = scratch.join("staged");
+        write_staged_from_raw(&staged, &committed_raw());
+        // Corrupt the staged run's persisted code-set with a code its raw lacks.
+        let mut cs: CodeSet =
+            serde_json::from_slice(&fs::read(staged.join(CODE_SET_FILE)).unwrap()).unwrap();
+        cs.codes.insert("zzzz_phantom".to_string());
+        fs::write(
+            staged.join(CODE_SET_FILE),
+            serde_json::to_vec_pretty(&cs).unwrap(),
+        )
+        .unwrap();
+
+        let paths = Paths {
+            baseline_dir: scratch.join("baseline"),
+            run_root: scratch.join("runs"),
+            metadata_dir: repo_metadata_dir(),
+            spec_baseline_dir: scratch.join("spec"),
+        };
+        // Seed a committed baseline + a sentinel raw to prove zero mutation on refusal.
+        let staged_run = load_normalized(&staged).unwrap();
+        write_normalized(&paths.baseline_dir, &staged_run).unwrap();
+        fs::create_dir_all(paths.baseline_dir.join("raw")).unwrap();
+        fs::write(paths.baseline_dir.join(RAW_FILE), b"{\"sentinel\":true}\n").unwrap();
+
+        let err = promote_committed(&paths, Some(&staged), "ENG-1", false, "2026-06-21").unwrap_err();
+        assert!(
+            err.contains("re-derived code-set/shapes differ"),
+            "a staged code-set diverging from its raw must be refused: {err}"
+        );
+        // Zero mutation: committed raw untouched.
+        assert_eq!(
+            fs::read(paths.baseline_dir.join(RAW_FILE)).unwrap(),
+            b"{\"sentinel\":true}\n"
         );
     }
 

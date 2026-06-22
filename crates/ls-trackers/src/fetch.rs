@@ -466,13 +466,28 @@ impl FetchClient {
         // "description" } ] }` — the code→display-name map is `key` → `value`.
         let mut map = BTreeMap::new();
         if let Some(arr) = parsed.get("codes").and_then(Value::as_array) {
+            let mut readable = 0usize;
             for item in arr {
                 if let (Some(key), Some(value)) = (
                     item.get("key").and_then(Value::as_str),
                     item.get("value").and_then(Value::as_str),
                 ) {
                     map.insert(key.to_string(), value.to_string());
+                    readable += 1;
                 }
+            }
+            // A partially-readable `codes` array (some items missing `key`/`value`)
+            // must NOT serve a silent partial map: those codes would resolve to raw
+            // type codes with `fell_back == false`, slipping past the facts-outage
+            // gate and re-pinning wrong types as a "type wave". Treat any unreadable
+            // entry as a degraded response and fall back (loud, gated).
+            if readable != arr.len() {
+                eprintln!(
+                    "warning: property-type mapping had {} unreadable of {} entries; using fallback",
+                    arr.len() - readable,
+                    arr.len()
+                );
+                return fallback();
             }
         }
         if map.is_empty() {
@@ -903,10 +918,59 @@ mod tests {
         });
         let client = FetchClient::new(server.base_url()).unwrap();
         let (map, fell_back) = client.property_type_mapping();
-        // Fallback map is non-empty and the call does not error out.
+        // Fallback map is non-empty and the call does not error out. Pin every
+        // corrected value (not just A0001 + length) so a regression in the fallback
+        // table — the sole type source when the live mapping is unavailable — fails
+        // a test rather than silently stamping wrong types into the baseline.
         assert_eq!(map.get("A0001"), Some(&"String".to_string()));
+        assert_eq!(map.get("A0002"), Some(&"Array".to_string()));
+        assert_eq!(map.get("A0003"), Some(&"Object".to_string()));
+        assert_eq!(map.get("A0004"), Some(&"Number".to_string()));
+        assert_eq!(map.get("A0005"), Some(&"Object Array".to_string()));
         assert_eq!(map.len(), PROPERTY_TYPE_FALLBACK.len());
         assert!(fell_back, "a 500 response served the fallback table (U4)");
+    }
+
+    /// A 200 response that omits the `codes` key entirely (e.g. a partial schema
+    /// migration) serves the fallback — the parser finds no array and must not
+    /// quietly return an empty map as if it were live.
+    #[test]
+    fn property_type_mapping_falls_back_when_codes_key_absent() {
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/codes/public/property_type");
+            then.status(200)
+                .json_body(serde_json::json!({ "code": "property_type", "description": "x" }));
+        });
+        let client = FetchClient::new(server.base_url()).unwrap();
+        let (map, fell_back) = client.property_type_mapping();
+        assert!(fell_back, "a 200 with no `codes` key serves the fallback");
+        assert_eq!(map.len(), PROPERTY_TYPE_FALLBACK.len());
+    }
+
+    /// A 200 whose `codes` array is non-empty but has an unreadable entry (missing
+    /// `value`) must fall back — NOT serve a silent partial map. A partial map with
+    /// `fell_back == false` would slip past the facts-outage gate and re-pin wrong
+    /// types as a bogus "type wave".
+    #[test]
+    fn property_type_mapping_falls_back_on_partial_unreadable_codes() {
+        let server = httpmock::MockServer::start();
+        server.mock(|when, then| {
+            when.method(httpmock::Method::GET)
+                .path("/api/codes/public/property_type");
+            then.status(200).json_body(serde_json::json!({ "codes": [
+                { "key": "A0001", "value": "String" },
+                { "key": "A0002" } // missing `value` -> degraded -> fallback
+            ]}));
+        });
+        let client = FetchClient::new(server.base_url()).unwrap();
+        let (map, fell_back) = client.property_type_mapping();
+        assert!(
+            fell_back,
+            "a partially-unreadable codes array serves the fallback, not a partial map"
+        );
+        assert_eq!(map.len(), PROPERTY_TYPE_FALLBACK.len());
     }
 
     #[test]
