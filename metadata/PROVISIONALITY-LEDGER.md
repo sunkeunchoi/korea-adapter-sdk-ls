@@ -195,24 +195,33 @@ no `metadata/evidence/<tr>.yaml` exists for any of the 11.
 
 ---
 
-## 6. Saved-Condition Screening wave — spine (U3/U4) progress (2026-06-22)
+## 6. Saved-Condition Screening wave — close-out (2026-06-22)
 
 The `tracked → implemented` saved-condition screening wave (plan
 `docs/plans/2026-06-22-001-feat-saved-condition-screening-expansion-plan.md`)
-completes the `t1866 → t1859/t1860` server-saved-condition `query_index` spine.
-Each implemented TR stays **non-recommended** (no Focused Evidence, no
-recommendation block, no `EVIDENCE-FRESHNESS.md` edit).
+ships as a **partial wave**: it completes the real server-saved-condition
+`query_index` spine (`t1866 → t1859`) and reaches a decided end state for all 7
+member TRs. Each implemented TR stays **non-recommended** (no Focused Evidence,
+no recommendation block, no `EVIDENCE-FRESHNESS.md` edit). The two core file-saved
+screens and the session pair could not clear their preconditions in-window and
+ship pending; t1860 reclassified out of scope. Every one of the 7 is decided:
+**2 implemented, 1 held, 4 pending.**
 
-| TR | Class | End state | Smoke gate (credential-free) |
+| TR | Class (first-pass) | End state | Disposition (credential-free) |
 |---|---|---|---|
-| t1866 | paginated (single-page) | implemented | `rsp_cd=00000 conditions=1` (spine producer) |
-| t1859 | market_session | implemented | `rsp_cd=00000 rows=934` (chained off t1866; `query_index` accepted) |
+| t1866 | paginated (single-page) | **implemented** | `rsp_cd=00000 conditions=1` (spine producer) |
+| t1859 | market_session | **implemented** | `rsp_cd=00000 rows=934` (chained off t1866; `query_index` accepted) |
 | t1860 | market_session | **HELD — out of scope (realtime registration)** | not smoked (see below) |
+| t1852 | market_session | **PENDING — input-unresolved** | required `sFileData` blob (~26.8 KB) unsourced |
+| t1856 | market_session | **PENDING — input-unresolved** | required `sFileData` blob (~26.8 KB) unsourced |
+| t1481 | paginated (body-`idx`) | **PENDING — session-unresolved** | no in-session window run; `venue_session` unresolved |
+| t1482 | paginated (body-`idx`) | **PENDING — session-unresolved** | no in-session window run; `venue_session` unresolved |
 
-The spine is proven end-to-end: a live `t1866` list supplies a `query_index`
-that `t1859`'s chained smoke accepts (a non-empty success), so the
-`t1866 → t1859` discovery edge (§3) is retired and `t1859`'s `venue_session`
-(§1, `krx_regular`) and `caller_supplied_identifiers` (§2, `[query_index]`) retire.
+**Spine proven end-to-end.** A live `t1866` list supplies a `query_index` that
+`t1859`'s chained smoke accepts (a non-empty success), so the `t1866 → t1859`
+discovery edge (§3) is retired and `t1859`'s `venue_session` (§1, `krx_regular`)
+and `caller_supplied_identifiers` (§2, `[query_index]`) retire. `t1866`'s
+`venue_session` + caller-input rows retired in U3.
 
 **t1860 — HELD, not implemented (recorded reason).** The raw spec
 (`crates/ls-trackers/baselines/api-drift/raw/ls-openapi-full.json`) resolves
@@ -225,5 +234,35 @@ torn down with a matching `'D'` + `sAlertNum` call. This is the recipe's §0
 "realtime/WebSocket → HELD out of scope" precondition: t1860 is not a read-only
 REST read, and a paper smoke would leave a dangling realtime registration (or
 require a custom register/deregister lifecycle outside this read-only wave).
-t1860 ships tracked-only; its §1/§2/§3 ledger rows are **retained** (unconfirmed).
 A future realtime/subscription wave that models the AFR channel should pick it up.
+
+**Residual provisionality (NOT retired by this wave).** The pending/held TRs stay
+tracked-only with their `§1`/`§2`/`§3` rows **retained** (none confirmed by a paper
+call), so no ledger row is left silently live (R11):
+- **t1860** — `venue_session` (§1), `caller_supplied_identifiers` (§2, `[query_index]`),
+  and the §3 `t1866 → t1860` discovery edge: all retained, unconfirmed (held).
+- **t1852 / t1856** — `venue_session` (§1) and `caller_supplied_identifiers` (§2)
+  retained. Note their §2 rows still read `[]`; the baseline marks a required
+  `sFileData` String, so the true caller-input set is `[sFileData]` — left
+  uncorrected here because the field is unconfirmed in-window (the sourcing wave
+  reconciles it on a confirming call). owner_class stays the `standalone`
+  placeholder (not reclassified absent a live confirmation).
+- **t1481 / t1482** — `venue_session` (§1) retained and explicitly
+  **session-unresolved**: no SDK/core field carries session phase, and an
+  off-session smoke cannot resolve `krx_regular` vs `krx_extended` (the
+  `t1489`/`t1492` precedent in §5). Resolving it needs an in-session live-run
+  window diffed against a regular-session run.
+
+**Follow-up roadmap (opened as issues).**
+1. **sFileData sourcing wave** — source a representative ~26.8 KB `sFileData`
+   screening-condition blob, then implement `t1852`/`t1856` and reconcile their
+   §2 caller-input rows to `[sFileData]`.
+2. **Session-semantics wave** — run an in-session window to resolve `t1481`/`t1482`'s
+   `venue_session`, then implement them at single-page body-`idx` scope.
+3. **Realtime lifecycle / AFR design** — model the `t1860` register/deregister
+   lifecycle and the AFR (사용자조건검색실시간) realtime channel if that capability
+   is pursued.
+
+Field-`type` facets (§4) are already retired inventory-wide (clean re-pin); nothing
+to retire here. Recommended tier untouched: `EVIDENCE-FRESHNESS.md` stays at six
+Recommended TRs; no `metadata/evidence/<tr>.yaml` exists for any of the 7.
