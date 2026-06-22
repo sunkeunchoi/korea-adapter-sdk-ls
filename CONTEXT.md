@@ -60,6 +60,14 @@ _Avoid_: SDK patch, automatic update, tracker write
 The normalized request and response structure of an LS transaction request, including block identity, field position, field name, field attributes, protocol, and endpoint facts.
 _Avoid_: sample payload, generated struct, leaf path
 
+**Clean Self-Diff**:
+The property that comparing a **Reviewed Baseline** against its own source yields zero **Tracker Findings**; it proves the baseline is internally consistent and deterministically projected, not that every drift path the trackers gate on is covered.
+_Avoid_: regression test, idempotent build, no-op diff
+
+**Provisionality**:
+A recorded caveat that a specific **Reviewed Baseline** facet is not yet trustworthy ground truth — for example a field type derived from a fallback rather than a live authoritative source — carried per facet in the provisionality ledger until a clean source resolves it.
+_Avoid_: bug, tech debt, open question
+
 **SDK Maintenance Work Item**:
 A reviewed unit of work derived from a **Tracker Finding** that asks an agent or maintainer to update, create, or remove SDK behavior.
 _Avoid_: generated diff, regeneration task, tracker result

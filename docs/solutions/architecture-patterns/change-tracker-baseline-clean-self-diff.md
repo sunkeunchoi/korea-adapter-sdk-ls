@@ -95,3 +95,4 @@ There is no code path from a raw credential-bearing string to a committed file t
 - `crates/ls-trackers/baselines/api-drift/SEED-ATTESTATION.md` — the first baseline; uses the per-TR layout (incl. `normalized/trs/S3_.json`) that the second tracker had to abandon at full-inventory scale.
 - `docs/plans/2026-06-16-006-feat-specification-document-tracker-plan.md` — KTD7 (type-unrepresentable secrets + clean self-diff), KTD8 (full-inventory baseline).
 - `CONTEXT.md` — defines Staged Snapshot, Reviewed Baseline, Specification Document Tracker.
+- `gate-over-diff-inherits-diff-scope-blind-spot.md` — companion gate-side pattern: a clean self-diff (same inventory on both sides) does *not* imply complete gate coverage when the staged and committed inventories differ; a gate reading `compare()` findings is blind to maintained shapes outside the committed∩staged set.
