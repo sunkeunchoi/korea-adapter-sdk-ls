@@ -19,10 +19,10 @@
 # proves single-page reachability only; multi-page `chart_all` correctness is
 # explicitly out of the recommendation scope.
 tr_code: t8412
-date: 2026-06-17
+date: 2026-06-22
 env: paper
 target: live-smoke-chart
-line: "LIVE-SMOKE target=live-smoke-chart inputs=[symbol=005930 date=20260617] result=[rsp_cd=00000 rows=381]"
+line: "LIVE-SMOKE target=live-smoke-chart inputs=[symbol=005930 date=20260619] result=[rsp_cd=00000 rows=381]"
 
 attested_normalizer_version: 2
 attested_shape:
@@ -101,7 +101,7 @@ attested_shape:
     field_index: 1
     field_name: ncnt
     korean_name: 단위(n분)
-    type: Decimal
+    type: Number
     length: 4
     required: true
   - direction: request
@@ -109,7 +109,7 @@ attested_shape:
     field_index: 2
     field_name: qrycnt
     korean_name: 요청건수(최대-압축:2000비압축:500)
-    type: Decimal
+    type: Number
     length: 4
     required: true
   - direction: request
@@ -230,7 +230,7 @@ attested_shape:
     field_index: 1
     field_name: jisiga
     korean_name: 전일시가
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -238,7 +238,7 @@ attested_shape:
     field_index: 2
     field_name: jihigh
     korean_name: 전일고가
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -246,7 +246,7 @@ attested_shape:
     field_index: 3
     field_name: jilow
     korean_name: 전일저가
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -254,7 +254,7 @@ attested_shape:
     field_index: 4
     field_name: jiclose
     korean_name: 전일종가
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -262,7 +262,7 @@ attested_shape:
     field_index: 5
     field_name: jivolume
     korean_name: 전일거래량
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -270,7 +270,7 @@ attested_shape:
     field_index: 6
     field_name: disiga
     korean_name: 당일시가
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -278,7 +278,7 @@ attested_shape:
     field_index: 7
     field_name: dihigh
     korean_name: 당일고가
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -286,7 +286,7 @@ attested_shape:
     field_index: 8
     field_name: dilow
     korean_name: 당일저가
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -294,7 +294,7 @@ attested_shape:
     field_index: 9
     field_name: diclose
     korean_name: 당일종가
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -302,7 +302,7 @@ attested_shape:
     field_index: 10
     field_name: highend
     korean_name: 상한가
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -310,7 +310,7 @@ attested_shape:
     field_index: 11
     field_name: lowend
     korean_name: 하한가
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -358,7 +358,7 @@ attested_shape:
     field_index: 17
     field_name: rec_count
     korean_name: 레코드카운트
-    type: Decimal
+    type: Number
     length: 7
     required: true
   - direction: response
@@ -382,7 +382,7 @@ attested_shape:
     field_index: 2
     field_name: open
     korean_name: 시가
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -390,7 +390,7 @@ attested_shape:
     field_index: 3
     field_name: high
     korean_name: 고가
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -398,7 +398,7 @@ attested_shape:
     field_index: 4
     field_name: low
     korean_name: 저가
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -406,7 +406,7 @@ attested_shape:
     field_index: 5
     field_name: close
     korean_name: 종가
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -414,7 +414,7 @@ attested_shape:
     field_index: 6
     field_name: jdiff_vol
     korean_name: 거래량
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -422,7 +422,7 @@ attested_shape:
     field_index: 7
     field_name: value
     korean_name: 거래대금
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -430,7 +430,7 @@ attested_shape:
     field_index: 8
     field_name: jongchk
     korean_name: 수정구분
-    type: Decimal
+    type: Number
     length: 13
     required: true
   - direction: response
@@ -438,7 +438,7 @@ attested_shape:
     field_index: 9
     field_name: rate
     korean_name: 수정비율
-    type: Decimal
+    type: Number
     required: true
   - direction: response
     block_name: t8412OutBlock1

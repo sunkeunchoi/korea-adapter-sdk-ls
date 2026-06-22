@@ -21,7 +21,7 @@ support:
   recommended: true
 maintenance:
   source_spec_hash: d4e5f6a1b2c3
-  last_reviewed: 2026-06-17
+  last_reviewed: 2026-06-22
 recommendation:
   behavior: Paper read-only cash-account balance inquiry (예수금/주문가능금액/총평가)
   evidence_ref: evidence/CSPAQ12200.yaml

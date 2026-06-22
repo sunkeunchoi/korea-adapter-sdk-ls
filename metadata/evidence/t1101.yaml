@@ -18,10 +18,10 @@
 # a paper-guard miss (which fails the test) and not a 01900 paper-incompatible
 # refusal (which would Err before recording).
 tr_code: t1101
-date: 2026-06-17
+date: 2026-06-22
 env: paper
 target: live-smoke-book
-line: "LIVE-SMOKE target=live-smoke-book inputs=[env=paper symbol=005930 date=2026-06-17] result=[token_len=380 rsp_cd=00000 price=346500 offerho1=346500 bidho1=346000]"
+line: "LIVE-SMOKE target=live-smoke-book inputs=[env=paper symbol=005930 date=2026-06-22] result=[token_len=380 rsp_cd=00000 price=357000 offerho1=357000 bidho1=356500]"
 
 attested_normalizer_version: 2
 attested_shape:
@@ -145,7 +145,7 @@ attested_shape:
     field_index: 1
     field_name: price
     korean_name: 현재가
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -161,7 +161,7 @@ attested_shape:
     field_index: 3
     field_name: change
     korean_name: 전일대비
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -169,14 +169,14 @@ attested_shape:
     field_index: 4
     field_name: diff
     korean_name: 등락율
-    type: Decimal
+    type: Number
     required: true
   - direction: response
     block_name: t1101OutBlock
     field_index: 5
     field_name: volume
     korean_name: 누적거래량
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -184,7 +184,7 @@ attested_shape:
     field_index: 6
     field_name: jnilclose
     korean_name: 전일종가
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -192,7 +192,7 @@ attested_shape:
     field_index: 7
     field_name: offerho1
     korean_name: 매도호가1
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -200,7 +200,7 @@ attested_shape:
     field_index: 8
     field_name: bidho1
     korean_name: 매수호가1
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -208,7 +208,7 @@ attested_shape:
     field_index: 9
     field_name: offerrem1
     korean_name: 매도호가수량1
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -216,7 +216,7 @@ attested_shape:
     field_index: 10
     field_name: bidrem1
     korean_name: 매수호가수량1
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -224,7 +224,7 @@ attested_shape:
     field_index: 11
     field_name: preoffercha1
     korean_name: 직전매도대비수량1
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -232,7 +232,7 @@ attested_shape:
     field_index: 12
     field_name: prebidcha1
     korean_name: 직전매수대비수량1
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -240,7 +240,7 @@ attested_shape:
     field_index: 13
     field_name: offerho2
     korean_name: 매도호가2
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -248,7 +248,7 @@ attested_shape:
     field_index: 14
     field_name: bidho2
     korean_name: 매수호가2
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -256,7 +256,7 @@ attested_shape:
     field_index: 15
     field_name: offerrem2
     korean_name: 매도호가수량2
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -264,7 +264,7 @@ attested_shape:
     field_index: 16
     field_name: bidrem2
     korean_name: 매수호가수량2
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -272,7 +272,7 @@ attested_shape:
     field_index: 17
     field_name: preoffercha2
     korean_name: 직전매도대비수량2
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -280,7 +280,7 @@ attested_shape:
     field_index: 18
     field_name: prebidcha2
     korean_name: 직전매수대비수량2
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -288,7 +288,7 @@ attested_shape:
     field_index: 19
     field_name: offerho3
     korean_name: 매도호가3
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -296,7 +296,7 @@ attested_shape:
     field_index: 20
     field_name: bidho3
     korean_name: 매수호가3
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -304,7 +304,7 @@ attested_shape:
     field_index: 21
     field_name: offerrem3
     korean_name: 매도호가수량3
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -312,7 +312,7 @@ attested_shape:
     field_index: 22
     field_name: bidrem3
     korean_name: 매수호가수량3
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -320,7 +320,7 @@ attested_shape:
     field_index: 23
     field_name: preoffercha3
     korean_name: 직전매도대비수량3
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -328,7 +328,7 @@ attested_shape:
     field_index: 24
     field_name: prebidcha3
     korean_name: 직전매수대비수량3
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -336,7 +336,7 @@ attested_shape:
     field_index: 25
     field_name: offerho4
     korean_name: 매도호가4
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -344,7 +344,7 @@ attested_shape:
     field_index: 26
     field_name: bidho4
     korean_name: 매수호가4
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -352,7 +352,7 @@ attested_shape:
     field_index: 27
     field_name: offerrem4
     korean_name: 매도호가수량4
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -360,7 +360,7 @@ attested_shape:
     field_index: 28
     field_name: bidrem4
     korean_name: 매수호가수량4
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -368,7 +368,7 @@ attested_shape:
     field_index: 29
     field_name: preoffercha4
     korean_name: 직전매도대비수량4
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -376,7 +376,7 @@ attested_shape:
     field_index: 30
     field_name: prebidcha4
     korean_name: 직전매수대비수량4
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -384,7 +384,7 @@ attested_shape:
     field_index: 31
     field_name: offerho5
     korean_name: 매도호가5
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -392,7 +392,7 @@ attested_shape:
     field_index: 32
     field_name: bidho5
     korean_name: 매수호가5
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -400,7 +400,7 @@ attested_shape:
     field_index: 33
     field_name: offerrem5
     korean_name: 매도호가수량5
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -408,7 +408,7 @@ attested_shape:
     field_index: 34
     field_name: bidrem5
     korean_name: 매수호가수량5
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -416,7 +416,7 @@ attested_shape:
     field_index: 35
     field_name: preoffercha5
     korean_name: 직전매도대비수량5
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -424,7 +424,7 @@ attested_shape:
     field_index: 36
     field_name: prebidcha5
     korean_name: 직전매수대비수량5
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -432,7 +432,7 @@ attested_shape:
     field_index: 37
     field_name: offerho6
     korean_name: 매도호가6
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -440,7 +440,7 @@ attested_shape:
     field_index: 38
     field_name: bidho6
     korean_name: 매수호가6
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -448,7 +448,7 @@ attested_shape:
     field_index: 39
     field_name: offerrem6
     korean_name: 매도호가수량6
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -456,7 +456,7 @@ attested_shape:
     field_index: 40
     field_name: bidrem6
     korean_name: 매수호가수량6
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -464,7 +464,7 @@ attested_shape:
     field_index: 41
     field_name: preoffercha6
     korean_name: 직전매도대비수량6
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -472,7 +472,7 @@ attested_shape:
     field_index: 42
     field_name: prebidcha6
     korean_name: 직전매수대비수량6
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -480,7 +480,7 @@ attested_shape:
     field_index: 43
     field_name: offerho7
     korean_name: 매도호가7
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -488,7 +488,7 @@ attested_shape:
     field_index: 44
     field_name: bidho7
     korean_name: 매수호가7
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -496,7 +496,7 @@ attested_shape:
     field_index: 45
     field_name: offerrem7
     korean_name: 매도호가수량7
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -504,7 +504,7 @@ attested_shape:
     field_index: 46
     field_name: bidrem7
     korean_name: 매수호가수량7
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -512,7 +512,7 @@ attested_shape:
     field_index: 47
     field_name: preoffercha7
     korean_name: 직전매도대비수량7
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -520,7 +520,7 @@ attested_shape:
     field_index: 48
     field_name: prebidcha7
     korean_name: 직전매수대비수량7
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -528,7 +528,7 @@ attested_shape:
     field_index: 49
     field_name: offerho8
     korean_name: 매도호가8
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -536,7 +536,7 @@ attested_shape:
     field_index: 50
     field_name: bidho8
     korean_name: 매수호가8
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -544,7 +544,7 @@ attested_shape:
     field_index: 51
     field_name: offerrem8
     korean_name: 매도호가수량8
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -552,7 +552,7 @@ attested_shape:
     field_index: 52
     field_name: bidrem8
     korean_name: 매수호가수량8
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -560,7 +560,7 @@ attested_shape:
     field_index: 53
     field_name: preoffercha8
     korean_name: 직전매도대비수량8
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -568,7 +568,7 @@ attested_shape:
     field_index: 54
     field_name: prebidcha8
     korean_name: 직전매수대비수량8
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -576,7 +576,7 @@ attested_shape:
     field_index: 55
     field_name: offerho9
     korean_name: 매도호가9
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -584,7 +584,7 @@ attested_shape:
     field_index: 56
     field_name: bidho9
     korean_name: 매수호가9
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -592,7 +592,7 @@ attested_shape:
     field_index: 57
     field_name: offerrem9
     korean_name: 매도호가수량9
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -600,7 +600,7 @@ attested_shape:
     field_index: 58
     field_name: bidrem9
     korean_name: 매수호가수량9
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -608,7 +608,7 @@ attested_shape:
     field_index: 59
     field_name: preoffercha9
     korean_name: 직전매도대비수량9
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -616,7 +616,7 @@ attested_shape:
     field_index: 60
     field_name: prebidcha9
     korean_name: 직전매수대비수량9
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -624,7 +624,7 @@ attested_shape:
     field_index: 61
     field_name: offerho10
     korean_name: 매도호가10
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -632,7 +632,7 @@ attested_shape:
     field_index: 62
     field_name: bidho10
     korean_name: 매수호가10
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -640,7 +640,7 @@ attested_shape:
     field_index: 63
     field_name: offerrem10
     korean_name: 매도호가수량10
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -648,7 +648,7 @@ attested_shape:
     field_index: 64
     field_name: bidrem10
     korean_name: 매수호가수량10
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -656,7 +656,7 @@ attested_shape:
     field_index: 65
     field_name: preoffercha10
     korean_name: 직전매도대비수량10
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -664,7 +664,7 @@ attested_shape:
     field_index: 66
     field_name: prebidcha10
     korean_name: 직전매수대비수량10
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -672,7 +672,7 @@ attested_shape:
     field_index: 67
     field_name: offer
     korean_name: 매도호가수량합
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -680,7 +680,7 @@ attested_shape:
     field_index: 68
     field_name: bid
     korean_name: 매수호가수량합
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -688,7 +688,7 @@ attested_shape:
     field_index: 69
     field_name: preoffercha
     korean_name: 직전매도대비수량합
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -696,7 +696,7 @@ attested_shape:
     field_index: 70
     field_name: prebidcha
     korean_name: 직전매수대비수량합
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -712,7 +712,7 @@ attested_shape:
     field_index: 72
     field_name: yeprice
     korean_name: 예상체결가격
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -720,7 +720,7 @@ attested_shape:
     field_index: 73
     field_name: yevolume
     korean_name: 예상체결수량
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -736,7 +736,7 @@ attested_shape:
     field_index: 75
     field_name: yechange
     korean_name: 예상체결전일대비
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -744,14 +744,14 @@ attested_shape:
     field_index: 76
     field_name: yediff
     korean_name: 예상체결등락율
-    type: Decimal
+    type: Number
     required: true
   - direction: response
     block_name: t1101OutBlock
     field_index: 77
     field_name: tmoffer
     korean_name: 시간외매도잔량
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -759,7 +759,7 @@ attested_shape:
     field_index: 78
     field_name: tmbid
     korean_name: 시간외매수잔량
-    type: Decimal
+    type: Number
     length: 12
     required: true
   - direction: response
@@ -783,7 +783,7 @@ attested_shape:
     field_index: 81
     field_name: uplmtprice
     korean_name: 상한가
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -791,7 +791,7 @@ attested_shape:
     field_index: 82
     field_name: dnlmtprice
     korean_name: 하한가
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -799,7 +799,7 @@ attested_shape:
     field_index: 83
     field_name: open
     korean_name: 시가
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -807,7 +807,7 @@ attested_shape:
     field_index: 84
     field_name: high
     korean_name: 고가
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -815,7 +815,7 @@ attested_shape:
     field_index: 85
     field_name: low
     korean_name: 저가
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -823,7 +823,7 @@ attested_shape:
     field_index: 86
     field_name: krx_midprice
     korean_name: KRX중간가격
-    type: Decimal
+    type: Number
     length: 8
     required: true
   - direction: response
@@ -831,7 +831,7 @@ attested_shape:
     field_index: 87
     field_name: krx_offermidsumrem
     korean_name: KRX매도중간가잔량합계수량
-    type: Decimal
+    type: Number
     length: 9
     required: true
   - direction: response
@@ -839,7 +839,7 @@ attested_shape:
     field_index: 88
     field_name: krx_bidmidsumrem
     korean_name: 'KRX매수중간가잔량합계수량 '
-    type: Decimal
+    type: Number
     length: 9
     required: true
   - direction: response
@@ -847,7 +847,7 @@ attested_shape:
     field_index: 89
     field_name: krx_midsumrem
     korean_name: KRX중간가잔량합계수량
-    type: Decimal
+    type: Number
     length: 9
     required: true
   - direction: response

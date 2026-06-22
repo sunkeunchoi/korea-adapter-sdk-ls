@@ -21,7 +21,7 @@ support:
   recommended: true
 maintenance:
   source_spec_hash: c3d4e5f6a1b2
-  last_reviewed: 2026-06-17
+  last_reviewed: 2026-06-22
 recommendation:
   behavior: Paper current-price (시세) quote for one symbol
   evidence_ref: evidence/t1102.yaml
