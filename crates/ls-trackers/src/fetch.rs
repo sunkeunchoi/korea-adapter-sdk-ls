@@ -27,13 +27,16 @@ use crate::types::CodeSet;
 /// observed (Open Questions §D3 proportion value).
 pub const DEFAULT_TRUNCATION_PROPORTION: f64 = 0.10;
 
-/// Hardcoded property-type fallback (mirrors the migration source) used when the
-/// property-type mapping API is unavailable — a recoverable, warning-only path.
+/// Hardcoded property-type fallback used when the property-type mapping API is
+/// unavailable — a recoverable, warning-only path. Mirrors the live
+/// `/api/codes/public/property_type` mapping so a fallback-served run carries the
+/// same type values a healthy fetch would, not guesses.
 const PROPERTY_TYPE_FALLBACK: &[(&str, &str)] = &[
     ("A0001", "String"),
-    ("A0003", "Long"),
-    ("A0004", "Decimal"),
-    ("A0005", "Binary"),
+    ("A0002", "Array"),
+    ("A0003", "Object"),
+    ("A0004", "Number"),
+    ("A0005", "Object Array"),
 ];
 
 // ---------------------------------------------------------------------------
@@ -445,14 +448,13 @@ impl FetchClient {
                 true,
             )
         };
-        let body =
-            match self.get_text_once("/api/codes/public/system-codes?groupCode=property_type") {
-                Ok(b) => b,
-                Err(e) => {
-                    eprintln!("warning: property-type mapping API failed ({e}); using fallback");
-                    return fallback();
-                }
-            };
+        let body = match self.get_text_once("/api/codes/public/property_type") {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("warning: property-type mapping API failed ({e}); using fallback");
+                return fallback();
+            }
+        };
         let parsed: Value = match serde_json::from_str(&body) {
             Ok(v) => v,
             Err(e) => {
@@ -460,16 +462,16 @@ impl FetchClient {
                 return fallback();
             }
         };
-        // Accept `{ "list": [...] }` or a bare array of `{ code, name }`.
-        let items = parsed.get("list").unwrap_or(&parsed);
+        // Response shape: `{ "code": "property_type", "codes": [ { "key", "value",
+        // "description" } ] }` — the code→display-name map is `key` → `value`.
         let mut map = BTreeMap::new();
-        if let Some(arr) = items.as_array() {
+        if let Some(arr) = parsed.get("codes").and_then(Value::as_array) {
             for item in arr {
-                if let (Some(code), Some(name)) = (
-                    item.get("code").and_then(Value::as_str),
-                    item.get("name").and_then(Value::as_str),
+                if let (Some(key), Some(value)) = (
+                    item.get("key").and_then(Value::as_str),
+                    item.get("value").and_then(Value::as_str),
                 ) {
-                    map.insert(code.to_string(), name.to_string());
+                    map.insert(key.to_string(), value.to_string());
                 }
             }
         }
@@ -863,20 +865,30 @@ mod tests {
     // --- HTTP layer (httpmock, synchronous, no live network) --------------
 
     #[test]
-    fn property_type_mapping_parses_list_response() {
+    fn property_type_mapping_parses_codes_response() {
         let server = httpmock::MockServer::start();
         let m = server.mock(|when, then| {
             when.method(httpmock::Method::GET)
-                .path("/api/codes/public/system-codes");
-            then.status(200).json_body(serde_json::json!({ "list": [
-                { "code": "A0001", "name": "String" },
-                { "code": "A0003", "name": "Long" }
-            ]}));
+                .path("/api/codes/public/property_type");
+            // The live response shape: a `codes` array of `{ key, value, description }`.
+            then.status(200).json_body(serde_json::json!({
+                "code": "property_type",
+                "description": "속성 타입",
+                "codes": [
+                    { "key": "A0001", "value": "String", "description": "String" },
+                    { "key": "A0003", "value": "Object", "description": "Object" }
+                ]
+            }));
         });
         let client = FetchClient::new(server.base_url()).unwrap();
         let (map, fell_back) = client.property_type_mapping();
         m.assert();
         assert_eq!(map.get("A0001"), Some(&"String".to_string()));
+        assert_eq!(
+            map.get("A0003"),
+            Some(&"Object".to_string()),
+            "key/value pairs are read from the `codes` array"
+        );
         assert_eq!(map.len(), 2);
         assert!(!fell_back, "a real mapping response did not fall back");
     }
@@ -886,7 +898,7 @@ mod tests {
         let server = httpmock::MockServer::start();
         server.mock(|when, then| {
             when.method(httpmock::Method::GET)
-                .path("/api/codes/public/system-codes");
+                .path("/api/codes/public/property_type");
             then.status(500);
         });
         let client = FetchClient::new(server.base_url()).unwrap();
@@ -961,9 +973,9 @@ mod tests {
         });
         server.mock(|when, then| {
             when.method(httpmock::Method::GET)
-                .path("/api/codes/public/system-codes");
+                .path("/api/codes/public/property_type");
             then.status(200)
-                .json_body(serde_json::json!({ "list": [] }));
+                .json_body(serde_json::json!({ "code": "property_type", "codes": [] }));
         });
 
         let client = FetchClient::new(server.base_url()).unwrap();
@@ -982,7 +994,7 @@ mod tests {
         );
 
         // Healthy protocol facts (g100 has an `id`) → no degradation; the
-        // property-type mapping returned `{ "list": [] }` → empty → fallback.
+        // property-type mapping returned an empty `codes` array → fallback.
         assert!(inv.facts_degraded_tr_codes().is_empty());
         assert!(
             outcome.property_type_fallback_served,
@@ -1034,7 +1046,7 @@ mod tests {
         // Property-type mapping fails → fallback served.
         server.mock(|when, then| {
             when.method(httpmock::Method::GET)
-                .path("/api/codes/public/system-codes");
+                .path("/api/codes/public/property_type");
             then.status(500);
         });
 
