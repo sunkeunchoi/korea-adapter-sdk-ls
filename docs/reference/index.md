@@ -49,6 +49,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t8433` | 지수옵션마스터조회API용 | `market_session` | implemented, not yet recommended |
 | `t8435` | 파생종목마스터조회API용 | `market_session` | implemented, not yet recommended |
 | `t8436` | 주식종목조회 API용 | `market_session` | implemented, not yet recommended |
+| `t8467` | 지수선물마스터조회API용 | `market_session` | implemented, not yet recommended |
 | `t9905` | 기초자산리스트조회 | `market_session` | implemented, not yet recommended |
 | `t9907` | 만기월조회 | `market_session` | implemented, not yet recommended |
 | `t9942` | ELW마스터조회API용 | `market_session` | implemented, not yet recommended |

@@ -25,7 +25,7 @@ use ls_sdk::market_session::{
     T1537Request, T1601Request, T1615Request, T1640Request, T1662Request, T1664Request,
     T1825Request, T1826Request, T1859Request, T1958Request, T1964Request, T2301Request,
     T2522Request, T8401Request, T8424Request, T8425Request, T8426Request, T8433Request,
-    T8435Request,
+    T8435Request, T8467Request,
     T8431Request,
     T8436Request,
     T9905Request, T9907Request, T9942Request,
@@ -1996,6 +1996,51 @@ async fn live_smoke_t8435() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t8435 market-data failure (not evidence)");
             panic!("live-smoke-t8435 failed: {e}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// t8467 — 지수선물마스터조회API용 (index-futures master; F/O). market_session,
+// non-paginated. Keyed by a `gubun` segment selector (`"V"` volatility / `"S"`
+// sector / `"Q"` KOSDAQ150 / any other value → KOSPI200 index futures). Master
+// read — non-empty regardless of the KRX session (venue facet stays
+// provisional). The out-block is a row array (KTD3), so the structural signal is
+// the row count, kept credential-free.
+// ---------------------------------------------------------------------------
+
+/// `make live-smoke-t8467`: paper guard → OAuth token → one `t8467` index-futures
+/// master read for `gubun="Q"` (KOSDAQ150-index futures). A success `rsp_cd` with
+/// a populated `t8467OutBlock` row array proves the read is callable and
+/// round-trips. The recorded line is credential-free (only `rsp_cd` + the row
+/// count, never `rsp_msg`) and self-dated; a failed run emits a distinct
+/// `SMOKE-FAIL` stderr line, never a capturable `LIVE-SMOKE` line.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8467`"]
+async fn live_smoke_t8467() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk
+        .standalone()
+        .token()
+        .await
+        .expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T8467Request::new("Q");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().index_futures_master(&req).await {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t8467",
+                &format!("env=paper gubun=Q date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8467 market-data failure (not evidence)");
+            panic!("live-smoke-t8467 failed: {e}");
         }
     }
 }

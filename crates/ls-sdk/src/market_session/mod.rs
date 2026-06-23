@@ -2651,6 +2651,117 @@ pub struct T8435Response {
     pub outblock: Vec<T8435OutBlock>,
 }
 
+// ---------------------------------------------------------------------------
+// t8467 — 지수선물마스터조회API용 (index-futures master). market_session,
+// non-paginated. Keyed by a `gubun` (구분) segment selector — `"V"` 변동성지수선물
+// (volatility-index futures) / `"S"` 섹터지수선물 (sector-index futures) / `"Q"`
+// 코스닥150지수선물 (KOSDAQ150-index futures) / any other value → 코스피200지수선물
+// (KOSPI200-index futures, the default). The response out-block `t8467OutBlock`
+// is itself a ROW ARRAY (the raw capture's `res_example` shows
+// `"t8467OutBlock": [ {…}, … ]`, propertyType `A0005`/Object Array, one
+// index-futures contract per row — the normalized baseline lists the row fields
+// flat under the block name, so the true wire shape is read from the raw capture
+// per KTD3). Each row carries the contract name + codes plus the daily
+// limit/close reference prices. Modeled identically to `T8435` (single row-array
+// out-block, the same 9 fields) but with the index-futures `gubun` selector.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t8467` — the index-futures segment selector.
+///
+/// `gubun` (구분) selects the index-futures segment: `"V"` 변동성지수선물 / `"S"`
+/// 섹터지수선물 / `"Q"` 코스닥150지수선물 / any other value → 코스피200지수선물
+/// (the default). The spec types it `String` (length 1). Caller-supplied.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8467InBlock {
+    /// Segment selector / 구분 (`"V"`/`"S"`/`"Q"` or default → KOSPI200).
+    pub gubun: String,
+}
+
+/// `t8467` request — wraps the input block under the `t8467InBlock` key.
+///
+/// Serializes to `{"t8467InBlock":{"gubun":"Q"}}`. `t8467` is not paginated, so
+/// there are no `tr_cont`/`tr_cont_key` fields in the body.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8467Request {
+    #[serde(rename = "t8467InBlock")]
+    pub inblock: T8467InBlock,
+}
+
+impl T8467Request {
+    /// Build a `t8467` index-futures-master request for one segment (`gubun`:
+    /// `"V"`/`"S"`/`"Q"` or any other value → KOSPI200-index futures).
+    pub fn new(gubun: impl Into<String>) -> Self {
+        T8467Request {
+            inblock: T8467InBlock {
+                gubun: gubun.into(),
+            },
+        }
+    }
+}
+
+/// `t8467OutBlock` — one index-futures-master row.
+///
+/// The data-bearing repeated block (`t8467OutBlock[]`, confirmed from the raw
+/// capture's `res_example` array — rows are direct elements under the
+/// `t8467OutBlock` key). The full 9 fields. `hname` (종목명, the index-futures
+/// contract name) is the canonical identity field, resolved by its `korean_name`
+/// from the baseline; `shcode`/`expcode` are the contract codes, and the
+/// `Number`-typed `uplmtprice`/`dnlmtprice`/`jnilclose`/`jnilhigh`/`jnillow`/
+/// `recprice` fields are the daily limit/close reference prices. The
+/// numeric-bearing fields use [`ls_core::string_or_number`] for wire-type
+/// tolerance (the gateway may send a `Number` field as a JSON number);
+/// `#[serde(default)]` lets a sparse row deserialize cleanly. Field names mirror
+/// the LS spec verbatim.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8467OutBlock {
+    /// Contract name / 종목명 (the canonical identity field).
+    pub hname: String,
+    /// Short code / 단축코드 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Expanded code / 확장코드.
+    pub expcode: String,
+    /// Upper limit price / 상한가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub uplmtprice: String,
+    /// Lower limit price / 하한가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dnlmtprice: String,
+    /// Previous-day close / 전일종가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jnilclose: String,
+    /// Previous-day high / 전일고가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jnilhigh: String,
+    /// Previous-day low / 전일저가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jnillow: String,
+    /// Reference price / 기준가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub recprice: String,
+}
+
+/// `t8467` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are the LS business-status fields; `outblock` is the
+/// index-futures-master row array under the `t8467OutBlock` key, tolerated as a
+/// single object OR an array via [`ls_core::de_vec_or_single`]. All
+/// `#[serde(default)]` so a terse or empty envelope still deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8467Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t8467OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T8467OutBlock>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -2965,6 +3076,17 @@ impl MarketSession {
     pub async fn derivatives_master(&self, req: &T8435Request) -> LsResult<T8435Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T8435_POLICY, req)
+            .await
+    }
+
+    /// Read the index-futures master (지수선물마스터조회) via `t8467`.
+    /// Non-paginated; keyed by a `gubun` segment selector (`"V"` volatility /
+    /// `"S"` sector / `"Q"` KOSDAQ150 / any other value → KOSPI200 index
+    /// futures). Returns the master snapshot (name + codes + daily limit/close
+    /// reference prices).
+    pub async fn index_futures_master(&self, req: &T8467Request) -> LsResult<T8467Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8467_POLICY, req)
             .await
     }
 }

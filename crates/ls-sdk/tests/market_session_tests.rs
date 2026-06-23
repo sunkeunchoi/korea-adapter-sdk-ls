@@ -17,7 +17,8 @@ use ls_sdk::market_session::{
     T1511Request, T1511Response, T1516Request, T1516Response, T8424Request, T8424Response,
     T2301Request, T2301Response, T2522OutBlock1, T2522Request, T2522Response, T8401OutBlock,
     T8401Request, T8401Response, T8426OutBlock, T8426Request, T8426Response, T8433OutBlock,
-    T8433Request, T8433Response, T8435OutBlock, T8435Request, T8435Response, T8425Request,
+    T8433Request, T8433Response, T8435OutBlock, T8435Request, T8435Response, T8467OutBlock,
+    T8467Request, T8467Response, T8425Request,
     T8425Response, T8431OutBlock, T8431Request,
     T8431Response, T8436Request, T8436Response, T9905OutBlock1, T9905Request, T9905Response,
     T9907Request, T9907Response, T9942Request, T9942Response,
@@ -2407,6 +2408,124 @@ fn t8435_single_object_row_deserializes_to_one_element_vec() {
 #[test]
 fn t8435_empty_result_deserializes_as_pending() {
     let empty: T8435Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707"
+    }))
+    .expect("empty master deserializes");
+    assert!(empty.outblock.is_empty(), "empty master is the pending case");
+}
+
+// ---------------------------------------------------------------------------
+// t8467 — 지수선물마스터조회API용 (index-futures master; F/O). market_session,
+// non-paginated. Keyed by a `gubun` segment selector (`"V"`/`"S"`/`"Q"` or any
+// other value → KOSPI200). The out-block is itself a ROW ARRAY (confirmed from
+// the raw capture's `res_example`, propertyType `A0005`/Object Array, KTD3) —
+// one index-futures contract per row, the full 9 fields.
+// ---------------------------------------------------------------------------
+
+const T8467_FIXTURE: &str = include_str!("fixtures/t8467_resp.json");
+
+/// Covers R4. `t8467` serializes to exactly `{"t8467InBlock":{"gubun":"Q"}}`
+/// with no continuation tokens (non-paginated) and no caller fields leaking.
+#[test]
+fn t8467_request_serializes_to_inblock() {
+    let value = serde_json::to_value(T8467Request::new("Q")).expect("serialize t8467 request");
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "exactly one top-level key");
+    assert_eq!(value["t8467InBlock"]["gubun"], "Q", "gubun selector serialized");
+    assert!(value.get("tr_cont").is_none(), "no tr_cont in the body");
+}
+
+/// Covers R2, R5 + KTD4. The spec-derived fixture deserializes through REAL
+/// dispatch: the master row array round-trips and the canonical identity field
+/// `hname` (종목명, the index-futures contract name) holds its EXACT value. The
+/// fixture's neighbouring fields carry DISTINCT values, so a mislabel that picked
+/// `shcode`/`recprice`/`jnilclose` instead would surface here.
+#[tokio::test]
+async fn t8467_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(FO_MARKET_DATA_PATH))
+        .and(header("tr_cd", "t8467"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T8467_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let resp = sdk_for(&server)
+        .market_session()
+        .index_futures_master(&T8467Request::new("Q"))
+        .await
+        .expect("t8467 index_futures_master should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock.len(), 2, "fixture carries two index-futures rows");
+    let row = &resp.outblock[0];
+    // The canonical identity field, by Korean name 종목명 — exact value.
+    assert_eq!(
+        row.hname, "F 2606",
+        "종목명 index-futures contract name (canonical field)"
+    );
+    // Distinct neighbours: a mislabel would collapse these onto hname.
+    assert_eq!(row.shcode, "A0166000", "단축코드 (distinct)");
+    assert_eq!(row.expcode, "KR4A01660005", "확장코드 (distinct)");
+    assert_eq!(row.uplmtprice, "1214.75", "상한가 (distinct)");
+    assert_eq!(row.dnlmtprice, "1034.85", "하한가 (distinct)");
+    assert_eq!(row.jnilclose, "1124.80", "전일종가 (distinct)");
+    assert_eq!(row.jnilhigh, "1125.65", "전일고가 (distinct)");
+    assert_eq!(row.jnillow, "1124.55", "전일저가 (distinct)");
+    // recprice (기준가) is distinct from jnilclose — a 기준가/전일종가 mislabel surfaces.
+    assert_eq!(row.recprice, "1124.70", "기준가 (distinct from 전일종가)");
+    // A distinct second row, proving the array carries multiple rows.
+    assert_eq!(resp.outblock[1].hname, "F 2609", "second row distinct");
+}
+
+/// Covers shared contract item 2. `uplmtprice` (상한가) parses via
+/// `ls_core::string_or_number` from BOTH a JSON number and a string — the gateway
+/// types it `Number` and may send either form.
+#[test]
+fn t8467_numeric_number_or_string_yields_same_value() {
+    let as_number: T8467Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8467OutBlock": [{ "hname": "F 2606", "uplmtprice": 1214.75 }]
+    }))
+    .expect("numeric uplmtprice deserializes");
+    let as_string: T8467Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8467OutBlock": [{ "hname": "F 2606", "uplmtprice": "1214.75" }]
+    }))
+    .expect("string uplmtprice deserializes");
+    assert_eq!(as_number.outblock[0].uplmtprice, "1214.75");
+    assert_eq!(as_string.outblock[0].uplmtprice, "1214.75");
+    assert_eq!(
+        as_number.outblock[0].hname, as_string.outblock[0].hname,
+        "hname both forms"
+    );
+}
+
+/// Covers the array single-or-Vec case (shared contract item 6): a single-object
+/// `t8467OutBlock` body deserializes to a one-element `Vec` via
+/// `de_vec_or_single`.
+#[test]
+fn t8467_single_object_row_deserializes_to_one_element_vec() {
+    let single: T8467Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8467OutBlock": { "hname": "F 2606" }
+    }))
+    .expect("single-object row deserializes");
+    assert_eq!(single.outblock.len(), 1, "single object becomes a one-element Vec");
+    assert_eq!(single.outblock[0].hname, "F 2606");
+    // The standalone row struct also default-constructs cleanly.
+    assert!(T8467OutBlock::default().hname.is_empty());
+}
+
+/// Covers R5. An empty `t8467` master (00707, empty out-block) deserializes as
+/// the pending case — the row array is empty.
+#[test]
+fn t8467_empty_result_deserializes_as_pending() {
+    let empty: T8467Response = serde_json::from_value(serde_json::json!({
         "rsp_cd": "00707"
     }))
     .expect("empty master deserializes");

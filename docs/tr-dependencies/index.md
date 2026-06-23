@@ -69,7 +69,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t8455` | KRX야간파생 마스터조회(API용) | `market_session` | tracked | [t8455](./t8455.md) |
 | `t8460` | KRX야간파생 옵션 전광판 | `market_session` | tracked | [t8460](./t8460.md) |
 | `t8463` | KRX야간파생 투자자시간대별(API용) | `market_session` | tracked | [t8463](./t8463.md) |
-| `t8467` | 지수선물마스터조회API용 | `market_session` | tracked | [t8467](./t8467.md) |
+| `t8467` | 지수선물마스터조회API용 | `market_session` | implemented | [t8467](./t8467.md) |
 | `t9905` | 기초자산리스트조회 | `market_session` | implemented | [t9905](./t9905.md) |
 | `t9907` | 만기월조회 | `market_session` | implemented | [t9907](./t9907.md) |
 | `t9942` | ELW마스터조회API용 | `market_session` | implemented | [t9942](./t9942.md) |
