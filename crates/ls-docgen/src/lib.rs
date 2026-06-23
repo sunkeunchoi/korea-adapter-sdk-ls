@@ -671,9 +671,10 @@ mod tests {
     }
 
     /// The tracked TRs in the slice. The original eight (`token`, `revoke`,
-    /// `t1101`, `t1102`, `t8412`, `CSPAQ12200`, `S3_`, `CSPAT00601`) plus the 36
-    /// read-only stock TRs brought into tracked-only maintenance ownership.
-    const TRACKED_TRS: [&str; 44] = [
+    /// `t1101`, `t1102`, `t8412`, `CSPAQ12200`, `S3_`, `CSPAT00601`) plus the 41
+    /// read-only stock/sector TRs brought into tracked-only maintenance ownership
+    /// (incl. the Wave A sector cluster t8424/t1511/t1514/t1516/t1485).
+    const TRACKED_TRS: [&str; 49] = [
         "CSPAQ12200",
         "CSPAT00601",
         "S3_",
@@ -687,8 +688,12 @@ mod tests {
         "t1466",
         "t1481",
         "t1482",
+        "t1485",
         "t1489",
         "t1492",
+        "t1511",
+        "t1514",
+        "t1516",
         "t1531",
         "t1537",
         "t1601",
@@ -710,6 +715,7 @@ mod tests {
         "t3320",
         "t3341",
         "t8412",
+        "t8424",
         "t8425",
         "t8430",
         "t8431",
@@ -836,9 +842,10 @@ mod tests {
 
         // The still-unrecommended implemented TRs each carry the banner.
         let banner_trs = [
-            "revoke", "t1403", "t1441", "t1452", "t1463", "t1466", "t1489", "t1492", "t1531",
-            "t1537", "t1601", "t1615", "t1640", "t1662", "t1664", "t1825", "t1826", "t1859",
-            "t1866", "t1958", "t3341", "t8425", "t8431", "t8436", "t9905", "t9907", "t9942",
+            "revoke", "t1403", "t1441", "t1452", "t1463", "t1466", "t1485", "t1489", "t1492",
+            "t1511", "t1514", "t1516", "t1531", "t1537", "t1601", "t1615", "t1640", "t1662",
+            "t1664", "t1825", "t1826", "t1859", "t1866", "t1958", "t3341", "t8424", "t8425",
+            "t8431", "t8436", "t9905", "t9907", "t9942",
         ];
         for tr in banner_trs {
             let page = reference
@@ -865,13 +872,13 @@ mod tests {
             );
         }
 
-        // index + 33 implemented pages (27 banner [the prior 21 + the Wave 2 analytics
-        // members t1601 + t1615 + t1640 + t1662 + t1664 + t3341] + token + t1101 +
-        // t1102 + t8412 + S3_ + CSPAQ12200). Count only grows as TRs implement.
+        // index + 38 implemented pages (32 banner [the prior 27 + the Wave A sector
+        // cluster t8424 + t1511 + t1485 + t1516 + t1514] + token + t1101 + t1102 +
+        // t8412 + S3_ + CSPAQ12200). Count only grows as TRs implement.
         // (Wave 1 t1988 + t1964 ship PENDING — not implemented, not counted.)
         assert_eq!(
             reference.len(),
-            34,
+            39,
             "index + the implemented reference pages"
         );
 

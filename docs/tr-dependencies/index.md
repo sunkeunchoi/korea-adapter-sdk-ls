@@ -19,8 +19,12 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t1466` | 전일동시간대비거래급증 | `paginated` | implemented | [t1466](./t1466.md) |
 | `t1481` | 시간외등락율상위 | `paginated` | tracked | [t1481](./t1481.md) |
 | `t1482` | 시간외거래량상위 | `paginated` | tracked | [t1482](./t1482.md) |
+| `t1485` | 예상지수 | `market_session` | implemented | [t1485](./t1485.md) |
 | `t1489` | 예상체결량상위조회 | `paginated` | implemented | [t1489](./t1489.md) |
 | `t1492` | 단일가예상등락율상위 | `paginated` | implemented | [t1492](./t1492.md) |
+| `t1511` | 업종현재가 | `market_session` | implemented | [t1511](./t1511.md) |
+| `t1514` | 업종기간별추이 | `paginated` | implemented | [t1514](./t1514.md) |
+| `t1516` | 업종별종목시세 | `market_session` | implemented | [t1516](./t1516.md) |
 | `t1531` | 테마별종목 | `market_session` | implemented | [t1531](./t1531.md) |
 | `t1537` | 테마종목별시세조회 | `market_session` | implemented | [t1537](./t1537.md) |
 | `t1601` | 투자자별종합 | `market_session` | implemented | [t1601](./t1601.md) |
@@ -42,6 +46,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t3320` | FNG_요약 | `standalone` | tracked | [t3320](./t3320.md) |
 | `t3341` | 재무순위종합 | `paginated` | implemented | [t3341](./t3341.md) |
 | `t8412` | 주식 차트(N분봉) 조회 | `paginated` | recommended | [t8412](./t8412.md) |
+| `t8424` | 전체업종 | `market_session` | implemented | [t8424](./t8424.md) |
 | `t8425` | 전체테마 | `market_session` | implemented | [t8425](./t8425.md) |
 | `t8430` | 주식종목조회 | `standalone` | tracked | [t8430](./t8430.md) |
 | `t8431` | ELW종목조회 | `market_session` | implemented | [t8431](./t8431.md) |

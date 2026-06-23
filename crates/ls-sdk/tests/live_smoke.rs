@@ -19,14 +19,14 @@ use futures::StreamExt;
 use ls_core::{LsConfig, LsError, LsResult};
 use ls_sdk::account::CSPAQ12200Request;
 use ls_sdk::market_session::{
-    T1101Request, T1102Request, T1531Request, T1537Request, T1601Request, T1615Request,
-    T1640Request, T1662Request, T1664Request, T1825Request, T1826Request, T1859Request,
-    T1958Request, T1964Request, T8425Request, T8431Request, T8436Request, T9905Request,
-    T9907Request, T9942Request,
+    T1101Request, T1102Request, T1485Request, T1511Request, T1516Request, T1531Request,
+    T1537Request, T1601Request, T1615Request, T1640Request, T1662Request, T1664Request,
+    T1825Request, T1826Request, T1859Request, T1958Request, T1964Request, T8424Request,
+    T8425Request, T8431Request, T8436Request, T9905Request, T9907Request, T9942Request,
 };
 use ls_sdk::paginated::{
     T1403Request, T1441Request, T1452Request, T1463Request, T1466Request, T1489Request,
-    T1492Request, T1866Request, T3341Request, T8412Request,
+    T1492Request, T1514Request, T1866Request, T3341Request, T8412Request,
 };
 use ls_sdk::realtime::S3Trade;
 use ls_sdk::LsSdk;
@@ -1452,6 +1452,175 @@ async fn raw_http_probe() {
                 "SMOKE-FAIL target=raw-probe transport failure (environmental, not evidence)"
             );
             panic!("raw-probe transport failed — classify as environmental");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// [업종] 시세 — sector/index cluster (Wave A). All on /indtp/market-data.
+// t8424 is the anchor + upcode source; the four consumers smoke standalone with
+// upcode="001" (코스피종합), confirmed accepted by the U1 raw-probe.
+// ---------------------------------------------------------------------------
+
+/// `make live-smoke-t8424`: paper guard → OAuth token → one `t8424` all-sectors
+/// read. A non-empty sector array proves the anchor is callable and round-trips.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8424`"]
+async fn live_smoke_t8424() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk
+        .standalone()
+        .token()
+        .await
+        .expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T8424Request::new();
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().sectors(&req).await {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "sectors")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t8424", &format!("env=paper date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8424 market-data failure (not evidence)");
+            panic!("live-smoke-t8424 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1511`: paper guard → OAuth token → one `t1511` index
+/// snapshot for `upcode="001"`. A single OutBlock with a success `rsp_cd` proves
+/// the read is callable and the snapshot round-trips. KRX-session-dependent.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1511`"]
+async fn live_smoke_t1511() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk
+        .standalone()
+        .token()
+        .await
+        .expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T1511Request::new("001");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().sector_quote(&req).await {
+        Ok(resp) => {
+            record(
+                "live-smoke-t1511",
+                &format!("env=paper upcode=001 date={date}"),
+                &format!(
+                    "rsp_cd={} hname_len={} pricejisu={}",
+                    resp.rsp_cd,
+                    resp.outblock.hname.len(),
+                    resp.outblock.pricejisu
+                ),
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1511 market-data failure (not evidence)");
+            panic!("live-smoke-t1511 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1485`: paper guard → OAuth token → one `t1485` expected-index
+/// read for `upcode="001"`, `gubun="1"`. The time-row array `t1485OutBlock1`
+/// proves the read round-trips. Expected/auction screen — KRX-session-dependent.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1485`"]
+async fn live_smoke_t1485() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk
+        .standalone()
+        .token()
+        .await
+        .expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T1485Request::new("001", "1");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().sector_expected_index(&req).await {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t1485",
+                &format!("env=paper upcode=001 gubun=1 date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1485 market-data failure (not evidence)");
+            panic!("live-smoke-t1485 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1516`: paper guard → OAuth token → one `t1516` per-sector
+/// stock-board read for `upcode="001"` + a representative `shcode="005930"`. The
+/// per-stock array `t1516OutBlock1` proves the read round-trips. Session-dependent.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1516`"]
+async fn live_smoke_t1516() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk
+        .standalone()
+        .token()
+        .await
+        .expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T1516Request::new("001", "1", "005930");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().sector_stocks(&req).await {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "stocks")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t1516",
+                &format!("env=paper upcode=001 shcode=005930 date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1516 market-data failure (not evidence)");
+            panic!("live-smoke-t1516 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1514`: paper guard → OAuth token → one first-page `t1514`
+/// period-trend read for `upcode="001"`. Self-paginated (`cts_date` cursor, `cnt`
+/// serialized as a number); a non-empty first page proves the paginated path.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1514`"]
+async fn live_smoke_t1514() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk
+        .standalone()
+        .token()
+        .await
+        .expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T1514Request::new("001");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.paginated().sector_trend(&req).await {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t1514",
+                &format!("env=paper upcode=001 date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1514 market-data failure (not evidence)");
+            panic!("live-smoke-t1514 failed: {e}");
         }
     }
 }

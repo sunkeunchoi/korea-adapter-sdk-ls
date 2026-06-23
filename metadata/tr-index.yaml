@@ -281,3 +281,33 @@ trs:
     protocol: rest
     instrument_domain: stock
     venue_session: krx_regular
+  t8424:
+    file: trs/t8424.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: sector_index
+    venue_session: krx_regular
+  t1511:
+    file: trs/t1511.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: sector_index
+    venue_session: krx_regular
+  t1485:
+    file: trs/t1485.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: sector_index
+    venue_session: krx_regular
+  t1516:
+    file: trs/t1516.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: sector_index
+    venue_session: krx_regular
+  t1514:
+    file: trs/t1514.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: sector_index
+    venue_session: krx_regular

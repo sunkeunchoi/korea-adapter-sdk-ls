@@ -1,0 +1,24 @@
+tr_code: t1485
+name: 예상지수
+owner_class: market_session
+facets:
+  protocol: rest
+  instrument_domain: sector_index
+  venue_session: krx_regular
+  date_sensitive: false
+  self_paginated: false
+  account_state: false
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: market_data
+  caller_supplied_identifiers: [upcode]
+dependencies:
+  self_continuation_fields: []
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: true
+  recommended: false
+maintenance:
+  source_spec_hash: 238beb842b1a
+  last_reviewed: 2026-06-23

@@ -1,0 +1,755 @@
+{
+  "tr_code": "t1511",
+  "tr_name": "업종현재가",
+  "protocol": "rest",
+  "is_websocket": false,
+  "endpoint_path": "/indtp/market-data",
+  "api_group_id": "88a7c0d3-fb4f-48ef-bc9b-4c47ac72a87b",
+  "source_group_name": "[업종] 시세",
+  "request_blocks": [
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 1,
+      "field_name": "authorization",
+      "korean_name": "접근토큰",
+      "type": "String",
+      "length": 1000,
+      "required": true,
+      "description_hash": "62956eed2a6e506a"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 2,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 3,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 4,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 5,
+      "field_name": "mac_address",
+      "korean_name": "MAC 주소",
+      "type": "String",
+      "length": 12,
+      "required": true,
+      "description_hash": "1d2213655779faf2"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1511InBlock",
+      "field_index": 0,
+      "field_name": "upcode",
+      "korean_name": "업종코드",
+      "type": "String",
+      "length": 3,
+      "required": true,
+      "description_hash": "372398bb7a006128"
+    }
+  ],
+  "response_blocks": [
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 1,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 2,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 3,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 0,
+      "field_name": "gubun",
+      "korean_name": "업종구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 1,
+      "field_name": "hname",
+      "korean_name": "업종명",
+      "type": "String",
+      "length": 20,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 2,
+      "field_name": "pricejisu",
+      "korean_name": "현재지수",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 3,
+      "field_name": "jniljisu",
+      "korean_name": "전일지수",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 4,
+      "field_name": "sign",
+      "korean_name": "전일대비구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 5,
+      "field_name": "change",
+      "korean_name": "전일대비",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 6,
+      "field_name": "diffjisu",
+      "korean_name": "지수등락율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 7,
+      "field_name": "jnilvolume",
+      "korean_name": "전일거래량",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 8,
+      "field_name": "volume",
+      "korean_name": "당일거래량",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 9,
+      "field_name": "volumechange",
+      "korean_name": "거래량전일대비",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 10,
+      "field_name": "volumerate",
+      "korean_name": "거래량비율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 11,
+      "field_name": "jnilvalue",
+      "korean_name": "전일거래대금",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 12,
+      "field_name": "value",
+      "korean_name": "당일거래대금",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 13,
+      "field_name": "valuechange",
+      "korean_name": "거래대금전일대비",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 14,
+      "field_name": "valuerate",
+      "korean_name": "거래대금비율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 15,
+      "field_name": "openjisu",
+      "korean_name": "시가지수",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 16,
+      "field_name": "opendiff",
+      "korean_name": "시가등락율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 17,
+      "field_name": "opentime",
+      "korean_name": "시가시간",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 18,
+      "field_name": "highjisu",
+      "korean_name": "고가지수",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 19,
+      "field_name": "highdiff",
+      "korean_name": "고가등락율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 20,
+      "field_name": "hightime",
+      "korean_name": "고가시간",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 21,
+      "field_name": "lowjisu",
+      "korean_name": "저가지수",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 22,
+      "field_name": "lowdiff",
+      "korean_name": "저가등락율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 23,
+      "field_name": "lowtime",
+      "korean_name": "저가시간",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 24,
+      "field_name": "whjisu",
+      "korean_name": "52주최고지수",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 25,
+      "field_name": "whchange",
+      "korean_name": "52주최고현재가대비",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 26,
+      "field_name": "whjday",
+      "korean_name": "52주최고지수일자",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 27,
+      "field_name": "wljisu",
+      "korean_name": "52주최저지수",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 28,
+      "field_name": "wlchange",
+      "korean_name": "52주최저현재가대비",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 29,
+      "field_name": "wljday",
+      "korean_name": "52주최저지수일자",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 30,
+      "field_name": "yhjisu",
+      "korean_name": "연중최고지수",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 31,
+      "field_name": "yhchange",
+      "korean_name": "연중최고현재가대비",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 32,
+      "field_name": "yhjday",
+      "korean_name": "연중최고지수일자",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 33,
+      "field_name": "yljisu",
+      "korean_name": "연중최저지수",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 34,
+      "field_name": "ylchange",
+      "korean_name": "연중최저현재가대비",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 35,
+      "field_name": "yljday",
+      "korean_name": "연중최저지수일자",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 36,
+      "field_name": "firstjcode",
+      "korean_name": "첫번째지수코드",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 37,
+      "field_name": "firstjname",
+      "korean_name": "첫번째지수명",
+      "type": "String",
+      "length": 20,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 38,
+      "field_name": "firstjisu",
+      "korean_name": "첫번째지수",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 39,
+      "field_name": "firsign",
+      "korean_name": "첫번째대비구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 40,
+      "field_name": "firchange",
+      "korean_name": "첫번째전일대비",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 41,
+      "field_name": "firdiff",
+      "korean_name": "첫번째등락율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 42,
+      "field_name": "secondjcode",
+      "korean_name": "두번째지수코드",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 43,
+      "field_name": "secondjname",
+      "korean_name": "두번째지수명",
+      "type": "String",
+      "length": 20,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 44,
+      "field_name": "secondjisu",
+      "korean_name": "두번째지수",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 45,
+      "field_name": "secsign",
+      "korean_name": "두번째대비구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 46,
+      "field_name": "secchange",
+      "korean_name": "두번째전일대비",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 47,
+      "field_name": "secdiff",
+      "korean_name": "두번째등락율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 48,
+      "field_name": "thirdjcode",
+      "korean_name": "세번째지수코드",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 49,
+      "field_name": "thirdjname",
+      "korean_name": "세번째지수명",
+      "type": "String",
+      "length": 20,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 50,
+      "field_name": "thirdjisu",
+      "korean_name": "세번째지수",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 51,
+      "field_name": "thrsign",
+      "korean_name": "세번째대비구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 52,
+      "field_name": "thrchange",
+      "korean_name": "세번째전일대비",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 53,
+      "field_name": "thrdiff",
+      "korean_name": "세번째등락율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 54,
+      "field_name": "fourthjcode",
+      "korean_name": "네번째지수코드",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 55,
+      "field_name": "fourthjname",
+      "korean_name": "네번째지수명",
+      "type": "String",
+      "length": 20,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 56,
+      "field_name": "fourthjisu",
+      "korean_name": "네번째지수",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 57,
+      "field_name": "forsign",
+      "korean_name": "네번째대비구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 58,
+      "field_name": "forchange",
+      "korean_name": "네번째전일대비",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 59,
+      "field_name": "fordiff",
+      "korean_name": "네번째등락율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 60,
+      "field_name": "highjo",
+      "korean_name": "상승종목수",
+      "type": "Number",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 61,
+      "field_name": "upjo",
+      "korean_name": "상한종목수",
+      "type": "Number",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 62,
+      "field_name": "unchgjo",
+      "korean_name": "보합종목수",
+      "type": "Number",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 63,
+      "field_name": "lowjo",
+      "korean_name": "하락종목수",
+      "type": "Number",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1511OutBlock",
+      "field_index": 64,
+      "field_name": "downjo",
+      "korean_name": "하한종목수",
+      "type": "Number",
+      "length": 4,
+      "required": true
+    }
+  ],
+  "rate_limit_per_sec": 10,
+  "corp_rate_limit_per_sec": 5,
+  "rate_source_group": "88a7c0d3-fb4f-48ef-bc9b-4c47ac72a87b"
+}

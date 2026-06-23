@@ -438,3 +438,63 @@ consumer-less Implemented TR is **triage-P3**, not a release blocker.
 Field-`type` facets (§4) are already retired inventory-wide (clean re-pin); nothing
 to retire here. Recommended tier untouched: `EVIDENCE-FRESHNESS.md` stays at six
 Recommended TRs; no `metadata/evidence/<tr>.yaml` exists for any of the 6.
+
+## 10. Sector cluster raw→Implemented wave (Wave A) — close-out (2026-06-23)
+
+The first **raw → Tracked → Implemented** wave (plan
+`docs/plans/2026-06-23-002-feat-sector-cluster-raw-to-implemented-plan.md`). The
+five `[업종] 시세` TRs began with no metadata and no normalized baseline — present
+only in the raw OpenAPI capture. This wave built the **Tracked rung** in-wave
+(authored `metadata/trs/*.yaml` + `tr-index.yaml`, projected the baselines via
+`make api-drift-renormalize`; `maintained_tr_count` 44→49), froze the loop as the
+reusable `.agents/skills/track-tr` recipe (R3), then authored callable Rust gated
+on a Paper Live Smoke. All five flip on a non-empty in-window paper smoke. Each
+stays **non-recommended** (no Focused Evidence, no recommendation block, no
+`EVIDENCE-FRESHNESS.md` edit). All five decided: **5 implemented, 0 pending.**
+
+| TR | Class (first-pass) | End state | Disposition (credential-free) |
+|---|---|---|---|
+| t8424 | market_session | **implemented** | `rsp_cd=00000 sectors=252` (전체업종; anchor + `upcode` source) |
+| t1511 | market_session | **implemented** | `rsp_cd=00000 snapshot=populated` (업종현재가; `upcode=001`) |
+| t1485 | market_session | **implemented** | `rsp_cd=00000 rows=61` (예상지수; `upcode=001`, `gubun=1`) |
+| t1516 | market_session | **implemented** | `rsp_cd=00000 stocks=40` (업종별종목시세; `upcode=001` + `shcode=005930`) |
+| t1514 | paginated (single-page) | **implemented** | `rsp_cd=00000 rows=1` (업종기간별추이; `cts_date` cursor, `cnt` number) |
+
+**Anchor guarantee (R12).** The ship-floor — ≥1 member flips via an *in-window*
+smoke — is met by all five (KRX regular session, 14:22 KST 2026-06-23). `t8424`
+is the intended anchor and flipped non-empty (252 sectors); the guarantee did not
+rest on an unverified off-hours result.
+
+**`upcode` resolved to the numeric-string `"001"` (not alpha).** The raw
+`req_example` value `upcode:"001"` (코스피종합) is accepted live by every consumer
+(U1 probe + smokes); it **supersedes** the origin's alpha-form hedge
+(`BMT`/`BM_`/`IJ_`), which came only from the migration-source WEAK heuristic
+(`producing_tr: null`). The consumers smoke **standalone** with `"001"`; the
+`t8424 → consumers` producer edge is optional convenience, not modeled (deferred
+follow-up). `upcode`/`shcode`/`cts_date` stay **string-serialized** — applying
+`string_as_number` to them would be the inverse `IGW40011` trap.
+
+**Input-shape notes (numeric request fields).** The only genuinely-numeric request
+field in the cluster is **`t1514.cnt`**, serialized as a JSON **number** via
+`string_as_number`. The U1 raw-probe A/B confirmed it empirically: `cnt` as a
+number → `rsp_cd=00000`; `cnt` as a string → **`http=500 IGW40011`**. `t1514`'s
+`has_pagination` mirrors `facets.self_paginated` (both true); its `cts_date` body
+cursor rides the in-block (header cursors `#[serde(skip)]`).
+
+**`venue_session` disposition (R12).** This is a net-new cluster — its members
+were never in §1's original 36, so there are no pre-existing rows to retire.
+Their `venue_session: krx_regular` was **authored in U2 and confirmed live in the
+same wave**: all five returned a non-empty success on an in-window paper call, so
+none ships with a session facet left unverified. The only premise unconfirmable by
+this session is `t8424`'s *off-hours* non-emptiness (we ran in-window) — recorded
+as deferred and non-blocking, since the ship-floor is an in-window flip.
+
+**Weak `upcode`/`shcode` edges (§3-style).** `upcode` (업종코드, `producing_tr:
+null`, WEAK) and `t1516`'s second input `shcode` (종목코드, `producing_tr: null`)
+were both resolved by a confirmed-accepted literal (`"001"` / `"005930"`), not a
+modeled producer→consumer edge. No weak-edge row is left live: each is dispositioned
+by a passing smoke.
+
+**Residual provisionality.** None for this wave — all five are implemented; no
+pending/held members. Recommended tier untouched: `EVIDENCE-FRESHNESS.md` stays at
+six Recommended TRs; no `metadata/evidence/<tr>.yaml` exists for any of the five.

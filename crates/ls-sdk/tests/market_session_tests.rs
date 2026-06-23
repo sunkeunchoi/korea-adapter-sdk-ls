@@ -13,9 +13,11 @@ use ls_sdk::market_session::{
     T1615Request, T1615Response, T1640Request, T1640Response, T1662Request, T1662Response,
     T1664Request, T1664Response, T1825OutBlock1, T1825Request, T1825Response, T1826OutBlock,
     T1826Request, T1826Response, T1859OutBlock1, T1859Request, T1859Response, T1958Request,
-    T1958Response, T1964OutBlock1, T1964Request, T1964Response, T8425Request, T8425Response,
-    T8431OutBlock, T8431Request, T8431Response, T8436Request, T8436Response, T9905OutBlock1,
-    T9905Request, T9905Response, T9907Request, T9907Response, T9942Request, T9942Response,
+    T1958Response, T1964OutBlock1, T1964Request, T1964Response, T1485Request, T1485Response,
+    T1511Request, T1511Response, T1516Request, T1516Response, T8424Request, T8424Response,
+    T8425Request, T8425Response, T8431OutBlock, T8431Request, T8431Response, T8436Request,
+    T8436Response, T9905OutBlock1, T9905Request, T9905Response, T9907Request, T9907Response,
+    T9942Request, T9942Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
@@ -1522,4 +1524,246 @@ fn t1664_request_serializes_cnt_as_number_and_response_round_trips() {
     assert_eq!(resp.outblock1.len(), 1);
     assert_eq!(resp.outblock1[0].dt, "20260623");
     assert_eq!(resp.outblock1[0].tjj17, "200", "foreign net-buy");
+}
+
+// ---------------------------------------------------------------------------
+// [업종] 시세 — sector/index cluster (Wave A). All share `/indtp/market-data`
+// (the `tr_cd` header distinguishes them).
+// ---------------------------------------------------------------------------
+
+/// Shared sector endpoint path (`T8424_POLICY.path` … `T1516_POLICY.path`).
+const INDTP_PATH: &str = "/indtp/market-data";
+
+const T8424_FIXTURE: &str = include_str!("fixtures/t8424_resp.json");
+const T1511_FIXTURE: &str = include_str!("fixtures/t1511_resp.json");
+const T1485_FIXTURE: &str = include_str!("fixtures/t1485_resp.json");
+const T1516_FIXTURE: &str = include_str!("fixtures/t1516_resp.json");
+
+/// Covers R4, R6. `t8424` serializes to exactly `{"t8424InBlock":{"gubun1":""}}`
+/// with no continuation tokens (non-paginated).
+#[test]
+fn t8424_request_serializes_to_inblock() {
+    let value = serde_json::to_value(T8424Request::new()).expect("serialize t8424 request");
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "exactly one top-level key");
+    assert_eq!(value["t8424InBlock"]["gubun1"], "", "gubun1 empty placeholder");
+    assert!(value.get("tr_cont").is_none(), "no tr_cont in the body");
+}
+
+/// Covers R2, R5, R6. The spec-derived fixture deserializes through REAL dispatch:
+/// the sector array round-trips with a real `upcode`/`hname`, and `upcode` is a
+/// string (never coerced numeric).
+#[tokio::test]
+async fn t8424_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(INDTP_PATH))
+        .and(header("tr_cd", "t8424"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T8424_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let resp = sdk_for(&server)
+        .market_session()
+        .sectors(&T8424Request::new())
+        .await
+        .expect("t8424 sectors should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert!(resp.outblock.len() >= 3, "sector rows round-trip");
+    assert_eq!(resp.outblock[0].upcode, "001", "first sector upcode (string)");
+    assert!(!resp.outblock[0].hname.is_empty(), "real non-default hname");
+}
+
+/// Covers R4, R6. A single-object `t8424OutBlock` (one sector) still deserializes
+/// via `de_vec_or_single` — not only the array form.
+#[test]
+fn t8424_single_object_outblock_deserializes() {
+    let resp: T8424Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8424OutBlock": { "hname": "종합", "upcode": "001" }
+    }))
+    .expect("single-object t8424OutBlock must deserialize");
+    assert_eq!(resp.outblock.len(), 1);
+    assert_eq!(resp.outblock[0].upcode, "001");
+}
+
+/// Covers R4, R7. `t1511` serializes to `{"t1511InBlock":{"upcode":"001"}}`.
+#[test]
+fn t1511_request_serializes_to_inblock() {
+    let value = serde_json::to_value(T1511Request::new("001")).expect("serialize t1511 request");
+    assert_eq!(value["t1511InBlock"]["upcode"], "001", "upcode stays a string");
+    assert!(value.get("tr_cont").is_none(), "non-paginated: no tr_cont");
+}
+
+/// Covers R2, R5, R7. `t1511` single-OutBlock snapshot deserializes through REAL
+/// dispatch; numeric fields tolerate both string and number wire forms.
+#[tokio::test]
+async fn t1511_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(INDTP_PATH))
+        .and(header("tr_cd", "t1511"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T1511_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let resp = sdk_for(&server)
+        .market_session()
+        .sector_quote(&T1511Request::new("001"))
+        .await
+        .expect("t1511 sector_quote should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert!(!resp.outblock.hname.is_empty(), "real non-default hname");
+    assert_eq!(resp.outblock.pricejisu, "2610.62", "현재지수 current index (was a number)");
+    assert!(!resp.outblock.firstjisu.is_empty(), "first sub-index populated");
+}
+
+/// Covers R4, R5. The `volume` field tolerates a JSON number or string via
+/// `string_or_number` (the gateway sends `volume` as an integer).
+#[test]
+fn t1511_volume_number_or_string_yields_same_value() {
+    let as_number: T1511Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "t1511OutBlock": { "hname": "종합", "volume": 263165 }
+    }))
+    .expect("number volume must deserialize");
+    let as_string: T1511Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "t1511OutBlock": { "hname": "종합", "volume": "263165" }
+    }))
+    .expect("string volume must deserialize");
+    assert_eq!(as_number.outblock.volume, "263165");
+    assert_eq!(as_number.outblock.volume, as_string.outblock.volume);
+}
+
+/// Covers R4, R7. `t1485` serializes to `{"t1485InBlock":{"upcode":"001","gubun":"1"}}`.
+#[test]
+fn t1485_request_serializes_to_inblock() {
+    let value =
+        serde_json::to_value(T1485Request::new("001", "1")).expect("serialize t1485 request");
+    assert_eq!(value["t1485InBlock"]["upcode"], "001");
+    assert_eq!(value["t1485InBlock"]["gubun"], "1");
+}
+
+/// Covers R2, R5, R7. `t1485` summary block + time-row array round-trip through
+/// REAL dispatch; the `t1485OutBlock1` array (and single-object form) deserialize.
+#[tokio::test]
+async fn t1485_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(INDTP_PATH))
+        .and(header("tr_cd", "t1485"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T1485_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let resp = sdk_for(&server)
+        .market_session()
+        .sector_expected_index(&T1485Request::new("001", "1"))
+        .await
+        .expect("t1485 sector_expected_index should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    // Summary block round-trips (separate struct from the time array — a rename
+    // typo on t1485OutBlock would silently zero these without this assertion).
+    assert_eq!(resp.outblock.pricejisu, "2610.62", "summary 예상지수");
+    assert_eq!(resp.outblock.volume, "263165", "summary volume (was a JSON number)");
+    assert!(resp.outblock1.len() >= 2, "expected-index time rows round-trip");
+    assert!(!resp.outblock1[0].jisu.is_empty(), "real non-default jisu");
+}
+
+/// Covers R4, R7. `t1485OutBlock1` single-object form deserializes via `de_vec_or_single`.
+#[test]
+fn t1485_single_object_outblock1_deserializes() {
+    let resp: T1485Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1485OutBlock1": { "jisu": "2617.03", "volume": 7372, "chetime": "장  전" }
+    }))
+    .expect("single-object t1485OutBlock1 must deserialize");
+    assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock1[0].chetime, "장  전", "non-numeric chetime label");
+}
+
+/// Covers R4, R7. `t1516` carries TWO caller identifiers — serializes to
+/// `{"t1516InBlock":{"upcode":"001","gubun":"1","shcode":"005930"}}`.
+#[test]
+fn t1516_request_serializes_two_identifiers() {
+    let value = serde_json::to_value(T1516Request::new("001", "1", "005930"))
+        .expect("serialize t1516 request");
+    assert_eq!(value["t1516InBlock"]["upcode"], "001");
+    assert_eq!(value["t1516InBlock"]["shcode"], "005930", "second required input");
+}
+
+/// Covers R2, R5, R7. `t1516` summary + per-stock array round-trip through REAL
+/// dispatch.
+#[tokio::test]
+async fn t1516_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(INDTP_PATH))
+        .and(header("tr_cd", "t1516"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T1516_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let resp = sdk_for(&server)
+        .market_session()
+        .sector_stocks(&T1516Request::new("001", "1", ""))
+        .await
+        .expect("t1516 sector_stocks should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    // Summary header round-trips (separate struct from the per-stock array).
+    assert_eq!(resp.outblock.shcode, "000640", "echoed board shcode");
+    assert_eq!(resp.outblock.pricejisu, "000002610.62", "summary 지수");
+    assert!(resp.outblock1.len() >= 2, "per-stock rows round-trip");
+    assert!(!resp.outblock1[0].shcode.is_empty(), "real per-stock shcode");
+    assert!(!resp.outblock1[0].hname.is_empty(), "real per-stock name");
+}
+
+/// Covers R5, R7. `t1516OutBlock1` single-object form deserializes via
+/// `de_vec_or_single`, and an empty board (00707) is the pending case.
+#[test]
+fn t1516_single_and_empty_outblock1_deserialize() {
+    let single: T1516Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1516OutBlock": { "shcode": "000640", "pricejisu": "2610.62" },
+        "t1516OutBlock1": { "shcode": "005930", "hname": "삼성전자", "price": 70000 }
+    }))
+    .expect("single per-stock row tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].price, "70000", "price from JSON number");
+
+    let empty: T1516Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t1516OutBlock": { "shcode": "" }, "t1516OutBlock1": []
+    }))
+    .expect("empty board deserializes");
+    assert!(empty.outblock1.is_empty(), "empty board is the pending case");
+}
+
+/// Covers R5, R6. An empty `t8424` sector list (00707) deserializes as the
+/// pending case, mirroring every prior array-bearing TR.
+#[test]
+fn t8424_empty_result_set_deserializes_as_pending() {
+    let empty: T8424Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8424OutBlock": []
+    }))
+    .expect("empty sector list deserializes");
+    assert!(empty.outblock.is_empty(), "empty list is the pending case");
 }

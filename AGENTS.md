@@ -19,7 +19,7 @@ crates/ls-sdk-test-support/# wiremock helpers for offline SDK tests
 docs/solutions/            # documented solutions to past problems (bugs, best practices, patterns), by category with YAML frontmatter (module, tags, problem_type) — relevant when implementing or debugging in a documented area
 CONCEPTS.md                # shared domain vocabulary (TR, owner_class, support tiers, Paper Live Smoke, ...) — relevant when orienting or discussing domain concepts
 metadata/PROVISIONALITY-LEDGER.md  # per-TR provisional-facet ledger, retired as TRs implement
-.agents/skills/            # frozen workflow recipes: implement-tr, promote-tr, ... (read the SKILL.md before running one)
+.agents/skills/            # frozen workflow recipes: track-tr, implement-tr, promote-tr, ... (read the SKILL.md before running one)
 ```
 
 ## Gate (run before committing TR/SDK/metadata changes)
@@ -35,10 +35,15 @@ Keep the tree green; never commit with a red gate.
 
 ## TR support lifecycle
 
-TRs climb **Tracked → Implemented → Recommended** (see CONCEPTS.md). The
-`implement-tr` recipe (`.agents/skills/implement-tr/SKILL.md`) flips a TR to
-Implemented by authoring callable Rust and gating it on a **Paper Live Smoke**;
-`promote-tr` takes Implemented → Recommended. Each new `{TR}_POLICY` const must
+TRs climb **Raw → Tracked → Implemented → Recommended** (see CONCEPTS.md). The
+`track-tr` recipe (`.agents/skills/track-tr/SKILL.md`) brings a raw TR (present
+only in the raw OpenAPI capture, no metadata, no baseline) to Tracked by
+authoring its `metadata/trs/<tr>.yaml` + `tr-index.yaml` entry and projecting its
+normalized baseline via `make api-drift-renormalize` (the baseline is projected,
+never hand-authored). The `implement-tr` recipe
+(`.agents/skills/implement-tr/SKILL.md`) then flips a Tracked TR to Implemented by
+authoring callable Rust and gating it on a **Paper Live Smoke**; `promote-tr`
+takes Implemented → Recommended. Each new `{TR}_POLICY` const must
 be registered in **both** cross-check lists (see the recipe). Wire field names,
 types, and array-vs-single shapes come from the normalized baseline
 (`crates/ls-trackers/baselines/api-drift/normalized/trs/<tr>.json`), not guesswork.

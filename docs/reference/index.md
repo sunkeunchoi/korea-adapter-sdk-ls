@@ -16,8 +16,12 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t1452` | 거래량상위 | `paginated` | implemented, not yet recommended |
 | `t1463` | 거래대금상위 | `paginated` | implemented, not yet recommended |
 | `t1466` | 전일동시간대비거래급증 | `paginated` | implemented, not yet recommended |
+| `t1485` | 예상지수 | `market_session` | implemented, not yet recommended |
 | `t1489` | 예상체결량상위조회 | `paginated` | implemented, not yet recommended |
 | `t1492` | 단일가예상등락율상위 | `paginated` | implemented, not yet recommended |
+| `t1511` | 업종현재가 | `market_session` | implemented, not yet recommended |
+| `t1514` | 업종기간별추이 | `paginated` | implemented, not yet recommended |
+| `t1516` | 업종별종목시세 | `market_session` | implemented, not yet recommended |
 | `t1531` | 테마별종목 | `market_session` | implemented, not yet recommended |
 | `t1537` | 테마종목별시세조회 | `market_session` | implemented, not yet recommended |
 | `t1601` | 투자자별종합 | `market_session` | implemented, not yet recommended |
@@ -32,6 +36,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t1958` | ELW종목비교 | `market_session` | implemented, not yet recommended |
 | `t3341` | 재무순위종합 | `paginated` | implemented, not yet recommended |
 | `t8412` | 주식 차트(N분봉) 조회 | `paginated` | recommended |
+| `t8424` | 전체업종 | `market_session` | implemented, not yet recommended |
 | `t8425` | 전체테마 | `market_session` | implemented, not yet recommended |
 | `t8431` | ELW종목조회 | `market_session` | implemented, not yet recommended |
 | `t8436` | 주식종목조회 API용 | `market_session` | implemented, not yet recommended |

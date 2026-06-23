@@ -46,6 +46,11 @@ TR marked `ready` is a promote-tr candidate.
 | `t1662` | `live-smoke-t1662` | `live_smoke_t1662` | open session; documented gubun defaults (KOSPI, amount, today, KRX) | implemented-only | paper by-time program-trading chart (Wave 2) |
 | `t1664` | `live-smoke-t1664` | `live_smoke_t1664` | open session; documented gubun defaults (KOSPI, amount, by-time, cnt=20, KRX) | implemented-only | paper investor trading chart (Wave 2) |
 | `t3341` | `live-smoke-t3341` | `live_smoke_t3341` | open session; single-page (`idx`=0 as a JSON number) | implemented-only | paper financial-ranking aggregate, single page (Wave 2) |
+| `t8424` | `live-smoke-t8424` | `live_smoke_t8424` | open session; no caller input (sector cluster anchor + `upcode` source) | implemented-only | paper all-sectors list (Wave A) |
+| `t1511` | `live-smoke-t1511` | `live_smoke_t1511` | open session; `upcode="001"` (코스피종합) | implemented-only | paper sector index snapshot (Wave A) |
+| `t1485` | `live-smoke-t1485` | `live_smoke_t1485` | open session; `upcode="001"`, `gubun="1"` (expected/auction — may be empty off-session) | implemented-only | paper sector expected-index (Wave A) |
+| `t1516` | `live-smoke-t1516` | `live_smoke_t1516` | open session; `upcode="001"` + representative `shcode="005930"` | implemented-only | paper per-sector stock board (Wave A) |
+| `t1514` | `live-smoke-t1514` | `live_smoke_t1514` | open session; single-page (`cts_date` first page; `cnt` as a JSON number) | implemented-only | paper sector period-trend, single page (Wave A) |
 
 Notes:
 - `live-smoke` (default) issues the OAuth token *then* a `t1102` quote in one run,

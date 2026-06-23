@@ -15,7 +15,7 @@
 # Export command-line / make variables (e.g. LS_LIVE_SMOKE_*) to recipe shells.
 export
 
-.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1866 live-smoke-t1859 live-smoke-t1826 live-smoke-t1825 live-smoke-t9905 live-smoke-t9907 live-smoke-t8431 live-smoke-t9942 live-smoke-t1958 live-smoke-t1964 live-smoke-t1601 live-smoke-t1615 live-smoke-t1640 live-smoke-t1662 live-smoke-t1664 live-smoke-t3341 raw-probe
+.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1866 live-smoke-t1859 live-smoke-t1826 live-smoke-t1825 live-smoke-t9905 live-smoke-t9907 live-smoke-t8431 live-smoke-t9942 live-smoke-t1958 live-smoke-t1964 live-smoke-t1601 live-smoke-t1615 live-smoke-t1640 live-smoke-t1662 live-smoke-t1664 live-smoke-t3341 live-smoke-t8424 live-smoke-t1511 live-smoke-t1485 live-smoke-t1516 live-smoke-t1514 raw-probe
 
 # $(1) = exact test name in crates/ls-sdk/tests/live_smoke.rs
 define run_smoke
@@ -136,6 +136,26 @@ live-smoke-t1664:
 ## (body idx serialized as a number at first-page convention 0).
 live-smoke-t3341:
 	$(call run_smoke,live_smoke_t3341)
+
+## t8424 (전체업종) smoke: token -> one all-sectors read (anchor + upcode source).
+live-smoke-t8424:
+	$(call run_smoke,live_smoke_t8424)
+
+## t1511 (업종현재가) smoke: token -> one sector index snapshot (upcode=001). In-session.
+live-smoke-t1511:
+	$(call run_smoke,live_smoke_t1511)
+
+## t1485 (예상지수) smoke: token -> one sector expected-index read (upcode=001). In-session.
+live-smoke-t1485:
+	$(call run_smoke,live_smoke_t1485)
+
+## t1516 (업종별종목시세) smoke: token -> one per-sector stock board (upcode=001, shcode=005930). In-session.
+live-smoke-t1516:
+	$(call run_smoke,live_smoke_t1516)
+
+## t1514 (업종기간별추이) smoke: token -> one first-page sector period-trend (upcode=001; cnt numeric).
+live-smoke-t1514:
+	$(call run_smoke,live_smoke_t1514)
 
 ## Failure classifier (implement-tr R6): one credential-safe raw-HTTP POST that
 ## bypasses the SDK's typed deserialize. Requires LS_PROBE_TR_CD, LS_PROBE_PATH,

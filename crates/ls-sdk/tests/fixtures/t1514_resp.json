@@ -1,0 +1,35 @@
+{
+  "t1514OutBlock": {
+    "cts_date": "20230605"
+  },
+  "rsp_cd": "00000",
+  "t1514OutBlock1": [
+    {
+      "date": "20230605",
+      "divrate": "0.00",
+      "value2": 3884240,
+      "diff_vol": "46.20",
+      "value1": 3884240,
+      "change": "9.26",
+      "sign": "2",
+      "totjo": 950,
+      "diff": "0.36",
+      "orgsvolume": 1210,
+      "unchg": 91,
+      "down": 0,
+      "jisu": "2610.62",
+      "volume": 263165,
+      "high": 606,
+      "highjisu": "2617.58",
+      "low": 253,
+      "rate": "0.00",
+      "upcode": "001",
+      "up": 0,
+      "lowjisu": "2610.40",
+      "uprate": "63.79",
+      "openjisu": "2617.43",
+      "frgsvolume": 351
+    }
+  ],
+  "rsp_msg": "정상적으로 조회가 완료되었습니다."
+}
