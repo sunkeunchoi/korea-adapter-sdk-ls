@@ -14,7 +14,7 @@ use ls_sdk::market_session::{
     T1664Request, T1664Response, T1825OutBlock1, T1825Request, T1825Response, T1826OutBlock,
     T1826Request, T1826Response, T1859OutBlock1, T1859Request, T1859Response, T1958Request,
     T1958Response, T1964OutBlock1, T1964Request, T1964Response, T1485Request, T1485Response,
-    T1511Request, T1511Response, T1516Request, T8424Request, T8424Response,
+    T1511Request, T1511Response, T1516Request, T1516Response, T8424Request, T8424Response,
     T8425Request, T8425Response, T8431OutBlock, T8431Request, T8431Response, T8436Request,
     T8436Response, T9905OutBlock1, T9905Request, T9905Response, T9907Request, T9907Response,
     T9942Request, T9942Response,
@@ -1624,7 +1624,8 @@ async fn t1511_deserializes_spec_fixture() {
         .expect("t1511 sector_quote should succeed");
     assert_eq!(resp.rsp_cd, "00000");
     assert!(!resp.outblock.hname.is_empty(), "real non-default hname");
-    assert!(!resp.outblock.firstjisu.is_empty(), "index value populated");
+    assert_eq!(resp.outblock.pricejisu, "2610.62", "현재지수 current index (was a number)");
+    assert!(!resp.outblock.firstjisu.is_empty(), "first sub-index populated");
 }
 
 /// Covers R4, R5. The `volume` field tolerates a JSON number or string via
@@ -1675,6 +1676,10 @@ async fn t1485_deserializes_spec_fixture() {
         .await
         .expect("t1485 sector_expected_index should succeed");
     assert_eq!(resp.rsp_cd, "00000");
+    // Summary block round-trips (separate struct from the time array — a rename
+    // typo on t1485OutBlock would silently zero these without this assertion).
+    assert_eq!(resp.outblock.pricejisu, "2610.62", "summary 예상지수");
+    assert_eq!(resp.outblock.volume, "263165", "summary volume (was a JSON number)");
     assert!(resp.outblock1.len() >= 2, "expected-index time rows round-trip");
     assert!(!resp.outblock1[0].jisu.is_empty(), "real non-default jisu");
 }
@@ -1724,7 +1729,41 @@ async fn t1516_deserializes_spec_fixture() {
         .await
         .expect("t1516 sector_stocks should succeed");
     assert_eq!(resp.rsp_cd, "00000");
+    // Summary header round-trips (separate struct from the per-stock array).
+    assert_eq!(resp.outblock.shcode, "000640", "echoed board shcode");
+    assert_eq!(resp.outblock.pricejisu, "000002610.62", "summary 지수");
     assert!(resp.outblock1.len() >= 2, "per-stock rows round-trip");
     assert!(!resp.outblock1[0].shcode.is_empty(), "real per-stock shcode");
     assert!(!resp.outblock1[0].hname.is_empty(), "real per-stock name");
+}
+
+/// Covers R5, R7. `t1516OutBlock1` single-object form deserializes via
+/// `de_vec_or_single`, and an empty board (00707) is the pending case.
+#[test]
+fn t1516_single_and_empty_outblock1_deserialize() {
+    let single: T1516Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1516OutBlock": { "shcode": "000640", "pricejisu": "2610.62" },
+        "t1516OutBlock1": { "shcode": "005930", "hname": "삼성전자", "price": 70000 }
+    }))
+    .expect("single per-stock row tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].price, "70000", "price from JSON number");
+
+    let empty: T1516Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t1516OutBlock": { "shcode": "" }, "t1516OutBlock1": []
+    }))
+    .expect("empty board deserializes");
+    assert!(empty.outblock1.is_empty(), "empty board is the pending case");
+}
+
+/// Covers R5, R6. An empty `t8424` sector list (00707) deserializes as the
+/// pending case, mirroring every prior array-bearing TR.
+#[test]
+fn t8424_empty_result_set_deserializes_as_pending() {
+    let empty: T8424Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8424OutBlock": []
+    }))
+    .expect("empty sector list deserializes");
+    assert!(empty.outblock.is_empty(), "empty list is the pending case");
 }

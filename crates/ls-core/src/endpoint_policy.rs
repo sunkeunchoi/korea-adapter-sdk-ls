@@ -438,7 +438,9 @@ pub const T8424_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
-/// t1511 — 업종현재가 (one sector's index snapshot; non-paginated).
+/// t1511 — 업종현재가 (one sector's index snapshot; non-paginated). The 10/5
+/// rate limit is higher than its sibling sector TRs (1/3) — this is the limit the
+/// upstream spec publishes for the snapshot endpoint, mirrored from the baseline.
 pub const T1511_POLICY: EndpointPolicy = EndpointPolicy {
     tr_code: "t1511",
     path: "/indtp/market-data",

@@ -18,9 +18,11 @@ use ls_core::{Inner, LsResult};
 
 mod chart;
 mod rank_screen;
+mod sector_index;
 
 pub use chart::*;
 pub use rank_screen::*;
+pub use sector_index::*;
 
 /// Paginated operations, backed by the shared runtime core.
 ///

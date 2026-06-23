@@ -1817,7 +1817,11 @@ pub struct T1511OutBlock {
     /// Sector name / 업종명.
     #[serde(deserialize_with = "ls_core::string_or_number")]
     pub hname: String,
-    /// Current index / 지수 (firstjisu in the full spec).
+    /// Current index / 현재지수 — the canonical composite index value.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub pricejisu: String,
+    /// First comparison sub-index / 첫번째지수 (distinct from `pricejisu`; for
+    /// KOSPI composite the two coincide, but they diverge for other sectors).
     #[serde(deserialize_with = "ls_core::string_or_number")]
     pub firstjisu: String,
     /// Previous-day index / 전일지수.
@@ -1977,12 +1981,18 @@ impl T1516Request {
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(default)]
 pub struct T1516OutBlock {
+    /// Echoed stock short code / 종목코드 (confirms which board was returned).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
     /// Sector index / 지수.
     #[serde(deserialize_with = "ls_core::string_or_number")]
     pub pricejisu: String,
     /// Change / 전일대비.
     #[serde(deserialize_with = "ls_core::string_or_number")]
     pub change: String,
+    /// Index change vs previous / 지수대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jdiff: String,
     /// Sign / 전일대비구분.
     #[serde(deserialize_with = "ls_core::string_or_number")]
     pub sign: String,

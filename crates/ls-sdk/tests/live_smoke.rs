@@ -1512,10 +1512,10 @@ async fn live_smoke_t1511() {
                 "live-smoke-t1511",
                 &format!("env=paper upcode=001 date={date}"),
                 &format!(
-                    "rsp_cd={} hname_len={} firstjisu={}",
+                    "rsp_cd={} hname_len={} pricejisu={}",
                     resp.rsp_cd,
                     resp.outblock.hname.len(),
-                    resp.outblock.firstjisu
+                    resp.outblock.pricejisu
                 ),
             );
         }
