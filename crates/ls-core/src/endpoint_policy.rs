@@ -318,8 +318,10 @@ pub const T1958_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(5),
 };
 
-/// `t1964` — ELW전광판 (ELW board; Wave 1 board member). Non-paginated
-/// `market_session` ELW read keyed by a `t9905`-sourced `item` underlying code.
+/// `t1964` — ELW전광판 (ELW board; Wave 1 board member). Non-paginated ELW read
+/// keyed by a `t9905`-sourced `item` underlying code. Ships **PENDING** (callable
+/// but shape-unconfirmed: broad filter defaults return an empty board), so its
+/// `owner_class` stays the `standalone` placeholder until a confirming flip.
 pub const T1964_POLICY: EndpointPolicy = EndpointPolicy {
     tr_code: "t1964",
     path: "/stock/elw",
