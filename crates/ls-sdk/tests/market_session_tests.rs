@@ -11,7 +11,9 @@ use ls_sdk::market_session::{
     T1101OutBlock, T1101Request, T1101Response, T1102OutBlock, T1102Request, T1102Response,
     T1531Request, T1531Response, T1537Request, T1537Response, T1825OutBlock1, T1825Request,
     T1825Response, T1826OutBlock, T1826Request, T1826Response, T1859OutBlock1, T1859Request,
-    T1859Response, T8425Request, T8425Response, T8436Request, T8436Response,
+    T1859Response, T8425Request, T8425Response, T8431OutBlock, T8431Request, T8431Response,
+    T8436Request, T8436Response, T9905OutBlock1, T9905Request, T9905Response, T9907Request,
+    T9907Response, T9942Request, T9942Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
@@ -1117,4 +1119,159 @@ fn t1825_chained_off_t1826_offline_fixture() {
     .expect("recorded t1825 consumer body must deserialize");
     assert_eq!(consumer.outblock1.len(), 1, "the chained consumer body round-trips");
     assert_eq!(consumer.outblock1[0].shcode, "005930");
+}
+
+// ---------------------------------------------------------------------------
+// Wave 1 — ELW universe/list reads (t9905, t9907, t8431, t9942). No-caller-input
+// `dummy` reads; each returns a code-keyed list. Covers AE1.
+// ---------------------------------------------------------------------------
+
+/// Covers AE1. `t9905` request serializes only `dummy`; a representative success
+/// deserializes with the underlying-asset `shcode` (the `t1964` `item` source)
+/// populated, single-or-array tolerated.
+#[test]
+fn t9905_request_and_response_round_trip() {
+    let value = serde_json::to_value(T9905Request::new()).expect("serialize t9905");
+    assert_eq!(value["t9905InBlock"]["dummy"], "");
+
+    let resp: T9905Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t9905OutBlock1": [
+            { "shcode": "005930", "expcode": "KR7005930003", "hname": "삼성전자" },
+            { "shcode": 660, "expcode": "KR7000660001", "hname": "SK하이닉스" }
+        ]
+    }))
+    .expect("representative t9905 success must deserialize");
+    assert_eq!(resp.outblock1.len(), 2);
+    assert_eq!(resp.outblock1[0].shcode, "005930", "underlying code populated");
+    assert_eq!(resp.outblock1[1].shcode, "660", "shcode from JSON number");
+
+    let single: T9905Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t9905OutBlock1": { "shcode": "005930", "hname": "삼성전자" }
+    }))
+    .expect("single row tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+
+    let empty: T9905Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t9905OutBlock1": []
+    }))
+    .expect("empty result deserializes");
+    assert!(empty.outblock1.is_empty(), "empty is the pending case");
+}
+
+/// Covers AE1. `T9905OutBlock1.shcode` parses from JSON number or string alike.
+#[test]
+fn t9905_shcode_number_or_string_yields_same_value() {
+    let n: T9905OutBlock1 =
+        serde_json::from_value(serde_json::json!({ "shcode": 5930 })).expect("number");
+    let s: T9905OutBlock1 =
+        serde_json::from_value(serde_json::json!({ "shcode": "5930" })).expect("string");
+    assert_eq!(n.shcode, "5930");
+    assert_eq!(n.shcode, s.shcode);
+}
+
+/// Covers AE1. `t9907` expiry-month list round-trips; empty is the pending case.
+#[test]
+fn t9907_request_and_response_round_trip() {
+    let value = serde_json::to_value(T9907Request::new()).expect("serialize t9907");
+    assert_eq!(value["t9907InBlock"]["dummy"], "");
+
+    let resp: T9907Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t9907OutBlock1": [
+            { "lastym": "202606", "lastnm": "2026년 06월" },
+            { "lastym": 202609, "lastnm": "2026년 09월" }
+        ]
+    }))
+    .expect("representative t9907 success must deserialize");
+    assert_eq!(resp.outblock1.len(), 2);
+    assert_eq!(resp.outblock1[0].lastym, "202606");
+    assert_eq!(resp.outblock1[1].lastym, "202609", "lastym from JSON number");
+
+    let empty: T9907Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t9907OutBlock1": []
+    }))
+    .expect("empty result deserializes");
+    assert!(empty.outblock1.is_empty());
+}
+
+/// Covers AE1. `t8431` ELW-symbol list round-trips with the `shcode` (the `t1958`
+/// pair source) populated; the numeric `recprice` parses number-or-string;
+/// single-or-array tolerated; empty is the pending case.
+#[test]
+fn t8431_request_and_response_round_trip() {
+    let value = serde_json::to_value(T8431Request::new()).expect("serialize t8431");
+    assert_eq!(value["t8431InBlock"]["dummy"], "");
+
+    let resp: T8431Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8431OutBlock": [
+            { "hname": "삼성전자콜ELW", "shcode": "57J123", "expcode": "KR4500001234",
+              "recprice": 105 },
+            { "hname": "SK하이닉스풋ELW", "shcode": "57J456", "expcode": "KR4500005678",
+              "recprice": "210" }
+        ]
+    }))
+    .expect("representative t8431 success must deserialize");
+    assert_eq!(resp.outblock.len(), 2);
+    assert_eq!(resp.outblock[0].shcode, "57J123", "ELW code populated");
+    assert_eq!(resp.outblock[0].recprice, "105", "recprice from JSON number");
+    assert_eq!(resp.outblock[1].recprice, "210", "recprice from JSON string");
+
+    let single: T8431Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8431OutBlock": { "shcode": "57J123", "hname": "삼성전자콜ELW" }
+    }))
+    .expect("single row tolerated as array");
+    assert_eq!(single.outblock.len(), 1);
+
+    let empty: T8431Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8431OutBlock": []
+    }))
+    .expect("empty result deserializes");
+    assert!(empty.outblock.is_empty(), "empty is the pending case");
+}
+
+/// Covers AE1. `T8431OutBlock.recprice` parses number-or-string alike.
+#[test]
+fn t8431_recprice_number_or_string_yields_same_value() {
+    let n: T8431OutBlock =
+        serde_json::from_value(serde_json::json!({ "recprice": 105 })).expect("number");
+    let s: T8431OutBlock =
+        serde_json::from_value(serde_json::json!({ "recprice": "105" })).expect("string");
+    assert_eq!(n.recprice, "105");
+    assert_eq!(n.recprice, s.recprice);
+}
+
+/// Covers AE1. `t9942` ELW master list round-trips; single-or-array tolerated;
+/// empty is the pending case.
+#[test]
+fn t9942_request_and_response_round_trip() {
+    let value = serde_json::to_value(T9942Request::new()).expect("serialize t9942");
+    assert_eq!(value["t9942InBlock"]["dummy"], "");
+
+    let resp: T9942Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t9942OutBlock": [
+            { "hname": "삼성전자콜ELW", "shcode": "57J123", "expcode": "KR4500001234" },
+            { "hname": "SK하이닉스풋ELW", "shcode": "57J456", "expcode": "KR4500005678" }
+        ]
+    }))
+    .expect("representative t9942 success must deserialize");
+    assert_eq!(resp.outblock.len(), 2);
+    assert_eq!(resp.outblock[0].shcode, "57J123");
+
+    let single: T9942Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t9942OutBlock": { "shcode": "57J123", "hname": "삼성전자콜ELW" }
+    }))
+    .expect("single row tolerated as array");
+    assert_eq!(single.outblock.len(), 1);
+
+    let empty: T9942Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t9942OutBlock": []
+    }))
+    .expect("empty result deserializes");
+    assert!(empty.outblock.is_empty());
 }

@@ -908,6 +908,253 @@ pub struct T1825Response {
     pub outblock1: Vec<T1825OutBlock1>,
 }
 
+// ---------------------------------------------------------------------------
+// Wave 1 — ELW universe & instrument surface. No-caller-input `dummy` reads
+// (t9905, t9907, t8431, t9942) modeled after `t8425`; each returns a list keyed
+// by a code field. All `/stock/elw`, `[주식] ELW`, non-paginated market_session.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t9905` — 기초자산리스트조회 (full underlying-asset list). A
+/// no-caller-input read: a single length-1 `dummy` placeholder.
+#[derive(Serialize, Debug, Clone)]
+pub struct T9905InBlock {
+    /// Dummy placeholder / DUMMY (length-1; the read takes no caller input).
+    pub dummy: String,
+}
+
+/// `t9905` request — serializes to `{"t9905InBlock":{"dummy":""}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T9905Request {
+    #[serde(rename = "t9905InBlock")]
+    pub inblock: T9905InBlock,
+}
+impl T9905Request {
+    /// Build a `t9905` underlying-list request (no caller input).
+    pub fn new() -> Self {
+        T9905Request {
+            inblock: T9905InBlock {
+                dummy: String::new(),
+            },
+        }
+    }
+}
+impl Default for T9905Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `t9905OutBlock1` — one underlying-asset row. `shcode` (단축코드) is the
+/// underlying-asset code consumed by `t1964` (`item`). All via
+/// [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T9905OutBlock1 {
+    /// Short code / 단축코드 (the underlying-asset code; `t1964` `item` input).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Standard code / 표준코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub expcode: String,
+    /// Korean name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+}
+
+/// `t9905` response — underlying-asset array under `t9905OutBlock1`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T9905Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t9905OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T9905OutBlock1>,
+}
+
+/// Input block for `t9907` — 만기월조회 (ELW expiry-month list). No caller input.
+#[derive(Serialize, Debug, Clone)]
+pub struct T9907InBlock {
+    /// Dummy placeholder / DUMMY (length-1; the read takes no caller input).
+    pub dummy: String,
+}
+
+/// `t9907` request — serializes to `{"t9907InBlock":{"dummy":""}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T9907Request {
+    #[serde(rename = "t9907InBlock")]
+    pub inblock: T9907InBlock,
+}
+impl T9907Request {
+    /// Build a `t9907` expiry-month request (no caller input).
+    pub fn new() -> Self {
+        T9907Request {
+            inblock: T9907InBlock {
+                dummy: String::new(),
+            },
+        }
+    }
+}
+impl Default for T9907Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `t9907OutBlock1` — one expiry-month row. All via [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T9907OutBlock1 {
+    /// Expiry month / 만기월 (`YYYYMM`).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub lastym: String,
+    /// Expiry-month name / 만기월명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub lastnm: String,
+}
+
+/// `t9907` response — expiry-month array under `t9907OutBlock1`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T9907Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t9907OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T9907OutBlock1>,
+}
+
+/// Input block for `t8431` — ELW종목조회 (ELW symbol list; the Wave 1 spine
+/// producer for `t1958`). No caller input.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8431InBlock {
+    /// Dummy placeholder / Dummy (length-1; the read takes no caller input).
+    pub dummy: String,
+}
+
+/// `t8431` request — serializes to `{"t8431InBlock":{"dummy":""}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8431Request {
+    #[serde(rename = "t8431InBlock")]
+    pub inblock: T8431InBlock,
+}
+impl T8431Request {
+    /// Build a `t8431` ELW-symbol-list request (no caller input).
+    pub fn new() -> Self {
+        T8431Request {
+            inblock: T8431InBlock {
+                dummy: String::new(),
+            },
+        }
+    }
+}
+impl Default for T8431Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `t8431OutBlock` — one ELW symbol row. `shcode` (단축코드) is the ELW code fed
+/// to `t1958` (the comparison pair). All via [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8431OutBlock {
+    /// Korean name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Short code / 단축코드 (the ELW code; `t1958` `shcode1`/`shcode2` input).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Extended code / 확장코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub expcode: String,
+    /// Reference price / 기준가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub recprice: String,
+}
+
+/// `t8431` response — ELW symbol array under `t8431OutBlock`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8431Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t8431OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T8431OutBlock>,
+}
+
+/// Input block for `t9942` — ELW마스터조회API용 (ELW master list). No caller input.
+#[derive(Serialize, Debug, Clone)]
+pub struct T9942InBlock {
+    /// Dummy placeholder / Dummy (length-1; the read takes no caller input).
+    pub dummy: String,
+}
+
+/// `t9942` request — serializes to `{"t9942InBlock":{"dummy":""}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T9942Request {
+    #[serde(rename = "t9942InBlock")]
+    pub inblock: T9942InBlock,
+}
+impl T9942Request {
+    /// Build a `t9942` ELW-master request (no caller input).
+    pub fn new() -> Self {
+        T9942Request {
+            inblock: T9942InBlock {
+                dummy: String::new(),
+            },
+        }
+    }
+}
+impl Default for T9942Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `t9942OutBlock` — one ELW master row. All via [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T9942OutBlock {
+    /// Korean name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Short code / 단축코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Extended code / 확장코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub expcode: String,
+}
+
+/// `t9942` response — ELW master array under `t9942OutBlock`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T9942Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t9942OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T9942OutBlock>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -1036,6 +1283,41 @@ impl MarketSession {
     pub async fn qclick_search(&self, req: &T1825Request) -> LsResult<T1825Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T1825_POLICY, req)
+            .await
+    }
+
+    /// List the full underlying-asset universe (기초자산리스트조회) via `t9905`.
+    ///
+    /// Non-paginated, no caller input. The returned `shcode` values are the
+    /// underlying-asset codes consumed by `t1964` (`item`).
+    pub async fn underlying_list(&self, req: &T9905Request) -> LsResult<T9905Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T9905_POLICY, req)
+            .await
+    }
+
+    /// List the ELW expiry months (만기월조회) via `t9907`. Non-paginated, no
+    /// caller input.
+    pub async fn elw_expiry_months(&self, req: &T9907Request) -> LsResult<T9907Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T9907_POLICY, req)
+            .await
+    }
+
+    /// List the ELW symbol universe (ELW종목조회) via `t8431` — the Wave 1 spine
+    /// producer. Non-paginated, no caller input; the returned `shcode` values are
+    /// the ELW codes consumed by `t1958` ([`MarketSession::elw_compare`]).
+    pub async fn elw_symbols(&self, req: &T8431Request) -> LsResult<T8431Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8431_POLICY, req)
+            .await
+    }
+
+    /// List the ELW master universe (ELW마스터조회) via `t9942`. Non-paginated,
+    /// no caller input.
+    pub async fn elw_master(&self, req: &T9942Request) -> LsResult<T9942Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T9942_POLICY, req)
             .await
     }
 }

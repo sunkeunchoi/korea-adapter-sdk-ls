@@ -44,9 +44,9 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t8412` | 주식 차트(N분봉) 조회 | `paginated` | recommended | [t8412](./t8412.md) |
 | `t8425` | 전체테마 | `market_session` | implemented | [t8425](./t8425.md) |
 | `t8430` | 주식종목조회 | `standalone` | tracked | [t8430](./t8430.md) |
-| `t8431` | ELW종목조회 | `standalone` | tracked | [t8431](./t8431.md) |
+| `t8431` | ELW종목조회 | `market_session` | implemented | [t8431](./t8431.md) |
 | `t8436` | 주식종목조회 API용 | `market_session` | implemented | [t8436](./t8436.md) |
-| `t9905` | 기초자산리스트조회 | `standalone` | tracked | [t9905](./t9905.md) |
-| `t9907` | 만기월조회 | `standalone` | tracked | [t9907](./t9907.md) |
-| `t9942` | ELW마스터조회API용 | `standalone` | tracked | [t9942](./t9942.md) |
+| `t9905` | 기초자산리스트조회 | `market_session` | implemented | [t9905](./t9905.md) |
+| `t9907` | 만기월조회 | `market_session` | implemented | [t9907](./t9907.md) |
+| `t9942` | ELW마스터조회API용 | `market_session` | implemented | [t9942](./t9942.md) |
 | `token` | 접근토큰 발급 (OAuth2 token issue) | `standalone` | recommended | [token](./token.md) |

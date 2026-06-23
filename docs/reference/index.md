@@ -26,5 +26,9 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t1866` | 서버저장조건 리스트조회 | `paginated` | implemented, not yet recommended |
 | `t8412` | 주식 차트(N분봉) 조회 | `paginated` | recommended |
 | `t8425` | 전체테마 | `market_session` | implemented, not yet recommended |
+| `t8431` | ELW종목조회 | `market_session` | implemented, not yet recommended |
 | `t8436` | 주식종목조회 API용 | `market_session` | implemented, not yet recommended |
+| `t9905` | 기초자산리스트조회 | `market_session` | implemented, not yet recommended |
+| `t9907` | 만기월조회 | `market_session` | implemented, not yet recommended |
+| `t9942` | ELW마스터조회API용 | `market_session` | implemented, not yet recommended |
 | `token` | 접근토큰 발급 (OAuth2 token issue) | `standalone` | recommended |

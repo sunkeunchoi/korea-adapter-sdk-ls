@@ -15,7 +15,7 @@
 # Export command-line / make variables (e.g. LS_LIVE_SMOKE_*) to recipe shells.
 export
 
-.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1866 live-smoke-t1859 live-smoke-t1826 live-smoke-t1825 raw-probe
+.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1866 live-smoke-t1859 live-smoke-t1826 live-smoke-t1825 live-smoke-t9905 live-smoke-t9907 live-smoke-t8431 live-smoke-t9942 raw-probe
 
 # $(1) = exact test name in crates/ls-sdk/tests/live_smoke.rs
 define run_smoke
@@ -101,6 +101,16 @@ live-smoke-t1826:
 ## keyed by the first search_cd (chained, self-sourcing; search_cd not recorded).
 live-smoke-t1825:
 	$(call run_smoke,live_smoke_t1825)
+
+## Wave 1 ELW universe/list reads (no caller input; non-empty success -> flip).
+live-smoke-t9905:
+	$(call run_smoke,live_smoke_t9905)
+live-smoke-t9907:
+	$(call run_smoke,live_smoke_t9907)
+live-smoke-t8431:
+	$(call run_smoke,live_smoke_t8431)
+live-smoke-t9942:
+	$(call run_smoke,live_smoke_t9942)
 
 ## Failure classifier (implement-tr R6): one credential-safe raw-HTTP POST that
 ## bypasses the SDK's typed deserialize. Requires LS_PROBE_TR_CD, LS_PROBE_PATH,

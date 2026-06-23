@@ -837,7 +837,8 @@ mod tests {
         // The still-unrecommended implemented TRs each carry the banner.
         let banner_trs = [
             "revoke", "t1403", "t1441", "t1452", "t1463", "t1466", "t1489", "t1492", "t1531",
-            "t1537", "t1825", "t1826", "t1859", "t1866", "t8425", "t8436",
+            "t1537", "t1825", "t1826", "t1859", "t1866", "t8425", "t8431", "t8436", "t9905",
+            "t9907", "t9942",
         ];
         for tr in banner_trs {
             let page = reference
@@ -864,12 +865,12 @@ mod tests {
             );
         }
 
-        // index + 22 implemented pages (16 banner [revoke + the 11 prior wave TRs
-        // + t1866 + t1859 + t1826 + t1825] + token + t1101 + t1102 + t8412 + S3_ +
-        // CSPAQ12200). Promoted TRs stay implemented, so the count only grows.
+        // index + 26 implemented pages (20 banner [the prior 16 + the Wave 1 ELW
+        // universe reads t8431 + t9905 + t9907 + t9942] + token + t1101 + t1102 +
+        // t8412 + S3_ + CSPAQ12200). Promoted TRs stay implemented; count only grows.
         assert_eq!(
             reference.len(),
-            23,
+            27,
             "index + the implemented reference pages"
         );
 

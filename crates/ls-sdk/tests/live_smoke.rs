@@ -20,7 +20,8 @@ use ls_core::{LsConfig, LsError, LsResult};
 use ls_sdk::account::CSPAQ12200Request;
 use ls_sdk::market_session::{
     T1101Request, T1102Request, T1531Request, T1537Request, T1825Request, T1826Request,
-    T1859Request, T8425Request, T8436Request,
+    T1859Request, T8425Request, T8431Request, T8436Request, T9905Request, T9907Request,
+    T9942Request,
 };
 use ls_sdk::paginated::{
     T1403Request, T1441Request, T1452Request, T1463Request, T1466Request, T1489Request,
@@ -909,6 +910,103 @@ async fn live_smoke_t1825() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t1825 market-data failure (not evidence)");
             panic!("live-smoke-t1825 failed: {e}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Wave 1 — ELW universe/list reads (t9905, t9907, t8431, t9942). No-caller-input
+// `dummy` reads; each gates on a non-empty success.
+// ---------------------------------------------------------------------------
+
+/// `make live-smoke-t9905`: paper guard → token → one `t9905` underlying-asset
+/// list read (no caller input). Non-empty success → flip.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t9905`"]
+async fn live_smoke_t9905() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().underlying_list(&T9905Request::new()).await {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "underlyings")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t9905", &format!("env=paper date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t9905 market-data failure (not evidence)");
+            panic!("live-smoke-t9905 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t9907`: paper guard → token → one `t9907` ELW expiry-month
+/// list read (no caller input). Non-empty success → flip.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t9907`"]
+async fn live_smoke_t9907() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .market_session()
+        .elw_expiry_months(&T9907Request::new())
+        .await
+    {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "months")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t9907", &format!("env=paper date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t9907 market-data failure (not evidence)");
+            panic!("live-smoke-t9907 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t8431`: paper guard → token → one `t8431` ELW-symbol list
+/// read (no caller input; the Wave 1 spine producer). Non-empty success → flip.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8431`"]
+async fn live_smoke_t8431() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().elw_symbols(&T8431Request::new()).await {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "elws")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t8431", &format!("env=paper date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8431 market-data failure (not evidence)");
+            panic!("live-smoke-t8431 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t9942`: paper guard → token → one `t9942` ELW master list
+/// read (no caller input). Non-empty success → flip.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t9942`"]
+async fn live_smoke_t9942() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().elw_master(&T9942Request::new()).await {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "elws")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t9942", &format!("env=paper date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t9942 market-data failure (not evidence)");
+            panic!("live-smoke-t9942 failed: {e}");
         }
     }
 }
