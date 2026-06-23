@@ -2762,6 +2762,96 @@ pub struct T8467Response {
     pub outblock: Vec<T8467OutBlock>,
 }
 
+// ---------------------------------------------------------------------------
+// t9943 — 지수선물마스터조회API용 (index-futures master). market_session,
+// non-paginated. Keyed by a `gubun` (구분) segment selector — `"V"` 변동성지수선물
+// (volatility-index futures) / `"S"` 섹터지수선물 (sector-index futures) / any
+// other value → 코스피200지수선물 (KOSPI200-index futures, the default). The
+// response out-block `t9943OutBlock` is itself a ROW ARRAY: the raw capture's
+// `res_example` shows `"t9943OutBlock": [ {…}, … ]` (propertyType `A0005`/Object
+// Array), each row a direct element carrying the contract name + codes — the
+// normalized baseline collapses the block name to `response_body`, so the true
+// wire out-block key `t9943OutBlock` is read from the raw capture per KTD3.
+// Modeled after `T8467` (same 지수선물마스터 read, the same `gubun` selector) but
+// the spec lists only the 3 identity fields (`hname`/`shcode`/`expcode`), no
+// daily limit/close reference prices.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t9943` — the index-futures segment selector.
+///
+/// `gubun` (구분) selects the index-futures segment: `"V"` 변동성지수선물 / `"S"`
+/// 섹터지수선물 / any other value → 코스피200지수선물 (the default). The spec types
+/// it `String` (length 1). Caller-supplied.
+#[derive(Serialize, Debug, Clone)]
+pub struct T9943InBlock {
+    /// Segment selector / 구분 (`"V"`/`"S"` or default → KOSPI200).
+    pub gubun: String,
+}
+
+/// `t9943` request — wraps the input block under the `t9943InBlock` key.
+///
+/// Serializes to `{"t9943InBlock":{"gubun":"V"}}`. `t9943` is not paginated, so
+/// there are no `tr_cont`/`tr_cont_key` fields in the body.
+#[derive(Serialize, Debug, Clone)]
+pub struct T9943Request {
+    #[serde(rename = "t9943InBlock")]
+    pub inblock: T9943InBlock,
+}
+
+impl T9943Request {
+    /// Build a `t9943` index-futures-master request for one segment (`gubun`:
+    /// `"V"`/`"S"` or any other value → KOSPI200-index futures).
+    pub fn new(gubun: impl Into<String>) -> Self {
+        T9943Request {
+            inblock: T9943InBlock {
+                gubun: gubun.into(),
+            },
+        }
+    }
+}
+
+/// `t9943OutBlock` — one index-futures-master row.
+///
+/// The data-bearing repeated block (`t9943OutBlock[]`, confirmed from the raw
+/// capture's `res_example` array — rows are direct elements under the
+/// `t9943OutBlock` key). The 3 spec fields. `hname` (종목명, the index-futures
+/// contract name) is the canonical identity field, resolved by its `korean_name`
+/// from the baseline; `shcode` (단축코드) / `expcode` (확장코드) are the contract
+/// codes. `shcode` uses [`ls_core::string_or_number`] for wire-type tolerance
+/// (the gateway may send a code field as a JSON number); `#[serde(default)]` lets
+/// a sparse row deserialize cleanly. Field names mirror the LS spec verbatim.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T9943OutBlock {
+    /// Contract name / 종목명 (the canonical identity field).
+    pub hname: String,
+    /// Short code / 단축코드 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Expanded code / 확장코드.
+    pub expcode: String,
+}
+
+/// `t9943` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are the LS business-status fields; `outblock` is the
+/// index-futures-master row array under the `t9943OutBlock` key, tolerated as a
+/// single object OR an array via [`ls_core::de_vec_or_single`]. All
+/// `#[serde(default)]` so a terse or empty envelope still deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T9943Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t9943OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T9943OutBlock>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -3087,6 +3177,16 @@ impl MarketSession {
     pub async fn index_futures_master(&self, req: &T8467Request) -> LsResult<T8467Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T8467_POLICY, req)
+            .await
+    }
+
+    /// Read the index-futures master (지수선물마스터조회) via `t9943`.
+    /// Non-paginated; keyed by a `gubun` segment selector (`"V"` volatility /
+    /// `"S"` sector / any other value → KOSPI200 index futures). Returns the
+    /// master snapshot row array (contract name + short/expanded codes).
+    pub async fn index_futures_master_v2(&self, req: &T9943Request) -> LsResult<T9943Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T9943_POLICY, req)
             .await
     }
 }

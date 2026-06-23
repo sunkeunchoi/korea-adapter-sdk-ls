@@ -867,7 +867,7 @@ mod tests {
             "t1466", "t1485", "t1489", "t1492", "t1511", "t1514", "t1516", "t1531", "t1537", "t1601",
             "t1615", "t1640", "t1662", "t1664", "t1825", "t1826", "t1859", "t1866", "t1958",
             "t2301", "t2522", "t3341", "t8401", "t8424", "t8425", "t8426", "t8433", "t8435",
-            "t8467", "t8431", "t8436", "t9905", "t9907", "t9942",
+            "t8467", "t9943", "t8431", "t8436", "t9905", "t9907", "t9942",
         ];
         for tr in banner_trs {
             let page = reference
@@ -904,11 +904,12 @@ mod tests {
         // t8426 (PR-B U7) adds one more (F/O commodity-futures master);
         // t8433 (PR-B U8) adds one more (F/O index-option master);
         // t8435 (PR-B U9) adds one more (F/O derivatives master);
-        // t8467 (PR-B U10) adds one more (F/O index-futures master).
+        // t8467 (PR-B U10) adds one more (F/O index-futures master);
+        // t9943 (PR-B U11) adds one more (F/O index-futures master, array out-block).
         // (Wave 1 t1988 + t1964 ship PENDING — not implemented, not counted.)
         assert_eq!(
             reference.len(),
-            49,
+            50,
             "index + the implemented reference pages"
         );
 
