@@ -24,6 +24,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t1826` | 종목Q클릭검색리스트조회(씽큐스마트) | `market_session` | implemented, not yet recommended |
 | `t1859` | 서버저장조건 조건검색 | `market_session` | implemented, not yet recommended |
 | `t1866` | 서버저장조건 리스트조회 | `paginated` | implemented, not yet recommended |
+| `t1958` | ELW종목비교 | `market_session` | implemented, not yet recommended |
 | `t8412` | 주식 차트(N분봉) 조회 | `paginated` | recommended |
 | `t8425` | 전체테마 | `market_session` | implemented, not yet recommended |
 | `t8431` | ELW종목조회 | `market_session` | implemented, not yet recommended |

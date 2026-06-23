@@ -11,9 +11,10 @@ use ls_sdk::market_session::{
     T1101OutBlock, T1101Request, T1101Response, T1102OutBlock, T1102Request, T1102Response,
     T1531Request, T1531Response, T1537Request, T1537Response, T1825OutBlock1, T1825Request,
     T1825Response, T1826OutBlock, T1826Request, T1826Response, T1859OutBlock1, T1859Request,
-    T1859Response, T8425Request, T8425Response, T8431OutBlock, T8431Request, T8431Response,
-    T8436Request, T8436Response, T9905OutBlock1, T9905Request, T9905Response, T9907Request,
-    T9907Response, T9942Request, T9942Response,
+    T1859Response, T1958Request, T1958Response, T1964OutBlock1, T1964Request, T1964Response,
+    T8425Request, T8425Response, T8431OutBlock, T8431Request, T8431Response, T8436Request,
+    T8436Response, T9905OutBlock1, T9905Request, T9905Response, T9907Request, T9907Response,
+    T9942Request, T9942Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
@@ -1274,4 +1275,141 @@ fn t9942_request_and_response_round_trip() {
     }))
     .expect("empty result deserializes");
     assert!(empty.outblock.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// t1958 — ELW종목비교 (ELW comparison; Wave 1). Two ELW shcodes self-sourced
+// from t8431; three single-object out-blocks (two details + a comparison block).
+// ---------------------------------------------------------------------------
+
+/// Covers AE3. `T1958Request::new` serializes both shcodes under `t1958InBlock`,
+/// no continuation leak.
+#[test]
+fn t1958_request_serializes_with_both_shcodes() {
+    let value = serde_json::to_value(T1958Request::new("57J123", "57J456"))
+        .expect("serialize t1958 request");
+    let inblock = value["t1958InBlock"].as_object().expect("inblock object");
+    assert_eq!(inblock.len(), 2, "t1958InBlock carries only shcode1 and shcode2");
+    assert_eq!(value["t1958InBlock"]["shcode1"], "57J123");
+    assert_eq!(value["t1958InBlock"]["shcode2"], "57J456");
+    assert!(value.get("tr_cont").is_none());
+}
+
+/// Covers AE3. A representative success deserializes: both symbol detail blocks
+/// and the comparison block round-trip, with `hname` (the modeled non-key signal)
+/// populated and numeric fields parsing number-or-string.
+#[test]
+fn t1958_deserializes_success_with_real_values() {
+    let resp: T1958Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1958OutBlock": { "hname": "삼성전자콜ELW", "item1": "삼성전자", "elwopt": "2",
+            "price": 105, "volume": 100000, "diff": 1.5 },
+        "t1958OutBlock1": { "hname": "SK하이닉스풋ELW", "item1": "SK하이닉스", "elwopt": "3",
+            "price": "210", "volume": "50000", "diff": "-0.7" },
+        "t1958OutBlock2": { "hnamecmp": "비교", "item1cmp": "기초", "pricecmp": 5,
+            "volumecmp": 1000, "diffcmp": 0.1 }
+    }))
+    .expect("representative t1958 success must deserialize");
+    assert_eq!(resp.outblock.hname, "삼성전자콜ELW", "symbol 1 detail populated");
+    assert_eq!(resp.outblock.price, "105", "price from JSON number");
+    assert_eq!(resp.outblock1.price, "210", "price from JSON string");
+    assert_eq!(resp.outblock2.pricecmp, "5", "comparison block populated");
+}
+
+/// Covers AE3. An empty/degenerate result (unpopulated detail blocks) deserializes
+/// and is recognized as the pending case (no comparison payload).
+#[test]
+fn t1958_empty_result_deserializes_as_empty() {
+    let empty: T1958Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1958OutBlock": {},
+        "t1958OutBlock1": {},
+        "t1958OutBlock2": {}
+    }))
+    .expect("empty detail blocks must deserialize");
+    assert!(
+        empty.outblock.hname.is_empty(),
+        "an unpopulated symbol-1 block is the pending case, not a flip"
+    );
+}
+
+/// Covers AE3. `T1958Response` default envelope is empty.
+#[test]
+fn t1958_response_envelope_default_is_empty() {
+    let resp = T1958Response::default();
+    assert_eq!(resp.rsp_cd, "");
+    assert!(resp.outblock.hname.is_empty());
+    assert!(resp.outblock2.hnamecmp.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// t1964 — ELW전광판 (ELW board; Wave 1). item (underlying code) self-sourced from
+// t9905; broad/default filters for the remaining 10 fields.
+// ---------------------------------------------------------------------------
+
+/// `T1964Request::new` serializes the underlying `item` plus the broad/default
+/// filters under `t1964InBlock`; no continuation leak.
+#[test]
+fn t1964_request_serializes_with_item_and_broad_defaults() {
+    let value = serde_json::to_value(T1964Request::new("005930"))
+        .expect("serialize t1964 request");
+    let inblock = value["t1964InBlock"].as_object().expect("inblock object");
+    assert_eq!(inblock.len(), 11, "t1964InBlock carries all 11 fields");
+    assert_eq!(value["t1964InBlock"]["item"], "005930", "underlying code");
+    assert_eq!(value["t1964InBlock"]["elwopt"], "0", "broad call/put filter");
+    assert_eq!(value["t1964InBlock"]["issuercd"], "", "broad issuer (all)");
+    assert!(value.get("tr_cont").is_none());
+}
+
+/// A representative success deserializes: the board rows round-trip with `shcode`
+/// (ELW code) and `item1` (underlying code) populated; single-or-array tolerated.
+#[test]
+fn t1964_deserializes_success_with_real_values() {
+    let resp: T1964Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1964OutBlock1": [
+            { "shcode": "57J123", "hname": "삼성전자콜ELW", "item1": "005930",
+              "itemnm": "삼성전자", "issuernmk": "한국투자" },
+            { "shcode": 57456, "hname": "삼성전자풋ELW", "item1": "005930",
+              "itemnm": "삼성전자", "issuernmk": "미래에셋" }
+        ]
+    }))
+    .expect("representative t1964 success must deserialize");
+    assert_eq!(resp.outblock1.len(), 2);
+    assert_eq!(resp.outblock1[0].shcode, "57J123", "ELW code populated");
+    assert_eq!(resp.outblock1[0].item1, "005930", "underlying code populated");
+    assert_eq!(resp.outblock1[1].shcode, "57456", "shcode from JSON number");
+}
+
+/// An empty board (`00707`, empty array) deserializes and is the pending case.
+#[test]
+fn t1964_empty_result_deserializes_as_empty() {
+    let empty: T1964Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t1964OutBlock1": []
+    }))
+    .expect("empty board must deserialize");
+    assert!(empty.outblock1.is_empty(), "empty board is the pending case");
+}
+
+/// A single board row (not an array) is tolerated as a one-element Vec.
+#[test]
+fn t1964_single_out_row_tolerated_as_array() {
+    let single: T1964Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1964OutBlock1": { "shcode": "57J123", "item1": "005930" }
+    }))
+    .expect("single board row tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].shcode, "57J123");
+}
+
+/// `T1964OutBlock1.shcode` parses number-or-string alike.
+#[test]
+fn t1964_shcode_number_or_string_yields_same_value() {
+    let n: T1964OutBlock1 =
+        serde_json::from_value(serde_json::json!({ "shcode": 57123 })).expect("number");
+    let s: T1964OutBlock1 =
+        serde_json::from_value(serde_json::json!({ "shcode": "57123" })).expect("string");
+    assert_eq!(n.shcode, "57123");
+    assert_eq!(n.shcode, s.shcode);
 }

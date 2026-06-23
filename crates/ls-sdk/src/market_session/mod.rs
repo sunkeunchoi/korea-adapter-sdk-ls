@@ -1155,6 +1155,201 @@ pub struct T9942Response {
     pub outblock: Vec<T9942OutBlock>,
 }
 
+/// Input block for `t1958` — ELW종목비교 (ELW symbol comparison; the Wave 1
+/// comparison member). Keyed by two ELW codes (`shcode1`/`shcode2`) self-sourced
+/// from `t8431` (`t8431OutBlock.shcode`) — the modeled discovery edge; never
+/// fabricated.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1958InBlock {
+    /// First ELW code / 종목코드1 (from `t8431`).
+    pub shcode1: String,
+    /// Second ELW code / 종목코드2 (from `t8431`).
+    pub shcode2: String,
+}
+
+/// `t1958` request — serializes to `{"t1958InBlock":{"shcode1":...,"shcode2":...}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1958Request {
+    #[serde(rename = "t1958InBlock")]
+    pub inblock: T1958InBlock,
+}
+impl T1958Request {
+    /// Build a `t1958` comparison request for two ELW codes (source both from
+    /// [`T8431Response`]).
+    pub fn new(shcode1: impl Into<String>, shcode2: impl Into<String>) -> Self {
+        T1958Request {
+            inblock: T1958InBlock {
+                shcode1: shcode1.into(),
+                shcode2: shcode2.into(),
+            },
+        }
+    }
+}
+
+/// `t1958OutBlock` / `t1958OutBlock1` — one ELW symbol's detail (single object;
+/// the two compared symbols). A representative subset, every field via
+/// [`ls_core::string_or_number`]; `hname` is the modeled non-key signal of a
+/// populated comparison.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1958Detail {
+    /// Korean name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Underlying asset / 기초자산.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub item1: String,
+    /// Issuer / 발행사.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub issuernmk: String,
+    /// Call/put / 콜풋구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub elwopt: String,
+    /// Price / 가격.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Volume / 거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Rate of change / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+}
+
+/// `t1958OutBlock2` — the comparison block (the `…cmp` fields; single object). A
+/// representative subset via [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1958Compare {
+    /// Compared name / 종목명비교.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hnamecmp: String,
+    /// Compared underlying / 기초자산비교.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub item1cmp: String,
+    /// Compared price / 가격비교.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub pricecmp: String,
+    /// Compared volume / 거래량비교.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volumecmp: String,
+    /// Compared rate of change / 등락율비교.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diffcmp: String,
+}
+
+/// `t1958` response — the first symbol (`outblock`), the second (`outblock1`),
+/// and the comparison block (`outblock2`); all single objects, all
+/// `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1958Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1958OutBlock", default)]
+    pub outblock: T1958Detail,
+    #[serde(rename = "t1958OutBlock1", default)]
+    pub outblock1: T1958Detail,
+    #[serde(rename = "t1958OutBlock2", default)]
+    pub outblock2: T1958Compare,
+}
+
+/// Input block for `t1964` — ELW전광판 (ELW board; the Wave 1 board member).
+/// `item` (기초자산코드) is the underlying-asset code self-sourced from `t9905`
+/// (`t9905OutBlock1.shcode`) — the modeled discovery edge; the remaining fields
+/// are broad/default filters.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1964InBlock {
+    /// Underlying-asset code / 기초자산코드 (from `t9905`).
+    pub item: String,
+    /// Issuer / 발행사 (broad: empty = all).
+    pub issuercd: String,
+    /// Expiry month / 만기월물 (broad: empty = all).
+    pub lastmonth: String,
+    /// Call/put / 콜풋구분 (broad: `"0"`).
+    pub elwopt: String,
+    /// Moneyness / 머니구분 (broad: `"0"`).
+    pub atmgubun: String,
+    /// Exercise type / 권리행사방식 (broad: `"0"`).
+    pub elwtype: String,
+    /// Settlement / 결제방법 (broad: `"0"`).
+    pub settletype: String,
+    /// Exercise underlying class / 행사기초자산구분 (broad: `"0"`).
+    pub elwexecgubun: String,
+    /// Ratio range start / 시작비율 (broad: `"0"`).
+    pub fromrat: String,
+    /// Ratio range end / 종료비율 (broad: `"0"`).
+    pub torat: String,
+    /// Volume filter / 거래량 (broad: `"0"`).
+    pub volume: String,
+}
+
+/// `t1964` request — serializes to `{"t1964InBlock":{...}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1964Request {
+    #[serde(rename = "t1964InBlock")]
+    pub inblock: T1964InBlock,
+}
+impl T1964Request {
+    /// Build a `t1964` board request for one underlying-asset code (source it from
+    /// [`T9905Response`]) with broad/default filters for the remaining fields.
+    pub fn new(item: impl Into<String>) -> Self {
+        T1964Request {
+            inblock: T1964InBlock {
+                item: item.into(),
+                issuercd: String::new(),
+                lastmonth: String::new(),
+                elwopt: "0".into(),
+                atmgubun: "0".into(),
+                elwtype: "0".into(),
+                settletype: "0".into(),
+                elwexecgubun: "0".into(),
+                fromrat: "0".into(),
+                torat: "0".into(),
+                volume: "0".into(),
+            },
+        }
+    }
+}
+
+/// `t1964OutBlock1` — one ELW board row. `shcode` (ELW코드) and `item1`
+/// (기초자산코드) via [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1964OutBlock1 {
+    /// ELW code / ELW코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Korean name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Underlying-asset code / 기초자산코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub item1: String,
+    /// Underlying-asset name / 기초자산명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub itemnm: String,
+    /// Issuer / 발행사.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub issuernmk: String,
+}
+
+/// `t1964` response — ELW board array under `t1964OutBlock1`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1964Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t1964OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1964OutBlock1>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -1318,6 +1513,24 @@ impl MarketSession {
     pub async fn elw_master(&self, req: &T9942Request) -> LsResult<T9942Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T9942_POLICY, req)
+            .await
+    }
+
+    /// Compare two ELW symbols (ELW종목비교) via `t1958`. Non-paginated; keyed by
+    /// two `shcode`s sourced from `t8431` ([`MarketSession::elw_symbols`]); the
+    /// response carries each symbol's detail plus a comparison block.
+    pub async fn elw_compare(&self, req: &T1958Request) -> LsResult<T1958Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1958_POLICY, req)
+            .await
+    }
+
+    /// Read the ELW board (ELW전광판) for one underlying via `t1964`.
+    /// Non-paginated; keyed by an `item` underlying-asset code sourced from
+    /// `t9905` ([`MarketSession::underlying_list`]), with broad/default filters.
+    pub async fn elw_board(&self, req: &T1964Request) -> LsResult<T1964Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1964_POLICY, req)
             .await
     }
 }

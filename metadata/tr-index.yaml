@@ -205,7 +205,7 @@ trs:
     venue_session: krx_regular
   t1958:
     file: trs/t1958.yaml
-    owner_class: standalone
+    owner_class: market_session
     protocol: rest
     instrument_domain: stock
     venue_session: krx_regular

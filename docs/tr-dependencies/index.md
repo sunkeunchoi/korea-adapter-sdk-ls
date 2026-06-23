@@ -35,7 +35,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t1859` | 서버저장조건 조건검색 | `market_session` | implemented | [t1859](./t1859.md) |
 | `t1860` | 서버저장조건 실시간검색 | `standalone` | tracked | [t1860](./t1860.md) |
 | `t1866` | 서버저장조건 리스트조회 | `paginated` | implemented | [t1866](./t1866.md) |
-| `t1958` | ELW종목비교 | `standalone` | tracked | [t1958](./t1958.md) |
+| `t1958` | ELW종목비교 | `market_session` | implemented | [t1958](./t1958.md) |
 | `t1964` | ELW전광판 | `standalone` | tracked | [t1964](./t1964.md) |
 | `t1988` | 기초자산리스트조회 | `standalone` | tracked | [t1988](./t1988.md) |
 | `t3102` | 뉴스본문 | `standalone` | tracked | [t3102](./t3102.md) |

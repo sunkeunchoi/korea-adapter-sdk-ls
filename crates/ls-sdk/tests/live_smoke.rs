@@ -20,8 +20,8 @@ use ls_core::{LsConfig, LsError, LsResult};
 use ls_sdk::account::CSPAQ12200Request;
 use ls_sdk::market_session::{
     T1101Request, T1102Request, T1531Request, T1537Request, T1825Request, T1826Request,
-    T1859Request, T8425Request, T8431Request, T8436Request, T9905Request, T9907Request,
-    T9942Request,
+    T1859Request, T1958Request, T1964Request, T8425Request, T8431Request, T8436Request,
+    T9905Request, T9907Request, T9942Request,
 };
 use ls_sdk::paginated::{
     T1403Request, T1441Request, T1452Request, T1463Request, T1466Request, T1489Request,
@@ -1009,6 +1009,123 @@ async fn live_smoke_t9942() {
             panic!("live-smoke-t9942 failed: {e}");
         }
     }
+}
+
+/// `make live-smoke-t1958`: paper guard → token → `t8431` ELW-symbol list →
+/// `t1958` comparison of the first two ELW `shcode`s.
+///
+/// CHAINED, self-sourcing (R8): the two `shcode`s come from a live `t8431` call,
+/// never fabricated. ELW `shcode`s are public market identifiers (may appear in
+/// `inputs`). The gate is the symbol-1 detail block (`outblock.hname`) being
+/// populated — the comparison ran. An empty/short `t8431` surfaces as a
+/// credential-safe `SMOKE-FAIL` (spine-input-unavailable).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1958`"]
+async fn live_smoke_t1958() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    // Self-source two ELW shcodes from a live t8431 list.
+    let elws = sdk
+        .market_session()
+        .elw_symbols(&T8431Request::new())
+        .await
+        .expect("t8431 elw_symbols (shcode source) failed");
+    if elws.outblock.len() < 2 {
+        eprintln!(
+            "SMOKE-FAIL target=live-smoke-t1958 t8431 spine source <2 codes (rsp_cd={})",
+            elws.rsp_cd
+        );
+        panic!("live-smoke-t1958: need two ELW shcodes to compare");
+    }
+    let (shcode1, shcode2) = (elws.outblock[0].shcode.clone(), elws.outblock[1].shcode.clone());
+
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .market_session()
+        .elw_compare(&T1958Request::new(&shcode1, &shcode2))
+        .await
+    {
+        Ok(resp) if resp.outblock.hname.is_empty() => {
+            eprintln!(
+                "SMOKE-FAIL target=live-smoke-t1958 empty comparison payload (rsp_cd={})",
+                resp.rsp_cd
+            );
+            panic!("live-smoke-t1958: comparison block empty (shape-unconfirmed)");
+        }
+        Ok(resp) => {
+            // shcodes are public ELW identifiers — OK to record.
+            record(
+                "live-smoke-t1958",
+                &format!("env=paper shcode1={shcode1} shcode2={shcode2} date={date}"),
+                &format!("rsp_cd={} compared=2", resp.rsp_cd),
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1958 market-data failure (not evidence)");
+            panic!("live-smoke-t1958 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1964`: paper guard → token → `t9905` underlying list →
+/// `t1964` ELW board for the first underlying (broad/default filters).
+///
+/// CHAINED, self-sourcing (R8): the `item` underlying code comes from a live
+/// `t9905` call, never fabricated. The smoke walks the first several underlyings
+/// until one returns a non-empty board (an underlying with no listed ELWs is not
+/// a failure). An empty `t9905`, or no underlying yielding a board, surfaces as a
+/// credential-safe `SMOKE-FAIL`.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1964`"]
+async fn live_smoke_t1964() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let underlyings = sdk
+        .market_session()
+        .underlying_list(&T9905Request::new())
+        .await
+        .expect("t9905 underlying_list (item source) failed");
+    if underlyings.outblock1.is_empty() {
+        eprintln!(
+            "SMOKE-FAIL target=live-smoke-t1964 t9905 spine source empty (rsp_cd={})",
+            underlyings.rsp_cd
+        );
+        panic!("live-smoke-t1964: no underlying to key the board");
+    }
+
+    let date = Utc::now().format("%Y-%m-%d");
+    // Walk the first several underlyings until one has a non-empty board. Pace
+    // the calls (t1964 is 2/sec) so the walk does not self-trigger IGW00201
+    // throttling (transient, environmental — not a TR defect).
+    for u in underlyings.outblock1.iter().take(10) {
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        let item = u.shcode.clone();
+        match sdk
+            .market_session()
+            .elw_board(&T1964Request::new(&item))
+            .await
+        {
+            Ok(resp) if !resp.outblock1.is_empty() => {
+                record(
+                    "live-smoke-t1964",
+                    &format!("env=paper item={item} date={date}"),
+                    &format!("rsp_cd={} elws={}", resp.rsp_cd, resp.outblock1.len()),
+                );
+                return;
+            }
+            Ok(_) => continue, // this underlying has no listed ELWs; try the next
+            Err(e) => {
+                eprintln!("SMOKE-FAIL target=live-smoke-t1964 market-data failure (not evidence)");
+                panic!("live-smoke-t1964 failed: {e}");
+            }
+        }
+    }
+    eprintln!("SMOKE-FAIL target=live-smoke-t1964 no underlying yielded a non-empty board");
+    panic!("live-smoke-t1964: no non-empty board among the first underlyings (shape-unconfirmed)");
 }
 
 // ---------------------------------------------------------------------------
