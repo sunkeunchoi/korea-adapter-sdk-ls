@@ -41,27 +41,37 @@ raw capture. Do not hand-write `normalized/trs/<tr>.json`.
   `properties` field set are all present and non-empty. A TR whose raw shape is
   missing a request or response block, or whose blocks are too sparse to pin a
   deserializable baseline, is `HELD <tr> — incomplete raw shape; needs live probe`.
-- This recipe covers read-only, paper-compatible REST reads. An order/account/
-  realtime/WebSocket TR is `HELD <tr> — out of scope (<reason>)`.
+- This recipe covers read-only, paper-compatible REST reads, including read-only
+  account-state reads. The read-only test: a request block with **no order number,
+  no registration field, and no mutation field** is read-only and eligible. An
+  order, registration, mutation, or realtime/WebSocket TR — anything that creates,
+  changes, removes, or subscribes to broker-side state — is `HELD <tr> — out of
+  scope (<reason>)`.
 
 ## 1. Author `metadata/trs/<tr>.yaml`
 
 Mirror the closest existing exemplar: `metadata/trs/t1101.yaml` (a
-`market_session` read with a caller identifier) or `metadata/trs/t1452.yaml` (a
-`paginated` self-continuation read). Every enum value is `snake_case` per
+`market_session` read with a caller identifier), `metadata/trs/t1452.yaml` (a
+`paginated` self-continuation read), or `metadata/trs/CSPAQ12200.yaml` (a
+read-only `account` read). Every enum value is `snake_case` per
 `crates/ls-metadata/src/schema.rs`. Author from the raw capture's field set:
 
 - `tr_code`, `name` (from the raw `code`/`name`).
-- `owner_class`: `paginated` if the read self-continues (a body cursor field like
-  `cts_date`/`idx`), else `market_session`.
+- `owner_class`: `account` for a read-only account-state read (one whose request
+  selects the caller's own account/holdings, e.g. a `/accno` endpoint — mirror
+  `metadata/trs/CSPAQ12200.yaml`); else `paginated` if the read self-continues (a
+  body cursor field like `cts_date`/`idx`); else `market_session`.
 - `facets`: `protocol` (`rest`), `instrument_domain` (the closed enum variant for
   the TR's market area, e.g. `sector_index` / `stock`), `venue_session`
-  (`krx_regular` for session-scoped reads), `date_sensitive`, `self_paginated`
-  (true ⟺ `owner_class: paginated`), `account_state: false`, `paper_incompatible:
-  false`, `certification_path: none` (no Focused Evidence at this rung),
-  `rate_bucket: market_data`, and `caller_supplied_identifiers` (the `required=Y`
-  inputs the caller supplies — e.g. `[upcode]`, `[upcode, shcode]`; `[]` for
-  no-input reads). Mode/filter flags (`gubun*`, `rate_gbn`) are NOT identifiers.
+  (`krx_regular` for session-scoped reads; `unspecified` for account-state reads,
+  which are session-agnostic), `date_sensitive`, `self_paginated`
+  (true ⟺ `owner_class: paginated`), `paper_incompatible: false`,
+  `certification_path: none` (no Focused Evidence at this rung), and
+  `caller_supplied_identifiers` (the `required=Y` inputs the caller supplies — e.g.
+  `[upcode]`, `[upcode, shcode]`; `[]` for no-input reads). Mode/filter flags
+  (`gubun*`, `rate_gbn`) are NOT identifiers. For `account_state` and `rate_bucket`,
+  set `account_state: true` / `rate_bucket: account` when `owner_class: account`,
+  else `account_state: false` / `rate_bucket: market_data`.
 - `dependencies.self_continuation_fields`: the body cursor for a paginated read
   (e.g. `[cts_date]`), else `[]`.
 - `support: {tracked: true, implemented: false, recommended: false}`.
