@@ -597,7 +597,10 @@ pub struct CFOBQ10500InBlock {}
 /// `CFOBQ10500InBlock` key.
 ///
 /// Serializes to `{"CFOBQ10500InBlock":{}}`. No account number and no caller
-/// field ever appears in the body.
+/// field ever appears in the body. The key is `CFOBQ10500InBlock` with NO `1`
+/// suffix (unlike the sibling `CSPAQ*InBlock1` keys): the baseline carries no
+/// numbered request in-block for this header-only read, so the suffix-less name
+/// is the spec-accurate wire key — do NOT "normalize" it to `...InBlock1`.
 #[derive(Serialize, Debug, Clone, Default)]
 pub struct CFOBQ10500Request {
     #[serde(rename = "CFOBQ10500InBlock")]

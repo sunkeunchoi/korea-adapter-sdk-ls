@@ -1,7 +1,16 @@
-//! Account (`CSPAQ12200`) dependency-class tests.
+//! Account dependency-class tests (`CSPAQ12200`, `CSPAQ12300`, `CSPAQ22200`,
+//! `CFOBQ10500`).
+//!
+//! All four are read-only account-state reads sharing the same discipline: the
+//! request is built from the CONFIG-supplied account, never a caller identifier,
+//! and the account number never appears in the body. They differ only in request
+//! shape — `CSPAQ12200` (single `BalCreTp`), `CSPAQ12300` (four query-shape
+//! enums), `CSPAQ22200` (single `BalCreTp`), and `CFOBQ10500` (empty in-block,
+//! three out-blocks) — and endpoint (`/stock/accno` vs `CFOBQ10500`'s
+//! `/futureoption/accno`).
 //!
 //! The defining facet is `account_state: true`, so the Change-Scoped Gate selects
-//! ONLY credential-free request-construction tests for this TR. These tests prove:
+//! ONLY credential-free request-construction tests for these TRs. These tests prove:
 //!   - the request constructs from the CONFIG-supplied account (never a caller
 //!     identifier) with `BalCreTp`, serializing to `{"CSPAQ12200InBlock1":{...}}`
 //!     WITHOUT a network call,
@@ -40,8 +49,11 @@ const CSPAQ22200_FIXTURE: &str = include_str!("fixtures/CSPAQ22200_resp.json");
 /// The spec-derived, SYNTHETIC `CFOBQ10500` response fixture.
 const CFOBQ10500_FIXTURE: &str = include_str!("fixtures/CFOBQ10500_resp.json");
 
-/// `CSPAQ12200_POLICY.path` — the mounted endpoint for the account TR.
-const CSPAQ12200_PATH: &str = "/stock/accno";
+/// The shared REST path for the `/stock/accno` account TRs (`CSPAQ12200`,
+/// `CSPAQ12300`, `CSPAQ22200`) — they mount the same endpoint and discriminate
+/// on the `tr_cd` header. (`CFOBQ10500` uses `/futureoption/accno`, spelled
+/// inline in its test.)
+const STOCK_ACCNO_PATH: &str = "/stock/accno";
 
 /// Build an `LsSdk` whose dispatch is pointed at the mock server.
 fn sdk_for(server: &MockServer) -> LsSdk {
@@ -128,7 +140,7 @@ async fn balance_deserializes_spec_fixture() {
     let server = MockServer::start().await;
     mount_token(&server).await;
     Mock::given(method("POST"))
-        .and(path(CSPAQ12200_PATH))
+        .and(path(STOCK_ACCNO_PATH))
         .and(header("tr_cd", "CSPAQ12200"))
         .and(header("tr_cont", "N"))
         .respond_with(
@@ -199,7 +211,7 @@ async fn errors_01715_and_01900_classify_distinctly() {
     let server_1900 = MockServer::start().await;
     mount_token(&server_1900).await;
     Mock::given(method("POST"))
-        .and(path(CSPAQ12200_PATH))
+        .and(path(STOCK_ACCNO_PATH))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "rsp_cd": "01900",
             "rsp_msg": "모의투자 미지원 업무입니다."
@@ -217,7 +229,7 @@ async fn errors_01715_and_01900_classify_distinctly() {
     let server_1715 = MockServer::start().await;
     mount_token(&server_1715).await;
     Mock::given(method("POST"))
-        .and(path(CSPAQ12200_PATH))
+        .and(path(STOCK_ACCNO_PATH))
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
             "rsp_cd": "01715",
             "rsp_msg": "조회기간 오류입니다."
@@ -304,7 +316,7 @@ async fn cspaq12300_deserializes_spec_fixture() {
     let server = MockServer::start().await;
     mount_token(&server).await;
     Mock::given(method("POST"))
-        .and(path(CSPAQ12200_PATH))
+        .and(path(STOCK_ACCNO_PATH))
         .and(header("tr_cd", "CSPAQ12300"))
         .respond_with(
             ResponseTemplate::new(200)
@@ -443,7 +455,7 @@ async fn cspaq22200_deserializes_spec_fixture() {
     let server = MockServer::start().await;
     mount_token(&server).await;
     Mock::given(method("POST"))
-        .and(path(CSPAQ12200_PATH))
+        .and(path(STOCK_ACCNO_PATH))
         .and(header("tr_cd", "CSPAQ22200"))
         .respond_with(
             ResponseTemplate::new(200)
@@ -600,7 +612,7 @@ async fn cfobq10500_deserializes_spec_fixture() {
         .expect("CFOBQ10500 F/O deposit inquiry should succeed");
 
     assert_eq!(resp.rsp_cd, "00000");
-    assert_eq!(resp.outblock1.acntno, "00000000-01");
+    assert_eq!(resp.outblock1.acntno, TEST_ACCOUNT_NO);
 
     assert_eq!(resp.outblock2.len(), 1, "one deposit row");
     let dep = &resp.outblock2[0];
