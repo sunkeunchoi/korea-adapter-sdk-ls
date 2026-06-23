@@ -43,10 +43,14 @@ raw capture. Do not hand-write `normalized/trs/<tr>.json`.
   deserializable baseline, is `HELD <tr> — incomplete raw shape; needs live probe`.
 - This recipe covers read-only, paper-compatible REST reads, including read-only
   account-state reads. The read-only test: a request block with **no order number,
-  no registration field, and no mutation field** is read-only and eligible. An
-  order, registration, mutation, or realtime/WebSocket TR — anything that creates,
-  changes, removes, or subscribes to broker-side state — is `HELD <tr> — out of
-  scope (<reason>)`.
+  no registration field, and no mutation field** is read-only and eligible. Those
+  markers, concretely: no order-id input (e.g. `OrdNo`/`OrgOrdNo`), no
+  register/deregister flag (e.g. `sFlag` `'E'`/`'D'`, `sSysUserFlag`), and no
+  caller-set quantity/price/amount that places or changes an order — an account
+  *balance/deposit inquiry* (조회) carrying only count/mode flags passes; an order,
+  registration, mutation, or realtime/WebSocket TR — anything that creates, changes,
+  removes, or subscribes to broker-side state — is `HELD <tr> — out of scope
+  (<reason>)`.
 
 ## 1. Author `metadata/trs/<tr>.yaml`
 
@@ -63,8 +67,10 @@ read-only `account` read). Every enum value is `snake_case` per
   body cursor field like `cts_date`/`idx`); else `market_session`.
 - `facets`: `protocol` (`rest`), `instrument_domain` (the closed enum variant for
   the TR's market area, e.g. `sector_index` / `stock`), `venue_session`
-  (`krx_regular` for session-scoped reads; `unspecified` for account-state reads,
-  which are session-agnostic), `date_sensitive`, `self_paginated`
+  (`krx_regular` for session-scoped reads; `unspecified` for session-agnostic
+  account reads — but a session-scoped account read still takes its session, e.g.
+  `krx_extended` for a `KRX야간` night-derivatives balance like `CCENQ90200`),
+  `date_sensitive`, `self_paginated`
   (true ⟺ `owner_class: paginated`), `paper_incompatible: false`,
   `certification_path: none` (no Focused Evidence at this rung), and
   `caller_supplied_identifiers` (the `required=Y` inputs the caller supplies — e.g.
