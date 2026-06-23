@@ -1,0 +1,53 @@
+{
+  "rsp_cd": "00000",
+  "t1516OutBlock1": [
+    {
+      "diff_vol": "-000052.61",
+      "change": 30,
+      "shcode": "000020",
+      "sign": "5",
+      "diff": "-00.30",
+      "orgsvolume": 0,
+      "perx": "015.40",
+      "volume": 80350,
+      "high": 10150,
+      "total": 2804,
+      "low": 9870,
+      "price": 10040,
+      "sojinrate": "004.02",
+      "value": 799,
+      "hname": "동화약품",
+      "open": 10130,
+      "beta": "0.0000",
+      "frgsvolume": 0
+    },
+    {
+      "diff_vol": "-000082.37",
+      "change": 0,
+      "shcode": "000640",
+      "sign": "3",
+      "diff": "000.00",
+      "orgsvolume": 0,
+      "perx": "064.07",
+      "volume": 1326,
+      "high": 89800,
+      "total": 5695,
+      "low": 88700,
+      "price": 89700,
+      "sojinrate": "012.68",
+      "value": 118,
+      "hname": "동아쏘시오홀딩스",
+      "open": 88800,
+      "beta": "0.0000",
+      "frgsvolume": 0
+    }
+  ],
+  "rsp_msg": "정상적으로 조회가 완료되었습니다.",
+  "t1516OutBlock": {
+    "shcode": "000640",
+    "change": "0009.26",
+    "sign": "2",
+    "jdiff": "000.36",
+    "pricejisu": "000002610.62"
+  }
+}

@@ -149,4 +149,13 @@ impl Paginated {
             .post_paginated(&ls_core::endpoint_policy::T3341_POLICY, req)
             .await
     }
+
+    /// Read one sector's period trend (업종기간별추이) via `t1514`. Self-paginated
+    /// on the body `cts_date` cursor (`cnt` serialized as a number); single-page
+    /// scope — no multi-page collection.
+    pub async fn sector_trend(&self, req: &T1514Request) -> LsResult<T1514Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1514_POLICY, req)
+            .await
+    }
 }

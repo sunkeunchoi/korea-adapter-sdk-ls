@@ -423,6 +423,78 @@ pub const T3341_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+/// t8424 — 전체업종 (all-sectors list; non-paginated sector/index read). The
+/// anchor and `upcode` source for the [업종] 시세 cluster (Wave A).
+pub const T8424_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8424",
+    path: "/indtp/market-data",
+    module: "indtp",
+    group: "[업종] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1511 — 업종현재가 (one sector's index snapshot; non-paginated).
+pub const T1511_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1511",
+    path: "/indtp/market-data",
+    module: "indtp",
+    group: "[업종] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(5),
+};
+
+/// t1485 — 예상지수 (one sector's expected/auction index; non-paginated).
+pub const T1485_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1485",
+    path: "/indtp/market-data",
+    module: "indtp",
+    group: "[업종] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1516 — 업종별종목시세 (per-sector stock board; non-paginated; two inputs).
+pub const T1516_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1516",
+    path: "/indtp/market-data",
+    module: "indtp",
+    group: "[업종] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1514 — 업종기간별추이 (one sector's period trend; self-paginated on
+/// `cts_date`). `has_pagination: true` mirrors `facets.self_paginated`.
+pub const T1514_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1514",
+    path: "/indtp/market-data",
+    module: "indtp",
+    group: "[업종] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
 /// t1452 — 거래량상위 (top trading volume; single-page body-`idx` paginated).
 pub const T1452_POLICY: EndpointPolicy = EndpointPolicy {
     tr_code: "t1452",
@@ -650,6 +722,11 @@ mod tests {
             T1662_POLICY,
             T1664_POLICY,
             T3341_POLICY,
+            T8424_POLICY,
+            T1511_POLICY,
+            T1485_POLICY,
+            T1516_POLICY,
+            T1514_POLICY,
             CSPAQ12200_POLICY,
         ] {
             assert!(!p.is_order, "{} must not be an order endpoint", p.tr_code);

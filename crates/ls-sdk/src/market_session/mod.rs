@@ -1720,6 +1720,318 @@ pub struct T1664Response {
     pub outblock1: Vec<T1664OutBlock1>,
 }
 
+// ---------------------------------------------------------------------------
+// [업종] 시세 — sector/index cluster (Wave A). All on `/indtp/market-data`,
+// instrument_domain `sector_index`. `upcode` (업종코드, e.g. "001"=코스피종합) is a
+// fixed-width sector code → stays string-serialized; never `string_as_number`.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t8424` — 전체업종 (all-sectors list). `gubun1` is an optional
+/// filter; the all-sectors read sends it empty.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8424InBlock {
+    /// Filter / 구분 (empty = all sectors).
+    pub gubun1: String,
+}
+
+/// `t8424` request — serializes to `{"t8424InBlock":{"gubun1":""}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8424Request {
+    #[serde(rename = "t8424InBlock")]
+    pub inblock: T8424InBlock,
+}
+impl T8424Request {
+    /// Build a `t8424` all-sectors request (no meaningful caller input).
+    pub fn new() -> Self {
+        T8424Request {
+            inblock: T8424InBlock {
+                gubun1: String::new(),
+            },
+        }
+    }
+}
+impl Default for T8424Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `t8424OutBlock` — one sector row: the `upcode` (업종코드) fed to the four
+/// consumers (`t1511`/`t1514`/`t1516`/`t1485`) and its Korean name.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8424OutBlock {
+    /// Sector name / 업종명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Sector code / 업종코드 (the `upcode` consumer key; string, never numeric).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub upcode: String,
+}
+
+/// `t8424` response — the sector array under `t8424OutBlock`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8424Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t8424OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T8424OutBlock>,
+}
+
+/// Input block for `t1511` — 업종현재가 (index snapshot for one sector).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1511InBlock {
+    /// Sector code / 업종코드 (e.g. "001"; from `t8424` or a literal sector code).
+    pub upcode: String,
+}
+
+/// `t1511` request — serializes to `{"t1511InBlock":{"upcode":"001"}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1511Request {
+    #[serde(rename = "t1511InBlock")]
+    pub inblock: T1511InBlock,
+}
+impl T1511Request {
+    /// Build a `t1511` index-snapshot request for one sector code.
+    pub fn new(upcode: impl Into<String>) -> Self {
+        T1511Request {
+            inblock: T1511InBlock {
+                upcode: upcode.into(),
+            },
+        }
+    }
+}
+
+/// `t1511OutBlock` — the index snapshot. A representative, spec-grounded subset
+/// of the ~65-field `t1511OutBlock`; every numeric-bearing field via
+/// [`ls_core::string_or_number`] (the gateway mixes string and number forms).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1511OutBlock {
+    /// Sector name / 업종명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Current index / 지수 (firstjisu in the full spec).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub firstjisu: String,
+    /// Previous-day index / 전일지수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jniljisu: String,
+    /// Open index / 시가지수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub openjisu: String,
+    /// High index / 고가지수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub highjisu: String,
+    /// Change / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Volume / 거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Value / 거래대금.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub value: String,
+}
+
+/// `t1511` response — single snapshot under `t1511OutBlock`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1511Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1511OutBlock", default)]
+    pub outblock: T1511OutBlock,
+}
+
+/// Input block for `t1485` — 예상지수 (expected/auction index for one sector).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1485InBlock {
+    /// Sector code / 업종코드.
+    pub upcode: String,
+    /// Mode / 구분.
+    pub gubun: String,
+}
+
+/// `t1485` request — serializes to `{"t1485InBlock":{"upcode":"001","gubun":"1"}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1485Request {
+    #[serde(rename = "t1485InBlock")]
+    pub inblock: T1485InBlock,
+}
+impl T1485Request {
+    /// Build a `t1485` expected-index request for one sector and mode.
+    pub fn new(upcode: impl Into<String>, gubun: impl Into<String>) -> Self {
+        T1485Request {
+            inblock: T1485InBlock {
+                upcode: upcode.into(),
+                gubun: gubun.into(),
+            },
+        }
+    }
+}
+
+/// `t1485OutBlock` — expected-index summary. Numerics via
+/// [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1485OutBlock {
+    /// Expected index / 예상지수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub pricejisu: String,
+    /// Change / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Volume / 거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+}
+
+/// `t1485OutBlock1` — one expected-index time row.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1485OutBlock1 {
+    /// Index / 지수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jisu: String,
+    /// Volume / 거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Change / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Time / 체결시간 (may be a label like "장 전").
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub chetime: String,
+}
+
+/// `t1485` response — summary `t1485OutBlock` + the time array `t1485OutBlock1`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1485Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1485OutBlock", default)]
+    pub outblock: T1485OutBlock,
+    #[serde(
+        rename = "t1485OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1485OutBlock1>,
+}
+
+/// Input block for `t1516` — 업종별종목시세 (per-sector stock board). Carries two
+/// caller-supplied identifiers: the sector `upcode` and a `shcode` ticker.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1516InBlock {
+    /// Sector code / 업종코드.
+    pub upcode: String,
+    /// Mode / 구분.
+    pub gubun: String,
+    /// Stock short code / 종목코드 (a 6-char ticker; empty returns the full board).
+    pub shcode: String,
+}
+
+/// `t1516` request — `{"t1516InBlock":{"upcode":"001","gubun":"1","shcode":"005930"}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1516Request {
+    #[serde(rename = "t1516InBlock")]
+    pub inblock: T1516InBlock,
+}
+impl T1516Request {
+    /// Build a `t1516` per-sector stock-board request.
+    pub fn new(
+        upcode: impl Into<String>,
+        gubun: impl Into<String>,
+        shcode: impl Into<String>,
+    ) -> Self {
+        T1516Request {
+            inblock: T1516InBlock {
+                upcode: upcode.into(),
+                gubun: gubun.into(),
+                shcode: shcode.into(),
+            },
+        }
+    }
+}
+
+/// `t1516OutBlock` — sector-board summary header.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1516OutBlock {
+    /// Sector index / 지수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub pricejisu: String,
+    /// Change / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+}
+
+/// `t1516OutBlock1` — one stock row within the sector board.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1516OutBlock1 {
+    /// Stock short code / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Stock name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Change / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Volume / 거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Value / 거래대금.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub value: String,
+}
+
+/// `t1516` response — summary `t1516OutBlock` + per-stock array `t1516OutBlock1`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1516Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1516OutBlock", default)]
+    pub outblock: T1516OutBlock,
+    #[serde(
+        rename = "t1516OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1516OutBlock1>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -1940,6 +2252,37 @@ impl MarketSession {
     pub async fn investor_chart(&self, req: &T1664Request) -> LsResult<T1664Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T1664_POLICY, req)
+            .await
+    }
+
+    /// List every sector (전체업종) via `t8424`. Non-paginated; the anchor and
+    /// `upcode` source for the sector cluster.
+    pub async fn sectors(&self, req: &T8424Request) -> LsResult<T8424Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8424_POLICY, req)
+            .await
+    }
+
+    /// Read one sector's index snapshot (업종현재가) via `t1511`. Non-paginated.
+    pub async fn sector_quote(&self, req: &T1511Request) -> LsResult<T1511Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1511_POLICY, req)
+            .await
+    }
+
+    /// Read one sector's expected/auction index (예상지수) via `t1485`.
+    /// Non-paginated.
+    pub async fn sector_expected_index(&self, req: &T1485Request) -> LsResult<T1485Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1485_POLICY, req)
+            .await
+    }
+
+    /// Read the per-sector stock board (업종별종목시세) via `t1516`. Non-paginated;
+    /// needs both `upcode` and a `shcode` ticker.
+    pub async fn sector_stocks(&self, req: &T1516Request) -> LsResult<T1516Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1516_POLICY, req)
             .await
     }
 }

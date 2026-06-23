@@ -1,0 +1,36 @@
+{
+  "rsp_cd": "00000",
+  "t1485OutBlock1": [
+    {
+      "jisu": "2617.03",
+      "volume": 7372,
+      "volcha": 810,
+      "change": "15.67",
+      "sign": "2",
+      "diff": "0.60",
+      "chetime": "장  전"
+    },
+    {
+      "jisu": "2601.36",
+      "volume": 488,
+      "volcha": 0,
+      "change": "0.00",
+      "sign": "3",
+      "diff": "0.00",
+      "chetime": "084000"
+    }
+  ],
+  "rsp_msg": "조회완료",
+  "t1485OutBlock": {
+    "volume": 263165,
+    "ylowjo": 1,
+    "yhighjo": 5,
+    "yunchgjo": 944,
+    "yupjo": 0,
+    "change": "9.26",
+    "sign": "2",
+    "ydownjo": 0,
+    "ytrajo": 7,
+    "pricejisu": "2610.62"
+  }
+}
