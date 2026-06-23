@@ -40,6 +40,12 @@ TR marked `ready` is a promote-tr candidate.
 | `t9942` | `live-smoke-t9942` | `live_smoke_t9942` | open session; no caller input | implemented-only | paper ELW master list (Wave 1) |
 | `t1958` | `live-smoke-t1958` | `live_smoke_t1958` | open session; chained — self-sources two `shcode`s from `t8431` (else SMOKE-FAIL) | implemented-only | paper ELW symbol comparison (Wave 1 comparison member) |
 | `t1964` | `live-smoke-t1964` | `live_smoke_t1964` | open session; chained — self-sources an `item` underlying from `t9905`, walks first 10 (else SMOKE-FAIL) | implemented-only | paper ELW board (Wave 1 board member) |
+| `t1601` | `live-smoke-t1601` | `live_smoke_t1601` | open session; documented gubun defaults (amount, KRX) | implemented-only | paper investor-by-type aggregate (Wave 2) |
+| `t1615` | `live-smoke-t1615` | `live_smoke_t1615` | open session; documented gubun defaults (amount, KRX) | implemented-only | paper investor trading aggregate (Wave 2) |
+| `t1640` | `live-smoke-t1640` | `live_smoke_t1640` | open session; documented gubun defaults (exchange-all, KRX) | implemented-only | paper program-trading aggregate (Wave 2) |
+| `t1662` | `live-smoke-t1662` | `live_smoke_t1662` | open session; documented gubun defaults (KOSPI, amount, today, KRX) | implemented-only | paper by-time program-trading chart (Wave 2) |
+| `t1664` | `live-smoke-t1664` | `live_smoke_t1664` | open session; documented gubun defaults (KOSPI, amount, by-time, cnt=20, KRX) | implemented-only | paper investor trading chart (Wave 2) |
+| `t3341` | `live-smoke-t3341` | `live_smoke_t3341` | open session; single-page (`idx`=0 as a JSON number) | implemented-only | paper financial-ranking aggregate, single page (Wave 2) |
 
 Notes:
 - `live-smoke` (default) issues the OAuth token *then* a `t1102` quote in one run,

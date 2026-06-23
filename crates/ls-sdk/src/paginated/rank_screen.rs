@@ -803,3 +803,114 @@ pub struct T1866Response {
     )]
     pub outblock1: Vec<T1866OutBlock1>,
 }
+
+// --- t3341 — 재무순위종합 (financial ranking; single-page body-idx) ------------
+
+/// Input block for `t3341` — 재무순위종합 (financial ranking). `idx` is the body
+/// continuation cursor serialized as a JSON number (first page = `"0"`); the
+/// header `tr_cont`/`tr_cont_key` are skipped (single-page scope, KTD-5).
+#[derive(Serialize, Debug, Clone)]
+pub struct T3341InBlock {
+    /// Market / 시장구분 (`"0"` all / `"1"` KOSPI / `"2"` KOSDAQ).
+    pub gubun: String,
+    /// Rank metric / 순위구분 (`"1"` sales-growth … per spec).
+    pub gubun1: String,
+    /// Comparison division / 대비구분 (`"1"` fixed per spec).
+    pub gubun2: String,
+    /// Body continuation cursor / IDX (first page = `"0"`; serialized as a number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub idx: String,
+}
+
+/// `t3341` request (single-page; `idx` in the body, header cursors skipped).
+#[derive(Serialize, Debug, Clone)]
+pub struct T3341Request {
+    #[serde(rename = "t3341InBlock")]
+    pub inblock: T3341InBlock,
+    #[serde(skip)]
+    pub tr_cont: String,
+    #[serde(skip)]
+    pub tr_cont_key: String,
+}
+ls_core::impl_has_pagination!(T3341Request);
+impl T3341Request {
+    /// Build a single-page `t3341` financial-ranking request with documented
+    /// defaults (all markets, sales-growth rank, fixed comparison). `idx` defaults
+    /// to the first-page convention (`"0"`, serialized as a number).
+    pub fn new() -> Self {
+        T3341Request {
+            inblock: T3341InBlock {
+                gubun: "0".to_string(),
+                gubun1: "1".to_string(),
+                gubun2: "1".to_string(),
+                idx: "0".to_string(),
+            },
+            tr_cont: String::new(),
+            tr_cont_key: String::new(),
+        }
+    }
+}
+impl Default for T3341Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `t3341OutBlock` — the financial-ranking summary block (count + next-page `idx`).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T3341OutBlock {
+    /// Row count / CNT.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cnt: String,
+    /// Returned continuation cursor / IDX.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub idx: String,
+}
+
+/// `t3341OutBlock1` — one financial-ranking row (representative subset; every
+/// field via [`ls_core::string_or_number`]).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T3341OutBlock1 {
+    /// Rank / 순위.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub rank: String,
+    /// Company name / 기업명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Short code / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Sales growth rate / 매출액증가율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub salesgrowth: String,
+    /// EPS / EPS.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub eps: String,
+    /// ROE / ROE.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub roe: String,
+    /// PER / PER.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub per: String,
+}
+
+/// `t3341` response (single page). `outblock` is the summary (count + next-page
+/// `idx`); `outblock1` is the ranked-row array under `t3341OutBlock1`, tolerated
+/// as single-or-array via [`ls_core::de_vec_or_single`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T3341Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t3341OutBlock", default)]
+    pub outblock: T3341OutBlock,
+    #[serde(
+        rename = "t3341OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T3341OutBlock1>,
+}

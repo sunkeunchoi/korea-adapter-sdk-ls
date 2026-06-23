@@ -15,8 +15,8 @@ use ls_core::{Inner, LsConfig, LsError};
 use ls_sdk::paginated::{
     T1403Request, T1403Response, T1441Request, T1441Response, T1452Request, T1452Response,
     T1463Request, T1463Response, T1466Request, T1466Response, T1489Request, T1489Response,
-    T1492Request, T1492Response, T1866Request, T1866Response, T8412OutBlock1, T8412Request,
-    T8412Response,
+    T1492Request, T1492Response, T1866Request, T1866Response, T3341Request, T3341Response,
+    T8412OutBlock1, T8412Request, T8412Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
@@ -561,4 +561,68 @@ fn remaining_paginated_requests_serialize_idx_in_block() {
         assert!(value.get("tr_cont").is_none(), "{key}: no tr_cont in body");
         assert!(value.get("tr_cont_key").is_none(), "{key}: no tr_cont_key in body");
     }
+}
+
+// ---------------------------------------------------------------------------
+// t3341 — 재무순위종합 (financial ranking; Wave 2). Single-page body-idx
+// sub-pattern (KTD-5): idx is an ordinary in-block field serialized as a JSON
+// number, NOT #[serde(skip)]; the header cursors are skipped.
+// ---------------------------------------------------------------------------
+
+/// Covers KTD-5. The `t3341` request serializes the body `idx` INSIDE the
+/// in-block as a JSON number at the first-page convention (`0`), with documented
+/// gubun defaults and no header continuation leaking into the body.
+#[test]
+fn t3341_request_serializes_idx_in_block_as_number() {
+    let value = serde_json::to_value(T3341Request::new()).expect("serialize t3341 request");
+
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "only t3341InBlock at the top level");
+    let inblock = &value["t3341InBlock"];
+    assert_eq!(inblock["gubun"], "0", "all markets");
+    assert_eq!(inblock["gubun1"], "1", "sales-growth rank");
+    assert_eq!(inblock["gubun2"], "1", "fixed comparison");
+    assert_eq!(inblock["idx"], 0, "idx serializes as a number at first-page convention");
+    assert!(inblock["idx"].is_number(), "idx is a JSON number, not a string");
+
+    assert!(value.get("tr_cont").is_none(), "no tr_cont in the body");
+    assert!(value.get("tr_cont_key").is_none(), "no tr_cont_key in the body");
+}
+
+/// Covers KTD-5. A representative success deserializes: the summary (count +
+/// next-page `idx`) and the ranked-row array round-trip with mixed number/string
+/// wire types; single-or-array tolerated; empty is the pending case.
+#[test]
+fn t3341_response_round_trips_single_or_array_and_empty() {
+    let resp: T3341Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t3341OutBlock": { "cnt": 2, "idx": "100" },
+        "t3341OutBlock1": [
+            { "rank": 1, "hname": "삼성전자", "shcode": "005930", "salesgrowth": 12.3,
+              "eps": "5000", "roe": 15.1, "per": "10.5" },
+            { "rank": "2", "hname": "SK하이닉스", "shcode": 660, "salesgrowth": "8.1",
+              "eps": 3000, "roe": "12.0", "per": 8.2 }
+        ]
+    }))
+    .expect("representative t3341 success must deserialize");
+    assert_eq!(resp.outblock.cnt, "2", "summary count populated");
+    assert_eq!(resp.outblock.idx, "100", "next-page idx captured");
+    assert_eq!(resp.outblock1.len(), 2);
+    assert_eq!(resp.outblock1[0].shcode, "005930");
+    assert_eq!(resp.outblock1[1].shcode, "660", "shcode from JSON number");
+    assert_eq!(resp.outblock1[0].rank, "1", "rank from JSON number");
+
+    let single: T3341Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t3341OutBlock": { "cnt": 1, "idx": "0" },
+        "t3341OutBlock1": { "rank": "1", "hname": "삼성전자", "shcode": "005930" }
+    }))
+    .expect("single ranked row tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+
+    let empty: T3341Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t3341OutBlock": { "cnt": 0, "idx": "0" }, "t3341OutBlock1": []
+    }))
+    .expect("empty result deserializes");
+    assert!(empty.outblock1.is_empty(), "empty first page is the pending case");
 }

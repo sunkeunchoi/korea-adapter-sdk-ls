@@ -9,12 +9,13 @@
 use ls_core::{Inner, LsError};
 use ls_sdk::market_session::{
     T1101OutBlock, T1101Request, T1101Response, T1102OutBlock, T1102Request, T1102Response,
-    T1531Request, T1531Response, T1537Request, T1537Response, T1825OutBlock1, T1825Request,
-    T1825Response, T1826OutBlock, T1826Request, T1826Response, T1859OutBlock1, T1859Request,
-    T1859Response, T1958Request, T1958Response, T1964OutBlock1, T1964Request, T1964Response,
-    T8425Request, T8425Response, T8431OutBlock, T8431Request, T8431Response, T8436Request,
-    T8436Response, T9905OutBlock1, T9905Request, T9905Response, T9907Request, T9907Response,
-    T9942Request, T9942Response,
+    T1531Request, T1531Response, T1537Request, T1537Response, T1601Request, T1601Response,
+    T1615Request, T1615Response, T1640Request, T1640Response, T1662Request, T1662Response,
+    T1664Request, T1664Response, T1825OutBlock1, T1825Request, T1825Response, T1826OutBlock,
+    T1826Request, T1826Response, T1859OutBlock1, T1859Request, T1859Response, T1958Request,
+    T1958Response, T1964OutBlock1, T1964Request, T1964Response, T8425Request, T8425Response,
+    T8431OutBlock, T8431Request, T8431Response, T8436Request, T8436Response, T9905OutBlock1,
+    T9905Request, T9905Response, T9907Request, T9907Response, T9942Request, T9942Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
@@ -1412,4 +1413,113 @@ fn t1964_shcode_number_or_string_yields_same_value() {
         serde_json::from_value(serde_json::json!({ "shcode": "57123" })).expect("string");
     assert_eq!(n.shcode, "57123");
     assert_eq!(n.shcode, s.shcode);
+}
+
+// ---------------------------------------------------------------------------
+// Wave 2 — market-flow analytics reads (t1601, t1615, t1640, t1662, t1664).
+// gubun-filter screens with documented defaults baked into ::new(). Covers AE1.
+// ---------------------------------------------------------------------------
+
+/// Covers AE1. `t1601` bakes documented defaults and deserializes the investor
+/// aggregate (single object) with net-buy columns populated.
+#[test]
+fn t1601_request_and_response_round_trip() {
+    let value = serde_json::to_value(T1601Request::new()).expect("serialize t1601");
+    assert_eq!(value["t1601InBlock"]["gubun1"], "2", "amount basis");
+    assert_eq!(value["t1601InBlock"]["exchgubun"], "K", "KRX");
+
+    let resp: T1601Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1601OutBlock1": { "svolume_08": -1000, "svolume_17": "2000", "svolume_18": 500 }
+    }))
+    .expect("representative t1601 success must deserialize");
+    assert_eq!(resp.outblock1.svolume_08, "-1000", "personal net-buy (number)");
+    assert_eq!(resp.outblock1.svolume_17, "2000", "foreign net-buy (string)");
+}
+
+/// Covers AE1. `t1615` summary + per-market array round-trip; single-or-array.
+#[test]
+fn t1615_request_and_response_round_trip() {
+    let value = serde_json::to_value(T1615Request::new()).expect("serialize t1615");
+    assert_eq!(value["t1615InBlock"]["exchgubun"], "K");
+
+    let resp: T1615Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1615OutBlock": { "sum_volume": 12345, "sum_value": "67890" },
+        "t1615OutBlock1": [
+            { "hname": "코스피", "sv_08": -100, "sv_17": 200, "sv_18": "-50" },
+            { "hname": "코스닥", "sv_08": "10", "sv_17": "-20", "sv_18": 5 }
+        ]
+    }))
+    .expect("representative t1615 success must deserialize");
+    assert_eq!(resp.outblock.sum_value, "67890");
+    assert_eq!(resp.outblock1.len(), 2);
+    assert_eq!(resp.outblock1[0].hname, "코스피");
+
+    let single: T1615Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "t1615OutBlock": {}, "t1615OutBlock1": { "hname": "코스피" }
+    }))
+    .expect("single market row tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+}
+
+/// Covers AE1. `t1640` program summary (single object) round-trips.
+#[test]
+fn t1640_request_and_response_round_trip() {
+    let value = serde_json::to_value(T1640Request::new()).expect("serialize t1640");
+    assert_eq!(value["t1640InBlock"]["gubun"], "11", "exchange-all");
+
+    let resp: T1640Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1640OutBlock": { "volume": -500, "value": "12000", "basis": "0.35" }
+    }))
+    .expect("representative t1640 success must deserialize");
+    assert_eq!(resp.outblock.value, "12000", "net-buy amount populated");
+    assert_eq!(resp.outblock.volume, "-500");
+}
+
+/// Covers AE1. `t1662` by-time array round-trips; single-or-array tolerated.
+#[test]
+fn t1662_request_and_response_round_trip() {
+    let value = serde_json::to_value(T1662Request::new()).expect("serialize t1662");
+    assert_eq!(value["t1662InBlock"]["gubun"], "0", "KOSPI");
+
+    let resp: T1662Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1662OutBlock": [
+            { "time": "0900", "k200jisu": 350, "tot3": -1000, "volume": 5000 },
+            { "time": "0901", "k200jisu": "351", "tot3": "200", "volume": "6000" }
+        ]
+    }))
+    .expect("representative t1662 success must deserialize");
+    assert_eq!(resp.outblock.len(), 2);
+    assert_eq!(resp.outblock[0].time, "0900");
+    assert_eq!(resp.outblock[1].k200jisu, "351", "index from string");
+
+    let empty: T1662Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t1662OutBlock": []
+    }))
+    .expect("empty deserializes");
+    assert!(empty.outblock.is_empty(), "empty is the pending case");
+}
+
+/// Covers AE1. `t1664` cnt serializes as a JSON number; the chart array
+/// round-trips.
+#[test]
+fn t1664_request_serializes_cnt_as_number_and_response_round_trips() {
+    let value = serde_json::to_value(T1664Request::new()).expect("serialize t1664");
+    assert_eq!(value["t1664InBlock"]["cnt"], 20, "cnt serializes as a JSON number");
+    assert!(value["t1664InBlock"]["cnt"].is_number(), "cnt is a number, not a string");
+    assert_eq!(value["t1664InBlock"]["mgubun"], "1", "KOSPI");
+
+    let resp: T1664Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1664OutBlock1": [
+            { "dt": "20260623", "tjj08": -100, "tjj17": 200, "tjj18": "-50" }
+        ]
+    }))
+    .expect("representative t1664 success must deserialize");
+    assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock1[0].dt, "20260623");
+    assert_eq!(resp.outblock1[0].tjj17, "200", "foreign net-buy");
 }

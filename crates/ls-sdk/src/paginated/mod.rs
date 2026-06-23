@@ -138,4 +138,15 @@ impl Paginated {
             .post_paginated(&ls_core::endpoint_policy::T1866_POLICY, req)
             .await
     }
+
+    /// Fetch a SINGLE page of the `t3341` financial ranking (재무순위종합).
+    ///
+    /// Dispatches through [`ls_core::Inner::post_paginated`] with empty header
+    /// cursors; the body `idx` (first page `0`, serialized as a number) is the
+    /// continuation. Single-page scope (Wave 2 / KTD-5); no multi-page collection.
+    pub async fn financial_ranking(&self, req: &T3341Request) -> LsResult<T3341Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T3341_POLICY, req)
+            .await
+    }
 }

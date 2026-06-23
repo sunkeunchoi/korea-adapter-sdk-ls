@@ -1,6 +1,6 @@
 tr_code: t1664
 name: 투자자매매종합(챠트)
-owner_class: standalone
+owner_class: market_session
 facets:
   protocol: rest
   instrument_domain: stock
@@ -17,7 +17,7 @@ dependencies:
   strong_order_fields: []
 support:
   tracked: true
-  implemented: false
+  implemented: true
   recommended: false
 maintenance:
   source_spec_hash: 05d841c5a78e
