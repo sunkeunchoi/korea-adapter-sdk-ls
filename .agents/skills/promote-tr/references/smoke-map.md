@@ -55,6 +55,7 @@ TR marked `ready` is a promote-tr candidate.
 | `t1516` | `live-smoke-t1516` | `live_smoke_t1516` | open session; `upcode="001"` + representative `shcode="005930"` | implemented-only | paper per-sector stock board (Wave A) |
 | `t1514` | `live-smoke-t1514` | `live_smoke_t1514` | open session; single-page (`cts_date` first page; `cnt` as a JSON number) | implemented-only | paper sector period-trend, single page (Wave A) |
 | `t2301` | `live-smoke-t2301` | `live_smoke_t2301` | any session; `yyyymm="202609"` (near-quarterly), `gubun="G"` (정규) — F/O master/board read, non-empty off-session | implemented-only | paper F/O option board (PR-B U4) |
+| `t2522` | `live-smoke-t2522` | `live_smoke_t2522` | any session; no caller input (`dummy`) — F/O underlying-asset master read, non-empty off-session | implemented-only | paper F/O stock-futures underlying master (PR-B U5) |
 
 Notes:
 - `live-smoke` (default) issues the OAuth token *then* a `t1102` quote in one run,

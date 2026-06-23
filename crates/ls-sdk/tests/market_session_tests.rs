@@ -15,7 +15,8 @@ use ls_sdk::market_session::{
     T1826Request, T1826Response, T1859OutBlock1, T1859Request, T1859Response, T1958Request,
     T1958Response, T1964OutBlock1, T1964Request, T1964Response, T1485Request, T1485Response,
     T1511Request, T1511Response, T1516Request, T1516Response, T8424Request, T8424Response,
-    T2301Request, T2301Response, T8425Request, T8425Response, T8431OutBlock, T8431Request,
+    T2301Request, T2301Response, T2522OutBlock1, T2522Request, T2522Response, T8425Request,
+    T8425Response, T8431OutBlock, T8431Request,
     T8431Response, T8436Request, T8436Response, T9905OutBlock1, T9905Request, T9905Response,
     T9907Request, T9907Response, T9942Request, T9942Response,
 };
@@ -1858,4 +1859,118 @@ fn t2301_empty_result_deserializes_as_pending() {
     }))
     .expect("empty board deserializes");
     assert!(empty.outblock.gmprice.is_empty(), "empty board is the pending case");
+}
+
+// ---------------------------------------------------------------------------
+// t2522 — 주식선물기초자산조회 (stock-futures underlying-asset master; F/O).
+// market_session, non-paginated, no caller input. Single out-block (a
+// representative subset of its 6 fields).
+// ---------------------------------------------------------------------------
+
+const T2522_FIXTURE: &str = include_str!("fixtures/t2522_resp.json");
+
+/// Covers R4. `t2522` serializes to exactly `{"t2522InBlock":{"dummy":""}}` with
+/// no continuation tokens (non-paginated) and no caller fields leaking — the read
+/// takes no caller input.
+#[test]
+fn t2522_request_serializes_to_inblock() {
+    let value = serde_json::to_value(T2522Request::new()).expect("serialize t2522 request");
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "exactly one top-level key");
+    assert_eq!(value["t2522InBlock"]["dummy"], "", "dummy placeholder serializes empty");
+    let inblock = value["t2522InBlock"].as_object().expect("in-block is an object");
+    assert_eq!(inblock.len(), 1, "only the dummy placeholder, no caller fields");
+    assert!(value.get("tr_cont").is_none(), "no tr_cont in the body");
+}
+
+/// Covers R2, R5 + KTD4. The spec-derived fixture deserializes through REAL
+/// dispatch: the count header round-trips and the canonical identity field
+/// `bsc_asts_nm` (기초자산명, underlying-asset name) — which lives in the
+/// `t2522OutBlock1` row array, not the count header — holds its EXACT value. The
+/// fixture's neighbouring fields carry DISTINCT values, so a mislabel that picked
+/// `bsc_asts_is_cd`/`nmc_is_shrt_cd` instead would surface here.
+#[tokio::test]
+async fn t2522_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(FO_MARKET_DATA_PATH))
+        .and(header("tr_cd", "t2522"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T2522_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let resp = sdk_for(&server)
+        .market_session()
+        .stock_futures_underlying(&T2522Request::new())
+        .await
+        .expect("t2522 stock_futures_underlying should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock.cnt, "2", "건수 count header (was a JSON number)");
+    assert_eq!(resp.outblock1.len(), 2, "two underlying-asset rows");
+    let row = &resp.outblock1[0];
+    // The canonical identity field, by Korean name 기초자산명 — exact value.
+    assert_eq!(
+        row.bsc_asts_nm, "삼성전자",
+        "기초자산명 underlying-asset name (canonical field)"
+    );
+    // Distinct neighbours: a mislabel would collapse these onto bsc_asts_nm.
+    assert_eq!(row.bsc_asts_is_cd, "005930", "기초자산종목코드 (distinct)");
+    assert_eq!(row.bsc_asts_id, "KR7", "기초자산ID (distinct)");
+    assert_eq!(row.nmc_is_shrt_cd, "111W9000", "최근월물종목코드 (distinct)");
+    // A distinct second row, proving the array carries multiple rows.
+    assert_eq!(resp.outblock1[1].bsc_asts_nm, "SK하이닉스", "second row distinct");
+}
+
+/// Covers R4, R5. The numeric fields tolerate a JSON number or string via
+/// `string_or_number` (the gateway sends `cnt` as an integer).
+#[test]
+fn t2522_numeric_number_or_string_yields_same_value() {
+    let as_number: T2522Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "t2522OutBlock": { "cnt": 42 },
+        "t2522OutBlock1": [{ "bsc_asts_nm": "삼성전자" }]
+    }))
+    .expect("number cnt must deserialize");
+    let as_string: T2522Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "t2522OutBlock": { "cnt": "42" },
+        "t2522OutBlock1": [{ "bsc_asts_nm": "삼성전자" }]
+    }))
+    .expect("string cnt must deserialize");
+    assert_eq!(as_number.outblock.cnt, "42");
+    assert_eq!(as_number.outblock.cnt, as_string.outblock.cnt);
+    assert_eq!(
+        as_number.outblock1[0].bsc_asts_nm, as_string.outblock1[0].bsc_asts_nm,
+        "bsc_asts_nm both forms"
+    );
+}
+
+/// Covers the array single-or-Vec case (shared contract item 6): a single-object
+/// `t2522OutBlock1` body deserializes to a one-element `Vec` via
+/// `de_vec_or_single`.
+#[test]
+fn t2522_single_object_row_deserializes_to_one_element_vec() {
+    let single: T2522Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "t2522OutBlock": { "cnt": 1 },
+        "t2522OutBlock1": { "bsc_asts_nm": "삼성전자" }
+    }))
+    .expect("single-object row deserializes");
+    assert_eq!(single.outblock1.len(), 1, "single object becomes a one-element Vec");
+    assert_eq!(single.outblock1[0].bsc_asts_nm, "삼성전자");
+    // The standalone row struct also default-constructs cleanly.
+    assert!(T2522OutBlock1::default().bsc_asts_nm.is_empty());
+}
+
+/// Covers R5. An empty `t2522` master (00707, empty out-block) deserializes as
+/// the pending case — the row array is empty.
+#[test]
+fn t2522_empty_result_deserializes_as_pending() {
+    let empty: T2522Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t2522OutBlock": {}
+    }))
+    .expect("empty master deserializes");
+    assert!(empty.outblock1.is_empty(), "empty master is the pending case");
 }

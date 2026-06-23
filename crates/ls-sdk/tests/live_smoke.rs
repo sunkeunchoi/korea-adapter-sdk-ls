@@ -24,8 +24,8 @@ use ls_sdk::market_session::{
     T1101Request, T1102Request, T1485Request, T1511Request, T1516Request, T1531Request,
     T1537Request, T1601Request, T1615Request, T1640Request, T1662Request, T1664Request,
     T1825Request, T1826Request, T1859Request, T1958Request, T1964Request, T2301Request,
-    T8424Request, T8425Request, T8431Request, T8436Request, T9905Request, T9907Request,
-    T9942Request,
+    T2522Request, T8424Request, T8425Request, T8431Request, T8436Request, T9905Request,
+    T9907Request, T9942Request,
 };
 use ls_sdk::paginated::{
     T1403Request, T1441Request, T1452Request, T1463Request, T1466Request, T1489Request,
@@ -1782,6 +1782,53 @@ async fn live_smoke_t2301() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t2301 market-data failure (not evidence)");
             panic!("live-smoke-t2301 failed: {e}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// t2522 — 주식선물기초자산조회 (stock-futures underlying-asset master; F/O).
+// market_session, non-paginated, no caller input (a single `dummy` placeholder).
+// Master read — non-empty regardless of the KRX session (venue facet stays
+// provisional). The structural signal is the canonical field's length (a single
+// out-block, not an array), kept credential-free.
+// ---------------------------------------------------------------------------
+
+/// `make live-smoke-t2522`: paper guard → OAuth token → one `t2522`
+/// underlying-asset master read (no caller input). A success `rsp_cd` with a
+/// populated `t2522OutBlock1` row array proves the read is callable and
+/// round-trips. The recorded line is credential-free (only `rsp_cd` + the row
+/// count, never `rsp_msg`) and self-dated; a failed run emits a distinct
+/// `SMOKE-FAIL` stderr line, never a capturable `LIVE-SMOKE` line.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t2522`"]
+async fn live_smoke_t2522() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk
+        .standalone()
+        .token()
+        .await
+        .expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T2522Request::new();
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().stock_futures_underlying(&req).await {
+        Ok(resp) => {
+            let line = smoke_result(
+                Ok((resp.rsp_cd.clone(), resp.outblock1.len())),
+                "rows",
+            )
+            .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t2522",
+                &format!("env=paper date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t2522 market-data failure (not evidence)");
+            panic!("live-smoke-t2522 failed: {e}");
         }
     }
 }

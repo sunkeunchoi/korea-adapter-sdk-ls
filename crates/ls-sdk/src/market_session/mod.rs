@@ -2146,6 +2146,116 @@ pub struct T2301Response {
     pub outblock: T2301OutBlock,
 }
 
+// ---------------------------------------------------------------------------
+// t2522 — 주식선물기초자산조회 (stock-futures underlying-asset master). market_session,
+// non-paginated. A no-caller-input read: the spec's `t2522InBlock` carries a single
+// length-1 `dummy` placeholder, so callers supply nothing. The response is a count
+// header (`t2522OutBlock`, single) plus the underlying-asset rows
+// (`t2522OutBlock1`, an object array) — the data-bearing block where each row's
+// 기초자산명 lives.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t2522` — a no-caller-input read.
+///
+/// The spec's `t2522InBlock` carries a single length-1 `dummy` placeholder
+/// (Dummy), so callers supply nothing. Modeled after `T8425InBlock`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T2522InBlock {
+    /// Dummy placeholder / Dummy (length-1; the read takes no caller input).
+    pub dummy: String,
+}
+
+/// `t2522` request — wraps the input block under the `t2522InBlock` key.
+///
+/// Serializes to `{"t2522InBlock":{"dummy":""}}`. `t2522` is not paginated and
+/// takes no caller identifier, so there are no continuation fields and no
+/// caller-supplied fields in the body.
+#[derive(Serialize, Debug, Clone)]
+pub struct T2522Request {
+    #[serde(rename = "t2522InBlock")]
+    pub inblock: T2522InBlock,
+}
+
+impl T2522Request {
+    /// Build a `t2522` stock-futures underlying-asset request. Takes no caller
+    /// input; the `dummy` placeholder serializes as an empty string.
+    pub fn new() -> Self {
+        T2522Request {
+            inblock: T2522InBlock {
+                dummy: String::new(),
+            },
+        }
+    }
+}
+
+impl Default for T2522Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `t2522OutBlock` — the count header (single object).
+///
+/// Carries the row count (`cnt` / 건수); the underlying-asset rows themselves are
+/// in [`T2522OutBlock1`]. `cnt` uses [`ls_core::string_or_number`] (the gateway
+/// sends it as a JSON number); `#[serde(default)]` lets a sparse/empty header
+/// deserialize cleanly.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T2522OutBlock {
+    /// Row count / 건수 (arrives as a JSON number).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cnt: String,
+}
+
+/// `t2522OutBlock1` — one stock-futures underlying-asset row.
+///
+/// The data-bearing repeated block (`t2522OutBlock1[]`). `bsc_asts_nm`
+/// (기초자산명, the underlying-asset name) is the canonical identity field,
+/// resolved by its `korean_name` from the baseline; the remaining fields are the
+/// underlying codes. Every field uses [`ls_core::string_or_number`] for wire-type
+/// tolerance; `#[serde(default)]` lets a sparse row deserialize cleanly. Field
+/// names mirror the LS spec verbatim.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T2522OutBlock1 {
+    /// Underlying-asset name / 기초자산명 (the canonical identity field).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bsc_asts_nm: String,
+    /// Underlying-asset issue code / 기초자산종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bsc_asts_is_cd: String,
+    /// Underlying-asset ID / 기초자산ID.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bsc_asts_id: String,
+    /// Near-month issue code / 최근월물종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub nmc_is_shrt_cd: String,
+}
+
+/// `t2522` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are the LS business-status fields; `outblock` is the count
+/// header under the `t2522OutBlock` key; `outblock1` is the underlying-asset row
+/// array under the `t2522OutBlock1` key, tolerated as a single object OR an array
+/// via [`ls_core::de_vec_or_single`]. All `#[serde(default)]` so a terse or empty
+/// envelope still deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T2522Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t2522OutBlock", default)]
+    pub outblock: T2522OutBlock,
+    #[serde(
+        rename = "t2522OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T2522OutBlock1>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -2405,6 +2515,18 @@ impl MarketSession {
     pub async fn option_board(&self, req: &T2301Request) -> LsResult<T2301Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T2301_POLICY, req)
+            .await
+    }
+
+    /// Read the stock-futures underlying-asset master (주식선물기초자산조회) via
+    /// `t2522`. Non-paginated, no caller input; returns the underlying-asset
+    /// header (name + codes).
+    pub async fn stock_futures_underlying(
+        &self,
+        req: &T2522Request,
+    ) -> LsResult<T2522Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T2522_POLICY, req)
             .await
     }
 }

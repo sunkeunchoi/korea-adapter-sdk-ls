@@ -1,0 +1,21 @@
+{
+  "rsp_cd": "00000",
+  "rsp_msg": "",
+  "t2522OutBlock": {
+    "cnt": 2
+  },
+  "t2522OutBlock1": [
+    {
+      "bsc_asts_nm": "삼성전자",
+      "bsc_asts_is_cd": "005930",
+      "bsc_asts_id": "KR7",
+      "nmc_is_shrt_cd": "111W9000"
+    },
+    {
+      "bsc_asts_nm": "SK하이닉스",
+      "bsc_asts_is_cd": "000660",
+      "bsc_asts_id": "KR2",
+      "nmc_is_shrt_cd": "111X9000"
+    }
+  ]
+}
