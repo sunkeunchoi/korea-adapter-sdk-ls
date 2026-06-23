@@ -376,3 +376,65 @@ failure on a consumer-less Implemented TR is **triage-P3**, not a release blocke
 Field-`type` facets (§4) are already retired inventory-wide (clean re-pin); nothing
 to retire here. Recommended tier untouched: `EVIDENCE-FRESHNESS.md` stays at six
 Recommended TRs; no `metadata/evidence/<tr>.yaml` exists for any of the 7.
+
+---
+
+## 9. Market-flow analytics surface wave — close-out (2026-06-23)
+
+The `tracked → implemented` market-flow analytics-surface wave (plan
+`docs/plans/2026-06-23-001-feat-capability-closed-tr-expansion-waves-plan.md`,
+Wave 2 / PR #3) ships **complete**: all 6 members flip on a non-empty paper
+smoke. Each implemented TR stays **non-recommended** (no Focused Evidence, no
+recommendation block, no `EVIDENCE-FRESHNESS.md` edit). All 6 are decided:
+**6 implemented, 0 pending.**
+
+| TR | Class (first-pass) | End state | Disposition (credential-free) |
+|---|---|---|---|
+| t1601 | market_session | **implemented** | `rsp_cd=00000 aggregate=populated` (investor-by-type) |
+| t1615 | market_session | **implemented** | `rsp_cd=00000 markets=5` (investor trading aggregate) |
+| t1640 | market_session | **implemented** | `rsp_cd=00000 aggregate=populated` (program-trading aggregate) |
+| t1662 | market_session | **implemented** | `rsp_cd=00000 rows=145` (by-time program-trading chart) |
+| t1664 | market_session | **implemented** | `rsp_cd=00000 rows=20` (investor trading chart) |
+| t3341 | paginated (single-page) | **implemented** | `rsp_cd=00000 ranks=100` (financial ranking; body `idx`=0 number) |
+
+**Capability surface, not a consumer edge (KTD-2).** This wave clears the
+consumer-less hold by being a **bounded investor-flow / program-trading analytics
+surface with strict membership and live paper smokes** — *not* by an internal
+producer→consumer edge. There are no discovery edges in this wave; every member is
+a standalone gubun-filter read with documented default inputs.
+
+**Dropped exclusion prong (deliberate).** The predecessor's hold had a *second*
+prong beyond the consumer-edge test: it excluded `t3341` and the analytics
+aggregates for **emitting analytics**. This campaign drops that prong on purpose.
+That exclusion was a *screening-workflow-consumption* test; membership here is
+defined by **capability-surface coherence**, not workflow-consumption. The accepted
+trade is the standing maintenance cost of a coherent read-only analytics surface
+(below) — every member is a coherent part of the one named analytics surface with
+a passing live smoke.
+
+**Capability proven (KTD-4).** The capability-defining members are the investor-flow
+/ program-trading aggregates (`t1601`/`t1615`/`t1640`/`t1662`), all of which flipped
+— the headline "investor-flow / program-trading analytics surface" claim holds.
+
+**Input-shape notes (KTD-5 + numeric request fields).** `t3341`'s body `idx` is an
+ordinary in-block field serialized as a JSON **number** at the first-page convention
+(`0`), never `#[serde(skip)]`; its `has_pagination` mirrors `facets.self_paginated`
+(both true). Two members needed a numeric (not string) request field, found via the
+raw-HTTP probe: `t1664.cnt` and `t3341.idx` both serialize via `string_as_number`.
+
+**venue_session disposition (R12).** All six members' §1 rows retire as
+`krx_regular` (each returned a non-empty success on a live paper call; none carries
+an after-hours / call-auction facet). No member ships with a row left silently live.
+
+**Residual provisionality.** None for this wave — all six are implemented and their
+§1/§2 rows are retired. No pending/held members.
+
+**Standing cost (accepted, per Risk Analysis).** This wave adds 6 consumer-less
+live-smoke targets + 6 drift-detection structs that must stay green — the symmetric
+cost of the analytics drift-readiness benefit. Disposition rule: a consumer-less
+smoke may go **pending (not red)** off-session, and a drift failure on a
+consumer-less Implemented TR is **triage-P3**, not a release blocker.
+
+Field-`type` facets (§4) are already retired inventory-wide (clean re-pin); nothing
+to retire here. Recommended tier untouched: `EVIDENCE-FRESHNESS.md` stays at six
+Recommended TRs; no `metadata/evidence/<tr>.yaml` exists for any of the 6.
