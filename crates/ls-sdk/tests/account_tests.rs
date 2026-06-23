@@ -20,8 +20,8 @@ use std::sync::Arc;
 
 use ls_core::{Inner, LsError};
 use ls_sdk::account::{
-    CSPAQ12200Request, CSPAQ12200Response, CSPAQ12300Request, CSPAQ12300Response,
-    CSPAQ22200Request, CSPAQ22200Response,
+    CFOBQ10500Request, CFOBQ10500Response, CSPAQ12200Request, CSPAQ12200Response, CSPAQ12300Request,
+    CSPAQ12300Response, CSPAQ22200Request, CSPAQ22200Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token, TEST_ACCOUNT_NO};
@@ -36,6 +36,9 @@ const CSPAQ12300_FIXTURE: &str = include_str!("fixtures/CSPAQ12300_resp.json");
 
 /// The spec-derived, SYNTHETIC `CSPAQ22200` response fixture.
 const CSPAQ22200_FIXTURE: &str = include_str!("fixtures/CSPAQ22200_resp.json");
+
+/// The spec-derived, SYNTHETIC `CFOBQ10500` response fixture.
+const CFOBQ10500_FIXTURE: &str = include_str!("fixtures/CFOBQ10500_resp.json");
 
 /// `CSPAQ12200_POLICY.path` — the mounted endpoint for the account TR.
 const CSPAQ12200_PATH: &str = "/stock/accno";
@@ -533,4 +536,159 @@ fn cspaq22200_out_block2_single_object_deserializes_to_one_element_vec() {
     );
     assert_eq!(resp.outblock2[0].mnyordableamt, "500000");
     assert_eq!(resp.outblock2[0].dps, "750000");
+}
+
+// ---------------------------------------------------------------------------
+// CFOBQ10500 — 선물옵션 계좌예탁금증거금조회 (read-only F/O account deposit / margin
+// inquiry). Header-only: no request-body fields, a no-argument `::new()`. THREE
+// out-blocks: OutBlock1 single + OutBlock2 + OutBlock3 each as a `Vec`.
+// ---------------------------------------------------------------------------
+
+/// `::new()` takes no args and serializes an EMPTY in-block under `CFOBQ10500InBlock`
+/// with no caller fields leaking (no account number, no body fields at all).
+#[test]
+fn cfobq10500_request_serializes_empty_inblock_no_account_leak() {
+    let req = CFOBQ10500Request::new();
+    let value = serde_json::to_value(&req).expect("serialize CFOBQ10500 request");
+
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "request must have exactly one top-level key");
+    assert!(
+        obj.contains_key("CFOBQ10500InBlock"),
+        "missing CFOBQ10500InBlock key"
+    );
+
+    let inblock = &value["CFOBQ10500InBlock"];
+    assert_eq!(
+        inblock.as_object().expect("inblock is an object").len(),
+        0,
+        "InBlock carries no caller fields (header-only read)"
+    );
+
+    // No account number anywhere in the serialized request.
+    let serialized = serde_json::to_string(&req).expect("serialize CFOBQ10500 request");
+    assert!(
+        !serialized.contains(TEST_ACCOUNT_NO),
+        "the account number must never appear in the request body"
+    );
+}
+
+/// A representative success body deserializes and the canonical OutBlock2 field
+/// (`DpsamtTotamt` = 예탁금총액, KTD4) holds its exact value. Distinct neighbours
+/// carry distinct values so a mislabel cannot be masked.
+#[tokio::test]
+async fn cfobq10500_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path("/futureoption/accno"))
+        .and(header("tr_cd", "CFOBQ10500"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(CFOBQ10500_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let req = CFOBQ10500Request::new();
+    let resp = sdk
+        .account()
+        .fo_deposit(&req)
+        .await
+        .expect("CFOBQ10500 F/O deposit inquiry should succeed");
+
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock1.acntno, "00000000-01");
+
+    assert_eq!(resp.outblock2.len(), 1, "one deposit row");
+    let dep = &resp.outblock2[0];
+    // Canonical field by Korean name (예탁금총액) — exact value, not !is_empty().
+    assert_eq!(dep.dpsamttotamt, "5500000", "DpsamtTotamt (예탁금총액)");
+    // Distinct neighbours hold distinct values (no collapse / mislabel).
+    assert_eq!(dep.dps, "5000000", "Dps (예수금)");
+    assert_eq!(dep.substamt, "500000", "SubstAmt (대용금액)");
+    assert_eq!(dep.wthdwableamt, "4800000", "WthdwAbleAmt (인출가능금액)");
+    assert_eq!(dep.mgn, "1200000", "Mgn (증거금액)");
+    assert_eq!(dep.ordableamt, "3700000", "OrdAbleAmt (주문가능금액)");
+
+    assert_eq!(resp.outblock3.len(), 1, "one margin-breakdown row");
+    let mgn = &resp.outblock3[0];
+    assert_eq!(mgn.pdgrpcodenm, "KOSPI200선물", "PdGrpCodeNm (상품군코드명)");
+    assert_eq!(mgn.netriskmgn, "1100000", "NetRiskMgn (순위험증거금액)");
+    assert_eq!(mgn.maintmgn, "1050000", "MaintMgn (유지증거금액)");
+}
+
+/// Numeric-bearing fields parse via `string_or_number` from BOTH string and number
+/// JSON.
+#[test]
+fn cfobq10500_numeric_fields_parse_from_string_and_number() {
+    // Numbers as JSON numbers.
+    let as_number = serde_json::json!({
+        "rsp_cd": "00000",
+        "CFOBQ10500OutBlock2": { "DpsamtTotamt": 999, "Dps": 42 }
+    });
+    let resp: CFOBQ10500Response =
+        serde_json::from_value(as_number).expect("number JSON must deserialize");
+    assert_eq!(resp.outblock2[0].dpsamttotamt, "999");
+    assert_eq!(resp.outblock2[0].dps, "42");
+
+    // Same fields as JSON strings.
+    let as_string = serde_json::json!({
+        "rsp_cd": "00000",
+        "CFOBQ10500OutBlock2": { "DpsamtTotamt": "999", "Dps": "42" }
+    });
+    let resp: CFOBQ10500Response =
+        serde_json::from_value(as_string).expect("string JSON must deserialize");
+    assert_eq!(resp.outblock2[0].dpsamttotamt, "999");
+    assert_eq!(resp.outblock2[0].dps, "42");
+}
+
+/// The empty-deposit case: a `rsp_cd 00707` with empty out-blocks deserializes and
+/// is recognized as the empty/pending case (a position-less paper account). This is
+/// the expected PENDING outcome for CFOBQ10500, not a defect.
+#[test]
+fn cfobq10500_empty_00707_deserializes_as_empty() {
+    let json = serde_json::json!({
+        "rsp_cd": "00707",
+        "CFOBQ10500OutBlock2": [],
+        "CFOBQ10500OutBlock3": []
+    });
+    let resp: CFOBQ10500Response =
+        serde_json::from_value(json).expect("empty out-blocks must deserialize");
+    assert_eq!(resp.rsp_cd, "00707");
+    assert!(
+        resp.outblock2.is_empty(),
+        "00707 yields an empty deposit Vec (the PENDING case)"
+    );
+    assert!(
+        resp.outblock3.is_empty(),
+        "00707 yields an empty margin Vec (the PENDING case)"
+    );
+}
+
+/// Both `CFOBQ10500OutBlock2` and `CFOBQ10500OutBlock3` arriving as a SINGLE object
+/// (not an array) deserialize via `de_vec_or_single` into 1-element Vecs.
+#[test]
+fn cfobq10500_out_blocks_single_object_deserialize_to_one_element_vecs() {
+    let json = serde_json::json!({
+        "rsp_cd": "00000",
+        "CFOBQ10500OutBlock2": { "DpsamtTotamt": 5500000, "Dps": 5000000 },
+        "CFOBQ10500OutBlock3": { "PdGrpCodeNm": "KOSPI200선물", "MaintMgn": 1050000 }
+    });
+    let resp: CFOBQ10500Response =
+        serde_json::from_value(json).expect("single-object out-blocks must deserialize");
+    assert_eq!(
+        resp.outblock2.len(),
+        1,
+        "OutBlock2 single object becomes a 1-element Vec"
+    );
+    assert_eq!(resp.outblock2[0].dpsamttotamt, "5500000");
+    assert_eq!(
+        resp.outblock3.len(),
+        1,
+        "OutBlock3 single object becomes a 1-element Vec"
+    );
+    assert_eq!(resp.outblock3[0].maintmgn, "1050000");
 }

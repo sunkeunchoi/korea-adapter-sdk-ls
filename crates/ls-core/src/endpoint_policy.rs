@@ -674,6 +674,24 @@ pub const CSPAQ22200_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(10),
 };
 
+/// CFOBQ10500 — 선물옵션 계좌예탁금증거금조회 (F/O account deposit / margin inquiry,
+/// read-only).
+///
+/// Dispatches through plain `Inner::post` (non-paginated): the result is
+/// single-page (`facets.self_paginated: false`), so `has_pagination: false`.
+pub const CFOBQ10500_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CFOBQ10500",
+    path: "/futureoption/accno",
+    module: "futureoption",
+    group: "[선물/옵션] 계좌",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Account,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(10),
+};
+
 /// S3_ — KOSPI체결 실시간 시세 (real-time KOSPI trade feed, WebSocket).
 ///
 /// WebSocket TR: there is no REST dispatch, but the policy const is retained as
@@ -767,6 +785,7 @@ mod tests {
             CSPAQ12200_POLICY,
             CSPAQ12300_POLICY,
             CSPAQ22200_POLICY,
+            CFOBQ10500_POLICY,
         ] {
             assert!(!p.is_order, "{} must not be an order endpoint", p.tr_code);
             assert!(p.is_rest(), "{} must be a REST endpoint", p.tr_code);

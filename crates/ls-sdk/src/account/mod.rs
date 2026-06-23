@@ -567,6 +567,177 @@ pub struct CSPAQ22200Response {
     pub outblock2: Vec<CSPAQ22200OutBlock2>,
 }
 
+// ---------------------------------------------------------------------------
+// CFOBQ10500 — 선물옵션 계좌예탁금증거금조회 (F/O account deposit / margin inquiry,
+// read-only).
+//
+// A read-only account-state read on the futures/options account. Like the
+// CSPAQ family it carries the same account-identity discipline: the account
+// number comes from `ResolvedConfig.account_no` and the bearer token, NEVER a
+// caller field. Unlike them this read has NO request-body fields at all — the
+// `tr_cd` rides the request header, so the in-block is an empty object and
+// `::new()` takes no arguments (mirrors `t8425`'s no-caller-input shape). This
+// read is single-page (`facets.self_paginated: false`) → plain `Inner::post`.
+//
+// The deposit response may be empty on a position-less paper account (the
+// `00707` empty case) — that is the PENDING outcome, not a defect.
+// ---------------------------------------------------------------------------
+
+/// Input block for `CFOBQ10500` — empty (no caller-supplied fields).
+///
+/// Per the normalized baseline, `CFOBQ10500` carries NO request-body fields: the
+/// `tr_cd` is a request-header field, not a body field, and there is no account
+/// number in the body (account identity is the bearer token plus the
+/// config-supplied `ResolvedConfig.account_no`). The in-block serializes as an
+/// empty object `{}`.
+#[derive(Serialize, Debug, Clone, Default)]
+pub struct CFOBQ10500InBlock {}
+
+/// `CFOBQ10500` request — wraps the empty input block under the
+/// `CFOBQ10500InBlock` key.
+///
+/// Serializes to `{"CFOBQ10500InBlock":{}}`. No account number and no caller
+/// field ever appears in the body.
+#[derive(Serialize, Debug, Clone, Default)]
+pub struct CFOBQ10500Request {
+    #[serde(rename = "CFOBQ10500InBlock")]
+    pub inblock: CFOBQ10500InBlock,
+}
+
+impl CFOBQ10500Request {
+    /// Build a `CFOBQ10500` F/O deposit inquiry. Takes no caller input: the
+    /// account is established by the credentialed token and the config-supplied
+    /// `ResolvedConfig.account_no`, never by the caller.
+    pub fn new() -> Self {
+        CFOBQ10500Request {
+            inblock: CFOBQ10500InBlock {},
+        }
+    }
+}
+
+/// `CFOBQ10500OutBlock1` — the account-identity summary block.
+///
+/// `AcntNo`/`Pwd` are account-sensitive, so [`std::fmt::Debug`] is hand-written
+/// to redact them (mirrors the CSPAQ redaction discipline).
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct CFOBQ10500OutBlock1 {
+    /// Record count / 레코드갯수.
+    #[serde(rename = "RecCnt", deserialize_with = "ls_core::string_or_number")]
+    pub reccnt: String,
+    /// Account number / 계좌번호 (account-sensitive; redacted in Debug).
+    #[serde(rename = "AcntNo", deserialize_with = "ls_core::string_or_number")]
+    pub acntno: String,
+    /// Password / 비밀번호 (account-sensitive; redacted in Debug).
+    #[serde(rename = "Pwd", deserialize_with = "ls_core::string_or_number")]
+    pub pwd: String,
+}
+
+impl std::fmt::Debug for CFOBQ10500OutBlock1 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CFOBQ10500OutBlock1")
+            .field("reccnt", &self.reccnt)
+            .field("acntno", &"<redacted>")
+            .field("pwd", &"<redacted>")
+            .finish()
+    }
+}
+
+/// `CFOBQ10500OutBlock2` — the deposit / margin summary block.
+///
+/// A representative, spec-grounded subset of the LS `CFOBQ10500OutBlock2` (24
+/// fields): the headline deposit, withdrawable, and margin figures. Every
+/// numeric-bearing field uses [`ls_core::string_or_number`]; `#[serde(default)]`
+/// lets a sparse or empty block deserialize. Field names mirror the spec verbatim.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct CFOBQ10500OutBlock2 {
+    /// Record count / 레코드갯수.
+    #[serde(rename = "RecCnt", deserialize_with = "ls_core::string_or_number")]
+    pub reccnt: String,
+    /// Account name / 계좌명.
+    #[serde(rename = "AcntNm", deserialize_with = "ls_core::string_or_number")]
+    pub acntnm: String,
+    /// Total deposit / 예탁금총액 (canonical field, KTD4).
+    #[serde(
+        rename = "DpsamtTotamt",
+        deserialize_with = "ls_core::string_or_number"
+    )]
+    pub dpsamttotamt: String,
+    /// Deposit / 예수금.
+    #[serde(rename = "Dps", deserialize_with = "ls_core::string_or_number")]
+    pub dps: String,
+    /// Substitute amount / 대용금액.
+    #[serde(rename = "SubstAmt", deserialize_with = "ls_core::string_or_number")]
+    pub substamt: String,
+    /// Withdrawable amount / 인출가능금액.
+    #[serde(
+        rename = "WthdwAbleAmt",
+        deserialize_with = "ls_core::string_or_number"
+    )]
+    pub wthdwableamt: String,
+    /// Margin amount / 증거금액.
+    #[serde(rename = "Mgn", deserialize_with = "ls_core::string_or_number")]
+    pub mgn: String,
+    /// Orderable amount / 주문가능금액.
+    #[serde(rename = "OrdAbleAmt", deserialize_with = "ls_core::string_or_number")]
+    pub ordableamt: String,
+}
+
+/// `CFOBQ10500OutBlock3` — the per-product-group margin breakdown block.
+///
+/// A representative, spec-grounded subset of the LS `CFOBQ10500OutBlock3` (18
+/// fields). Every numeric-bearing field uses [`ls_core::string_or_number`];
+/// `#[serde(default)]` lets a sparse or empty block deserialize.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct CFOBQ10500OutBlock3 {
+    /// Product-group code name / 상품군코드명.
+    #[serde(rename = "PdGrpCodeNm", deserialize_with = "ls_core::string_or_number")]
+    pub pdgrpcodenm: String,
+    /// Net-risk margin / 순위험증거금액.
+    #[serde(rename = "NetRiskMgn", deserialize_with = "ls_core::string_or_number")]
+    pub netriskmgn: String,
+    /// Price margin / 가격증거금액.
+    #[serde(rename = "PrcMgn", deserialize_with = "ls_core::string_or_number")]
+    pub prcmgn: String,
+    /// Order margin / 주문증거금액.
+    #[serde(rename = "OrdMgn", deserialize_with = "ls_core::string_or_number")]
+    pub ordmgn: String,
+    /// Maintenance margin / 유지증거금액.
+    #[serde(rename = "MaintMgn", deserialize_with = "ls_core::string_or_number")]
+    pub maintmgn: String,
+}
+
+/// `CFOBQ10500` response envelope.
+///
+/// `outblock1` is the account-identity summary under `CFOBQ10500OutBlock1`;
+/// `outblock2` (deposit/margin summary) and `outblock3` (per-product-group margin)
+/// are each tolerated as a single object OR an array via
+/// [`ls_core::de_vec_or_single`] (the gateway collapses a one-row block to a bare
+/// object). An empty `00707` yields empty Vecs (the PENDING case).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct CFOBQ10500Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "CFOBQ10500OutBlock1", default)]
+    pub outblock1: CFOBQ10500OutBlock1,
+    #[serde(
+        rename = "CFOBQ10500OutBlock2",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock2: Vec<CFOBQ10500OutBlock2>,
+    #[serde(
+        rename = "CFOBQ10500OutBlock3",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock3: Vec<CFOBQ10500OutBlock3>,
+}
+
 /// Account operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache, rate
@@ -625,6 +796,19 @@ impl Account {
     pub async fn orderable(&self, req: &CSPAQ22200Request) -> LsResult<CSPAQ22200Response> {
         self.inner
             .post(&ls_core::endpoint_policy::CSPAQ22200_POLICY, req)
+            .await
+    }
+
+    /// Inquire the futures/options account deposit / margin via `CFOBQ10500`.
+    ///
+    /// Dispatches through plain [`ls_core::Inner::post`] (Account rate bucket,
+    /// single-page). The account is the config-supplied [`Account::account_no`],
+    /// identified by the bearer token — the caller passes no input at all (the
+    /// request body is an empty in-block). A position-less paper account may
+    /// return an empty `00707` deposit (the PENDING case), not a defect.
+    pub async fn fo_deposit(&self, req: &CFOBQ10500Request) -> LsResult<CFOBQ10500Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::CFOBQ10500_POLICY, req)
             .await
     }
 }

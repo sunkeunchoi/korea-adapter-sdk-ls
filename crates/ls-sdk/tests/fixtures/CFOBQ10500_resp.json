@@ -1,0 +1,30 @@
+{
+  "rsp_cd": "00000",
+  "rsp_msg": "정상처리 되었습니다.",
+  "CFOBQ10500OutBlock1": {
+    "RecCnt": 1,
+    "AcntNo": "00000000-01",
+    "Pwd": "0000"
+  },
+  "CFOBQ10500OutBlock2": [
+    {
+      "RecCnt": 1,
+      "AcntNm": "홍길동",
+      "DpsamtTotamt": 5500000,
+      "Dps": 5000000,
+      "SubstAmt": 500000,
+      "WthdwAbleAmt": 4800000,
+      "Mgn": 1200000,
+      "OrdAbleAmt": 3700000
+    }
+  ],
+  "CFOBQ10500OutBlock3": [
+    {
+      "PdGrpCodeNm": "KOSPI200선물",
+      "NetRiskMgn": 1100000,
+      "PrcMgn": 900000,
+      "OrdMgn": 850000,
+      "MaintMgn": 1050000
+    }
+  ]
+}
