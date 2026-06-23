@@ -1773,6 +1773,10 @@ async fn live_smoke_t2301() {
     let date = Utc::now().format("%Y-%m-%d");
     match sdk.market_session().option_board(&req).await {
         Ok(resp) => {
+            assert!(
+                !resp.outblock.gmprice.is_empty(),
+                "live-smoke-t2301: empty result (00707) — PENDING, not Implemented"
+            );
             let line =
                 smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.gmprice.len())), "gmprice_len")
                     .expect("an Ok outcome yields a result line");
@@ -1816,8 +1820,12 @@ async fn live_smoke_t2522() {
 
     let req = T2522Request::new();
     let date = Utc::now().format("%Y-%m-%d");
-    match sdk.market_session().stock_futures_underlying(&req).await {
+    match sdk.market_session().stock_futures_underlying_master(&req).await {
         Ok(resp) => {
+            assert!(
+                !resp.outblock1.is_empty(),
+                "live-smoke-t2522: empty result (00707) — PENDING, not Implemented"
+            );
             let line = smoke_result(
                 Ok((resp.rsp_cd.clone(), resp.outblock1.len())),
                 "rows",
@@ -1865,6 +1873,10 @@ async fn live_smoke_t8401() {
     let date = Utc::now().format("%Y-%m-%d");
     match sdk.market_session().stock_futures_master(&req).await {
         Ok(resp) => {
+            assert!(
+                !resp.outblock.is_empty(),
+                "live-smoke-t8401: empty result (00707) — PENDING, not Implemented"
+            );
             let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "rows")
                 .expect("an Ok outcome yields a result line");
             record("live-smoke-t8401", &format!("env=paper date={date}"), &line);
@@ -1905,6 +1917,10 @@ async fn live_smoke_t8426() {
     let date = Utc::now().format("%Y-%m-%d");
     match sdk.market_session().commodity_futures_master(&req).await {
         Ok(resp) => {
+            assert!(
+                !resp.outblock.is_empty(),
+                "live-smoke-t8426: empty result (00707) — PENDING, not Implemented"
+            );
             let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "rows")
                 .expect("an Ok outcome yields a result line");
             record("live-smoke-t8426", &format!("env=paper date={date}"), &line);
@@ -1945,6 +1961,10 @@ async fn live_smoke_t8433() {
     let date = Utc::now().format("%Y-%m-%d");
     match sdk.market_session().index_option_master(&req).await {
         Ok(resp) => {
+            assert!(
+                !resp.outblock.is_empty(),
+                "live-smoke-t8433: empty result (00707) — PENDING, not Implemented"
+            );
             let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "rows")
                 .expect("an Ok outcome yields a result line");
             record("live-smoke-t8433", &format!("env=paper date={date}"), &line);
@@ -1958,14 +1978,16 @@ async fn live_smoke_t8433() {
 
 // ---------------------------------------------------------------------------
 // t8435 — 파생종목마스터조회API용 (derivatives master; F/O). market_session,
-// non-paginated. Keyed by a `gubun` segment selector (`"MF"` futures / `"MO"`
-// options). Master read — non-empty regardless of the KRX session (venue facet
-// stays provisional). The out-block is a row array (KTD3), so the structural
-// signal is the row count, kept credential-free.
+// non-paginated. Keyed by a `gubun` segment selector — the LS spec defines these
+// as the MINI/weekly segments: `"MF"` 미니선물 / `"MO"` 미니옵션 /
+// `"WK"` 코스피200위클리옵션 / `"SF"` 코스닥150선물 / `"QW"` 코스닥150위클리옵션.
+// Master read — non-empty regardless of the KRX session (venue facet stays
+// provisional). The out-block is a row array (KTD3), so the structural signal is
+// the row count, kept credential-free.
 // ---------------------------------------------------------------------------
 
 /// `make live-smoke-t8435`: paper guard → OAuth token → one `t8435` derivatives
-/// master read for `gubun="MF"` (선물/futures). A success `rsp_cd` with a
+/// master read for `gubun="MF"` (미니선물/mini futures). A success `rsp_cd` with a
 /// populated `t8435OutBlock` row array proves the read is callable and
 /// round-trips. The recorded line is credential-free (only `rsp_cd` + the row
 /// count, never `rsp_msg`) and self-dated; a failed run emits a distinct
@@ -1985,6 +2007,10 @@ async fn live_smoke_t8435() {
     let date = Utc::now().format("%Y-%m-%d");
     match sdk.market_session().derivatives_master(&req).await {
         Ok(resp) => {
+            assert!(
+                !resp.outblock.is_empty(),
+                "live-smoke-t8435: empty result (00707) — PENDING, not Implemented"
+            );
             let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "rows")
                 .expect("an Ok outcome yields a result line");
             record(
@@ -2030,6 +2056,10 @@ async fn live_smoke_t8467() {
     let date = Utc::now().format("%Y-%m-%d");
     match sdk.market_session().index_futures_master(&req).await {
         Ok(resp) => {
+            assert!(
+                !resp.outblock.is_empty(),
+                "live-smoke-t8467: empty result (00707) — PENDING, not Implemented"
+            );
             let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "rows")
                 .expect("an Ok outcome yields a result line");
             record(
@@ -2073,8 +2103,12 @@ async fn live_smoke_t9943() {
 
     let req = T9943Request::new("V");
     let date = Utc::now().format("%Y-%m-%d");
-    match sdk.market_session().index_futures_master_v2(&req).await {
+    match sdk.market_session().index_futures_master_codes(&req).await {
         Ok(resp) => {
+            assert!(
+                !resp.outblock.is_empty(),
+                "live-smoke-t9943: empty result (00707) — PENDING, not Implemented"
+            );
             let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "rows")
                 .expect("an Ok outcome yields a result line");
             record(
@@ -2117,8 +2151,12 @@ async fn live_smoke_t9944() {
 
     let req = T9944Request::new();
     let date = Utc::now().format("%Y-%m-%d");
-    match sdk.market_session().index_option_master_v2(&req).await {
+    match sdk.market_session().index_option_master_codes(&req).await {
         Ok(resp) => {
+            assert!(
+                !resp.outblock.is_empty(),
+                "live-smoke-t9944: empty result (00707) — PENDING, not Implemented"
+            );
             let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "rows")
                 .expect("an Ok outcome yields a result line");
             record("live-smoke-t9944", &format!("env=paper date={date}"), &line);

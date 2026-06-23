@@ -7,9 +7,9 @@
       "hprice": "175.80",
       "lprice": "102.90",
       "jnilclose": "127.95",
-      "jnilhigh": "0.00",
-      "jnillow": "0.00",
-      "recprice": "127.95"
+      "jnilhigh": "131.40",
+      "jnillow": "124.10",
+      "recprice": "127.90"
     },
     {
       "hname": "C 2406 330.0",
@@ -18,9 +18,9 @@
       "hprice": "159.20",
       "lprice": "0.01",
       "jnilclose": "62.00",
-      "jnilhigh": "0.00",
-      "jnillow": "0.00",
-      "recprice": "62.00"
+      "jnilhigh": "64.30",
+      "jnillow": "60.15",
+      "recprice": "61.95"
     }
   ],
   "rsp_cd": "00000",

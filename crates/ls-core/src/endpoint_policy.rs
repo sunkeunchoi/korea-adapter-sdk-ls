@@ -768,8 +768,9 @@ pub const T8433_POLICY: EndpointPolicy = EndpointPolicy {
 };
 
 /// t8435 — 파생종목마스터조회API용 (derivatives master; non-paginated market
-/// read). Caller supplies a `gubun` segment selector (`"MF"` futures / `"MO"`
-/// options).
+/// read). Caller supplies a `gubun` segment selector — the LS spec defines these
+/// as the MINI/weekly segments (`"MF"` 미니선물 / `"MO"` 미니옵션 / `"WK"`
+/// 코스피200위클리옵션 / `"SF"` 코스닥150선물 / `"QW"` 코스닥150위클리옵션).
 pub const T8435_POLICY: EndpointPolicy = EndpointPolicy {
     tr_code: "t8435",
     path: "/futureoption/market-data",

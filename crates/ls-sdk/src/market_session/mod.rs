@@ -2445,8 +2445,9 @@ pub struct T8426Response {
 // is a single out-block `t8433OutBlock` that is itself the data-bearing ROW
 // ARRAY (the raw capture's `res_example` shows `"t8433OutBlock": [ {…}, … ]`,
 // rows direct under the key, no numbered sub-block) — one index-option contract
-// per row. There is no separate count header. Modeled after `T8426` (single
-// row-array out-block).
+// per row. There is no separate count header. The row is modeled after the
+// 9-field `T8435` row-array out-block (T8426 has only 3 fields; the index-option
+// row carries the daily limit/close reference prices too).
 // ---------------------------------------------------------------------------
 
 /// Input block for `t8433` — a no-caller-input read.
@@ -2492,14 +2493,15 @@ impl Default for T8433Request {
 ///
 /// The data-bearing repeated block (`t8433OutBlock[]`, confirmed from the raw
 /// capture's `res_example` array — rows are direct elements under the
-/// `t8433OutBlock` key). `hname` (종목명, the index-option contract name) is the
-/// canonical identity field, resolved by its `korean_name` from the baseline;
-/// `shcode`/`expcode` are the contract codes, and the price fields are the
-/// daily limit/close references. `shcode` and the `Number`-typed price fields
-/// use [`ls_core::string_or_number`] for wire-type tolerance (the gateway sends
-/// these as JSON strings in the capture but may send numbers);
-/// `#[serde(default)]` lets a sparse row deserialize cleanly. Field names mirror
-/// the LS spec verbatim.
+/// `t8433OutBlock` key). A representative, spec-grounded subset modeled after the
+/// 9-field [`T8435OutBlock`] row. `hname` (종목명, the index-option contract
+/// name) is the canonical identity field, resolved by its `korean_name` from the
+/// baseline; `shcode`/`expcode` are the contract codes, and the price fields are
+/// the daily limit/close references (상한가/하한가/전일종가/전일고가/전일저가/
+/// 기준가). `shcode` and the `Number`-typed price fields use
+/// [`ls_core::string_or_number`] for wire-type tolerance (the gateway sends these
+/// as JSON strings in the capture but may send numbers); `#[serde(default)]` lets
+/// a sparse row deserialize cleanly. Field names mirror the LS spec verbatim.
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(default)]
 pub struct T8433OutBlock {
@@ -2519,6 +2521,12 @@ pub struct T8433OutBlock {
     /// Previous-day close / 전일종가 (tolerant of a string OR number wire value).
     #[serde(deserialize_with = "ls_core::string_or_number")]
     pub jnilclose: String,
+    /// Previous-day high / 전일고가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jnilhigh: String,
+    /// Previous-day low / 전일저가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jnillow: String,
     /// Reference price / 기준가 (tolerant of a string OR number wire value).
     #[serde(deserialize_with = "ls_core::string_or_number")]
     pub recprice: String,
@@ -2546,8 +2554,10 @@ pub struct T8433Response {
 
 // ---------------------------------------------------------------------------
 // t8435 — 파생종목마스터조회API용 (derivatives master). market_session,
-// non-paginated. Keyed by a `gubun` (구분) selector — `"MF"` 선물 (futures) /
-// `"MO"` 옵션 (options). The response out-block `t8435OutBlock` is itself a ROW
+// non-paginated. Keyed by a `gubun` (구분) selector — the LS spec defines these
+// as the MINI/weekly segments: `"MF"` 미니선물 (mini futures) / `"MO"` 미니옵션
+// (mini options) / `"WK"` 코스피200위클리옵션 / `"SF"` 코스닥150선물 / `"QW"`
+// 코스닥150위클리옵션. The response out-block `t8435OutBlock` is itself a ROW
 // ARRAY (the raw capture's `res_example` shows `"t8435OutBlock": [ {…}, … ]`,
 // one derivatives contract per row, no numbered sub-block — the normalized
 // baseline collapses the block, so the true wire shape is read from the raw
@@ -2556,13 +2566,18 @@ pub struct T8433Response {
 // out-block) but with a caller `gubun` selector.
 // ---------------------------------------------------------------------------
 
-/// Input block for `t8435` — the futures/options selector.
+/// Input block for `t8435` — the derivatives-segment selector.
 ///
-/// `gubun` (구분) selects the derivatives segment: `"MF"` 선물 (futures) /
-/// `"MO"` 옵션 (options). The spec types it `String` (length 2). Caller-supplied.
+/// `gubun` (구분) selects the derivatives segment. The LS spec defines these as
+/// the MINI/weekly segments: `"MF"` 미니선물 (mini futures) / `"MO"` 미니옵션
+/// (mini options) / `"WK"` 코스피200위클리옵션 (KOSPI200 weekly options) /
+/// `"SF"` 코스닥150선물 (KOSDAQ150 futures) / `"QW"` 코스닥150위클리옵션
+/// (KOSDAQ150 weekly options). The spec types it `String` (length 2).
+/// Caller-supplied.
 #[derive(Serialize, Debug, Clone)]
 pub struct T8435InBlock {
-    /// Segment selector / 구분 (`"MF"` futures / `"MO"` options).
+    /// Segment selector / 구분 (`"MF"` mini futures / `"MO"` mini options /
+    /// `"WK"`/`"SF"`/`"QW"` weekly/KOSDAQ150 segments).
     pub gubun: String,
 }
 
@@ -2578,7 +2593,8 @@ pub struct T8435Request {
 
 impl T8435Request {
     /// Build a `t8435` derivatives-master request for one segment (`gubun`:
-    /// `"MF"` futures / `"MO"` options).
+    /// `"MF"` mini futures / `"MO"` mini options / `"WK"`/`"SF"`/`"QW"` weekly/
+    /// KOSDAQ150 segments).
     pub fn new(gubun: impl Into<String>) -> Self {
         T8435Request {
             inblock: T8435InBlock {
@@ -3211,7 +3227,7 @@ impl MarketSession {
     /// Read the stock-futures underlying-asset master (주식선물기초자산조회) via
     /// `t2522`. Non-paginated, no caller input; returns the underlying-asset
     /// header (name + codes).
-    pub async fn stock_futures_underlying(
+    pub async fn stock_futures_underlying_master(
         &self,
         req: &T2522Request,
     ) -> LsResult<T2522Response> {
@@ -3241,9 +3257,13 @@ impl MarketSession {
             .await
     }
 
-    /// Read the index-option master (지수옵션마스터조회) via `t8433`.
-    /// Non-paginated, no caller input; returns the index-option contract rows
-    /// (name + codes + daily limit/close references).
+    /// Read the price-bearing index-option master (지수옵션마스터조회) via `t8433`.
+    ///
+    /// Each row carries the contract name + codes PLUS the daily limit/close
+    /// reference prices (상한가/하한가/전일종가/전일고가/전일저가/기준가) — the
+    /// fuller variant. For the codes-only counterpart (3 identity fields, no
+    /// price refs) use [`MarketSession::index_option_master_codes`] (`t9944`).
+    /// Non-paginated, no caller input; returns the index-option contract rows.
     pub async fn index_option_master(
         &self,
         req: &T8433Request,
@@ -3254,40 +3274,63 @@ impl MarketSession {
     }
 
     /// Read the derivatives master (파생종목마스터조회) via `t8435`.
-    /// Non-paginated; keyed by a `gubun` segment selector (`"MF"` futures /
-    /// `"MO"` options). Returns the master snapshot (name + codes + daily
-    /// limit/close reference prices).
+    /// Non-paginated; keyed by a `gubun` segment selector — the MINI/weekly
+    /// segments (`"MF"` 미니선물 / `"MO"` 미니옵션 / `"WK"` 코스피200위클리옵션 /
+    /// `"SF"` 코스닥150선물 / `"QW"` 코스닥150위클리옵션). Returns the master
+    /// snapshot (name + codes + daily limit/close reference prices).
     pub async fn derivatives_master(&self, req: &T8435Request) -> LsResult<T8435Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T8435_POLICY, req)
             .await
     }
 
-    /// Read the index-futures master (지수선물마스터조회) via `t8467`.
+    /// Read the price-bearing index-futures master (지수선물마스터조회) via `t8467`.
+    ///
+    /// Each row carries the contract name + codes PLUS the daily limit/close
+    /// reference prices (상한가/하한가/전일종가/전일고가/전일저가/기준가) — the
+    /// fuller variant. For the codes-only counterpart (3 identity fields, no
+    /// price refs) use [`MarketSession::index_futures_master_codes`] (`t9943`).
     /// Non-paginated; keyed by a `gubun` segment selector (`"V"` volatility /
     /// `"S"` sector / `"Q"` KOSDAQ150 / any other value → KOSPI200 index
-    /// futures). Returns the master snapshot (name + codes + daily limit/close
-    /// reference prices).
+    /// futures).
     pub async fn index_futures_master(&self, req: &T8467Request) -> LsResult<T8467Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T8467_POLICY, req)
             .await
     }
 
-    /// Read the index-futures master (지수선물마스터조회) via `t9943`.
-    /// Non-paginated; keyed by a `gubun` segment selector (`"V"` volatility /
-    /// `"S"` sector / any other value → KOSPI200 index futures). Returns the
-    /// master snapshot row array (contract name + short/expanded codes).
-    pub async fn index_futures_master_v2(&self, req: &T9943Request) -> LsResult<T9943Response> {
+    /// Read the codes-only index-futures master (지수선물마스터조회) via `t9943`.
+    ///
+    /// The lightweight index-futures master: each row carries only the 3 identity
+    /// fields (contract name `hname` + short/expanded codes), with NO daily
+    /// price references. This is the distinction from
+    /// [`MarketSession::index_futures_master`] (`t8467`), whose rows additionally
+    /// carry the daily limit/close reference prices (~9 fields). Both accept the
+    /// same `gubun` segment selector (`"V"` volatility / `"S"` sector / any other
+    /// value → KOSPI200 index futures); pick this one when only the contract
+    /// codes are needed. Non-paginated; returns the master snapshot row array.
+    pub async fn index_futures_master_codes(
+        &self,
+        req: &T9943Request,
+    ) -> LsResult<T9943Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T9943_POLICY, req)
             .await
     }
 
-    /// Read the index-option master (지수옵션마스터조회) via `t9944`.
-    /// Non-paginated, no caller input; returns the index-option master snapshot
-    /// row array (contract name + short/expanded codes).
-    pub async fn index_option_master_v2(&self, req: &T9944Request) -> LsResult<T9944Response> {
+    /// Read the codes-only index-option master (지수옵션마스터조회) via `t9944`.
+    ///
+    /// The lightweight index-option master: each row carries only the 3 identity
+    /// fields (contract name `hname` + short/expanded codes), with NO daily
+    /// price references. This is the distinction from
+    /// [`MarketSession::index_option_master`] (`t8433`), whose rows additionally
+    /// carry the daily limit/close reference prices. Pick this one when only the
+    /// contract codes are needed. Non-paginated, no caller input; returns the
+    /// master snapshot row array.
+    pub async fn index_option_master_codes(
+        &self,
+        req: &T9944Request,
+    ) -> LsResult<T9944Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T9944_POLICY, req)
             .await

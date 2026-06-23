@@ -1910,9 +1910,9 @@ async fn t2522_deserializes_spec_fixture() {
 
     let resp = sdk_for(&server)
         .market_session()
-        .stock_futures_underlying(&T2522Request::new())
+        .stock_futures_underlying_master(&T2522Request::new())
         .await
-        .expect("t2522 stock_futures_underlying should succeed");
+        .expect("t2522 stock_futures_underlying_master should succeed");
     assert_eq!(resp.rsp_cd, "00000");
     assert_eq!(resp.outblock.cnt, "2", "건수 count header (was a JSON number)");
     assert_eq!(resp.outblock1.len(), 2, "two underlying-asset rows");
@@ -2247,7 +2247,10 @@ async fn t8433_deserializes_spec_fixture() {
     assert_eq!(row.hprice, "175.80", "상한가 (distinct)");
     assert_eq!(row.lprice, "102.90", "하한가 (distinct)");
     assert_eq!(row.jnilclose, "127.95", "전일종가 (distinct)");
-    assert_eq!(row.recprice, "127.95", "기준가");
+    assert_eq!(row.jnilhigh, "131.40", "전일고가 (distinct)");
+    assert_eq!(row.jnillow, "124.10", "전일저가 (distinct)");
+    // recprice (기준가) is distinct from jnilclose — a 기준가/전일종가 mislabel surfaces.
+    assert_eq!(row.recprice, "127.90", "기준가 (distinct from 전일종가)");
     // A distinct second row, proving the array carries multiple rows.
     assert_eq!(resp.outblock[1].hname, "C 2406 330.0", "second row distinct");
 }
@@ -2257,18 +2260,24 @@ async fn t8433_deserializes_spec_fixture() {
 /// may send a numeric-looking price either way.
 #[test]
 fn t8433_hprice_number_or_string_yields_same_value() {
+    // Use a value whose JSON-number form and string form normalize identically
+    // (no trailing-zero divergence), so the two forms cross-assert equal — the
+    // same round-trip guarantee the sibling TRs' number-or-string tests prove.
     let as_number: T8433Response = serde_json::from_value(serde_json::json!({
         "rsp_cd": "00000",
-        "t8433OutBlock": [{ "hname": "C 2307 185.0", "hprice": 175.80 }]
+        "t8433OutBlock": [{ "hname": "C 2307 185.0", "hprice": 175.5 }]
     }))
     .expect("numeric hprice deserializes");
     let as_string: T8433Response = serde_json::from_value(serde_json::json!({
         "rsp_cd": "00000",
-        "t8433OutBlock": [{ "hname": "C 2307 185.0", "hprice": "175.80" }]
+        "t8433OutBlock": [{ "hname": "C 2307 185.0", "hprice": "175.5" }]
     }))
     .expect("string hprice deserializes");
-    assert_eq!(as_number.outblock[0].hprice, "175.8");
-    assert_eq!(as_string.outblock[0].hprice, "175.80");
+    assert_eq!(as_number.outblock[0].hprice, "175.5");
+    assert_eq!(
+        as_number.outblock[0].hprice, as_string.outblock[0].hprice,
+        "both wire forms normalize to the same string"
+    );
 }
 
 /// Covers the array single-or-Vec case (shared contract item 6): a single-object
@@ -2360,7 +2369,8 @@ async fn t8435_deserializes_spec_fixture() {
     assert_eq!(row.jnilclose, "1348.7", "전일종가 (distinct)");
     assert_eq!(row.jnilhigh, "1349.8", "전일고가 (distinct)");
     assert_eq!(row.jnillow, "1323.9", "전일저가 (distinct)");
-    assert_eq!(row.recprice, "1348.7", "기준가");
+    // recprice (기준가) is distinct from jnilclose — a 기준가/전일종가 mislabel surfaces.
+    assert_eq!(row.recprice, "1348.6", "기준가 (distinct from 전일종가)");
     // A distinct second row, proving the array carries multiple rows.
     assert_eq!(resp.outblock[1].hname, "KQF 2309", "second row distinct");
 }
@@ -2577,9 +2587,9 @@ async fn t9943_deserializes_spec_fixture() {
 
     let resp = sdk_for(&server)
         .market_session()
-        .index_futures_master_v2(&T9943Request::new("V"))
+        .index_futures_master_codes(&T9943Request::new("V"))
         .await
-        .expect("t9943 index_futures_master_v2 should succeed");
+        .expect("t9943 index_futures_master_codes should succeed");
     assert_eq!(resp.rsp_cd, "00000");
     assert_eq!(resp.outblock.len(), 2, "fixture carries two index-futures rows");
     let row = &resp.outblock[0];
@@ -2689,9 +2699,9 @@ async fn t9944_deserializes_spec_fixture() {
 
     let resp = sdk_for(&server)
         .market_session()
-        .index_option_master_v2(&T9944Request::new())
+        .index_option_master_codes(&T9944Request::new())
         .await
-        .expect("t9944 index_option_master_v2 should succeed");
+        .expect("t9944 index_option_master_codes should succeed");
     assert_eq!(resp.rsp_cd, "00000");
     assert_eq!(resp.outblock.len(), 2, "fixture carries two index-option rows");
     let row = &resp.outblock[0];
