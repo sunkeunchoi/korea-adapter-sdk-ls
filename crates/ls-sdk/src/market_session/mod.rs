@@ -739,6 +739,76 @@ pub struct T1859Response {
     pub outblock1: Vec<T1859OutBlock1>,
 }
 
+/// Input block for `t1826` — 종목Q클릭검색리스트조회 (ThinQ Q-click search-list
+/// inquiry; the Wave 3 producer).
+///
+/// `search_gb` selects which search catalog to list (검색구분):
+/// `"0"` 핵심검색 / `"1"` 지표검색 / `"2"` 시세동향 / `"3"` 투자자동향. It is a
+/// documented filter enum, not an instrument identifier. The response carries the
+/// `search_cd` catalog keys that `t1825` consumes (the modeled discovery edge).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1826InBlock {
+    /// Search catalog / 검색구분 (`"0"`–`"3"`).
+    pub search_gb: String,
+}
+
+/// `t1826` request — wraps the input block under the `t1826InBlock` key.
+///
+/// Serializes to `{"t1826InBlock":{"search_gb":...}}`. `t1826` is not paginated,
+/// so there are no `tr_cont`/`tr_cont_key` fields in the body.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1826Request {
+    #[serde(rename = "t1826InBlock")]
+    pub inblock: T1826InBlock,
+}
+
+impl T1826Request {
+    /// Build a `t1826` search-list request for one search catalog (`search_gb`,
+    /// `"0"` 핵심검색 being the representative core-search catalog).
+    pub fn new(search_gb: impl Into<String>) -> Self {
+        T1826Request {
+            inblock: T1826InBlock {
+                search_gb: search_gb.into(),
+            },
+        }
+    }
+}
+
+/// `t1826OutBlock` — one available-search row (`t1826OutBlock[]`).
+///
+/// `search_cd` (검색코드) is the catalog key fed to `t1825`; `search_nm` (검색명)
+/// is its display name. Both via [`ls_core::string_or_number`] for wire-type
+/// tolerance; `#[serde(default)]` lets a sparse/empty row deserialize.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1826OutBlock {
+    /// Search code / 검색코드 (the `t1825` `search_cd` input).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub search_cd: String,
+    /// Search name / 검색명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub search_nm: String,
+}
+
+/// `t1826` response envelope.
+///
+/// `outblock` is the available-search array under the `t1826OutBlock` key,
+/// tolerated as single-or-array via [`ls_core::de_vec_or_single`]. All
+/// `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1826Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t1826OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T1826OutBlock>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -839,6 +909,20 @@ impl MarketSession {
     pub async fn condition_search(&self, req: &T1859Request) -> LsResult<T1859Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T1859_POLICY, req)
+            .await
+    }
+
+    /// List the available ThinQ Q-click searches (종목Q클릭검색리스트조회) via
+    /// `t1826` — the Wave 3 producer.
+    ///
+    /// Dispatches through [`ls_core::Inner::post`] (non-paginated). `search_gb`
+    /// selects the search catalog (`"0"` 핵심검색 being representative); the
+    /// response carries the `search_cd` catalog keys consumed by `t1825`
+    /// ([`MarketSession::qclick_search`]). A `01900` business code surfaces as
+    /// [`ls_core::LsError::ApiError`] and classifies as paper-incompatible.
+    pub async fn qclick_search_list(&self, req: &T1826Request) -> LsResult<T1826Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1826_POLICY, req)
             .await
     }
 }

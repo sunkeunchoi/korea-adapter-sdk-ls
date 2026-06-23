@@ -9,8 +9,9 @@
 use ls_core::{Inner, LsError};
 use ls_sdk::market_session::{
     T1101OutBlock, T1101Request, T1101Response, T1102OutBlock, T1102Request, T1102Response,
-    T1531Request, T1531Response, T1537Request, T1537Response, T1859OutBlock1, T1859Request,
-    T1859Response, T8425Request, T8425Response, T8436Request, T8436Response,
+    T1531Request, T1531Response, T1537Request, T1537Response, T1826OutBlock, T1826Request,
+    T1826Response, T1859OutBlock1, T1859Request, T1859Response, T8425Request, T8425Response,
+    T8436Request, T8436Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
@@ -844,4 +845,111 @@ fn t1859_response_envelope_default_is_empty() {
     assert_eq!(resp.rsp_cd, "");
     assert!(resp.outblock1.is_empty());
     assert_eq!(resp.outblock.result_count, "");
+}
+
+// ---------------------------------------------------------------------------
+// t1826 — 종목Q클릭검색리스트조회 (ThinQ Q-click search-list; Wave 3 producer).
+// market_session, non-paginated; takes a `search_gb` catalog filter and returns
+// the `search_cd` keys consumed by `t1825`.
+// ---------------------------------------------------------------------------
+
+/// Covers AE2. `T1826Request::new` serializes the `search_gb` filter under the
+/// `t1826InBlock` key, with no `tr_cont`/`tr_cont_key` leak (t1826 is not
+/// paginated).
+#[test]
+fn t1826_request_serializes_with_search_gb_in_inblock() {
+    let req = T1826Request::new("0");
+    let value = serde_json::to_value(&req).expect("serialize t1826 request");
+
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "request must have exactly one top-level key");
+    assert!(obj.contains_key("t1826InBlock"), "missing t1826InBlock key");
+
+    let inblock = &value["t1826InBlock"];
+    let inblock_obj = inblock.as_object().expect("inblock is an object");
+    assert_eq!(inblock_obj.len(), 1, "t1826InBlock carries only search_gb");
+    assert_eq!(inblock["search_gb"], "0");
+
+    assert!(value.get("tr_cont").is_none(), "no tr_cont in the body");
+    assert!(
+        value.get("tr_cont_key").is_none(),
+        "no tr_cont_key in the body"
+    );
+}
+
+/// Covers AE2. A representative success response deserializes through the typed
+/// path: the `search_cd` catalog keys round-trip (the `t1825` discovery-edge
+/// input), and `search_cd` parses whether it arrives as a JSON number (row 0) or
+/// string (row 1) via `string_or_number` — proving the subset round-trips, not
+/// just `serde(default)`.
+#[test]
+fn t1826_deserializes_success_with_real_values() {
+    let resp: T1826Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1826OutBlock": [
+            { "search_cd": "0001", "search_nm": "거래량급증" },
+            { "search_cd": 2, "search_nm": "외국인순매수" }
+        ]
+    }))
+    .expect("representative t1826 success must deserialize");
+
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock.len(), 2, "both available-search rows round-trip");
+    assert_eq!(resp.outblock[0].search_cd, "0001", "search_cd (from string)");
+    assert_eq!(resp.outblock[1].search_cd, "2", "search_cd (from JSON number)");
+}
+
+/// Covers AE2. An empty result set (`rsp_cd 00707`, empty out-block) deserializes
+/// and is recognized as the empty/pending case — the implement-tr gate records
+/// this as PENDING, never a flip.
+#[test]
+fn t1826_empty_result_set_deserializes_as_empty() {
+    let empty: T1826Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707",
+        "t1826OutBlock": []
+    }))
+    .expect("empty result set must deserialize");
+    assert_eq!(empty.rsp_cd, "00707");
+    assert!(
+        empty.outblock.is_empty(),
+        "an empty search-list is the pending case, not a flip"
+    );
+}
+
+/// Covers AE2. A single available-search row (not an array) is tolerated as a
+/// one-element Vec via `de_vec_or_single`.
+#[test]
+fn t1826_single_out_row_tolerated_as_array() {
+    let single: T1826Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1826OutBlock": { "search_cd": "0001", "search_nm": "거래량급증" }
+    }))
+    .expect("single out-row object must deserialize as a one-element Vec");
+    assert_eq!(single.outblock.len(), 1);
+    assert_eq!(single.outblock[0].search_cd, "0001");
+}
+
+/// Covers AE2. `search_cd` parses whether it arrives as a JSON number or string —
+/// the `string_or_number` round-trip guarantee proven directly against
+/// `T1826OutBlock`.
+#[test]
+fn t1826_search_cd_number_or_string_yields_same_value() {
+    let as_number: T1826OutBlock = serde_json::from_value(serde_json::json!({
+        "search_cd": 1
+    }))
+    .expect("number search_cd must deserialize");
+    let as_string: T1826OutBlock = serde_json::from_value(serde_json::json!({
+        "search_cd": "1"
+    }))
+    .expect("string search_cd must deserialize");
+    assert_eq!(as_number.search_cd, "1");
+    assert_eq!(as_number.search_cd, as_string.search_cd);
+}
+
+/// Compile-time guard: `T1826Response` default envelope is empty.
+#[test]
+fn t1826_response_envelope_default_is_empty() {
+    let resp = T1826Response::default();
+    assert_eq!(resp.rsp_cd, "");
+    assert!(resp.outblock.is_empty());
 }

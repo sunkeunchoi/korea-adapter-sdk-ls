@@ -19,8 +19,8 @@ use futures::StreamExt;
 use ls_core::{LsConfig, LsError, LsResult};
 use ls_sdk::account::CSPAQ12200Request;
 use ls_sdk::market_session::{
-    T1101Request, T1102Request, T1531Request, T1537Request, T1859Request, T8425Request,
-    T8436Request,
+    T1101Request, T1102Request, T1531Request, T1537Request, T1826Request, T1859Request,
+    T8425Request, T8436Request,
 };
 use ls_sdk::paginated::{
     T1403Request, T1441Request, T1452Request, T1463Request, T1466Request, T1489Request,
@@ -812,6 +812,49 @@ async fn live_smoke_t1859() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t1859 market-data failure (not evidence)");
             panic!("live-smoke-t1859 failed: {e}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// t1826 / t1825 — ThinQ Q-click search (Wave 3 spine). t1826 lists the available
+// searches (producer); t1825 runs one search keyed by a `search_cd` self-sourced
+// from t1826 (consumer, chained). The `search_cd` is a server-assigned catalog
+// key and is NEVER recorded (treated like the saved-condition `query_index`).
+// ---------------------------------------------------------------------------
+
+/// `make live-smoke-t1826`: paper guard → OAuth token → one `t1826` Q-click
+/// search-list read for `search_gb="0"` (핵심검색/core search; the Wave 3
+/// producer).
+///
+/// `qclick_search_list` returning `Ok` with a non-empty `outblock` proves the
+/// read is callable and the row shape round-trips. The recorded line is
+/// credential-free (only `rsp_cd` + a public search count; `search_cd` values are
+/// NOT recorded) and self-dated; a failed run emits a distinct `SMOKE-FAIL`
+/// stderr line, never a capturable `LIVE-SMOKE` line.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1826`"]
+async fn live_smoke_t1826() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T1826Request::new("0");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().qclick_search_list(&req).await {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "searches")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t1826",
+                &format!("env=paper search_gb=0 date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1826 market-data failure (not evidence)");
+            panic!("live-smoke-t1826 failed: {e}");
         }
     }
 }
