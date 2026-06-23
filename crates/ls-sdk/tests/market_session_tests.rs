@@ -18,7 +18,8 @@ use ls_sdk::market_session::{
     T2301Request, T2301Response, T2522OutBlock1, T2522Request, T2522Response, T8401OutBlock,
     T8401Request, T8401Response, T8426OutBlock, T8426Request, T8426Response, T8433OutBlock,
     T8433Request, T8433Response, T8435OutBlock, T8435Request, T8435Response, T8467OutBlock,
-    T8467Request, T8467Response, T9943OutBlock, T9943Request, T9943Response, T8425Request,
+    T8467Request, T8467Response, T9943OutBlock, T9943Request, T9943Response, T9944OutBlock,
+    T9944Request, T9944Response, T8425Request,
     T8425Response, T8431OutBlock, T8431Request,
     T8431Response, T8436Request, T8436Response, T9905OutBlock1, T9905Request, T9905Response,
     T9907Request, T9907Response, T9942Request, T9942Response,
@@ -2639,6 +2640,118 @@ fn t9943_single_object_row_deserializes_to_one_element_vec() {
 #[test]
 fn t9943_empty_result_deserializes_as_pending() {
     let empty: T9943Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707"
+    }))
+    .expect("empty master deserializes");
+    assert!(empty.outblock.is_empty(), "empty master is the pending case");
+}
+
+// ---------------------------------------------------------------------------
+// t9944 — 지수옵션마스터조회API용 (index-option master; F/O). market_session,
+// non-paginated, no caller input (a single `dummy` placeholder). The out-block
+// is itself a ROW ARRAY (confirmed from the raw capture's `res_example`,
+// propertyType Object Array, the true wire key `t9944OutBlock` per KTD3) — one
+// index-option contract per row, the 3 spec fields (hname/shcode/expcode).
+// ---------------------------------------------------------------------------
+
+const T9944_FIXTURE: &str = include_str!("fixtures/t9944_resp.json");
+
+/// Covers R4. `t9944` serializes to exactly `{"t9944InBlock":{"dummy":""}}`
+/// with no continuation tokens (non-paginated) and no caller fields leaking.
+#[test]
+fn t9944_request_serializes_to_inblock() {
+    let value = serde_json::to_value(T9944Request::new()).expect("serialize t9944 request");
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "exactly one top-level key");
+    assert_eq!(value["t9944InBlock"]["dummy"], "", "dummy placeholder serialized");
+    assert!(value.get("tr_cont").is_none(), "no tr_cont in the body");
+}
+
+/// Covers R2, R5 + KTD4. The spec-derived fixture deserializes through REAL
+/// dispatch: the master row array round-trips and the canonical identity field
+/// `hname` (종목명, the index-option contract name) holds its EXACT value. The
+/// fixture's neighbouring fields carry DISTINCT values, so a mislabel that picked
+/// `shcode`/`expcode` instead would surface here.
+#[tokio::test]
+async fn t9944_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(FO_MARKET_DATA_PATH))
+        .and(header("tr_cd", "t9944"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T9944_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let resp = sdk_for(&server)
+        .market_session()
+        .index_option_master_v2(&T9944Request::new())
+        .await
+        .expect("t9944 index_option_master_v2 should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock.len(), 2, "fixture carries two index-option rows");
+    let row = &resp.outblock[0];
+    // The canonical identity field, by Korean name 종목명 — exact value.
+    assert_eq!(
+        row.hname, "C 2306 160.0",
+        "종목명 index-option contract name (canonical field)"
+    );
+    // Distinct neighbours: a mislabel would collapse these onto hname.
+    assert_eq!(row.shcode, "201T6160", "단축코드 (distinct)");
+    assert_eq!(row.expcode, "KR4201T61606", "확장코드 (distinct)");
+    // A distinct second row, proving the array carries multiple rows.
+    assert_eq!(resp.outblock[1].hname, "C 2306 162.5", "second row distinct");
+    assert_eq!(resp.outblock[1].shcode, "201T6162", "second row 단축코드 distinct");
+}
+
+/// Covers shared contract item 2. `shcode` (단축코드) parses via
+/// `ls_core::string_or_number` from BOTH a JSON number and a string — the gateway
+/// may send a code field as either form.
+#[test]
+fn t9944_numeric_number_or_string_yields_same_value() {
+    let as_number: T9944Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t9944OutBlock": [{ "hname": "C 2306 160.0", "shcode": 2016160 }]
+    }))
+    .expect("numeric shcode deserializes");
+    let as_string: T9944Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t9944OutBlock": [{ "hname": "C 2306 160.0", "shcode": "2016160" }]
+    }))
+    .expect("string shcode deserializes");
+    assert_eq!(as_number.outblock[0].shcode, "2016160");
+    assert_eq!(as_string.outblock[0].shcode, "2016160");
+    assert_eq!(
+        as_number.outblock[0].hname, as_string.outblock[0].hname,
+        "hname both forms"
+    );
+}
+
+/// Covers the array single-or-Vec case (shared contract item 6): a single-object
+/// `t9944OutBlock` body deserializes to a one-element `Vec` via
+/// `de_vec_or_single`.
+#[test]
+fn t9944_single_object_row_deserializes_to_one_element_vec() {
+    let single: T9944Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t9944OutBlock": { "hname": "C 2306 160.0" }
+    }))
+    .expect("single-object row deserializes");
+    assert_eq!(single.outblock.len(), 1, "single object becomes a one-element Vec");
+    assert_eq!(single.outblock[0].hname, "C 2306 160.0");
+    // The standalone row struct also default-constructs cleanly.
+    assert!(T9944OutBlock::default().hname.is_empty());
+}
+
+/// Covers R5. An empty `t9944` master (00707, empty out-block) deserializes as
+/// the pending case — the row array is empty.
+#[test]
+fn t9944_empty_result_deserializes_as_pending() {
+    let empty: T9944Response = serde_json::from_value(serde_json::json!({
         "rsp_cd": "00707"
     }))
     .expect("empty master deserializes");

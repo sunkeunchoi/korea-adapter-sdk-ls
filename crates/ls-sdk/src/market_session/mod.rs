@@ -2852,6 +2852,100 @@ pub struct T9943Response {
     pub outblock: Vec<T9943OutBlock>,
 }
 
+// ---------------------------------------------------------------------------
+// t9944 — 지수옵션마스터조회API용 (index-option master). market_session,
+// non-paginated. A no-caller-input read: the spec's `t9944InBlock` carries a
+// single length-1 `dummy` placeholder, so callers supply nothing. The response
+// out-block `t9944OutBlock` is itself a ROW ARRAY: the raw capture's
+// `res_example` shows `"t9944OutBlock": [ {…}, … ]` (propertyType Object Array),
+// each row a direct element carrying the contract name + codes — the normalized
+// baseline collapses the block name to `response_body`, so the true wire
+// out-block key `t9944OutBlock` is read from the raw capture per KTD3. Modeled
+// after `T8426`/`T9943` (same dummy-input row-array master read); the spec lists
+// only the 3 identity fields (`hname`/`shcode`/`expcode`).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t9944` — a no-caller-input read.
+///
+/// The spec's `t9944InBlock` carries a single length-1 `dummy` placeholder
+/// (Dummy), so callers supply nothing. Modeled after `T8426InBlock`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T9944InBlock {
+    /// Dummy placeholder / Dummy (length-1; the read takes no caller input).
+    pub dummy: String,
+}
+
+/// `t9944` request — wraps the input block under the `t9944InBlock` key.
+///
+/// Serializes to `{"t9944InBlock":{"dummy":""}}`. `t9944` is not paginated and
+/// takes no caller identifier, so there are no continuation fields and no
+/// caller-supplied fields in the body.
+#[derive(Serialize, Debug, Clone)]
+pub struct T9944Request {
+    #[serde(rename = "t9944InBlock")]
+    pub inblock: T9944InBlock,
+}
+
+impl T9944Request {
+    /// Build a `t9944` index-option master request. Takes no caller input; the
+    /// `dummy` placeholder serializes as an empty string.
+    pub fn new() -> Self {
+        T9944Request {
+            inblock: T9944InBlock {
+                dummy: String::new(),
+            },
+        }
+    }
+}
+
+impl Default for T9944Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `t9944OutBlock` — one index-option master row.
+///
+/// The data-bearing repeated block (`t9944OutBlock[]`, confirmed from the raw
+/// capture's `res_example` array — rows are direct elements under the
+/// `t9944OutBlock` key). The 3 spec fields. `hname` (종목명, the index-option
+/// contract name) is the canonical identity field, resolved by its `korean_name`
+/// from the baseline; `shcode` (단축코드) / `expcode` (확장코드) are the contract
+/// codes. `shcode` uses [`ls_core::string_or_number`] for wire-type tolerance
+/// (the gateway may send a code field as a JSON number); `#[serde(default)]` lets
+/// a sparse row deserialize cleanly. Field names mirror the LS spec verbatim.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T9944OutBlock {
+    /// Contract name / 종목명 (the canonical identity field).
+    pub hname: String,
+    /// Short code / 단축코드 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Expanded code / 확장코드.
+    pub expcode: String,
+}
+
+/// `t9944` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are the LS business-status fields; `outblock` is the
+/// index-option master row array under the `t9944OutBlock` key, tolerated as a
+/// single object OR an array via [`ls_core::de_vec_or_single`]. All
+/// `#[serde(default)]` so a terse or empty envelope still deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T9944Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t9944OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T9944OutBlock>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -3187,6 +3281,15 @@ impl MarketSession {
     pub async fn index_futures_master_v2(&self, req: &T9943Request) -> LsResult<T9943Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T9943_POLICY, req)
+            .await
+    }
+
+    /// Read the index-option master (지수옵션마스터조회) via `t9944`.
+    /// Non-paginated, no caller input; returns the index-option master snapshot
+    /// row array (contract name + short/expanded codes).
+    pub async fn index_option_master_v2(&self, req: &T9944Request) -> LsResult<T9944Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T9944_POLICY, req)
             .await
     }
 }

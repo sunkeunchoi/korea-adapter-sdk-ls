@@ -54,4 +54,5 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t9907` | 만기월조회 | `market_session` | implemented, not yet recommended |
 | `t9942` | ELW마스터조회API용 | `market_session` | implemented, not yet recommended |
 | `t9943` | 지수선물마스터조회API용 | `market_session` | implemented, not yet recommended |
+| `t9944` | 지수옵션마스터조회API용 | `market_session` | implemented, not yet recommended |
 | `token` | 접근토큰 발급 (OAuth2 token issue) | `standalone` | recommended |

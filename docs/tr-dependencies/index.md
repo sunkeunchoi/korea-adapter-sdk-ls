@@ -74,5 +74,5 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t9907` | 만기월조회 | `market_session` | implemented | [t9907](./t9907.md) |
 | `t9942` | ELW마스터조회API용 | `market_session` | implemented | [t9942](./t9942.md) |
 | `t9943` | 지수선물마스터조회API용 | `market_session` | implemented | [t9943](./t9943.md) |
-| `t9944` | 지수옵션마스터조회API용 | `market_session` | tracked | [t9944](./t9944.md) |
+| `t9944` | 지수옵션마스터조회API용 | `market_session` | implemented | [t9944](./t9944.md) |
 | `token` | 접근토큰 발급 (OAuth2 token issue) | `standalone` | recommended | [token](./token.md) |
