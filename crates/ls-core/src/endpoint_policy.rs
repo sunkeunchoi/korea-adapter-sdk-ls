@@ -692,6 +692,147 @@ pub const CFOBQ10500_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(10),
 };
 
+/// t2301 — 옵션전광판 (F/O option board; non-paginated market read). Keyed by a
+/// contract month + mini/regular selector.
+pub const T2301_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t2301",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t2522 — 주식선물기초자산조회 (stock-futures underlying-asset master;
+/// non-paginated market read). No caller input (a single `dummy` placeholder).
+pub const T2522_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t2522",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8401 — 주식선물마스터조회 (stock-futures master; non-paginated market read).
+/// No caller input (a single `dummy` placeholder).
+pub const T8401_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8401",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8426 — 상품선물마스터조회 (commodity-futures master; non-paginated market
+/// read). No caller input (a single `dummy` placeholder).
+pub const T8426_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8426",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8433 — 지수옵션마스터조회API용 (index-option master; non-paginated market
+/// read). No caller input (a single `dummy` placeholder).
+pub const T8433_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8433",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8435 — 파생종목마스터조회API용 (derivatives master; non-paginated market
+/// read). Caller supplies a `gubun` segment selector — the LS spec defines these
+/// as the MINI/weekly segments (`"MF"` 미니선물 / `"MO"` 미니옵션 / `"WK"`
+/// 코스피200위클리옵션 / `"SF"` 코스닥150선물 / `"QW"` 코스닥150위클리옵션).
+pub const T8435_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8435",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8467 — 지수선물마스터조회API용 (index-futures master; F/O market-data read).
+///
+/// Non-paginated `market_session` read keyed by a `gubun` segment selector.
+/// MarketData rate bucket; not an order.
+pub const T8467_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8467",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t9943 — 지수선물마스터조회API용 (index-futures master; F/O market-data read).
+///
+/// Non-paginated `market_session` read keyed by a `gubun` segment selector.
+/// MarketData rate bucket; not an order.
+pub const T9943_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t9943",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t9944 — 지수옵션마스터조회API용 (index-option master, F/O). Non-paginated
+/// market-data read; no caller input (a single `dummy` placeholder).
+pub const T9944_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t9944",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// S3_ — KOSPI체결 실시간 시세 (real-time KOSPI trade feed, WebSocket).
 ///
 /// WebSocket TR: there is no REST dispatch, but the policy const is retained as
@@ -786,6 +927,15 @@ mod tests {
             CSPAQ12300_POLICY,
             CSPAQ22200_POLICY,
             CFOBQ10500_POLICY,
+            T2301_POLICY,
+            T2522_POLICY,
+            T8401_POLICY,
+            T8426_POLICY,
+            T8433_POLICY,
+            T8435_POLICY,
+            T8467_POLICY,
+            T9943_POLICY,
+            T9944_POLICY,
         ] {
             assert!(!p.is_order, "{} must not be an order endpoint", p.tr_code);
             assert!(p.is_rest(), "{} must be a REST endpoint", p.tr_code);

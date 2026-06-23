@@ -1,0 +1,28 @@
+{
+  "t8467OutBlock": [
+    {
+      "hname": "F 2606",
+      "shcode": "A0166000",
+      "expcode": "KR4A01660005",
+      "uplmtprice": "1214.75",
+      "dnlmtprice": "1034.85",
+      "jnilclose": "1124.80",
+      "jnilhigh": "1125.65",
+      "jnillow": "1124.55",
+      "recprice": "1124.70"
+    },
+    {
+      "hname": "F 2609",
+      "shcode": "A0169000",
+      "expcode": "KR4A01690002",
+      "uplmtprice": "972.05",
+      "dnlmtprice": "828.05",
+      "jnilclose": "900.05",
+      "jnilhigh": "900.20",
+      "jnillow": "899.85",
+      "recprice": "900.15"
+    }
+  ],
+  "rsp_cd": "00000",
+  "rsp_msg": "정상적으로 조회가 완료되었습니다."
+}

@@ -23,8 +23,12 @@ use ls_sdk::account::{
 use ls_sdk::market_session::{
     T1101Request, T1102Request, T1485Request, T1511Request, T1516Request, T1531Request,
     T1537Request, T1601Request, T1615Request, T1640Request, T1662Request, T1664Request,
-    T1825Request, T1826Request, T1859Request, T1958Request, T1964Request, T8424Request,
-    T8425Request, T8431Request, T8436Request, T9905Request, T9907Request, T9942Request,
+    T1825Request, T1826Request, T1859Request, T1958Request, T1964Request, T2301Request,
+    T2522Request, T8401Request, T8424Request, T8425Request, T8426Request, T8433Request,
+    T8435Request, T8467Request, T9943Request, T9944Request,
+    T8431Request,
+    T8436Request,
+    T9905Request, T9907Request, T9942Request,
 };
 use ls_sdk::paginated::{
     T1403Request, T1441Request, T1452Request, T1463Request, T1466Request, T1489Request,
@@ -1736,6 +1740,430 @@ async fn live_smoke_t1514() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t1514 market-data failure (not evidence)");
             panic!("live-smoke-t1514 failed: {e}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// t2301 — 옵션전광판 (option board; F/O). market_session, non-paginated. Keyed by
+// a near-quarterly contract month (`yyyymm`) + a `gubun` mini/regular selector.
+// Master/board read — non-empty regardless of the KRX session (venue facet stays
+// provisional). The structural signal is the canonical field's length (a single
+// out-block, not an array), kept credential-free.
+// ---------------------------------------------------------------------------
+
+/// `make live-smoke-t2301`: paper guard → OAuth token → one `t2301` option-board
+/// read for `yyyymm="202609"`, `gubun="G"` (정규/regular). A success `rsp_cd`
+/// with a populated board header proves the read is callable and round-trips. The
+/// recorded line is credential-free (only `rsp_cd` + the canonical `gmprice`
+/// field's length, never `rsp_msg`) and self-dated; a failed run emits a distinct
+/// `SMOKE-FAIL` stderr line, never a capturable `LIVE-SMOKE` line.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t2301`"]
+async fn live_smoke_t2301() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk
+        .standalone()
+        .token()
+        .await
+        .expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T2301Request::new("202609", "G");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().option_board(&req).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock.gmprice.is_empty(),
+                "live-smoke-t2301: empty result (00707) — PENDING, not Implemented"
+            );
+            let line =
+                smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.gmprice.len())), "gmprice_len")
+                    .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t2301",
+                &format!("env=paper yyyymm=202609 gubun=G date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t2301 market-data failure (not evidence)");
+            panic!("live-smoke-t2301 failed: {e}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// t2522 — 주식선물기초자산조회 (stock-futures underlying-asset master; F/O).
+// market_session, non-paginated, no caller input (a single `dummy` placeholder).
+// Master read — non-empty regardless of the KRX session (venue facet stays
+// provisional). The structural signal is the canonical field's length (a single
+// out-block, not an array), kept credential-free.
+// ---------------------------------------------------------------------------
+
+/// `make live-smoke-t2522`: paper guard → OAuth token → one `t2522`
+/// underlying-asset master read (no caller input). A success `rsp_cd` with a
+/// populated `t2522OutBlock1` row array proves the read is callable and
+/// round-trips. The recorded line is credential-free (only `rsp_cd` + the row
+/// count, never `rsp_msg`) and self-dated; a failed run emits a distinct
+/// `SMOKE-FAIL` stderr line, never a capturable `LIVE-SMOKE` line.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t2522`"]
+async fn live_smoke_t2522() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk
+        .standalone()
+        .token()
+        .await
+        .expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T2522Request::new();
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().stock_futures_underlying_master(&req).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock1.is_empty(),
+                "live-smoke-t2522: empty result (00707) — PENDING, not Implemented"
+            );
+            let line = smoke_result(
+                Ok((resp.rsp_cd.clone(), resp.outblock1.len())),
+                "rows",
+            )
+            .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t2522",
+                &format!("env=paper date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t2522 market-data failure (not evidence)");
+            panic!("live-smoke-t2522 failed: {e}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// t8401 — 주식선물마스터조회 (stock-futures master; F/O). market_session,
+// non-paginated, no caller input (a single `dummy` placeholder). Master read —
+// non-empty regardless of the KRX session (venue facet stays provisional). The
+// structural signal is the out-block row count (a single row-array out-block),
+// kept credential-free.
+// ---------------------------------------------------------------------------
+
+/// `make live-smoke-t8401`: paper guard → OAuth token → one `t8401`
+/// stock-futures master read (no caller input). A success `rsp_cd` with a
+/// populated `t8401OutBlock` row array proves the read is callable and
+/// round-trips. The recorded line is credential-free (only `rsp_cd` + the row
+/// count, never `rsp_msg`) and self-dated; a failed run emits a distinct
+/// `SMOKE-FAIL` stderr line, never a capturable `LIVE-SMOKE` line.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8401`"]
+async fn live_smoke_t8401() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk
+        .standalone()
+        .token()
+        .await
+        .expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T8401Request::new();
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().stock_futures_master(&req).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock.is_empty(),
+                "live-smoke-t8401: empty result (00707) — PENDING, not Implemented"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t8401", &format!("env=paper date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8401 market-data failure (not evidence)");
+            panic!("live-smoke-t8401 failed: {e}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// t8426 — 상품선물마스터조회 (commodity-futures master; F/O). market_session,
+// non-paginated, no caller input (a single `dummy` placeholder). Master read —
+// non-empty regardless of the KRX session (venue facet stays provisional). The
+// structural signal is the out-block row count (a single row-array out-block),
+// kept credential-free.
+// ---------------------------------------------------------------------------
+
+/// `make live-smoke-t8426`: paper guard → OAuth token → one `t8426`
+/// commodity-futures master read (no caller input). A success `rsp_cd` with a
+/// populated `t8426OutBlock` row array proves the read is callable and
+/// round-trips. The recorded line is credential-free (only `rsp_cd` + the row
+/// count, never `rsp_msg`) and self-dated; a failed run emits a distinct
+/// `SMOKE-FAIL` stderr line, never a capturable `LIVE-SMOKE` line.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8426`"]
+async fn live_smoke_t8426() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk
+        .standalone()
+        .token()
+        .await
+        .expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T8426Request::new();
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().commodity_futures_master(&req).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock.is_empty(),
+                "live-smoke-t8426: empty result (00707) — PENDING, not Implemented"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t8426", &format!("env=paper date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8426 market-data failure (not evidence)");
+            panic!("live-smoke-t8426 failed: {e}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// t8433 — 지수옵션마스터조회API용 (index-option master; F/O). market_session,
+// non-paginated, no caller input (a single `dummy` placeholder). Master read —
+// non-empty regardless of the KRX session (venue facet stays provisional). The
+// structural signal is the out-block row count (a single row-array out-block),
+// kept credential-free.
+// ---------------------------------------------------------------------------
+
+/// `make live-smoke-t8433`: paper guard → OAuth token → one `t8433` index-option
+/// master read (no caller input). A success `rsp_cd` with a populated
+/// `t8433OutBlock` row array proves the read is callable and round-trips. The
+/// recorded line is credential-free (only `rsp_cd` + the row count, never
+/// `rsp_msg`) and self-dated; a failed run emits a distinct `SMOKE-FAIL` stderr
+/// line, never a capturable `LIVE-SMOKE` line.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8433`"]
+async fn live_smoke_t8433() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk
+        .standalone()
+        .token()
+        .await
+        .expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T8433Request::new();
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().index_option_master(&req).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock.is_empty(),
+                "live-smoke-t8433: empty result (00707) — PENDING, not Implemented"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t8433", &format!("env=paper date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8433 market-data failure (not evidence)");
+            panic!("live-smoke-t8433 failed: {e}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// t8435 — 파생종목마스터조회API용 (derivatives master; F/O). market_session,
+// non-paginated. Keyed by a `gubun` segment selector — the LS spec defines these
+// as the MINI/weekly segments: `"MF"` 미니선물 / `"MO"` 미니옵션 /
+// `"WK"` 코스피200위클리옵션 / `"SF"` 코스닥150선물 / `"QW"` 코스닥150위클리옵션.
+// Master read — non-empty regardless of the KRX session (venue facet stays
+// provisional). The out-block is a row array (KTD3), so the structural signal is
+// the row count, kept credential-free.
+// ---------------------------------------------------------------------------
+
+/// `make live-smoke-t8435`: paper guard → OAuth token → one `t8435` derivatives
+/// master read for `gubun="MF"` (미니선물/mini futures). A success `rsp_cd` with a
+/// populated `t8435OutBlock` row array proves the read is callable and
+/// round-trips. The recorded line is credential-free (only `rsp_cd` + the row
+/// count, never `rsp_msg`) and self-dated; a failed run emits a distinct
+/// `SMOKE-FAIL` stderr line, never a capturable `LIVE-SMOKE` line.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8435`"]
+async fn live_smoke_t8435() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk
+        .standalone()
+        .token()
+        .await
+        .expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T8435Request::new("MF");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().derivatives_master(&req).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock.is_empty(),
+                "live-smoke-t8435: empty result (00707) — PENDING, not Implemented"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t8435",
+                &format!("env=paper gubun=MF date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8435 market-data failure (not evidence)");
+            panic!("live-smoke-t8435 failed: {e}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// t8467 — 지수선물마스터조회API용 (index-futures master; F/O). market_session,
+// non-paginated. Keyed by a `gubun` segment selector (`"V"` volatility / `"S"`
+// sector / `"Q"` KOSDAQ150 / any other value → KOSPI200 index futures). Master
+// read — non-empty regardless of the KRX session (venue facet stays
+// provisional). The out-block is a row array (KTD3), so the structural signal is
+// the row count, kept credential-free.
+// ---------------------------------------------------------------------------
+
+/// `make live-smoke-t8467`: paper guard → OAuth token → one `t8467` index-futures
+/// master read for `gubun="Q"` (KOSDAQ150-index futures). A success `rsp_cd` with
+/// a populated `t8467OutBlock` row array proves the read is callable and
+/// round-trips. The recorded line is credential-free (only `rsp_cd` + the row
+/// count, never `rsp_msg`) and self-dated; a failed run emits a distinct
+/// `SMOKE-FAIL` stderr line, never a capturable `LIVE-SMOKE` line.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8467`"]
+async fn live_smoke_t8467() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk
+        .standalone()
+        .token()
+        .await
+        .expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T8467Request::new("Q");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().index_futures_master(&req).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock.is_empty(),
+                "live-smoke-t8467: empty result (00707) — PENDING, not Implemented"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t8467",
+                &format!("env=paper gubun=Q date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8467 market-data failure (not evidence)");
+            panic!("live-smoke-t8467 failed: {e}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// t9943 — 지수선물마스터조회API용 (index-futures master; F/O). market_session,
+// non-paginated. Keyed by a `gubun` segment selector (`"V"` volatility / `"S"`
+// sector / any other value → KOSPI200 index futures). Master read — non-empty
+// regardless of the KRX session (venue facet stays provisional). The out-block is
+// a row array (KTD3, true wire key `t9943OutBlock` from the raw capture), so the
+// structural signal is the row count, kept credential-free.
+// ---------------------------------------------------------------------------
+
+/// `make live-smoke-t9943`: paper guard → OAuth token → one `t9943` index-futures
+/// master read for `gubun="V"` (volatility-index futures). A success `rsp_cd` with
+/// a populated `t9943OutBlock` row array proves the read is callable and
+/// round-trips. The recorded line is credential-free (only `rsp_cd` + the row
+/// count, never `rsp_msg`) and self-dated; a failed run emits a distinct
+/// `SMOKE-FAIL` stderr line, never a capturable `LIVE-SMOKE` line.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t9943`"]
+async fn live_smoke_t9943() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk
+        .standalone()
+        .token()
+        .await
+        .expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T9943Request::new("V");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().index_futures_master_codes(&req).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock.is_empty(),
+                "live-smoke-t9943: empty result (00707) — PENDING, not Implemented"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t9943",
+                &format!("env=paper gubun=V date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t9943 market-data failure (not evidence)");
+            panic!("live-smoke-t9943 failed: {e}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// t9944 — 지수옵션마스터조회API용 (index-option master; F/O). market_session,
+// non-paginated, no caller input (a single `dummy` placeholder). Master read —
+// non-empty regardless of the KRX session (venue facet stays provisional). The
+// out-block is a row array (KTD3, true wire key `t9944OutBlock` from the raw
+// capture), so the structural signal is the row count, kept credential-free.
+// ---------------------------------------------------------------------------
+
+/// `make live-smoke-t9944`: paper guard → OAuth token → one `t9944` index-option
+/// master read (no caller input). A success `rsp_cd` with a populated
+/// `t9944OutBlock` row array proves the read is callable and round-trips. The
+/// recorded line is credential-free (only `rsp_cd` + the row count, never
+/// `rsp_msg`) and self-dated; a failed run emits a distinct `SMOKE-FAIL` stderr
+/// line, never a capturable `LIVE-SMOKE` line.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t9944`"]
+async fn live_smoke_t9944() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk
+        .standalone()
+        .token()
+        .await
+        .expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T9944Request::new();
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().index_option_master_codes(&req).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock.is_empty(),
+                "live-smoke-t9944: empty result (00707) — PENDING, not Implemented"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t9944", &format!("env=paper date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t9944 market-data failure (not evidence)");
+            panic!("live-smoke-t9944 failed: {e}");
         }
     }
 }

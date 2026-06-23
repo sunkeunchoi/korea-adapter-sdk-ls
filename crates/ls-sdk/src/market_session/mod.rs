@@ -2042,6 +2042,926 @@ pub struct T1516Response {
     pub outblock1: Vec<T1516OutBlock1>,
 }
 
+// ---------------------------------------------------------------------------
+// t2301 — 옵션전광판 (option board). market_session, non-paginated. Keyed by a
+// contract month `yyyymm` (월물) + a `gubun` mini/regular selector
+// (미니구분 — `"M"` mini / `"G"` regular). The out-block is a single struct: the
+// board header carries the near-month futures snapshot (`gm*` fields) plus the
+// representative call-option leg; the deeper per-strike legs are nested object
+// arrays the recipe models as a representative subset, not in full.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t2301` — the contract month + mini/regular selector.
+///
+/// `yyyymm` (월물) is the contract month, `YYYYMM` (e.g. `"202609"`); the spec
+/// types it `String` (length 6). `gubun` (미니구분) selects mini vs regular:
+/// `"M"` 미니 / `"G"` 정규. Both are caller-supplied.
+#[derive(Serialize, Debug, Clone)]
+pub struct T2301InBlock {
+    /// Contract month / 월물 (`YYYYMM`, e.g. `"202609"`).
+    pub yyyymm: String,
+    /// Mini/regular selector / 미니구분 (`"M"` mini / `"G"` regular).
+    pub gubun: String,
+}
+
+/// `t2301` request — wraps the input block under the `t2301InBlock` key.
+///
+/// Serializes to `{"t2301InBlock":{"yyyymm":...,"gubun":...}}`. `t2301` is not
+/// paginated, so there are no `tr_cont`/`tr_cont_key` fields in the body.
+#[derive(Serialize, Debug, Clone)]
+pub struct T2301Request {
+    #[serde(rename = "t2301InBlock")]
+    pub inblock: T2301InBlock,
+}
+
+impl T2301Request {
+    /// Build a `t2301` option-board request for one contract month + selector.
+    pub fn new(yyyymm: impl Into<String>, gubun: impl Into<String>) -> Self {
+        T2301Request {
+            inblock: T2301InBlock {
+                yyyymm: yyyymm.into(),
+                gubun: gubun.into(),
+            },
+        }
+    }
+}
+
+/// `t2301OutBlock` — the option-board header (single object).
+///
+/// A representative, spec-grounded subset of the 76-field `t2301OutBlock`: the
+/// near-month futures snapshot (`gm*` — the board's headline current value) and
+/// the representative call-option leg. `gmprice` (근월물현재가, near-month
+/// futures current price) is the canonical current-value field, resolved by its
+/// `korean_name` from the baseline. Every numeric-bearing field uses
+/// [`ls_core::string_or_number`] for wire-type tolerance; `#[serde(default)]`
+/// lets a sparse/empty out-block deserialize cleanly. Field names mirror the LS
+/// spec verbatim.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T2301OutBlock {
+    /// Historical volatility / 역사적변동성.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub histimpv: String,
+    /// Option days-to-expiry / 옵션잔존일.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jandatecnt: String,
+    /// Near-month futures current price / 근월물현재가 (the canonical current value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gmprice: String,
+    /// Near-month sign vs. previous close / 근월물전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gmsign: String,
+    /// Near-month change vs. previous close / 근월물전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gmchange: String,
+    /// Near-month rate of change / 근월물등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gmdiff: String,
+    /// Near-month volume / 근월물거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gmvolume: String,
+    /// Near-month futures code / 근월물선물코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gmshcode: String,
+    /// Call-option representative IV / 콜옵션대표IV.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cimpv: String,
+    /// Put-option representative IV / 풋옵션대표IV.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub pimpv: String,
+}
+
+/// `t2301` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are the LS business-status fields; `outblock` is the board
+/// header under the `t2301OutBlock` key. All `#[serde(default)]` so a terse or
+/// empty envelope still deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T2301Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t2301OutBlock", default)]
+    pub outblock: T2301OutBlock,
+}
+
+// ---------------------------------------------------------------------------
+// t2522 — 주식선물기초자산조회 (stock-futures underlying-asset master). market_session,
+// non-paginated. A no-caller-input read: the spec's `t2522InBlock` carries a single
+// length-1 `dummy` placeholder, so callers supply nothing. The response is a count
+// header (`t2522OutBlock`, single) plus the underlying-asset rows
+// (`t2522OutBlock1`, an object array) — the data-bearing block where each row's
+// 기초자산명 lives.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t2522` — a no-caller-input read.
+///
+/// The spec's `t2522InBlock` carries a single length-1 `dummy` placeholder
+/// (Dummy), so callers supply nothing. Modeled after `T8425InBlock`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T2522InBlock {
+    /// Dummy placeholder / Dummy (length-1; the read takes no caller input).
+    pub dummy: String,
+}
+
+/// `t2522` request — wraps the input block under the `t2522InBlock` key.
+///
+/// Serializes to `{"t2522InBlock":{"dummy":""}}`. `t2522` is not paginated and
+/// takes no caller identifier, so there are no continuation fields and no
+/// caller-supplied fields in the body.
+#[derive(Serialize, Debug, Clone)]
+pub struct T2522Request {
+    #[serde(rename = "t2522InBlock")]
+    pub inblock: T2522InBlock,
+}
+
+impl T2522Request {
+    /// Build a `t2522` stock-futures underlying-asset request. Takes no caller
+    /// input; the `dummy` placeholder serializes as an empty string.
+    pub fn new() -> Self {
+        T2522Request {
+            inblock: T2522InBlock {
+                dummy: String::new(),
+            },
+        }
+    }
+}
+
+impl Default for T2522Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `t2522OutBlock` — the count header (single object).
+///
+/// Carries the row count (`cnt` / 건수); the underlying-asset rows themselves are
+/// in [`T2522OutBlock1`]. `cnt` uses [`ls_core::string_or_number`] (the gateway
+/// sends it as a JSON number); `#[serde(default)]` lets a sparse/empty header
+/// deserialize cleanly.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T2522OutBlock {
+    /// Row count / 건수 (arrives as a JSON number).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cnt: String,
+}
+
+/// `t2522OutBlock1` — one stock-futures underlying-asset row.
+///
+/// The data-bearing repeated block (`t2522OutBlock1[]`). `bsc_asts_nm`
+/// (기초자산명, the underlying-asset name) is the canonical identity field,
+/// resolved by its `korean_name` from the baseline; the remaining fields are the
+/// underlying codes. Every field uses [`ls_core::string_or_number`] for wire-type
+/// tolerance; `#[serde(default)]` lets a sparse row deserialize cleanly. Field
+/// names mirror the LS spec verbatim.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T2522OutBlock1 {
+    /// Underlying-asset name / 기초자산명 (the canonical identity field).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bsc_asts_nm: String,
+    /// Underlying-asset issue code / 기초자산종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bsc_asts_is_cd: String,
+    /// Underlying-asset ID / 기초자산ID.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bsc_asts_id: String,
+    /// Near-month issue code / 최근월물종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub nmc_is_shrt_cd: String,
+}
+
+/// `t2522` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are the LS business-status fields; `outblock` is the count
+/// header under the `t2522OutBlock` key; `outblock1` is the underlying-asset row
+/// array under the `t2522OutBlock1` key, tolerated as a single object OR an array
+/// via [`ls_core::de_vec_or_single`]. All `#[serde(default)]` so a terse or empty
+/// envelope still deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T2522Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t2522OutBlock", default)]
+    pub outblock: T2522OutBlock,
+    #[serde(
+        rename = "t2522OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T2522OutBlock1>,
+}
+
+// ---------------------------------------------------------------------------
+// t8401 — 주식선물마스터조회 (stock-futures master). market_session, non-paginated.
+// A no-caller-input read: the spec's `t8401InBlock` carries a single length-1
+// `dummy` placeholder, so callers supply nothing. The response is a single
+// out-block `t8401OutBlock` that is itself the data-bearing ROW ARRAY (the raw
+// capture's `res_example` shows `"t8401OutBlock": [ {…}, … ]`, propertyType
+// A0005 / propertyOrder 002.00x children) — one stock-futures contract per row.
+// There is no separate count header. Modeled after `T8425` (single row-array
+// out-block).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t8401` — a no-caller-input read.
+///
+/// The spec's `t8401InBlock` carries a single length-1 `dummy` placeholder
+/// (Dummy), so callers supply nothing. Modeled after `T8425InBlock`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8401InBlock {
+    /// Dummy placeholder / Dummy (length-1; the read takes no caller input).
+    pub dummy: String,
+}
+
+/// `t8401` request — wraps the input block under the `t8401InBlock` key.
+///
+/// Serializes to `{"t8401InBlock":{"dummy":""}}`. `t8401` is not paginated and
+/// takes no caller identifier, so there are no continuation fields and no
+/// caller-supplied fields in the body.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8401Request {
+    #[serde(rename = "t8401InBlock")]
+    pub inblock: T8401InBlock,
+}
+
+impl T8401Request {
+    /// Build a `t8401` stock-futures master request. Takes no caller input; the
+    /// `dummy` placeholder serializes as an empty string.
+    pub fn new() -> Self {
+        T8401Request {
+            inblock: T8401InBlock {
+                dummy: String::new(),
+            },
+        }
+    }
+}
+
+impl Default for T8401Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `t8401OutBlock` — one stock-futures master row.
+///
+/// The data-bearing repeated block (`t8401OutBlock[]`). `hname` (종목명, the
+/// stock-futures contract name) is the canonical identity field, resolved by its
+/// `korean_name` from the baseline; the remaining fields are the contract codes.
+/// `#[serde(default)]` lets a sparse row deserialize cleanly. Field names mirror
+/// the LS spec verbatim. All fields are spec `String` types; no numeric coercion
+/// is required here.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8401OutBlock {
+    /// Contract name / 종목명 (the canonical identity field).
+    pub hname: String,
+    /// Short code / 단축코드.
+    pub shcode: String,
+    /// Expanded code / 확장코드.
+    pub expcode: String,
+    /// Underlying-asset code / 기초자산코드.
+    pub basecode: String,
+}
+
+/// `t8401` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are the LS business-status fields; `outblock` is the
+/// stock-futures master row array under the `t8401OutBlock` key, tolerated as a
+/// single object OR an array via [`ls_core::de_vec_or_single`]. All
+/// `#[serde(default)]` so a terse or empty envelope still deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8401Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t8401OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T8401OutBlock>,
+}
+
+// ---------------------------------------------------------------------------
+// t8426 — 상품선물마스터조회 (commodity-futures master). market_session,
+// non-paginated. A no-caller-input read: the spec's `t8426InBlock` carries a
+// single length-1 `dummy` placeholder, so callers supply nothing. The response
+// is a single out-block `t8426OutBlock` that is itself the data-bearing ROW
+// ARRAY (the raw capture's `res_example` shows `"t8426OutBlock": [ {…}, … ]`) —
+// one commodity-futures contract per row. There is no separate count header.
+// Modeled after `T8401` (single row-array out-block).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t8426` — a no-caller-input read.
+///
+/// The spec's `t8426InBlock` carries a single length-1 `dummy` placeholder
+/// (Dummy), so callers supply nothing. Modeled after `T8401InBlock`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8426InBlock {
+    /// Dummy placeholder / Dummy (length-1; the read takes no caller input).
+    pub dummy: String,
+}
+
+/// `t8426` request — wraps the input block under the `t8426InBlock` key.
+///
+/// Serializes to `{"t8426InBlock":{"dummy":""}}`. `t8426` is not paginated and
+/// takes no caller identifier, so there are no continuation fields and no
+/// caller-supplied fields in the body.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8426Request {
+    #[serde(rename = "t8426InBlock")]
+    pub inblock: T8426InBlock,
+}
+
+impl T8426Request {
+    /// Build a `t8426` commodity-futures master request. Takes no caller input;
+    /// the `dummy` placeholder serializes as an empty string.
+    pub fn new() -> Self {
+        T8426Request {
+            inblock: T8426InBlock {
+                dummy: String::new(),
+            },
+        }
+    }
+}
+
+impl Default for T8426Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `t8426OutBlock` — one commodity-futures master row.
+///
+/// The data-bearing repeated block (`t8426OutBlock[]`, confirmed from the raw
+/// capture's `res_example` array). `hname` (종목명, the commodity-futures
+/// contract name) is the canonical identity field, resolved by its `korean_name`
+/// from the baseline; the remaining fields are the contract codes. `shcode`
+/// (단축코드) uses [`ls_core::string_or_number`] for wire-type tolerance (the
+/// gateway may send a numeric-looking code as a JSON number);
+/// `#[serde(default)]` lets a sparse row deserialize cleanly. Field names mirror
+/// the LS spec verbatim.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8426OutBlock {
+    /// Contract name / 종목명 (the canonical identity field).
+    pub hname: String,
+    /// Short code / 단축코드 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Expanded code / 확장코드.
+    pub expcode: String,
+}
+
+/// `t8426` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are the LS business-status fields; `outblock` is the
+/// commodity-futures master row array under the `t8426OutBlock` key, tolerated
+/// as a single object OR an array via [`ls_core::de_vec_or_single`]. All
+/// `#[serde(default)]` so a terse or empty envelope still deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8426Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t8426OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T8426OutBlock>,
+}
+
+// ---------------------------------------------------------------------------
+// t8433 — 지수옵션마스터조회API용 (index-option master). market_session,
+// non-paginated. A no-caller-input read: the spec's `t8433InBlock` carries a
+// single length-1 `dummy` placeholder, so callers supply nothing. The response
+// is a single out-block `t8433OutBlock` that is itself the data-bearing ROW
+// ARRAY (the raw capture's `res_example` shows `"t8433OutBlock": [ {…}, … ]`,
+// rows direct under the key, no numbered sub-block) — one index-option contract
+// per row. There is no separate count header. The row is modeled after the
+// 9-field `T8435` row-array out-block (T8426 has only 3 fields; the index-option
+// row carries the daily limit/close reference prices too).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t8433` — a no-caller-input read.
+///
+/// The spec's `t8433InBlock` carries a single length-1 `dummy` placeholder
+/// (Dummy), so callers supply nothing. Modeled after `T8426InBlock`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8433InBlock {
+    /// Dummy placeholder / Dummy (length-1; the read takes no caller input).
+    pub dummy: String,
+}
+
+/// `t8433` request — wraps the input block under the `t8433InBlock` key.
+///
+/// Serializes to `{"t8433InBlock":{"dummy":""}}`. `t8433` is not paginated and
+/// takes no caller identifier, so there are no continuation fields and no
+/// caller-supplied fields in the body.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8433Request {
+    #[serde(rename = "t8433InBlock")]
+    pub inblock: T8433InBlock,
+}
+
+impl T8433Request {
+    /// Build a `t8433` index-option master request. Takes no caller input; the
+    /// `dummy` placeholder serializes as an empty string.
+    pub fn new() -> Self {
+        T8433Request {
+            inblock: T8433InBlock {
+                dummy: String::new(),
+            },
+        }
+    }
+}
+
+impl Default for T8433Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `t8433OutBlock` — one index-option master row.
+///
+/// The data-bearing repeated block (`t8433OutBlock[]`, confirmed from the raw
+/// capture's `res_example` array — rows are direct elements under the
+/// `t8433OutBlock` key). A representative, spec-grounded subset modeled after the
+/// 9-field [`T8435OutBlock`] row. `hname` (종목명, the index-option contract
+/// name) is the canonical identity field, resolved by its `korean_name` from the
+/// baseline; `shcode`/`expcode` are the contract codes, and the price fields are
+/// the daily limit/close references (상한가/하한가/전일종가/전일고가/전일저가/
+/// 기준가). `shcode` and the `Number`-typed price fields use
+/// [`ls_core::string_or_number`] for wire-type tolerance (the gateway sends these
+/// as JSON strings in the capture but may send numbers); `#[serde(default)]` lets
+/// a sparse row deserialize cleanly. Field names mirror the LS spec verbatim.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8433OutBlock {
+    /// Contract name / 종목명 (the canonical identity field).
+    pub hname: String,
+    /// Short code / 단축코드 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Expanded code / 확장코드.
+    pub expcode: String,
+    /// Upper limit price / 상한가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hprice: String,
+    /// Lower limit price / 하한가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub lprice: String,
+    /// Previous-day close / 전일종가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jnilclose: String,
+    /// Previous-day high / 전일고가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jnilhigh: String,
+    /// Previous-day low / 전일저가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jnillow: String,
+    /// Reference price / 기준가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub recprice: String,
+}
+
+/// `t8433` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are the LS business-status fields; `outblock` is the
+/// index-option master row array under the `t8433OutBlock` key, tolerated as a
+/// single object OR an array via [`ls_core::de_vec_or_single`]. All
+/// `#[serde(default)]` so a terse or empty envelope still deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8433Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t8433OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T8433OutBlock>,
+}
+
+// ---------------------------------------------------------------------------
+// t8435 — 파생종목마스터조회API용 (derivatives master). market_session,
+// non-paginated. Keyed by a `gubun` (구분) selector — the LS spec defines these
+// as the MINI/weekly segments: `"MF"` 미니선물 (mini futures) / `"MO"` 미니옵션
+// (mini options) / `"WK"` 코스피200위클리옵션 / `"SF"` 코스닥150선물 / `"QW"`
+// 코스닥150위클리옵션. The response out-block `t8435OutBlock` is itself a ROW
+// ARRAY (the raw capture's `res_example` shows `"t8435OutBlock": [ {…}, … ]`,
+// one derivatives contract per row, no numbered sub-block — the normalized
+// baseline collapses the block, so the true wire shape is read from the raw
+// capture per KTD3) — each row carries the contract name + codes plus the daily
+// limit/close reference prices. Modeled after `T8433` (single row-array
+// out-block) but with a caller `gubun` selector.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t8435` — the derivatives-segment selector.
+///
+/// `gubun` (구분) selects the derivatives segment. The LS spec defines these as
+/// the MINI/weekly segments: `"MF"` 미니선물 (mini futures) / `"MO"` 미니옵션
+/// (mini options) / `"WK"` 코스피200위클리옵션 (KOSPI200 weekly options) /
+/// `"SF"` 코스닥150선물 (KOSDAQ150 futures) / `"QW"` 코스닥150위클리옵션
+/// (KOSDAQ150 weekly options). The spec types it `String` (length 2).
+/// Caller-supplied.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8435InBlock {
+    /// Segment selector / 구분 (`"MF"` mini futures / `"MO"` mini options /
+    /// `"WK"`/`"SF"`/`"QW"` weekly/KOSDAQ150 segments).
+    pub gubun: String,
+}
+
+/// `t8435` request — wraps the input block under the `t8435InBlock` key.
+///
+/// Serializes to `{"t8435InBlock":{"gubun":"MF"}}`. `t8435` is not paginated, so
+/// there are no `tr_cont`/`tr_cont_key` fields in the body.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8435Request {
+    #[serde(rename = "t8435InBlock")]
+    pub inblock: T8435InBlock,
+}
+
+impl T8435Request {
+    /// Build a `t8435` derivatives-master request for one segment (`gubun`:
+    /// `"MF"` mini futures / `"MO"` mini options / `"WK"`/`"SF"`/`"QW"` weekly/
+    /// KOSDAQ150 segments).
+    pub fn new(gubun: impl Into<String>) -> Self {
+        T8435Request {
+            inblock: T8435InBlock {
+                gubun: gubun.into(),
+            },
+        }
+    }
+}
+
+/// `t8435OutBlock` — one derivatives-master row.
+///
+/// The data-bearing repeated block (`t8435OutBlock[]`, confirmed from the raw
+/// capture's `res_example` array — rows are direct elements under the
+/// `t8435OutBlock` key). The full 9 fields. `hname` (종목명, the derivatives
+/// contract name) is the canonical identity field, resolved by its `korean_name`
+/// from the baseline; `shcode`/`expcode` are the contract codes, and the
+/// `Number`-typed `uplmtprice`/`dnlmtprice`/`jnilclose`/`jnilhigh`/`jnillow`/
+/// `recprice` fields are the daily limit/close reference prices. The
+/// numeric-bearing fields use [`ls_core::string_or_number`] for wire-type
+/// tolerance (the gateway may send a `Number` field as a JSON number);
+/// `#[serde(default)]` lets a sparse row deserialize cleanly. Field names mirror
+/// the LS spec verbatim.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8435OutBlock {
+    /// Contract name / 종목명 (the canonical identity field).
+    pub hname: String,
+    /// Short code / 단축코드 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Expanded code / 확장코드.
+    pub expcode: String,
+    /// Upper limit price / 상한가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub uplmtprice: String,
+    /// Lower limit price / 하한가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dnlmtprice: String,
+    /// Previous-day close / 전일종가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jnilclose: String,
+    /// Previous-day high / 전일고가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jnilhigh: String,
+    /// Previous-day low / 전일저가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jnillow: String,
+    /// Reference price / 기준가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub recprice: String,
+}
+
+/// `t8435` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are the LS business-status fields; `outblock` is the
+/// derivatives-master row array under the `t8435OutBlock` key, tolerated as a
+/// single object OR an array via [`ls_core::de_vec_or_single`]. All
+/// `#[serde(default)]` so a terse or empty envelope still deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8435Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t8435OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T8435OutBlock>,
+}
+
+// ---------------------------------------------------------------------------
+// t8467 — 지수선물마스터조회API용 (index-futures master). market_session,
+// non-paginated. Keyed by a `gubun` (구분) segment selector — `"V"` 변동성지수선물
+// (volatility-index futures) / `"S"` 섹터지수선물 (sector-index futures) / `"Q"`
+// 코스닥150지수선물 (KOSDAQ150-index futures) / any other value → 코스피200지수선물
+// (KOSPI200-index futures, the default). The response out-block `t8467OutBlock`
+// is itself a ROW ARRAY (the raw capture's `res_example` shows
+// `"t8467OutBlock": [ {…}, … ]`, propertyType `A0005`/Object Array, one
+// index-futures contract per row — the normalized baseline lists the row fields
+// flat under the block name, so the true wire shape is read from the raw capture
+// per KTD3). Each row carries the contract name + codes plus the daily
+// limit/close reference prices. Modeled identically to `T8435` (single row-array
+// out-block, the same 9 fields) but with the index-futures `gubun` selector.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t8467` — the index-futures segment selector.
+///
+/// `gubun` (구분) selects the index-futures segment: `"V"` 변동성지수선물 / `"S"`
+/// 섹터지수선물 / `"Q"` 코스닥150지수선물 / any other value → 코스피200지수선물
+/// (the default). The spec types it `String` (length 1). Caller-supplied.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8467InBlock {
+    /// Segment selector / 구분 (`"V"`/`"S"`/`"Q"` or default → KOSPI200).
+    pub gubun: String,
+}
+
+/// `t8467` request — wraps the input block under the `t8467InBlock` key.
+///
+/// Serializes to `{"t8467InBlock":{"gubun":"Q"}}`. `t8467` is not paginated, so
+/// there are no `tr_cont`/`tr_cont_key` fields in the body.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8467Request {
+    #[serde(rename = "t8467InBlock")]
+    pub inblock: T8467InBlock,
+}
+
+impl T8467Request {
+    /// Build a `t8467` index-futures-master request for one segment (`gubun`:
+    /// `"V"`/`"S"`/`"Q"` or any other value → KOSPI200-index futures).
+    pub fn new(gubun: impl Into<String>) -> Self {
+        T8467Request {
+            inblock: T8467InBlock {
+                gubun: gubun.into(),
+            },
+        }
+    }
+}
+
+/// `t8467OutBlock` — one index-futures-master row.
+///
+/// The data-bearing repeated block (`t8467OutBlock[]`, confirmed from the raw
+/// capture's `res_example` array — rows are direct elements under the
+/// `t8467OutBlock` key). The full 9 fields. `hname` (종목명, the index-futures
+/// contract name) is the canonical identity field, resolved by its `korean_name`
+/// from the baseline; `shcode`/`expcode` are the contract codes, and the
+/// `Number`-typed `uplmtprice`/`dnlmtprice`/`jnilclose`/`jnilhigh`/`jnillow`/
+/// `recprice` fields are the daily limit/close reference prices. The
+/// numeric-bearing fields use [`ls_core::string_or_number`] for wire-type
+/// tolerance (the gateway may send a `Number` field as a JSON number);
+/// `#[serde(default)]` lets a sparse row deserialize cleanly. Field names mirror
+/// the LS spec verbatim.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8467OutBlock {
+    /// Contract name / 종목명 (the canonical identity field).
+    pub hname: String,
+    /// Short code / 단축코드 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Expanded code / 확장코드.
+    pub expcode: String,
+    /// Upper limit price / 상한가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub uplmtprice: String,
+    /// Lower limit price / 하한가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dnlmtprice: String,
+    /// Previous-day close / 전일종가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jnilclose: String,
+    /// Previous-day high / 전일고가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jnilhigh: String,
+    /// Previous-day low / 전일저가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jnillow: String,
+    /// Reference price / 기준가 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub recprice: String,
+}
+
+/// `t8467` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are the LS business-status fields; `outblock` is the
+/// index-futures-master row array under the `t8467OutBlock` key, tolerated as a
+/// single object OR an array via [`ls_core::de_vec_or_single`]. All
+/// `#[serde(default)]` so a terse or empty envelope still deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8467Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t8467OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T8467OutBlock>,
+}
+
+// ---------------------------------------------------------------------------
+// t9943 — 지수선물마스터조회API용 (index-futures master). market_session,
+// non-paginated. Keyed by a `gubun` (구분) segment selector — `"V"` 변동성지수선물
+// (volatility-index futures) / `"S"` 섹터지수선물 (sector-index futures) / any
+// other value → 코스피200지수선물 (KOSPI200-index futures, the default). The
+// response out-block `t9943OutBlock` is itself a ROW ARRAY: the raw capture's
+// `res_example` shows `"t9943OutBlock": [ {…}, … ]` (propertyType `A0005`/Object
+// Array), each row a direct element carrying the contract name + codes — the
+// normalized baseline collapses the block name to `response_body`, so the true
+// wire out-block key `t9943OutBlock` is read from the raw capture per KTD3.
+// Modeled after `T8467` (same 지수선물마스터 read, the same `gubun` selector) but
+// the spec lists only the 3 identity fields (`hname`/`shcode`/`expcode`), no
+// daily limit/close reference prices.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t9943` — the index-futures segment selector.
+///
+/// `gubun` (구분) selects the index-futures segment: `"V"` 변동성지수선물 / `"S"`
+/// 섹터지수선물 / any other value → 코스피200지수선물 (the default). The spec types
+/// it `String` (length 1). Caller-supplied.
+#[derive(Serialize, Debug, Clone)]
+pub struct T9943InBlock {
+    /// Segment selector / 구분 (`"V"`/`"S"` or default → KOSPI200).
+    pub gubun: String,
+}
+
+/// `t9943` request — wraps the input block under the `t9943InBlock` key.
+///
+/// Serializes to `{"t9943InBlock":{"gubun":"V"}}`. `t9943` is not paginated, so
+/// there are no `tr_cont`/`tr_cont_key` fields in the body.
+#[derive(Serialize, Debug, Clone)]
+pub struct T9943Request {
+    #[serde(rename = "t9943InBlock")]
+    pub inblock: T9943InBlock,
+}
+
+impl T9943Request {
+    /// Build a `t9943` index-futures-master request for one segment (`gubun`:
+    /// `"V"`/`"S"` or any other value → KOSPI200-index futures).
+    pub fn new(gubun: impl Into<String>) -> Self {
+        T9943Request {
+            inblock: T9943InBlock {
+                gubun: gubun.into(),
+            },
+        }
+    }
+}
+
+/// `t9943OutBlock` — one index-futures-master row.
+///
+/// The data-bearing repeated block (`t9943OutBlock[]`, confirmed from the raw
+/// capture's `res_example` array — rows are direct elements under the
+/// `t9943OutBlock` key). The 3 spec fields. `hname` (종목명, the index-futures
+/// contract name) is the canonical identity field, resolved by its `korean_name`
+/// from the baseline; `shcode` (단축코드) / `expcode` (확장코드) are the contract
+/// codes. `shcode` uses [`ls_core::string_or_number`] for wire-type tolerance
+/// (the gateway may send a code field as a JSON number); `#[serde(default)]` lets
+/// a sparse row deserialize cleanly. Field names mirror the LS spec verbatim.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T9943OutBlock {
+    /// Contract name / 종목명 (the canonical identity field).
+    pub hname: String,
+    /// Short code / 단축코드 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Expanded code / 확장코드.
+    pub expcode: String,
+}
+
+/// `t9943` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are the LS business-status fields; `outblock` is the
+/// index-futures-master row array under the `t9943OutBlock` key, tolerated as a
+/// single object OR an array via [`ls_core::de_vec_or_single`]. All
+/// `#[serde(default)]` so a terse or empty envelope still deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T9943Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t9943OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T9943OutBlock>,
+}
+
+// ---------------------------------------------------------------------------
+// t9944 — 지수옵션마스터조회API용 (index-option master). market_session,
+// non-paginated. A no-caller-input read: the spec's `t9944InBlock` carries a
+// single length-1 `dummy` placeholder, so callers supply nothing. The response
+// out-block `t9944OutBlock` is itself a ROW ARRAY: the raw capture's
+// `res_example` shows `"t9944OutBlock": [ {…}, … ]` (propertyType Object Array),
+// each row a direct element carrying the contract name + codes — the normalized
+// baseline collapses the block name to `response_body`, so the true wire
+// out-block key `t9944OutBlock` is read from the raw capture per KTD3. Modeled
+// after `T8426`/`T9943` (same dummy-input row-array master read); the spec lists
+// only the 3 identity fields (`hname`/`shcode`/`expcode`).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t9944` — a no-caller-input read.
+///
+/// The spec's `t9944InBlock` carries a single length-1 `dummy` placeholder
+/// (Dummy), so callers supply nothing. Modeled after `T8426InBlock`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T9944InBlock {
+    /// Dummy placeholder / Dummy (length-1; the read takes no caller input).
+    pub dummy: String,
+}
+
+/// `t9944` request — wraps the input block under the `t9944InBlock` key.
+///
+/// Serializes to `{"t9944InBlock":{"dummy":""}}`. `t9944` is not paginated and
+/// takes no caller identifier, so there are no continuation fields and no
+/// caller-supplied fields in the body.
+#[derive(Serialize, Debug, Clone)]
+pub struct T9944Request {
+    #[serde(rename = "t9944InBlock")]
+    pub inblock: T9944InBlock,
+}
+
+impl T9944Request {
+    /// Build a `t9944` index-option master request. Takes no caller input; the
+    /// `dummy` placeholder serializes as an empty string.
+    pub fn new() -> Self {
+        T9944Request {
+            inblock: T9944InBlock {
+                dummy: String::new(),
+            },
+        }
+    }
+}
+
+impl Default for T9944Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `t9944OutBlock` — one index-option master row.
+///
+/// The data-bearing repeated block (`t9944OutBlock[]`, confirmed from the raw
+/// capture's `res_example` array — rows are direct elements under the
+/// `t9944OutBlock` key). The 3 spec fields. `hname` (종목명, the index-option
+/// contract name) is the canonical identity field, resolved by its `korean_name`
+/// from the baseline; `shcode` (단축코드) / `expcode` (확장코드) are the contract
+/// codes. `shcode` uses [`ls_core::string_or_number`] for wire-type tolerance
+/// (the gateway may send a code field as a JSON number); `#[serde(default)]` lets
+/// a sparse row deserialize cleanly. Field names mirror the LS spec verbatim.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T9944OutBlock {
+    /// Contract name / 종목명 (the canonical identity field).
+    pub hname: String,
+    /// Short code / 단축코드 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Expanded code / 확장코드.
+    pub expcode: String,
+}
+
+/// `t9944` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are the LS business-status fields; `outblock` is the
+/// index-option master row array under the `t9944OutBlock` key, tolerated as a
+/// single object OR an array via [`ls_core::de_vec_or_single`]. All
+/// `#[serde(default)]` so a terse or empty envelope still deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T9944Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t9944OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T9944OutBlock>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -2293,6 +3213,126 @@ impl MarketSession {
     pub async fn sector_stocks(&self, req: &T1516Request) -> LsResult<T1516Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T1516_POLICY, req)
+            .await
+    }
+
+    /// Read the option board (옵션전광판) via `t2301`. Non-paginated; keyed by a
+    /// contract month `yyyymm` (월물) and a `gubun` mini/regular selector.
+    pub async fn option_board(&self, req: &T2301Request) -> LsResult<T2301Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T2301_POLICY, req)
+            .await
+    }
+
+    /// Read the stock-futures underlying-asset master (주식선물기초자산조회) via
+    /// `t2522`. Non-paginated, no caller input; returns the underlying-asset
+    /// header (name + codes).
+    pub async fn stock_futures_underlying_master(
+        &self,
+        req: &T2522Request,
+    ) -> LsResult<T2522Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T2522_POLICY, req)
+            .await
+    }
+
+    /// Read the stock-futures master (주식선물마스터조회) via `t8401`.
+    /// Non-paginated, no caller input; returns the stock-futures contract rows
+    /// (name + codes).
+    pub async fn stock_futures_master(&self, req: &T8401Request) -> LsResult<T8401Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8401_POLICY, req)
+            .await
+    }
+
+    /// Read the commodity-futures master (상품선물마스터조회) via `t8426`.
+    /// Non-paginated, no caller input; returns the commodity-futures contract
+    /// rows (name + codes).
+    pub async fn commodity_futures_master(
+        &self,
+        req: &T8426Request,
+    ) -> LsResult<T8426Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8426_POLICY, req)
+            .await
+    }
+
+    /// Read the price-bearing index-option master (지수옵션마스터조회) via `t8433`.
+    ///
+    /// Each row carries the contract name + codes PLUS the daily limit/close
+    /// reference prices (상한가/하한가/전일종가/전일고가/전일저가/기준가) — the
+    /// fuller variant. For the codes-only counterpart (3 identity fields, no
+    /// price refs) use [`MarketSession::index_option_master_codes`] (`t9944`).
+    /// Non-paginated, no caller input; returns the index-option contract rows.
+    pub async fn index_option_master(
+        &self,
+        req: &T8433Request,
+    ) -> LsResult<T8433Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8433_POLICY, req)
+            .await
+    }
+
+    /// Read the derivatives master (파생종목마스터조회) via `t8435`.
+    /// Non-paginated; keyed by a `gubun` segment selector — the MINI/weekly
+    /// segments (`"MF"` 미니선물 / `"MO"` 미니옵션 / `"WK"` 코스피200위클리옵션 /
+    /// `"SF"` 코스닥150선물 / `"QW"` 코스닥150위클리옵션). Returns the master
+    /// snapshot (name + codes + daily limit/close reference prices).
+    pub async fn derivatives_master(&self, req: &T8435Request) -> LsResult<T8435Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8435_POLICY, req)
+            .await
+    }
+
+    /// Read the price-bearing index-futures master (지수선물마스터조회) via `t8467`.
+    ///
+    /// Each row carries the contract name + codes PLUS the daily limit/close
+    /// reference prices (상한가/하한가/전일종가/전일고가/전일저가/기준가) — the
+    /// fuller variant. For the codes-only counterpart (3 identity fields, no
+    /// price refs) use [`MarketSession::index_futures_master_codes`] (`t9943`).
+    /// Non-paginated; keyed by a `gubun` segment selector (`"V"` volatility /
+    /// `"S"` sector / `"Q"` KOSDAQ150 / any other value → KOSPI200 index
+    /// futures).
+    pub async fn index_futures_master(&self, req: &T8467Request) -> LsResult<T8467Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8467_POLICY, req)
+            .await
+    }
+
+    /// Read the codes-only index-futures master (지수선물마스터조회) via `t9943`.
+    ///
+    /// The lightweight index-futures master: each row carries only the 3 identity
+    /// fields (contract name `hname` + short/expanded codes), with NO daily
+    /// price references. This is the distinction from
+    /// [`MarketSession::index_futures_master`] (`t8467`), whose rows additionally
+    /// carry the daily limit/close reference prices (~9 fields). Both accept the
+    /// same `gubun` segment selector (`"V"` volatility / `"S"` sector / any other
+    /// value → KOSPI200 index futures); pick this one when only the contract
+    /// codes are needed. Non-paginated; returns the master snapshot row array.
+    pub async fn index_futures_master_codes(
+        &self,
+        req: &T9943Request,
+    ) -> LsResult<T9943Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T9943_POLICY, req)
+            .await
+    }
+
+    /// Read the codes-only index-option master (지수옵션마스터조회) via `t9944`.
+    ///
+    /// The lightweight index-option master: each row carries only the 3 identity
+    /// fields (contract name `hname` + short/expanded codes), with NO daily
+    /// price references. This is the distinction from
+    /// [`MarketSession::index_option_master`] (`t8433`), whose rows additionally
+    /// carry the daily limit/close reference prices. Pick this one when only the
+    /// contract codes are needed. Non-paginated, no caller input; returns the
+    /// master snapshot row array.
+    pub async fn index_option_master_codes(
+        &self,
+        req: &T9944Request,
+    ) -> LsResult<T9944Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T9944_POLICY, req)
             .await
     }
 }

@@ -54,6 +54,15 @@ TR marked `ready` is a promote-tr candidate.
 | `t1485` | `live-smoke-t1485` | `live_smoke_t1485` | open session; `upcode="001"`, `gubun="1"` (expected/auction — may be empty off-session) | implemented-only | paper sector expected-index (Wave A) |
 | `t1516` | `live-smoke-t1516` | `live_smoke_t1516` | open session; `upcode="001"` + representative `shcode="005930"` | implemented-only | paper per-sector stock board (Wave A) |
 | `t1514` | `live-smoke-t1514` | `live_smoke_t1514` | open session; single-page (`cts_date` first page; `cnt` as a JSON number) | implemented-only | paper sector period-trend, single page (Wave A) |
+| `t2301` | `live-smoke-t2301` | `live_smoke_t2301` | any session; `yyyymm="202609"` (near-quarterly), `gubun="G"` (정규) — F/O master/board read, non-empty off-session | implemented-only | paper F/O option board (PR-B U4) |
+| `t2522` | `live-smoke-t2522` | `live_smoke_t2522` | any session; no caller input (`dummy`) — F/O underlying-asset master read, non-empty off-session | implemented-only | paper F/O stock-futures underlying master (PR-B U5) |
+| `t8401` | `live-smoke-t8401` | `live_smoke_t8401` | any session; no caller input (`dummy`) — F/O stock-futures master read, non-empty off-session | implemented-only | paper F/O stock-futures master (PR-B U6) |
+| `t8426` | `live-smoke-t8426` | `live_smoke_t8426` | any session; no caller input (`dummy`) — F/O commodity-futures master read, non-empty off-session | implemented-only | paper F/O commodity-futures master (PR-B U7) |
+| `t8433` | `live-smoke-t8433` | `live_smoke_t8433` | any session; no caller input (`dummy`) — F/O index-option master read, non-empty off-session | implemented-only | paper F/O index-option master (PR-B U8) |
+| `t8435` | `live-smoke-t8435` | `live_smoke_t8435` | any session; `gubun="MF"` (미니선물/mini futures; spec MINI/weekly segments MF/MO/WK/SF/QW) — F/O derivatives master read, non-empty off-session | implemented-only | paper F/O derivatives master (PR-B U9) |
+| `t8467` | `live-smoke-t8467` | `live_smoke_t8467` | any session; `gubun="Q"` (KOSDAQ150 index-futures) — F/O index-futures master read, non-empty off-session | implemented-only | paper F/O index-futures master (PR-B U10) |
+| `t9943` | `live-smoke-t9943` | `live_smoke_t9943` | any session; `gubun="V"` (volatility index-futures) — F/O index-futures master read, non-empty off-session | implemented-only | paper F/O index-futures master (PR-B U11) |
+| `t9944` | `live-smoke-t9944` | `live_smoke_t9944` | any session; no caller input (`dummy`) — F/O index-option master read, non-empty off-session | implemented-only | paper F/O index-option master (PR-B U12) |
 
 Notes:
 - `live-smoke` (default) issues the OAuth token *then* a `t1102` quote in one run,
