@@ -125,6 +125,11 @@ cursor. Confirm the first-page convention (empty / `0` / `1`) against the
 spec/gateway per TR. Use the `rank_row!` / `idx_summary!` macros in
 `paginated/mod.rs` for the uniform row+summary shape.
 
+> Sending `idx` (or any numeric request field) as a quoted string instead of a
+> JSON number makes the gateway reject the call with `IGW40011`. The failure
+> signature and the `make raw-probe` diagnostic that isolates it are in
+> `docs/solutions/integration-issues/ls-gateway-igw40011-numeric-request-fields.md`.
+
 ### Examples
 
 ```rust
