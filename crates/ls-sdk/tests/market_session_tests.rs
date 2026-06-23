@@ -15,9 +15,9 @@ use ls_sdk::market_session::{
     T1826Request, T1826Response, T1859OutBlock1, T1859Request, T1859Response, T1958Request,
     T1958Response, T1964OutBlock1, T1964Request, T1964Response, T1485Request, T1485Response,
     T1511Request, T1511Response, T1516Request, T1516Response, T8424Request, T8424Response,
-    T8425Request, T8425Response, T8431OutBlock, T8431Request, T8431Response, T8436Request,
-    T8436Response, T9905OutBlock1, T9905Request, T9905Response, T9907Request, T9907Response,
-    T9942Request, T9942Response,
+    T2301Request, T2301Response, T8425Request, T8425Response, T8431OutBlock, T8431Request,
+    T8431Response, T8436Request, T8436Response, T9905OutBlock1, T9905Request, T9905Response,
+    T9907Request, T9907Response, T9942Request, T9942Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
@@ -1766,4 +1766,96 @@ fn t8424_empty_result_set_deserializes_as_pending() {
     }))
     .expect("empty sector list deserializes");
     assert!(empty.outblock.is_empty(), "empty list is the pending case");
+}
+
+// ---------------------------------------------------------------------------
+// t2301 — 옵션전광판 (option board; F/O). market_session, non-paginated. Keyed by
+// a contract month `yyyymm` (월물) + a `gubun` mini/regular selector. Single
+// out-block (a representative subset of the 76-field board header).
+// ---------------------------------------------------------------------------
+
+/// `T2301_POLICY.path` — the F/O market-data endpoint.
+const FO_MARKET_DATA_PATH: &str = "/futureoption/market-data";
+
+const T2301_FIXTURE: &str = include_str!("fixtures/t2301_resp.json");
+
+/// Covers R4. `t2301` serializes to exactly
+/// `{"t2301InBlock":{"yyyymm":"202609","gubun":"G"}}` with no continuation tokens
+/// (non-paginated) and `yyyymm` stays a string (no caller fields leak).
+#[test]
+fn t2301_request_serializes_to_inblock() {
+    let value =
+        serde_json::to_value(T2301Request::new("202609", "G")).expect("serialize t2301 request");
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "exactly one top-level key");
+    assert_eq!(value["t2301InBlock"]["yyyymm"], "202609", "yyyymm stays a string");
+    assert_eq!(value["t2301InBlock"]["gubun"], "G", "gubun selector serialized");
+    assert!(value.get("tr_cont").is_none(), "no tr_cont in the body");
+}
+
+/// Covers R2, R5, R6 + KTD4. The spec-derived fixture deserializes through REAL
+/// dispatch: the board header round-trips and the canonical current-value field
+/// `gmprice` (근월물현재가, near-month futures current price) holds its EXACT
+/// value. The fixture's neighbouring fields carry DISTINCT values, so a mislabel
+/// that picked `gmchange`/`cimpv` instead would surface here (the Wave A
+/// `firstjisu`/`pricejisu` guard).
+#[tokio::test]
+async fn t2301_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(FO_MARKET_DATA_PATH))
+        .and(header("tr_cd", "t2301"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T2301_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let resp = sdk_for(&server)
+        .market_session()
+        .option_board(&T2301Request::new("202609", "G"))
+        .await
+        .expect("t2301 option_board should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    // The canonical current-value field, by Korean name 근월물현재가 — exact value.
+    assert_eq!(
+        resp.outblock.gmprice, "331.40",
+        "근월물현재가 near-month futures current price (canonical field)"
+    );
+    // Distinct neighbours: a mislabel would collapse these onto gmprice's value.
+    assert_eq!(resp.outblock.gmchange, "1.85", "근월물전일대비 (distinct from gmprice)");
+    assert_eq!(resp.outblock.cimpv, "14.07", "콜옵션대표IV (distinct from gmprice)");
+    assert_eq!(resp.outblock.pimpv, "15.92", "풋옵션대표IV (distinct from cimpv)");
+    assert_eq!(resp.outblock.gmvolume, "184523", "근월물거래량 (was a JSON number)");
+}
+
+/// Covers R4, R5. The `gmvolume` field tolerates a JSON number or string via
+/// `string_or_number` (the gateway sends `gmvolume` as an integer).
+#[test]
+fn t2301_numeric_number_or_string_yields_same_value() {
+    let as_number: T2301Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "t2301OutBlock": { "gmprice": 331, "gmvolume": 184523 }
+    }))
+    .expect("number gmvolume must deserialize");
+    let as_string: T2301Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "t2301OutBlock": { "gmprice": "331", "gmvolume": "184523" }
+    }))
+    .expect("string gmvolume must deserialize");
+    assert_eq!(as_number.outblock.gmvolume, "184523");
+    assert_eq!(as_number.outblock.gmvolume, as_string.outblock.gmvolume);
+    assert_eq!(as_number.outblock.gmprice, as_string.outblock.gmprice, "gmprice both forms");
+}
+
+/// Covers R5, R6. An empty `t2301` board (00707, empty out-block) deserializes as
+/// the pending case — the canonical field defaults to empty.
+#[test]
+fn t2301_empty_result_deserializes_as_pending() {
+    let empty: T2301Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t2301OutBlock": {}
+    }))
+    .expect("empty board deserializes");
+    assert!(empty.outblock.gmprice.is_empty(), "empty board is the pending case");
 }

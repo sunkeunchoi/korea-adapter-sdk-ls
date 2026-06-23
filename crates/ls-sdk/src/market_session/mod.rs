@@ -2042,6 +2042,110 @@ pub struct T1516Response {
     pub outblock1: Vec<T1516OutBlock1>,
 }
 
+// ---------------------------------------------------------------------------
+// t2301 — 옵션전광판 (option board). market_session, non-paginated. Keyed by a
+// contract month `yyyymm` (월물) + a `gubun` mini/regular selector
+// (미니구분 — `"M"` mini / `"G"` regular). The out-block is a single struct: the
+// board header carries the near-month futures snapshot (`gm*` fields) plus the
+// representative call-option leg; the deeper per-strike legs are nested object
+// arrays the recipe models as a representative subset, not in full.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t2301` — the contract month + mini/regular selector.
+///
+/// `yyyymm` (월물) is the contract month, `YYYYMM` (e.g. `"202609"`); the spec
+/// types it `String` (length 6). `gubun` (미니구분) selects mini vs regular:
+/// `"M"` 미니 / `"G"` 정규. Both are caller-supplied.
+#[derive(Serialize, Debug, Clone)]
+pub struct T2301InBlock {
+    /// Contract month / 월물 (`YYYYMM`, e.g. `"202609"`).
+    pub yyyymm: String,
+    /// Mini/regular selector / 미니구분 (`"M"` mini / `"G"` regular).
+    pub gubun: String,
+}
+
+/// `t2301` request — wraps the input block under the `t2301InBlock` key.
+///
+/// Serializes to `{"t2301InBlock":{"yyyymm":...,"gubun":...}}`. `t2301` is not
+/// paginated, so there are no `tr_cont`/`tr_cont_key` fields in the body.
+#[derive(Serialize, Debug, Clone)]
+pub struct T2301Request {
+    #[serde(rename = "t2301InBlock")]
+    pub inblock: T2301InBlock,
+}
+
+impl T2301Request {
+    /// Build a `t2301` option-board request for one contract month + selector.
+    pub fn new(yyyymm: impl Into<String>, gubun: impl Into<String>) -> Self {
+        T2301Request {
+            inblock: T2301InBlock {
+                yyyymm: yyyymm.into(),
+                gubun: gubun.into(),
+            },
+        }
+    }
+}
+
+/// `t2301OutBlock` — the option-board header (single object).
+///
+/// A representative, spec-grounded subset of the 76-field `t2301OutBlock`: the
+/// near-month futures snapshot (`gm*` — the board's headline current value) and
+/// the representative call-option leg. `gmprice` (근월물현재가, near-month
+/// futures current price) is the canonical current-value field, resolved by its
+/// `korean_name` from the baseline. Every numeric-bearing field uses
+/// [`ls_core::string_or_number`] for wire-type tolerance; `#[serde(default)]`
+/// lets a sparse/empty out-block deserialize cleanly. Field names mirror the LS
+/// spec verbatim.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T2301OutBlock {
+    /// Historical volatility / 역사적변동성.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub histimpv: String,
+    /// Option days-to-expiry / 옵션잔존일.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jandatecnt: String,
+    /// Near-month futures current price / 근월물현재가 (the canonical current value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gmprice: String,
+    /// Near-month sign vs. previous close / 근월물전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gmsign: String,
+    /// Near-month change vs. previous close / 근월물전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gmchange: String,
+    /// Near-month rate of change / 근월물등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gmdiff: String,
+    /// Near-month volume / 근월물거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gmvolume: String,
+    /// Near-month futures code / 근월물선물코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gmshcode: String,
+    /// Call-option representative IV / 콜옵션대표IV.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cimpv: String,
+    /// Put-option representative IV / 풋옵션대표IV.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub pimpv: String,
+}
+
+/// `t2301` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are the LS business-status fields; `outblock` is the board
+/// header under the `t2301OutBlock` key. All `#[serde(default)]` so a terse or
+/// empty envelope still deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T2301Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t2301OutBlock", default)]
+    pub outblock: T2301OutBlock,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -2293,6 +2397,14 @@ impl MarketSession {
     pub async fn sector_stocks(&self, req: &T1516Request) -> LsResult<T1516Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T1516_POLICY, req)
+            .await
+    }
+
+    /// Read the option board (옵션전광판) via `t2301`. Non-paginated; keyed by a
+    /// contract month `yyyymm` (월물) and a `gubun` mini/regular selector.
+    pub async fn option_board(&self, req: &T2301Request) -> LsResult<T2301Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T2301_POLICY, req)
             .await
     }
 }

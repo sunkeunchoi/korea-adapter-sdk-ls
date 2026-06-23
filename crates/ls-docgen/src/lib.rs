@@ -866,7 +866,7 @@ mod tests {
             "CFOBQ10500", "CSPAQ12300", "CSPAQ22200", "revoke", "t1403", "t1441", "t1452", "t1463",
             "t1466", "t1485", "t1489", "t1492", "t1511", "t1514", "t1516", "t1531", "t1537", "t1601",
             "t1615", "t1640", "t1662", "t1664", "t1825", "t1826", "t1859", "t1866", "t1958",
-            "t3341", "t8424", "t8425", "t8431", "t8436", "t9905", "t9907", "t9942",
+            "t2301", "t3341", "t8424", "t8425", "t8431", "t8436", "t9905", "t9907", "t9942",
         ];
         for tr in banner_trs {
             let page = reference
@@ -897,11 +897,11 @@ mod tests {
         // TRs + the promoted-but-still-implemented token/t1101/t1102/t8412/S3_/
         // CSPAQ12200). Count only grows as TRs implement; CSPAQ12300 (PR-A U1),
         // CSPAQ22200 (PR-A U2), and CFOBQ10500 (PR-A U3) each add one
-        // banner-carrying page.
+        // banner-carrying page. t2301 (PR-B U4) adds one more (F/O option board).
         // (Wave 1 t1988 + t1964 ship PENDING — not implemented, not counted.)
         assert_eq!(
             reference.len(),
-            42,
+            43,
             "index + the implemented reference pages"
         );
 

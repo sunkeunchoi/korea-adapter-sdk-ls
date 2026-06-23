@@ -692,6 +692,21 @@ pub const CFOBQ10500_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(10),
 };
 
+/// t2301 — 옵션전광판 (F/O option board; non-paginated market read). Keyed by a
+/// contract month + mini/regular selector.
+pub const T2301_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t2301",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// S3_ — KOSPI체결 실시간 시세 (real-time KOSPI trade feed, WebSocket).
 ///
 /// WebSocket TR: there is no REST dispatch, but the policy const is retained as
@@ -786,6 +801,7 @@ mod tests {
             CSPAQ12300_POLICY,
             CSPAQ22200_POLICY,
             CFOBQ10500_POLICY,
+            T2301_POLICY,
         ] {
             assert!(!p.is_order, "{} must not be an order endpoint", p.tr_code);
             assert!(p.is_rest(), "{} must be a REST endpoint", p.tr_code);

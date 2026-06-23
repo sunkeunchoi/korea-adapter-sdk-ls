@@ -1,0 +1,16 @@
+{
+  "rsp_cd": "00000",
+  "rsp_msg": "",
+  "t2301OutBlock": {
+    "histimpv": "13.25",
+    "jandatecnt": "21",
+    "gmprice": "331.40",
+    "gmsign": "2",
+    "gmchange": "1.85",
+    "gmdiff": "0.56",
+    "gmvolume": 184523,
+    "gmshcode": "101W9000",
+    "cimpv": "14.07",
+    "pimpv": "15.92"
+  }
+}
