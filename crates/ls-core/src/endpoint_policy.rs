@@ -243,6 +243,96 @@ pub const T1826_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+/// `t9905` — 기초자산리스트조회 (full underlying-asset list; Wave 1). Non-paginated
+/// `market_session` ELW read; its `shcode` output keys `t1964`'s `item`.
+pub const T9905_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t9905",
+    path: "/stock/elw",
+    module: "stock",
+    group: "[주식] ELW",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(5),
+};
+
+/// `t9907` — 만기월조회 (ELW expiry-month list; Wave 1). Non-paginated
+/// `market_session` ELW read.
+pub const T9907_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t9907",
+    path: "/stock/elw",
+    module: "stock",
+    group: "[주식] ELW",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(5),
+};
+
+/// `t8431` — ELW종목조회 (ELW symbol list; the Wave 1 spine producer). Non-paginated
+/// `market_session` ELW read; its `shcode` output keys `t1958`'s comparison pair.
+pub const T8431_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8431",
+    path: "/stock/elw",
+    module: "stock",
+    group: "[주식] ELW",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// `t9942` — ELW마스터조회API용 (ELW master list; Wave 1). Non-paginated
+/// `market_session` ELW read.
+pub const T9942_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t9942",
+    path: "/stock/elw",
+    module: "stock",
+    group: "[주식] ELW",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// `t1958` — ELW종목비교 (ELW symbol comparison; Wave 1 comparison member).
+/// Non-paginated `market_session` ELW read keyed by two `t8431`-sourced `shcode`s.
+pub const T1958_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1958",
+    path: "/stock/elw",
+    module: "stock",
+    group: "[주식] ELW",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(5),
+};
+
+/// `t1964` — ELW전광판 (ELW board; Wave 1 board member). Non-paginated
+/// `market_session` ELW read keyed by a `t9905`-sourced `item` underlying code.
+pub const T1964_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1964",
+    path: "/stock/elw",
+    module: "stock",
+    group: "[주식] ELW",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(5),
+};
+
 /// t1452 — 거래량상위 (top trading volume; single-page body-`idx` paginated).
 pub const T1452_POLICY: EndpointPolicy = EndpointPolicy {
     tr_code: "t1452",
@@ -458,6 +548,12 @@ mod tests {
             T1866_POLICY,
             T1825_POLICY,
             T1826_POLICY,
+            T9905_POLICY,
+            T9907_POLICY,
+            T8431_POLICY,
+            T9942_POLICY,
+            T1958_POLICY,
+            T1964_POLICY,
             CSPAQ12200_POLICY,
         ] {
             assert!(!p.is_order, "{} must not be an order endpoint", p.tr_code);

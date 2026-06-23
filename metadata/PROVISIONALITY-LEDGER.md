@@ -53,17 +53,12 @@ call-auction screens are the most likely to differ (`krx_extended`).
 | t1852 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t1856 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t1860 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
-| t1958 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t1964 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t1988 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t3102 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t3320 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t3341 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t8430 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
-| t8431 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
-| t9905 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
-| t9907 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
-| t9942 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 
 ## 2. `caller_supplied_identifiers`
 
@@ -83,17 +78,12 @@ it is recorded. The true required-input set is confirmed at implementation.
 | t1852 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
 | t1856 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
 | t1860 | `[query_index]` | best-effort: request-shape input fields that look like instrument/record identifiers | confirm the true caller-supplied identifier set against a live request |
-| t1958 | `[shcode1, shcode2]` | best-effort: request-shape input fields that look like instrument/record identifiers | confirm the true caller-supplied identifier set against a live request |
 | t1964 | `[item, issuercd]` | best-effort: request-shape input fields that look like instrument/record identifiers | confirm the true caller-supplied identifier set against a live request |
 | t1988 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
 | t3102 | `[sNewsno]` | best-effort: request-shape input fields that look like instrument/record identifiers | confirm the true caller-supplied identifier set against a live request |
 | t3320 | `[gicode]` | best-effort: request-shape input fields that look like instrument/record identifiers | confirm the true caller-supplied identifier set against a live request |
 | t3341 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
 | t8430 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
-| t8431 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
-| t9905 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
-| t9907 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
-| t9942 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
 
 ## 3. Weak discovery-style relationships
 
@@ -104,6 +94,7 @@ order-coupling fields).
 | TR | Relationship | Source basis | Re-verify before implementation |
 |---|---|---|---|
 | t1860 | `query_index` ← `t1866OutBlock1.query_index` | request field `query_index` is documented as sourced from `t1866`'s output — a cross-TR discovery dependency, not modelled in `dependencies` | model the `t1866 → t1860` discovery edge when either TR is implemented |
+| t1964 | `item` ← `t9905OutBlock1.shcode` | t1964's `item` (기초자산코드) is the underlying-asset code `t9905` emits — modeled this wave (Wave 1). t1964 ships **PENDING** (broad/default filters returned an empty board for the first 10 underlyings; no named source for the 10 filter enums per KTD-1), so this edge is **retained, unconfirmed** | retire on a confirming non-empty `t1964` board call once defensible filter defaults are sourced |
 
 ## 4. Field-level `type` facets — re-pinned from clean `property_type` (2026-06-22) — RETIRED
 
@@ -321,3 +312,79 @@ surprise.
 Field-`type` facets (§4) are already retired inventory-wide (clean re-pin); nothing
 to retire here. Recommended tier untouched: `EVIDENCE-FRESHNESS.md` stays at six
 Recommended TRs; no `metadata/evidence/<tr>.yaml` exists for either member.
+
+---
+
+## 8. ELW universe & instrument surface wave — close-out (2026-06-23)
+
+The `tracked → implemented` ELW universe & instrument-surface wave (plan
+`docs/plans/2026-06-23-001-feat-capability-closed-tr-expansion-waves-plan.md`,
+Wave 1 / PR #2) ships as a **partial wave**: it reaches a decided end state for
+all 7 member TRs and proves the ELW capability through its defining member. Each
+implemented TR stays **non-recommended** (no Focused Evidence, no recommendation
+block, no `EVIDENCE-FRESHNESS.md` edit). Every one of the 7 is decided:
+**5 implemented, 2 pending.**
+
+| TR | Class (first-pass) | End state | Disposition (credential-free) |
+|---|---|---|---|
+| t9905 | market_session | **implemented** | `rsp_cd=00000 underlyings=74` (full underlying list; `shcode` keys t1964) |
+| t9907 | market_session | **implemented** | `rsp_cd=00000 months=11` (ELW expiry months) |
+| t8431 | market_session | **implemented** | `rsp_cd=00000 elws=2919` (ELW symbol list; spine producer for t1958) |
+| t9942 | market_session | **implemented** | `rsp_cd=00000 elws=2919` (ELW master list) |
+| t1958 | market_session | **implemented** | `rsp_cd=00000 compared=2` (chained off t8431; two public shcodes; capability-defining) |
+| t1964 | market_session | **PENDING — input-unresolved (filter defaults)** | callable; broad `"0"` filter defaults returned an empty board for the first 10 underlyings (no named source for the 10 filter enums, KTD-1) |
+| t1988 | (not authored) | **PENDING — gateway rejects (IGW40011)** | the raw-HTTP probe rejects every broad-filter form with `IGW40011`; its sibling t9905 (same path) works — environmental, no in-window recovery |
+
+**Capability surface, not a consumer edge (KTD-2).** This wave clears the
+consumer-less hold for these members by being a **bounded ELW universe &
+instrument-lookup surface with strict membership and live paper smokes** — *not*
+by an internal producer→consumer edge. That is a deliberately different bar from
+the predecessor's saved-condition screening-workflow consumer test. The one
+internal edge present (t8431 → t1958, and the modeled t9905 → t1964) is a
+discovery-sourcing convenience for the smoke harness, not a claim that the surface
+has a downstream consumer.
+
+**Capability proven (KTD-4).** The ≥1 required flip is a capability-**defining**
+member: `t1958` (ELW comparison) flips on a chained non-empty success, so the
+headline "ELW universe & instrument surface" claim holds (it is not carried by a
+trivially-non-empty list read). The four universe/list reads (t9905/t9907/t8431/
+t9942) are the supporting surface.
+
+**Discovery edges.** `t1958`'s `shcode1/shcode2 ← t8431OutBlock.shcode` edge was
+modeled-then-retired on the confirming chained smoke (its §1/§2/§3 rows retire;
+`caller_supplied_identifiers` `[shcode1, shcode2] → []`). `t1964`'s
+`item ← t9905OutBlock1.shcode` edge is **modeled and retained** (§3) because
+t1964 ships pending — no silent retirement.
+
+**venue_session disposition (R12).** The five implemented members' §1 rows retire
+as `krx_regular` (each returned a non-empty success on a live paper call; none
+carries an after-hours / call-auction facet). The two pending members keep their
+§1 rows retained, unconfirmed.
+
+**Residual provisionality (NOT retired by this wave).** The pending TRs stay
+tracked-only with their rows **retained**:
+- **t1964** — `venue_session` (§1), `caller_supplied_identifiers` (§2,
+  `[item, issuercd]`), and the new §3 `t9905 → t1964` discovery edge: all retained,
+  unconfirmed. owner_class stays the `standalone` placeholder. Resolving it needs
+  a named source for the 10 board filter enums (or an in-session window where the
+  board is non-empty under broad defaults).
+- **t1988** — `venue_session` (§1) and `caller_supplied_identifiers` (§2, `[]`)
+  retained; owner_class stays `standalone`. No SDK code was authored (the raw
+  probe pre-classified it as gateway-rejected). Resolving it needs the gateway to
+  accept a t1988 request form (the `IGW40011` cause is unresolved in-window).
+
+**Follow-up roadmap.**
+1. **t1964 filter-default sourcing** — source the 10 ELW-board filter enums from a
+   vendor spec or an observed HTS payload, then chain t1964 off t9905 and flip.
+2. **t1988 gateway-form resolution** — determine why the paper gateway returns
+   `IGW40011` for every broad t1988 filter form (provisioning vs request shape),
+   then implement.
+
+**Standing cost (accepted, per Risk Analysis).** This wave adds 5 consumer-less
+live-smoke targets + 5 drift-detection structs that must stay green. Disposition
+rule: a consumer-less smoke may go **pending (not red)** off-session, and a drift
+failure on a consumer-less Implemented TR is **triage-P3**, not a release blocker.
+
+Field-`type` facets (§4) are already retired inventory-wide (clean re-pin); nothing
+to retire here. Recommended tier untouched: `EVIDENCE-FRESHNESS.md` stays at six
+Recommended TRs; no `metadata/evidence/<tr>.yaml` exists for any of the 7.

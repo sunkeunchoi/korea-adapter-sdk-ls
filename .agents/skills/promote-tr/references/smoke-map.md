@@ -34,6 +34,12 @@ TR marked `ready` is a promote-tr candidate.
 | `t1859` | `live-smoke-t1859` | `live_smoke_t1859` | `LS_PAPER_USER_ID=<LS login id>`; chained — self-sources a `query_index` from `t1866` (else SMOKE-FAIL: spine-input-unavailable) | implemented-only | paper server-saved condition search (spine consumer) |
 | `t1826` | `live-smoke-t1826` | `live_smoke_t1826` | open session; `search_gb=0` (핵심검색) | implemented-only | paper ThinQ Q-click search-list (Wave 3 spine producer; yields `search_cd` keys) |
 | `t1825` | `live-smoke-t1825` | `live_smoke_t1825` | open session; chained — self-sources a `search_cd` from `t1826` (else SMOKE-FAIL: spine-input-unavailable); `search_cd` not recorded | implemented-only | paper ThinQ Q-click search (Wave 3 spine consumer) |
+| `t9905` | `live-smoke-t9905` | `live_smoke_t9905` | open session; no caller input | implemented-only | paper full underlying-asset list (Wave 1; `shcode` keys `t1964`) |
+| `t9907` | `live-smoke-t9907` | `live_smoke_t9907` | open session; no caller input | implemented-only | paper ELW expiry-month list (Wave 1) |
+| `t8431` | `live-smoke-t8431` | `live_smoke_t8431` | open session; no caller input | implemented-only | paper ELW symbol list (Wave 1 spine producer; `shcode` keys `t1958`) |
+| `t9942` | `live-smoke-t9942` | `live_smoke_t9942` | open session; no caller input | implemented-only | paper ELW master list (Wave 1) |
+| `t1958` | `live-smoke-t1958` | `live_smoke_t1958` | open session; chained — self-sources two `shcode`s from `t8431` (else SMOKE-FAIL) | implemented-only | paper ELW symbol comparison (Wave 1 comparison member) |
+| `t1964` | `live-smoke-t1964` | `live_smoke_t1964` | open session; chained — self-sources an `item` underlying from `t9905`, walks first 10 (else SMOKE-FAIL) | implemented-only | paper ELW board (Wave 1 board member) |
 
 Notes:
 - `live-smoke` (default) issues the OAuth token *then* a `t1102` quote in one run,

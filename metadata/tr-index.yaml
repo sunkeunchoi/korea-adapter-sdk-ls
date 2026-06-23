@@ -205,7 +205,7 @@ trs:
     venue_session: krx_regular
   t1958:
     file: trs/t1958.yaml
-    owner_class: standalone
+    owner_class: market_session
     protocol: rest
     instrument_domain: stock
     venue_session: krx_regular
@@ -253,7 +253,7 @@ trs:
     venue_session: krx_regular
   t8431:
     file: trs/t8431.yaml
-    owner_class: standalone
+    owner_class: market_session
     protocol: rest
     instrument_domain: stock
     venue_session: krx_regular
@@ -265,19 +265,19 @@ trs:
     venue_session: krx_regular
   t9905:
     file: trs/t9905.yaml
-    owner_class: standalone
+    owner_class: market_session
     protocol: rest
     instrument_domain: stock
     venue_session: krx_regular
   t9907:
     file: trs/t9907.yaml
-    owner_class: standalone
+    owner_class: market_session
     protocol: rest
     instrument_domain: stock
     venue_session: krx_regular
   t9942:
     file: trs/t9942.yaml
-    owner_class: standalone
+    owner_class: market_session
     protocol: rest
     instrument_domain: stock
     venue_session: krx_regular

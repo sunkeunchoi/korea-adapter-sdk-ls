@@ -1,6 +1,6 @@
 tr_code: t1958
 name: ELW종목비교
-owner_class: standalone
+owner_class: market_session
 facets:
   protocol: rest
   instrument_domain: stock
@@ -11,13 +11,13 @@ facets:
   paper_incompatible: false
   certification_path: none
   rate_bucket: market_data
-  caller_supplied_identifiers: [shcode1, shcode2]
+  caller_supplied_identifiers: []
 dependencies:
   self_continuation_fields: []
   strong_order_fields: []
 support:
   tracked: true
-  implemented: false
+  implemented: true
   recommended: false
 maintenance:
   source_spec_hash: 8cd36853e288
