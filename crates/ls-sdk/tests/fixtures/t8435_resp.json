@@ -1,0 +1,28 @@
+{
+  "t8435OutBlock": [
+    {
+      "hname": "KQF 2306",
+      "shcode": "106T6000",
+      "expcode": "KR4106T60005",
+      "uplmtprice": "1456.5",
+      "dnlmtprice": "1240.9",
+      "jnilclose": "1348.7",
+      "jnilhigh": "1349.8",
+      "jnillow": "1323.9",
+      "recprice": "1348.7"
+    },
+    {
+      "hname": "KQF 2309",
+      "shcode": "106T9000",
+      "expcode": "KR4106T90002",
+      "uplmtprice": "1456.3",
+      "dnlmtprice": "1240.7",
+      "jnilclose": "1348.5",
+      "jnilhigh": "1348.5",
+      "jnillow": "1320.2",
+      "recprice": "1348.5"
+    }
+  ],
+  "rsp_cd": "00000",
+  "rsp_msg": "정상적으로 조회가 완료되었습니다."
+}

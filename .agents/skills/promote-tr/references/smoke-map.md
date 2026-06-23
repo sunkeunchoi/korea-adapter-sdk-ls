@@ -59,6 +59,7 @@ TR marked `ready` is a promote-tr candidate.
 | `t8401` | `live-smoke-t8401` | `live_smoke_t8401` | any session; no caller input (`dummy`) — F/O stock-futures master read, non-empty off-session | implemented-only | paper F/O stock-futures master (PR-B U6) |
 | `t8426` | `live-smoke-t8426` | `live_smoke_t8426` | any session; no caller input (`dummy`) — F/O commodity-futures master read, non-empty off-session | implemented-only | paper F/O commodity-futures master (PR-B U7) |
 | `t8433` | `live-smoke-t8433` | `live_smoke_t8433` | any session; no caller input (`dummy`) — F/O index-option master read, non-empty off-session | implemented-only | paper F/O index-option master (PR-B U8) |
+| `t8435` | `live-smoke-t8435` | `live_smoke_t8435` | any session; `gubun="MF"` (선물/futures) — F/O derivatives master read, non-empty off-session | implemented-only | paper F/O derivatives master (PR-B U9) |
 
 Notes:
 - `live-smoke` (default) issues the OAuth token *then* a `t1102` quote in one run,

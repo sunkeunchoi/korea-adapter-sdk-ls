@@ -17,7 +17,7 @@ use ls_sdk::market_session::{
     T1511Request, T1511Response, T1516Request, T1516Response, T8424Request, T8424Response,
     T2301Request, T2301Response, T2522OutBlock1, T2522Request, T2522Response, T8401OutBlock,
     T8401Request, T8401Response, T8426OutBlock, T8426Request, T8426Response, T8433OutBlock,
-    T8433Request, T8433Response, T8425Request,
+    T8433Request, T8433Response, T8435OutBlock, T8435Request, T8435Response, T8425Request,
     T8425Response, T8431OutBlock, T8431Request,
     T8431Response, T8436Request, T8436Response, T9905OutBlock1, T9905Request, T9905Response,
     T9907Request, T9907Response, T9942Request, T9942Response,
@@ -2290,6 +2290,123 @@ fn t8433_single_object_row_deserializes_to_one_element_vec() {
 #[test]
 fn t8433_empty_result_deserializes_as_pending() {
     let empty: T8433Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707"
+    }))
+    .expect("empty master deserializes");
+    assert!(empty.outblock.is_empty(), "empty master is the pending case");
+}
+
+// ---------------------------------------------------------------------------
+// t8435 — 파생종목마스터조회API용 (derivatives master; F/O). market_session,
+// non-paginated. Keyed by a `gubun` segment selector (`"MF"` futures / `"MO"`
+// options). The out-block is itself a ROW ARRAY (confirmed from the raw
+// capture's `res_example`, KTD3) — one derivatives contract per row, the full
+// 9 fields.
+// ---------------------------------------------------------------------------
+
+const T8435_FIXTURE: &str = include_str!("fixtures/t8435_resp.json");
+
+/// Covers R4. `t8435` serializes to exactly `{"t8435InBlock":{"gubun":"MF"}}`
+/// with no continuation tokens (non-paginated) and no caller fields leaking.
+#[test]
+fn t8435_request_serializes_to_inblock() {
+    let value = serde_json::to_value(T8435Request::new("MF")).expect("serialize t8435 request");
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "exactly one top-level key");
+    assert_eq!(value["t8435InBlock"]["gubun"], "MF", "gubun selector serialized");
+    assert!(value.get("tr_cont").is_none(), "no tr_cont in the body");
+}
+
+/// Covers R2, R5 + KTD4. The spec-derived fixture deserializes through REAL
+/// dispatch: the master row array round-trips and the canonical identity field
+/// `hname` (종목명, the derivatives contract name) holds its EXACT value. The
+/// fixture's neighbouring fields carry DISTINCT values, so a mislabel that picked
+/// `shcode`/`recprice` instead would surface here.
+#[tokio::test]
+async fn t8435_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(FO_MARKET_DATA_PATH))
+        .and(header("tr_cd", "t8435"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T8435_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let resp = sdk_for(&server)
+        .market_session()
+        .derivatives_master(&T8435Request::new("MF"))
+        .await
+        .expect("t8435 derivatives_master should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock.len(), 2, "fixture carries two derivatives rows");
+    let row = &resp.outblock[0];
+    // The canonical identity field, by Korean name 종목명 — exact value.
+    assert_eq!(
+        row.hname, "KQF 2306",
+        "종목명 derivatives contract name (canonical field)"
+    );
+    // Distinct neighbours: a mislabel would collapse these onto hname.
+    assert_eq!(row.shcode, "106T6000", "단축코드 (distinct)");
+    assert_eq!(row.expcode, "KR4106T60005", "확장코드 (distinct)");
+    assert_eq!(row.uplmtprice, "1456.5", "상한가 (distinct)");
+    assert_eq!(row.dnlmtprice, "1240.9", "하한가 (distinct)");
+    assert_eq!(row.jnilclose, "1348.7", "전일종가 (distinct)");
+    assert_eq!(row.jnilhigh, "1349.8", "전일고가 (distinct)");
+    assert_eq!(row.jnillow, "1323.9", "전일저가 (distinct)");
+    assert_eq!(row.recprice, "1348.7", "기준가");
+    // A distinct second row, proving the array carries multiple rows.
+    assert_eq!(resp.outblock[1].hname, "KQF 2309", "second row distinct");
+}
+
+/// Covers shared contract item 2. `uplmtprice` (상한가) parses via
+/// `ls_core::string_or_number` from BOTH a JSON number and a string — the gateway
+/// types it `Number` and may send either form.
+#[test]
+fn t8435_numeric_number_or_string_yields_same_value() {
+    let as_number: T8435Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8435OutBlock": [{ "hname": "KQF 2306", "uplmtprice": 1456.5 }]
+    }))
+    .expect("numeric uplmtprice deserializes");
+    let as_string: T8435Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8435OutBlock": [{ "hname": "KQF 2306", "uplmtprice": "1456.5" }]
+    }))
+    .expect("string uplmtprice deserializes");
+    assert_eq!(as_number.outblock[0].uplmtprice, "1456.5");
+    assert_eq!(as_string.outblock[0].uplmtprice, "1456.5");
+    assert_eq!(
+        as_number.outblock[0].hname, as_string.outblock[0].hname,
+        "hname both forms"
+    );
+}
+
+/// Covers the array single-or-Vec case (shared contract item 6): a single-object
+/// `t8435OutBlock` body deserializes to a one-element `Vec` via
+/// `de_vec_or_single`.
+#[test]
+fn t8435_single_object_row_deserializes_to_one_element_vec() {
+    let single: T8435Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8435OutBlock": { "hname": "KQF 2306" }
+    }))
+    .expect("single-object row deserializes");
+    assert_eq!(single.outblock.len(), 1, "single object becomes a one-element Vec");
+    assert_eq!(single.outblock[0].hname, "KQF 2306");
+    // The standalone row struct also default-constructs cleanly.
+    assert!(T8435OutBlock::default().hname.is_empty());
+}
+
+/// Covers R5. An empty `t8435` master (00707, empty out-block) deserializes as
+/// the pending case — the row array is empty.
+#[test]
+fn t8435_empty_result_deserializes_as_pending() {
+    let empty: T8435Response = serde_json::from_value(serde_json::json!({
         "rsp_cd": "00707"
     }))
     .expect("empty master deserializes");
