@@ -7,10 +7,10 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | TR | Name | Owner class | Support | Page |
 |----|------|-------------|---------|------|
 | `CCENQ90200` | KRX야간파생 잔고조회 | `account` | tracked | [CCENQ90200](./CCENQ90200.md) |
-| `CFOBQ10500` | 선물옵션 계좌예탁금증거금조회 | `account` | tracked | [CFOBQ10500](./CFOBQ10500.md) |
+| `CFOBQ10500` | 선물옵션 계좌예탁금증거금조회 | `account` | implemented | [CFOBQ10500](./CFOBQ10500.md) |
 | `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | recommended | [CSPAQ12200](./CSPAQ12200.md) |
-| `CSPAQ12300` | BEP단가조회 | `account` | tracked | [CSPAQ12300](./CSPAQ12300.md) |
-| `CSPAQ22200` | 현물계좌예수금 주문가능금액 총평가2 | `account` | tracked | [CSPAQ22200](./CSPAQ22200.md) |
+| `CSPAQ12300` | BEP단가조회 | `account` | implemented | [CSPAQ12300](./CSPAQ12300.md) |
+| `CSPAQ22200` | 현물계좌예수금 주문가능금액 총평가2 | `account` | implemented | [CSPAQ22200](./CSPAQ22200.md) |
 | `CSPAT00601` | 현물 정규주문 (cash equity order submission) | `orders` | tracked | [CSPAT00601](./CSPAT00601.md) |
 | `S3_` | KOSPI 체결 실시간 시세 | `realtime` | recommended | [S3_](./S3_.md) |
 | `g3101` | 해외주식 API 현재가 조회 | `market_session` | tracked | [g3101](./g3101.md) |

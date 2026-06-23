@@ -484,9 +484,9 @@ the LS overseas gateway/session shape is uncharted in the repo.
 
 | TR | Provisional value | Source basis | Re-verify before implementation |
 |---|---|---|---|
-| CSPAQ12300 | `unspecified` | account-state read, session-agnostic | confirm the read is session-independent live |
-| CSPAQ22200 | `unspecified` | account-state read, session-agnostic | confirm the read is session-independent live |
-| CFOBQ10500 | `unspecified` | account-state read, session-agnostic | confirm the read is session-independent live |
+| ~~CSPAQ12300~~ | ~~`unspecified`~~ | ~~account-state read, session-agnostic~~ | **RETIRED (PR-A U1)** — paper BEP read returned `rsp_cd=00136` non-empty regardless of session, confirming session-independence |
+| ~~CSPAQ22200~~ | ~~`unspecified`~~ | ~~account-state read, session-agnostic~~ | **RETIRED (PR-A U2)** — paper orderable/valuation read returned `rsp_cd=00136` non-empty regardless of session, confirming session-independence |
+| ~~CFOBQ10500~~ | ~~`unspecified`~~ | ~~account-state read, session-agnostic~~ | **RETIRED (PR-A U3)** — paper F/O deposit read returned `rsp_cd=00136` non-empty regardless of session, confirming session-independence |
 | CCENQ90200 | `krx_extended` | `KRX야간파생` night-derivatives balance — session from name only, not snapshot-pinned | confirm `krx_extended` vs `unspecified` against live night-session behavior |
 | t2301 | `krx_regular` | F/O board/master read, KRX regular assumed | confirm the session the read is scoped to |
 | t2522 | `krx_regular` | F/O master read, KRX regular assumed | confirm the session the read is scoped to |

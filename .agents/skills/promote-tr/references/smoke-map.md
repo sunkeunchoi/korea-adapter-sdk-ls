@@ -18,6 +18,9 @@ TR marked `ready` is a promote-tr candidate.
 | `t1101` | `live-smoke-book` | `live_smoke_book` | open session | ready | paper price + 10-level order book |
 | `t8412` | `live-smoke-chart` | `live_smoke_chart` | `LS_LIVE_SMOKE_T8412_DATE=<trading day YYYYMMDD>`; gateway `01715` = non-trading day | ready | paper single chart page |
 | `CSPAQ12200` | `live-smoke-account` | `live_smoke_account` | provisioned paper account (else SMOKE-FAIL) | ready | paper read-only balance inquiry |
+| `CSPAQ12300` | `live-smoke-cspaq12300` | `live_smoke_cspaq12300` | provisioned paper account (else SMOKE-FAIL) | implemented-only | paper read-only BEP/balance inquiry |
+| `CSPAQ22200` | `live-smoke-cspaq22200` | `live_smoke_cspaq22200` | provisioned paper account (else SMOKE-FAIL) | implemented-only | paper read-only orderable-amount/valuation inquiry |
+| `CFOBQ10500` | `live-smoke-cfobq10500` | `live_smoke_cfobq10500` | provisioned paper account (empty `00707` on a position-less account → PENDING) | implemented-only | paper read-only F/O deposit/margin inquiry |
 | `S3_` | `live-smoke-ws` | `live_smoke_ws` | paper WS port reachable | ready | **websocket lifecycle reachability only** |
 | `t8425` | `live-smoke-t8425` | `live_smoke_t8425` | open session | implemented-only | paper all-themes read |
 | `t8436` | `live-smoke-t8436` | `live_smoke_t8436` | open session | implemented-only | paper stock-master list, gubun=0 |

@@ -639,6 +639,59 @@ pub const CSPAQ12200_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(1),
 };
 
+/// CSPAQ12300 — BEP단가조회 (account BEP / balance inquiry, read-only).
+///
+/// Dispatches through plain `Inner::post` (non-paginated): the result is
+/// single-page (`facets.self_paginated: false`), so `has_pagination: false`.
+pub const CSPAQ12300_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CSPAQ12300",
+    path: "/stock/accno",
+    module: "stock",
+    group: "[주식] 계좌",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Account,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(10),
+};
+
+/// CSPAQ22200 — 현물계좌예수금 주문가능금액 총평가2 (account orderable-amount /
+/// valuation inquiry, read-only).
+///
+/// Dispatches through plain `Inner::post` (non-paginated): the result is
+/// single-page (`facets.self_paginated: false`), so `has_pagination: false`.
+pub const CSPAQ22200_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CSPAQ22200",
+    path: "/stock/accno",
+    module: "stock",
+    group: "[주식] 계좌",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Account,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(10),
+};
+
+/// CFOBQ10500 — 선물옵션 계좌예탁금증거금조회 (F/O account deposit / margin inquiry,
+/// read-only).
+///
+/// Dispatches through plain `Inner::post` (non-paginated): the result is
+/// single-page (`facets.self_paginated: false`), so `has_pagination: false`.
+pub const CFOBQ10500_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CFOBQ10500",
+    path: "/futureoption/accno",
+    module: "futureoption",
+    group: "[선물/옵션] 계좌",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Account,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(10),
+};
+
 /// S3_ — KOSPI체결 실시간 시세 (real-time KOSPI trade feed, WebSocket).
 ///
 /// WebSocket TR: there is no REST dispatch, but the policy const is retained as
@@ -730,6 +783,9 @@ mod tests {
             T1516_POLICY,
             T1514_POLICY,
             CSPAQ12200_POLICY,
+            CSPAQ12300_POLICY,
+            CSPAQ22200_POLICY,
+            CFOBQ10500_POLICY,
         ] {
             assert!(!p.is_order, "{} must not be an order endpoint", p.tr_code);
             assert!(p.is_rest(), "{} must be a REST endpoint", p.tr_code);

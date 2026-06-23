@@ -17,7 +17,9 @@ use std::time::Duration;
 use chrono::{Datelike, FixedOffset, NaiveDate, Utc, Weekday};
 use futures::StreamExt;
 use ls_core::{LsConfig, LsError, LsResult};
-use ls_sdk::account::CSPAQ12200Request;
+use ls_sdk::account::{
+    CFOBQ10500Request, CSPAQ12200Request, CSPAQ12300Request, CSPAQ22200Request,
+};
 use ls_sdk::market_session::{
     T1101Request, T1102Request, T1485Request, T1511Request, T1516Request, T1531Request,
     T1537Request, T1601Request, T1615Request, T1640Request, T1662Request, T1664Request,
@@ -1304,6 +1306,119 @@ async fn live_smoke_account() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-account account-state failure (not transport)");
             panic!("live-smoke-account failed (account-state, may be paper-account setup): {e}");
+        }
+    }
+}
+
+/// `make live-smoke-cspaq12300`: paper guard → read-only `CSPAQ12300` BEP/balance.
+///
+/// The account number comes from config, never the caller — the four query-shape
+/// enums (`balcretp,cmsnapptpcode,d2balbaseqrytp,uprctpcode`) are the only inputs.
+/// A success records a credential-free line (only the numeric `rsp_cd` and a
+/// structural `outblock2` row count; `rsp_msg` is dropped because it can carry
+/// account-identifying text). A failed run emits a distinct `SMOKE-FAIL` stderr
+/// line, never a capturable `LIVE-SMOKE` line.
+#[tokio::test]
+#[ignore = "live smoke: needs a provisioned LS paper account; run via `make live-smoke-cspaq12300`"]
+async fn live_smoke_cspaq12300() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+
+    let req = CSPAQ12300Request::new("1", "0", "0", "0");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.account().bep(&req).await {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock2.len())), "balrows")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-cspaq12300",
+                &format!("env=paper balcretp=1 date={date}"),
+                &line,
+            );
+        }
+        // A failed run must NOT emit a capturable `LIVE-SMOKE` line: the raw
+        // gateway error can carry account-identifying text. Use a distinct
+        // non-`LIVE-SMOKE` stderr prefix; the panic is unchanged.
+        Err(e) => {
+            eprintln!(
+                "SMOKE-FAIL target=live-smoke-cspaq12300 account-state failure (not transport)"
+            );
+            panic!("live-smoke-cspaq12300 failed (account-state, may be paper-account setup): {e}");
+        }
+    }
+}
+
+/// `make live-smoke-cspaq22200`: paper guard → read-only `CSPAQ22200`
+/// orderable-amount / valuation inquiry.
+///
+/// The account number comes from config, never the caller — `balcretp` is the only
+/// input. A success records a credential-free line (only the numeric `rsp_cd` and a
+/// structural `outblock2` row count; `rsp_msg` is dropped because it can carry
+/// account-identifying text). A failed run emits a distinct `SMOKE-FAIL` stderr
+/// line, never a capturable `LIVE-SMOKE` line.
+#[tokio::test]
+#[ignore = "live smoke: needs a provisioned LS paper account; run via `make live-smoke-cspaq22200`"]
+async fn live_smoke_cspaq22200() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+
+    let req = CSPAQ22200Request::new("1");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.account().orderable(&req).await {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock2.len())), "balrows")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-cspaq22200",
+                &format!("env=paper balcretp=1 date={date}"),
+                &line,
+            );
+        }
+        // A failed run must NOT emit a capturable `LIVE-SMOKE` line: the raw
+        // gateway error can carry account-identifying text. Use a distinct
+        // non-`LIVE-SMOKE` stderr prefix; the panic is unchanged.
+        Err(e) => {
+            eprintln!(
+                "SMOKE-FAIL target=live-smoke-cspaq22200 account-state failure (not transport)"
+            );
+            panic!("live-smoke-cspaq22200 failed (account-state, may be paper-account setup): {e}");
+        }
+    }
+}
+
+/// `make live-smoke-cfobq10500`: paper guard → read-only `CFOBQ10500` F/O account
+/// deposit / margin inquiry.
+///
+/// The account number comes from config, never the caller — this is a header-only
+/// read with no caller input. A success records a credential-free line (only the
+/// numeric `rsp_cd` and a structural `outblock2` row count; `rsp_msg` is dropped
+/// because it can carry account-identifying text). A position-less paper account
+/// may return an empty `00707` deposit (the PENDING case), which still records a
+/// credential-free line with the row count = 0. A failed run emits a distinct
+/// `SMOKE-FAIL` stderr line, never a capturable `LIVE-SMOKE` line.
+#[tokio::test]
+#[ignore = "live smoke: needs a provisioned LS paper account; run via `make live-smoke-cfobq10500`"]
+async fn live_smoke_cfobq10500() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+
+    let req = CFOBQ10500Request::new();
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.account().fo_deposit(&req).await {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock2.len())), "deprows")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-cfobq10500",
+                &format!("env=paper date={date}"),
+                &line,
+            );
+        }
+        // A failed run must NOT emit a capturable `LIVE-SMOKE` line: the raw
+        // gateway error can carry account-identifying text. Use a distinct
+        // non-`LIVE-SMOKE` stderr prefix; the panic is unchanged.
+        Err(e) => {
+            eprintln!(
+                "SMOKE-FAIL target=live-smoke-cfobq10500 account-state failure (not transport)"
+            );
+            panic!("live-smoke-cfobq10500 failed (account-state, may be paper-account setup): {e}");
         }
     }
 }

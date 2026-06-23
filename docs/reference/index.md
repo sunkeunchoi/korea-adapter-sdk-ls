@@ -6,7 +6,10 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 
 | TR | Name | Owner class | Status |
 |----|------|-------------|--------|
+| `CFOBQ10500` | 선물옵션 계좌예탁금증거금조회 | `account` | implemented, not yet recommended |
 | `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | recommended |
+| `CSPAQ12300` | BEP단가조회 | `account` | implemented, not yet recommended |
+| `CSPAQ22200` | 현물계좌예수금 주문가능금액 총평가2 | `account` | implemented, not yet recommended |
 | `S3_` | KOSPI 체결 실시간 시세 | `realtime` | recommended |
 | `revoke` | 접근토큰 폐기 (OAuth2 token revoke) | `standalone` | implemented, not yet recommended |
 | `t1101` | 주식 현재가호가 조회 | `market_session` | recommended |
