@@ -88,7 +88,7 @@ LS is asymmetric about JSON types. **Response** fields arrive inconsistently as 
 - **Sibling gateway codes seen the same session:**
   - `IGW00201` ("호출 거래건수를 초과") = call-count / rate throttle, usually **self-inflicted** by a tight self-sourcing loop — pace it (`tokio::time::sleep`), don't treat it as a TR defect.
   - A TR that returns `IGW40011` for *every* request form (e.g. `t1988`) after the type is correct is environmental/provisioning → ship **PENDING**, don't flip.
-- Unrelated but adjacent modeling trap: the normalized baselines under `crates/ls-trackers/baselines/api-drift/normalized/trs/*.json` mark some response blocks "single" that are **runtime arrays** (a large `body_len` from the raw probe gives it away) — model list blocks as `Vec` via `#[serde(deserialize_with = "ls_core::de_vec_or_single")]`, which tolerates both shapes.
+- The *response-side* counterpart to this request-side learning — the normalized baseline hides an out-block's true wire key and array-ness, so read them from the raw capture and model array blocks as `Vec` via `de_vec_or_single` — has its own canonical home: `docs/solutions/conventions/tr-out-block-shape-from-raw-capture.md`. (A large `body_len` from the same raw probe is the tell that a "single"-looking block is a runtime array.)
 
 ## Related Issues
 
