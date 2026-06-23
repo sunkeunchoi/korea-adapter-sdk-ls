@@ -1,0 +1,576 @@
+{
+  "tr_code": "CFOBQ10500",
+  "tr_name": "선물옵션 계좌예탁금증거금조회",
+  "protocol": "rest",
+  "is_websocket": false,
+  "endpoint_path": "/futureoption/accno",
+  "api_group_id": "09a668df-d7e8-4b5c-977f-91d1429b931a",
+  "source_group_name": "[선물/옵션] 계좌",
+  "request_blocks": [
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 1,
+      "field_name": "authorization",
+      "korean_name": "접근토큰",
+      "type": "String",
+      "length": 1000,
+      "required": true,
+      "description_hash": "62956eed2a6e506a"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 2,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 3,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 4,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 5,
+      "field_name": "mac_address",
+      "korean_name": "MAC 주소",
+      "type": "String",
+      "length": 12,
+      "required": true,
+      "description_hash": "1d2213655779faf2"
+    }
+  ],
+  "response_blocks": [
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 1,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 2,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 3,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock1",
+      "field_index": 0,
+      "field_name": "RecCnt",
+      "korean_name": "레코드갯수",
+      "type": "Number",
+      "length": 5,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock1",
+      "field_index": 1,
+      "field_name": "AcntNo",
+      "korean_name": "계좌번호",
+      "type": "String",
+      "length": 20,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock1",
+      "field_index": 2,
+      "field_name": "Pwd",
+      "korean_name": "비밀번호",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 0,
+      "field_name": "RecCnt",
+      "korean_name": "레코드갯수",
+      "type": "Number",
+      "length": 5,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 1,
+      "field_name": "AcntNm",
+      "korean_name": "계좌명",
+      "type": "String",
+      "length": 40,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 2,
+      "field_name": "DpsamtTotamt",
+      "korean_name": "예탁금총액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 3,
+      "field_name": "Dps",
+      "korean_name": "예수금",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 4,
+      "field_name": "SubstAmt",
+      "korean_name": "대용금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 5,
+      "field_name": "FilupDpsamtTotamt",
+      "korean_name": "충당예탁금총액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 6,
+      "field_name": "FilupDps",
+      "korean_name": "충당예수금",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 7,
+      "field_name": "FutsPnlAmt",
+      "korean_name": "선물손익금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 8,
+      "field_name": "WthdwAbleAmt",
+      "korean_name": "인출가능금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 9,
+      "field_name": "PsnOutAbleCurAmt",
+      "korean_name": "인출가능현금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 10,
+      "field_name": "PsnOutAbleSubstAmt",
+      "korean_name": "인출가능대용금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 11,
+      "field_name": "Mgn",
+      "korean_name": "증거금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 12,
+      "field_name": "MnyMgn",
+      "korean_name": "현금증거금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 13,
+      "field_name": "OrdAbleAmt",
+      "korean_name": "주문가능금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 14,
+      "field_name": "MnyOrdAbleAmt",
+      "korean_name": "현금주문가능금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 15,
+      "field_name": "AddMgn",
+      "korean_name": "추가증거금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 16,
+      "field_name": "MnyAddMgn",
+      "korean_name": "현금추가증거금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 17,
+      "field_name": "AmtPrdayChckInAmt",
+      "korean_name": "금전일수표입금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 18,
+      "field_name": "FnoPrdaySubstSellAmt",
+      "korean_name": "선물옵션전일대용매도금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 19,
+      "field_name": "FnoCrdaySubstSellAmt",
+      "korean_name": "선물옵션금일대용매도금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 20,
+      "field_name": "FnoPrdayFdamt",
+      "korean_name": "선물옵션전일가입금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 21,
+      "field_name": "FnoCrdayFdamt",
+      "korean_name": "선물옵션금일가입금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 22,
+      "field_name": "FcurrSubstAmt",
+      "korean_name": "외화대용금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock2",
+      "field_index": 23,
+      "field_name": "FnoAcntAfmgnNm",
+      "korean_name": "선물옵션계좌사후증거금명",
+      "type": "String",
+      "length": 20,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock3",
+      "field_index": 0,
+      "field_name": "PdGrpCodeNm",
+      "korean_name": "상품군코드명",
+      "type": "String",
+      "length": 20,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock3",
+      "field_index": 1,
+      "field_name": "NetRiskMgn",
+      "korean_name": "순위험증거금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock3",
+      "field_index": 2,
+      "field_name": "PrcMgn",
+      "korean_name": "가격증거금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock3",
+      "field_index": 3,
+      "field_name": "SprdMgn",
+      "korean_name": "스프레드증거금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock3",
+      "field_index": 4,
+      "field_name": "PrcFlctMgn",
+      "korean_name": "가격변동증거금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock3",
+      "field_index": 5,
+      "field_name": "MinMgn",
+      "korean_name": "최소증거금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock3",
+      "field_index": 6,
+      "field_name": "OrdMgn",
+      "korean_name": "주문증거금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock3",
+      "field_index": 7,
+      "field_name": "OptNetBuyAmt",
+      "korean_name": "옵션순매수금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock3",
+      "field_index": 8,
+      "field_name": "CsgnMgn",
+      "korean_name": "위탁증거금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock3",
+      "field_index": 9,
+      "field_name": "MaintMgn",
+      "korean_name": "유지증거금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock3",
+      "field_index": 10,
+      "field_name": "FutsBuyExecAmt",
+      "korean_name": "선물매수체결금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock3",
+      "field_index": 11,
+      "field_name": "FutsSellExecAmt",
+      "korean_name": "선물매도체결금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock3",
+      "field_index": 12,
+      "field_name": "OptBuyExecAmt",
+      "korean_name": "옵션매수체결금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock3",
+      "field_index": 13,
+      "field_name": "OptSellExecAmt",
+      "korean_name": "옵션매도체결금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock3",
+      "field_index": 14,
+      "field_name": "FutsPnlAmt",
+      "korean_name": "선물손익금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock3",
+      "field_index": 15,
+      "field_name": "TotRiskCsgnMgn",
+      "korean_name": "총위험위탁증거금",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock3",
+      "field_index": 16,
+      "field_name": "UndCsgnMgn",
+      "korean_name": "인수도위탁증거금",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOBQ10500OutBlock3",
+      "field_index": 17,
+      "field_name": "MgnRdctAmt",
+      "korean_name": "증거금감면금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    }
+  ],
+  "rate_limit_per_sec": 1,
+  "corp_rate_limit_per_sec": 10,
+  "rate_source_group": "09a668df-d7e8-4b5c-977f-91d1429b931a"
+}

@@ -103,7 +103,7 @@ fn committed_token_shape_exposes_scope_under_v2() {
     let manifest: Manifest = read_committed("normalized/manifest.json");
     assert_eq!(manifest.normalizer_version, 2, "re-seeded at normalizer v2");
     assert_eq!(manifest.upstream_tr_count, 365);
-    assert_eq!(manifest.maintained_tr_count, 49);
+    assert_eq!(manifest.maintained_tr_count, 70);
 
     let code_set: CodeSet = read_committed("code-set.json");
     assert_eq!(code_set.len(), 365, "full inventory code-set preserved");
@@ -378,8 +378,8 @@ fn committed_baseline_shapes_round_trip_byte_identically() {
         checked += 1;
     }
     assert!(
-        checked >= 44,
-        "expected at least the 44 committed shapes, saw {checked}"
+        checked >= 70,
+        "expected at least the 70 committed shapes, saw {checked}"
     );
 }
 

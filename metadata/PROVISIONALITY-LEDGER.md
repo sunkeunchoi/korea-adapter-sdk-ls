@@ -460,6 +460,72 @@ stays **non-recommended** (no Focused Evidence, no recommendation block, no
 | t1516 | market_session | **implemented** | `rsp_cd=00000 stocks=40` (업종별종목시세; `upcode=001` + `shcode=005930`) |
 | t1514 | paginated (single-page) | **implemented** | `rsp_cd=00000 rows=1` (업종기간별추이; `cts_date` cursor, `cnt` number) |
 
+---
+
+## 11. Wave 0 read-only TR raw→Tracked bulk expansion (21 TRs) — provisional facets (2026-06-23)
+
+The first stage of a staged read-only expansion (plan
+`docs/plans/2026-06-23-003-feat-wave0-readonly-tr-tracking-plan.md`). 21 TRs across
+account, futures/options, overseas-futures, and overseas-stock were brought from
+raw → **Tracked** (metadata + `tr-index.yaml` + projected baselines via
+`make api-drift-renormalize`; `maintained_tr_count` 49→70). No callable Rust, no
+Implemented flips. The hard-accurate facets (`support`, `owner_class`, `protocol`,
+`instrument_domain`, `account_state`, `self_paginated`, `paper_incompatible`,
+`certification_path`) are confirmed against the committed raw snapshot and are not
+listed; only the provisional facets are.
+
+### 11.1 `venue_session` (authored best-effort; rows retire as TRs implement)
+
+The raw snapshot does not pin the trading session a read is scoped to. The four
+account reads are session-agnostic; the night-derivatives reads
+(`CCENQ90200`/`t8455`/`t8460`/`t8463`) are authored `krx_extended` from their
+`KRX야간` name only — **unconfirmed**; the overseas reads carry `unspecified` because
+the LS overseas gateway/session shape is uncharted in the repo.
+
+| TR | Provisional value | Source basis | Re-verify before implementation |
+|---|---|---|---|
+| CSPAQ12300 | `unspecified` | account-state read, session-agnostic | confirm the read is session-independent live |
+| CSPAQ22200 | `unspecified` | account-state read, session-agnostic | confirm the read is session-independent live |
+| CFOBQ10500 | `unspecified` | account-state read, session-agnostic | confirm the read is session-independent live |
+| CCENQ90200 | `krx_extended` | `KRX야간파생` night-derivatives balance — session from name only, not snapshot-pinned | confirm `krx_extended` vs `unspecified` against live night-session behavior |
+| t2301 | `krx_regular` | F/O board/master read, KRX regular assumed | confirm the session the read is scoped to |
+| t2522 | `krx_regular` | F/O master read, KRX regular assumed | confirm the session the read is scoped to |
+| t8401 | `krx_regular` | F/O master read, KRX regular assumed | confirm the session the read is scoped to |
+| t8426 | `krx_regular` | F/O master read, KRX regular assumed | confirm the session the read is scoped to |
+| t8433 | `krx_regular` | F/O master read, KRX regular assumed | confirm the session the read is scoped to |
+| t8435 | `krx_regular` | F/O master read, KRX regular assumed | confirm the session the read is scoped to |
+| t8467 | `krx_regular` | F/O master read, KRX regular assumed | confirm the session the read is scoped to |
+| t9943 | `krx_regular` | F/O master read, KRX regular assumed | confirm the session the read is scoped to |
+| t9944 | `krx_regular` | F/O master read, KRX regular assumed | confirm the session the read is scoped to |
+| t8455 | `krx_extended` | `KRX야간파생` master — session from name only | confirm `krx_extended` against live night-session behavior |
+| t8460 | `krx_extended` | `KRX야간파생` option board — session from name only | confirm `krx_extended` against live night-session behavior |
+| t8463 | `krx_extended` | `KRX야간파생` investor-by-time — session from name only | confirm `krx_extended` against live night-session behavior |
+| o3101 | `unspecified` | overseas-futures read; LS overseas gateway/session uncharted | confirm the overseas session model against live behavior |
+| o3121 | `unspecified` | overseas-futures read; LS overseas gateway/session uncharted | confirm the overseas session model against live behavior |
+| g3101 | `unspecified` | overseas-stock read; LS overseas gateway/session uncharted | confirm the overseas session model against live behavior |
+| g3104 | `unspecified` | overseas-stock read; LS overseas gateway/session uncharted | confirm the overseas session model against live behavior |
+| g3106 | `unspecified` | overseas-stock read; LS overseas gateway/session uncharted | confirm the overseas session model against live behavior |
+
+### 11.2 `caller_supplied_identifiers` (authored best-effort from request shape)
+
+Filter/`gubun`/`dummy`-style master and board reads carry `[]`. Where the request
+carries an instrument/underlying/market code it is recorded. The overseas
+identifiers are **uncharted** — the gateway has not been probed, so the true
+required-input set (and identifier wire names) is unconfirmed.
+
+| TR | Provisional value | Source basis | Re-verify before implementation |
+|---|---|---|---|
+| t8463 | `[bsc_asts_id]` | `기초자산코드` underlying-asset code in the request | confirm the required caller-input set against a live request |
+| o3101 | `[]` | overseas-futures master read, no obvious identifier (reserve `gubun` only); gateway uncharted | confirm the overseas request shape against a live probe |
+| o3121 | `[BscGdsCd]` | overseas option underlying-product code (optional; blank lists all); gateway uncharted | confirm the overseas request shape + identifier names against a live probe |
+| g3101 | `[keysymbol, exchcd, symbol]` | overseas-stock symbol + exchange code; gateway uncharted | confirm the overseas request shape + identifier names against a live probe |
+| g3104 | `[keysymbol, exchcd, symbol]` | overseas-stock symbol + exchange code; gateway uncharted | confirm the overseas request shape + identifier names against a live probe |
+| g3106 | `[keysymbol, exchcd, symbol]` | overseas-stock symbol + exchange code; gateway uncharted | confirm the overseas request shape + identifier names against a live probe |
+
+The other 15 TRs authored `caller_supplied_identifiers: []` best-effort (master/board
+reads with only `dummy`/`gubun`/month/mode inputs); confirm no caller-supplied
+identifier is required when each implements.
+
 **Anchor guarantee (R12).** The ship-floor — ≥1 member flips via an *in-window*
 smoke — is met by all five (KRX regular session, 14:22 KST 2026-06-23). `t8424`
 is the intended anchor and flipped non-empty (252 sectors); the guarantee did not

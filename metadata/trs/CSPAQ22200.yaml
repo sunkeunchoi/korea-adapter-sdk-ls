@@ -1,0 +1,24 @@
+tr_code: CSPAQ22200
+name: 현물계좌예수금 주문가능금액 총평가2
+owner_class: account
+facets:
+  protocol: rest
+  instrument_domain: stock
+  venue_session: unspecified
+  date_sensitive: false
+  self_paginated: false
+  account_state: true
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: account
+  caller_supplied_identifiers: []
+dependencies:
+  self_continuation_fields: []
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: false
+  recommended: false
+maintenance:
+  source_spec_hash: b2c3d4e5f6a7
+  last_reviewed: 2026-06-23
