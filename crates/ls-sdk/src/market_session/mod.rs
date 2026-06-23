@@ -2256,6 +2256,97 @@ pub struct T2522Response {
     pub outblock1: Vec<T2522OutBlock1>,
 }
 
+// ---------------------------------------------------------------------------
+// t8401 — 주식선물마스터조회 (stock-futures master). market_session, non-paginated.
+// A no-caller-input read: the spec's `t8401InBlock` carries a single length-1
+// `dummy` placeholder, so callers supply nothing. The response is a single
+// out-block `t8401OutBlock` that is itself the data-bearing ROW ARRAY (the raw
+// capture's `res_example` shows `"t8401OutBlock": [ {…}, … ]`, propertyType
+// A0005 / propertyOrder 002.00x children) — one stock-futures contract per row.
+// There is no separate count header. Modeled after `T8425` (single row-array
+// out-block).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t8401` — a no-caller-input read.
+///
+/// The spec's `t8401InBlock` carries a single length-1 `dummy` placeholder
+/// (Dummy), so callers supply nothing. Modeled after `T8425InBlock`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8401InBlock {
+    /// Dummy placeholder / Dummy (length-1; the read takes no caller input).
+    pub dummy: String,
+}
+
+/// `t8401` request — wraps the input block under the `t8401InBlock` key.
+///
+/// Serializes to `{"t8401InBlock":{"dummy":""}}`. `t8401` is not paginated and
+/// takes no caller identifier, so there are no continuation fields and no
+/// caller-supplied fields in the body.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8401Request {
+    #[serde(rename = "t8401InBlock")]
+    pub inblock: T8401InBlock,
+}
+
+impl T8401Request {
+    /// Build a `t8401` stock-futures master request. Takes no caller input; the
+    /// `dummy` placeholder serializes as an empty string.
+    pub fn new() -> Self {
+        T8401Request {
+            inblock: T8401InBlock {
+                dummy: String::new(),
+            },
+        }
+    }
+}
+
+impl Default for T8401Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `t8401OutBlock` — one stock-futures master row.
+///
+/// The data-bearing repeated block (`t8401OutBlock[]`). `hname` (종목명, the
+/// stock-futures contract name) is the canonical identity field, resolved by its
+/// `korean_name` from the baseline; the remaining fields are the contract codes.
+/// `#[serde(default)]` lets a sparse row deserialize cleanly. Field names mirror
+/// the LS spec verbatim. All fields are spec `String` types; no numeric coercion
+/// is required here.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8401OutBlock {
+    /// Contract name / 종목명 (the canonical identity field).
+    pub hname: String,
+    /// Short code / 단축코드.
+    pub shcode: String,
+    /// Expanded code / 확장코드.
+    pub expcode: String,
+    /// Underlying-asset code / 기초자산코드.
+    pub basecode: String,
+}
+
+/// `t8401` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are the LS business-status fields; `outblock` is the
+/// stock-futures master row array under the `t8401OutBlock` key, tolerated as a
+/// single object OR an array via [`ls_core::de_vec_or_single`]. All
+/// `#[serde(default)]` so a terse or empty envelope still deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8401Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t8401OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T8401OutBlock>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -2527,6 +2618,15 @@ impl MarketSession {
     ) -> LsResult<T2522Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T2522_POLICY, req)
+            .await
+    }
+
+    /// Read the stock-futures master (주식선물마스터조회) via `t8401`.
+    /// Non-paginated, no caller input; returns the stock-futures contract rows
+    /// (name + codes).
+    pub async fn stock_futures_master(&self, req: &T8401Request) -> LsResult<T8401Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8401_POLICY, req)
             .await
     }
 }
