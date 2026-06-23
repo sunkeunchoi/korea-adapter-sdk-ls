@@ -21,6 +21,7 @@ use std::sync::Arc;
 use ls_core::{Inner, LsError};
 use ls_sdk::account::{
     CSPAQ12200Request, CSPAQ12200Response, CSPAQ12300Request, CSPAQ12300Response,
+    CSPAQ22200Request, CSPAQ22200Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token, TEST_ACCOUNT_NO};
@@ -32,6 +33,9 @@ const CSPAQ12200_FIXTURE: &str = include_str!("fixtures/CSPAQ12200_resp.json");
 
 /// The spec-derived, SYNTHETIC `CSPAQ12300` response fixture.
 const CSPAQ12300_FIXTURE: &str = include_str!("fixtures/CSPAQ12300_resp.json");
+
+/// The spec-derived, SYNTHETIC `CSPAQ22200` response fixture.
+const CSPAQ22200_FIXTURE: &str = include_str!("fixtures/CSPAQ22200_resp.json");
 
 /// `CSPAQ12200_POLICY.path` — the mounted endpoint for the account TR.
 const CSPAQ12200_PATH: &str = "/stock/accno";
@@ -390,4 +394,143 @@ fn cspaq12300_out_block2_single_object_deserializes_to_one_element_vec() {
     );
     assert_eq!(resp.outblock2[0].mnyordableamt, "500000");
     assert_eq!(resp.outblock2[0].balevalamt, "750000");
+}
+
+// ---------------------------------------------------------------------------
+// CSPAQ22200 — 현물계좌예수금 주문가능금액 총평가2 (read-only account orderable
+// amount / valuation inquiry).
+// ---------------------------------------------------------------------------
+
+/// `::new` serializes only `BalCreTp` under `CSPAQ22200InBlock1` with NO account
+/// number / caller leak. The account is config-supplied, never threaded into the
+/// body.
+#[test]
+fn cspaq22200_request_serializes_inblock_only_no_account_leak() {
+    let req = CSPAQ22200Request::new("1");
+    let value = serde_json::to_value(&req).expect("serialize CSPAQ22200 request");
+
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "request must have exactly one top-level key");
+    assert!(
+        obj.contains_key("CSPAQ22200InBlock1"),
+        "missing CSPAQ22200InBlock1 key"
+    );
+
+    let inblock = &value["CSPAQ22200InBlock1"];
+    assert_eq!(inblock["BalCreTp"], "1", "BalCreTp rides in the body");
+    assert_eq!(
+        inblock.as_object().expect("inblock is an object").len(),
+        1,
+        "InBlock1 carries only BalCreTp (no account number)"
+    );
+
+    // No account number anywhere in the serialized request.
+    let serialized = serde_json::to_string(&req).expect("serialize CSPAQ22200 request");
+    assert!(
+        !serialized.contains(TEST_ACCOUNT_NO),
+        "the account number must never appear in the request body"
+    );
+}
+
+/// A representative success body deserializes and the canonical OutBlock2 field
+/// (`MnyOrdAbleAmt` = 현금주문가능금액, KTD4) holds its exact value. Distinct fields
+/// carry distinct values so a mislabel cannot be masked.
+#[tokio::test]
+async fn cspaq22200_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(CSPAQ12200_PATH))
+        .and(header("tr_cd", "CSPAQ22200"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(CSPAQ22200_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let req = CSPAQ22200Request::new("1");
+    let resp = sdk
+        .account()
+        .orderable(&req)
+        .await
+        .expect("CSPAQ22200 orderable inquiry should succeed");
+
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock1.balcretp, "1");
+    assert_eq!(resp.outblock1.mgmtbrnno, "001");
+
+    assert_eq!(resp.outblock2.len(), 1, "one valuation row");
+    let bal = &resp.outblock2[0];
+    // Canonical field by Korean name (현금주문가능금액) — exact value, not !is_empty().
+    assert_eq!(bal.mnyordableamt, "1234567", "MnyOrdAbleAmt (현금주문가능금액)");
+    // Distinct neighbours hold distinct values (no collapse / mislabel).
+    assert_eq!(bal.substordableamt, "2222222", "SubstOrdAbleAmt (대용주문가능금액)");
+    assert_eq!(bal.seordableamt, "3333333", "SeOrdAbleAmt (거래소금액)");
+    assert_eq!(bal.kdqordableamt, "4444444", "KdqOrdAbleAmt (코스닥금액)");
+    assert_eq!(bal.dps, "1100000", "Dps (예수금)");
+    assert_eq!(bal.d2dps, "1250000", "D2Dps (D2예수금)");
+}
+
+/// Numeric-bearing fields parse via `string_or_number` from BOTH string and number
+/// JSON.
+#[test]
+fn cspaq22200_numeric_fields_parse_from_string_and_number() {
+    // Numbers as JSON numbers.
+    let as_number = serde_json::json!({
+        "rsp_cd": "00000",
+        "CSPAQ22200OutBlock2": { "MnyOrdAbleAmt": 999, "Dps": 42 }
+    });
+    let resp: CSPAQ22200Response =
+        serde_json::from_value(as_number).expect("number JSON must deserialize");
+    assert_eq!(resp.outblock2[0].mnyordableamt, "999");
+    assert_eq!(resp.outblock2[0].dps, "42");
+
+    // Same fields as JSON strings.
+    let as_string = serde_json::json!({
+        "rsp_cd": "00000",
+        "CSPAQ22200OutBlock2": { "MnyOrdAbleAmt": "999", "Dps": "42" }
+    });
+    let resp: CSPAQ22200Response =
+        serde_json::from_value(as_string).expect("string JSON must deserialize");
+    assert_eq!(resp.outblock2[0].mnyordableamt, "999");
+    assert_eq!(resp.outblock2[0].dps, "42");
+}
+
+/// An empty result (`rsp_cd 00707`, empty out-block) deserializes and is recognized
+/// as the empty/pending case.
+#[test]
+fn cspaq22200_empty_00707_deserializes_as_empty() {
+    let json = serde_json::json!({
+        "rsp_cd": "00707",
+        "CSPAQ22200OutBlock2": []
+    });
+    let resp: CSPAQ22200Response =
+        serde_json::from_value(json).expect("empty out-block must deserialize");
+    assert_eq!(resp.rsp_cd, "00707");
+    assert!(
+        resp.outblock2.is_empty(),
+        "00707 yields an empty valuation Vec (the PENDING case)"
+    );
+}
+
+/// `CSPAQ22200OutBlock2` arriving as a SINGLE object deserializes via
+/// `de_vec_or_single` into a 1-element Vec.
+#[test]
+fn cspaq22200_out_block2_single_object_deserializes_to_one_element_vec() {
+    let json = serde_json::json!({
+        "rsp_cd": "00000",
+        "CSPAQ22200OutBlock2": { "MnyOrdAbleAmt": 500000, "Dps": 750000 }
+    });
+    let resp: CSPAQ22200Response =
+        serde_json::from_value(json).expect("single-object out-block must deserialize");
+    assert_eq!(
+        resp.outblock2.len(),
+        1,
+        "single object becomes a 1-element Vec"
+    );
+    assert_eq!(resp.outblock2[0].mnyordableamt, "500000");
+    assert_eq!(resp.outblock2[0].dps, "750000");
 }

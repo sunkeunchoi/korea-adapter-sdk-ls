@@ -863,10 +863,10 @@ mod tests {
 
         // The still-unrecommended implemented TRs each carry the banner.
         let banner_trs = [
-            "CSPAQ12300", "revoke", "t1403", "t1441", "t1452", "t1463", "t1466", "t1485", "t1489",
-            "t1492", "t1511", "t1514", "t1516", "t1531", "t1537", "t1601", "t1615", "t1640",
-            "t1662", "t1664", "t1825", "t1826", "t1859", "t1866", "t1958", "t3341", "t8424",
-            "t8425", "t8431", "t8436", "t9905", "t9907", "t9942",
+            "CSPAQ12300", "CSPAQ22200", "revoke", "t1403", "t1441", "t1452", "t1463", "t1466",
+            "t1485", "t1489", "t1492", "t1511", "t1514", "t1516", "t1531", "t1537", "t1601",
+            "t1615", "t1640", "t1662", "t1664", "t1825", "t1826", "t1859", "t1866", "t1958",
+            "t3341", "t8424", "t8425", "t8431", "t8436", "t9905", "t9907", "t9942",
         ];
         for tr in banner_trs {
             let page = reference
@@ -895,12 +895,12 @@ mod tests {
 
         // index + the implemented reference pages (banner-carrying still-implemented
         // TRs + the promoted-but-still-implemented token/t1101/t1102/t8412/S3_/
-        // CSPAQ12200). Count only grows as TRs implement; CSPAQ12300 adds one
-        // banner-carrying page (PR-A U1).
+        // CSPAQ12200). Count only grows as TRs implement; CSPAQ12300 (PR-A U1) and
+        // CSPAQ22200 (PR-A U2) each add one banner-carrying page.
         // (Wave 1 t1988 + t1964 ship PENDING — not implemented, not counted.)
         assert_eq!(
             reference.len(),
-            40,
+            41,
             "index + the implemented reference pages"
         );
 

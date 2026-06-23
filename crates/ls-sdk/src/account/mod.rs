@@ -406,6 +406,167 @@ pub struct CSPAQ12300Response {
     pub outblock2: Vec<CSPAQ12300OutBlock2>,
 }
 
+// ---------------------------------------------------------------------------
+// CSPAQ22200 — 현물계좌예수금 주문가능금액 총평가2 (account orderable-amount /
+// total-valuation inquiry, read-only).
+//
+// A third read-only account-state read, mirroring `CSPAQ12300`'s account-identity
+// discipline: the account number comes from `ResolvedConfig.account_no` and the
+// bearer token, NEVER a caller field. The in-block carries ONLY `BalCreTp`
+// (잔고생성구분). This read is single-page (`facets.self_paginated: false`), so
+// dispatch goes through plain `Inner::post` with no continuation tokens.
+// ---------------------------------------------------------------------------
+
+/// Input block for `CSPAQ22200` — the balance-creation distinction.
+///
+/// Per the normalized baseline, `CSPAQ22200InBlock1` carries exactly one field,
+/// `BalCreTp` (잔고생성구분, length 1). It holds NO account number — the account
+/// identity is the bearer token plus the config-supplied `ResolvedConfig.account_no`.
+#[derive(Serialize, Debug, Clone)]
+pub struct CSPAQ22200InBlock1 {
+    /// Balance-creation distinction / 잔고생성구분.
+    #[serde(rename = "BalCreTp")]
+    pub balcretp: String,
+}
+
+/// `CSPAQ22200` request — wraps the input block under the `CSPAQ22200InBlock1` key.
+///
+/// Serializes to `{"CSPAQ22200InBlock1":{"BalCreTp":…}}`. No account number and no
+/// continuation token ever appear in the body (this read is single-page).
+#[derive(Serialize, Debug, Clone)]
+pub struct CSPAQ22200Request {
+    #[serde(rename = "CSPAQ22200InBlock1")]
+    pub inblock: CSPAQ22200InBlock1,
+}
+
+impl CSPAQ22200Request {
+    /// Build a `CSPAQ22200` orderable-amount/valuation inquiry for the given
+    /// `BalCreTp`.
+    ///
+    /// The account number is NOT a parameter: it is established by the credentialed
+    /// token and the config-supplied `ResolvedConfig.account_no`, never by the
+    /// caller.
+    pub fn new(balcretp: impl Into<String>) -> Self {
+        CSPAQ22200Request {
+            inblock: CSPAQ22200InBlock1 {
+                balcretp: balcretp.into(),
+            },
+        }
+    }
+}
+
+/// `CSPAQ22200OutBlock1` — the account-identity summary block.
+///
+/// Echoes the request distinction plus account-identity fields. There is no
+/// `AcntNo`/`Pwd` in this block's spec (only `RecCnt`/`MgmtBrnNo`/`BalCreTp`), but
+/// the managing-branch number is account-administrative, so [`std::fmt::Debug`] is
+/// hand-written to redact it (mirrors the CSPAQ12200/CSPAQ12300 redaction
+/// discipline for account-identifying fields).
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct CSPAQ22200OutBlock1 {
+    /// Record count / 레코드갯수.
+    #[serde(rename = "RecCnt", deserialize_with = "ls_core::string_or_number")]
+    pub reccnt: String,
+    /// Managing branch number / 관리지점번호 (account-administrative; redacted in Debug).
+    #[serde(rename = "MgmtBrnNo", deserialize_with = "ls_core::string_or_number")]
+    pub mgmtbrnno: String,
+    /// Balance-creation distinction / 잔고생성구분 (echoes the request).
+    #[serde(rename = "BalCreTp", deserialize_with = "ls_core::string_or_number")]
+    pub balcretp: String,
+}
+
+impl std::fmt::Debug for CSPAQ22200OutBlock1 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CSPAQ22200OutBlock1")
+            .field("reccnt", &self.reccnt)
+            .field("mgmtbrnno", &"<redacted>")
+            .field("balcretp", &self.balcretp)
+            .finish()
+    }
+}
+
+/// `CSPAQ22200OutBlock2` — the orderable-amount / valuation block.
+///
+/// A representative, spec-grounded subset of the LS `CSPAQ22200OutBlock2` (~38
+/// fields). Every numeric-bearing field uses [`ls_core::string_or_number`] (the
+/// gateway sends them as either JSON numbers or strings); `#[serde(default)]` lets a
+/// sparse or empty block deserialize. Field names mirror the spec verbatim.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct CSPAQ22200OutBlock2 {
+    /// Record count / 레코드갯수.
+    #[serde(rename = "RecCnt", deserialize_with = "ls_core::string_or_number")]
+    pub reccnt: String,
+    /// Branch name / 지점명.
+    #[serde(rename = "BrnNm", deserialize_with = "ls_core::string_or_number")]
+    pub brnnm: String,
+    /// Account name / 계좌명.
+    #[serde(rename = "AcntNm", deserialize_with = "ls_core::string_or_number")]
+    pub acntnm: String,
+    /// Cash orderable amount / 현금주문가능금액 (canonical field, KTD4).
+    #[serde(
+        rename = "MnyOrdAbleAmt",
+        deserialize_with = "ls_core::string_or_number"
+    )]
+    pub mnyordableamt: String,
+    /// Substitute orderable amount / 대용주문가능금액.
+    #[serde(
+        rename = "SubstOrdAbleAmt",
+        deserialize_with = "ls_core::string_or_number"
+    )]
+    pub substordableamt: String,
+    /// Exchange (KOSPI) amount / 거래소금액.
+    #[serde(
+        rename = "SeOrdAbleAmt",
+        deserialize_with = "ls_core::string_or_number"
+    )]
+    pub seordableamt: String,
+    /// KOSDAQ amount / 코스닥금액.
+    #[serde(
+        rename = "KdqOrdAbleAmt",
+        deserialize_with = "ls_core::string_or_number"
+    )]
+    pub kdqordableamt: String,
+    /// Deposit / 예수금.
+    #[serde(rename = "Dps", deserialize_with = "ls_core::string_or_number")]
+    pub dps: String,
+    /// Substitute amount / 대용금액.
+    #[serde(rename = "SubstAmt", deserialize_with = "ls_core::string_or_number")]
+    pub substamt: String,
+    /// D+1 deposit / D1예수금.
+    #[serde(rename = "D1Dps", deserialize_with = "ls_core::string_or_number")]
+    pub d1dps: String,
+    /// D+2 deposit / D2예수금.
+    #[serde(rename = "D2Dps", deserialize_with = "ls_core::string_or_number")]
+    pub d2dps: String,
+    /// Receivable amount / 미수금액.
+    #[serde(rename = "RcvblAmt", deserialize_with = "ls_core::string_or_number")]
+    pub rcvblamt: String,
+}
+
+/// `CSPAQ22200` response envelope.
+///
+/// `outblock1` is the account-identity summary under `CSPAQ22200OutBlock1`;
+/// `outblock2` is the orderable-amount/valuation block under `CSPAQ22200OutBlock2`,
+/// tolerated as a single object OR an array via [`ls_core::de_vec_or_single`] (the
+/// gateway collapses a one-row block to a bare object).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct CSPAQ22200Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "CSPAQ22200OutBlock1", default)]
+    pub outblock1: CSPAQ22200OutBlock1,
+    #[serde(
+        rename = "CSPAQ22200OutBlock2",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock2: Vec<CSPAQ22200OutBlock2>,
+}
+
 /// Account operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache, rate
@@ -452,6 +613,18 @@ impl Account {
     pub async fn bep(&self, req: &CSPAQ12300Request) -> LsResult<CSPAQ12300Response> {
         self.inner
             .post(&ls_core::endpoint_policy::CSPAQ12300_POLICY, req)
+            .await
+    }
+
+    /// Inquire the account orderable-amount / total-valuation via `CSPAQ22200`.
+    ///
+    /// Dispatches through plain [`ls_core::Inner::post`] (Account rate bucket,
+    /// single-page). The account is the config-supplied [`Account::account_no`],
+    /// identified by the bearer token — the caller passes only `BalCreTp`, never an
+    /// account number.
+    pub async fn orderable(&self, req: &CSPAQ22200Request) -> LsResult<CSPAQ22200Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::CSPAQ22200_POLICY, req)
             .await
     }
 }
