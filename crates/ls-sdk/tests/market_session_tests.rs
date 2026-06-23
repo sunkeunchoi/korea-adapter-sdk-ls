@@ -9,9 +9,9 @@
 use ls_core::{Inner, LsError};
 use ls_sdk::market_session::{
     T1101OutBlock, T1101Request, T1101Response, T1102OutBlock, T1102Request, T1102Response,
-    T1531Request, T1531Response, T1537Request, T1537Response, T1826OutBlock, T1826Request,
-    T1826Response, T1859OutBlock1, T1859Request, T1859Response, T8425Request, T8425Response,
-    T8436Request, T8436Response,
+    T1531Request, T1531Response, T1537Request, T1537Response, T1825OutBlock1, T1825Request,
+    T1825Response, T1826OutBlock, T1826Request, T1826Response, T1859OutBlock1, T1859Request,
+    T1859Response, T8425Request, T8425Response, T8436Request, T8436Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
@@ -952,4 +952,169 @@ fn t1826_response_envelope_default_is_empty() {
     let resp = T1826Response::default();
     assert_eq!(resp.rsp_cd, "");
     assert!(resp.outblock.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// t1825 — 종목Q클릭검색 (ThinQ Q-click search; Wave 3 consumer). market_session,
+// non-paginated; keyed by a `search_cd` self-sourced from t1826 (the discovery
+// edge), plus a `gubun` market filter.
+// ---------------------------------------------------------------------------
+
+/// Covers AE2. `T1825Request::new` serializes both `search_cd` and `gubun` under
+/// the `t1825InBlock` key, with no `tr_cont`/`tr_cont_key` leak (t1825 is not
+/// paginated).
+#[test]
+fn t1825_request_serializes_with_search_cd_and_gubun_in_inblock() {
+    let req = T1825Request::new("0001", "0");
+    let value = serde_json::to_value(&req).expect("serialize t1825 request");
+
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "request must have exactly one top-level key");
+    assert!(obj.contains_key("t1825InBlock"), "missing t1825InBlock key");
+
+    let inblock = &value["t1825InBlock"];
+    let inblock_obj = inblock.as_object().expect("inblock is an object");
+    assert_eq!(
+        inblock_obj.len(),
+        2,
+        "t1825InBlock carries only search_cd and gubun"
+    );
+    assert_eq!(inblock["search_cd"], "0001");
+    assert_eq!(inblock["gubun"], "0");
+
+    assert!(value.get("tr_cont").is_none(), "no tr_cont in the body");
+    assert!(
+        value.get("tr_cont_key").is_none(),
+        "no tr_cont_key in the body"
+    );
+}
+
+/// Covers AE2. A representative success response deserializes through the typed
+/// path: the summary `jong_cnt` (a modeled non-key field) holds a real
+/// non-default value, the matched-issue array round-trips, and numeric fields
+/// parse whether they arrive as JSON numbers (row 0) or strings (row 1) via
+/// `string_or_number` — proving the subset round-trips, not just `serde(default)`.
+#[test]
+fn t1825_deserializes_success_with_real_values() {
+    let resp: T1825Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1825OutBlock": { "JongCnt": 2 },
+        "t1825OutBlock1": [
+            { "shcode": "005930", "hname": "삼성전자", "close": 71000, "change": 500,
+              "diff": 0.71, "volume": 1000000 },
+            { "shcode": "000660", "hname": "SK하이닉스", "close": "150000", "change": "-1000",
+              "diff": "-0.66", "volume": "500000" }
+        ]
+    }))
+    .expect("representative t1825 success must deserialize");
+
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock.jong_cnt, "2", "non-key summary field populated");
+    assert_eq!(resp.outblock1.len(), 2, "both matched-issue rows round-trip");
+    assert_eq!(resp.outblock1[0].shcode, "005930");
+    assert_eq!(resp.outblock1[0].close, "71000", "close (from JSON number)");
+    assert_eq!(resp.outblock1[1].close, "150000", "close (from JSON string)");
+}
+
+/// Covers AE2. An empty result set (`rsp_cd 00707`, empty out-block) deserializes
+/// and is recognized as the empty/pending case.
+#[test]
+fn t1825_empty_result_set_deserializes_as_empty() {
+    let empty: T1825Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707",
+        "t1825OutBlock": { "JongCnt": 0 },
+        "t1825OutBlock1": []
+    }))
+    .expect("empty result set must deserialize");
+    assert_eq!(empty.rsp_cd, "00707");
+    assert!(
+        empty.outblock1.is_empty(),
+        "an empty matched-issue array is the pending case, not a flip"
+    );
+}
+
+/// Covers AE2. A single matched-issue row (not an array) is tolerated as a
+/// one-element Vec via `de_vec_or_single`.
+#[test]
+fn t1825_single_out_row_tolerated_as_array() {
+    let single: T1825Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1825OutBlock": { "JongCnt": 1 },
+        "t1825OutBlock1": { "shcode": "005930", "hname": "삼성전자", "close": 71000 }
+    }))
+    .expect("single out-row object must deserialize as a one-element Vec");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].shcode, "005930");
+}
+
+/// Covers AE2. The matched-issue row fields parse whether `close` arrives as a
+/// JSON number or string — proven directly against `T1825OutBlock1`.
+#[test]
+fn t1825_row_close_number_or_string_yields_same_value() {
+    let as_number: T1825OutBlock1 = serde_json::from_value(serde_json::json!({
+        "shcode": "005930", "close": 71000
+    }))
+    .expect("number close must deserialize");
+    let as_string: T1825OutBlock1 = serde_json::from_value(serde_json::json!({
+        "shcode": "005930", "close": "71000"
+    }))
+    .expect("string close must deserialize");
+    assert_eq!(as_number.close, "71000");
+    assert_eq!(as_number.close, as_string.close);
+}
+
+/// Compile-time guard: `T1825Response` default envelope is empty.
+#[test]
+fn t1825_response_envelope_default_is_empty() {
+    let resp = T1825Response::default();
+    assert_eq!(resp.rsp_cd, "");
+    assert!(resp.outblock1.is_empty());
+    assert_eq!(resp.outblock.jong_cnt, "");
+}
+
+/// Covers AE2 / KTD-3 contingency. The OFFLINE captured-chain fixture: validates
+/// the `t1826 → t1825` chained-smoke harness *logic* independently of live data.
+/// A recorded `t1826` body deserializes, its first `search_cd` is extracted, that
+/// value builds a `t1825` request (proving the self-source wiring), and a recorded
+/// `t1825` body deserializes — so harness correctness does not depend on the paper
+/// account having seeded data (decouples "is the chain code correct" from "does
+/// this account have data").
+#[test]
+fn t1825_chained_off_t1826_offline_fixture() {
+    // Stage 1: a recorded t1826 search-list body deserializes.
+    let producer: T1826Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1826OutBlock": [
+            { "search_cd": "0001", "search_nm": "거래량급증" },
+            { "search_cd": "0002", "search_nm": "외국인순매수" }
+        ]
+    }))
+    .expect("recorded t1826 producer body must deserialize");
+    assert!(
+        !producer.outblock.is_empty(),
+        "non-empty producer is the precondition for chaining"
+    );
+
+    // Stage 2: self-source the search_cd from the producer (never fabricated) and
+    // build the consumer request — the exact wiring live_smoke_t1825 performs.
+    let search_cd = producer.outblock[0].search_cd.clone();
+    let req = T1825Request::new(&search_cd, "0");
+    let value = serde_json::to_value(&req).expect("serialize chained t1825 request");
+    assert_eq!(
+        value["t1825InBlock"]["search_cd"], "0001",
+        "the consumer request carries the self-sourced search_cd"
+    );
+
+    // Stage 3: a recorded t1825 body for that search deserializes.
+    let consumer: T1825Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1825OutBlock": { "JongCnt": 1 },
+        "t1825OutBlock1": [
+            { "shcode": "005930", "hname": "삼성전자", "close": 71000, "change": 500,
+              "diff": 0.71, "volume": 1000000 }
+        ]
+    }))
+    .expect("recorded t1825 consumer body must deserialize");
+    assert_eq!(consumer.outblock1.len(), 1, "the chained consumer body round-trips");
+    assert_eq!(consumer.outblock1[0].shcode, "005930");
 }

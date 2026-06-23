@@ -19,8 +19,8 @@ use futures::StreamExt;
 use ls_core::{LsConfig, LsError, LsResult};
 use ls_sdk::account::CSPAQ12200Request;
 use ls_sdk::market_session::{
-    T1101Request, T1102Request, T1531Request, T1537Request, T1826Request, T1859Request,
-    T8425Request, T8436Request,
+    T1101Request, T1102Request, T1531Request, T1537Request, T1825Request, T1826Request,
+    T1859Request, T8425Request, T8436Request,
 };
 use ls_sdk::paginated::{
     T1403Request, T1441Request, T1452Request, T1463Request, T1466Request, T1489Request,
@@ -855,6 +855,60 @@ async fn live_smoke_t1826() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t1826 market-data failure (not evidence)");
             panic!("live-smoke-t1826 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1825`: paper guard → token → `t1826` search-list →
+/// `t1825` Q-click search keyed by the first available `search_cd`.
+///
+/// CHAINED, self-sourcing (R8): the consumer never receives a fabricated
+/// `search_cd` — it is read from a live `t1826` call (mirrors `live_smoke_t1859`
+/// self-sourcing a `query_index` from `t1866`). The `search_cd` is a
+/// server-assigned catalog key and is NOT recorded. An empty `t1826` (no
+/// available search) surfaces as a credential-safe `SMOKE-FAIL`
+/// (spine-input-unavailable), never a fabricated key.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1825`"]
+async fn live_smoke_t1825() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    // Self-source the search_cd from a live t1826 search-list.
+    let list = sdk
+        .market_session()
+        .qclick_search_list(&T1826Request::new("0"))
+        .await
+        .expect("t1826 qclick_search_list (search_cd source) failed");
+    if list.outblock.is_empty() {
+        eprintln!(
+            "SMOKE-FAIL target=live-smoke-t1825 t1826 spine source empty (rsp_cd={})",
+            list.rsp_cd
+        );
+        panic!("live-smoke-t1825: no available search to key the Q-click search");
+    }
+    let search_cd = list.outblock[0].search_cd.clone();
+
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .market_session()
+        .qclick_search(&T1825Request::new(search_cd, "0"))
+        .await
+    {
+        Ok(resp) => {
+            // The search_cd is NOT recorded — it is a server-assigned catalog key.
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t1825",
+                &format!("env=paper gubun=0 date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1825 market-data failure (not evidence)");
+            panic!("live-smoke-t1825 failed: {e}");
         }
     }
 }

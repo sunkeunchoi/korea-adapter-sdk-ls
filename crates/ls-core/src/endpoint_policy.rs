@@ -212,6 +212,21 @@ pub const T1859_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(1),
 };
 
+/// `t1825` — 종목Q클릭검색 (ThinQ Q-click search; the Wave 3 spine consumer).
+/// Non-paginated `market_session` read keyed by a `t1826`-produced `search_cd`.
+pub const T1825_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1825",
+    path: "/stock/item-search",
+    module: "stock",
+    group: "[주식] 종목검색",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// `t1826` — 종목Q클릭검색리스트조회 (ThinQ Q-click search-list; the Wave 3 spine
 /// producer). Non-paginated `market_session` read whose `search_cd` output keys
 /// the `t1825` consumer.
@@ -441,6 +456,7 @@ mod tests {
             T1492_POLICY,
             T1859_POLICY,
             T1866_POLICY,
+            T1825_POLICY,
             T1826_POLICY,
             CSPAQ12200_POLICY,
         ] {
