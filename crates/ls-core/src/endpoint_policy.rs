@@ -752,6 +752,21 @@ pub const T8426_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+/// t8433 — 지수옵션마스터조회API용 (index-option master; non-paginated market
+/// read). No caller input (a single `dummy` placeholder).
+pub const T8433_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8433",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// S3_ — KOSPI체결 실시간 시세 (real-time KOSPI trade feed, WebSocket).
 ///
 /// WebSocket TR: there is no REST dispatch, but the policy const is retained as
@@ -850,6 +865,7 @@ mod tests {
             T2522_POLICY,
             T8401_POLICY,
             T8426_POLICY,
+            T8433_POLICY,
         ] {
             assert!(!p.is_order, "{} must not be an order endpoint", p.tr_code);
             assert!(p.is_rest(), "{} must be a REST endpoint", p.tr_code);

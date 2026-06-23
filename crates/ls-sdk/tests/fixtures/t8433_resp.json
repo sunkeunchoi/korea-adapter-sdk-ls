@@ -1,0 +1,28 @@
+{
+  "t8433OutBlock": [
+    {
+      "hname": "C 2307 185.0",
+      "shcode": "201T7185",
+      "expcode": "KR4201T71852",
+      "hprice": "175.80",
+      "lprice": "102.90",
+      "jnilclose": "127.95",
+      "jnilhigh": "0.00",
+      "jnillow": "0.00",
+      "recprice": "127.95"
+    },
+    {
+      "hname": "C 2406 330.0",
+      "shcode": "201V6330",
+      "expcode": "KR4201V63301",
+      "hprice": "159.20",
+      "lprice": "0.01",
+      "jnilclose": "62.00",
+      "jnilhigh": "0.00",
+      "jnillow": "0.00",
+      "recprice": "62.00"
+    }
+  ],
+  "rsp_cd": "00000",
+  "rsp_msg": "정상적으로 조회가 완료되었습니다."
+}
