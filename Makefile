@@ -15,7 +15,7 @@
 # Export command-line / make variables (e.g. LS_LIVE_SMOKE_*) to recipe shells.
 export
 
-.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1866 live-smoke-t1859 raw-probe
+.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1866 live-smoke-t1859 live-smoke-t1826 live-smoke-t1825 raw-probe
 
 # $(1) = exact test name in crates/ls-sdk/tests/live_smoke.rs
 define run_smoke
@@ -91,6 +91,16 @@ live-smoke-t1866:
 ## Requires LS_PAPER_USER_ID + a seeded condition (else SMOKE-FAIL).
 live-smoke-t1859:
 	$(call run_smoke,live_smoke_t1859)
+
+## t1826 (종목Q클릭검색리스트조회) smoke: token -> one ThinQ Q-click search-list
+## read for search_gb=0 (핵심검색). Wave 3 spine producer (yields search_cd keys).
+live-smoke-t1826:
+	$(call run_smoke,live_smoke_t1826)
+
+## t1825 (종목Q클릭검색) smoke: token -> t1826 search-list -> one Q-click search
+## keyed by the first search_cd (chained, self-sourcing; search_cd not recorded).
+live-smoke-t1825:
+	$(call run_smoke,live_smoke_t1825)
 
 ## Failure classifier (implement-tr R6): one credential-safe raw-HTTP POST that
 ## bypasses the SDK's typed deserialize. Requires LS_PROBE_TR_CD, LS_PROBE_PATH,

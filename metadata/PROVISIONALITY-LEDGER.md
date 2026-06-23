@@ -50,8 +50,6 @@ call-auction screens are the most likely to differ (`krx_extended`).
 | t1640 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t1662 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t1664 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
-| t1825 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
-| t1826 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t1852 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t1856 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t1860 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
@@ -82,8 +80,6 @@ it is recorded. The true required-input set is confirmed at implementation.
 | t1640 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
 | t1662 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
 | t1664 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
-| t1825 | `[search_cd]` | best-effort: request-shape input fields that look like instrument/record identifiers | confirm the true caller-supplied identifier set against a live request |
-| t1826 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
 | t1852 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
 | t1856 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
 | t1860 | `[query_index]` | best-effort: request-shape input fields that look like instrument/record identifiers | confirm the true caller-supplied identifier set against a live request |
@@ -266,3 +262,62 @@ call), so no ledger row is left silently live (R11):
 Field-`type` facets (§4) are already retired inventory-wide (clean re-pin); nothing
 to retire here. Recommended tier untouched: `EVIDENCE-FRESHNESS.md` stays at six
 Recommended TRs; no `metadata/evidence/<tr>.yaml` exists for any of the 7.
+
+---
+
+## 7. ThinQ Q-click search wave — close-out (2026-06-23)
+
+The `tracked → implemented` ThinQ Q-click search wave (plan
+`docs/plans/2026-06-23-001-feat-capability-closed-tr-expansion-waves-plan.md`,
+Wave 3 / PR #1) ships **complete**: both member TRs flip on a chained paper
+smoke that proves the `t1826 → t1825` producer→consumer spine end-to-end. Each
+implemented TR stays **non-recommended** (no Focused Evidence, no recommendation
+block, no `EVIDENCE-FRESHNESS.md` edit). Both of the 2 are decided:
+**2 implemented, 0 pending.**
+
+| TR | Class (first-pass) | End state | Disposition (credential-free) |
+|---|---|---|---|
+| t1826 | market_session | **implemented** | `rsp_cd=<success> searches=23` (spine producer; `search_gb=0` 핵심검색) |
+| t1825 | market_session | **implemented** | `rsp_cd=<success> rows=220` (chained off t1826; `search_cd` accepted) |
+
+**Genuine producer→consumer edge (not a capability surface).** Unlike the ELW
+(Wave 1) and analytics (Wave 2) surfaces — which clear the consumer-less hold by
+being bounded market-data capabilities, not by an internal consumer edge — Wave 3
+carries a **real** producer→consumer dependency: a live `t1826` list supplies the
+`search_cd` that `t1825`'s chained smoke consumes (a non-empty success). This is
+why Wave 3 shipped first (KTD-3): it validates the chained-smoke harness pattern
+the later waves reuse.
+
+**Spine proven end-to-end.** The chained smoke self-sources a `search_cd` from a
+live `t1826` call and feeds it to `t1825` (never fabricated, never recorded — the
+`search_cd` is treated as a server-assigned catalog key like the saved-condition
+`query_index`). On the confirming non-empty success:
+- the `search_cd ← t1826OutBlock.search_cd` discovery edge (§3) was **modeled then
+  retired** — it is not left as a live §3 row (mirroring the `t1866 → t1859`
+  treatment in §6);
+- `t1825`'s `caller_supplied_identifiers` (§2, `[search_cd]` → `[]`) corrects in
+  metadata and its §2 row retires — no metadata/ledger contradiction remains;
+- both members' `venue_session` (§1, `krx_regular`) rows retire.
+
+`t1826`'s `venue_session` + caller-input (`[]`) rows retired in U2 (the producer's
+implement unit); `t1825`'s rows retired in U3 (the consumer's flip).
+
+**venue_session disposition (R12).** Both members' §1 rows retired as
+`krx_regular`: each is a ThinQ catalog/search read that returned a non-empty
+success during a live paper call, and neither carries an after-hours / call-auction
+facet (no `krx_extended` candidate). No member ships with a §1 row left silently
+live.
+
+**Residual provisionality.** None for this wave — both members are implemented and
+their §1/§2/§3 rows are retired. No pending/held members, so no rows are retained.
+
+**Standing cost (accepted, per Risk Analysis).** This wave adds 2 consumer-less
+live-smoke targets + 2 drift-detection structs that must stay green. Disposition
+rule: a consumer-less smoke is allowed to go **pending (not red)** off-session, and
+a drift failure on a consumer-less Implemented TR is **triage-P3**, not a release
+blocker — so the first off-session red or upstream drift is budgeted, not a
+surprise.
+
+Field-`type` facets (§4) are already retired inventory-wide (clean re-pin); nothing
+to retire here. Recommended tier untouched: `EVIDENCE-FRESHNESS.md` stays at six
+Recommended TRs; no `metadata/evidence/<tr>.yaml` exists for either member.

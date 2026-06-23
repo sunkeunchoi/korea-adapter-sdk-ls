@@ -28,8 +28,8 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t1640` | 프로그램매매종합조회(미니) | `standalone` | tracked | [t1640](./t1640.md) |
 | `t1662` | 시간대별프로그램매매추이(차트) | `standalone` | tracked | [t1662](./t1662.md) |
 | `t1664` | 투자자매매종합(챠트) | `standalone` | tracked | [t1664](./t1664.md) |
-| `t1825` | 종목Q클릭검색(씽큐스마트) | `standalone` | tracked | [t1825](./t1825.md) |
-| `t1826` | 종목Q클릭검색리스트조회(씽큐스마트) | `standalone` | tracked | [t1826](./t1826.md) |
+| `t1825` | 종목Q클릭검색(씽큐스마트) | `market_session` | implemented | [t1825](./t1825.md) |
+| `t1826` | 종목Q클릭검색리스트조회(씽큐스마트) | `market_session` | implemented | [t1826](./t1826.md) |
 | `t1852` | 파일저장종목 실시간검색 | `standalone` | tracked | [t1852](./t1852.md) |
 | `t1856` | 파일저장종목검색 | `standalone` | tracked | [t1856](./t1856.md) |
 | `t1859` | 서버저장조건 조건검색 | `market_session` | implemented | [t1859](./t1859.md) |

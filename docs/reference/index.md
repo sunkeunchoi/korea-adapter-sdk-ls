@@ -20,6 +20,8 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t1492` | 단일가예상등락율상위 | `paginated` | implemented, not yet recommended |
 | `t1531` | 테마별종목 | `market_session` | implemented, not yet recommended |
 | `t1537` | 테마종목별시세조회 | `market_session` | implemented, not yet recommended |
+| `t1825` | 종목Q클릭검색(씽큐스마트) | `market_session` | implemented, not yet recommended |
+| `t1826` | 종목Q클릭검색리스트조회(씽큐스마트) | `market_session` | implemented, not yet recommended |
 | `t1859` | 서버저장조건 조건검색 | `market_session` | implemented, not yet recommended |
 | `t1866` | 서버저장조건 리스트조회 | `paginated` | implemented, not yet recommended |
 | `t8412` | 주식 차트(N분봉) 조회 | `paginated` | recommended |

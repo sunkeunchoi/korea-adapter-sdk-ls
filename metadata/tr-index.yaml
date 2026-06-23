@@ -163,13 +163,13 @@ trs:
     venue_session: krx_regular
   t1825:
     file: trs/t1825.yaml
-    owner_class: standalone
+    owner_class: market_session
     protocol: rest
     instrument_domain: stock
     venue_session: krx_regular
   t1826:
     file: trs/t1826.yaml
-    owner_class: standalone
+    owner_class: market_session
     protocol: rest
     instrument_domain: stock
     venue_session: krx_regular
