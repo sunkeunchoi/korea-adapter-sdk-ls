@@ -34,20 +34,26 @@ Focused Evidence) is explicitly out of scope for this recipe.
 Read `metadata/trs/<tr>.yaml`. Bail early as HELD if:
 
 - `support.implemented` is already `true` → `HELD <tr> — already implemented`.
-- The TR is paper-incompatible, account-state, an order, or realtime/WebSocket
-  → `HELD <tr> — out of scope (<reason>)`. This recipe covers read-only,
-  paper-compatible REST reads only.
+- The TR is paper-incompatible, an order, a registration/mutation, or
+  realtime/WebSocket → `HELD <tr> — out of scope (<reason>)`. This recipe covers
+  read-only, paper-compatible REST reads, **including read-only account-state
+  reads** (a request block with no order number, no registration field, and no
+  mutation field). A side-effectful account TR — one that places, modifies,
+  cancels, registers, or deregisters — stays out of scope.
 - The TR has an unresolved structural blocker recorded in
   `metadata/PROVISIONALITY-LEDGER.md` or an open `docs/plans/` document for this TR
   (e.g. `t8430`'s array-shape blocker) → `HELD <tr> — blocked: <reason>; needs ce-plan`.
 
 ## 1. Author callable Rust
 
-Route by reading `facets.self_paginated` from `metadata/trs/<tr>.yaml`:
-`false` → the `market_session` module (non-paginated reads); `true` → the
-`paginated` module (single-page body-`idx` reads). See
-`references/author-patterns.md` for the per-class skeletons; mirror the closest
-existing TR (`T1102` non-paginated, `T8412`/`T1452` paginated single-page).
+Route by reading `owner_class` and `facets.self_paginated` from
+`metadata/trs/<tr>.yaml`: `owner_class: account` → the `account` module (a
+read-only account-state read; mirror `CSPAQ12200`, dispatch through `Inner::post`);
+else by `facets.self_paginated`: `false` → the `market_session` module
+(non-paginated reads); `true` → the `paginated` module (single-page body-`idx`
+reads). See `references/author-patterns.md` for the per-class skeletons; mirror the
+closest existing TR (`CSPAQ12200` account, `T1102` non-paginated, `T8412`/`T1452`
+paginated single-page).
 
 - **Request:** an `InBlock` struct + a request wrapper that `#[serde(rename)]`s
   the in-block under the `{tr}InBlock` key, plus a `::new(...)` constructor.
@@ -100,7 +106,12 @@ harness to run it. Build all three:
 The smoke fn opens with `paper_sdk()` (never `paper_guard()` alone —
 `paper_sdk()` adds the resolved-environment defense-in-depth check). It calls the
 new facade method, then `record(...)` a single credential-free `LIVE-SMOKE` line
-on success. See step 4 for the Err-path discipline.
+on success. See step 4 for the Err-path discipline. For an `account` TR, mirror the
+existing `live_smoke_account` test fn — it already establishes the credentialed
+paper-account context and the `SMOKE-FAIL` stderr discipline; an account read needs
+the resolved account, not a caller-supplied instrument. An account read may return
+an empty balance on a position-less paper account — that is the `00707` empty case
+(PENDING, per step 4), not a defect.
 
 ## 3. Offline deserialize test FIRST
 

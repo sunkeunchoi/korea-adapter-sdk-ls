@@ -1,0 +1,24 @@
+tr_code: g3106
+name: 해외주식 API 현재가호가 조회
+owner_class: market_session
+facets:
+  protocol: rest
+  instrument_domain: overseas_stock
+  venue_session: unspecified
+  date_sensitive: false
+  self_paginated: false
+  account_state: false
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: market_data
+  caller_supplied_identifiers: [keysymbol, exchcd, symbol]
+dependencies:
+  self_continuation_fields: []
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: false
+  recommended: false
+maintenance:
+  source_spec_hash: f17f8091a2b3
+  last_reviewed: 2026-06-23

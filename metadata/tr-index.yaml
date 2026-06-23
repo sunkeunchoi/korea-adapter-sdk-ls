@@ -53,6 +53,132 @@ trs:
     protocol: rest
     instrument_domain: stock
     venue_session: unspecified
+  CSPAQ12300:
+    file: trs/CSPAQ12300.yaml
+    owner_class: account
+    protocol: rest
+    instrument_domain: stock
+    venue_session: unspecified
+  CSPAQ22200:
+    file: trs/CSPAQ22200.yaml
+    owner_class: account
+    protocol: rest
+    instrument_domain: stock
+    venue_session: unspecified
+  CCENQ90200:
+    file: trs/CCENQ90200.yaml
+    owner_class: account
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_extended
+  CFOBQ10500:
+    file: trs/CFOBQ10500.yaml
+    owner_class: account
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: unspecified
+  t2301:
+    file: trs/t2301.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t2522:
+    file: trs/t2522.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t8401:
+    file: trs/t8401.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t8426:
+    file: trs/t8426.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t8433:
+    file: trs/t8433.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t8435:
+    file: trs/t8435.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t8467:
+    file: trs/t8467.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t9943:
+    file: trs/t9943.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t9944:
+    file: trs/t9944.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t8455:
+    file: trs/t8455.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_extended
+  t8460:
+    file: trs/t8460.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_extended
+  t8463:
+    file: trs/t8463.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_extended
+  o3101:
+    file: trs/o3101.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  o3121:
+    file: trs/o3121.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  g3101:
+    file: trs/g3101.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: overseas_stock
+    venue_session: unspecified
+  g3104:
+    file: trs/g3104.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: overseas_stock
+    venue_session: unspecified
+  g3106:
+    file: trs/g3106.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: overseas_stock
+    venue_session: unspecified
   S3_:
     file: trs/S3_.yaml
     owner_class: realtime
