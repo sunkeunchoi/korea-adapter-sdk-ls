@@ -19,7 +19,9 @@
 use std::sync::Arc;
 
 use ls_core::{Inner, LsError};
-use ls_sdk::account::{CSPAQ12200Request, CSPAQ12200Response};
+use ls_sdk::account::{
+    CSPAQ12200Request, CSPAQ12200Response, CSPAQ12300Request, CSPAQ12300Response,
+};
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token, TEST_ACCOUNT_NO};
 use wiremock::matchers::{header, method, path};
@@ -27,6 +29,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// The spec-derived, SYNTHETIC `CSPAQ12200` response fixture.
 const CSPAQ12200_FIXTURE: &str = include_str!("fixtures/CSPAQ12200_resp.json");
+
+/// The spec-derived, SYNTHETIC `CSPAQ12300` response fixture.
+const CSPAQ12300_FIXTURE: &str = include_str!("fixtures/CSPAQ12300_resp.json");
 
 /// `CSPAQ12200_POLICY.path` — the mounted endpoint for the account TR.
 const CSPAQ12200_PATH: &str = "/stock/accno";
@@ -244,4 +249,145 @@ async fn errors_01715_and_01900_classify_distinctly() {
         err_1715.is_paper_incompatible(),
         "01900 and 01715 must classify distinctly"
     );
+}
+
+// ---------------------------------------------------------------------------
+// CSPAQ12300 — BEP단가조회 (read-only account BEP/balance inquiry).
+// ---------------------------------------------------------------------------
+
+/// `::new` serializes the four query-shape enums under `CSPAQ12300InBlock1` with
+/// NO account number / caller leak. The account is config-supplied, never threaded
+/// into the body.
+#[test]
+fn cspaq12300_request_serializes_inblock_only_no_account_leak() {
+    let req = CSPAQ12300Request::new("1", "0", "0", "0");
+    let value = serde_json::to_value(&req).expect("serialize CSPAQ12300 request");
+
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "request must have exactly one top-level key");
+    assert!(
+        obj.contains_key("CSPAQ12300InBlock1"),
+        "missing CSPAQ12300InBlock1 key"
+    );
+
+    let inblock = &value["CSPAQ12300InBlock1"];
+    assert_eq!(inblock["BalCreTp"], "1", "BalCreTp rides in the body");
+    assert_eq!(inblock["CmsnAppTpCode"], "0");
+    assert_eq!(inblock["D2balBaseQryTp"], "0");
+    assert_eq!(inblock["UprcTpCode"], "0");
+    assert_eq!(
+        inblock.as_object().expect("inblock is an object").len(),
+        4,
+        "InBlock1 carries only the four enum selectors (no account number)"
+    );
+
+    // No account number anywhere in the serialized request.
+    let serialized = serde_json::to_string(&req).expect("serialize CSPAQ12300 request");
+    assert!(
+        !serialized.contains(TEST_ACCOUNT_NO),
+        "the account number must never appear in the request body"
+    );
+}
+
+/// A representative success body deserializes and the canonical OutBlock2 field
+/// (`MnyOrdAbleAmt` = 현금주문가능금액, KTD4) holds its exact value. Distinct fields
+/// carry distinct values so a mislabel cannot be masked.
+#[tokio::test]
+async fn cspaq12300_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(CSPAQ12200_PATH))
+        .and(header("tr_cd", "CSPAQ12300"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(CSPAQ12300_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let req = CSPAQ12300Request::new("1", "0", "0", "0");
+    let resp = sdk
+        .account()
+        .bep(&req)
+        .await
+        .expect("CSPAQ12300 BEP inquiry should succeed");
+
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock1.balcretp, "1");
+    assert_eq!(resp.outblock1.acntno, TEST_ACCOUNT_NO);
+
+    assert_eq!(resp.outblock2.len(), 1, "one balance row");
+    let bal = &resp.outblock2[0];
+    // Canonical field by Korean name (현금주문가능금액) — exact value, not !is_empty().
+    assert_eq!(bal.mnyordableamt, "1234567", "MnyOrdAbleAmt (현금주문가능금액)");
+    // Distinct neighbours hold distinct values (no collapse / mislabel).
+    assert_eq!(bal.mnyoutableamt, "1200000", "MnyoutAbleAmt");
+    assert_eq!(bal.balevalamt, "2500000", "BalEvalAmt");
+    assert_eq!(bal.dpsasttotamt, "3500000", "DpsastTotamt");
+    assert_eq!(bal.dps, "1100000", "Dps");
+    assert_eq!(bal.ordableamt, "1300000", "OrdAbleAmt");
+}
+
+/// Numeric-bearing fields parse via `string_or_number` from BOTH string and number
+/// JSON.
+#[test]
+fn cspaq12300_numeric_fields_parse_from_string_and_number() {
+    // Numbers as JSON numbers.
+    let as_number = serde_json::json!({
+        "rsp_cd": "00000",
+        "CSPAQ12300OutBlock2": { "MnyOrdAbleAmt": 999, "BalEvalAmt": 42 }
+    });
+    let resp: CSPAQ12300Response =
+        serde_json::from_value(as_number).expect("number JSON must deserialize");
+    assert_eq!(resp.outblock2[0].mnyordableamt, "999");
+    assert_eq!(resp.outblock2[0].balevalamt, "42");
+
+    // Same fields as JSON strings.
+    let as_string = serde_json::json!({
+        "rsp_cd": "00000",
+        "CSPAQ12300OutBlock2": { "MnyOrdAbleAmt": "999", "BalEvalAmt": "42" }
+    });
+    let resp: CSPAQ12300Response =
+        serde_json::from_value(as_string).expect("string JSON must deserialize");
+    assert_eq!(resp.outblock2[0].mnyordableamt, "999");
+    assert_eq!(resp.outblock2[0].balevalamt, "42");
+}
+
+/// An empty result (`rsp_cd 00707`, empty out-block) deserializes and is recognized
+/// as the empty/pending case.
+#[test]
+fn cspaq12300_empty_00707_deserializes_as_empty() {
+    let json = serde_json::json!({
+        "rsp_cd": "00707",
+        "CSPAQ12300OutBlock2": []
+    });
+    let resp: CSPAQ12300Response =
+        serde_json::from_value(json).expect("empty out-block must deserialize");
+    assert_eq!(resp.rsp_cd, "00707");
+    assert!(
+        resp.outblock2.is_empty(),
+        "00707 yields an empty balance Vec (the PENDING case)"
+    );
+}
+
+/// `CSPAQ12300OutBlock2` arriving as a SINGLE object deserializes via
+/// `de_vec_or_single` into a 1-element Vec.
+#[test]
+fn cspaq12300_out_block2_single_object_deserializes_to_one_element_vec() {
+    let json = serde_json::json!({
+        "rsp_cd": "00000",
+        "CSPAQ12300OutBlock2": { "MnyOrdAbleAmt": 500000, "BalEvalAmt": 750000 }
+    });
+    let resp: CSPAQ12300Response =
+        serde_json::from_value(json).expect("single-object out-block must deserialize");
+    assert_eq!(
+        resp.outblock2.len(),
+        1,
+        "single object becomes a 1-element Vec"
+    );
+    assert_eq!(resp.outblock2[0].mnyordableamt, "500000");
+    assert_eq!(resp.outblock2[0].balevalamt, "750000");
 }

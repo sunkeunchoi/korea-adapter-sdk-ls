@@ -1,0 +1,23 @@
+{
+  "rsp_cd": "00000",
+  "rsp_msg": "정상처리 되었습니다.",
+  "CSPAQ12300OutBlock1": {
+    "RecCnt": 1,
+    "AcntNo": "00000000-01",
+    "Pwd": "****",
+    "BalCreTp": "1"
+  },
+  "CSPAQ12300OutBlock2": [
+    {
+      "RecCnt": 1,
+      "MnyOrdAbleAmt": 1234567,
+      "MnyoutAbleAmt": 1200000,
+      "BalEvalAmt": 2500000,
+      "DpsastTotamt": 3500000,
+      "Dps": 1100000,
+      "D2Dps": 1150000,
+      "OrdAbleAmt": 1300000,
+      "PchsAmt": 2100000
+    }
+  ]
+}

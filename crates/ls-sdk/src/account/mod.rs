@@ -236,6 +236,176 @@ pub struct CSPAQ12200Response {
     pub outblock2: Vec<CSPAQ12200OutBlock2>,
 }
 
+// ---------------------------------------------------------------------------
+// CSPAQ12300 — BEP단가조회 (account BEP / balance inquiry, read-only).
+//
+// A second read-only account-state read, mirroring `CSPAQ12200`'s
+// account-identity discipline: the account number comes from
+// `ResolvedConfig.account_no` and the bearer token, NEVER a caller field, and the
+// in-block carries only the four query-shape enums. Unlike `CSPAQ12200` this read
+// is single-page (`facets.self_paginated: false`), so dispatch goes through plain
+// `Inner::post` and the request carries no continuation tokens.
+// ---------------------------------------------------------------------------
+
+/// Input block for `CSPAQ12300` — the four query-shape enum selectors.
+///
+/// Per the normalized baseline, `CSPAQ12300InBlock1` carries exactly four fields
+/// (each length-1 `String`): `BalCreTp` (잔고생성구분), `CmsnAppTpCode`
+/// (수수료적용구분), `D2balBaseQryTp` (D2잔고기준조회구분), `UprcTpCode` (단가구분).
+/// It holds NO account number — the account identity is the bearer token plus the
+/// config-supplied `ResolvedConfig.account_no`.
+#[derive(Serialize, Debug, Clone)]
+pub struct CSPAQ12300InBlock1 {
+    /// Balance-creation distinction / 잔고생성구분.
+    #[serde(rename = "BalCreTp")]
+    pub balcretp: String,
+    /// Commission-application distinction / 수수료적용구분.
+    #[serde(rename = "CmsnAppTpCode")]
+    pub cmsnapptpcode: String,
+    /// D2-balance-basis query distinction / D2잔고기준조회구분.
+    #[serde(rename = "D2balBaseQryTp")]
+    pub d2balbaseqrytp: String,
+    /// Unit-price distinction / 단가구분.
+    #[serde(rename = "UprcTpCode")]
+    pub uprctpcode: String,
+}
+
+/// `CSPAQ12300` request — wraps the input block under the `CSPAQ12300InBlock1` key.
+///
+/// Serializes to `{"CSPAQ12300InBlock1":{"BalCreTp":…,"CmsnAppTpCode":…,…}}`. No
+/// account number and no continuation token ever appear in the body (this read is
+/// single-page).
+#[derive(Serialize, Debug, Clone)]
+pub struct CSPAQ12300Request {
+    #[serde(rename = "CSPAQ12300InBlock1")]
+    pub inblock: CSPAQ12300InBlock1,
+}
+
+impl CSPAQ12300Request {
+    /// Build a `CSPAQ12300` BEP/balance inquiry from the four query-shape enums.
+    ///
+    /// The account number is NOT a parameter: it is established by the credentialed
+    /// token and the config-supplied `ResolvedConfig.account_no`, never by the
+    /// caller.
+    pub fn new(
+        balcretp: impl Into<String>,
+        cmsnapptpcode: impl Into<String>,
+        d2balbaseqrytp: impl Into<String>,
+        uprctpcode: impl Into<String>,
+    ) -> Self {
+        CSPAQ12300Request {
+            inblock: CSPAQ12300InBlock1 {
+                balcretp: balcretp.into(),
+                cmsnapptpcode: cmsnapptpcode.into(),
+                d2balbaseqrytp: d2balbaseqrytp.into(),
+                uprctpcode: uprctpcode.into(),
+            },
+        }
+    }
+}
+
+/// `CSPAQ12300OutBlock1` — the account-identity summary block.
+///
+/// Echoes the request distinctions plus account-identity fields. `AcntNo`/`Pwd`
+/// are account-sensitive, so [`std::fmt::Debug`] is hand-written to redact them.
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct CSPAQ12300OutBlock1 {
+    /// Record count / 레코드갯수.
+    #[serde(rename = "RecCnt", deserialize_with = "ls_core::string_or_number")]
+    pub reccnt: String,
+    /// Account number / 계좌번호 (account-sensitive; redacted in Debug).
+    #[serde(rename = "AcntNo", deserialize_with = "ls_core::string_or_number")]
+    pub acntno: String,
+    /// Password / 비밀번호 (account-sensitive; redacted in Debug).
+    #[serde(rename = "Pwd", deserialize_with = "ls_core::string_or_number")]
+    pub pwd: String,
+    /// Balance-creation distinction / 잔고생성구분 (echoes the request).
+    #[serde(rename = "BalCreTp", deserialize_with = "ls_core::string_or_number")]
+    pub balcretp: String,
+}
+
+impl std::fmt::Debug for CSPAQ12300OutBlock1 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CSPAQ12300OutBlock1")
+            .field("reccnt", &self.reccnt)
+            .field("acntno", &"<redacted>")
+            .field("pwd", &"<redacted>")
+            .field("balcretp", &self.balcretp)
+            .finish()
+    }
+}
+
+/// `CSPAQ12300OutBlock2` — the BEP / balance / orderable-amount block.
+///
+/// A representative, spec-grounded subset of the LS `CSPAQ12300OutBlock2` (which
+/// carries ~112 fields plus a nested `CSPAQ12300OutBlock3` object array that this
+/// model intentionally SKIPS — only scalar fields are modeled). Every
+/// numeric-bearing field uses [`ls_core::string_or_number`]; `#[serde(default)]`
+/// lets a sparse or empty block deserialize.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct CSPAQ12300OutBlock2 {
+    /// Record count / 레코드갯수.
+    #[serde(rename = "RecCnt", deserialize_with = "ls_core::string_or_number")]
+    pub reccnt: String,
+    /// Cash orderable amount / 현금주문가능금액 (canonical field, KTD4).
+    #[serde(
+        rename = "MnyOrdAbleAmt",
+        deserialize_with = "ls_core::string_or_number"
+    )]
+    pub mnyordableamt: String,
+    /// Cash withdrawable amount / 출금가능금액.
+    #[serde(
+        rename = "MnyoutAbleAmt",
+        deserialize_with = "ls_core::string_or_number"
+    )]
+    pub mnyoutableamt: String,
+    /// Total balance valuation / 잔고평가금액.
+    #[serde(rename = "BalEvalAmt", deserialize_with = "ls_core::string_or_number")]
+    pub balevalamt: String,
+    /// Deposit-asset total amount / 예탁자산총액.
+    #[serde(
+        rename = "DpsastTotamt",
+        deserialize_with = "ls_core::string_or_number"
+    )]
+    pub dpsasttotamt: String,
+    /// Deposit / 예수금.
+    #[serde(rename = "Dps", deserialize_with = "ls_core::string_or_number")]
+    pub dps: String,
+    /// D+2 deposit / D2예수금.
+    #[serde(rename = "D2Dps", deserialize_with = "ls_core::string_or_number")]
+    pub d2dps: String,
+    /// Orderable amount / 주문가능금액.
+    #[serde(rename = "OrdAbleAmt", deserialize_with = "ls_core::string_or_number")]
+    pub ordableamt: String,
+    /// Purchase amount / 매입금액.
+    #[serde(rename = "PchsAmt", deserialize_with = "ls_core::string_or_number")]
+    pub pchsamt: String,
+}
+
+/// `CSPAQ12300` response envelope.
+///
+/// `outblock1` is the account-identity summary under `CSPAQ12300OutBlock1`;
+/// `outblock2` is the BEP/balance block under `CSPAQ12300OutBlock2`, tolerated as a
+/// single object OR an array via [`ls_core::de_vec_or_single`] (the gateway
+/// collapses a one-row block to a bare object).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct CSPAQ12300Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "CSPAQ12300OutBlock1", default)]
+    pub outblock1: CSPAQ12300OutBlock1,
+    #[serde(
+        rename = "CSPAQ12300OutBlock2",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock2: Vec<CSPAQ12300OutBlock2>,
+}
+
 /// Account operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache, rate
@@ -270,6 +440,18 @@ impl Account {
     pub async fn balance(&self, req: &CSPAQ12200Request) -> LsResult<CSPAQ12200Response> {
         self.inner
             .post_paginated(&ls_core::endpoint_policy::CSPAQ12200_POLICY, req)
+            .await
+    }
+
+    /// Inquire the account BEP / balance via `CSPAQ12300`.
+    ///
+    /// Dispatches through plain [`ls_core::Inner::post`] (Account rate bucket,
+    /// single-page). The account is the config-supplied [`Account::account_no`],
+    /// identified by the bearer token — the caller passes only the four
+    /// query-shape enums, never an account number.
+    pub async fn bep(&self, req: &CSPAQ12300Request) -> LsResult<CSPAQ12300Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::CSPAQ12300_POLICY, req)
             .await
     }
 }
