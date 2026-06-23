@@ -44,6 +44,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t8412` | 주식 차트(N분봉) 조회 | `paginated` | recommended |
 | `t8424` | 전체업종 | `market_session` | implemented, not yet recommended |
 | `t8425` | 전체테마 | `market_session` | implemented, not yet recommended |
+| `t8426` | 상품선물마스터조회(API용) | `market_session` | implemented, not yet recommended |
 | `t8431` | ELW종목조회 | `market_session` | implemented, not yet recommended |
 | `t8436` | 주식종목조회 API용 | `market_session` | implemented, not yet recommended |
 | `t9905` | 기초자산리스트조회 | `market_session` | implemented, not yet recommended |

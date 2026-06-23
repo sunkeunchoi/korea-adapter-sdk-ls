@@ -866,8 +866,8 @@ mod tests {
             "CFOBQ10500", "CSPAQ12300", "CSPAQ22200", "revoke", "t1403", "t1441", "t1452", "t1463",
             "t1466", "t1485", "t1489", "t1492", "t1511", "t1514", "t1516", "t1531", "t1537", "t1601",
             "t1615", "t1640", "t1662", "t1664", "t1825", "t1826", "t1859", "t1866", "t1958",
-            "t2301", "t2522", "t3341", "t8401", "t8424", "t8425", "t8431", "t8436", "t9905",
-            "t9907", "t9942",
+            "t2301", "t2522", "t3341", "t8401", "t8424", "t8425", "t8426", "t8431", "t8436",
+            "t9905", "t9907", "t9942",
         ];
         for tr in banner_trs {
             let page = reference
@@ -900,11 +900,12 @@ mod tests {
         // CSPAQ22200 (PR-A U2), and CFOBQ10500 (PR-A U3) each add one
         // banner-carrying page. t2301 (PR-B U4) adds one more (F/O option board);
         // t2522 (PR-B U5) adds one more (F/O stock-futures underlying master);
-        // t8401 (PR-B U6) adds one more (F/O stock-futures master).
+        // t8401 (PR-B U6) adds one more (F/O stock-futures master);
+        // t8426 (PR-B U7) adds one more (F/O commodity-futures master).
         // (Wave 1 t1988 + t1964 ship PENDING — not implemented, not counted.)
         assert_eq!(
             reference.len(),
-            45,
+            46,
             "index + the implemented reference pages"
         );
 

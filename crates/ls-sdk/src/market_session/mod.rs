@@ -2347,6 +2347,97 @@ pub struct T8401Response {
     pub outblock: Vec<T8401OutBlock>,
 }
 
+// ---------------------------------------------------------------------------
+// t8426 — 상품선물마스터조회 (commodity-futures master). market_session,
+// non-paginated. A no-caller-input read: the spec's `t8426InBlock` carries a
+// single length-1 `dummy` placeholder, so callers supply nothing. The response
+// is a single out-block `t8426OutBlock` that is itself the data-bearing ROW
+// ARRAY (the raw capture's `res_example` shows `"t8426OutBlock": [ {…}, … ]`) —
+// one commodity-futures contract per row. There is no separate count header.
+// Modeled after `T8401` (single row-array out-block).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t8426` — a no-caller-input read.
+///
+/// The spec's `t8426InBlock` carries a single length-1 `dummy` placeholder
+/// (Dummy), so callers supply nothing. Modeled after `T8401InBlock`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8426InBlock {
+    /// Dummy placeholder / Dummy (length-1; the read takes no caller input).
+    pub dummy: String,
+}
+
+/// `t8426` request — wraps the input block under the `t8426InBlock` key.
+///
+/// Serializes to `{"t8426InBlock":{"dummy":""}}`. `t8426` is not paginated and
+/// takes no caller identifier, so there are no continuation fields and no
+/// caller-supplied fields in the body.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8426Request {
+    #[serde(rename = "t8426InBlock")]
+    pub inblock: T8426InBlock,
+}
+
+impl T8426Request {
+    /// Build a `t8426` commodity-futures master request. Takes no caller input;
+    /// the `dummy` placeholder serializes as an empty string.
+    pub fn new() -> Self {
+        T8426Request {
+            inblock: T8426InBlock {
+                dummy: String::new(),
+            },
+        }
+    }
+}
+
+impl Default for T8426Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `t8426OutBlock` — one commodity-futures master row.
+///
+/// The data-bearing repeated block (`t8426OutBlock[]`, confirmed from the raw
+/// capture's `res_example` array). `hname` (종목명, the commodity-futures
+/// contract name) is the canonical identity field, resolved by its `korean_name`
+/// from the baseline; the remaining fields are the contract codes. `shcode`
+/// (단축코드) uses [`ls_core::string_or_number`] for wire-type tolerance (the
+/// gateway may send a numeric-looking code as a JSON number);
+/// `#[serde(default)]` lets a sparse row deserialize cleanly. Field names mirror
+/// the LS spec verbatim.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8426OutBlock {
+    /// Contract name / 종목명 (the canonical identity field).
+    pub hname: String,
+    /// Short code / 단축코드 (tolerant of a string OR number wire value).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Expanded code / 확장코드.
+    pub expcode: String,
+}
+
+/// `t8426` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are the LS business-status fields; `outblock` is the
+/// commodity-futures master row array under the `t8426OutBlock` key, tolerated
+/// as a single object OR an array via [`ls_core::de_vec_or_single`]. All
+/// `#[serde(default)]` so a terse or empty envelope still deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8426Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t8426OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T8426OutBlock>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -2627,6 +2718,18 @@ impl MarketSession {
     pub async fn stock_futures_master(&self, req: &T8401Request) -> LsResult<T8401Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T8401_POLICY, req)
+            .await
+    }
+
+    /// Read the commodity-futures master (상품선물마스터조회) via `t8426`.
+    /// Non-paginated, no caller input; returns the commodity-futures contract
+    /// rows (name + codes).
+    pub async fn commodity_futures_master(
+        &self,
+        req: &T8426Request,
+    ) -> LsResult<T8426Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8426_POLICY, req)
             .await
     }
 }

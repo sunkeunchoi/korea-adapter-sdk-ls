@@ -16,7 +16,7 @@ use ls_sdk::market_session::{
     T1958Response, T1964OutBlock1, T1964Request, T1964Response, T1485Request, T1485Response,
     T1511Request, T1511Response, T1516Request, T1516Response, T8424Request, T8424Response,
     T2301Request, T2301Response, T2522OutBlock1, T2522Request, T2522Response, T8401OutBlock,
-    T8401Request, T8401Response, T8425Request,
+    T8401Request, T8401Response, T8426OutBlock, T8426Request, T8426Response, T8425Request,
     T8425Response, T8431OutBlock, T8431Request,
     T8431Response, T8436Request, T8436Response, T9905OutBlock1, T9905Request, T9905Response,
     T9907Request, T9907Response, T9942Request, T9942Response,
@@ -2062,6 +2062,117 @@ fn t8401_single_object_row_deserializes_to_one_element_vec() {
 #[test]
 fn t8401_empty_result_deserializes_as_pending() {
     let empty: T8401Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707"
+    }))
+    .expect("empty master deserializes");
+    assert!(empty.outblock.is_empty(), "empty master is the pending case");
+}
+
+// ---------------------------------------------------------------------------
+// t8426 — 상품선물마스터조회 (commodity-futures master; F/O). market_session,
+// non-paginated, no caller input. A single ROW-ARRAY out-block `t8426OutBlock`
+// (confirmed from the raw capture's `res_example`; no separate count header):
+// one commodity-futures contract per row. The wire out-block key is the literal
+// `t8426OutBlock` — the normalized baseline collapses it to `response_body`, so
+// the rename was taken from the raw capture, not the baseline.
+// ---------------------------------------------------------------------------
+
+const T8426_FIXTURE: &str = include_str!("fixtures/t8426_resp.json");
+
+/// Covers R4. `t8426` serializes to exactly `{"t8426InBlock":{"dummy":""}}` with
+/// no continuation tokens (non-paginated) and no caller fields leaking — the read
+/// takes no caller input.
+#[test]
+fn t8426_request_serializes_to_inblock() {
+    let value = serde_json::to_value(T8426Request::new()).expect("serialize t8426 request");
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "exactly one top-level key");
+    assert_eq!(value["t8426InBlock"]["dummy"], "", "dummy placeholder serializes empty");
+    let inblock = value["t8426InBlock"].as_object().expect("in-block is an object");
+    assert_eq!(inblock.len(), 1, "only the dummy placeholder, no caller fields");
+    assert!(value.get("tr_cont").is_none(), "no tr_cont in the body");
+}
+
+/// Covers R2, R5 + KTD4. The spec-derived fixture deserializes through REAL
+/// dispatch: the row array round-trips and the canonical identity field `hname`
+/// (종목명, the commodity-futures contract name) holds its EXACT value. The
+/// fixture's neighbouring fields carry DISTINCT values, so a mislabel that picked
+/// `shcode`/`expcode` instead would surface here.
+#[tokio::test]
+async fn t8426_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(FO_MARKET_DATA_PATH))
+        .and(header("tr_cd", "t8426"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T8426_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let resp = sdk_for(&server)
+        .market_session()
+        .commodity_futures_master(&T8426Request::new())
+        .await
+        .expect("t8426 commodity_futures_master should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock.len(), 2, "two commodity-futures master rows");
+    let row = &resp.outblock[0];
+    // The canonical identity field, by Korean name 종목명 — exact value.
+    assert_eq!(
+        row.hname, "금          F 202306",
+        "종목명 commodity-futures contract name (canonical field)"
+    );
+    // Distinct neighbours: a mislabel would collapse these onto hname.
+    assert_eq!(row.shcode, "175T6000", "단축코드 (distinct)");
+    assert_eq!(row.expcode, "KR4175T60003", "확장코드 (distinct)");
+    // A distinct second row, proving the array carries multiple rows.
+    assert_eq!(resp.outblock[1].hname, "돈육          F 202309", "second row distinct");
+}
+
+/// Covers shared contract item 2. `shcode` (단축코드) parses via
+/// `ls_core::string_or_number` from BOTH a string and a JSON number — the gateway
+/// may send a numeric-looking code either way.
+#[test]
+fn t8426_shcode_number_or_string_yields_same_value() {
+    let as_number: T8426Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8426OutBlock": [{ "hname": "금          F 202306", "shcode": 1756000 }]
+    }))
+    .expect("numeric shcode deserializes");
+    let as_string: T8426Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8426OutBlock": [{ "hname": "금          F 202306", "shcode": "1756000" }]
+    }))
+    .expect("string shcode deserializes");
+    assert_eq!(as_number.outblock[0].shcode, "1756000");
+    assert_eq!(as_string.outblock[0].shcode, "1756000");
+}
+
+/// Covers the array single-or-Vec case (shared contract item 6): a single-object
+/// `t8426OutBlock` body deserializes to a one-element `Vec` via
+/// `de_vec_or_single`.
+#[test]
+fn t8426_single_object_row_deserializes_to_one_element_vec() {
+    let single: T8426Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8426OutBlock": { "hname": "금          F 202306" }
+    }))
+    .expect("single-object row deserializes");
+    assert_eq!(single.outblock.len(), 1, "single object becomes a one-element Vec");
+    assert_eq!(single.outblock[0].hname, "금          F 202306");
+    // The standalone row struct also default-constructs cleanly.
+    assert!(T8426OutBlock::default().hname.is_empty());
+}
+
+/// Covers R5. An empty `t8426` master (00707, empty out-block) deserializes as
+/// the pending case — the row array is empty.
+#[test]
+fn t8426_empty_result_deserializes_as_pending() {
+    let empty: T8426Response = serde_json::from_value(serde_json::json!({
         "rsp_cd": "00707"
     }))
     .expect("empty master deserializes");
