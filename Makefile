@@ -15,7 +15,7 @@
 # Export command-line / make variables (e.g. LS_LIVE_SMOKE_*) to recipe shells.
 export
 
-.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1866 live-smoke-t1859 live-smoke-t1826 live-smoke-t1825 live-smoke-t9905 live-smoke-t9907 live-smoke-t8431 live-smoke-t9942 live-smoke-t1958 live-smoke-t1964 raw-probe
+.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1866 live-smoke-t1859 live-smoke-t1826 live-smoke-t1825 live-smoke-t9905 live-smoke-t9907 live-smoke-t8431 live-smoke-t9942 live-smoke-t1958 live-smoke-t1964 live-smoke-t1601 live-smoke-t1615 live-smoke-t1640 live-smoke-t1662 live-smoke-t1664 live-smoke-t3341 raw-probe
 
 # $(1) = exact test name in crates/ls-sdk/tests/live_smoke.rs
 define run_smoke
@@ -119,6 +119,23 @@ live-smoke-t1958:
 	$(call run_smoke,live_smoke_t1958)
 live-smoke-t1964:
 	$(call run_smoke,live_smoke_t1964)
+
+## Wave 2 market-flow analytics reads (documented gubun defaults; non-empty -> flip).
+live-smoke-t1601:
+	$(call run_smoke,live_smoke_t1601)
+live-smoke-t1615:
+	$(call run_smoke,live_smoke_t1615)
+live-smoke-t1640:
+	$(call run_smoke,live_smoke_t1640)
+live-smoke-t1662:
+	$(call run_smoke,live_smoke_t1662)
+live-smoke-t1664:
+	$(call run_smoke,live_smoke_t1664)
+
+## t3341 (재무순위종합) smoke: token -> one single-page financial-ranking read
+## (body idx serialized as a number at first-page convention 0).
+live-smoke-t3341:
+	$(call run_smoke,live_smoke_t3341)
 
 ## Failure classifier (implement-tr R6): one credential-safe raw-HTTP POST that
 ## bypasses the SDK's typed deserialize. Requires LS_PROBE_TR_CD, LS_PROBE_PATH,

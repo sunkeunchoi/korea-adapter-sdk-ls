@@ -1,6 +1,6 @@
 tr_code: t1662
 name: 시간대별프로그램매매추이(차트)
-owner_class: standalone
+owner_class: market_session
 facets:
   protocol: rest
   instrument_domain: stock
@@ -17,7 +17,7 @@ dependencies:
   strong_order_fields: []
 support:
   tracked: true
-  implemented: false
+  implemented: true
   recommended: false
 maintenance:
   source_spec_hash: fb54f119b5a7

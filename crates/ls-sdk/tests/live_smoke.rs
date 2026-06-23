@@ -19,13 +19,14 @@ use futures::StreamExt;
 use ls_core::{LsConfig, LsError, LsResult};
 use ls_sdk::account::CSPAQ12200Request;
 use ls_sdk::market_session::{
-    T1101Request, T1102Request, T1531Request, T1537Request, T1825Request, T1826Request,
-    T1859Request, T1958Request, T1964Request, T8425Request, T8431Request, T8436Request,
-    T9905Request, T9907Request, T9942Request,
+    T1101Request, T1102Request, T1531Request, T1537Request, T1601Request, T1615Request,
+    T1640Request, T1662Request, T1664Request, T1825Request, T1826Request, T1859Request,
+    T1958Request, T1964Request, T8425Request, T8431Request, T8436Request, T9905Request,
+    T9907Request, T9942Request,
 };
 use ls_sdk::paginated::{
     T1403Request, T1441Request, T1452Request, T1463Request, T1466Request, T1489Request,
-    T1492Request, T1866Request, T8412Request,
+    T1492Request, T1866Request, T3341Request, T8412Request,
 };
 use ls_sdk::realtime::S3Trade;
 use ls_sdk::LsSdk;
@@ -1126,6 +1127,150 @@ async fn live_smoke_t1964() {
     }
     eprintln!("SMOKE-FAIL target=live-smoke-t1964 no underlying yielded a non-empty board");
     panic!("live-smoke-t1964: no non-empty board among the first underlyings (shape-unconfirmed)");
+}
+
+// ---------------------------------------------------------------------------
+// Wave 2 — market-flow analytics reads (t1601, t1615, t1640, t1662, t1664).
+// Standalone gubun-filter reads with documented defaults; non-empty success gate.
+// ---------------------------------------------------------------------------
+
+/// `make live-smoke-t1601`: token → one `t1601` investor-by-type aggregate.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1601`"]
+async fn live_smoke_t1601() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().investor_aggregate(&T1601Request::new()).await {
+        Ok(resp) if resp.outblock1.svolume_08.is_empty() && resp.outblock1.svolume_17.is_empty() => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1601 empty aggregate (rsp_cd={})", resp.rsp_cd);
+            panic!("live-smoke-t1601: empty investor aggregate (shape-unconfirmed)");
+        }
+        Ok(resp) => record(
+            "live-smoke-t1601",
+            &format!("env=paper exchgubun=K date={date}"),
+            &format!("rsp_cd={} aggregate=populated", resp.rsp_cd),
+        ),
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1601 market-data failure (not evidence)");
+            panic!("live-smoke-t1601 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1615`: token → one `t1615` investor trading aggregate.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1615`"]
+async fn live_smoke_t1615() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().investor_trading(&T1615Request::new()).await {
+        Ok(resp) if resp.outblock1.is_empty() && resp.outblock.sum_value.is_empty() => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1615 empty aggregate (rsp_cd={})", resp.rsp_cd);
+            panic!("live-smoke-t1615: empty trading aggregate (shape-unconfirmed)");
+        }
+        Ok(resp) => record(
+            "live-smoke-t1615",
+            &format!("env=paper exchgubun=K date={date}"),
+            &format!("rsp_cd={} markets={}", resp.rsp_cd, resp.outblock1.len()),
+        ),
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1615 market-data failure (not evidence)");
+            panic!("live-smoke-t1615 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1640`: token → one `t1640` program-trading aggregate.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1640`"]
+async fn live_smoke_t1640() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().program_aggregate(&T1640Request::new()).await {
+        Ok(resp) if resp.outblock.value.is_empty() && resp.outblock.volume.is_empty() => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1640 empty aggregate (rsp_cd={})", resp.rsp_cd);
+            panic!("live-smoke-t1640: empty program aggregate (shape-unconfirmed)");
+        }
+        Ok(resp) => record(
+            "live-smoke-t1640",
+            &format!("env=paper gubun=11 date={date}"),
+            &format!("rsp_cd={} aggregate=populated", resp.rsp_cd),
+        ),
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1640 market-data failure (not evidence)");
+            panic!("live-smoke-t1640 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1662`: token → one `t1662` by-time program-trading chart.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1662`"]
+async fn live_smoke_t1662() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().program_chart(&T1662Request::new()).await {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1662", &format!("env=paper gubun=0 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1662 market-data failure (not evidence)");
+            panic!("live-smoke-t1662 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1664`: token → one `t1664` investor trading chart.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1664`"]
+async fn live_smoke_t1664() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().investor_chart(&T1664Request::new()).await {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1664", &format!("env=paper mgubun=1 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1664 market-data failure (not evidence)");
+            panic!("live-smoke-t1664 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t3341`: token → one single-page `t3341` financial-ranking
+/// read (body `idx`=0 as a number; single-page scope, KTD-5).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t3341`"]
+async fn live_smoke_t3341() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.paginated().financial_ranking(&T3341Request::new()).await {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "ranks")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t3341", &format!("env=paper gubun=0 idx=0 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t3341 market-data failure (not evidence)");
+            panic!("live-smoke-t3341 failed: {e}");
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------

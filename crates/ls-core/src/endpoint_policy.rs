@@ -318,8 +318,10 @@ pub const T1958_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(5),
 };
 
-/// `t1964` — ELW전광판 (ELW board; Wave 1 board member). Non-paginated
-/// `market_session` ELW read keyed by a `t9905`-sourced `item` underlying code.
+/// `t1964` — ELW전광판 (ELW board; Wave 1 board member). Non-paginated ELW read
+/// keyed by a `t9905`-sourced `item` underlying code. Ships **PENDING** (callable
+/// but shape-unconfirmed: broad filter defaults return an empty board), so its
+/// `owner_class` stays the `standalone` placeholder until a confirming flip.
 pub const T1964_POLICY: EndpointPolicy = EndpointPolicy {
     tr_code: "t1964",
     path: "/stock/elw",
@@ -331,6 +333,94 @@ pub const T1964_POLICY: EndpointPolicy = EndpointPolicy {
     has_pagination: false,
     rate_limit_per_sec: Some(2),
     corp_rate_limit_per_sec: Some(5),
+};
+
+/// `t1601` — 투자자별종합 (investor-by-type aggregate; Wave 2). Non-paginated
+/// `market_session` investor read.
+pub const T1601_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1601",
+    path: "/stock/investor",
+    module: "stock",
+    group: "[주식] 투자자",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(5),
+};
+
+/// `t1615` — 투자자매매종합1 (investor trading aggregate; Wave 2). Non-paginated.
+pub const T1615_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1615",
+    path: "/stock/investor",
+    module: "stock",
+    group: "[주식] 투자자",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// `t1640` — 프로그램매매종합조회(미니) (program-trading aggregate; Wave 2).
+/// Non-paginated.
+pub const T1640_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1640",
+    path: "/stock/program",
+    module: "stock",
+    group: "[주식] 프로그램",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// `t1662` — 시간대별프로그램매매추이(차트) (by-time program-trading chart; Wave 2).
+/// Non-paginated.
+pub const T1662_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1662",
+    path: "/stock/program",
+    module: "stock",
+    group: "[주식] 프로그램",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// `t1664` — 투자자매매종합(챠트) (investor trading chart; Wave 2). Non-paginated.
+pub const T1664_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1664",
+    path: "/stock/investor",
+    module: "stock",
+    group: "[주식] 투자자",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// `t3341` — 재무순위종합 (financial ranking; Wave 2; single-page body-`idx`
+/// paginated). `has_pagination: true` mirrors `facets.self_paginated`.
+pub const T3341_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t3341",
+    path: "/stock/investinfo",
+    module: "stock",
+    group: "[주식] 투자정보",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
 };
 
 /// t1452 — 거래량상위 (top trading volume; single-page body-`idx` paginated).
@@ -554,6 +644,12 @@ mod tests {
             T9942_POLICY,
             T1958_POLICY,
             T1964_POLICY,
+            T1601_POLICY,
+            T1615_POLICY,
+            T1640_POLICY,
+            T1662_POLICY,
+            T1664_POLICY,
+            T3341_POLICY,
             CSPAQ12200_POLICY,
         ] {
             assert!(!p.is_order, "{} must not be an order endpoint", p.tr_code);

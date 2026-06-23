@@ -23,11 +23,11 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t1492` | 단일가예상등락율상위 | `paginated` | implemented | [t1492](./t1492.md) |
 | `t1531` | 테마별종목 | `market_session` | implemented | [t1531](./t1531.md) |
 | `t1537` | 테마종목별시세조회 | `market_session` | implemented | [t1537](./t1537.md) |
-| `t1601` | 투자자별종합 | `standalone` | tracked | [t1601](./t1601.md) |
-| `t1615` | 투자자매매종합1 | `standalone` | tracked | [t1615](./t1615.md) |
-| `t1640` | 프로그램매매종합조회(미니) | `standalone` | tracked | [t1640](./t1640.md) |
-| `t1662` | 시간대별프로그램매매추이(차트) | `standalone` | tracked | [t1662](./t1662.md) |
-| `t1664` | 투자자매매종합(챠트) | `standalone` | tracked | [t1664](./t1664.md) |
+| `t1601` | 투자자별종합 | `market_session` | implemented | [t1601](./t1601.md) |
+| `t1615` | 투자자매매종합1 | `market_session` | implemented | [t1615](./t1615.md) |
+| `t1640` | 프로그램매매종합조회(미니) | `market_session` | implemented | [t1640](./t1640.md) |
+| `t1662` | 시간대별프로그램매매추이(차트) | `market_session` | implemented | [t1662](./t1662.md) |
+| `t1664` | 투자자매매종합(챠트) | `market_session` | implemented | [t1664](./t1664.md) |
 | `t1825` | 종목Q클릭검색(씽큐스마트) | `market_session` | implemented | [t1825](./t1825.md) |
 | `t1826` | 종목Q클릭검색리스트조회(씽큐스마트) | `market_session` | implemented | [t1826](./t1826.md) |
 | `t1852` | 파일저장종목 실시간검색 | `standalone` | tracked | [t1852](./t1852.md) |
@@ -40,7 +40,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t1988` | 기초자산리스트조회 | `standalone` | tracked | [t1988](./t1988.md) |
 | `t3102` | 뉴스본문 | `standalone` | tracked | [t3102](./t3102.md) |
 | `t3320` | FNG_요약 | `standalone` | tracked | [t3320](./t3320.md) |
-| `t3341` | 재무순위종합 | `paginated` | tracked | [t3341](./t3341.md) |
+| `t3341` | 재무순위종합 | `paginated` | implemented | [t3341](./t3341.md) |
 | `t8412` | 주식 차트(N분봉) 조회 | `paginated` | recommended | [t8412](./t8412.md) |
 | `t8425` | 전체테마 | `market_session` | implemented | [t8425](./t8425.md) |
 | `t8430` | 주식종목조회 | `standalone` | tracked | [t8430](./t8430.md) |

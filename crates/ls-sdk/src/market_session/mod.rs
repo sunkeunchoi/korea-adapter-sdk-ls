@@ -1350,6 +1350,376 @@ pub struct T1964Response {
     pub outblock1: Vec<T1964OutBlock1>,
 }
 
+// ---------------------------------------------------------------------------
+// Wave 2 — market-flow analytics surface. Investor-flow (t1601/t1615/t1664) and
+// program-trading (t1640/t1662) aggregates; gubun-filter screens with documented
+// default inputs. All non-paginated market_session reads.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1601` — 투자자별종합 (investor-by-type aggregate). All-gubun
+/// filter screen; `::new()` bakes documented defaults (amount basis, KRX).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1601InBlock {
+    /// Stock amount/quantity / 주식금액수량구분1 (`"1"` qty / `"2"` amount).
+    pub gubun1: String,
+    /// Option amount/quantity / 옵션금액수량구분2.
+    pub gubun2: String,
+    /// Amount unit / 금액단위 (unused; `"0"`).
+    pub gubun3: String,
+    /// Futures amount/quantity / 선물금액수량구분4.
+    pub gubun4: String,
+    /// Exchange / 거래소구분코드 (`"K"` KRX).
+    pub exchgubun: String,
+}
+
+/// `t1601` request — wraps the in-block under `t1601InBlock`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1601Request {
+    #[serde(rename = "t1601InBlock")]
+    pub inblock: T1601InBlock,
+}
+impl T1601Request {
+    /// Build a `t1601` request with documented broad defaults (amount basis, KRX).
+    pub fn new() -> Self {
+        T1601Request {
+            inblock: T1601InBlock {
+                gubun1: "2".into(),
+                gubun2: "2".into(),
+                gubun3: "0".into(),
+                gubun4: "2".into(),
+                exchgubun: "K".into(),
+            },
+        }
+    }
+}
+impl Default for T1601Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `t1601OutBlock1` — the investor-by-type aggregate (single summary object; a
+/// representative subset of net-buy columns). All via [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1601OutBlock1 {
+    /// Personal net-buy / 개인순매수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub svolume_08: String,
+    /// Foreign net-buy / 외국인순매수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub svolume_17: String,
+    /// Institutional net-buy / 기관계순매수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub svolume_18: String,
+}
+
+/// `t1601` response — the investor aggregate under `t1601OutBlock1` (single object).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1601Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1601OutBlock1", default)]
+    pub outblock1: T1601OutBlock1,
+}
+
+/// Input block for `t1615` — 투자자매매종합1 (investor trading aggregate).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1615InBlock {
+    /// Stock division / 주식구분 (`"1"` qty / `"2"` amount).
+    pub gubun1: String,
+    /// Option division / 옵션구분.
+    pub gubun2: String,
+    /// Exchange / 거래소구분코드 (`"K"` KRX).
+    pub exchgubun: String,
+}
+
+/// `t1615` request — wraps the in-block under `t1615InBlock`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1615Request {
+    #[serde(rename = "t1615InBlock")]
+    pub inblock: T1615InBlock,
+}
+impl T1615Request {
+    /// Build a `t1615` request with documented broad defaults (amount basis, KRX).
+    pub fn new() -> Self {
+        T1615Request {
+            inblock: T1615InBlock {
+                gubun1: "2".into(),
+                gubun2: "2".into(),
+                exchgubun: "K".into(),
+            },
+        }
+    }
+}
+impl Default for T1615Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `t1615OutBlock` — the trading summary (single object). Subset via
+/// [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1615OutBlock {
+    /// Total quantity / 합계수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sum_volume: String,
+    /// Total amount / 합계금액.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sum_value: String,
+}
+
+/// `t1615OutBlock1` — one per-market investor row. Subset via
+/// [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1615OutBlock1 {
+    /// Market name / 시장명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Personal / 개인.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sv_08: String,
+    /// Foreign / 외국인.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sv_17: String,
+    /// Institutional / 기관계.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sv_18: String,
+}
+
+/// `t1615` response — summary + per-market array (single-or-array tolerated).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1615Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1615OutBlock", default)]
+    pub outblock: T1615OutBlock,
+    #[serde(
+        rename = "t1615OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1615OutBlock1>,
+}
+
+/// Input block for `t1640` — 프로그램매매종합조회(미니) (program-trading aggregate).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1640InBlock {
+    /// Division / 구분 (`"11"` exchange-all).
+    pub gubun: String,
+    /// Exchange / 거래소구분코드 (`"K"` KRX).
+    pub exchgubun: String,
+}
+
+/// `t1640` request — wraps the in-block under `t1640InBlock`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1640Request {
+    #[serde(rename = "t1640InBlock")]
+    pub inblock: T1640InBlock,
+}
+impl T1640Request {
+    /// Build a `t1640` request with documented broad defaults (exchange-all, KRX).
+    pub fn new() -> Self {
+        T1640Request {
+            inblock: T1640InBlock {
+                gubun: "11".into(),
+                exchgubun: "K".into(),
+            },
+        }
+    }
+}
+impl Default for T1640Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `t1640OutBlock` — the program-trading summary (single object). Subset via
+/// [`ls_core::string_or_number`]; `value` is the modeled non-key signal.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1640OutBlock {
+    /// Net-buy quantity / 순매수수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Net-buy amount / 순매수금액.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub value: String,
+    /// Basis / 베이시스.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub basis: String,
+}
+
+/// `t1640` response — the program summary (single object).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1640Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1640OutBlock", default)]
+    pub outblock: T1640OutBlock,
+}
+
+/// Input block for `t1662` — 시간대별프로그램매매추이(차트) (by-time program-trading
+/// chart).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1662InBlock {
+    /// Market / 구분 (`"0"` KOSPI / `"1"` KOSDAQ).
+    pub gubun: String,
+    /// Amount/quantity / 금액수량구분 (`"0"` amount / `"1"` qty).
+    pub gubun1: String,
+    /// Day / 전일구분 (`"0"` today / `"1"` prior).
+    pub gubun3: String,
+    /// Exchange / 거래소구분코드 (`"K"` KRX).
+    pub exchgubun: String,
+}
+
+/// `t1662` request — wraps the in-block under `t1662InBlock`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1662Request {
+    #[serde(rename = "t1662InBlock")]
+    pub inblock: T1662InBlock,
+}
+impl T1662Request {
+    /// Build a `t1662` request with documented broad defaults (KOSPI, amount,
+    /// today, KRX).
+    pub fn new() -> Self {
+        T1662Request {
+            inblock: T1662InBlock {
+                gubun: "0".into(),
+                gubun1: "0".into(),
+                gubun3: "0".into(),
+                exchgubun: "K".into(),
+            },
+        }
+    }
+}
+impl Default for T1662Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `t1662OutBlock` — one by-time program-trading row. Subset via
+/// [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1662OutBlock {
+    /// Time / 시간.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub time: String,
+    /// KOSPI200 index / KP200.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub k200jisu: String,
+    /// Total net-buy / 전체순매수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tot3: String,
+    /// Volume / 거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+}
+
+/// `t1662` response — the by-time array under `t1662OutBlock` (single-or-array).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1662Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t1662OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T1662OutBlock>,
+}
+
+/// Input block for `t1664` — 투자자매매종합(챠트) (investor trading chart). `cnt`
+/// is a numeric count serialized as a JSON number.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1664InBlock {
+    /// Market / 시장구분 (`"1"` KOSPI).
+    pub mgubun: String,
+    /// Amount/quantity / 금액수량구분 (`"2"` amount).
+    pub vagubun: String,
+    /// Time/day / 시간일별구분 (`"1"` by-time).
+    pub bdgubun: String,
+    /// Row count / 조회건수 (serialized as a JSON number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub cnt: String,
+    /// Exchange / 거래소구분코드 (`"K"` KRX).
+    pub exchgubun: String,
+}
+
+/// `t1664` request — wraps the in-block under `t1664InBlock`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1664Request {
+    #[serde(rename = "t1664InBlock")]
+    pub inblock: T1664InBlock,
+}
+impl T1664Request {
+    /// Build a `t1664` request with documented broad defaults (KOSPI, amount,
+    /// by-time, 20 rows, KRX).
+    pub fn new() -> Self {
+        T1664Request {
+            inblock: T1664InBlock {
+                mgubun: "1".into(),
+                vagubun: "2".into(),
+                bdgubun: "1".into(),
+                cnt: "20".into(),
+                exchgubun: "K".into(),
+            },
+        }
+    }
+}
+impl Default for T1664Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// `t1664OutBlock1` — one investor-chart row. Subset via
+/// [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1664OutBlock1 {
+    /// Date/time / 일자시간.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dt: String,
+    /// Personal net-buy / 개인순매수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tjj08: String,
+    /// Foreign net-buy / 외국인순매수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tjj17: String,
+    /// Institutional net-buy / 기관순매수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tjj18: String,
+}
+
+/// `t1664` response — the investor-chart array under `t1664OutBlock1`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1664Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t1664OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1664OutBlock1>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -1531,6 +1901,45 @@ impl MarketSession {
     pub async fn elw_board(&self, req: &T1964Request) -> LsResult<T1964Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T1964_POLICY, req)
+            .await
+    }
+
+    /// Read the investor-by-type aggregate (투자자별종합) via `t1601`. Non-paginated.
+    pub async fn investor_aggregate(&self, req: &T1601Request) -> LsResult<T1601Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1601_POLICY, req)
+            .await
+    }
+
+    /// Read the investor trading aggregate (투자자매매종합1) via `t1615`.
+    /// Non-paginated.
+    pub async fn investor_trading(&self, req: &T1615Request) -> LsResult<T1615Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1615_POLICY, req)
+            .await
+    }
+
+    /// Read the program-trading aggregate (프로그램매매종합, mini) via `t1640`.
+    /// Non-paginated.
+    pub async fn program_aggregate(&self, req: &T1640Request) -> LsResult<T1640Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1640_POLICY, req)
+            .await
+    }
+
+    /// Read the by-time program-trading chart (시간대별프로그램매매추이) via `t1662`.
+    /// Non-paginated.
+    pub async fn program_chart(&self, req: &T1662Request) -> LsResult<T1662Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1662_POLICY, req)
+            .await
+    }
+
+    /// Read the investor trading chart (투자자매매종합 챠트) via `t1664`.
+    /// Non-paginated.
+    pub async fn investor_chart(&self, req: &T1664Request) -> LsResult<T1664Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1664_POLICY, req)
             .await
     }
 }
