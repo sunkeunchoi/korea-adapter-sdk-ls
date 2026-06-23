@@ -93,5 +93,8 @@ make live-smoke-t1511   # -> rsp_cd=00000 ...         -> IMPLEMENTED
 The same `00707` returned off-hours and in-window means two different things; only
 the recorded session clock tells them apart. See also
 `docs/solutions/integration-issues/ls-gateway-igw40011-numeric-request-fields.md`
-(the raw-probe classifier that separates a real defect from environmental noise) and
-`docs/solutions/conventions/sdk-struct-field-from-baseline-korean-name.md`.
+(the raw-probe classifier that separates a real defect from environmental noise),
+`docs/solutions/conventions/sdk-struct-field-from-baseline-korean-name.md`, and
+`docs/solutions/conventions/tr-out-block-shape-from-raw-capture.md` (which adds the
+"assert non-empty in the smoke so a real shape defect can't hide behind a fake-empty
+result" rule that complements this doc's disposition logic).

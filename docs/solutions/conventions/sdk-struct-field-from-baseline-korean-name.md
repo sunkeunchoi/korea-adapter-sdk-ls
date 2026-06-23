@@ -107,5 +107,9 @@ assert_eq!(resp.outblock.pricejisu, "2610.62", "현재지수 current index");
 ```
 
 See also `docs/solutions/architecture-patterns/ls-sdk-pagination-modeling.md` (the
-sibling ls-sdk modeling pattern) and
-`docs/solutions/conventions/market-hours-read-empty-result-disposition.md`.
+sibling ls-sdk modeling pattern),
+`docs/solutions/conventions/market-hours-read-empty-result-disposition.md`, and
+`docs/solutions/conventions/tr-out-block-shape-from-raw-capture.md` (the sibling
+out-block *container* convention: this doc picks the right field, that one picks
+the right block key + array-ness — the normalized baseline is reliable for a
+field's `korean_name` but lossy for out-block name/shape).
