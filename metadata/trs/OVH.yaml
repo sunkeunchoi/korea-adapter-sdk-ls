@@ -1,0 +1,24 @@
+tr_code: OVH
+name: 해외선물 호가 실시간 시세
+owner_class: realtime
+facets:
+  protocol: websocket
+  instrument_domain: overseas_futures
+  venue_session: unspecified
+  date_sensitive: false
+  self_paginated: false
+  account_state: false
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: market_data
+  caller_supplied_identifiers: [symbol]
+dependencies:
+  self_continuation_fields: []
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: false
+  recommended: false
+maintenance:
+  source_spec_hash: 3659db489a03
+  last_reviewed: 2026-06-24
