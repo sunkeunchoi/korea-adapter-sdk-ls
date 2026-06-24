@@ -30,14 +30,44 @@ pub struct MockWsServer {
     kill_tx: broadcast::Sender<()>,
     /// Every text frame received from clients, accumulated across connections.
     received: Arc<Mutex<Vec<String>>>,
+    /// `tr_cd`s the gateway is configured to REJECT (negative-control seam, KTD6).
+    /// Fixed at construction; read inside the accept loop.
+    rejected_tr_cds: Arc<Vec<String>>,
     /// The detached accept loop — aborting it closes the listening port so a
     /// reconnect can never succeed (reconnect-budget-exhaustion tests).
     accept_handle: tokio::task::JoinHandle<()>,
 }
 
 impl MockWsServer {
-    /// Spawn a mock WS server on a random loopback port.
+    /// Spawn a mock WS server on a random loopback port (rejects nothing).
     pub async fn start() -> Self {
+        Self::start_rejecting(&[]).await
+    }
+
+    /// Spawn a mock WS server that REJECTS the given `tr_cd`s (the KTD6
+    /// negative-control seam).
+    ///
+    /// The real LS gateway, on a bad `tr_cd`, replies with an error-shaped ACK
+    /// frame rather than silently accepting. We model that: when a subscribe frame
+    /// arrives whose `body.tr_cd` is in `reject`, the per-connection task
+    /// immediately sends back, IN-BAND on the same socket, a frame
+    ///
+    /// ```json
+    /// {"header":{"tr_cd":<cd>,"tr_key":<key>},
+    ///  "body":{"rsp_cd":"IGW00001","rsp_msg":"rejected"}}
+    /// ```
+    ///
+    /// The `header.tr_cd`/`header.tr_key` ECHO the subscribe, so the SDK inbound
+    /// task routes the error `body` to THIS subscriber's stream by composite key.
+    /// The SDK's subscribe is fire-and-forget and never reads an ACK, but the
+    /// inbound dispatch DOES route any inbound frame matching a live composite key
+    /// — so an in-band rejection surfaces to the subscriber as a delivered `body`
+    /// it can inspect (e.g. a non-empty `rsp_cd`). A non-rejected `tr_cd` is
+    /// recorded and otherwise ignored exactly as before, so an ACCEPTED subscribe
+    /// is observably distinct (no inbound frame within the timebox) from a
+    /// REJECTED one (an `rsp_cd` body arrives). This is what makes a smoke built on
+    /// the gate able to FAIL.
+    pub async fn start_rejecting(reject: &[&str]) -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind mock ws listener");
@@ -46,10 +76,13 @@ impl MockWsServer {
         let received: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
         let (broadcast_tx, _) = broadcast::channel::<String>(512);
         let (kill_tx, _) = broadcast::channel::<()>(16);
+        let rejected_tr_cds: Arc<Vec<String>> =
+            Arc::new(reject.iter().map(|s| s.to_string()).collect());
 
         let received_loop = Arc::clone(&received);
         let broadcast_loop = broadcast_tx.clone();
         let kill_loop = kill_tx.clone();
+        let rejected_loop = Arc::clone(&rejected_tr_cds);
 
         let accept_handle = tokio::spawn(async move {
             loop {
@@ -57,6 +90,7 @@ impl MockWsServer {
                     break;
                 };
                 let recv_inner = Arc::clone(&received_loop);
+                let rejected = Arc::clone(&rejected_loop);
                 let mut bcast_rx = broadcast_loop.subscribe();
                 let mut kill_rx = kill_loop.subscribe();
                 tokio::spawn(async move {
@@ -70,6 +104,13 @@ impl MockWsServer {
                                 match frame {
                                     Some(Ok(Message::Text(t))) => {
                                         recv_inner.lock().await.push(t.to_string());
+                                        // Negative-control path: if this subscribe
+                                        // targets a rejected tr_cd, reply in-band
+                                        // with an error-shaped ACK routed back to
+                                        // the subscriber by composite key.
+                                        if let Some(reply) = rejection_reply(&t, &rejected) {
+                                            let _ = ws.send(Message::Text(reply.into())).await;
+                                        }
                                     }
                                     _ => break,
                                 }
@@ -91,6 +132,7 @@ impl MockWsServer {
             broadcast_tx,
             kill_tx,
             received,
+            rejected_tr_cds,
             accept_handle,
         }
     }
@@ -156,4 +198,33 @@ impl MockWsServer {
             })
             .count()
     }
+
+    /// The `tr_cd`s this server is configured to reject (empty unless built via
+    /// [`Self::start_rejecting`]). Exposed for test introspection.
+    pub fn rejected_tr_cds(&self) -> &[String] {
+        &self.rejected_tr_cds
+    }
+}
+
+/// Business `rsp_cd` carried by the mock gateway's rejection ACK. Mirrors the LS
+/// `IGW`-family error prefix; the value is arbitrary but stable for assertions.
+pub const MOCK_REJECTION_RSP_CD: &str = "IGW00001";
+
+/// If `subscribe_text` is a subscribe frame for a rejected `tr_cd`, build the
+/// error-shaped ACK reply (a JSON string), echoing the subscribe's `tr_cd`/
+/// `tr_key` in the header so the SDK routes it back to the subscriber by
+/// composite key. Returns `None` for a non-rejected `tr_cd` or an unparseable
+/// frame (which is recorded but otherwise ignored, as before).
+fn rejection_reply(subscribe_text: &str, rejected: &[String]) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(subscribe_text).ok()?;
+    let tr_cd = v["body"]["tr_cd"].as_str()?;
+    if !rejected.iter().any(|r| r == tr_cd) {
+        return None;
+    }
+    let tr_key = v["body"]["tr_key"].as_str().unwrap_or("");
+    let reply = serde_json::json!({
+        "header": { "tr_cd": tr_cd, "tr_key": tr_key },
+        "body": { "rsp_cd": MOCK_REJECTION_RSP_CD, "rsp_msg": "rejected" },
+    });
+    Some(reply.to_string())
 }
