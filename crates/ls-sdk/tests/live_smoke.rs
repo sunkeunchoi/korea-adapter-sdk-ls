@@ -1742,6 +1742,115 @@ async fn live_smoke_k3() {
     );
 }
 
+/// Non-panicking sibling of [`ws_lifecycle_smoke`] for the combined P1 wave run.
+///
+/// Wraps the FULL lifecycle (paper guard → port-29443 assertion → fresh-manager
+/// subscribe → timeboxed bonus row → unsubscribe) in a `Result`, so a single bad
+/// TR records its failure as a line and does NOT panic-abort the whole 14-TR
+/// sweep (the resilience requirement of `live_smoke_ws_p1`). Mirrors
+/// `ws_lifecycle_smoke` step-for-step; `ws_lifecycle_smoke`'s own callers are
+/// untouched (they still want the fail-fast panic). NO raw-frame logging.
+async fn ws_lifecycle_try(tr_cd: &str, tr_key: &str, lane: WsLane) -> Result<String, String> {
+    paper_guard().map_err(|e| format!("paper guard failed: {e}"))?;
+    let config = LsConfig::from_env().map_err(|e| format!("config from env failed: {e}"))?;
+    if !config.environment.is_paper() {
+        return Err("resolved environment is not Paper".to_string());
+    }
+
+    let ws_url = ls_core::config::Environment::resolve_ws_url(&config);
+    if !ws_url.contains("29443") {
+        return Err("resolved WS URL is not the paper port 29443".to_string());
+    }
+
+    // Fresh SDK → fresh, isolated WsManager (KTD2 — no shared-manager poisoning).
+    let sdk = LsSdk::new(config).map_err(|e| format!("sdk construction failed: {e}"))?;
+    let ws = sdk.realtime();
+
+    let (handle, mut stream) = ws
+        .subscribe_typed::<WsLifecycleRow>(tr_cd, tr_key, lane)
+        .await
+        .map_err(|e| format!("subscribe/lifecycle failed: {e}"))?;
+
+    // BONUS: a row may or may not arrive; absence is not a failure.
+    let row_note = match timeout(Duration::from_secs(5), stream.next()).await {
+        Ok(Some(Ok(row))) if !row.rsp_cd.is_empty() => {
+            format!("inbound body carried rsp_cd={} (rejection-shaped)", row.rsp_cd)
+        }
+        Ok(Some(Ok(_))) => "row received (lifecycle bonus)".to_string(),
+        Ok(Some(Err(e))) => format!("frame decode error: {e}"),
+        Ok(None) => "stream ended without a row".to_string(),
+        Err(_) => "no row within timeout (not a failure)".to_string(),
+    };
+
+    handle
+        .unsubscribe()
+        .await
+        .map_err(|e| format!("unsubscribe failed: {e}"))?;
+
+    Ok(row_note)
+}
+
+/// `make live-smoke-ws-p1`: COMBINED lifecycle smoke for the 14 P1 market-data
+/// realtime TRs (the operator runs ONE command to gate the whole wave).
+///
+/// Iterates all 14 `(tr_cd, tr_key, WsLane::MarketData)` tuples, each on a FRESH
+/// manager via [`ws_lifecycle_try`]. RESILIENT: a per-TR subscribe/lifecycle
+/// failure is CAUGHT and recorded as that TR's `record(...)` line, so one bad TR
+/// cannot hide the other 13. After the sweep, panics only if ANY TR failed (so
+/// the make target reports red) — but every TR's line is emitted first.
+///
+/// Default `tr_key`s are public symbols (the migration-source cert keys — stock
+/// `005930`, overseas-stock `TSLA`, overseas-futures `CLZ25`, F-O `101TC000`),
+/// safe to hardcode. Override the stock key via `LS_LIVE_SMOKE_SHCODE`. Per KTD6
+/// (`NOT-OBSERVABLE`), a clean lifecycle here proves **connection reachability
+/// only**, not per-TR reachability — flip each TR's metadata with that weaker
+/// claim. NO raw-frame logging.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-ws-p1`"]
+async fn live_smoke_ws_p1() {
+    let stock_key = resolve_symbol();
+    // (tr_cd, tr_key) — public cert symbols; stock key overridable via env.
+    let trs: [(&str, &str); 14] = [
+        ("H1_", stock_key.as_str()),
+        ("HA_", stock_key.as_str()),
+        ("S2_", stock_key.as_str()),
+        ("US3", stock_key.as_str()),
+        ("UH1", stock_key.as_str()),
+        ("US2", stock_key.as_str()),
+        ("GSC", "TSLA"),
+        ("GSH", "TSLA"),
+        ("OVC", "CLZ25"),
+        ("OVH", "CLZ25"),
+        ("OC0", "101TC000"),
+        ("OH0", "101TC000"),
+        ("FC9", "101TC000"),
+        ("FH9", "101TC000"),
+    ];
+
+    let mut failures = 0usize;
+    for (tr_cd, tr_key) in trs {
+        // Each TR on a fresh manager; a failure is recorded, never propagated.
+        let result = ws_lifecycle_try(tr_cd, tr_key, WsLane::MarketData).await;
+        let row_note = match result {
+            Ok(note) => note,
+            Err(err) => {
+                failures += 1;
+                format!("LIFECYCLE-FAIL: {err}")
+            }
+        };
+        record(
+            &format!("live-smoke-{}", tr_cd.to_lowercase().trim_end_matches('_')),
+            &format!("tr_cd={tr_cd} tr_key={tr_key} ws_port=29443 tr_type=3"),
+            &row_note,
+        );
+    }
+
+    assert_eq!(
+        failures, 0,
+        "{failures} of 14 P1 market-data TRs failed their lifecycle (see per-TR lines above)"
+    );
+}
+
 /// `make live-smoke-ws-negative`: LIVE half of the KTD6 negative control.
 ///
 /// Subscribes a deliberately-INVALID `tr_cd` and reports whether the paper
