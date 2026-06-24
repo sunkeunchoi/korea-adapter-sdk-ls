@@ -746,6 +746,13 @@ async fn live_smoke_t1481() {
     let req = T1481Request::new("0", "1", "0", "0");
     let date = Utc::now().format("%Y-%m-%d");
     match sdk.paginated().after_hours_top_change_rate(&req).await {
+        Ok(resp) if resp.outblock1.is_empty() => {
+            // Empty success (`00707`) outside an after-hours session is the PENDING
+            // case, not Implemented evidence — emit no capturable LIVE-SMOKE line
+            // (mirrors live_smoke_t1866's non-empty guard).
+            eprintln!("SMOKE-FAIL target=live-smoke-t1481 empty result (00707); PENDING not evidence");
+            panic!("live-smoke-t1481: empty result (00707) — PENDING, not Implemented");
+        }
         Ok(resp) => record(
             "live-smoke-t1481",
             &format!("env=paper gubun1=0 idx=0 date={date}"),
@@ -780,6 +787,13 @@ async fn live_smoke_t1482() {
     let req = T1482Request::new("0", "0", "0");
     let date = Utc::now().format("%Y-%m-%d");
     match sdk.paginated().after_hours_top_volume(&req).await {
+        Ok(resp) if resp.outblock1.is_empty() => {
+            // Empty success (`00707`) outside an after-hours session is the PENDING
+            // case, not Implemented evidence — emit no capturable LIVE-SMOKE line
+            // (mirrors live_smoke_t1866's non-empty guard).
+            eprintln!("SMOKE-FAIL target=live-smoke-t1482 empty result (00707); PENDING not evidence");
+            panic!("live-smoke-t1482: empty result (00707) — PENDING, not Implemented");
+        }
         Ok(resp) => record(
             "live-smoke-t1482",
             &format!("env=paper sort_gbn=0 idx=0 date={date}"),
@@ -1558,6 +1572,13 @@ async fn live_smoke_cfoaq10100() {
     let req = CFOAQ10100Request::new("1", "1", "0", "0", &fnoisu, "1", "0", "00");
     let date = Utc::now().format("%Y-%m-%d");
     match sdk.account().fo_orderable_qty(&req).await {
+        Ok(resp) if resp.outblock2.is_empty() => {
+            // Empty success (`00707`) on a position-less paper account is the PENDING
+            // case, not Implemented evidence — emit no capturable LIVE-SMOKE line
+            // (mirrors live_smoke_t1866's non-empty guard).
+            eprintln!("SMOKE-FAIL target=live-smoke-cfoaq10100 empty result (00707); PENDING not evidence");
+            panic!("live-smoke-cfoaq10100: empty result (00707) — PENDING, not Implemented");
+        }
         Ok(resp) => {
             let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock2.len())), "qtyrows")
                 .expect("an Ok outcome yields a result line");

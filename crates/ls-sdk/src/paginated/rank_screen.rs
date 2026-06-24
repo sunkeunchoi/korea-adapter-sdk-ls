@@ -1018,7 +1018,7 @@ pub struct T1482InBlock {
     pub sort_gbn: String,
     /// Division / 구분.
     pub gubun: String,
-    /// Volume flag / 거래량 (a length-1 flag here; serialized as a string).
+    /// Issue-type check / 종목체크 (a length-1 flag here; serialized as a string).
     pub jongchk: String,
     /// Body continuation cursor / IDX (first page = `"0"`; serialized as a number).
     #[serde(serialize_with = "ls_core::string_as_number")]

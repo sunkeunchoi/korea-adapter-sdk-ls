@@ -5527,8 +5527,8 @@ impl MarketSession {
     }
 
     /// Read the FnGuide company summary (FNG_요약) via `t3320`. Non-paginated;
-    /// keyed by a 7-char FnGuide company code (`gicode`). Routes through
-    /// `market_session` (KTD3).
+    /// keyed by a bare 6-digit ticker (`gicode`, e.g. `"005930"`), confirmed on a
+    /// live paper smoke. Routes through `market_session` (KTD3).
     pub async fn company_summary(&self, req: &T3320Request) -> LsResult<T3320Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T3320_POLICY, req)
