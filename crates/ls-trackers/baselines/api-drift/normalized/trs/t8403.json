@@ -1,0 +1,874 @@
+{
+  "tr_code": "t8403",
+  "tr_name": "주식선물호가조회(API용)",
+  "protocol": "rest",
+  "is_websocket": false,
+  "endpoint_path": "/futureoption/market-data",
+  "api_group_id": "9f467798-6ce6-4d31-ab93-5a0e2860f89f",
+  "source_group_name": "[선물/옵션] 시세",
+  "request_blocks": [
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 1,
+      "field_name": "authorization",
+      "korean_name": "접근토큰",
+      "type": "String",
+      "length": 1000,
+      "required": true,
+      "description_hash": "62956eed2a6e506a"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 2,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 3,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 4,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 5,
+      "field_name": "mac_address",
+      "korean_name": "MAC 주소",
+      "type": "String",
+      "length": 12,
+      "required": true,
+      "description_hash": "1d2213655779faf2"
+    },
+    {
+      "direction": "request",
+      "block_name": "t8403InBlock",
+      "field_index": 0,
+      "field_name": "shcode",
+      "korean_name": "단축코드",
+      "type": "String",
+      "length": 8,
+      "required": true
+    }
+  ],
+  "response_blocks": [
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 1,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 2,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 3,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 0,
+      "field_name": "hname",
+      "korean_name": "종목명",
+      "type": "String",
+      "length": 20,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 1,
+      "field_name": "price",
+      "korean_name": "현재가",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 2,
+      "field_name": "sign",
+      "korean_name": "전일대비구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 3,
+      "field_name": "change",
+      "korean_name": "전일대비",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 4,
+      "field_name": "diff",
+      "korean_name": "등락율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 5,
+      "field_name": "volume",
+      "korean_name": "거래량",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 6,
+      "field_name": "stimeqrt",
+      "korean_name": "거래량전일동시간비율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 7,
+      "field_name": "jnilclose",
+      "korean_name": "전일종가",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 8,
+      "field_name": "offerho1",
+      "korean_name": "매도호가1",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 9,
+      "field_name": "bidho1",
+      "korean_name": "매수호가1",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 10,
+      "field_name": "offerrem1",
+      "korean_name": "매도호가수량1",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 11,
+      "field_name": "bidrem1",
+      "korean_name": "매수호가수량1",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 12,
+      "field_name": "dcnt1",
+      "korean_name": "매도호가건수1",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 13,
+      "field_name": "scnt1",
+      "korean_name": "매수호가건수1",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 14,
+      "field_name": "offerho2",
+      "korean_name": "매도호가2",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 15,
+      "field_name": "bidho2",
+      "korean_name": "매수호가2",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 16,
+      "field_name": "offerrem2",
+      "korean_name": "매도호가수량2",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 17,
+      "field_name": "bidrem2",
+      "korean_name": "매수호가수량2",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 18,
+      "field_name": "dcnt2",
+      "korean_name": "매도호가건수2",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 19,
+      "field_name": "scnt2",
+      "korean_name": "매수호가건수2",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 20,
+      "field_name": "offerho3",
+      "korean_name": "매도호가3",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 21,
+      "field_name": "bidho3",
+      "korean_name": "매수호가3",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 22,
+      "field_name": "offerrem3",
+      "korean_name": "매도호가수량3",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 23,
+      "field_name": "bidrem3",
+      "korean_name": "매수호가수량3",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 24,
+      "field_name": "dcnt3",
+      "korean_name": "매도호가건수3",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 25,
+      "field_name": "scnt3",
+      "korean_name": "매수호가건수3",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 26,
+      "field_name": "offerho4",
+      "korean_name": "매도호가4",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 27,
+      "field_name": "bidho4",
+      "korean_name": "매수호가4",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 28,
+      "field_name": "offerrem4",
+      "korean_name": "매도호가수량4",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 29,
+      "field_name": "bidrem4",
+      "korean_name": "매수호가수량4",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 30,
+      "field_name": "dcnt4",
+      "korean_name": "매도호가건수4",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 31,
+      "field_name": "scnt4",
+      "korean_name": "매수호가건수4",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 32,
+      "field_name": "offerho5",
+      "korean_name": "매도호가5",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 33,
+      "field_name": "bidho5",
+      "korean_name": "매수호가5",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 34,
+      "field_name": "offerrem5",
+      "korean_name": "매도호가수량5",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 35,
+      "field_name": "bidrem5",
+      "korean_name": "매수호가수량5",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 36,
+      "field_name": "dcnt5",
+      "korean_name": "매도호가건수5",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 37,
+      "field_name": "scnt5",
+      "korean_name": "매수호가건수5",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 38,
+      "field_name": "offerho6",
+      "korean_name": "매도호가6",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 39,
+      "field_name": "bidho6",
+      "korean_name": "매수호가6",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 40,
+      "field_name": "offerrem6",
+      "korean_name": "매도호가수량6",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 41,
+      "field_name": "bidrem6",
+      "korean_name": "매수호가수량6",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 42,
+      "field_name": "dcnt6",
+      "korean_name": "매도호가건수6",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 43,
+      "field_name": "scnt6",
+      "korean_name": "매수호가건수6",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 44,
+      "field_name": "offerho7",
+      "korean_name": "매도호가7",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 45,
+      "field_name": "bidho7",
+      "korean_name": "매수호가7",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 46,
+      "field_name": "offerrem7",
+      "korean_name": "매도호가수량7",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 47,
+      "field_name": "bidrem7",
+      "korean_name": "매수호가수량7",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 48,
+      "field_name": "dcnt7",
+      "korean_name": "매도호가건수7",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 49,
+      "field_name": "scnt7",
+      "korean_name": "매수호가건수7",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 50,
+      "field_name": "offerho8",
+      "korean_name": "매도호가8",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 51,
+      "field_name": "bidho8",
+      "korean_name": "매수호가8",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 52,
+      "field_name": "offerrem8",
+      "korean_name": "매도호가수량8",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 53,
+      "field_name": "bidrem8",
+      "korean_name": "매수호가수량8",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 54,
+      "field_name": "dcnt8",
+      "korean_name": "매도호가건수8",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 55,
+      "field_name": "scnt8",
+      "korean_name": "매수호가건수8",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 56,
+      "field_name": "offerho9",
+      "korean_name": "매도호가9",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 57,
+      "field_name": "bidho9",
+      "korean_name": "매수호가9",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 58,
+      "field_name": "offerrem9",
+      "korean_name": "매도호가수량9",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 59,
+      "field_name": "bidrem9",
+      "korean_name": "매수호가수량9",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 60,
+      "field_name": "dcnt9",
+      "korean_name": "매도호가건수9",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 61,
+      "field_name": "scnt9",
+      "korean_name": "매수호가건수9",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 62,
+      "field_name": "offerho10",
+      "korean_name": "매도호가10",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 63,
+      "field_name": "bidho10",
+      "korean_name": "매수호가10",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 64,
+      "field_name": "offerrem10",
+      "korean_name": "매도호가수량10",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 65,
+      "field_name": "bidrem10",
+      "korean_name": "매수호가수량10",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 66,
+      "field_name": "dcnt10",
+      "korean_name": "매도호가건수10",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 67,
+      "field_name": "scnt10",
+      "korean_name": "매수호가건수10",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 68,
+      "field_name": "dvol",
+      "korean_name": "매도호가총수량",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 69,
+      "field_name": "svol",
+      "korean_name": "매수호가총수량",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 70,
+      "field_name": "toffernum",
+      "korean_name": "총매도호가건수",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 71,
+      "field_name": "tbidnum",
+      "korean_name": "총매수호가건수",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 72,
+      "field_name": "time",
+      "korean_name": "수신시간",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8403OutBlock",
+      "field_index": 73,
+      "field_name": "shcode",
+      "korean_name": "단축코드",
+      "type": "String",
+      "length": 6,
+      "required": true
+    }
+  ],
+  "rate_limit_per_sec": 10,
+  "corp_rate_limit_per_sec": 2,
+  "rate_source_group": "9f467798-6ce6-4d31-ab93-5a0e2860f89f"
+}

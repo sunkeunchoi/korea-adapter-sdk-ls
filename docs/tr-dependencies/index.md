@@ -6,7 +6,9 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 
 | TR | Name | Owner class | Support | Page |
 |----|------|-------------|---------|------|
+| `CCENQ10100` | KRX야간파생 주문가능수량 조회 | `account` | tracked | [CCENQ10100](./CCENQ10100.md) |
 | `CCENQ90200` | KRX야간파생 잔고조회 | `account` | tracked | [CCENQ90200](./CCENQ90200.md) |
+| `CFOAQ10100` | 선물옵션 주문가능수량조회 | `account` | tracked | [CFOAQ10100](./CFOAQ10100.md) |
 | `CFOBQ10500` | 선물옵션 계좌예탁금증거금조회 | `account` | implemented | [CFOBQ10500](./CFOBQ10500.md) |
 | `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | recommended | [CSPAQ12200](./CSPAQ12200.md) |
 | `CSPAQ12300` | BEP단가조회 | `account` | implemented | [CSPAQ12300](./CSPAQ12300.md) |
@@ -14,10 +16,17 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `CSPAT00601` | 현물 정규주문 (cash equity order submission) | `orders` | tracked | [CSPAT00601](./CSPAT00601.md) |
 | `S3_` | KOSPI 체결 실시간 시세 | `realtime` | recommended | [S3_](./S3_.md) |
 | `g3101` | 해외주식 API 현재가 조회 | `market_session` | tracked | [g3101](./g3101.md) |
+| `g3102` | 해외주식 API 시간대별 | `market_session` | tracked | [g3102](./g3102.md) |
+| `g3103` | 해외주식 API 일주월 조회 | `market_session` | tracked | [g3103](./g3103.md) |
 | `g3104` | 해외주식 API 종목정보 조회 | `market_session` | tracked | [g3104](./g3104.md) |
 | `g3106` | 해외주식 API 현재가호가 조회 | `market_session` | tracked | [g3106](./g3106.md) |
+| `g3190` | 해외주식 API 마스터 조회 | `market_session` | tracked | [g3190](./g3190.md) |
 | `o3101` | 해외선물마스터조회 | `market_session` | tracked | [o3101](./o3101.md) |
+| `o3105` | 해외선물 현재가(종목정보) 조회 | `market_session` | tracked | [o3105](./o3105.md) |
+| `o3106` | 해외선물 현재가호가 조회 | `market_session` | tracked | [o3106](./o3106.md) |
 | `o3121` | 해외선물옵션 마스터 조회 | `market_session` | tracked | [o3121](./o3121.md) |
+| `o3125` | 해외선물옵션 현재가(종목정보) 조회 | `market_session` | tracked | [o3125](./o3125.md) |
+| `o3126` | 해외선물옵션 현재가호가 조회 | `market_session` | tracked | [o3126](./o3126.md) |
 | `revoke` | 접근토큰 폐기 (OAuth2 token revoke) | `standalone` | implemented | [revoke](./revoke.md) |
 | `t1101` | 주식 현재가호가 조회 | `market_session` | recommended | [t1101](./t1101.md) |
 | `t1102` | 주식 현재가(시세) 조회 | `market_session` | recommended | [t1102](./t1102.md) |
@@ -51,12 +60,17 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t1958` | ELW종목비교 | `market_session` | implemented | [t1958](./t1958.md) |
 | `t1964` | ELW전광판 | `standalone` | tracked | [t1964](./t1964.md) |
 | `t1988` | 기초자산리스트조회 | `standalone` | tracked | [t1988](./t1988.md) |
+| `t2106` | 선물/옵션현재가시세메모 | `market_session` | tracked | [t2106](./t2106.md) |
+| `t2111` | 선물/옵션현재가(시세)조회 | `market_session` | tracked | [t2111](./t2111.md) |
+| `t2112` | 선물/옵션현재가호가조회 | `market_session` | tracked | [t2112](./t2112.md) |
 | `t2301` | 옵션전광판 | `market_session` | implemented | [t2301](./t2301.md) |
 | `t2522` | 주식선물기초자산조회 | `market_session` | implemented | [t2522](./t2522.md) |
 | `t3102` | 뉴스본문 | `standalone` | tracked | [t3102](./t3102.md) |
 | `t3320` | FNG_요약 | `standalone` | tracked | [t3320](./t3320.md) |
 | `t3341` | 재무순위종합 | `paginated` | implemented | [t3341](./t3341.md) |
 | `t8401` | 주식선물마스터조회(API용) | `market_session` | implemented | [t8401](./t8401.md) |
+| `t8402` | 주식선물현재가조회(API용) | `market_session` | tracked | [t8402](./t8402.md) |
+| `t8403` | 주식선물호가조회(API용) | `market_session` | tracked | [t8403](./t8403.md) |
 | `t8412` | 주식 차트(N분봉) 조회 | `paginated` | recommended | [t8412](./t8412.md) |
 | `t8424` | 전체업종 | `market_session` | implemented | [t8424](./t8424.md) |
 | `t8425` | 전체테마 | `market_session` | implemented | [t8425](./t8425.md) |
@@ -64,6 +78,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t8430` | 주식종목조회 | `standalone` | tracked | [t8430](./t8430.md) |
 | `t8431` | ELW종목조회 | `market_session` | implemented | [t8431](./t8431.md) |
 | `t8433` | 지수옵션마스터조회API용 | `market_session` | implemented | [t8433](./t8433.md) |
+| `t8434` | 선물/옵션멀티현재가조회 | `market_session` | tracked | [t8434](./t8434.md) |
 | `t8435` | 파생종목마스터조회API용 | `market_session` | implemented | [t8435](./t8435.md) |
 | `t8436` | 주식종목조회 API용 | `market_session` | implemented | [t8436](./t8436.md) |
 | `t8455` | KRX야간파생 마스터조회(API용) | `market_session` | tracked | [t8455](./t8455.md) |
