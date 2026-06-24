@@ -884,7 +884,7 @@ mod tests {
             "t1615", "t1640", "t1662", "t1664", "t1825", "t1826", "t1859", "t1866", "t1958",
             "t2301", "t2522", "t3341", "t8401", "t8424", "t8425", "t8426", "t8433", "t8435",
             "t8467", "t9943", "t9944", "t8431", "t8436", "t9905", "t9907", "t9942",
-            "t2111", "t2112", "t8402",
+            "t2111", "t2112", "t8402", "t8403",
         ];
         for tr in banner_trs {
             let page = reference
@@ -929,10 +929,11 @@ mod tests {
         // t2111 (U5 reach wave, F/O current-price quote) adds one more.
         // t2112 (U5 reach wave, F/O current-price order book) adds one more.
         // t8402 (U5 reach wave, stock-futures current price) adds one more.
+        // t8403 (U5 reach wave, stock-futures order book) adds one more.
         // (t2106 ships PENDING — empty memo array off-session — not counted.)
         assert_eq!(
             reference.len(),
-            56,
+            57,
             "index + the implemented reference pages"
         );
 
