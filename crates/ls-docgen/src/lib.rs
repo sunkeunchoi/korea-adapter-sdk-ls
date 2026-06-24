@@ -922,6 +922,8 @@ mod tests {
             "K3_",
             "H1_", "HA_", "S2_", "US3", "UH1", "US2", "GSC", "GSH", "OVC", "OVH", "OC0", "OH0",
             "FC9", "FH9",
+            "SC0", "SC1", "SC2", "SC3", "SC4", "C01", "O01", "H01", "AS0", "AS1", "AS2", "AS3",
+            "AS4", "TC1", "TC2", "TC3",
         ];
         for tr in banner_trs {
             let page = reference
@@ -988,9 +990,13 @@ mod tests {
         // GSC/GSH (overseas stock), OVC/OVH (overseas futures), OC0/OH0/FC9/FH9 (F/O) —
         // 14 TRs, each a clean paper lifecycle smoke via the live-smoke-ws-p1 sweep,
         // connection-reachable-only per KTD6 — add 14 more.
+        // P2 order-event WS lane (realtime flip wave): SC0-SC4 (stock), C01/O01/H01 (F/O),
+        // AS0-AS4 (overseas stock), TC1-TC3 (overseas futures) — 16 TRs, each a clean
+        // order-event (tr_type "1"/"2") lifecycle via the live-smoke-ws-p2 sweep,
+        // observation-only + connection-reachable-only per KTD6 — add 16 more.
         assert_eq!(
             reference.len(),
-            78,
+            94,
             "index + the implemented reference pages"
         );
 
