@@ -1,0 +1,1148 @@
+{
+  "tr_code": "AS1",
+  "tr_name": "해외주식주문체결(미국)",
+  "protocol": "websocket",
+  "is_websocket": true,
+  "endpoint_path": "/websocket/overseas-stock",
+  "api_group_id": "0c023f96-5137-48cf-8682-8dd30bbc81be",
+  "source_group_name": "[해외주식] 실시간 시세",
+  "request_blocks": [
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 0,
+      "field_name": "token",
+      "korean_name": "접근토큰",
+      "type": "String",
+      "length": 1000,
+      "required": true,
+      "description_hash": "ee5c73906207dffe"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 1,
+      "field_name": "tr_type",
+      "korean_name": "거래 Type",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "5d9761ebdce44e7f"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_body",
+      "field_index": 0,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 3,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_body",
+      "field_index": 1,
+      "field_name": "tr_key",
+      "korean_name": "단축코드",
+      "type": "String",
+      "length": 8,
+      "required": false
+    }
+  ],
+  "response_blocks": [
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 0,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 3,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 0,
+      "field_name": "lineseq",
+      "korean_name": "라인일련번호",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 1,
+      "field_name": "accno",
+      "korean_name": "계좌번호",
+      "type": "String",
+      "length": 11,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 2,
+      "field_name": "user",
+      "korean_name": "조작자ID",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 3,
+      "field_name": "len",
+      "korean_name": "헤더길이",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 4,
+      "field_name": "gubun",
+      "korean_name": "헤더구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 5,
+      "field_name": "compress",
+      "korean_name": "압축구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 6,
+      "field_name": "encrypt",
+      "korean_name": "암호구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 7,
+      "field_name": "offset",
+      "korean_name": "공통시작지점",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 8,
+      "field_name": "trcode",
+      "korean_name": "TRCODE",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 9,
+      "field_name": "comid",
+      "korean_name": "이용사번호",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 10,
+      "field_name": "userid",
+      "korean_name": "사용자ID",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 11,
+      "field_name": "media",
+      "korean_name": "접속매체",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 12,
+      "field_name": "ifid",
+      "korean_name": "I/F일련번호",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 13,
+      "field_name": "seq",
+      "korean_name": "전문일련번호",
+      "type": "String",
+      "length": 9,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 14,
+      "field_name": "trid",
+      "korean_name": "TR추적ID",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 15,
+      "field_name": "pubip",
+      "korean_name": "공인IP",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 16,
+      "field_name": "prvip",
+      "korean_name": "사설IP",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 17,
+      "field_name": "pcbpno",
+      "korean_name": "처리지점번호",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 18,
+      "field_name": "bpno",
+      "korean_name": "지점번호",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 19,
+      "field_name": "termno",
+      "korean_name": "단말번호",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 20,
+      "field_name": "lang",
+      "korean_name": "언어구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 21,
+      "field_name": "proctm",
+      "korean_name": "AP처리시간",
+      "type": "String",
+      "length": 9,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 22,
+      "field_name": "msgcode",
+      "korean_name": "메세지코드",
+      "type": "String",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 23,
+      "field_name": "outgu",
+      "korean_name": "메세지출력구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 24,
+      "field_name": "compreq",
+      "korean_name": "압축요청구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 25,
+      "field_name": "funckey",
+      "korean_name": "기능키",
+      "type": "String",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 26,
+      "field_name": "reqcnt",
+      "korean_name": "요청레코드개수",
+      "type": "String",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 27,
+      "field_name": "filler",
+      "korean_name": "예비영역",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 28,
+      "field_name": "cont",
+      "korean_name": "연속구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 29,
+      "field_name": "contkey",
+      "korean_name": "연속키값",
+      "type": "String",
+      "length": 18,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 30,
+      "field_name": "varlen",
+      "korean_name": "가변시스템길이",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 31,
+      "field_name": "varhdlen",
+      "korean_name": "가변해더길이",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 32,
+      "field_name": "varmsglen",
+      "korean_name": "가변메시지길이",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 33,
+      "field_name": "trsrc",
+      "korean_name": "조회발원지",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 34,
+      "field_name": "eventid",
+      "korean_name": "I/F이벤트ID",
+      "type": "String",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 35,
+      "field_name": "ifinfo",
+      "korean_name": "I/F정보",
+      "type": "String",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 36,
+      "field_name": "filler1",
+      "korean_name": "예비영역",
+      "type": "String",
+      "length": 41,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 37,
+      "field_name": "sOrdxctPtnCode",
+      "korean_name": "주문체결유형코드",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 38,
+      "field_name": "sOrdMktCode",
+      "korean_name": "주문시장코드",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 39,
+      "field_name": "sOrdPtnCode",
+      "korean_name": "주문유형코드",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 40,
+      "field_name": "sMgmtBrnNo",
+      "korean_name": "관리지점번호",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 41,
+      "field_name": "sAcntNo",
+      "korean_name": "계좌번호",
+      "type": "String",
+      "length": 20,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 42,
+      "field_name": "sAcntNm",
+      "korean_name": "계좌명",
+      "type": "String",
+      "length": 40,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 43,
+      "field_name": "sIsuNo",
+      "korean_name": "종목번호",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 44,
+      "field_name": "sIsuNm",
+      "korean_name": "종목명",
+      "type": "String",
+      "length": 40,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 45,
+      "field_name": "sOrdNo",
+      "korean_name": "주문번호",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 46,
+      "field_name": "sOrgOrdNo",
+      "korean_name": "원주문번호",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 47,
+      "field_name": "sExecNO",
+      "korean_name": "체결번호",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 48,
+      "field_name": "sAbrdExecId",
+      "korean_name": "해외체결ID",
+      "type": "String",
+      "length": 18,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 49,
+      "field_name": "sOrdQty",
+      "korean_name": "주문수량",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 50,
+      "field_name": "sOrdPrc",
+      "korean_name": "주문가",
+      "type": "String",
+      "length": 13,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 51,
+      "field_name": "sExecQty",
+      "korean_name": "체결수량",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 52,
+      "field_name": "sExecPrc",
+      "korean_name": "체결가",
+      "type": "String",
+      "length": 13,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 53,
+      "field_name": "sMdfyCnfQty",
+      "korean_name": "정정확인수량",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 54,
+      "field_name": "sMdfyCnfPrc",
+      "korean_name": "정정확인가",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 55,
+      "field_name": "sCancCnfQty",
+      "korean_name": "취소확인수량",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 56,
+      "field_name": "sRjtQty",
+      "korean_name": "거부수량",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 57,
+      "field_name": "sOrdTrxPtnCode",
+      "korean_name": "주문처리유형코드",
+      "type": "String",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 58,
+      "field_name": "sMtiordSeqno",
+      "korean_name": "복수주문일련번호",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 59,
+      "field_name": "sOrdCndi",
+      "korean_name": "주문조건",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 60,
+      "field_name": "sOrdprcPtnCode",
+      "korean_name": "호가유형코드",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 61,
+      "field_name": "sShtnIsuNo",
+      "korean_name": "단축종목번호",
+      "type": "String",
+      "length": 9,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 62,
+      "field_name": "sOpDrtnNo",
+      "korean_name": "운용지시번호",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 63,
+      "field_name": "sUnercQty",
+      "korean_name": "미체결수량(주문)",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 64,
+      "field_name": "sOrgOrdUnercQty",
+      "korean_name": "원주문미체결수량",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 65,
+      "field_name": "sOrgOrdMdfyQty",
+      "korean_name": "원주문정정수량",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 66,
+      "field_name": "sOrgOrdCancQty",
+      "korean_name": "원주문취소수량",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 67,
+      "field_name": "sOrdAvrExecPrc",
+      "korean_name": "주문평균체결가",
+      "type": "String",
+      "length": 13,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 68,
+      "field_name": "sOrdAmt",
+      "korean_name": "주문금액",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 69,
+      "field_name": "sStdIsuNo",
+      "korean_name": "표준종목번호",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 70,
+      "field_name": "sBnsTp",
+      "korean_name": "매매구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 71,
+      "field_name": "sCommdaCode",
+      "korean_name": "통신매체코드",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 72,
+      "field_name": "sOrdAcntNo",
+      "korean_name": "주문계좌번호",
+      "type": "String",
+      "length": 20,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 73,
+      "field_name": "sAgrgtBrnNo",
+      "korean_name": "집계지점번호",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 74,
+      "field_name": "sRegMktCode",
+      "korean_name": "등록시장코드",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 75,
+      "field_name": "sMnyMgnRat",
+      "korean_name": "현금증거금률",
+      "type": "String",
+      "length": 7,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 76,
+      "field_name": "sSubstMgnRat",
+      "korean_name": "대용증거금률",
+      "type": "String",
+      "length": 9,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 77,
+      "field_name": "sMnyExecAmt",
+      "korean_name": "현금체결금액",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 78,
+      "field_name": "sSubstExecAmt",
+      "korean_name": "대용체결금액",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 79,
+      "field_name": "sCmsnAmtExecAmt",
+      "korean_name": "수수료체결금액",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 80,
+      "field_name": "sPrdayRuseExecVal",
+      "korean_name": "전일재사용체결금액",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 81,
+      "field_name": "sCrdayRuseExecVal",
+      "korean_name": "금일재사용체결금액",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 82,
+      "field_name": "sSpotExecQty",
+      "korean_name": "실물체결수량",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 83,
+      "field_name": "sStslExecQty",
+      "korean_name": "공매도체결수량",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 84,
+      "field_name": "sStrtgCode",
+      "korean_name": "전략코드",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 85,
+      "field_name": "sGrpId",
+      "korean_name": "그룹ID",
+      "type": "String",
+      "length": 20,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 86,
+      "field_name": "sOrdSeqno",
+      "korean_name": "주문회차",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 87,
+      "field_name": "sOrdUserId",
+      "korean_name": "주문자ID",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 88,
+      "field_name": "sExecTime",
+      "korean_name": "체결시각",
+      "type": "String",
+      "length": 9,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 89,
+      "field_name": "sRcptExecTime",
+      "korean_name": "거래소수신체결시각",
+      "type": "String",
+      "length": 9,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 90,
+      "field_name": "sRjtRsn",
+      "korean_name": "거부사유",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 91,
+      "field_name": "sSecBalQty",
+      "korean_name": "잔고수량",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 92,
+      "field_name": "sSpotOrdAbleQty",
+      "korean_name": "실물주문가능수량",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 93,
+      "field_name": "sOrdAbleRuseQty",
+      "korean_name": "주문가능재사용수량",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 94,
+      "field_name": "sFlctQty",
+      "korean_name": "변동수량",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 95,
+      "field_name": "sSecBalQtyD2",
+      "korean_name": "잔고수량(D2)",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 96,
+      "field_name": "sSellAbleQty",
+      "korean_name": "매도주문가능수량",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 97,
+      "field_name": "sUnercSellOrdQty",
+      "korean_name": "미체결매도주문수량",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 98,
+      "field_name": "sAvrPchsPrc",
+      "korean_name": "평균매입가",
+      "type": "String",
+      "length": 13,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 99,
+      "field_name": "sPchsAmt",
+      "korean_name": "매입금액",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 100,
+      "field_name": "sDeposit",
+      "korean_name": "예수금",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 101,
+      "field_name": "sSubstAmt",
+      "korean_name": "대용금",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 102,
+      "field_name": "sCsgnMnyMgn",
+      "korean_name": "위탁현금증거금액",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 103,
+      "field_name": "sCsgnSubstMgn",
+      "korean_name": "위탁대용증거금액",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 104,
+      "field_name": "sOrdAbleMny",
+      "korean_name": "주문가능현금",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 105,
+      "field_name": "sOrdAbleSubstAmt",
+      "korean_name": "주문가능대용금액",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 106,
+      "field_name": "sRuseAbleAmt",
+      "korean_name": "재사용가능금액",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 107,
+      "field_name": "sMgntrnCode",
+      "korean_name": "신용거래코드",
+      "type": "String",
+      "length": 3,
+      "required": true
+    }
+  ],
+  "rate_source_group": "0c023f96-5137-48cf-8682-8dd30bbc81be"
+}

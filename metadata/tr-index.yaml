@@ -527,3 +527,189 @@ trs:
     protocol: rest
     instrument_domain: futures_options
     venue_session: krx_regular
+  K3_:
+    file: trs/K3_.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  H1_:
+    file: trs/H1_.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  HA_:
+    file: trs/HA_.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  S2_:
+    file: trs/S2_.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  US3:
+    file: trs/US3.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  UH1:
+    file: trs/UH1.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  US2:
+    file: trs/US2.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  GSC:
+    file: trs/GSC.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: overseas_stock
+    venue_session: unspecified
+  GSH:
+    file: trs/GSH.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: overseas_stock
+    venue_session: unspecified
+  OVC:
+    file: trs/OVC.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  OVH:
+    file: trs/OVH.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  OC0:
+    file: trs/OC0.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  OH0:
+    file: trs/OH0.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  FC9:
+    file: trs/FC9.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  FH9:
+    file: trs/FH9.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  SC0:
+    file: trs/SC0.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  SC1:
+    file: trs/SC1.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  SC2:
+    file: trs/SC2.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  SC3:
+    file: trs/SC3.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  SC4:
+    file: trs/SC4.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  C01:
+    file: trs/C01.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  O01:
+    file: trs/O01.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  H01:
+    file: trs/H01.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  AS0:
+    file: trs/AS0.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: overseas_stock
+    venue_session: unspecified
+  AS1:
+    file: trs/AS1.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: overseas_stock
+    venue_session: unspecified
+  AS2:
+    file: trs/AS2.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: overseas_stock
+    venue_session: unspecified
+  AS3:
+    file: trs/AS3.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: overseas_stock
+    venue_session: unspecified
+  AS4:
+    file: trs/AS4.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: overseas_stock
+    venue_session: unspecified
+  TC1:
+    file: trs/TC1.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  TC2:
+    file: trs/TC2.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  TC3:
+    file: trs/TC3.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: overseas_futures
+    venue_session: unspecified
