@@ -1,0 +1,30 @@
+{
+  "rsp_cd": "00000",
+  "rsp_msg": "정상처리 되었습니다.",
+  "CCENQ90200OutBlock1": {
+    "RecCnt": 1,
+    "AcntNo": "00000000-01",
+    "InptPwd": "0000",
+    "BalEvalTp": "2"
+  },
+  "CCENQ90200OutBlock2": {
+    "RecCnt": 1,
+    "AcntNm": "홍길동",
+    "EvalDpsamtTotamt": 34399538,
+    "DpsamtTotamt": 31925203,
+    "PsnOutAbleTotAmt": 20321010,
+    "OrdAbleTotAmt": 20327175,
+    "MnyOrdAbleAmt": 20327176,
+    "CsgnMgnTotamt": 11598028,
+    "EvalPnlSum": 6288000
+  },
+  "CCENQ90200OutBlock3": [
+    {
+      "FnoIsuNo": "105W6000",
+      "IsuNm": "MF 2506",
+      "UnsttQty": 2,
+      "EvalPnl": 6288000,
+      "EvalAmt": 40658000
+    }
+  ]
+}

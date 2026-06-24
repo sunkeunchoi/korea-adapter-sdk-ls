@@ -722,6 +722,60 @@ pub const CFOBQ10500_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(10),
 };
 
+/// CCENQ90200 — KRX야간파생 잔고조회 (KRX night-derivatives account balance inquiry,
+/// read-only). Account-gated, krx_extended session.
+///
+/// Dispatches through plain `Inner::post` (non-paginated): the result is
+/// single-page (`facets.self_paginated: false`), so `has_pagination: false`.
+pub const CCENQ90200_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CCENQ90200",
+    path: "/futureoption/accno",
+    module: "futureoption",
+    group: "[선물/옵션] 계좌",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Account,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
+/// CFOAQ10100 — 선물옵션 주문가능수량조회 (F/O orderable-quantity inquiry, read-only —
+/// an inquiry, NOT an order).
+///
+/// Dispatches through plain `Inner::post` (non-paginated): the result is
+/// single-page (`facets.self_paginated: false`), so `has_pagination: false`.
+pub const CFOAQ10100_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CFOAQ10100",
+    path: "/futureoption/accno",
+    module: "futureoption",
+    group: "[선물/옵션] 계좌",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Account,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(10),
+};
+
+/// CCENQ10100 — KRX야간파생 주문가능수량 조회 (KRX night-derivatives orderable-quantity
+/// inquiry, read-only — an inquiry, NOT an order). krx_extended session.
+///
+/// Dispatches through plain `Inner::post` (non-paginated): the result is
+/// single-page (`facets.self_paginated: false`), so `has_pagination: false`.
+pub const CCENQ10100_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CCENQ10100",
+    path: "/futureoption/accno",
+    module: "futureoption",
+    group: "[선물/옵션] 계좌",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Account,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(10),
+};
+
 /// t2301 — 옵션전광판 (F/O option board; non-paginated market read). Keyed by a
 /// contract month + mini/regular selector.
 pub const T2301_POLICY: EndpointPolicy = EndpointPolicy {
@@ -1049,6 +1103,9 @@ mod tests {
             CSPAQ12300_POLICY,
             CSPAQ22200_POLICY,
             CFOBQ10500_POLICY,
+            CCENQ90200_POLICY,
+            CFOAQ10100_POLICY,
+            CCENQ10100_POLICY,
             T2301_POLICY,
             T2522_POLICY,
             T8401_POLICY,

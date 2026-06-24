@@ -1,0 +1,19 @@
+{
+  "rsp_cd": "00000",
+  "rsp_msg": "정상처리 되었습니다.",
+  "CCENQ10100OutBlock1": {
+    "RecCnt": 1,
+    "AcntNo": "00000000-01",
+    "Pwd": "0000",
+    "FnoIsuNo": "101W6000"
+  },
+  "CCENQ10100OutBlock2": {
+    "RecCnt": 1,
+    "AcntNm": "홍길동",
+    "OrdAbleQty": 2,
+    "NewOrdAbleQty": 3,
+    "LqdtOrdAbleQty": 1,
+    "OrdAbleAmt": 20327175,
+    "MnyOrdAbleAmt": 20327176
+  }
+}

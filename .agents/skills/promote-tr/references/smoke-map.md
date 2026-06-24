@@ -21,6 +21,9 @@ TR marked `ready` is a promote-tr candidate.
 | `CSPAQ12300` | `live-smoke-cspaq12300` | `live_smoke_cspaq12300` | provisioned paper account (else SMOKE-FAIL) | implemented-only | paper read-only BEP/balance inquiry |
 | `CSPAQ22200` | `live-smoke-cspaq22200` | `live_smoke_cspaq22200` | provisioned paper account (else SMOKE-FAIL) | implemented-only | paper read-only orderable-amount/valuation inquiry |
 | `CFOBQ10500` | `live-smoke-cfobq10500` | `live_smoke_cfobq10500` | provisioned paper account (empty `00707` on a position-less account → PENDING) | implemented-only | paper read-only F/O deposit/margin inquiry |
+| `CCENQ90200` | `live-smoke-ccenq90200` | `live_smoke_ccenq90200` | provisioned paper account; krx_extended night window (off-window empty → PENDING, regular clock N/A) | implemented-only | paper read-only KRX night-derivatives balance inquiry |
+| `CFOAQ10100` | `live-smoke-cfoaq10100` | `live_smoke_cfoaq10100` | provisioned paper account + current `LS_LIVE_SMOKE_FNOISU` (empty `00707` → PENDING) | implemented-only | paper read-only F/O orderable-quantity inquiry (조회, not an order) |
+| `CCENQ10100` | `live-smoke-ccenq10100` | `live_smoke_ccenq10100` | provisioned paper account + current `LS_LIVE_SMOKE_FNOISU`; krx_extended night window | implemented-only | paper read-only KRX night-derivatives orderable-quantity inquiry (조회, not an order) |
 | `S3_` | `live-smoke-ws` | `live_smoke_ws` | paper WS port reachable | ready | **websocket lifecycle reachability only** |
 | `t8425` | `live-smoke-t8425` | `live_smoke_t8425` | open session | implemented-only | paper all-themes read |
 | `t8436` | `live-smoke-t8436` | `live_smoke_t8436` | open session | implemented-only | paper stock-master list, gubun=0 |

@@ -18,7 +18,8 @@ use chrono::{Datelike, FixedOffset, NaiveDate, Utc, Weekday};
 use futures::StreamExt;
 use ls_core::{LsConfig, LsError, LsResult};
 use ls_sdk::account::{
-    CFOBQ10500Request, CSPAQ12200Request, CSPAQ12300Request, CSPAQ22200Request,
+    CCENQ10100Request, CCENQ90200Request, CFOAQ10100Request, CFOBQ10500Request, CSPAQ12200Request,
+    CSPAQ12300Request, CSPAQ22200Request,
 };
 use ls_sdk::market_session::{
     T1101Request, T1102Request, T1485Request, T1511Request, T1516Request, T1531Request,
@@ -1492,6 +1493,118 @@ async fn live_smoke_cfobq10500() {
                 "SMOKE-FAIL target=live-smoke-cfobq10500 account-state failure (not transport)"
             );
             panic!("live-smoke-cfobq10500 failed (account-state, may be paper-account setup): {e}");
+        }
+    }
+}
+
+/// `make live-smoke-ccenq90200`: paper guard → read-only `CCENQ90200`
+/// KRX night-derivatives account balance inquiry (krx_extended session).
+///
+/// The account number comes from config, never the caller — the only inputs are
+/// the record count and two evaluation-shape enums. This is a night (krx_extended)
+/// read: an empty `00707`/empty result OFF the night window is the PENDING case
+/// (callable, shape unconfirmed), NOT a defect — the regular ~09:00–15:30 KST clock
+/// does not apply. A success records a credential-free line (only the numeric
+/// `rsp_cd` and a structural `outblock2` row count; `rsp_msg` is dropped because it
+/// can carry account-identifying text). A failed run emits a distinct `SMOKE-FAIL`
+/// stderr line, never a capturable `LIVE-SMOKE` line.
+#[tokio::test]
+#[ignore = "live smoke: needs a provisioned LS paper account; run via `make live-smoke-ccenq90200`"]
+async fn live_smoke_ccenq90200() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+
+    let req = CCENQ90200Request::new("1", "0", "0");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.account().night_balance(&req).await {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock2.len())), "balrows")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-ccenq90200",
+                &format!("env=paper balevaltp=0 futsprcevaltp=0 date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!(
+                "SMOKE-FAIL target=live-smoke-ccenq90200 account-state failure (not transport)"
+            );
+            panic!("live-smoke-ccenq90200 failed (account-state, may be paper-account setup): {e}");
+        }
+    }
+}
+
+/// `make live-smoke-cfoaq10100`: paper guard → read-only `CFOAQ10100` F/O
+/// orderable-quantity INQUIRY (조회, NOT an order).
+///
+/// The account number comes from config, never the caller. The F/O instrument is
+/// taken from `LS_LIVE_SMOKE_FNOISU` (a current KOSPI200-futures code, e.g.
+/// `101V6000`) so the smoke targets a live contract; the rest are conservative
+/// query-shape inputs. A position-less paper account may return an empty `00707`
+/// (the PENDING case). A success records a credential-free line (only the numeric
+/// `rsp_cd` and a structural `outblock2` row count; `rsp_msg` is dropped). A failed
+/// run emits a distinct `SMOKE-FAIL` stderr line, never a capturable `LIVE-SMOKE`
+/// line.
+#[tokio::test]
+#[ignore = "live smoke: needs a provisioned LS paper account + current FnoIsuNo; run via `make live-smoke-cfoaq10100`"]
+async fn live_smoke_cfoaq10100() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+
+    let fnoisu = std::env::var("LS_LIVE_SMOKE_FNOISU").unwrap_or_else(|_| "101V6000".to_string());
+    let req = CFOAQ10100Request::new("1", "1", "0", "0", &fnoisu, "1", "0", "00");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.account().fo_orderable_qty(&req).await {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock2.len())), "qtyrows")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-cfoaq10100",
+                &format!("env=paper fnoisu={fnoisu} qrytp=1 date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!(
+                "SMOKE-FAIL target=live-smoke-cfoaq10100 account-state failure (not transport)"
+            );
+            panic!("live-smoke-cfoaq10100 failed (account-state, may be paper-account setup): {e}");
+        }
+    }
+}
+
+/// `make live-smoke-ccenq10100`: paper guard → read-only `CCENQ10100` KRX
+/// night-derivatives orderable-quantity INQUIRY (조회, NOT an order; krx_extended).
+///
+/// The account number comes from config, never the caller. The F/O instrument is
+/// taken from `LS_LIVE_SMOKE_FNOISU`. This is a night (krx_extended) read: an empty
+/// `00707`/empty result off the night window is the PENDING case, NOT a defect —
+/// the regular clock does not apply. A success records a credential-free line (only
+/// the numeric `rsp_cd` and a structural `outblock2` row count; `rsp_msg` dropped).
+/// A failed run emits a distinct `SMOKE-FAIL` stderr line, never a capturable
+/// `LIVE-SMOKE` line.
+#[tokio::test]
+#[ignore = "live smoke: needs a provisioned LS paper account + current FnoIsuNo; run via `make live-smoke-ccenq10100`"]
+async fn live_smoke_ccenq10100() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+
+    let fnoisu = std::env::var("LS_LIVE_SMOKE_FNOISU").unwrap_or_else(|_| "101V6000".to_string());
+    let req = CCENQ10100Request::new("1", "1", "0", "0", &fnoisu, "1", "0", "00");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.account().night_orderable_qty(&req).await {
+        Ok(resp) => {
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock2.len())), "qtyrows")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-ccenq10100",
+                &format!("env=paper fnoisu={fnoisu} qrytp=1 date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!(
+                "SMOKE-FAIL target=live-smoke-ccenq10100 account-state failure (not transport)"
+            );
+            panic!("live-smoke-ccenq10100 failed (account-state, may be paper-account setup): {e}");
         }
     }
 }
