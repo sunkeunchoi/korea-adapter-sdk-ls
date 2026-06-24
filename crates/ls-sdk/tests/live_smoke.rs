@@ -41,6 +41,7 @@ use ls_sdk::paginated::{
     T1482Request, T1489Request, T1492Request, T1514Request, T1866Request, T3341Request,
     T8412Request,
 };
+use ls_sdk::realtime::WsLane;
 use ls_sdk::LsSdk;
 use tokio::time::timeout;
 
@@ -1637,7 +1638,7 @@ async fn live_smoke_ccenq10100() {
 // U3/U6 — WebSocket lifecycle smoke (generic helper + S3_ + negative control)
 // ---------------------------------------------------------------------------
 
-/// GENERIC WS lifecycle smoke, parameterized by `(tr_cd, tr_key, tr_type)` — the
+/// GENERIC WS lifecycle smoke, parameterized by `(tr_cd, tr_key, lane)` — the
 /// reusable helper the per-TR U5/U6 smokes call (KTD2).
 ///
 /// Runs the full lifecycle on a FRESH/isolated `WsManager` per call (a fresh
@@ -1653,7 +1654,7 @@ async fn live_smoke_ccenq10100() {
 ///
 /// Returns the credential-free `row_note` for the caller to `record(...)`. NO
 /// raw-frame logging anywhere on this path (ACK frames echo the bearer token).
-async fn ws_lifecycle_smoke(tr_cd: &str, tr_key: &str, tr_type: &str) -> String {
+async fn ws_lifecycle_smoke(tr_cd: &str, tr_key: &str, lane: WsLane) -> String {
     paper_guard().expect("paper guard must pass for a paper run");
     let config = LsConfig::from_env().expect("config from env");
     assert!(
@@ -1672,7 +1673,7 @@ async fn ws_lifecycle_smoke(tr_cd: &str, tr_key: &str, tr_type: &str) -> String 
     let ws = sdk.realtime();
 
     let (handle, mut stream) = ws
-        .subscribe_typed::<WsLifecycleRow>(tr_cd, tr_key, tr_type)
+        .subscribe_typed::<WsLifecycleRow>(tr_cd, tr_key, lane)
         .await
         .unwrap_or_else(|e| panic!("subscribe_typed {tr_cd} failed (connect/subscribe lifecycle): {e}"));
 
@@ -1714,7 +1715,7 @@ struct WsLifecycleRow {
 #[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-ws`"]
 async fn live_smoke_ws() {
     let symbol = resolve_symbol();
-    let row_note = ws_lifecycle_smoke("S3_", &symbol, "3").await;
+    let row_note = ws_lifecycle_smoke("S3_", &symbol, WsLane::MarketData).await;
     record(
         "live-smoke-ws",
         &format!("symbol={symbol} ws_port=29443 tr_type=3"),
@@ -1734,10 +1735,12 @@ async fn live_smoke_ws() {
 /// returns `Ok` for a valid AND an invalid `tr_cd` alike. The only live signal a
 /// rejection can produce, given today's code, is an INBOUND frame the gateway
 /// pushes whose `header.tr_cd`/`tr_key` route it back to this subscriber's
-/// stream (surfacing as a body with a non-empty `rsp_cd`), OR a CLOSED stream.
-/// If neither arrives — only silence — then a rejected and an accepted subscribe
-/// are indistinguishable on the live paper path, which means every U5/U6 flip
-/// can claim only CONNECTION-REACHABLE-ONLY, not per-TR reachability.
+/// stream, surfacing as a body with a non-empty `rsp_cd` — that is the ONLY
+/// tr_cd-attributable signal. A closed stream or a decode error is INCONCLUSIVE
+/// (a transient disconnect produces the same close), and pure silence is
+/// NOT-OBSERVABLE. If the result is anything but a clean `rsp_cd`, a rejected and
+/// an accepted subscribe are indistinguishable on the live paper path, so every
+/// U5/U6 flip can claim only CONNECTION-REACHABLE-ONLY, not per-TR reachability.
 ///
 /// OPEN-QUESTION STATUS: UNRESOLVED in this environment — there is no market
 /// session or live credentials here, so this smoke is `#[ignore]` and a human
@@ -1760,9 +1763,9 @@ async fn live_smoke_ws_negative() {
         "expected the paper WS port 29443, got {ws_url}"
     );
 
-    // A deliberately-invalid TR code: not a real LS realtime channel. tr_type "3"
-    // (market-data register) is used arbitrarily — the lane is irrelevant when the
-    // code itself is bogus.
+    // A deliberately-invalid TR code: not a real LS realtime channel. The market-
+    // data lane is used arbitrarily — the lane is irrelevant when the code itself
+    // is bogus.
     const INVALID_TR_CD: &str = "ZZ9";
 
     let sdk = LsSdk::new(config).expect("sdk construction");
@@ -1770,21 +1773,38 @@ async fn live_smoke_ws_negative() {
 
     // subscribe_typed may well return Ok even for an invalid code (fire-and-forget).
     let subscribe_outcome = ws
-        .subscribe_typed::<WsLifecycleRow>(INVALID_TR_CD, &resolve_symbol(), "3")
+        .subscribe_typed::<WsLifecycleRow>(INVALID_TR_CD, &resolve_symbol(), WsLane::MarketData)
         .await;
 
     let observation = match subscribe_outcome {
         Err(e) => format!("subscribe returned Err immediately: {e}"),
         Ok((handle, mut stream)) => {
-            // Timebox for an observable rejection: an inbound rejection-shaped
-            // body, a decode error, or a closed stream. Silence ⇒ NOT observable.
+            // Timebox for a tr_cd-ATTRIBUTABLE rejection signal. Only an inbound
+            // body routed to THIS subscriber by composite key carrying a non-empty
+            // `rsp_cd` is OBSERVABLE — that is the one signal a rejection produces
+            // that an acceptance does not. A bare stream close or a decode error is
+            // INCONCLUSIVE: a transient gateway disconnect / reconnect-budget
+            // exhaustion produces the same close and is NOT attributable to the
+            // invalid tr_cd, so treating it as OBSERVABLE would false-confirm the
+            // stronger per-TR reachability claim KTD6 exists to gate. Silence is
+            // NOT-OBSERVABLE. INCONCLUSIVE and NOT-OBSERVABLE both leave flips at
+            // connection-reachable-only.
             let note = match timeout(Duration::from_secs(5), stream.next()).await {
                 Ok(Some(Ok(row))) if !row.rsp_cd.is_empty() => {
                     format!("OBSERVABLE: inbound rejection body rsp_cd={}", row.rsp_cd)
                 }
-                Ok(Some(Ok(_))) => "inbound body with no rsp_cd (ambiguous)".to_string(),
-                Ok(Some(Err(_))) => "OBSERVABLE: stream yielded an error item".to_string(),
-                Ok(None) => "OBSERVABLE: stream closed (gateway severed)".to_string(),
+                Ok(Some(Ok(_))) => {
+                    "INCONCLUSIVE: inbound body with no rsp_cd (not attributable)".to_string()
+                }
+                Ok(Some(Err(_))) => {
+                    "INCONCLUSIVE: routed frame failed to decode (not a clean rejection signal)"
+                        .to_string()
+                }
+                Ok(None) => {
+                    "INCONCLUSIVE: stream closed — indistinguishable from a transient \
+                     disconnect; NOT attributable to the invalid tr_cd"
+                        .to_string()
+                }
                 Err(_) => {
                     "NOT-OBSERVABLE: silence in timebox — flips are connection-reachable-only"
                         .to_string()

@@ -39,7 +39,7 @@ mod frame;
 mod overflow;
 mod stream;
 
-pub use frame::{composite_key, S3Trade};
+pub use frame::{composite_key, S3Trade, WsLane};
 pub use stream::WsStream;
 
 pub(crate) use dispatch::{DispatchEntry, WS_OUTBOUND_CHANNEL_CAPACITY};
@@ -62,11 +62,10 @@ use ls_core::{Inner, LsError, LsResult};
 
 /// Active subscription store + WebSocket connection lifecycle.
 pub struct WsManager {
-    /// `composite_key(tr_cd, tr_key)` → `(tr_cd, tr_type)`, where `tr_type` is the
-    /// lane's register value (`"3"` market-data, `"1"` order-event). The bearer
-    /// token is NEVER stored here — only routing identifiers and the lane, so the
-    /// replay set carries no secret and rebuilds the correct frame per lane.
-    pub(crate) subscriptions: DashMap<String, (String, String)>,
+    /// `composite_key(tr_cd, tr_key)` → `(tr_cd, lane)`. The bearer token is NEVER
+    /// stored here — only routing identifiers and the [`WsLane`], so the replay set
+    /// carries no secret and rebuilds the correct register frame per lane.
+    pub(crate) subscriptions: DashMap<String, (String, WsLane)>,
 
     /// Outbound frame sender — re-established atomically on every reconnect.
     /// `None` when no active connection.
@@ -145,14 +144,12 @@ impl WsManager {
     /// live connection exists, `ensure_connected`'s replay loop includes the
     /// just-inserted entry, so we return early to avoid a double-send.
     #[tracing::instrument(skip_all, fields(tr_cd, tr_key))]
-    pub async fn subscribe(&self, tr_cd: &str, tr_key: &str, tr_type: &str) -> LsResult<()> {
+    pub async fn subscribe(&self, tr_cd: &str, tr_key: &str, lane: WsLane) -> LsResult<()> {
         // Step 1: RECORD first (the ordering point). A send that fails after this
-        // must not take the subscription with it. Store the lane's `tr_type` so
-        // reconnect replay rebuilds the correct register frame.
-        self.subscriptions.insert(
-            composite_key(tr_cd, tr_key),
-            (tr_cd.to_string(), tr_type.to_string()),
-        );
+        // must not take the subscription with it. Store the `lane` so reconnect
+        // replay rebuilds the correct register frame.
+        self.subscriptions
+            .insert(composite_key(tr_cd, tr_key), (tr_cd.to_string(), lane));
 
         // Step 2: check connection state under a single lock acquisition.
         let needs_connect = self.tx.lock().await.is_none();
@@ -176,7 +173,7 @@ impl WsManager {
                 .token_manager
                 .get_or_refresh(&self.http_client, &self.config, &self.rate_limiter)
                 .await?;
-            let msg = build_subscribe_msg(tr_cd, tr_key, &token, tr_type);
+            let msg = build_subscribe_msg(tr_cd, tr_key, &token, lane);
             tx.send(msg)
                 .await
                 .map_err(|e| LsError::WebSocket(e.to_string()))?;
@@ -279,7 +276,7 @@ impl WsManager {
         &self,
         tr_cd: &str,
         tr_key: &str,
-        tr_type: &str,
+        lane: WsLane,
     ) -> LsResult<(SubscriptionHandle, WsStream<Res>)>
     where
         Res: serde::de::DeserializeOwned + Send + 'static,
@@ -311,7 +308,7 @@ impl WsManager {
         // its orphaned stream ends rather than pending forever.
         close_latest_only_entry(self.dispatch.insert(key, entry));
 
-        if let Err(e) = self.subscribe(tr_cd, tr_key, tr_type).await {
+        if let Err(e) = self.subscribe(tr_cd, tr_key, lane).await {
             // Roll back both maps on subscribe failure so no ghost subscription
             // is replayed to the server with no live consumer.
             let key = composite_key(tr_cd, tr_key);
@@ -331,7 +328,7 @@ impl WsManager {
             ws_manager,
             tr_cd: tr_cd.to_string(),
             tr_key: tr_key.to_string(),
-            tr_type: tr_type.to_string(),
+            lane,
             runtime_handle,
             consumed: AtomicBool::new(false),
         };
@@ -341,12 +338,12 @@ impl WsManager {
 
     /// Unsubscribe from typed frames for `(tr_cd, tr_key)`.
     ///
-    /// Sends the deregister frame for the lane's `tr_type` (`"3"→"4"` market-data,
-    /// `"1"→"2"` order-event), then removes the entry from both the dispatch map
+    /// Sends the deregister frame for `lane` (`"4"` market-data, `"2"` order-event),
+    /// then removes the entry from both the dispatch map
     /// (ending the subscriber stream under both policies) and the subscriptions
     /// map (preventing reconnect replay). Network/token errors are logged and do
     /// NOT abort local cleanup — local state is always removed.
-    pub async fn unsubscribe_typed(&self, tr_cd: &str, tr_key: &str, tr_type: &str) -> LsResult<()> {
+    pub async fn unsubscribe_typed(&self, tr_cd: &str, tr_key: &str, lane: WsLane) -> LsResult<()> {
         let key = composite_key(tr_cd, tr_key);
 
         if self.tx.lock().await.is_some() {
@@ -356,7 +353,7 @@ impl WsManager {
                 .await
             {
                 Ok(token) => {
-                    let msg = build_unsubscribe_msg(tr_cd, tr_key, &token, tr_type);
+                    let msg = build_unsubscribe_msg(tr_cd, tr_key, &token, lane);
                     if let Some(tx) = self.tx.lock().await.as_ref() {
                         if let Err(e) = tx.send(msg).await {
                             tracing::warn!(
@@ -428,8 +425,8 @@ impl WsManager {
             .iter()
             .map(|e| {
                 let (_, tr_key) = split_composite_key(e.key());
-                let (tr_cd, tr_type) = e.value();
-                build_subscribe_msg(tr_cd, tr_key, token, tr_type)
+                let (tr_cd, lane) = e.value();
+                build_subscribe_msg(tr_cd, tr_key, token, *lane)
             })
             .collect();
         let count = msgs.len();
@@ -477,9 +474,9 @@ pub struct SubscriptionHandle {
     ws_manager: Arc<WsManager>,
     tr_cd: String,
     tr_key: String,
-    /// The lane's register `tr_type` (`"3"` market-data, `"1"` order-event),
-    /// carried so unsubscribe rebuilds the correct deregister frame.
-    tr_type: String,
+    /// The subscription's [`WsLane`], carried so unsubscribe rebuilds the correct
+    /// deregister frame. `Copy`, so Drop reuses it without a clone.
+    lane: WsLane,
     /// Captured at construction (always inside an async fn) — more reliable than
     /// `Handle::current()` from `Drop`, which panics if the runtime is gone.
     runtime_handle: tokio::runtime::Handle,
@@ -495,7 +492,7 @@ impl SubscriptionHandle {
     pub async fn unsubscribe(self) -> LsResult<()> {
         let result = self
             .ws_manager
-            .unsubscribe_typed(&self.tr_cd, &self.tr_key, &self.tr_type)
+            .unsubscribe_typed(&self.tr_cd, &self.tr_key, self.lane)
             .await;
         if result.is_ok() {
             self.consumed.store(true, Ordering::SeqCst);
@@ -512,11 +509,11 @@ impl Drop for SubscriptionHandle {
         let arc = Arc::clone(&self.ws_manager);
         let tr_cd = self.tr_cd.clone();
         let tr_key = self.tr_key.clone();
-        let tr_type = self.tr_type.clone();
+        let lane = self.lane;
         // Fire-and-forget cleanup on the captured runtime. Drop has no fallible
         // return path; errors are logged, not surfaced.
         self.runtime_handle.spawn(async move {
-            if let Err(e) = arc.unsubscribe_typed(&tr_cd, &tr_key, &tr_type).await {
+            if let Err(e) = arc.unsubscribe_typed(&tr_cd, &tr_key, lane).await {
                 tracing::warn!(
                     tr_cd = %tr_cd,
                     tr_key = %tr_key,
@@ -609,7 +606,7 @@ mod tests {
         drop(dead_rx);
         *wm.tx.lock().await = Some(dead_tx);
 
-        let result = wm.subscribe("S3_", "005930", "3").await;
+        let result = wm.subscribe("S3_", "005930", WsLane::MarketData).await;
 
         assert!(
             matches!(result, Err(LsError::WebSocket(_))),

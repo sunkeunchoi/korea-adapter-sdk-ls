@@ -70,8 +70,9 @@ erases the real wire key and array-ness.
 
 Add the new row type to the `pub use frame::{...}` line in
 `crates/ls-sdk/src/realtime/mod.rs` (mirror `pub use frame::{composite_key,
-S3Trade};`). No decode-dispatch-table (`dispatch.rs`) edit — decode is generic
-over the caller's type at the `subscribe_typed::<Row>(tr_cd, tr_key)` call site.
+S3Trade, WsLane};`). No decode-dispatch-table (`dispatch.rs`) edit — decode is
+generic over the caller's type at the `subscribe_typed::<Row>(tr_cd, tr_key,
+lane)` call site.
 
 ## 3. WebSocket `{TR}_POLICY` + crosscheck registration
 
@@ -92,20 +93,29 @@ over the caller's type at the `subscribe_typed::<Row>(tr_cd, tr_key)` call site.
 ## 4. Thin lifecycle smoke (the flip gate)
 
 Add a thin per-TR lifecycle smoke mirroring `live_smoke_ws`
-(`crates/ls-sdk/tests/live_smoke.rs`, around lines 1648-1691) — or call the
-generic `(tr_cd, tr_key, tr_type)` lifecycle helper. It must:
+(`crates/ls-sdk/tests/live_smoke.rs`) — or call the generic
+`ws_lifecycle_smoke(tr_cd, tr_key, lane)` helper. It must:
 
 - open with the paper guard and **assert the resolved WS URL carries the paper
   port `29443`** (a wrong-target run fails fast);
 - use a **FRESH / isolated `WsManager` per smoke** (KTD2 — the Phase 83/84 root
   cause was a shared manager whose sender died after the first TR, poisoning
   later TRs);
-- `subscribe_typed::<{Xx}Row>(<tr_cd>, &tr_key, <tr_type>)` passing the lane's
-  register `tr_type` (`"3"` market-data, `"1"` order-event — unsubscribe derives
-  the `"4"`/`"2"` deregister pair automatically);
+- `subscribe_typed::<{Xx}Row>(<tr_cd>, &tr_key, lane)` passing the lane as a
+  `WsLane` variant (`WsLane::MarketData` for 시세 feeds, `WsLane::OrderEvent` for
+  order-event channels — the enum picks the `"3"/"4"` vs `"1"/"2"` register/
+  deregister pair, so an invalid lane is a compile error);
 - timebox a row as **bonus** (`timeout(..)` — absence is "no row within timeout
   (not a failure)", never an error);
 - `unsubscribe()` cleanly.
+
+**The `tr_key` per lane:** a P1 market-data smoke passes a domain symbol (stock
+`shcode` e.g. `005930`, overseas `symbol`, F-O `futcode`/`optcode`) sourced from
+`facets.caller_supplied_identifiers` / the existing `LS_LIVE_SMOKE_*` env
+convention. A **P2 order-event** subscription is account-bound, not symbol-keyed:
+pass an **empty string `""`** (the account scope the deterministic SC0 tests use);
+if no usable account-bound key exists, that is a `PENDING <tr> — no representative
+tr_key` disposition, not a guess.
 
 Also add the `live-smoke-<tr>` `make` target (+ `.PHONY`) and a row in
 `.agents/skills/promote-tr/references/smoke-map.md`. **No raw-frame logging** —
@@ -129,6 +139,14 @@ Run the smoke (it loads `.env` and hits the real **paper** gateway).
   `string_or_number` on that slot **before** concluding environmental (KTD8 — the
   IGW40011 numeric-typing trap is documented for REST bodies only and is untested
   for WS subscribe frames). Only call it environmental after the typing fix fails.
+
+**Claim strength is gated on the KTD6 negative control.** Because subscribe is
+fire-and-forget (no ACK read), a clean lifecycle proves per-TR reachability ONLY
+if `make live-smoke-ws-negative` has returned `OBSERVABLE` (a tr_cd-attributable
+`rsp_cd`). If that smoke has not been run, or returned `INCONCLUSIVE`/
+`NOT-OBSERVABLE`, a clean lifecycle proves only **connection reachability** — the
+flip is still valid, but the metadata/commit note must say
+**connection-reachable-only**, not a per-TR-reachable claim.
 
 **Secret-safety (blocking):** any committed line (smoke line, gate output,
 pending reason) must contain no token, appkey, secret, or account number — only

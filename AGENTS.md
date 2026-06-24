@@ -43,8 +43,11 @@ normalized baseline via `make api-drift-renormalize` (the baseline is projected,
 never hand-authored). The `implement-tr` recipe
 (`.agents/skills/implement-tr/SKILL.md`) then flips a Tracked TR to Implemented by
 authoring callable Rust and gating it on a **Paper Live Smoke**; `promote-tr`
-takes Implemented → Recommended. Each new `{TR}_POLICY` const must
-be registered in **both** cross-check lists (see the recipe). Wire field names,
+takes Implemented → Recommended. Each new REST `{TR}_POLICY` const must
+be registered in **both** cross-check lists (see the recipe); a **WebSocket**
+`{TR}_POLICY` (`owner_class: realtime`) registers in the crosscheck list **only**,
+never the REST-only `slice_rest_policies_are_non_order_rest` list — see
+`.agents/skills/implement-realtime-tr/SKILL.md`. Wire field names,
 types, and array-vs-single shapes come from the normalized baseline
 (`crates/ls-trackers/baselines/api-drift/normalized/trs/<tr>.json`), not guesswork.
 

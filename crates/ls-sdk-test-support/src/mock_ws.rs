@@ -30,9 +30,6 @@ pub struct MockWsServer {
     kill_tx: broadcast::Sender<()>,
     /// Every text frame received from clients, accumulated across connections.
     received: Arc<Mutex<Vec<String>>>,
-    /// `tr_cd`s the gateway is configured to REJECT (negative-control seam, KTD6).
-    /// Fixed at construction; read inside the accept loop.
-    rejected_tr_cds: Arc<Vec<String>>,
     /// The detached accept loop — aborting it closes the listening port so a
     /// reconnect can never succeed (reconnect-budget-exhaustion tests).
     accept_handle: tokio::task::JoinHandle<()>,
@@ -132,7 +129,6 @@ impl MockWsServer {
             broadcast_tx,
             kill_tx,
             received,
-            rejected_tr_cds,
             accept_handle,
         }
     }
@@ -197,12 +193,6 @@ impl MockWsServer {
                     && v["header"]["tr_type"].as_str() == Some(tr_type)
             })
             .count()
-    }
-
-    /// The `tr_cd`s this server is configured to reject (empty unless built via
-    /// [`Self::start_rejecting`]). Exposed for test introspection.
-    pub fn rejected_tr_cds(&self) -> &[String] {
-        &self.rejected_tr_cds
     }
 }
 

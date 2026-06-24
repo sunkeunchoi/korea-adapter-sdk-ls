@@ -13,7 +13,7 @@ use std::time::Duration;
 use futures::StreamExt;
 use ls_core::config::WsOverflowPolicy;
 use ls_core::{Inner, LsConfig, LsError};
-use ls_sdk::realtime::{S3Trade, WsManager};
+use ls_sdk::realtime::{S3Trade, WsLane, WsManager};
 use ls_sdk_test_support::{mock_config, mount_token, MockWsServer, MOCK_REJECTION_RSP_CD};
 use tokio::time::timeout;
 use wiremock::MockServer;
@@ -48,7 +48,7 @@ async fn subscribe_s3_decodes_pushed_frame_and_routes_by_composite_key() {
     let wm = ws_manager_for(&http, &ws.ws_url(), WsOverflowPolicy::DropNewest).await;
 
     let (_handle, mut stream) = wm
-        .subscribe_typed::<S3Trade>("S3_", "005930", "3")
+        .subscribe_typed::<S3Trade>("S3_", "005930", WsLane::MarketData)
         .await
         .expect("subscribe_typed S3_");
 
@@ -95,7 +95,7 @@ async fn reconnect_refreshes_token_and_replays_subscription() {
     let wm = ws_manager_for(&http, &ws.ws_url(), WsOverflowPolicy::DropNewest).await;
 
     let (_handle, mut stream) = wm
-        .subscribe_typed::<S3Trade>("S3_", "005930", "3")
+        .subscribe_typed::<S3Trade>("S3_", "005930", WsLane::MarketData)
         .await
         .expect("subscribe_typed S3_");
 
@@ -149,7 +149,7 @@ async fn reconnect_replays_order_event_subscription_with_tr_type_1() {
     // Subscribe an order-event channel: tr_type "1", account-bound empty tr_key.
     // The decode type is irrelevant for a lifecycle/replay test (no row pushed).
     let (_handle, _stream) = wm
-        .subscribe_typed::<S3Trade>("SC0", "", "1")
+        .subscribe_typed::<S3Trade>("SC0", "", WsLane::OrderEvent)
         .await
         .expect("subscribe_typed SC0 (order-event)");
 
@@ -190,7 +190,7 @@ async fn reconnect_budget_exhaustion_delivers_terminal_error_and_cleans_up() {
     let wm = ws_manager_for(&http, &ws.ws_url(), WsOverflowPolicy::DropNewest).await;
 
     let (_handle, mut stream) = wm
-        .subscribe_typed::<S3Trade>("S3_", "005930", "3")
+        .subscribe_typed::<S3Trade>("S3_", "005930", WsLane::MarketData)
         .await
         .expect("subscribe_typed S3_");
     wait_for(|| async { ws.count_subscribe_frames("S3_", "3").await >= 1 }).await;
@@ -235,7 +235,7 @@ async fn latest_only_yields_newest_then_terminal_none_on_unsubscribe() {
     let wm = ws_manager_for(&http, &ws.ws_url(), WsOverflowPolicy::LatestOnly).await;
 
     let (handle, mut stream) = wm
-        .subscribe_typed::<S3Trade>("S3_", "005930", "3")
+        .subscribe_typed::<S3Trade>("S3_", "005930", WsLane::MarketData)
         .await
         .expect("subscribe_typed S3_ latest-only");
     wait_for(|| async { ws.count_subscribe_frames("S3_", "3").await >= 1 }).await;
@@ -274,7 +274,7 @@ async fn dropping_subscription_handle_unsubscribes() {
     let wm = ws_manager_for(&http, &ws.ws_url(), WsOverflowPolicy::DropNewest).await;
 
     let (handle, _stream) = wm
-        .subscribe_typed::<S3Trade>("S3_", "005930", "3")
+        .subscribe_typed::<S3Trade>("S3_", "005930", WsLane::MarketData)
         .await
         .expect("subscribe_typed S3_");
     wait_for(|| async { ws.count_subscribe_frames("S3_", "3").await >= 1 }).await;
@@ -316,7 +316,7 @@ async fn lifecycle_tr_type_3_subscribe_no_push_unsubscribe_clean() {
     let wm = ws_manager_for(&http, &ws.ws_url(), WsOverflowPolicy::DropNewest).await;
 
     let (handle, mut stream) = wm
-        .subscribe_typed::<LifecycleRow>("S3_", "005930", "3")
+        .subscribe_typed::<LifecycleRow>("S3_", "005930", WsLane::MarketData)
         .await
         .expect("market-data subscribe lifecycle");
     wait_for(|| async { ws.count_subscribe_frames("S3_", "3").await >= 1 }).await;
@@ -349,10 +349,17 @@ async fn lifecycle_tr_type_1_subscribe_no_push_unsubscribe_clean() {
 
     // Order-event channel: account-bound empty tr_key, tr_type "1".
     let (handle, mut stream) = wm
-        .subscribe_typed::<LifecycleRow>("SC0", "", "1")
+        .subscribe_typed::<LifecycleRow>("SC0", "", WsLane::OrderEvent)
         .await
         .expect("order-event subscribe lifecycle");
     wait_for(|| async { ws.count_subscribe_frames("SC0", "1").await >= 1 }).await;
+    // The initial order-event subscribe must register on lane "1", never "3"
+    // (mirrors the guard in the reconnect-replay test, but for the first send).
+    assert_eq!(
+        ws.count_subscribe_frames("SC0", "3").await,
+        0,
+        "an order-event subscribe must never emit the market-data tr_type \"3\""
+    );
 
     let row = timeout(Duration::from_millis(300), stream.next()).await;
     assert!(row.is_err(), "no inbound frame expected; got {row:?}");
@@ -381,7 +388,6 @@ async fn negative_control_rejected_tr_cd_is_observably_distinct_from_accepted() 
     let http = MockServer::start().await;
     mount_token(&http).await;
     let ws = MockWsServer::start_rejecting(&["BAD"]).await;
-    assert_eq!(ws.rejected_tr_cds(), &["BAD".to_string()]);
 
     let wm = ws_manager_for(&http, &ws.ws_url(), WsOverflowPolicy::DropNewest).await;
 
@@ -389,7 +395,7 @@ async fn negative_control_rejected_tr_cd_is_observably_distinct_from_accepted() 
     // and never reads an ACK. This is exactly the trap KTD6 names: Ok alone does
     // NOT prove reachability.
     let (_bad_handle, mut bad_stream) = wm
-        .subscribe_typed::<LifecycleRow>("BAD", "005930", "3")
+        .subscribe_typed::<LifecycleRow>("BAD", "005930", WsLane::MarketData)
         .await
         .expect("subscribe call itself returns Ok (fire-and-forget)");
 
@@ -409,7 +415,7 @@ async fn negative_control_rejected_tr_cd_is_observably_distinct_from_accepted() 
     // same timebox — no rsp_cd, no row — so the rejection is a genuine signal,
     // not noise the accepted path also produces.
     let (_good_handle, mut good_stream) = wm
-        .subscribe_typed::<LifecycleRow>("S3_", "005930", "3")
+        .subscribe_typed::<LifecycleRow>("S3_", "005930", WsLane::MarketData)
         .await
         .expect("good subscribe");
     wait_for(|| async { ws.count_subscribe_frames("S3_", "3").await >= 1 }).await;
