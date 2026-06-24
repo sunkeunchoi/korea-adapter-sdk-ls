@@ -36,6 +36,12 @@ The top rung: an Implemented TR additionally cleared for production use, backed 
 ### Paper Live Smoke
 A credential-gated integration test that hits the real LS *paper* gateway with real credentials to prove a TR is genuinely callable. It is the gate for flipping a TR to Implemented; a smoke that returns an empty result leaves the TR callable-but-unconfirmed (pending), not Implemented. For `realtime`/websocket TRs the gate is instead *lifecycle (Transport) reachability* — a clean connect → subscribe → unsubscribe — and a row that does or does not arrive is bonus, not the gate; row contents stay provisional until a separate FrameDecode pass.
 
+### Connection-reachable-only
+The calibrated reachability claim a `realtime`/websocket TR carries when its lifecycle smoke passes but the subscribe path is fire-and-forget (the SDK never reads the subscribe ACK) and the gateway emits no observable rejection for an invalid `tr_cd`. A clean connect → subscribe → unsubscribe then proves the *connection* works, not that the specific channel is individually reachable — so the TR is Implemented but its claim is recorded as connection-reachable-only, not per-TR-reachable. Earning the stronger per-TR claim requires the SDK to read the subscribe ACK (a separate capability). Established empirically by the WebSocket negative control.
+
+### WebSocket negative control
+The check that calibrates a realtime reachability claim: subscribe a deliberately-invalid `tr_cd` and observe whether the gateway signals a rejection. A `tr_cd`-attributable inbound body (non-empty `rsp_cd`) is `OBSERVABLE` (per-TR reachability is provable); a bare stream close or decode error is `INCONCLUSIVE`; pure silence is `NOT-OBSERVABLE` (flips are [[Connection-reachable-only]]). It has a deterministic mock-WS twin and a live half (`make live-smoke-ws-negative`); its verdict gates how strong a flip's claim may be, not whether the flip happens.
+
 ### Focused Evidence
 A recorded, credential-free result of a Paper Live Smoke that backs a Recommended TR's claim. A smoke run gates Implementation; it only becomes Focused Evidence when a TR is deliberately promoted to Recommended.
 
