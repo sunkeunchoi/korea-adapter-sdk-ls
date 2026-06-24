@@ -1666,7 +1666,7 @@ async fn live_smoke_ws() {
     let ws = sdk.realtime();
 
     let (handle, mut stream) = ws
-        .subscribe_typed::<S3Trade>("S3_", &symbol)
+        .subscribe_typed::<S3Trade>("S3_", &symbol, "3")
         .await
         .expect("subscribe_typed S3_ failed (connect/subscribe lifecycle)");
 

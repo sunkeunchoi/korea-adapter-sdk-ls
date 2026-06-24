@@ -13,11 +13,12 @@
 //! Verified from `specs/ls_openapi_specs.json` (S3_ example):
 //! `{"header":{"token":"<bearer>","tr_type":"<n>"},"body":{"tr_cd":...,"tr_key":...}}`.
 //!
-//! **S3_ is a market-data (실시간 시세) channel**, so it registers with
-//! `tr_type "3"` (실시간 시세 등록) and deregisters with `tr_type "4"` (실시간 시세
-//! 해제). (Order-event channels register an account with `tr_type "1"/"2"`
-//! instead; this slice ships only the market-data S3_ TR, so the builders use the
-//! market-data `tr_type` directly — see `metadata/trs/S3_.yaml`.)
+//! The `tr_type` is the lane's REGISTER value, threaded per-subscription:
+//! market-data channels (like S3_) register with `tr_type "3"` (실시간 시세 등록)
+//! and deregister with `"4"` (실시간 시세 해제); order-event channels register an
+//! account with `tr_type "1"` (실시간 계좌 등록) and deregister with `"2"`. The
+//! builders take a `tr_type` argument so both lanes share one frame path; the
+//! caller (recipe/smoke) supplies the lane value — see `metadata/trs/S3_.yaml`.
 //!
 //! ## S3_ push decode
 //!
@@ -48,19 +49,47 @@ pub(crate) fn split_composite_key(key: &str) -> (&str, &str) {
     key.split_once(':').unwrap_or((key, ""))
 }
 
-/// Build an LS WebSocket subscribe message for a market-data channel.
+/// Build an LS WebSocket subscribe (register) message.
 ///
-/// `{"header":{"token","tr_type":"3"},"body":{"tr_cd","tr_key"}}` — `tr_type "3"`
-/// is 실시간 시세 등록 (realtime-quote register), the shape S3_ uses.
-pub(crate) fn build_subscribe_msg(tr_cd: &str, tr_key: &str, token: &str) -> Message {
-    build_frame(tr_cd, tr_key, token, "3")
+/// `{"header":{"token","tr_type":<reg>},"body":{"tr_cd","tr_key"}}`. `tr_type` is
+/// the lane's REGISTER value — `"3"` (실시간 시세 등록) for market-data channels like
+/// S3_, `"1"` (실시간 계좌 등록) for order-event channels. The same value is stored
+/// per-subscription and reused verbatim on reconnect replay.
+pub(crate) fn build_subscribe_msg(tr_cd: &str, tr_key: &str, token: &str, tr_type: &str) -> Message {
+    build_frame(tr_cd, tr_key, token, tr_type)
 }
 
-/// Build an LS WebSocket unsubscribe message for a market-data channel.
+/// Build an LS WebSocket unsubscribe (deregister) message.
 ///
-/// `tr_type "4"` is 실시간 시세 해제 (realtime-quote deregister).
-pub(crate) fn build_unsubscribe_msg(tr_cd: &str, tr_key: &str, token: &str) -> Message {
-    build_frame(tr_cd, tr_key, token, "4")
+/// Takes the lane's REGISTER `tr_type` and emits its deregister pair — `"3"→"4"`
+/// (시세 해제), `"1"→"2"` (계좌 해제) — so a caller threads a single per-subscription
+/// `tr_type` through both build paths.
+pub(crate) fn build_unsubscribe_msg(
+    tr_cd: &str,
+    tr_key: &str,
+    token: &str,
+    tr_type: &str,
+) -> Message {
+    build_frame(tr_cd, tr_key, token, deregister_tr_type(tr_type))
+}
+
+/// Map a lane's register `tr_type` to its deregister pair.
+///
+/// LS pairs register/deregister values per lane: market-data `("3","4")`,
+/// order-event `("1","2")`. An unknown value falls back to the market-data
+/// deregister `"4"` (with a debug assertion) rather than panicking in release.
+fn deregister_tr_type(tr_type: &str) -> &'static str {
+    match tr_type {
+        "1" => "2",
+        "3" => "4",
+        other => {
+            debug_assert!(
+                false,
+                "unknown register tr_type {other:?}; expected \"1\" (order-event) or \"3\" (market-data)"
+            );
+            "4"
+        }
+    }
 }
 
 /// Shared frame constructor — the token rides only in the header, never logged.
@@ -137,7 +166,7 @@ mod tests {
 
     #[test]
     fn subscribe_msg_uses_tr_type_3_for_market_data() {
-        let v = parse_msg(build_subscribe_msg("S3_", "005930", "tok_abc"));
+        let v = parse_msg(build_subscribe_msg("S3_", "005930", "tok_abc", "3"));
         assert_eq!(v["header"]["token"], "tok_abc");
         assert_eq!(v["header"]["tr_type"], "3");
         assert_eq!(v["body"]["tr_cd"], "S3_");
@@ -146,10 +175,27 @@ mod tests {
 
     #[test]
     fn unsubscribe_msg_uses_tr_type_4_for_market_data() {
-        let v = parse_msg(build_unsubscribe_msg("S3_", "005930", "tok_abc"));
+        // The deregister pair of the market-data register value "3" is "4".
+        let v = parse_msg(build_unsubscribe_msg("S3_", "005930", "tok_abc", "3"));
         assert_eq!(v["header"]["tr_type"], "4");
         assert_eq!(v["body"]["tr_cd"], "S3_");
         assert_eq!(v["body"]["tr_key"], "005930");
+    }
+
+    #[test]
+    fn subscribe_msg_uses_tr_type_1_for_order_event() {
+        // Order-event channels (P2 lane) register with tr_type "1".
+        let v = parse_msg(build_subscribe_msg("SC0", "", "tok_abc", "1"));
+        assert_eq!(v["header"]["tr_type"], "1");
+        assert_eq!(v["body"]["tr_cd"], "SC0");
+    }
+
+    #[test]
+    fn unsubscribe_msg_uses_tr_type_2_for_order_event() {
+        // The deregister pair of the order-event register value "1" is "2".
+        let v = parse_msg(build_unsubscribe_msg("SC0", "", "tok_abc", "1"));
+        assert_eq!(v["header"]["tr_type"], "2");
+        assert_eq!(v["body"]["tr_cd"], "SC0");
     }
 
     #[test]

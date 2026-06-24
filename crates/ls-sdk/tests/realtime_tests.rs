@@ -48,7 +48,7 @@ async fn subscribe_s3_decodes_pushed_frame_and_routes_by_composite_key() {
     let wm = ws_manager_for(&http, &ws.ws_url(), WsOverflowPolicy::DropNewest).await;
 
     let (_handle, mut stream) = wm
-        .subscribe_typed::<S3Trade>("S3_", "005930")
+        .subscribe_typed::<S3Trade>("S3_", "005930", "3")
         .await
         .expect("subscribe_typed S3_");
 
@@ -95,7 +95,7 @@ async fn reconnect_refreshes_token_and_replays_subscription() {
     let wm = ws_manager_for(&http, &ws.ws_url(), WsOverflowPolicy::DropNewest).await;
 
     let (_handle, mut stream) = wm
-        .subscribe_typed::<S3Trade>("S3_", "005930")
+        .subscribe_typed::<S3Trade>("S3_", "005930", "3")
         .await
         .expect("subscribe_typed S3_");
 
@@ -131,6 +131,49 @@ async fn reconnect_refreshes_token_and_replays_subscription() {
     );
 }
 
+/// Integration: an order-event subscription (tr_type "1") is replayed with
+/// tr_type "1" after a reconnect — NOT the market-data "3".
+///
+/// The per-subscription `tr_type` (U2) must survive reconnect replay so an
+/// order-event channel re-registers as 실시간 계좌 등록 ("1"), not 실시간 시세 등록
+/// ("3"). A subscription stored with only its `tr_cd` (the pre-U2 shape) would
+/// replay the hardcoded "3" and silently re-register on the wrong lane.
+#[tokio::test]
+async fn reconnect_replays_order_event_subscription_with_tr_type_1() {
+    let http = MockServer::start().await;
+    mount_token(&http).await;
+    let ws = MockWsServer::start().await;
+
+    let wm = ws_manager_for(&http, &ws.ws_url(), WsOverflowPolicy::DropNewest).await;
+
+    // Subscribe an order-event channel: tr_type "1", account-bound empty tr_key.
+    // The decode type is irrelevant for a lifecycle/replay test (no row pushed).
+    let (_handle, _stream) = wm
+        .subscribe_typed::<S3Trade>("SC0", "", "1")
+        .await
+        .expect("subscribe_typed SC0 (order-event)");
+
+    // The initial subscribe registers on the order-event lane ("1"), never "3".
+    wait_for(|| async { ws.count_subscribe_frames("SC0", "1").await >= 1 }).await;
+    assert_eq!(
+        ws.count_subscribe_frames("SC0", "3").await,
+        0,
+        "an order-event subscription must never register with the market-data tr_type \"3\""
+    );
+
+    // Sever the connection; auto-reconnect replays the stored subscription.
+    ws.kill_connections();
+
+    // The replay re-registers with tr_type "1" (proving the lane survived),
+    // and still never emits a "3" frame for this TR.
+    wait_for(|| async { ws.count_subscribe_frames("SC0", "1").await >= 2 }).await;
+    assert_eq!(
+        ws.count_subscribe_frames("SC0", "3").await,
+        0,
+        "reconnect replay must reuse the stored tr_type \"1\", not the hardcoded \"3\""
+    );
+}
+
 /// Edge: reconnect-budget exhaustion (4 attempts) delivers the terminal
 /// `WebSocket` error to subscribers and cleans up.
 ///
@@ -147,7 +190,7 @@ async fn reconnect_budget_exhaustion_delivers_terminal_error_and_cleans_up() {
     let wm = ws_manager_for(&http, &ws.ws_url(), WsOverflowPolicy::DropNewest).await;
 
     let (_handle, mut stream) = wm
-        .subscribe_typed::<S3Trade>("S3_", "005930")
+        .subscribe_typed::<S3Trade>("S3_", "005930", "3")
         .await
         .expect("subscribe_typed S3_");
     wait_for(|| async { ws.count_subscribe_frames("S3_", "3").await >= 1 }).await;
@@ -192,7 +235,7 @@ async fn latest_only_yields_newest_then_terminal_none_on_unsubscribe() {
     let wm = ws_manager_for(&http, &ws.ws_url(), WsOverflowPolicy::LatestOnly).await;
 
     let (handle, mut stream) = wm
-        .subscribe_typed::<S3Trade>("S3_", "005930")
+        .subscribe_typed::<S3Trade>("S3_", "005930", "3")
         .await
         .expect("subscribe_typed S3_ latest-only");
     wait_for(|| async { ws.count_subscribe_frames("S3_", "3").await >= 1 }).await;
@@ -231,7 +274,7 @@ async fn dropping_subscription_handle_unsubscribes() {
     let wm = ws_manager_for(&http, &ws.ws_url(), WsOverflowPolicy::DropNewest).await;
 
     let (handle, _stream) = wm
-        .subscribe_typed::<S3Trade>("S3_", "005930")
+        .subscribe_typed::<S3Trade>("S3_", "005930", "3")
         .await
         .expect("subscribe_typed S3_");
     wait_for(|| async { ws.count_subscribe_frames("S3_", "3").await >= 1 }).await;
