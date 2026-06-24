@@ -1299,6 +1299,23 @@ pub const S3_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: None,
 };
 
+/// K3_ — KOSDAQ체결 실시간 시세 (real-time KOSDAQ trade feed, WebSocket).
+///
+/// WebSocket TR: no REST dispatch; the policy const mirrors the metadata index
+/// for cross-checking. Ported verbatim from the migration source's `K3_POLICY`.
+pub const K3_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "K3_",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

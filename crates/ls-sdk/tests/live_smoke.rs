@@ -1723,6 +1723,25 @@ async fn live_smoke_ws() {
     );
 }
 
+/// `make live-smoke-k3`: lifecycle smoke for `K3_` (KOSDAQ 체결, market-data).
+///
+/// The flip gate for K3_. Set `LS_LIVE_SMOKE_SHCODE` to a KOSDAQ code for a
+/// venue-representative run (the migration source's cert used `005930`). Per the
+/// KTD6 result (`NOT-OBSERVABLE`), a clean lifecycle here proves **connection
+/// reachability only**, not per-TR reachability — flip the metadata with that
+/// weaker claim.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-k3`"]
+async fn live_smoke_k3() {
+    let symbol = resolve_symbol();
+    let row_note = ws_lifecycle_smoke("K3_", &symbol, WsLane::MarketData).await;
+    record(
+        "live-smoke-k3",
+        &format!("symbol={symbol} ws_port=29443 tr_type=3"),
+        &row_note,
+    );
+}
+
 /// `make live-smoke-ws-negative`: LIVE half of the KTD6 negative control.
 ///
 /// Subscribes a deliberately-INVALID `tr_cd` and reports whether the paper

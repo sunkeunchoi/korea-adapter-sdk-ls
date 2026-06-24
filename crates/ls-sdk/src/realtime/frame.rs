@@ -165,6 +165,59 @@ pub struct S3Trade {
     pub shcode: String,
 }
 
+/// Decoded K3_ (KOSDAQ 체결 / KOSDAQ trade) realtime push row.
+///
+/// KOSDAQ 체결 is the schema sibling of KOSPI 체결 (`S3_`); the field set mirrors
+/// [`S3Trade`] and is **structurally-verified** against the migration source's
+/// `K3Response` (`korea-broker-sdk-ls` `generated/stock.rs`) — a single object
+/// out-block (not an array), with these exact LS field names. A representative,
+/// spec-grounded subset of the fuller push row. Every field is
+/// `string_or_number`-coerced and `#[serde(default)]` so both wire shapes — and a
+/// sparse registration-ACK body — deserialize without a panic.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(default)]
+pub struct K3Trade {
+    /// Trade time / 체결시간.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub chetime: String,
+    /// Sign vs. previous close / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change vs. previous close / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Rate of change (%) / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub drate: String,
+    /// Current (last-trade) price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Trade direction / 체결구분 (`+` = buy, `-` = sell).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cgubun: String,
+    /// This-tick trade volume / 체결량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cvolume: String,
+    /// Accumulated volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Accumulated trade value / 누적거래대금.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub value: String,
+    /// Trade strength / 체결강도.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cpower: String,
+    /// Best offer / 매도호가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerho: String,
+    /// Best bid / 매수호가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidho: String,
+    /// Short code / 단축코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,5 +311,39 @@ mod tests {
         let row: S3Trade = serde_json::from_value(body).expect("decode numeric S3_ body");
         assert_eq!(row.price, "55550");
         assert_eq!(row.volume, "10887");
+    }
+
+    #[test]
+    fn k3_trade_decodes_single_object_body_from_migration_source_shape() {
+        // K3_ (KOSDAQ 체결) out-block is a SINGLE object (verified against the
+        // migration source's K3Response), with the same 체결 field names as S3_.
+        let body = serde_json::json!({
+            "price": "5550",
+            "cvolume": "3",
+            "volume": "204881",
+            "value": "1136",
+            "cgubun": "-",
+            "shcode": "035720",
+            "chetime": "091200",
+            "sign": "5",
+            "cpower": "88.21",
+            "offerho": "5560",
+            "bidho": "5550",
+        });
+        let row: K3Trade = serde_json::from_value(body).expect("decode K3_ body");
+        assert_eq!(row.price, "5550");
+        assert_eq!(row.cvolume, "3");
+        assert_eq!(row.cgubun, "-");
+        assert_eq!(row.shcode, "035720");
+        assert_eq!(row.offerho, "5560");
+    }
+
+    #[test]
+    fn k3_trade_decodes_numeric_wire_shape() {
+        // string_or_number coercion: numeric price/volume still decode.
+        let body = serde_json::json!({ "price": 5550, "volume": 204881 });
+        let row: K3Trade = serde_json::from_value(body).expect("decode numeric K3_ body");
+        assert_eq!(row.price, "5550");
+        assert_eq!(row.volume, "204881");
     }
 }

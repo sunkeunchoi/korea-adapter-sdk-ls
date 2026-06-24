@@ -39,7 +39,7 @@ mod frame;
 mod overflow;
 mod stream;
 
-pub use frame::{composite_key, S3Trade, WsLane};
+pub use frame::{composite_key, K3Trade, S3Trade, WsLane};
 pub use stream::WsStream;
 
 pub(crate) use dispatch::{DispatchEntry, WS_OUTBOUND_CHANNEL_CAPACITY};
