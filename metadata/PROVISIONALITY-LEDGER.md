@@ -522,7 +522,7 @@ required-input set (and identifier wire names) is unconfirmed.
 | TR | Provisional value | Source basis | Re-verify before implementation |
 |---|---|---|---|
 | t8463 | `[bsc_asts_id]` | `기초자산코드` underlying-asset code in the request | confirm the required caller-input set against a live request |
-| o3101 | `[]` | overseas-futures master read, no obvious identifier (reserve `gubun` only); gateway uncharted | confirm the overseas request shape against a live probe |
+| ~~o3101~~ | ~~`[]`~~ | **RETIRED (U8, 2026-06-24)**: implemented; the futures-master paper smoke returned 85 rows with `gubun=""` and no instrument identifier, confirming the empty caller-input set (`[]`). | — |
 | o3121 | `[BscGdsCd]` | overseas option underlying-product code (optional; blank lists all); gateway uncharted | confirm the overseas request shape + identifier names against a live probe |
 | g3101 | `[keysymbol, exchcd, symbol]` | overseas-stock symbol + exchange code; gateway uncharted | confirm the overseas request shape + identifier names against a live probe |
 | g3104 | `[keysymbol, exchcd, symbol]` | overseas-stock symbol + exchange code; gateway uncharted | confirm the overseas request shape + identifier names against a live probe |
