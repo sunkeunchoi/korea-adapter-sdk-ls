@@ -4620,6 +4620,467 @@ pub struct G3190Response {
     pub outblock1: Vec<G3190OutBlock1>,
 }
 
+// ── Overseas-futures (`o`-prefix) reads — U8 reach wave ─────────────────────
+//
+// Surface: `/overseas-futureoption/market-data`, group `[해외선물] 시세`,
+// instrument_domain overseas_futures, venue_session unspecified (uncharted). One
+// `o`-probe + KTD9 A/B (wrong path → http=404, wrong tr_cd → http=500 IGW00215,
+// intended → http=200; NO 01900) confirms the domain REACHABLE and our contract
+// CORRECT. The two MASTER reads (o3101 futures, o3121 option) return non-empty
+// data on paper; the four live quote/order-book reads (o3105/o3106/o3125/o3126)
+// answer http=200 rsp_cd=00000 with an empty body (the live overseas-futures feed
+// is not provisioned on paper) → PENDING per the disposition state machine. All
+// request fields are strings (no numeric REQUEST field → no `string_as_number`).
+
+/// Input block for `o3101` — 해외선물마스터조회 (overseas-futures master list). A
+/// single `gubun` selector (`""` = all); no instrument identifier.
+#[derive(Serialize, Debug, Clone)]
+pub struct O3101InBlock {
+    /// Distinction / 구분 (`""` = all products).
+    pub gubun: String,
+}
+
+/// `o3101` request — serializes to `{"o3101InBlock":{...}}`. Non-paginated.
+#[derive(Serialize, Debug, Clone)]
+pub struct O3101Request {
+    #[serde(rename = "o3101InBlock")]
+    pub inblock: O3101InBlock,
+}
+impl O3101Request {
+    /// Build an `o3101` futures-master request for one `gubun` selector.
+    pub fn new(gubun: impl Into<String>) -> Self {
+        O3101Request {
+            inblock: O3101InBlock {
+                gubun: gubun.into(),
+            },
+        }
+    }
+}
+
+/// `o3101OutBlock` — one overseas-futures master row (`o3101OutBlock[]`, an
+/// ARRAY block per the raw capture, KTD5). `symbol_nm` (종목명) is the canonical
+/// name field (KTD6); `dot_gb` is a numeric out-block field (소수점자리수). Rust
+/// fields are snake_case with `#[serde(rename)]` to the PascalCase wire keys.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct O3101OutBlock {
+    /// Symbol / 종목코드.
+    #[serde(rename = "Symbol", deserialize_with = "ls_core::string_or_number")]
+    pub symbol: String,
+    /// Symbol name / 종목명 (canonical field, KTD6).
+    #[serde(rename = "SymbolNm", deserialize_with = "ls_core::string_or_number")]
+    pub symbol_nm: String,
+    /// Base-product code / 기초상품코드.
+    #[serde(rename = "BscGdsCd", deserialize_with = "ls_core::string_or_number")]
+    pub bsc_gds_cd: String,
+    /// Base-product name / 기초상품명.
+    #[serde(rename = "BscGdsNm", deserialize_with = "ls_core::string_or_number")]
+    pub bsc_gds_nm: String,
+    /// Exchange code / 거래소코드.
+    #[serde(rename = "ExchCd", deserialize_with = "ls_core::string_or_number")]
+    pub exch_cd: String,
+    /// Currency / 통화코드.
+    #[serde(rename = "CrncyCd", deserialize_with = "ls_core::string_or_number")]
+    pub crncy_cd: String,
+    /// Unit price / 호가단위.
+    #[serde(rename = "UntPrc", deserialize_with = "ls_core::string_or_number")]
+    pub unt_prc: String,
+    /// Decimal places / 소수점자리수 (numeric out field).
+    #[serde(rename = "DotGb", deserialize_with = "ls_core::string_or_number")]
+    pub dot_gb: String,
+}
+
+/// `o3101` response envelope: the master row array under the `o3101OutBlock` key,
+/// tolerated as single-or-array via [`ls_core::de_vec_or_single`] (KTD5).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct O3101Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "o3101OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<O3101OutBlock>,
+}
+
+/// Input block for `o3121` — 해외선물옵션 마스터 조회 (overseas-future-option master).
+/// `MktGb` selects the market (`"O"` = option) and `BscGdsCd` filters by base
+/// product (`""` = all).
+#[derive(Serialize, Debug, Clone)]
+pub struct O3121InBlock {
+    /// Market distinction / 시장구분 (`"O"` = option).
+    #[serde(rename = "MktGb")]
+    pub mkt_gb: String,
+    /// Option base-product code / 옵션기초상품코드 (`""` = all).
+    #[serde(rename = "BscGdsCd")]
+    pub bsc_gds_cd: String,
+}
+
+/// `o3121` request — serializes to `{"o3121InBlock":{...}}`. Non-paginated.
+#[derive(Serialize, Debug, Clone)]
+pub struct O3121Request {
+    #[serde(rename = "o3121InBlock")]
+    pub inblock: O3121InBlock,
+}
+impl O3121Request {
+    /// Build an `o3121` option-master request for one market + base product.
+    pub fn new(mkt_gb: impl Into<String>, bsc_gds_cd: impl Into<String>) -> Self {
+        O3121Request {
+            inblock: O3121InBlock {
+                mkt_gb: mkt_gb.into(),
+                bsc_gds_cd: bsc_gds_cd.into(),
+            },
+        }
+    }
+}
+
+/// `o3121OutBlock` — one overseas-future-option master row (`o3121OutBlock[]`,
+/// an ARRAY block per the raw capture, KTD5). `bsc_gds_nm` (기초상품명) is the
+/// canonical name field (KTD6); `dot_gb` is a numeric out-block field. Rust
+/// fields are snake_case with `#[serde(rename)]` to the PascalCase wire keys.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct O3121OutBlock {
+    /// Symbol / 종목코드.
+    #[serde(rename = "Symbol", deserialize_with = "ls_core::string_or_number")]
+    pub symbol: String,
+    /// Base-product code / 옵션기초상품코드.
+    #[serde(rename = "BscGdsCd", deserialize_with = "ls_core::string_or_number")]
+    pub bsc_gds_cd: String,
+    /// Base-product name / 기초상품명 (canonical field, KTD6).
+    #[serde(rename = "BscGdsNm", deserialize_with = "ls_core::string_or_number")]
+    pub bsc_gds_nm: String,
+    /// Exchange code / 거래소코드.
+    #[serde(rename = "ExchCd", deserialize_with = "ls_core::string_or_number")]
+    pub exch_cd: String,
+    /// Strike price / 행사가.
+    #[serde(rename = "XrcPrc", deserialize_with = "ls_core::string_or_number")]
+    pub xrc_prc: String,
+    /// Option type code / 콜풋구분.
+    #[serde(rename = "OptTpCode", deserialize_with = "ls_core::string_or_number")]
+    pub opt_tp_code: String,
+    /// Decimal places / 소수점자리수 (numeric out field).
+    #[serde(rename = "DotGb", deserialize_with = "ls_core::string_or_number")]
+    pub dot_gb: String,
+}
+
+/// `o3121` response envelope: the master row array under the `o3121OutBlock` key,
+/// tolerated as single-or-array via [`ls_core::de_vec_or_single`] (KTD5).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct O3121Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "o3121OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<O3121OutBlock>,
+}
+
+/// Input block for `o3105` — 해외선물 현재가(종목정보) 조회 (overseas-futures
+/// current price / symbol info). Keyed by one `symbol`.
+#[derive(Serialize, Debug, Clone)]
+pub struct O3105InBlock {
+    /// Symbol / 종목심볼.
+    pub symbol: String,
+}
+
+/// `o3105` request — serializes to `{"o3105InBlock":{...}}`. Non-paginated.
+#[derive(Serialize, Debug, Clone)]
+pub struct O3105Request {
+    #[serde(rename = "o3105InBlock")]
+    pub inblock: O3105InBlock,
+}
+impl O3105Request {
+    /// Build an `o3105` symbol-info request for one overseas-futures symbol.
+    pub fn new(symbol: impl Into<String>) -> Self {
+        O3105Request {
+            inblock: O3105InBlock {
+                symbol: symbol.into(),
+            },
+        }
+    }
+}
+
+/// `o3105OutBlock` — the overseas-futures current-price snapshot (single object
+/// per the raw capture, KTD5). `trd_p` (체결가격) is the canonical price field
+/// (KTD6); `tot_q`/`trd_q`/`seq_no`/`dot_gb` are numeric. Rust fields are
+/// snake_case with `#[serde(rename)]` to the PascalCase wire keys.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct O3105OutBlock {
+    /// Symbol / 종목코드.
+    #[serde(rename = "Symbol", deserialize_with = "ls_core::string_or_number")]
+    pub symbol: String,
+    /// Symbol name / 종목명.
+    #[serde(rename = "SymbolNm", deserialize_with = "ls_core::string_or_number")]
+    pub symbol_nm: String,
+    /// Trade price / 체결가격 (canonical field, KTD6).
+    #[serde(rename = "TrdP", deserialize_with = "ls_core::string_or_number")]
+    pub trd_p: String,
+    /// Open / 시가.
+    #[serde(rename = "OpenP", deserialize_with = "ls_core::string_or_number")]
+    pub open_p: String,
+    /// High / 고가.
+    #[serde(rename = "HighP", deserialize_with = "ls_core::string_or_number")]
+    pub high_p: String,
+    /// Low / 저가.
+    #[serde(rename = "LowP", deserialize_with = "ls_core::string_or_number")]
+    pub low_p: String,
+    /// Total volume / 누적거래량 (numeric out field).
+    #[serde(rename = "TotQ", deserialize_with = "ls_core::string_or_number")]
+    pub tot_q: String,
+    /// Trade quantity / 체결수량 (numeric out field).
+    #[serde(rename = "TrdQ", deserialize_with = "ls_core::string_or_number")]
+    pub trd_q: String,
+    /// Sequence number / 수신순번 (numeric out field).
+    #[serde(rename = "SeqNo", deserialize_with = "ls_core::string_or_number")]
+    pub seq_no: String,
+    /// Currency / 통화코드.
+    #[serde(rename = "CrncyCd", deserialize_with = "ls_core::string_or_number")]
+    pub crncy_cd: String,
+}
+
+/// `o3105` response envelope. Single out-block under the `o3105OutBlock` key.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct O3105Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "o3105OutBlock", default)]
+    pub outblock: O3105OutBlock,
+}
+
+/// Input block for `o3106` — 해외선물 현재가호가 조회 (overseas-futures current
+/// price + order book). Keyed by one `symbol`.
+#[derive(Serialize, Debug, Clone)]
+pub struct O3106InBlock {
+    /// Symbol / 종목심볼.
+    pub symbol: String,
+}
+
+/// `o3106` request — serializes to `{"o3106InBlock":{...}}`. Non-paginated.
+#[derive(Serialize, Debug, Clone)]
+pub struct O3106Request {
+    #[serde(rename = "o3106InBlock")]
+    pub inblock: O3106InBlock,
+}
+impl O3106Request {
+    /// Build an `o3106` order-book request for one overseas-futures symbol.
+    pub fn new(symbol: impl Into<String>) -> Self {
+        O3106Request {
+            inblock: O3106InBlock {
+                symbol: symbol.into(),
+            },
+        }
+    }
+}
+
+/// `o3106OutBlock` — the overseas-futures current-price + order-book snapshot
+/// (single object per the raw capture, KTD5). `price` (현재가) is the canonical
+/// price field (KTD6); the level-1 book + counts are numeric.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct O3106OutBlock {
+    /// Symbol / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub symbol: String,
+    /// Symbol name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub symbolname: String,
+    /// Current price / 현재가 (canonical field, KTD6).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Change vs. previous close / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Accumulated volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Best ask price / 매도호가1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerho1: String,
+    /// Best bid price / 매수호가1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidho1: String,
+    /// Total ask volume / 매도호가총잔량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offer: String,
+    /// Total bid volume / 매수호가총잔량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bid: String,
+}
+
+/// `o3106` response envelope. Single out-block under the `o3106OutBlock` key.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct O3106Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "o3106OutBlock", default)]
+    pub outblock: O3106OutBlock,
+}
+
+/// Input block for `o3125` — 해외선물옵션 현재가(종목정보) 조회 (overseas
+/// future-option current price / symbol info). Keyed by `mktgb` + `symbol`.
+#[derive(Serialize, Debug, Clone)]
+pub struct O3125InBlock {
+    /// Market distinction / 시장구분 (`"F"` = future, `"O"` = option).
+    pub mktgb: String,
+    /// Symbol / 종목심볼.
+    pub symbol: String,
+}
+
+/// `o3125` request — serializes to `{"o3125InBlock":{...}}`. Non-paginated.
+#[derive(Serialize, Debug, Clone)]
+pub struct O3125Request {
+    #[serde(rename = "o3125InBlock")]
+    pub inblock: O3125InBlock,
+}
+impl O3125Request {
+    /// Build an `o3125` symbol-info request for one market + symbol.
+    pub fn new(mktgb: impl Into<String>, symbol: impl Into<String>) -> Self {
+        O3125Request {
+            inblock: O3125InBlock {
+                mktgb: mktgb.into(),
+                symbol: symbol.into(),
+            },
+        }
+    }
+}
+
+/// `o3125OutBlock` — the overseas-future-option current-price snapshot (single
+/// object per the raw capture, KTD5). `trd_p` (체결가격) is the canonical price
+/// field (KTD6); `tot_q`/`trd_q`/`seq_no`/`dot_gb` are numeric. Rust fields are
+/// snake_case with `#[serde(rename)]` to the PascalCase wire keys.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct O3125OutBlock {
+    /// Symbol / 종목코드.
+    #[serde(rename = "Symbol", deserialize_with = "ls_core::string_or_number")]
+    pub symbol: String,
+    /// Symbol name / 종목명.
+    #[serde(rename = "SymbolNm", deserialize_with = "ls_core::string_or_number")]
+    pub symbol_nm: String,
+    /// Trade price / 체결가격 (canonical field, KTD6).
+    #[serde(rename = "TrdP", deserialize_with = "ls_core::string_or_number")]
+    pub trd_p: String,
+    /// Open / 시가.
+    #[serde(rename = "OpenP", deserialize_with = "ls_core::string_or_number")]
+    pub open_p: String,
+    /// High / 고가.
+    #[serde(rename = "HighP", deserialize_with = "ls_core::string_or_number")]
+    pub high_p: String,
+    /// Low / 저가.
+    #[serde(rename = "LowP", deserialize_with = "ls_core::string_or_number")]
+    pub low_p: String,
+    /// Total volume / 누적거래량 (numeric out field).
+    #[serde(rename = "TotQ", deserialize_with = "ls_core::string_or_number")]
+    pub tot_q: String,
+    /// Trade quantity / 체결수량 (numeric out field).
+    #[serde(rename = "TrdQ", deserialize_with = "ls_core::string_or_number")]
+    pub trd_q: String,
+    /// Sequence number / 수신순번 (numeric out field).
+    #[serde(rename = "SeqNo", deserialize_with = "ls_core::string_or_number")]
+    pub seq_no: String,
+    /// Currency / 통화코드.
+    #[serde(rename = "CrncyCd", deserialize_with = "ls_core::string_or_number")]
+    pub crncy_cd: String,
+}
+
+/// `o3125` response envelope. Single out-block under the `o3125OutBlock` key.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct O3125Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "o3125OutBlock", default)]
+    pub outblock: O3125OutBlock,
+}
+
+/// Input block for `o3126` — 해외선물옵션 현재가호가 조회 (overseas future-option
+/// current price + order book). Keyed by `mktgb` + `symbol`.
+#[derive(Serialize, Debug, Clone)]
+pub struct O3126InBlock {
+    /// Market distinction / 시장구분 (`"F"` = future, `"O"` = option).
+    pub mktgb: String,
+    /// Symbol / 종목심볼.
+    pub symbol: String,
+}
+
+/// `o3126` request — serializes to `{"o3126InBlock":{...}}`. Non-paginated.
+#[derive(Serialize, Debug, Clone)]
+pub struct O3126Request {
+    #[serde(rename = "o3126InBlock")]
+    pub inblock: O3126InBlock,
+}
+impl O3126Request {
+    /// Build an `o3126` order-book request for one market + symbol.
+    pub fn new(mktgb: impl Into<String>, symbol: impl Into<String>) -> Self {
+        O3126Request {
+            inblock: O3126InBlock {
+                mktgb: mktgb.into(),
+                symbol: symbol.into(),
+            },
+        }
+    }
+}
+
+/// `o3126OutBlock` — the overseas-future-option current-price + order-book
+/// snapshot (single object per the raw capture, KTD5). `price` (현재가) is the
+/// canonical price field (KTD6); the level-1 book + counts are numeric.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct O3126OutBlock {
+    /// Symbol / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub symbol: String,
+    /// Symbol name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub symbolname: String,
+    /// Current price / 현재가 (canonical field, KTD6).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Change vs. previous close / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Accumulated volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Best ask price / 매도호가1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerho1: String,
+    /// Best bid price / 매수호가1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidho1: String,
+    /// Total ask volume / 매도호가총잔량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offer: String,
+    /// Total bid volume / 매수호가총잔량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bid: String,
+}
+
+/// `o3126` response envelope. Single out-block under the `o3126OutBlock` key.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct O3126Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "o3126OutBlock", default)]
+    pub outblock: O3126OutBlock,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -5155,6 +5616,66 @@ impl MarketSession {
     pub async fn overseas_master(&self, req: &G3190Request) -> LsResult<G3190Response> {
         self.inner
             .post(&ls_core::endpoint_policy::G3190_POLICY, req)
+            .await
+    }
+
+    /// Read the overseas-futures master list (해외선물마스터) via `o3101`.
+    /// Non-paginated; `gubun` filters (`""` = all), no instrument identifier.
+    /// Returns a master row array. `instrument_domain: overseas_futures`,
+    /// `venue_session: unspecified`.
+    pub async fn overseas_futures_master(&self, req: &O3101Request) -> LsResult<O3101Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::O3101_POLICY, req)
+            .await
+    }
+
+    /// Read the overseas-future-option master list (해외선물옵션 마스터) via `o3121`.
+    /// Non-paginated; keyed by a market distinction + base-product filter. Returns
+    /// a master row array. `venue_session: unspecified`.
+    pub async fn overseas_option_master(&self, req: &O3121Request) -> LsResult<O3121Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::O3121_POLICY, req)
+            .await
+    }
+
+    /// Read the overseas-futures current price / symbol info (해외선물 현재가) via
+    /// `o3105`. Non-paginated; keyed by one `symbol`. Single out-block.
+    pub async fn overseas_futures_quote(&self, req: &O3105Request) -> LsResult<O3105Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::O3105_POLICY, req)
+            .await
+    }
+
+    /// Read the overseas-futures current price + order book (해외선물 현재가호가) via
+    /// `o3106`. Non-paginated; keyed by one `symbol`. Single out-block (level-1
+    /// book).
+    pub async fn overseas_futures_order_book(
+        &self,
+        req: &O3106Request,
+    ) -> LsResult<O3106Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::O3106_POLICY, req)
+            .await
+    }
+
+    /// Read the overseas-future-option current price / symbol info (해외선물옵션
+    /// 현재가) via `o3125`. Non-paginated; keyed by a market distinction + symbol.
+    /// Single out-block.
+    pub async fn overseas_option_quote(&self, req: &O3125Request) -> LsResult<O3125Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::O3125_POLICY, req)
+            .await
+    }
+
+    /// Read the overseas-future-option current price + order book (해외선물옵션
+    /// 현재가호가) via `o3126`. Non-paginated; keyed by a market distinction +
+    /// symbol. Single out-block (level-1 book).
+    pub async fn overseas_option_order_book(
+        &self,
+        req: &O3126Request,
+    ) -> LsResult<O3126Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::O3126_POLICY, req)
             .await
     }
 }

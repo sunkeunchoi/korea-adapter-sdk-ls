@@ -1192,6 +1192,96 @@ pub const G3190_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(50),
 };
 
+/// o3101 — 해외선물마스터조회 (overseas-futures master list; non-paginated
+/// market-data read; ARRAY out-block). `gubun` filters, no instrument id.
+pub const O3101_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3101",
+    path: "/overseas-futureoption/market-data",
+    module: "overseas-futureoption",
+    group: "[해외선물] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(10),
+};
+
+/// o3121 — 해외선물옵션 마스터 조회 (overseas-future-option master list;
+/// non-paginated market-data read; ARRAY out-block).
+pub const O3121_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3121",
+    path: "/overseas-futureoption/market-data",
+    module: "overseas-futureoption",
+    group: "[해외선물] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(10),
+};
+
+/// o3105 — 해외선물 현재가(종목정보) 조회 (overseas-futures current price /
+/// symbol info; non-paginated market-data read; single out-block).
+pub const O3105_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3105",
+    path: "/overseas-futureoption/market-data",
+    module: "overseas-futureoption",
+    group: "[해외선물] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(50),
+};
+
+/// o3106 — 해외선물 현재가호가 조회 (overseas-futures current price + order book;
+/// non-paginated market-data read; single out-block).
+pub const O3106_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3106",
+    path: "/overseas-futureoption/market-data",
+    module: "overseas-futureoption",
+    group: "[해외선물] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(50),
+};
+
+/// o3125 — 해외선물옵션 현재가(종목정보) 조회 (overseas-future-option current price /
+/// symbol info; non-paginated market-data read; single out-block).
+pub const O3125_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3125",
+    path: "/overseas-futureoption/market-data",
+    module: "overseas-futureoption",
+    group: "[해외선물] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(50),
+};
+
+/// o3126 — 해외선물옵션 현재가호가 조회 (overseas-future-option current price +
+/// order book; non-paginated market-data read; single out-block).
+pub const O3126_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3126",
+    path: "/overseas-futureoption/market-data",
+    module: "overseas-futureoption",
+    group: "[해외선물] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(50),
+};
+
 /// S3_ — KOSPI체결 실시간 시세 (real-time KOSPI trade feed, WebSocket).
 ///
 /// WebSocket TR: there is no REST dispatch, but the policy const is retained as
@@ -1318,6 +1408,12 @@ mod tests {
             G3102_POLICY,
             G3103_POLICY,
             G3190_POLICY,
+            O3101_POLICY,
+            O3121_POLICY,
+            O3105_POLICY,
+            O3106_POLICY,
+            O3125_POLICY,
+            O3126_POLICY,
         ] {
             assert!(!p.is_order, "{} must not be an order endpoint", p.tr_code);
             assert!(p.is_rest(), "{} must be a REST endpoint", p.tr_code);

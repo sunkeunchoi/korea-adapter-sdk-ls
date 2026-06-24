@@ -33,6 +33,9 @@ use ls_sdk::market_session::{
     G3101OutBlock, G3101Request, G3101Response, G3102Request, G3102Response, G3103Request,
     G3103Response, G3104OutBlock, G3104Request, G3104Response, G3106OutBlock, G3106Request,
     G3106Response, G3190Request, G3190Response,
+    O3101OutBlock, O3101Request, O3101Response, O3105OutBlock, O3105Request, O3105Response,
+    O3106OutBlock, O3106Request, O3106Response, O3121Request, O3121Response, O3125OutBlock,
+    O3125Request, O3125Response, O3126OutBlock, O3126Request, O3126Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
@@ -3714,4 +3717,344 @@ fn g3190_request_serializes_count_as_number_and_array_round_trips() {
     }))
     .expect("empty deserializes");
     assert!(empty.outblock1.is_empty(), "empty master array is the pending case");
+}
+
+// ---------------------------------------------------------------------------
+// Overseas-futures (`o`-prefix) reads — U8 reach wave.
+//
+// Surface `/overseas-futureoption/market-data`, group `[해외선물] 시세`,
+// instrument_domain overseas_futures, venue_session unspecified. One `o`-probe +
+// KTD9 A/B (wrong path → http=404, wrong tr_cd → http=500 IGW00215, intended →
+// http=200; NO 01900) confirmed the domain REACHABLE and our contract CORRECT.
+// The two MASTER reads (o3101/o3121) return non-empty data on paper → IMPLEMENT;
+// the four live quote/order-book reads (o3105/o3106/o3125/o3126) answer empty on
+// paper → PENDING. Canonical fields by baseline `korean_name`, pinned exactly
+// from a NON-COLLAPSING fixture (KTD6); numeric out fields via `string_or_number`
+// from BOTH string and number JSON (KTD4); array out-blocks single→one-element
+// Vec via `de_vec_or_single` (KTD5). The `01900` disposition is covered
+// explicitly on o3101 (representative). No numeric REQUEST fields in this lane.
+// ---------------------------------------------------------------------------
+
+/// `o3101` request rename (no caller leak) + a NON-COLLAPSING master row array:
+/// `symbol_nm` (종목명, canonical KTD6) pinned exactly and distinct from the
+/// base-product name so a mislabel cannot hide; the ARRAY out-block round-trips
+/// (KTD5).
+#[test]
+fn o3101_request_renames_and_master_array_round_trips() {
+    let value = serde_json::to_value(O3101Request::new("")).expect("serialize o3101");
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "exactly one top-level key");
+    assert_eq!(value["o3101InBlock"]["gubun"], "");
+    assert!(value.get("o3101OutBlock").is_none(), "no out-block leaks into the request");
+
+    let resp: O3101Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "o3101OutBlock": [
+            { "Symbol": "ADM23", "SymbolNm": "Australian Dollar(2023.06)", "BscGdsCd": "AD",
+              "BscGdsNm": "Australian Dollar", "ExchCd": "CME", "CrncyCd": "USD",
+              "UntPrc": "0.000050000", "DotGb": 5 },
+            { "Symbol": "M6EZ23", "SymbolNm": "E-micro EUR/USD(2023.12)", "BscGdsCd": "M6E",
+              "BscGdsNm": "E-micro EUR/USD", "ExchCd": "CME", "CrncyCd": "USD",
+              "UntPrc": "0.000100000", "DotGb": 5 }
+        ]
+    }))
+    .expect("representative o3101 success must deserialize");
+    assert_eq!(resp.outblock.len(), 2);
+    // Canonical 종목명 pinned exactly, distinct from 기초상품명 (KTD6).
+    assert_eq!(resp.outblock[0].symbol_nm, "Australian Dollar(2023.06)", "종목명");
+    assert_eq!(resp.outblock[0].bsc_gds_nm, "Australian Dollar", "기초상품명");
+    assert_ne!(
+        resp.outblock[0].symbol_nm, resp.outblock[0].bsc_gds_nm,
+        "non-collapsing: 종목명≠기초상품명"
+    );
+
+    // single row object → one-element Vec (KTD5).
+    let single: O3101Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "o3101OutBlock": { "Symbol": "ADM23", "SymbolNm": "Australian Dollar(2023.06)" }
+    }))
+    .expect("single row deserializes");
+    assert_eq!(single.outblock.len(), 1, "single object becomes a one-element Vec");
+}
+
+/// `o3101` numeric out-block field (`DotGb`/`dot_gb`) parses from BOTH string and
+/// number JSON (KTD4).
+#[test]
+fn o3101_numeric_field_string_or_number() {
+    let from_num: O3101OutBlock =
+        serde_json::from_value(serde_json::json!({ "DotGb": 5 })).expect("number form");
+    let from_str: O3101OutBlock =
+        serde_json::from_value(serde_json::json!({ "DotGb": "5" })).expect("string form");
+    assert_eq!(from_num.dot_gb, "5");
+    assert_eq!(from_str.dot_gb, "5");
+}
+
+/// `o3101` empty result (00707, empty out-block) deserializes as the pending case.
+#[test]
+fn o3101_empty_result_deserializes_as_pending() {
+    let empty: O3101Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "o3101OutBlock": []
+    }))
+    .expect("empty deserializes");
+    assert!(empty.outblock.is_empty(), "empty master array is the pending case");
+}
+
+/// `o3101` `01900` classifies as paper-incompatible — the member stays Tracked,
+/// no flip (disposition state machine). Representative for the lane.
+#[tokio::test]
+async fn o3101_code_01900_classifies_as_paper_incompatible() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path("/overseas-futureoption/market-data"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "rsp_cd": "01900",
+            "rsp_msg": "모의투자에서는 해당업무가 제공되지 않습니다."
+        })))
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let err = sdk
+        .market_session()
+        .overseas_futures_master(&O3101Request::new(""))
+        .await
+        .expect_err("01900 must surface as an error");
+    match &err {
+        LsError::ApiError { code, .. } => {
+            assert_eq!(code, "01900", "exact code preserved");
+            assert!(ls_core::is_paper_incompatible(code), "01900 paper-incompatible");
+        }
+        other => panic!("expected ApiError, got {other:?}"),
+    }
+}
+
+/// `o3121` rename (no caller leak) + a NON-COLLAPSING option-master row array:
+/// `bsc_gds_nm` (기초상품명, canonical KTD6) pinned exactly; ARRAY out-block
+/// round-trips (KTD5).
+#[test]
+fn o3121_request_renames_and_master_array_round_trips() {
+    let value = serde_json::to_value(O3121Request::new("O", "")).expect("serialize o3121");
+    assert_eq!(value["o3121InBlock"]["MktGb"], "O");
+    assert_eq!(value["o3121InBlock"]["BscGdsCd"], "");
+    assert!(value.get("o3121OutBlock").is_none(), "no out-block leaks");
+
+    let resp: O3121Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "o3121OutBlock": [
+            { "Symbol": "", "BscGdsCd": "O_E1A", "BscGdsNm": "W1 Monday E-mini S&P 500 Option",
+              "ExchCd": "CME", "XrcPrc": "", "OptTpCode": "", "DotGb": 0 }
+        ]
+    }))
+    .expect("representative o3121 success must deserialize");
+    assert_eq!(resp.outblock.len(), 1);
+    assert_eq!(resp.outblock[0].bsc_gds_nm, "W1 Monday E-mini S&P 500 Option", "기초상품명");
+    assert_eq!(resp.outblock[0].exch_cd, "CME", "거래소코드");
+    assert_ne!(
+        resp.outblock[0].bsc_gds_nm, resp.outblock[0].exch_cd,
+        "non-collapsing: 기초상품명≠거래소코드"
+    );
+
+    let single: O3121Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "o3121OutBlock": { "BscGdsCd": "O_E1A", "BscGdsNm": "W1 Monday E-mini S&P 500 Option" }
+    }))
+    .expect("single row deserializes");
+    assert_eq!(single.outblock.len(), 1, "single object becomes a one-element Vec");
+}
+
+/// `o3121` numeric out-block field (`DotGb`) parses from BOTH string and number.
+#[test]
+fn o3121_numeric_field_string_or_number() {
+    let from_num: O3121Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "o3121OutBlock": [{ "DotGb": 0 }]
+    }))
+    .expect("number form");
+    let from_str: O3121Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "o3121OutBlock": [{ "DotGb": "0" }]
+    }))
+    .expect("string form");
+    assert_eq!(from_num.outblock[0].dot_gb, "0");
+    assert_eq!(from_str.outblock[0].dot_gb, "0");
+}
+
+/// `o3121` empty result (00707) deserializes as the pending case.
+#[test]
+fn o3121_empty_result_deserializes_as_pending() {
+    let empty: O3121Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "o3121OutBlock": []
+    }))
+    .expect("empty deserializes");
+    assert!(empty.outblock.is_empty(), "empty option-master array is the pending case");
+}
+
+/// `o3105` rename + canonical 체결가격 (`trd_p`, KTD6) from a non-collapsing
+/// single out-block; numeric out fields parse from BOTH forms (KTD4).
+#[test]
+fn o3105_request_renames_and_trade_price_round_trips() {
+    let value = serde_json::to_value(O3105Request::new("CUSN23  ")).expect("serialize o3105");
+    assert_eq!(value["o3105InBlock"]["symbol"], "CUSN23  ");
+    assert!(value.get("o3105OutBlock").is_none(), "no out-block leaks");
+
+    let resp: O3105Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "o3105OutBlock": {
+            "Symbol": "CUSN23", "SymbolNm": "Renminbi_USD/CNH(2023.07)", "TrdP": "7.2011",
+            "OpenP": "7.2081", "HighP": "7.2081", "LowP": "7.1907", "TotQ": 1011, "TrdQ": 1,
+            "SeqNo": 1, "CrncyCd": "CNY"
+        }
+    }))
+    .expect("representative o3105 success must deserialize");
+    assert_eq!(resp.outblock.trd_p, "7.2011", "체결가격");
+    assert_eq!(resp.outblock.open_p, "7.2081", "시가");
+    assert_eq!(resp.outblock.low_p, "7.1907", "저가");
+    assert_ne!(resp.outblock.trd_p, resp.outblock.open_p, "non-collapsing: 체결가≠시가");
+}
+
+/// `o3105` numeric out-block field parses from BOTH string and number JSON.
+#[test]
+fn o3105_numeric_field_string_or_number() {
+    let from_num: O3105OutBlock =
+        serde_json::from_value(serde_json::json!({ "TotQ": 1011 })).expect("number form");
+    let from_str: O3105OutBlock =
+        serde_json::from_value(serde_json::json!({ "TotQ": "1011" })).expect("string form");
+    assert_eq!(from_num.tot_q, "1011");
+    assert_eq!(from_str.tot_q, "1011");
+}
+
+/// `o3105` empty result (00707) deserializes as the pending case.
+#[test]
+fn o3105_empty_result_deserializes_as_pending() {
+    let empty: O3105Response =
+        serde_json::from_value(serde_json::json!({ "rsp_cd": "00707" })).expect("empty");
+    assert!(empty.outblock.trd_p.is_empty(), "empty snapshot is the pending case");
+}
+
+/// `o3106` rename + canonical 현재가 (`price`, KTD6) from a non-collapsing single
+/// out-block (book level-1 distinct from price).
+#[test]
+fn o3106_request_renames_and_price_round_trips() {
+    let value = serde_json::to_value(O3106Request::new("ADM23")).expect("serialize o3106");
+    assert_eq!(value["o3106InBlock"]["symbol"], "ADM23");
+    assert!(value.get("o3106OutBlock").is_none(), "no out-block leaks");
+
+    let resp: O3106Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "o3106OutBlock": {
+            "symbol": "ADM23", "symbolname": "Australian Dollar(2023.06)", "price": "0.67670",
+            "change": "0.00135", "volume": 18844, "offerho1": "0.67670", "bidho1": "0.67665",
+            "offer": 149, "bid": 220
+        }
+    }))
+    .expect("representative o3106 success must deserialize");
+    assert_eq!(resp.outblock.price, "0.67670", "현재가");
+    assert_eq!(resp.outblock.offerho1, "0.67670", "매도호가1");
+    assert_eq!(resp.outblock.bidho1, "0.67665", "매수호가1");
+    assert_ne!(resp.outblock.offerho1, resp.outblock.bidho1, "non-collapsing: offer≠bid");
+}
+
+/// `o3106` numeric out-block field parses from BOTH string and number JSON.
+#[test]
+fn o3106_numeric_field_string_or_number() {
+    let from_num: O3106OutBlock =
+        serde_json::from_value(serde_json::json!({ "volume": 18844 })).expect("number form");
+    let from_str: O3106OutBlock =
+        serde_json::from_value(serde_json::json!({ "volume": "18844" })).expect("string form");
+    assert_eq!(from_num.volume, "18844");
+    assert_eq!(from_str.volume, "18844");
+}
+
+/// `o3106` empty result (00707) deserializes as the pending case.
+#[test]
+fn o3106_empty_result_deserializes_as_pending() {
+    let empty: O3106Response =
+        serde_json::from_value(serde_json::json!({ "rsp_cd": "00707" })).expect("empty");
+    assert!(empty.outblock.price.is_empty(), "empty order book is the pending case");
+}
+
+/// `o3125` rename + canonical 체결가격 (`trd_p`, KTD6) from a non-collapsing
+/// single out-block; the two-field in-block round-trips.
+#[test]
+fn o3125_request_renames_and_trade_price_round_trips() {
+    let value =
+        serde_json::to_value(O3125Request::new("F", "HSIM23          ")).expect("serialize o3125");
+    assert_eq!(value["o3125InBlock"]["mktgb"], "F");
+    assert_eq!(value["o3125InBlock"]["symbol"], "HSIM23          ");
+    assert!(value.get("o3125OutBlock").is_none(), "no out-block leaks");
+
+    let resp: O3125Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "o3125OutBlock": {
+            "Symbol": "HSIM23", "SymbolNm": "Hang Seng(2023.06)", "TrdP": "18922.0",
+            "OpenP": "18877.0", "HighP": "19022.0", "LowP": "18676.0", "TotQ": 93965, "TrdQ": 3,
+            "SeqNo": 1, "CrncyCd": "HKD"
+        }
+    }))
+    .expect("representative o3125 success must deserialize");
+    assert_eq!(resp.outblock.trd_p, "18922.0", "체결가격");
+    assert_eq!(resp.outblock.high_p, "19022.0", "고가");
+    assert_eq!(resp.outblock.low_p, "18676.0", "저가");
+    assert_ne!(resp.outblock.trd_p, resp.outblock.high_p, "non-collapsing: 체결가≠고가");
+}
+
+/// `o3125` numeric out-block field parses from BOTH string and number JSON.
+#[test]
+fn o3125_numeric_field_string_or_number() {
+    let from_num: O3125OutBlock =
+        serde_json::from_value(serde_json::json!({ "TotQ": 93965 })).expect("number form");
+    let from_str: O3125OutBlock =
+        serde_json::from_value(serde_json::json!({ "TotQ": "93965" })).expect("string form");
+    assert_eq!(from_num.tot_q, "93965");
+    assert_eq!(from_str.tot_q, "93965");
+}
+
+/// `o3125` empty result (00707) deserializes as the pending case.
+#[test]
+fn o3125_empty_result_deserializes_as_pending() {
+    let empty: O3125Response =
+        serde_json::from_value(serde_json::json!({ "rsp_cd": "00707" })).expect("empty");
+    assert!(empty.outblock.trd_p.is_empty(), "empty snapshot is the pending case");
+}
+
+/// `o3126` rename + canonical 현재가 (`price`, KTD6) from a non-collapsing single
+/// out-block.
+#[test]
+fn o3126_request_renames_and_price_round_trips() {
+    let value = serde_json::to_value(O3126Request::new("F", "ADM23")).expect("serialize o3126");
+    assert_eq!(value["o3126InBlock"]["mktgb"], "F");
+    assert_eq!(value["o3126InBlock"]["symbol"], "ADM23");
+    assert!(value.get("o3126OutBlock").is_none(), "no out-block leaks");
+
+    let resp: O3126Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "o3126OutBlock": {
+            "symbol": "ADM23", "symbolname": "Australian Dollar(2023.06)", "price": "0.67670",
+            "change": "0.00135", "volume": 18844, "offerho1": "0.67670", "bidho1": "0.67665",
+            "offer": 150, "bid": 220
+        }
+    }))
+    .expect("representative o3126 success must deserialize");
+    assert_eq!(resp.outblock.price, "0.67670", "현재가");
+    assert_eq!(resp.outblock.offerho1, "0.67670", "매도호가1");
+    assert_eq!(resp.outblock.bidho1, "0.67665", "매수호가1");
+    assert_ne!(resp.outblock.offerho1, resp.outblock.bidho1, "non-collapsing: offer≠bid");
+}
+
+/// `o3126` numeric out-block field parses from BOTH string and number JSON.
+#[test]
+fn o3126_numeric_field_string_or_number() {
+    let from_num: O3126OutBlock =
+        serde_json::from_value(serde_json::json!({ "volume": 18844 })).expect("number form");
+    let from_str: O3126OutBlock =
+        serde_json::from_value(serde_json::json!({ "volume": "18844" })).expect("string form");
+    assert_eq!(from_num.volume, "18844");
+    assert_eq!(from_str.volume, "18844");
+}
+
+/// `o3126` empty result (00707) deserializes as the pending case.
+#[test]
+fn o3126_empty_result_deserializes_as_pending() {
+    let empty: O3126Response =
+        serde_json::from_value(serde_json::json!({ "rsp_cd": "00707" })).expect("empty");
+    assert!(empty.outblock.price.is_empty(), "empty order book is the pending case");
 }

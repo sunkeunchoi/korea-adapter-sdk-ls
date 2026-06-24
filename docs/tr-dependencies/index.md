@@ -21,7 +21,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `g3104` | 해외주식 API 종목정보 조회 | `market_session` | tracked | [g3104](./g3104.md) |
 | `g3106` | 해외주식 API 현재가호가 조회 | `market_session` | tracked | [g3106](./g3106.md) |
 | `g3190` | 해외주식 API 마스터 조회 | `market_session` | tracked | [g3190](./g3190.md) |
-| `o3101` | 해외선물마스터조회 | `market_session` | tracked | [o3101](./o3101.md) |
+| `o3101` | 해외선물마스터조회 | `market_session` | implemented | [o3101](./o3101.md) |
 | `o3105` | 해외선물 현재가(종목정보) 조회 | `market_session` | tracked | [o3105](./o3105.md) |
 | `o3106` | 해외선물 현재가호가 조회 | `market_session` | tracked | [o3106](./o3106.md) |
 | `o3121` | 해외선물옵션 마스터 조회 | `market_session` | tracked | [o3121](./o3121.md) |

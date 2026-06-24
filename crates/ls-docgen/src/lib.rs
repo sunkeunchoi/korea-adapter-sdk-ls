@@ -887,6 +887,7 @@ mod tests {
             "t8467", "t9943", "t9944", "t8431", "t8436", "t9905", "t9907", "t9942",
             "t2111", "t2112", "t8402", "t8403", "t8434",
             "t1988", "t3320",
+            "o3101",
         ];
         for tr in banner_trs {
             let page = reference
@@ -943,9 +944,11 @@ mod tests {
         // bare-6-digit gicode found via raw-probe A/B) adds one more.
         // (t3102 ships HELD input-unresolved (sNewsno only from realtime NWS) —
         // not counted.)
+        // o3101 (U8 reach wave, overseas-futures master; market_session, ARRAY
+        // out-block; non-empty 85-row paper smoke) adds one more.
         assert_eq!(
             reference.len(),
-            61,
+            62,
             "index + the implemented reference pages"
         );
 
