@@ -41,7 +41,7 @@ use ls_sdk::paginated::{
     T1482Request, T1489Request, T1492Request, T1514Request, T1866Request, T3341Request,
     T8412Request,
 };
-use ls_sdk::realtime::S3Trade;
+use ls_sdk::realtime::WsLane;
 use ls_sdk::LsSdk;
 use tokio::time::timeout;
 
@@ -1635,19 +1635,26 @@ async fn live_smoke_ccenq10100() {
 }
 
 // ---------------------------------------------------------------------------
-// U6 — WebSocket smoke (S3_ lifecycle)
+// U3/U6 — WebSocket lifecycle smoke (generic helper + S3_ + negative control)
 // ---------------------------------------------------------------------------
 
-/// `make live-smoke-ws`: paper guard → assert the paper WS port → connect /
-/// subscribe `S3_` / unsubscribe. Covers AE6.
+/// GENERIC WS lifecycle smoke, parameterized by `(tr_cd, tr_key, lane)` — the
+/// reusable helper the per-TR U5/U6 smokes call (KTD2).
 ///
-/// The connect → subscribe → unsubscribe lifecycle is the blocking assertion;
-/// receiving a row is extra evidence, and its absence within the timeout is not
-/// a failure. Asserting the resolved WS URL carries the paper port `29443` turns
-/// a silent wrong-target run (WS ports differ by environment) into a failure.
-#[tokio::test]
-#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-ws`"]
-async fn live_smoke_ws() {
+/// Runs the full lifecycle on a FRESH/isolated `WsManager` per call (a fresh
+/// `LsSdk` whose `.realtime()` builds a new manager — the Phase 83/84 lesson: a
+/// shared manager poisons later TRs). Steps:
+///   1. paper guard (refuses unless `LS_TRADING_ENV=paper`),
+///   2. assert the resolved WS URL carries the paper port `29443` (fail fast on a
+///      wrong target — WS ports differ by environment),
+///   3. subscribe via a fresh manager, decoding into a PERMISSIVE row type
+///      ([`WsLifecycleRow`]) since lifecycle-only smokes never require a real row,
+///   4. timebox a row as BONUS — absence is NOT a failure,
+///   5. unsubscribe cleanly (the blocking lifecycle assertion).
+///
+/// Returns the credential-free `row_note` for the caller to `record(...)`. NO
+/// raw-frame logging anywhere on this path (ACK frames echo the bearer token).
+async fn ws_lifecycle_smoke(tr_cd: &str, tr_key: &str, lane: WsLane) -> String {
     paper_guard().expect("paper guard must pass for a paper run");
     let config = LsConfig::from_env().expect("config from env");
     assert!(
@@ -1661,18 +1668,23 @@ async fn live_smoke_ws() {
         "expected the paper WS port 29443, got {ws_url}"
     );
 
-    let symbol = resolve_symbol();
+    // Fresh SDK → fresh, isolated WsManager (KTD2 — no shared-manager poisoning).
     let sdk = LsSdk::new(config).expect("sdk construction");
     let ws = sdk.realtime();
 
     let (handle, mut stream) = ws
-        .subscribe_typed::<S3Trade>("S3_", &symbol)
+        .subscribe_typed::<WsLifecycleRow>(tr_cd, tr_key, lane)
         .await
-        .expect("subscribe_typed S3_ failed (connect/subscribe lifecycle)");
+        .unwrap_or_else(|e| panic!("subscribe_typed {tr_cd} failed (connect/subscribe lifecycle): {e}"));
 
-    // Extra evidence: a row may or may not arrive inside the timebox.
+    // BONUS: a row may or may not arrive inside the timebox; absence is not a
+    // failure. We surface only WHETHER a body arrived and whether it looked like
+    // a rejection (non-empty rsp_cd) — never the body contents.
     let row_note = match timeout(Duration::from_secs(5), stream.next()).await {
-        Ok(Some(Ok(row))) => format!("row received price={}", row.price),
+        Ok(Some(Ok(row))) if !row.rsp_cd.is_empty() => {
+            format!("inbound body carried rsp_cd={} (rejection-shaped)", row.rsp_cd)
+        }
+        Ok(Some(Ok(_))) => "row received (lifecycle bonus)".to_string(),
         Ok(Some(Err(e))) => format!("frame decode error: {e}"),
         Ok(None) => "stream ended without a row".to_string(),
         Err(_) => "no row within timeout (not a failure)".to_string(),
@@ -1683,10 +1695,131 @@ async fn live_smoke_ws() {
         .await
         .expect("unsubscribe must complete cleanly");
 
+    row_note
+}
+
+/// Permissive lifecycle row for [`ws_lifecycle_smoke`] — lifecycle-only smokes
+/// never require a real row, so any body deserializes here. `rsp_cd` is the one
+/// field we read: a non-empty value on an inbound body is the observable signal
+/// of a gateway rejection (the live half of KTD6's open question).
+#[derive(serde::Deserialize, Debug, Default)]
+struct WsLifecycleRow {
+    #[serde(default)]
+    rsp_cd: String,
+}
+
+/// `make live-smoke-ws`: generic lifecycle smoke for `S3_` (market-data, "3").
+/// Covers AE6. Delegates to [`ws_lifecycle_smoke`] so the single-TR smoke and the
+/// per-TR U5/U6 smokes share one code path.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-ws`"]
+async fn live_smoke_ws() {
+    let symbol = resolve_symbol();
+    let row_note = ws_lifecycle_smoke("S3_", &symbol, WsLane::MarketData).await;
     record(
         "live-smoke-ws",
-        &format!("symbol={symbol} ws_port=29443"),
+        &format!("symbol={symbol} ws_port=29443 tr_type=3"),
         &row_note,
+    );
+}
+
+/// `make live-smoke-ws-negative`: LIVE half of the KTD6 negative control.
+///
+/// Subscribes a deliberately-INVALID `tr_cd` and reports whether the paper
+/// gateway emits an OBSERVABLE rejection within the timebox. This is the live
+/// complement of the DETERMINISTIC mock-WS negative control in
+/// `realtime_tests.rs::negative_control_rejected_tr_cd_is_observably_distinct_from_accepted`.
+///
+/// WHAT "observable" means here, and WHY it is uncertain: the SDK subscribe path
+/// is FIRE-AND-FORGET — it never reads the subscribe ACK — so `subscribe_typed`
+/// returns `Ok` for a valid AND an invalid `tr_cd` alike. The only live signal a
+/// rejection can produce, given today's code, is an INBOUND frame the gateway
+/// pushes whose `header.tr_cd`/`tr_key` route it back to this subscriber's
+/// stream, surfacing as a body with a non-empty `rsp_cd` — that is the ONLY
+/// tr_cd-attributable signal. A closed stream or a decode error is INCONCLUSIVE
+/// (a transient disconnect produces the same close), and pure silence is
+/// NOT-OBSERVABLE. If the result is anything but a clean `rsp_cd`, a rejected and
+/// an accepted subscribe are indistinguishable on the live paper path, so every
+/// U5/U6 flip can claim only CONNECTION-REACHABLE-ONLY, not per-TR reachability.
+///
+/// OPEN-QUESTION STATUS: UNRESOLVED in this environment — there is no market
+/// session or live credentials here, so this smoke is `#[ignore]` and a human
+/// runs it later via `make live-smoke-ws-negative`. The recorded `result=[...]`
+/// line is the answer; we do NOT fabricate it. Until then the wave's flip claim
+/// stays the weaker connection-reachable-only per KTD6.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials + a session to observe a rejection; run via `make live-smoke-ws-negative`"]
+async fn live_smoke_ws_negative() {
+    paper_guard().expect("paper guard must pass for a paper run");
+    let config = LsConfig::from_env().expect("config from env");
+    assert!(
+        config.environment.is_paper(),
+        "resolved environment must be Paper"
+    );
+
+    let ws_url = ls_core::config::Environment::resolve_ws_url(&config);
+    assert!(
+        ws_url.contains("29443"),
+        "expected the paper WS port 29443, got {ws_url}"
+    );
+
+    // A deliberately-invalid TR code: not a real LS realtime channel. The market-
+    // data lane is used arbitrarily — the lane is irrelevant when the code itself
+    // is bogus.
+    const INVALID_TR_CD: &str = "ZZ9";
+
+    let sdk = LsSdk::new(config).expect("sdk construction");
+    let ws = sdk.realtime();
+
+    // subscribe_typed may well return Ok even for an invalid code (fire-and-forget).
+    let subscribe_outcome = ws
+        .subscribe_typed::<WsLifecycleRow>(INVALID_TR_CD, &resolve_symbol(), WsLane::MarketData)
+        .await;
+
+    let observation = match subscribe_outcome {
+        Err(e) => format!("subscribe returned Err immediately: {e}"),
+        Ok((handle, mut stream)) => {
+            // Timebox for a tr_cd-ATTRIBUTABLE rejection signal. Only an inbound
+            // body routed to THIS subscriber by composite key carrying a non-empty
+            // `rsp_cd` is OBSERVABLE — that is the one signal a rejection produces
+            // that an acceptance does not. A bare stream close or a decode error is
+            // INCONCLUSIVE: a transient gateway disconnect / reconnect-budget
+            // exhaustion produces the same close and is NOT attributable to the
+            // invalid tr_cd, so treating it as OBSERVABLE would false-confirm the
+            // stronger per-TR reachability claim KTD6 exists to gate. Silence is
+            // NOT-OBSERVABLE. INCONCLUSIVE and NOT-OBSERVABLE both leave flips at
+            // connection-reachable-only.
+            let note = match timeout(Duration::from_secs(5), stream.next()).await {
+                Ok(Some(Ok(row))) if !row.rsp_cd.is_empty() => {
+                    format!("OBSERVABLE: inbound rejection body rsp_cd={}", row.rsp_cd)
+                }
+                Ok(Some(Ok(_))) => {
+                    "INCONCLUSIVE: inbound body with no rsp_cd (not attributable)".to_string()
+                }
+                Ok(Some(Err(_))) => {
+                    "INCONCLUSIVE: routed frame failed to decode (not a clean rejection signal)"
+                        .to_string()
+                }
+                Ok(None) => {
+                    "INCONCLUSIVE: stream closed — indistinguishable from a transient \
+                     disconnect; NOT attributable to the invalid tr_cd"
+                        .to_string()
+                }
+                Err(_) => {
+                    "NOT-OBSERVABLE: silence in timebox — flips are connection-reachable-only"
+                        .to_string()
+                }
+            };
+            // Clean up regardless of outcome.
+            let _ = handle.unsubscribe().await;
+            note
+        }
+    };
+
+    record(
+        "live-smoke-ws-negative",
+        &format!("invalid_tr_cd={INVALID_TR_CD} ws_port=29443"),
+        &observation,
     );
 }
 

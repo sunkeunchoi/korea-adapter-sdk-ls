@@ -13,11 +13,12 @@
 //! Verified from `specs/ls_openapi_specs.json` (S3_ example):
 //! `{"header":{"token":"<bearer>","tr_type":"<n>"},"body":{"tr_cd":...,"tr_key":...}}`.
 //!
-//! **S3_ is a market-data (실시간 시세) channel**, so it registers with
-//! `tr_type "3"` (실시간 시세 등록) and deregisters with `tr_type "4"` (실시간 시세
-//! 해제). (Order-event channels register an account with `tr_type "1"/"2"`
-//! instead; this slice ships only the market-data S3_ TR, so the builders use the
-//! market-data `tr_type` directly — see `metadata/trs/S3_.yaml`.)
+//! The lane is carried per-subscription as a [`WsLane`]: market-data channels
+//! (like S3_) register with `tr_type "3"` (실시간 시세 등록) and deregister with `"4"`
+//! (실시간 시세 해제); order-event channels register an account with `tr_type "1"`
+//! (실시간 계좌 등록) and deregister with `"2"`. The builders take a [`WsLane`] so both
+//! lanes share one frame path and an invalid lane is a compile error; the caller
+//! (recipe/smoke) supplies the variant — see `metadata/trs/S3_.yaml`.
 //!
 //! ## S3_ push decode
 //!
@@ -48,19 +49,60 @@ pub(crate) fn split_composite_key(key: &str) -> (&str, &str) {
     key.split_once(':').unwrap_or((key, ""))
 }
 
-/// Build an LS WebSocket subscribe message for a market-data channel.
+/// The realtime subscription lane — selects the register/deregister `tr_type`
+/// pair sent on the WebSocket.
 ///
-/// `{"header":{"token","tr_type":"3"},"body":{"tr_cd","tr_key"}}` — `tr_type "3"`
-/// is 실시간 시세 등록 (realtime-quote register), the shape S3_ uses.
-pub(crate) fn build_subscribe_msg(tr_cd: &str, tr_key: &str, token: &str) -> Message {
-    build_frame(tr_cd, tr_key, token, "3")
+/// A closed two-variant enum (rather than a raw `tr_type: &str`) makes an invalid
+/// lane a compile error at the `subscribe`/`subscribe_typed` boundary and keeps
+/// the register/deregister pairing in exactly one place — so a wrong-lane
+/// deregister frame can never be emitted silently. The wire values are an LS
+/// protocol detail confined to [`WsLane::register`]/[`WsLane::deregister`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WsLane {
+    /// 실시간 시세 — market-data feeds (S3_, K3_, H1_, …). Register `"3"`, deregister `"4"`.
+    MarketData,
+    /// 실시간 계좌 — order-event channels (SC0, AS0, …). Register `"1"`, deregister `"2"`.
+    OrderEvent,
 }
 
-/// Build an LS WebSocket unsubscribe message for a market-data channel.
+impl WsLane {
+    /// The register (등록) `tr_type` wire value.
+    pub(crate) fn register(self) -> &'static str {
+        match self {
+            WsLane::MarketData => "3",
+            WsLane::OrderEvent => "1",
+        }
+    }
+
+    /// The deregister (해제) `tr_type` wire value — the register value's pair.
+    pub(crate) fn deregister(self) -> &'static str {
+        match self {
+            WsLane::MarketData => "4",
+            WsLane::OrderEvent => "2",
+        }
+    }
+}
+
+/// Build an LS WebSocket subscribe (register) message for `lane`.
 ///
-/// `tr_type "4"` is 실시간 시세 해제 (realtime-quote deregister).
-pub(crate) fn build_unsubscribe_msg(tr_cd: &str, tr_key: &str, token: &str) -> Message {
-    build_frame(tr_cd, tr_key, token, "4")
+/// `{"header":{"token","tr_type":<reg>},"body":{"tr_cd","tr_key"}}` — the register
+/// value is `lane.register()` (`"3"` market-data, `"1"` order-event). The lane is
+/// stored per-subscription and reused verbatim on reconnect replay.
+pub(crate) fn build_subscribe_msg(tr_cd: &str, tr_key: &str, token: &str, lane: WsLane) -> Message {
+    build_frame(tr_cd, tr_key, token, lane.register())
+}
+
+/// Build an LS WebSocket unsubscribe (deregister) message for `lane`.
+///
+/// Emits `lane.deregister()` (`"4"` market-data, `"2"` order-event), so a caller
+/// threads a single per-subscription [`WsLane`] through both build paths.
+pub(crate) fn build_unsubscribe_msg(
+    tr_cd: &str,
+    tr_key: &str,
+    token: &str,
+    lane: WsLane,
+) -> Message {
+    build_frame(tr_cd, tr_key, token, lane.deregister())
 }
 
 /// Shared frame constructor — the token rides only in the header, never logged.
@@ -136,8 +178,20 @@ mod tests {
     }
 
     #[test]
+    fn market_data_lane_register_deregister_pair() {
+        assert_eq!(WsLane::MarketData.register(), "3");
+        assert_eq!(WsLane::MarketData.deregister(), "4");
+    }
+
+    #[test]
+    fn order_event_lane_register_deregister_pair() {
+        assert_eq!(WsLane::OrderEvent.register(), "1");
+        assert_eq!(WsLane::OrderEvent.deregister(), "2");
+    }
+
+    #[test]
     fn subscribe_msg_uses_tr_type_3_for_market_data() {
-        let v = parse_msg(build_subscribe_msg("S3_", "005930", "tok_abc"));
+        let v = parse_msg(build_subscribe_msg("S3_", "005930", "tok_abc", WsLane::MarketData));
         assert_eq!(v["header"]["token"], "tok_abc");
         assert_eq!(v["header"]["tr_type"], "3");
         assert_eq!(v["body"]["tr_cd"], "S3_");
@@ -146,10 +200,26 @@ mod tests {
 
     #[test]
     fn unsubscribe_msg_uses_tr_type_4_for_market_data() {
-        let v = parse_msg(build_unsubscribe_msg("S3_", "005930", "tok_abc"));
+        let v = parse_msg(build_unsubscribe_msg("S3_", "005930", "tok_abc", WsLane::MarketData));
         assert_eq!(v["header"]["tr_type"], "4");
         assert_eq!(v["body"]["tr_cd"], "S3_");
         assert_eq!(v["body"]["tr_key"], "005930");
+    }
+
+    #[test]
+    fn subscribe_msg_uses_tr_type_1_for_order_event() {
+        // Order-event channels (P2 lane) register with tr_type "1".
+        let v = parse_msg(build_subscribe_msg("SC0", "", "tok_abc", WsLane::OrderEvent));
+        assert_eq!(v["header"]["tr_type"], "1");
+        assert_eq!(v["body"]["tr_cd"], "SC0");
+    }
+
+    #[test]
+    fn unsubscribe_msg_uses_tr_type_2_for_order_event() {
+        // The order-event deregister pair is "2".
+        let v = parse_msg(build_unsubscribe_msg("SC0", "", "tok_abc", WsLane::OrderEvent));
+        assert_eq!(v["header"]["tr_type"], "2");
+        assert_eq!(v["body"]["tr_cd"], "SC0");
     }
 
     #[test]

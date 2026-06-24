@@ -84,6 +84,14 @@ _Avoid_: implemented expansion, generated coverage, full SDK port
 An **SDK Expansion Work Item** that adds callable SDK behavior for one or more TRs.
 _Avoid_: tracked-only expansion, generated coverage, full SDK port
 
+**Implementation Lane**:
+A planning boundary for sequencing TR implementation work by shared safety, transport, or evidence prerequisites. It is not a support tier and does not by itself make a TR tracked, implemented, or recommended.
+_Avoid_: support tier, blanket campaign, backlog bucket
+
+**Mixed Expansion Wave**:
+An SDK expansion effort that may bring raw TRs to tracked and then implemented within one coordinated batch while still applying each TR's rung-specific gate. It is a planning scope, not a shortcut around tracking, implementation, smoke, or recommendation requirements.
+_Avoid_: bulk implementation, generated port, support shortcut
+
 **Completed Maintenance Work Item**:
 An **SDK Maintenance Work Item** whose affected maintained artifacts have been updated and whose selected **Change-Scoped Gate** has passed.
 _Avoid_: merged patch, closed issue, generated update
@@ -152,6 +160,10 @@ _Avoid_: real gate test, live integration suite, production test
 A **Credentialed Live Smoke** that targets LS paper credentials only. It is the default live check before any real or order-capable evidence is considered.
 _Avoid_: simulation smoke, real-money smoke, sandbox test
 
+**WebSocket Lifecycle Smoke**:
+A **Paper Live Smoke** for realtime TRs that proves the paper WebSocket endpoint can connect, subscribe, and unsubscribe for a TR. A delivered row can strengthen evidence, but lifecycle reachability is the implementation gate because many realtime feeds are session- or event-dependent.
+_Avoid_: row-delivery proof, realtime recommendation evidence, REST smoke
+
 **Bootstrap Tool**:
 A temporary migration utility used to create initial project data from old specs or documents.
 _Avoid_: permanent tracker, maintained tooling, SDK runtime
@@ -196,6 +208,18 @@ _Avoid_: dependency, standalone prerequisite
 A TR whose response supplies a required value for another TR's request, such as an order number used by a modify, cancel, inquiry, or reconciliation flow.
 _Avoid_: weak lookup TR, identifier source, nice-to-have producer
 
+**Read-Only TR**:
+A TR whose successful call observes broker, market, account, or reference state without placing, modifying, canceling, registering, deregistering, or otherwise creating broker-side state.
+_Avoid_: safe TR, simple TR, query TR
+
+**Side-Effectful TR**:
+A TR whose successful call can create, change, remove, or subscribe to broker-side state, including order operations and registration lifecycles.
+_Avoid_: read TR, ordinary implemented TR, harmless control
+
+**Side-Effect-Adjacent Realtime Feed**:
+A realtime feed that observes broker-side lifecycle state such as order receipt, execution, correction, cancellation, or rejection without itself submitting, modifying, or canceling an order. It requires stricter evidence wording than market quote feeds, but it is not the same as REST order runtime.
+_Avoid_: order runtime, harmless realtime feed, order TR
+
 ## Relationships
 
 - The **Maintained SDK Surface** is the source of truth for SDK behavior.
@@ -214,6 +238,8 @@ _Avoid_: weak lookup TR, identifier source, nice-to-have producer
 - A **SDK Expansion Work Item** is a decision to own additional SDK behavior, not a reaction to behavior already owned by the **Maintained SDK Surface**.
 - A **Tracked-Only Expansion Work Item** expands maintenance ownership but does not make a TR an **Implemented TR**.
 - An **Implemented Expansion Work Item** makes a TR an **Implemented TR** but not automatically a **Recommended TR**.
+- An **Implementation Lane** groups candidate TRs before support-rung promotion; it does not override the gate for any individual TR.
+- A **Mixed Expansion Wave** can contain both **Tracked-Only Expansion Work Items** and **Implemented Expansion Work Items**, but each TR still climbs the support ladder one rung at a time.
 - Accepted **SDK Maintenance Work Items** and **SDK Expansion Work Items** live in the **Maintenance Work Queue**.
 - A **Completed Maintenance Work Item** is not complete from code changes alone.
 - The **Maintenance Flow** begins with an upstream change signal and does not change the **Maintained SDK Surface** until reviewed work is accepted.
@@ -231,6 +257,7 @@ _Avoid_: weak lookup TR, identifier source, nice-to-have producer
 - **Focused Evidence** replaces old certification vocabulary for implemented or recommended behavior.
 - **Credentialed Live Smoke** can support **Focused Evidence** but is not automatically **Focused Evidence**.
 - **Paper Live Smoke** is a **Credentialed Live Smoke**.
+- A **WebSocket Lifecycle Smoke** can make a realtime TR an **Implemented TR** without proving a non-empty pushed row.
 - **Focused Evidence** is required for **Recommended TR** claims, not for every **Tracked TR** or every **Completed Maintenance Work Item**.
 - A **Bootstrap Tool** is not part of the permanent maintenance architecture.
 - A **Migration Source** does not remain a dependency after migration.
@@ -243,3 +270,5 @@ _Avoid_: weak lookup TR, identifier source, nice-to-have producer
 - A **Standalone TR** does not include TRs that need market/session timing, account state, date handling, pagination, order coupling, or WebSocket lifecycle.
 - A **Caller-Supplied Identifier** does not make a TR standalone by itself.
 - A **Prerequisite Producer TR** is limited to strong cross-TR prerequisites; a TR that merely helps discover a **Caller-Supplied Identifier** is not a prerequisite producer.
+- A **Side-Effectful TR** is not treated as a **Read-Only TR** merely because it uses REST or returns a response body.
+- A **Side-Effect-Adjacent Realtime Feed** can be included in a realtime implementation lane without implementing broker-state-mutating REST order runtime.
