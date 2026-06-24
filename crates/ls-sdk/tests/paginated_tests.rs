@@ -14,9 +14,10 @@ use std::sync::Arc;
 use ls_core::{Inner, LsConfig, LsError};
 use ls_sdk::paginated::{
     T1403Request, T1403Response, T1441Request, T1441Response, T1452Request, T1452Response,
-    T1463Request, T1463Response, T1466Request, T1466Response, T1489Request, T1489Response,
-    T1492Request, T1492Response, T1514Request, T1514Response, T1866Request, T1866Response,
-    T3341Request, T3341Response, T8412OutBlock1, T8412Request, T8412Response,
+    T1463Request, T1463Response, T1466Request, T1466Response, T1481Request, T1481Response,
+    T1489Request, T1489Response, T1492Request, T1492Response, T1514Request, T1514Response,
+    T1866Request, T1866Response, T3341Request, T3341Response, T8412OutBlock1, T8412Request,
+    T8412Response,
 };
 use ls_core::endpoint_policy::T1514_POLICY;
 use ls_sdk::LsSdk;
@@ -712,4 +713,128 @@ fn t1514_policy_is_registered_and_paginated() {
         T1514_POLICY.has_pagination,
         "t1514 self-paginates (cts_date) — policy must thread continuation"
     );
+}
+
+// ---------------------------------------------------------------------------
+// t1481 — 시간외등락율상위 (after-hours top change rate; U2 reach wave). Single-page
+// body-`idx` sub-pattern (KTD-5/KTD-8): idx is an ordinary in-block field
+// serialized as a JSON number, NOT #[serde(skip)]; the header cursors are skipped.
+// Out-block shape (single `idx` summary + `t1481OutBlock1` row ARRAY) read from
+// the raw capture.
+// ---------------------------------------------------------------------------
+
+/// Covers contract item 4 + KTD-4. The `t1481` request serializes the body `idx`
+/// INSIDE `t1481InBlock` as a JSON number at the first-page convention (`0`), with
+/// the length-1 string flags kept as strings and no header continuation leaking
+/// into the body.
+#[test]
+fn t1481_request_serializes_idx_in_block_as_number() {
+    let value = serde_json::to_value(T1481Request::new("1", "1", "1", "1"))
+        .expect("serialize t1481 request");
+
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "only t1481InBlock at the top level");
+    let inblock = &value["t1481InBlock"];
+    assert_eq!(inblock["gubun1"], "1", "gubun1 stays a string flag");
+    assert_eq!(inblock["gubun2"], "1");
+    assert_eq!(inblock["jongchk"], "1");
+    assert_eq!(inblock["volume"], "1", "volume is a length-1 string flag");
+    assert_eq!(inblock["idx"], 0, "idx serializes as a number at first-page convention");
+    assert!(inblock["idx"].is_number(), "idx is a JSON number, not a string");
+
+    assert!(value.get("tr_cont").is_none(), "no tr_cont in the body");
+    assert!(value.get("tr_cont_key").is_none(), "no tr_cont_key in the body");
+}
+
+/// Covers contract items 1, 2, 6. A representative success (from the raw capture)
+/// deserializes through REAL `post_paginated` dispatch: the summary next-page
+/// `idx` and the `t1481OutBlock1` row array round-trip with mixed number/string
+/// wire types, and the canonical row field `hname` (한글명, KTD-6) holds its EXACT
+/// expected value.
+#[tokio::test]
+async fn t1481_deserializes_raw_capture_shape() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(HIGH_ITEM_PATH))
+        .and(header("tr_cd", "t1481"))
+        .and(header("tr_cont", "N"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                // The exact wire shape from the raw capture: a single `idx` summary
+                // object and a two-row `t1481OutBlock1` ARRAY (mixed number/string).
+                .set_body_string(
+                    r#"{
+                        "rsp_cd": "00000",
+                        "t1481OutBlock": { "idx": 20 },
+                        "t1481OutBlock1": [
+                            { "volume": 2136, "bidrem1": 301, "price": 10490, "change": 445,
+                              "offerrem1": 764, "shcode": "449180", "sign": "5", "diff": "-04.07",
+                              "bidho1": 10305, "value": 22493050, "hname": "KODEX 미국S&P500(H)",
+                              "offerho1": 10485 },
+                            { "volume": 369875, "bidrem1": 9738, "price": 935, "change": 8,
+                              "offerrem1": 248, "shcode": "031820", "sign": "5", "diff": "-00.85",
+                              "bidho1": 935, "value": 346240565, "hname": "콤텍시스템",
+                              "offerho1": 936 }
+                        ]
+                    }"#,
+                )
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let resp = sdk_for(&server)
+        .paginated()
+        .after_hours_top_change_rate(&T1481Request::new("1", "1", "1", "1"))
+        .await
+        .expect("t1481 after_hours_top_change_rate should succeed");
+
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock.idx, "20", "summary next-page idx round-trips");
+    assert_eq!(resp.outblock1.len(), 2, "both ranked rows round-trip");
+    assert_eq!(
+        resp.outblock1[0].hname, "KODEX 미국S&P500(H)",
+        "canonical row field hname (한글명) holds its exact value"
+    );
+    assert_eq!(resp.outblock1[0].shcode, "449180");
+    assert_eq!(resp.outblock1[0].price, "10490", "price from JSON number");
+    assert_eq!(resp.outblock1[0].diff, "-04.07", "diff from JSON string");
+    assert_eq!(resp.outblock1[1].volume, "369875", "volume from JSON number");
+}
+
+/// Covers contract items 2, 3, 6. A single out-row object (not an array) is
+/// tolerated as a one-element Vec via `de_vec_or_single`; `string_or_number` parses
+/// a numeric field from BOTH string and number JSON; an empty result set (`00707`)
+/// deserializes as the pending case (not a flip).
+#[test]
+fn t1481_single_or_array_string_or_number_and_empty_pending() {
+    // string-form price (parsed via string_or_number) + single object → one-element Vec.
+    let single: T1481Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1481OutBlock": { "idx": 1 },
+        "t1481OutBlock1": { "hname": "단일", "shcode": "000660", "price": "100" }
+    }))
+    .expect("single row tolerated as a one-element Vec");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].shcode, "000660");
+    assert_eq!(single.outblock1[0].price, "100", "price parsed from a JSON string");
+
+    // number-form price (the other string_or_number branch).
+    let numeric: T1481Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1481OutBlock": { "idx": 2 },
+        "t1481OutBlock1": [{ "hname": "수치", "shcode": "005930", "price": 71500 }]
+    }))
+    .expect("number-form price deserializes");
+    assert_eq!(numeric.outblock1[0].price, "71500", "price parsed from a JSON number");
+
+    let empty: T1481Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707",
+        "t1481OutBlock": { "idx": 0 },
+        "t1481OutBlock1": []
+    }))
+    .expect("empty result set deserializes");
+    assert_eq!(empty.rsp_cd, "00707");
+    assert!(empty.outblock1.is_empty(), "empty is the pending case, not a flip");
 }

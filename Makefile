@@ -15,7 +15,7 @@
 # Export command-line / make variables (e.g. LS_LIVE_SMOKE_*) to recipe shells.
 export
 
-.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1866 live-smoke-t1859 live-smoke-t1826 live-smoke-t1825 live-smoke-t9905 live-smoke-t9907 live-smoke-t8431 live-smoke-t9942 live-smoke-t1958 live-smoke-t1964 live-smoke-t1601 live-smoke-t1615 live-smoke-t1640 live-smoke-t1662 live-smoke-t1664 live-smoke-t3341 live-smoke-t8424 live-smoke-t1511 live-smoke-t1485 live-smoke-t1516 live-smoke-t1514 live-smoke-cspaq12300 live-smoke-cspaq22200 live-smoke-cfobq10500 live-smoke-t2301 live-smoke-t2522 live-smoke-t8401 live-smoke-t8426 live-smoke-t8433 live-smoke-t8435 live-smoke-t8467 live-smoke-t9943 live-smoke-t9944 raw-probe
+.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1481 live-smoke-t1866 live-smoke-t1859 live-smoke-t1826 live-smoke-t1825 live-smoke-t9905 live-smoke-t9907 live-smoke-t8431 live-smoke-t9942 live-smoke-t1958 live-smoke-t1964 live-smoke-t1601 live-smoke-t1615 live-smoke-t1640 live-smoke-t1662 live-smoke-t1664 live-smoke-t3341 live-smoke-t8424 live-smoke-t1511 live-smoke-t1485 live-smoke-t1516 live-smoke-t1514 live-smoke-cspaq12300 live-smoke-cspaq22200 live-smoke-cfobq10500 live-smoke-t2301 live-smoke-t2522 live-smoke-t8401 live-smoke-t8426 live-smoke-t8433 live-smoke-t8435 live-smoke-t8467 live-smoke-t9943 live-smoke-t9944 raw-probe
 
 # $(1) = exact test name in crates/ls-sdk/tests/live_smoke.rs
 define run_smoke
@@ -93,6 +93,11 @@ live-smoke-t1489:
 	$(call run_smoke,live_smoke_t1489)
 live-smoke-t1492:
 	$(call run_smoke,live_smoke_t1492)
+
+## t1481 (시간외등락율상위) smoke: token -> one single-page after-hours top
+## change-rate read (body idx serialized as a number at first-page convention 0).
+live-smoke-t1481:
+	$(call run_smoke,live_smoke_t1481)
 
 ## t1866 (서버저장조건 리스트조회) smoke: token -> server-saved condition list (the
 ## saved-condition spine producer). Requires LS_PAPER_USER_ID + a seeded condition.

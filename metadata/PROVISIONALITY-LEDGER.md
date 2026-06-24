@@ -189,7 +189,7 @@ ship pending; t1860 reclassified out of scope. Every one of the 7 is decided:
 | t1860 | market_session | **HELD — out of scope (realtime registration)** | not smoked (see below) |
 | t1852 | market_session | **PENDING — input-unresolved** | required `sFileData` blob (~26.8 KB) unsourced |
 | t1856 | market_session | **PENDING — input-unresolved** | required `sFileData` blob (~26.8 KB) unsourced |
-| t1481 | paginated (body-`idx`) | **PENDING — session-unresolved** | no in-session window run; `venue_session` unresolved |
+| t1481 | paginated (body-`idx`) | **implemented (U2 reach wave)** | `rsp_cd=00000 rows=20`; `caller_supplied_identifiers: []` confirmed accepted; `venue_session` retained (regular-vs-extended unresolved by a single regular-session run, KTD7) |
 | t1482 | paginated (body-`idx`) | **PENDING — session-unresolved** | no in-session window run; `venue_session` unresolved |
 
 **Spine proven end-to-end.** A live `t1866` list supplies a `query_index` that
