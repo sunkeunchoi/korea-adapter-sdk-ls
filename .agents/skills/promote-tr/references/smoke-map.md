@@ -76,6 +76,9 @@ TR marked `ready` is a promote-tr candidate.
 | `t8434` | `live-smoke-t8434` | `live_smoke_t8434` | anytime F/O; self-sources a contract `focode` from `t8467`, `qrycnt=1` (JSON number) — F/O multi current-price read (empty array off-session → PENDING) | implemented-only | paper F/O multi current-price (U5) |
 | `t1988` | `live-smoke-t1988` | `live_smoke_t1988` | standalone→`market_session` (KTD3); no caller input (all markets, filters off); `from_rate`/`to_rate` JSON numbers (KTD4) — ELW underlying-asset list (empty out-block → PENDING; IGW40011 → PENDING) | implemented-only | paper ELW underlying-asset list (U3) |
 | `t3320` | `live-smoke-t3320` | `live_smoke_t3320` | standalone→`market_session` (KTD3); public ticker `gicode=005930` (삼성전자, bare 6-digit) — FnGuide company summary (empty out-block → PENDING) | implemented-only | paper FnGuide company summary (U3) |
+| `t8455` | `live-smoke-t8455` | `live_smoke_t8455` | `venue_session: krx_extended` night window ~18:00–05:00 KST (NOT the regular clock, KTD7); `gubun=NF` — night-derivatives master (off-window empty → PENDING re-run, not a flip/DROP; `01900` → paper-incompatible) | implemented-only | paper KRX night-derivatives master (U6) |
+| `t8460` | `live-smoke-t8460` | `live_smoke_t8460` | `venue_session: krx_extended` night window ~18:00–05:00 KST (KTD7); `yyyymm`=near month, `gubun=G` — night-option board (off-window empty → PENDING re-run) | implemented-only | paper KRX night-derivatives option board (U6) |
+| `t8463` | `live-smoke-t8463` | `live_smoke_t8463` | `venue_session: krx_extended` night window ~18:00–05:00 KST (KTD7); `tm_rng=N`/`fot_clsf_cd=F`/`bsc_asts_id=101`, `cnt` JSON number (KTD4) — night investor-by-timeslot (off-window empty → PENDING re-run) | implemented-only | paper KRX night-derivatives investor-by-timeslot (U6) |
 
 Notes:
 - `live-smoke` (default) issues the OAuth token *then* a `t1102` quote in one run,

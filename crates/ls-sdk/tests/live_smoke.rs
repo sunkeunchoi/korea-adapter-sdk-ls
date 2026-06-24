@@ -32,6 +32,7 @@ use ls_sdk::market_session::{
     T9905Request, T9907Request, T9942Request,
     T2106Request, T2111Request, T2112Request, T8402Request, T8403Request, T8434Request,
     T1988Request, T3320Request,
+    T8455Request, T8460Request, T8463Request,
 };
 use ls_sdk::paginated::{
     T1403Request, T1441Request, T1452Request, T1463Request, T1466Request, T1481Request,
@@ -2713,6 +2714,121 @@ async fn live_smoke_t3320() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t3320 market-data failure (not evidence)");
             panic!("live-smoke-t3320 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t8455`: paper guard → token → one KRX night-derivatives
+/// master read (`gubun="NF"` 야간선물). `venue_session: krx_extended` (KTD7) — the
+/// night session is ~18:00–05:00 KST, NOT the regular clock; an off-window empty
+/// result is NOT a valid attempt (re-run in-window, do NOT flip, do NOT DROP). A
+/// definitive `01900` is paper-incompatible regardless of window.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8455`"]
+async fn live_smoke_t8455() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().night_derivatives_master(&T8455Request::new("NF")).await {
+        Ok(resp) => {
+            if resp.outblock.is_empty() {
+                eprintln!(
+                    "SMOKE-FAIL target=live-smoke-t8455 empty master array (rsp_cd={}) — night window closed? re-run ~18:00–05:00 KST",
+                    resp.rsp_cd
+                );
+                panic!("live-smoke-t8455: empty master array (00707) — off-window/PENDING, not Implemented");
+            }
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t8455",
+                &format!("env=paper gubun=NF date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8455 market-data failure (not evidence)");
+            panic!("live-smoke-t8455 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t8460`: paper guard → token → one KRX night-derivatives
+/// option-board read (`gubun="G"` 원지수, near contract month). `venue_session:
+/// krx_extended` (KTD7) — off-window empty is a re-run, not a flip/DROP.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8460`"]
+async fn live_smoke_t8460() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let now = Utc::now();
+    let yyyymm = now.format("%Y%m").to_string();
+    let date = now.format("%Y-%m-%d");
+    match sdk.market_session().night_option_board(&T8460Request::new(&yyyymm, "G")).await {
+        Ok(resp) => {
+            let rows = resp.outblock1.len() + resp.outblock2.len();
+            if rows == 0 && resp.outblock.gmprice.is_empty() {
+                eprintln!(
+                    "SMOKE-FAIL target=live-smoke-t8460 empty board (rsp_cd={}) — night window closed? re-run ~18:00–05:00 KST",
+                    resp.rsp_cd
+                );
+                panic!("live-smoke-t8460: empty board (00707) — off-window/PENDING, not Implemented");
+            }
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), rows)), "rows")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t8460",
+                &format!("env=paper yyyymm={yyyymm} gubun=G date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8460 market-data failure (not evidence)");
+            panic!("live-smoke-t8460 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t8463`: paper guard → token → one KRX night-derivatives
+/// investor-by-timeslot read (`tm_rng="N"` 야간, `fot_clsf_cd="F"` 선물,
+/// `bsc_asts_id="101"` KOSPI200). `venue_session: krx_extended` (KTD7) —
+/// off-window empty is a re-run, not a flip/DROP.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8463`"]
+async fn live_smoke_t8463() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .market_session()
+        .night_investor_timeslot(&T8463Request::new("N", "F", "101"))
+        .await
+    {
+        Ok(resp) => {
+            if resp.outblock1.is_empty() {
+                eprintln!(
+                    "SMOKE-FAIL target=live-smoke-t8463 empty time-series array (rsp_cd={}) — night window closed? re-run ~18:00–05:00 KST",
+                    resp.rsp_cd
+                );
+                panic!("live-smoke-t8463: empty time-series array (00707) — off-window/PENDING, not Implemented");
+            }
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t8463",
+                &format!("env=paper tm_rng=N fot_clsf_cd=F bsc_asts_id=101 date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8463 market-data failure (not evidence)");
+            panic!("live-smoke-t8463 failed: {e}");
         }
     }
 }

@@ -28,6 +28,8 @@ use ls_sdk::market_session::{
     T8403Request, T8403Response, T8434OutBlock1, T8434Request, T8434Response,
     T1988OutBlock, T1988Request, T1988Response, T3102Request, T3102Response, T3320OutBlock,
     T3320Request, T3320Response,
+    T8455OutBlock, T8455Request, T8455Response, T8460Request, T8460Response, T8463OutBlock,
+    T8463Request, T8463Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
@@ -3210,4 +3212,198 @@ fn t3320_empty_result_deserializes_as_pending() {
         serde_json::from_value(serde_json::json!({ "rsp_cd": "00707" }))
             .expect("empty deserializes");
     assert!(empty.outblock.company.is_empty(), "empty summary is the pending case");
+}
+
+// ---------------------------------------------------------------------------
+// Night-derivatives lane (reach wave U6), routed through `market_session` (KTD3).
+// `venue_session: krx_extended` — the night session (~18:00–05:00 KST), NOT the
+// regular clock (KTD7): an off-window empty result is NOT a valid attempt, so it
+// is a re-run-in-window disposition (not a flip, not a DROP). Out-block shape
+// from the raw capture (KTD5): t8455 master is an ARRAY (A0005); t8460 carries a
+// single near-month header (A0003) + call/put option ARRAYS (A0005); t8463
+// carries a single investor-code header (A0003) + a time-series row ARRAY
+// (A0005). Canonical field by baseline `korean_name` (KTD6); t8463's `cnt`
+// request field serializes as a JSON number (KTD4).
+// ---------------------------------------------------------------------------
+
+/// `t8455` request rename + ARRAY master out-block round-trips; a single row
+/// collapses to a one-element Vec via `de_vec_or_single` (KTD5). Canonical 종목명
+/// (`hname`) pinned exactly (KTD6).
+#[test]
+fn t8455_request_renames_and_master_array_round_trips() {
+    let value = serde_json::to_value(T8455Request::new("NF")).expect("serialize t8455");
+    assert_eq!(value["t8455InBlock"]["gubun"], "NF");
+    assert_eq!(value.as_object().expect("object").len(), 1, "exactly one top-level key");
+
+    let resp: T8455Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8455OutBlock": [
+            { "hname": "야간 F 202509", "shcode": "111VC000", "expcode": "KR4111VC0001", "tradeunit": 250000 },
+            { "hname": "야간 F 202512", "shcode": "111VF000", "expcode": "KR4111VF0008", "tradeunit": "250000" }
+        ]
+    }))
+    .expect("representative t8455 success must deserialize");
+    assert_eq!(resp.outblock.len(), 2);
+    assert_eq!(resp.outblock[0].hname, "야간 F 202509", "종목명");
+    assert_eq!(resp.outblock[1].shcode, "111VF000", "종목코드");
+    assert_eq!(resp.outblock[0].tradeunit, "250000", "거래승수 from number");
+
+    // single row object → one-element Vec (KTD5 single-or-array).
+    let single: T8455Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8455OutBlock": { "hname": "야간 F 202509", "shcode": "111VC000" }
+    }))
+    .expect("single row deserializes");
+    assert_eq!(single.outblock.len(), 1, "single object becomes a one-element Vec");
+    assert_eq!(single.outblock[0].hname, "야간 F 202509");
+}
+
+/// `t8455` numeric out-block field parses from BOTH string and number JSON.
+#[test]
+fn t8455_numeric_field_string_or_number() {
+    let from_num: T8455OutBlock =
+        serde_json::from_value(serde_json::json!({ "tradeunit": 250000 }))
+            .expect("number form deserializes");
+    let from_str: T8455OutBlock =
+        serde_json::from_value(serde_json::json!({ "tradeunit": "250000" }))
+            .expect("string form deserializes");
+    assert_eq!(from_num.tradeunit, "250000");
+    assert_eq!(from_str.tradeunit, "250000");
+}
+
+/// `t8455` off-window empty (`00707`, empty array) deserializes — the night
+/// session (~18:00–05:00 KST) is closed (KTD7), so this is a RE-RUN-IN-WINDOW
+/// disposition (NOT a flip, NOT a DROP), recognized as the empty/pending case.
+#[test]
+fn t8455_off_window_empty_is_rerun_disposition_not_flip_not_drop() {
+    let empty: T8455Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8455OutBlock": []
+    }))
+    .expect("off-window empty still deserializes (the night window is closed)");
+    assert_eq!(empty.rsp_cd, "00707");
+    assert!(
+        empty.outblock.is_empty(),
+        "an empty master array off the night window is the re-run case, not Implemented"
+    );
+}
+
+/// `t8460` request rename + single header + call/put option ARRAYS round-trip; a
+/// single option row collapses to a one-element Vec via `de_vec_or_single`
+/// (KTD5). Canonical 근월물현재가 (`gmprice`) pinned exactly (KTD6).
+#[test]
+fn t8460_request_renames_and_header_plus_option_arrays_round_trip() {
+    let value = serde_json::to_value(T8460Request::new("202509", "G")).expect("serialize t8460");
+    assert_eq!(value["t8460InBlock"]["yyyymm"], "202509");
+    assert_eq!(value["t8460InBlock"]["gubun"], "G");
+
+    let resp: T8460Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8460OutBlock": { "gmprice": 350.25, "gmchange": "1.50", "gmvolume": 12345, "gmshcode": "111VC000" },
+        "t8460OutBlock1": [
+            { "actprice": 350.0, "optcode": "201VC350", "price": 4.55, "offerho1": 4.60, "bidho1": 4.50 },
+            { "actprice": "352.5", "optcode": "201VC352", "price": "3.10", "offerho1": "3.15", "bidho1": "3.05" }
+        ],
+        "t8460OutBlock2": [
+            { "actprice": 350.0, "optcode": "301VC350", "price": 3.20, "offerho1": 3.25, "bidho1": 3.15 }
+        ]
+    }))
+    .expect("representative t8460 success must deserialize");
+    assert_eq!(resp.outblock.gmprice, "350.25", "근월물현재가");
+    assert_eq!(resp.outblock.gmshcode, "111VC000", "근월물선물코드");
+    assert_eq!(resp.outblock1.len(), 2, "call-option array");
+    assert_eq!(resp.outblock1[0].optcode, "201VC350", "콜옵션코드");
+    assert_eq!(resp.outblock1[1].price, "3.10", "price from string preserved verbatim");
+    assert_eq!(resp.outblock2.len(), 1, "put-option array");
+    assert_eq!(resp.outblock2[0].optcode, "301VC350", "풋옵션코드");
+
+    // single call-option row → one-element Vec (KTD5).
+    let single: T8460Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8460OutBlock1": { "actprice": 350.0, "optcode": "201VC350", "price": 4.55 }
+    }))
+    .expect("single option row deserializes");
+    assert_eq!(single.outblock1.len(), 1, "single object becomes a one-element Vec");
+}
+
+/// `t8460` off-window empty (`00707`, empty arrays) deserializes — the night
+/// window is closed (KTD7), so this is a RE-RUN-IN-WINDOW disposition (NOT a
+/// flip, NOT a DROP).
+#[test]
+fn t8460_off_window_empty_is_rerun_disposition_not_flip_not_drop() {
+    let empty: T8460Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8460OutBlock1": [], "t8460OutBlock2": []
+    }))
+    .expect("off-window empty still deserializes (the night window is closed)");
+    assert_eq!(empty.rsp_cd, "00707");
+    assert!(empty.outblock.gmprice.is_empty(), "empty header is the re-run case");
+    assert!(empty.outblock1.is_empty() && empty.outblock2.is_empty(), "empty boards");
+}
+
+/// `t8463` request: `cnt` serializes as a JSON NUMBER (KTD4 — `string_as_number`,
+/// avoids IGW40011); the single header + ARRAY time-series block round-trip and a
+/// single row collapses to a one-element Vec (KTD5). Canonical 일자 (`date`)
+/// pinned exactly (KTD6).
+#[test]
+fn t8463_request_serializes_cnt_as_number_and_header_plus_array_round_trips() {
+    let value = serde_json::to_value(T8463Request::new("N", "F", "101")).expect("serialize t8463");
+    assert_eq!(value["t8463InBlock"]["tm_rng"], "N");
+    assert_eq!(value["t8463InBlock"]["fot_clsf_cd"], "F");
+    assert_eq!(value["t8463InBlock"]["bsc_asts_id"], "101");
+    assert!(
+        value["t8463InBlock"]["cnt"].is_number(),
+        "cnt is a JSON number, not a string (IGW40011 guard)"
+    );
+    assert_eq!(value["t8463InBlock"]["cnt"], 20);
+    // bgubun stays a genuine string.
+    assert!(value["t8463InBlock"]["bgubun"].is_string());
+
+    let resp: T8463Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8463OutBlock": { "tm_rng": "N", "indcode": "1000", "forcode": "2000" },
+        "t8463OutBlock1": [
+            { "date": "20260624", "time": "190000", "indmsvol": 1234, "formsvol": "5678" },
+            { "date": "20260624", "time": "191000", "indmsvol": "4321", "formsvol": 8765 }
+        ]
+    }))
+    .expect("representative t8463 success must deserialize");
+    assert_eq!(resp.outblock.tm_rng, "N", "시간대");
+    assert_eq!(resp.outblock.indcode, "1000", "개인투자자코드");
+    assert_eq!(resp.outblock1.len(), 2);
+    assert_eq!(resp.outblock1[0].date, "20260624", "일자");
+    assert_eq!(resp.outblock1[1].indmsvol, "4321", "개인순매수거래량 from string preserved");
+
+    // single row object → one-element Vec (KTD5).
+    let single: T8463Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8463OutBlock1": { "date": "20260624", "time": "190000", "indmsvol": 1234 }
+    }))
+    .expect("single row deserializes");
+    assert_eq!(single.outblock1.len(), 1, "single object becomes a one-element Vec");
+    assert_eq!(single.outblock1[0].date, "20260624");
+}
+
+/// `t8463` numeric out-block field parses from BOTH string and number JSON.
+#[test]
+fn t8463_numeric_field_string_or_number() {
+    let from_num: T8463OutBlock =
+        serde_json::from_value(serde_json::json!({ "indcode": 1000 }))
+            .expect("number form deserializes");
+    let from_str: T8463OutBlock =
+        serde_json::from_value(serde_json::json!({ "indcode": "1000" }))
+            .expect("string form deserializes");
+    assert_eq!(from_num.indcode, "1000");
+    assert_eq!(from_str.indcode, "1000");
+}
+
+/// `t8463` off-window empty (`00707`, empty array) deserializes — the night
+/// window is closed (KTD7), so this is a RE-RUN-IN-WINDOW disposition (NOT a
+/// flip, NOT a DROP).
+#[test]
+fn t8463_off_window_empty_is_rerun_disposition_not_flip_not_drop() {
+    let empty: T8463Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8463OutBlock1": []
+    }))
+    .expect("off-window empty still deserializes (the night window is closed)");
+    assert_eq!(empty.rsp_cd, "00707");
+    assert!(empty.outblock1.is_empty(), "empty time-series array is the re-run case");
 }

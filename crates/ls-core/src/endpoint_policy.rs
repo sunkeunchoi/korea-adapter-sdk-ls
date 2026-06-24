@@ -1054,6 +1054,54 @@ pub const T3320_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+/// t8455 — KRX야간파생 마스터조회(API용) (night-derivatives master; non-paginated
+/// F/O market-data read). `venue_session: krx_extended` (KTD7). Keyed by a
+/// `gubun` class selector.
+pub const T8455_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8455",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8460 — KRX야간파생 옵션 전광판 (night-derivatives option board; non-paginated
+/// F/O market-data read). `venue_session: krx_extended` (KTD7). Keyed by a
+/// contract month `yyyymm` + an index `gubun`.
+pub const T8460_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8460",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8463 — KRX야간파생 투자자시간대별(API용) (night-derivatives investor-by-timeslot;
+/// non-paginated F/O investor read). `venue_session: krx_extended` (KTD7). Keyed
+/// by `tm_rng`/`fot_clsf_cd`/`bsc_asts_id`; `cnt` is a numeric request slot.
+pub const T8463_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8463",
+    path: "/futureoption/investor",
+    module: "futureoption",
+    group: "[선물/옵션] 투자자",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// S3_ — KOSPI체결 실시간 시세 (real-time KOSPI trade feed, WebSocket).
 ///
 /// WebSocket TR: there is no REST dispatch, but the policy const is retained as
@@ -1171,6 +1219,9 @@ mod tests {
             T1988_POLICY,
             T3102_POLICY,
             T3320_POLICY,
+            T8455_POLICY,
+            T8460_POLICY,
+            T8463_POLICY,
         ] {
             assert!(!p.is_order, "{} must not be an order endpoint", p.tr_code);
             assert!(p.is_rest(), "{} must be a REST endpoint", p.tr_code);

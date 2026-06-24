@@ -3716,6 +3716,309 @@ pub struct T3320Response {
     pub outblock1: T3320OutBlock1,
 }
 
+// ---------------------------------------------------------------------------
+// Night-derivatives lane (reach wave U6) — KRX야간파생 market-data reads, routed
+// through `market_session` (KTD3). These are `venue_session: krx_extended`: the
+// data is only meaningful in the night session (~18:00–05:00 KST), NOT the
+// regular ~09:00–15:30 clock (KTD7). Members flip Implemented venue-provisional
+// on a reachable in-window probe; an off-window empty result is not a valid
+// attempt. Out-block shape from the raw capture (KTD5): t8455 master is an array
+// (A0005); t8460 carries a single near-month header (A0003) + call/put option
+// arrays (A0005); t8463 carries a single investor-code header (A0003) + a
+// time-series row array (A0005). Canonical field by baseline `korean_name`
+// (KTD6); t8463's `cnt` request field serializes as a JSON number (KTD4).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t8455` — KRX야간파생 마스터조회(API용) (night-derivatives master).
+///
+/// `gubun` selects the instrument class (구분: `"NF"` 야간선물 / `"NC"` 야간콜옵션 /
+/// `"NM"` 야간미니 / `"NO"` 야간풋옵션), a caller-supplied selector — not an
+/// instrument identifier.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8455InBlock {
+    /// Class selector / 구분 (`"NF"`/`"NC"`/`"NM"`/`"NO"`).
+    pub gubun: String,
+}
+
+/// `t8455` request — serializes to `{"t8455InBlock":{"gubun":...}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8455Request {
+    #[serde(rename = "t8455InBlock")]
+    pub inblock: T8455InBlock,
+}
+impl T8455Request {
+    /// Build a `t8455` night-derivatives master request for one instrument class.
+    pub fn new(gubun: impl Into<String>) -> Self {
+        T8455Request {
+            inblock: T8455InBlock {
+                gubun: gubun.into(),
+            },
+        }
+    }
+}
+
+/// `t8455OutBlock` — one night-derivatives master row (`t8455OutBlock[]`, an
+/// ARRAY block in the raw capture). A representative subset; numeric `tradeunit`
+/// (거래승수) via [`ls_core::string_or_number`]. `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8455OutBlock {
+    /// Issue name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Short code / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Standard code / 표준코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub expcode: String,
+    /// Trade multiplier / 거래승수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tradeunit: String,
+}
+
+/// `t8455` response — the master row array under the `t8455OutBlock` key,
+/// tolerated as single-or-array via [`ls_core::de_vec_or_single`] (KTD5). All
+/// `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8455Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t8455OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T8455OutBlock>,
+}
+
+/// Input block for `t8460` — KRX야간파생 옵션 전광판 (night-derivatives option board).
+///
+/// `yyyymm` is the contract month (월물, or `"WN"` for a weekly); `gubun` selects
+/// the index variant (`"G"` 원지수 / `"W"` 위클리). Both caller-supplied.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8460InBlock {
+    /// Contract month / 월물 (혹은 주물 `"WN"`).
+    pub yyyymm: String,
+    /// Index variant / 구분 (`"G"` 원지수 / `"W"` 위클리).
+    pub gubun: String,
+}
+
+/// `t8460` request — serializes to `{"t8460InBlock":{"yyyymm":...,"gubun":...}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8460Request {
+    #[serde(rename = "t8460InBlock")]
+    pub inblock: T8460InBlock,
+}
+impl T8460Request {
+    /// Build a `t8460` night-option-board request for one contract month + variant.
+    pub fn new(yyyymm: impl Into<String>, gubun: impl Into<String>) -> Self {
+        T8460Request {
+            inblock: T8460InBlock {
+                yyyymm: yyyymm.into(),
+                gubun: gubun.into(),
+            },
+        }
+    }
+}
+
+/// `t8460OutBlock` — the near-month futures header (single Object, A0003 in the
+/// raw capture). A representative subset; numeric-bearing fields via
+/// [`ls_core::string_or_number`]. `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8460OutBlock {
+    /// Near-month current price / 근월물현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gmprice: String,
+    /// Near-month change vs. previous / 근월물전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gmchange: String,
+    /// Near-month volume / 근월물거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gmvolume: String,
+    /// Near-month futures code / 근월물선물코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gmshcode: String,
+}
+
+/// `t8460OutBlock1` — one CALL-option board row (`t8460OutBlock1[]`, an ARRAY
+/// block, A0005). A representative subset; numerics via
+/// [`ls_core::string_or_number`]. `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8460OutBlock1 {
+    /// Strike price / 행사가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub actprice: String,
+    /// Call option code / 콜옵션코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub optcode: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Best offer / 매도호가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerho1: String,
+    /// Best bid / 매수호가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidho1: String,
+}
+
+/// `t8460OutBlock2` — one PUT-option board row (`t8460OutBlock2[]`, an ARRAY
+/// block, A0005). A representative subset; numerics via
+/// [`ls_core::string_or_number`]. `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8460OutBlock2 {
+    /// Strike price / 행사가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub actprice: String,
+    /// Put option code / 풋옵션코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub optcode: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Best offer / 매도호가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerho1: String,
+    /// Best bid / 매수호가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidho1: String,
+}
+
+/// `t8460` response — the near-month header `t8460OutBlock` + the call-option
+/// array `t8460OutBlock1` + the put-option array `t8460OutBlock2` (each tolerated
+/// single-or-array via [`ls_core::de_vec_or_single`]). All `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8460Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t8460OutBlock", default)]
+    pub outblock: T8460OutBlock,
+    #[serde(
+        rename = "t8460OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T8460OutBlock1>,
+    #[serde(
+        rename = "t8460OutBlock2",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock2: Vec<T8460OutBlock2>,
+}
+
+/// Input block for `t8463` — KRX야간파생 투자자시간대별(API용) (night-derivatives
+/// investor-by-timeslot).
+///
+/// `tm_rng` is the timeslot (시간대: `D`/`N`/`U`); `fot_clsf_cd` is the F/O
+/// distinction (선물옵션구분); `bsc_asts_id` is the underlying-asset code
+/// (기초자산코드); `cnt` is the requested COUNT (조회건수), a numeric REQUEST field
+/// serialized as a JSON number via [`ls_core::string_as_number`] (KTD4 — the
+/// string form risks `IGW40011`); `bgubun` is the previous-day flag (전일분).
+#[derive(Serialize, Debug, Clone)]
+pub struct T8463InBlock {
+    /// Timeslot / 시간대 (`"D"`/`"N"`/`"U"`).
+    pub tm_rng: String,
+    /// F/O distinction / 선물옵션구분.
+    pub fot_clsf_cd: String,
+    /// Underlying-asset code / 기초자산코드.
+    pub bsc_asts_id: String,
+    /// Requested count / 조회건수 (serialized as a JSON number, KTD4).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub cnt: String,
+    /// Previous-day flag / 전일분.
+    pub bgubun: String,
+}
+
+/// `t8463` request — serializes to `{"t8463InBlock":{...,"cnt":<number>,...}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8463Request {
+    #[serde(rename = "t8463InBlock")]
+    pub inblock: T8463InBlock,
+}
+impl T8463Request {
+    /// Build a `t8463` investor-by-timeslot request. `cnt` defaults to `"20"`
+    /// (rows requested); `bgubun` to `"0"` (current day).
+    pub fn new(
+        tm_rng: impl Into<String>,
+        fot_clsf_cd: impl Into<String>,
+        bsc_asts_id: impl Into<String>,
+    ) -> Self {
+        T8463Request {
+            inblock: T8463InBlock {
+                tm_rng: tm_rng.into(),
+                fot_clsf_cd: fot_clsf_cd.into(),
+                bsc_asts_id: bsc_asts_id.into(),
+                cnt: "20".into(),
+                bgubun: "0".into(),
+            },
+        }
+    }
+}
+
+/// `t8463OutBlock` — the investor-code header (single Object, A0003). A
+/// representative subset; the per-investor-type codes. `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8463OutBlock {
+    /// Timeslot / 시간대 (`"D"`/`"N"`/`"U"`).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tm_rng: String,
+    /// Individual-investor code / 개인투자자코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub indcode: String,
+    /// Foreign-investor code / 외국인투자자코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub forcode: String,
+}
+
+/// `t8463OutBlock1` — one investor-by-timeslot row (`t8463OutBlock1[]`, an ARRAY
+/// block, A0005). A representative subset; numeric net-buy volumes via
+/// [`ls_core::string_or_number`]. `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8463OutBlock1 {
+    /// Date / 일자.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    /// Time / 시간.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub time: String,
+    /// Individual net-buy volume / 개인순매수거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub indmsvol: String,
+    /// Foreign net-buy volume / 외국인순매수거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub formsvol: String,
+}
+
+/// `t8463` response — the investor-code header `t8463OutBlock` + the
+/// time-series row array `t8463OutBlock1` (tolerated single-or-array via
+/// [`ls_core::de_vec_or_single`]). All `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8463Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t8463OutBlock", default)]
+    pub outblock: T8463OutBlock,
+    #[serde(
+        rename = "t8463OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T8463OutBlock1>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -4167,6 +4470,37 @@ impl MarketSession {
     pub async fn company_summary(&self, req: &T3320Request) -> LsResult<T3320Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T3320_POLICY, req)
+            .await
+    }
+
+    /// Read the KRX night-derivatives master (KRX야간파생 마스터조회) via `t8455`.
+    /// Non-paginated; `gubun` selects the instrument class. Returns the master
+    /// row array. `venue_session: krx_extended` — the data is only meaningful in
+    /// the night session (~18:00–05:00 KST), not the regular clock (KTD7).
+    pub async fn night_derivatives_master(&self, req: &T8455Request) -> LsResult<T8455Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8455_POLICY, req)
+            .await
+    }
+
+    /// Read the KRX night-derivatives option board (KRX야간파생 옵션 전광판) via
+    /// `t8460`. Non-paginated; keyed by a contract month `yyyymm` + an index
+    /// `gubun`. Returns the near-month header + call/put option arrays.
+    /// `venue_session: krx_extended` (KTD7).
+    pub async fn night_option_board(&self, req: &T8460Request) -> LsResult<T8460Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8460_POLICY, req)
+            .await
+    }
+
+    /// Read the KRX night-derivatives investor-by-timeslot (KRX야간파생
+    /// 투자자시간대별) via `t8463`. Non-paginated; keyed by a timeslot `tm_rng`, an
+    /// F/O distinction `fot_clsf_cd`, and an underlying `bsc_asts_id`; `cnt` is a
+    /// numeric count (JSON number, KTD4). Returns the investor-code header + a
+    /// time-series row array. `venue_session: krx_extended` (KTD7).
+    pub async fn night_investor_timeslot(&self, req: &T8463Request) -> LsResult<T8463Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8463_POLICY, req)
             .await
     }
 }
