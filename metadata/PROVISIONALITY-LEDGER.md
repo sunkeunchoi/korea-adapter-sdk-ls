@@ -49,8 +49,8 @@ call-auction screens are the most likely to differ (`krx_extended`).
 | t1856 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t1860 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t1964 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
-| t1988 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
-| t3102 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
+| ~~t1988~~ | ~~`krx_regular`~~ | **RETIRED (U3, 2026-06-24)**: implemented, non-empty success on a live KRX-regular paper smoke (`assets=71`) | — |
+| t3102 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to (HELD — input-unresolved, see §13) |
 | t3320 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | t8430 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 
@@ -68,7 +68,7 @@ it is recorded. The true required-input set is confirmed at implementation.
 | t1856 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
 | t1860 | `[query_index]` | best-effort: request-shape input fields that look like instrument/record identifiers | confirm the true caller-supplied identifier set against a live request |
 | t1964 | `[item, issuercd]` | best-effort: request-shape input fields that look like instrument/record identifiers | confirm the true caller-supplied identifier set against a live request |
-| t1988 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
+| ~~t1988~~ | ~~`[]`~~ | **RETIRED (U3, 2026-06-24)**: implemented; `mkt_gb`+filter-flags only, no instrument identifier, accepted live (`[]` confirmed) | — |
 | t3102 | `[sNewsno]` | best-effort: request-shape input fields that look like instrument/record identifiers | confirm the true caller-supplied identifier set against a live request |
 | t3320 | `[gicode]` | best-effort: request-shape input fields that look like instrument/record identifiers | confirm the true caller-supplied identifier set against a live request |
 | t8430 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
@@ -327,7 +327,7 @@ block, no `EVIDENCE-FRESHNESS.md` edit). Every one of the 7 is decided:
 | t9942 | market_session | **implemented** | `rsp_cd=00000 elws=2919` (ELW master list) |
 | t1958 | market_session | **implemented** | `rsp_cd=00000 compared=2` (chained off t8431; two public shcodes; capability-defining) |
 | t1964 | market_session | **PENDING — input-unresolved (filter defaults)** | callable; broad `"0"` filter defaults returned an empty board for the first 10 underlyings (no named source for the 10 filter enums, KTD-1) |
-| t1988 | (not authored) | **PENDING — gateway rejects (IGW40011)** | the raw-HTTP probe rejects every broad-filter form with `IGW40011`; its sibling t9905 (same path) works — environmental, no in-window recovery |
+| t1988 | market_session | **implemented (U3 reach wave, 2026-06-24)** | the prior `IGW40011` was a wire-type defect, not environmental: `from_rate`/`to_rate` (the two Number-typed request fields) were quoted strings. Serializing them as JSON numbers (`string_as_number`, KTD4) cleared it — `rsp_cd=00000 assets=71`. See §13. |
 
 **Capability surface, not a consumer edge (KTD-2).** This wave clears the
 consumer-less hold for these members by being a **bounded ELW universe &
@@ -362,17 +362,17 @@ tracked-only with their rows **retained**:
   unconfirmed. owner_class stays the `standalone` placeholder. Resolving it needs
   a named source for the 10 board filter enums (or an in-session window where the
   board is non-empty under broad defaults).
-- **t1988** — `venue_session` (§1) and `caller_supplied_identifiers` (§2, `[]`)
-  retained; owner_class stays `standalone`. No SDK code was authored (the raw
-  probe pre-classified it as gateway-rejected). Resolving it needs the gateway to
-  accept a t1988 request form (the `IGW40011` cause is unresolved in-window).
+- **t1988** — RESOLVED in the U3 reach wave (2026-06-24): the `IGW40011` was the
+  `from_rate`/`to_rate` wire-type defect (KTD4), not environmental. Now
+  **implemented** through `market_session`; `venue_session` (§1) and
+  `caller_supplied_identifiers` (§2, `[]`) retired on the non-empty smoke. See §13.
 
 **Follow-up roadmap.**
 1. **t1964 filter-default sourcing** — source the 10 ELW-board filter enums from a
    vendor spec or an observed HTS payload, then chain t1964 off t9905 and flip.
-2. **t1988 gateway-form resolution** — determine why the paper gateway returns
-   `IGW40011` for every broad t1988 filter form (provisioning vs request shape),
-   then implement.
+2. ~~**t1988 gateway-form resolution**~~ — DONE (U3 reach wave, 2026-06-24): the
+   `IGW40011` was the `from_rate`/`to_rate` wire-type defect, cleared by
+   `string_as_number`. t1988 is now implemented (§13).
 
 **Standing cost (accepted, per Risk Analysis).** This wave adds 5 consumer-less
 live-smoke targets + 5 drift-detection structs that must stay green. Disposition
@@ -605,3 +605,46 @@ session-agnostic (account read); the F/O orderable-quantity read returned a
 non-empty success during the KRX regular session, consistent with
 session-independence. Field-level `type` facets stay flagged (a clean deserialize
 does not confirm the HTTP-500-seeded types). Recommended tier untouched.
+
+---
+
+## 13. Reach wave U3 — Standalone lane (t1988, t3102, t3320) (2026-06-24)
+
+Three reads carrying a placeholder `owner_class: standalone` — but the
+`standalone` module is OAuth-only (token/revoke) and cannot host a data read, so
+all three route through `market_session` (non-paginated, `category: MarketData`),
+correcting `owner_class` from `standalone` to `market_session` at flip time
+(KTD3). **2 implemented, 1 HELD (input-unresolved).**
+
+| TR | End state | Disposition (credential-free) |
+|---|---|---|
+| t1988 | **implemented** | `rsp_cd=00000 assets=71` (기초자산리스트조회 ELW underlying-asset list; `mkt_gb="0"` all markets, all filters off). The prior `IGW40011` (§8) was the `from_rate`/`to_rate` **wire-type defect** (KTD4): the two Number-typed request fields were quoted strings; serializing them as JSON numbers via `string_as_number` cleared it. Canonical out-block field 코스피종목건수 (`ksp_cnt`); detail rows under `t1988OutBlock1` (Object-Array, `de_vec_or_single`). |
+| t3320 | **implemented** | `rsp_cd=00000 summary=1` (FNG_요약 FnGuide company summary; `gicode="005930"` bare 6-digit 삼성전자, accepted live — the `A005930` FnGuide form returned a sparse body, the bare 6-digit form returns the populated summary, found via a raw-probe A/B per KTD9). Single objects under `t3320OutBlock` (summary) + `t3320OutBlock1` (ratios); canonical 한글기업명 (`company`) + 현재가 (`price`) pinned to distinct values (KTD6). |
+| t3102 | **HELD — input-unresolved** | 뉴스본문 (news body) requires a news number `sNewsno`. The ONLY catalog producer of a news number is `NWS` (실시간뉴스제목패킷), a realtime **WebSocket** feed held to the separate realtime effort (out of scope). No REST producer of `sNewsno` exists and no implemented TR yields one, so the caller input cannot be discovered in this REST-only wave. SDK structs + offline tests authored (title block round-trips) but no smoke target, no flip. |
+
+**t1988 — IGW40011 resolved, not environmental.** The §8 disposition recorded
+t1988 PENDING on persistent `IGW40011` and called for "gateway-form resolution".
+This wave resolved it: the cause was wire-type (request `from_rate`/`to_rate` sent
+as strings), not provisioning. The `string_as_number` fix (the same KTD4 defect as
+`t3341.idx` / `t1664.cnt`) cleared it on the first smoke. Its `venue_session` (§1,
+`krx_regular`) and `caller_supplied_identifiers` (§2, `[]`) rows are **retired** on
+the non-empty success.
+
+**t3320 — gicode form found via raw-probe A/B (KTD9).** The first smoke returned
+`rsp_cd=00000` but an empty SDK out-block for `gicode=A005930`. A credential-safe
+raw-probe A/B showed `A005930` → body_len=638 vs bare `005930` → body_len=943: the
+bare 6-digit ticker returns the populated summary. The smoke + tests use the bare
+form; its `caller_supplied_identifiers` (§2, `[gicode]`) and `venue_session` (§1,
+`krx_regular`) rows are **retired** on the non-empty success.
+
+**t3102 — HELD, not PENDING (recorded reason).** PENDING is for callable-but-empty
+or environmental; t3102 is neither — it is structurally un-callable in a REST-only
+wave because its sole required input has no REST source. Its `venue_session` (§1)
+and `caller_supplied_identifiers` (§2, `[sNewsno]`) rows are **retained**,
+unconfirmed; `owner_class` stays the `standalone` placeholder (not reclassified
+absent a live confirmation). A future realtime wave that models the `NWS` channel
+can source a news number and implement it.
+
+**Field-`type` facets (§4)** stay inventory-wide retired; nothing to retire here.
+Recommended tier untouched (no Focused Evidence, no `recommendation` block, no
+`metadata/evidence/<tr>.yaml`, no `EVIDENCE-FRESHNESS.md` edit).

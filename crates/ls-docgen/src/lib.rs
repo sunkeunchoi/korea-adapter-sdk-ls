@@ -886,6 +886,7 @@ mod tests {
             "t2301", "t2522", "t3341", "t8401", "t8424", "t8425", "t8426", "t8433", "t8435",
             "t8467", "t9943", "t9944", "t8431", "t8436", "t9905", "t9907", "t9942",
             "t2111", "t2112", "t8402", "t8403", "t8434",
+            "t1988",
         ];
         for tr in banner_trs {
             let page = reference
@@ -936,9 +937,13 @@ mod tests {
         // CFOAQ10100 (U4 reach wave, F/O orderable-quantity inquiry) adds one more.
         // (CCENQ90200 + CCENQ10100 ship Tracked/paper-incompatible (gateway 01900) —
         // not implemented, not counted.)
+        // t1988 (U3 reach wave, ELW underlying-asset list; standalone→market_session,
+        // IGW40011 cleared by the `from_rate`/`to_rate` wire-type fix) adds one more.
+        // (t3320 is the next U3 flip — counted in its own commit; t3102 ships HELD
+        // input-unresolved, not counted.)
         assert_eq!(
             reference.len(),
-            59,
+            60,
             "index + the implemented reference pages"
         );
 

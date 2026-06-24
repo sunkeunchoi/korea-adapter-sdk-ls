@@ -31,6 +31,7 @@ use ls_sdk::market_session::{
     T8436Request,
     T9905Request, T9907Request, T9942Request,
     T2106Request, T2111Request, T2112Request, T8402Request, T8403Request, T8434Request,
+    T1988Request, T3320Request,
 };
 use ls_sdk::paginated::{
     T1403Request, T1441Request, T1452Request, T1463Request, T1466Request, T1481Request,
@@ -2640,6 +2641,78 @@ async fn live_smoke_t8434() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t8434 market-data failure (not evidence)");
             panic!("live-smoke-t8434 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1988`: paper guard → token → one ELW underlying-asset list
+/// read (all markets, filters off). Routes through `market_session` (KTD3).
+/// Numeric request fields `from_rate`/`to_rate` serialize as JSON numbers (KTD4),
+/// the prior IGW40011 wire-type fix.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1988`"]
+async fn live_smoke_t1988() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().elw_underlying_list(&T1988Request::new("0")).await {
+        Ok(resp) => {
+            if resp.outblock.ksp_cnt.is_empty() && resp.outblock1.is_empty() {
+                eprintln!(
+                    "SMOKE-FAIL target=live-smoke-t1988 empty out-block (rsp_cd={})",
+                    resp.rsp_cd
+                );
+                panic!("live-smoke-t1988: empty out-block (00707) — PENDING, not Implemented");
+            }
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "assets")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t1988",
+                &format!("env=paper mkt_gb=0 date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1988 market-data failure (not evidence)");
+            panic!("live-smoke-t1988 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t3320`: paper guard → token → one FnGuide company-summary
+/// read keyed by a public FnGuide company code (`A005930` = 삼성전자). Routes
+/// through `market_session` (KTD3).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t3320`"]
+async fn live_smoke_t3320() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let gicode = "005930";
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().company_summary(&T3320Request::new(gicode)).await {
+        Ok(resp) => {
+            if resp.outblock.company.is_empty() && resp.outblock1.gicode.is_empty() {
+                eprintln!(
+                    "SMOKE-FAIL target=live-smoke-t3320 empty out-block (rsp_cd={})",
+                    resp.rsp_cd
+                );
+                panic!("live-smoke-t3320: empty out-block (00707) — PENDING, not Implemented");
+            }
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), 1)), "summary")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t3320",
+                &format!("env=paper gicode={gicode} date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t3320 market-data failure (not evidence)");
+            panic!("live-smoke-t3320 failed: {e}");
         }
     }
 }

@@ -40,6 +40,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t1859` | 서버저장조건 조건검색 | `market_session` | implemented, not yet recommended |
 | `t1866` | 서버저장조건 리스트조회 | `paginated` | implemented, not yet recommended |
 | `t1958` | ELW종목비교 | `market_session` | implemented, not yet recommended |
+| `t1988` | 기초자산리스트조회 | `market_session` | implemented, not yet recommended |
 | `t2111` | 선물/옵션현재가(시세)조회 | `market_session` | implemented, not yet recommended |
 | `t2112` | 선물/옵션현재가호가조회 | `market_session` | implemented, not yet recommended |
 | `t2301` | 옵션전광판 | `market_session` | implemented, not yet recommended |

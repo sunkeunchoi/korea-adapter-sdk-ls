@@ -1007,6 +1007,53 @@ pub const T8434_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(5),
 };
 
+/// t1988 — 기초자산리스트조회 (ELW underlying-asset list; non-paginated market-data
+/// read). Routes through `market_session` (KTD3 — placeholder `standalone`
+/// owner_class is OAuth-only). `from_rate`/`to_rate` are numeric request slots.
+pub const T1988_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1988",
+    path: "/stock/elw",
+    module: "stock",
+    group: "[주식] ELW",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t3102 — 뉴스본문 (news body; non-paginated market-data read). Keyed by a news
+/// number (`sNewsno`). Routes through `market_session` (KTD3).
+pub const T3102_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t3102",
+    path: "/stock/investinfo",
+    module: "stock",
+    group: "[주식] 투자정보",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t3320 — FNG_요약 (FnGuide company summary; non-paginated market-data read).
+/// Keyed by a 7-char FnGuide company code (`gicode`). Routes through
+/// `market_session` (KTD3).
+pub const T3320_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t3320",
+    path: "/stock/investinfo",
+    module: "stock",
+    group: "[주식] 투자정보",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// S3_ — KOSPI체결 실시간 시세 (real-time KOSPI trade feed, WebSocket).
 ///
 /// WebSocket TR: there is no REST dispatch, but the policy const is retained as
@@ -1121,6 +1168,9 @@ mod tests {
             T8402_POLICY,
             T8403_POLICY,
             T8434_POLICY,
+            T1988_POLICY,
+            T3102_POLICY,
+            T3320_POLICY,
         ] {
             assert!(!p.is_order, "{} must not be an order endpoint", p.tr_code);
             assert!(p.is_rest(), "{} must be a REST endpoint", p.tr_code);

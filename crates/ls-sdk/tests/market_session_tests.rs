@@ -26,6 +26,8 @@ use ls_sdk::market_session::{
     T2106Request, T2106Response, T2111OutBlock, T2111Request, T2111Response, T2112OutBlock,
     T2112Request, T2112Response, T8402OutBlock, T8402Request, T8402Response, T8403OutBlock,
     T8403Request, T8403Response, T8434OutBlock1, T8434Request, T8434Response,
+    T1988OutBlock, T1988Request, T1988Response, T3102Request, T3102Response, T3320OutBlock,
+    T3320Request, T3320Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
@@ -3033,4 +3035,179 @@ fn t8434_request_serializes_qrycnt_as_number_and_array_round_trips() {
     }))
     .expect("empty deserializes");
     assert!(empty.outblock1.is_empty(), "empty array is the pending case");
+}
+
+// ---------------------------------------------------------------------------
+// Standalone-lane reads (reach wave U3), routed through `market_session` (KTD3).
+// Out-block shape from the raw capture (KTD5): t1988 summary + Object-Array
+// detail; t3102 title (Object); t3320 summary + ratios (both Object). Canonical
+// field pinned by baseline `korean_name` (KTD6). t1988's numeric request fields
+// `from_rate`/`to_rate` assert `.is_number()` (KTD4).
+// ---------------------------------------------------------------------------
+
+/// `t1988` request: the numeric rate bounds serialize as JSON NUMBERS (KTD4 —
+/// `string_as_number`, avoids IGW40011); the summary + Object-Array detail
+/// round-trips and a single detail row collapses to a one-element Vec (KTD5).
+/// Canonical 코스피종목건수 (`ksp_cnt`) pinned exactly (KTD6).
+#[test]
+fn t1988_request_serializes_rate_bounds_as_numbers_and_round_trips() {
+    let value = serde_json::to_value(T1988Request::new("0")).expect("serialize t1988");
+    assert_eq!(value["t1988InBlock"]["mkt_gb"], "0");
+    assert!(
+        value["t1988InBlock"]["from_rate"].is_number(),
+        "from_rate is a JSON number, not a string (IGW40011 guard)"
+    );
+    assert!(
+        value["t1988InBlock"]["to_rate"].is_number(),
+        "to_rate is a JSON number, not a string (IGW40011 guard)"
+    );
+    assert_eq!(value["t1988InBlock"]["from_rate"], 0);
+    // String filter flags stay quoted (genuine strings).
+    assert!(value["t1988InBlock"]["chk_rate"].is_string());
+    assert!(
+        value.get("t1988OutBlock").is_none(),
+        "no out-block / caller field leaks into the request body"
+    );
+
+    let resp: T1988Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1988OutBlock": { "ksp_cnt": "120", "ksd_cnt": 45 },
+        "t1988OutBlock1": [
+            { "shcode": "005930", "expcode": "KR7005930003", "hname": "삼성전자", "price": 71000, "sign": "2", "volume": "1234567" },
+            { "shcode": "000660", "expcode": "KR7000660001", "hname": "SK하이닉스", "price": "128000", "sign": "5", "volume": 987654 }
+        ]
+    }))
+    .expect("representative t1988 success must deserialize");
+    // Canonical 코스피종목건수 pinned exactly (KTD6); 코스닥종목건수 from a number form.
+    assert_eq!(resp.outblock.ksp_cnt, "120", "코스피종목건수");
+    assert_eq!(resp.outblock.ksd_cnt, "45", "코스닥종목건수 from number");
+    assert_eq!(resp.outblock1.len(), 2);
+    assert_eq!(resp.outblock1[0].shcode, "005930", "단축코드");
+    assert_eq!(resp.outblock1[1].price, "128000", "price from string preserved verbatim");
+
+    // single row object → one-element Vec (KTD5).
+    let single: T1988Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1988OutBlock": { "ksp_cnt": "1", "ksd_cnt": "0" },
+        "t1988OutBlock1": { "shcode": "005930", "hname": "삼성전자", "price": 71000 }
+    }))
+    .expect("single row deserializes");
+    assert_eq!(single.outblock1.len(), 1, "single object becomes a one-element Vec");
+    assert_eq!(single.outblock1[0].shcode, "005930");
+}
+
+/// `t1988` numeric out-block field parses from BOTH string and number JSON.
+#[test]
+fn t1988_numeric_field_string_or_number() {
+    let from_num: T1988OutBlock =
+        serde_json::from_value(serde_json::json!({ "ksp_cnt": 120 }))
+            .expect("number form deserializes");
+    let from_str: T1988OutBlock =
+        serde_json::from_value(serde_json::json!({ "ksp_cnt": "120" }))
+            .expect("string form deserializes");
+    assert_eq!(from_num.ksp_cnt, "120");
+    assert_eq!(from_str.ksp_cnt, "120");
+}
+
+/// `t1988` empty result (00707, empty out-block) deserializes as the pending case.
+#[test]
+fn t1988_empty_result_deserializes_as_pending() {
+    let empty: T1988Response =
+        serde_json::from_value(serde_json::json!({ "rsp_cd": "00707" }))
+            .expect("empty deserializes");
+    assert!(empty.outblock.ksp_cnt.is_empty(), "empty summary is the pending case");
+    assert!(empty.outblock1.is_empty(), "empty detail array is the pending case");
+}
+
+/// `t3102` request rename + title block round-trips. This read ships HELD
+/// (input-unresolved: `sNewsno` is sourced only from the realtime `NWS`
+/// WebSocket feed — no REST producer), so only the offline shape is pinned;
+/// no live smoke flips it.
+#[test]
+fn t3102_request_renames_and_title_round_trips() {
+    // The in-block serializes `sNewsno` under its exact wire key.
+    let value = serde_json::to_value(T3102Request::new("20260624123456")).expect("serialize t3102");
+    assert_eq!(value["t3102InBlock"]["sNewsno"], "20260624123456");
+    assert!(
+        value.get("t3102OutBlock2").is_none(),
+        "no out-block / caller field leaks into the request body"
+    );
+
+    let resp: T3102Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t3102OutBlock2": { "sTitle": "삼성전자, 신규 투자 발표" }
+    }))
+    .expect("representative t3102 success must deserialize");
+    assert_eq!(resp.outblock2.title, "삼성전자, 신규 투자 발표", "뉴스타이틀");
+}
+
+/// `t3102` input-unresolved HELD path: with no REST producer of a news number,
+/// the caller input cannot be discovered, so the read is dispositioned HELD —
+/// the empty result still deserializes (the pending/empty case).
+#[test]
+fn t3102_empty_result_deserializes_as_pending() {
+    let empty: T3102Response =
+        serde_json::from_value(serde_json::json!({ "rsp_cd": "00707" }))
+            .expect("empty deserializes");
+    assert!(empty.outblock2.title.is_empty(), "empty title is the held/pending case");
+}
+
+/// `t3320` request rename + summary + ratios round-trip; the canonical 한글기업명
+/// (`company`) and 현재가 (`price`) hold DISTINCT exact values so a mislabel is
+/// caught (KTD6). `gicode` echoes back in the ratios block.
+#[test]
+fn t3320_request_renames_and_summary_round_trips() {
+    let value = serde_json::to_value(T3320Request::new("005930")).expect("serialize t3320");
+    assert_eq!(value["t3320InBlock"]["gicode"], "005930");
+    assert!(
+        value.get("t3320OutBlock").is_none(),
+        "no out-block / caller field leaks into the request body"
+    );
+
+    let resp: T3320Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t3320OutBlock": {
+            "company": "삼성전자",
+            "marketnm": "코스피",
+            "price": 71000,
+            "jnilclose": "70500",
+            "sigavalue": 4238000
+        },
+        "t3320OutBlock1": {
+            "gicode": "A005930",
+            "per": 12.34,
+            "eps": "5700",
+            "pbr": 1.45,
+            "bps": "49000"
+        }
+    }))
+    .expect("representative t3320 success must deserialize");
+    // Canonical 한글기업명 / 현재가 pinned to DISTINCT exact values (KTD6).
+    assert_eq!(resp.outblock.company, "삼성전자", "한글기업명");
+    assert_eq!(resp.outblock.price, "71000", "현재가");
+    assert_eq!(resp.outblock.jnilclose, "70500", "전일종가 from string preserved");
+    assert_eq!(resp.outblock1.gicode, "A005930", "기업코드 echoes the caller gicode");
+    assert_eq!(resp.outblock1.per, "12.34", "PER from number");
+}
+
+/// `t3320` numeric out-block field parses from BOTH string and number JSON.
+#[test]
+fn t3320_numeric_field_string_or_number() {
+    let from_num: T3320OutBlock =
+        serde_json::from_value(serde_json::json!({ "price": 71000 }))
+            .expect("number form deserializes");
+    let from_str: T3320OutBlock =
+        serde_json::from_value(serde_json::json!({ "price": "71000" }))
+            .expect("string form deserializes");
+    assert_eq!(from_num.price, "71000");
+    assert_eq!(from_str.price, "71000");
+}
+
+/// `t3320` empty result (00707, empty out-block) deserializes as the pending case.
+#[test]
+fn t3320_empty_result_deserializes_as_pending() {
+    let empty: T3320Response =
+        serde_json::from_value(serde_json::json!({ "rsp_cd": "00707" }))
+            .expect("empty deserializes");
+    assert!(empty.outblock.company.is_empty(), "empty summary is the pending case");
 }

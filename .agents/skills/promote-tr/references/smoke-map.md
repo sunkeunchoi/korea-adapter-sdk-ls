@@ -74,6 +74,8 @@ TR marked `ready` is a promote-tr candidate.
 | `t8402` | `live-smoke-t8402` | `live_smoke_t8402` | anytime F/O; self-sources a contract `focode` from `t8401` — stock-futures current-price read (empty out-block off-session → PENDING) | implemented-only | paper stock-futures current price (U5) |
 | `t8403` | `live-smoke-t8403` | `live_smoke_t8403` | anytime F/O; self-sources a contract `shcode` from `t8401` — stock-futures order-book read (empty out-block off-session → PENDING) | implemented-only | paper stock-futures order book (U5) |
 | `t8434` | `live-smoke-t8434` | `live_smoke_t8434` | anytime F/O; self-sources a contract `focode` from `t8467`, `qrycnt=1` (JSON number) — F/O multi current-price read (empty array off-session → PENDING) | implemented-only | paper F/O multi current-price (U5) |
+| `t1988` | `live-smoke-t1988` | `live_smoke_t1988` | standalone→`market_session` (KTD3); no caller input (all markets, filters off); `from_rate`/`to_rate` JSON numbers (KTD4) — ELW underlying-asset list (empty out-block → PENDING; IGW40011 → PENDING) | implemented-only | paper ELW underlying-asset list (U3) |
+| `t3320` | `live-smoke-t3320` | `live_smoke_t3320` | standalone→`market_session` (KTD3); public ticker `gicode=005930` (삼성전자, bare 6-digit) — FnGuide company summary (empty out-block → PENDING) | implemented-only | paper FnGuide company summary (U3) |
 
 Notes:
 - `live-smoke` (default) issues the OAuth token *then* a `t1102` quote in one run,

@@ -3438,6 +3438,284 @@ pub struct T8434Response {
     pub outblock1: Vec<T8434OutBlock1>,
 }
 
+// ---------------------------------------------------------------------------
+// Standalone-lane reads (reach wave U3). These carry a placeholder
+// `owner_class: standalone`, but the `standalone` module is OAuth-only
+// (token/revoke) and cannot host a data read — they route through
+// `market_session` (non-paginated, MarketData). KTD3.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1988` — 기초자산리스트조회 (ELW underlying-asset list). A
+/// filter screen: `mkt_gb` selects the market and the `chk_*` flags toggle the
+/// price/volume/amount/rate conditions (`"0"` = all). `from_rate`/`to_rate` are
+/// the only Number-typed request fields — they MUST serialize as JSON numbers
+/// (`string_as_number`, KTD4) or the gateway rejects the call with `IGW40011`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1988InBlock {
+    /// Market / 시장구분 (`"0"` all / `"1"` KOSPI / `"2"` KOSDAQ).
+    pub mkt_gb: String,
+    /// Price filter / 가격설정 (`"0"` all).
+    pub chk_price: String,
+    /// Price lower bound / 가격1.
+    pub from_price: String,
+    /// Price upper bound / 가격2.
+    pub to_price: String,
+    /// Volume filter / 거래량설정 (`"0"` all).
+    pub chk_vol: String,
+    /// Volume lower bound / 거래량1.
+    pub from_vol: String,
+    /// Volume upper bound / 거래량2.
+    pub to_vol: String,
+    /// Rate filter / 등락율설정 (`"0"` all).
+    pub chk_rate: String,
+    /// Rate lower bound / 등락율1 (numeric request slot, KTD4).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub from_rate: String,
+    /// Rate upper bound / 등락율2 (numeric request slot, KTD4).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub to_rate: String,
+    /// Amount filter / 거래대금설정 (`"0"` all).
+    pub chk_amt: String,
+    /// Amount lower bound / 거래대금1.
+    pub from_amt: String,
+    /// Amount upper bound / 거래대금2.
+    pub to_amt: String,
+    /// Bullish-candle filter / 양봉설정 (`"0"` all).
+    pub chk_up: String,
+    /// Bearish-candle filter / 음봉설정 (`"0"` all).
+    pub chk_down: String,
+}
+
+/// `t1988` request — wraps the in-block under `t1988InBlock`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1988Request {
+    #[serde(rename = "t1988InBlock")]
+    pub inblock: T1988InBlock,
+}
+impl T1988Request {
+    /// Build a `t1988` all-underlyings request: every filter off (`"0"`),
+    /// numeric rate bounds `0`, blank string bounds. Returns the unfiltered
+    /// underlying-asset universe for one market segment.
+    pub fn new(mkt_gb: impl Into<String>) -> Self {
+        T1988Request {
+            inblock: T1988InBlock {
+                mkt_gb: mkt_gb.into(),
+                chk_price: "0".into(),
+                from_price: String::new(),
+                to_price: String::new(),
+                chk_vol: "0".into(),
+                from_vol: String::new(),
+                to_vol: String::new(),
+                chk_rate: "0".into(),
+                from_rate: "0".into(),
+                to_rate: "0".into(),
+                chk_amt: "0".into(),
+                from_amt: String::new(),
+                to_amt: String::new(),
+                chk_up: "0".into(),
+                chk_down: "0".into(),
+            },
+        }
+    }
+}
+impl Default for T1988Request {
+    fn default() -> Self {
+        Self::new("0")
+    }
+}
+
+/// `t1988OutBlock1` — one underlying-asset row (the Object-Array detail block).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1988OutBlock1 {
+    /// Short code / 단축코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Standard code / 표준코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub expcode: String,
+    /// Issue name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Sign / 부호.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Volume / 누적거래량(주).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+}
+
+/// `t1988OutBlock` — summary header: KOSPI/KOSDAQ counts plus the per-asset row
+/// array under `t1988OutBlock1` (single-or-array via [`ls_core::de_vec_or_single`]).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1988OutBlock {
+    /// KOSPI issue count / 코스피종목건수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ksp_cnt: String,
+    /// KOSDAQ issue count / 코스닥종목건수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ksd_cnt: String,
+}
+
+/// `t1988` response — summary `t1988OutBlock` + the per-asset array
+/// `t1988OutBlock1`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1988Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1988OutBlock", default)]
+    pub outblock: T1988OutBlock,
+    #[serde(
+        rename = "t1988OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1988OutBlock1>,
+}
+
+/// Input block for `t3102` — 뉴스본문 (news body). Keyed by `sNewsno`, a news
+/// number sourced ONLY from the realtime `NWS` WebSocket title feed — there is
+/// no REST producer of a news number, so the caller input is unresolved in this
+/// (REST-only) wave (HELD).
+#[derive(Serialize, Debug, Clone)]
+pub struct T3102InBlock {
+    /// News number / 뉴스번호.
+    #[serde(rename = "sNewsno")]
+    pub news_no: String,
+}
+
+/// `t3102` request — wraps the in-block under `t3102InBlock`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T3102Request {
+    #[serde(rename = "t3102InBlock")]
+    pub inblock: T3102InBlock,
+}
+impl T3102Request {
+    /// Build a `t3102` news-body request for one news number.
+    pub fn new(news_no: impl Into<String>) -> Self {
+        T3102Request {
+            inblock: T3102InBlock {
+                news_no: news_no.into(),
+            },
+        }
+    }
+}
+
+/// `t3102OutBlock2` — the news title block (single Object in the raw capture).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T3102OutBlock2 {
+    /// News title / 뉴스타이틀.
+    #[serde(rename = "sTitle", deserialize_with = "ls_core::string_or_number")]
+    pub title: String,
+}
+
+/// `t3102` response — the title block under `t3102OutBlock2`. The body/issue
+/// blocks (`t3102OutBlock`/`t3102OutBlock1`, Object Arrays in the raw capture)
+/// are not modeled: this read ships HELD (input-unresolved), so only the title
+/// block is pinned for the offline round-trip.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T3102Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t3102OutBlock2", default)]
+    pub outblock2: T3102OutBlock2,
+}
+
+/// Input block for `t3320` — FNG_요약 (FnGuide company summary). Keyed by
+/// `gicode`, a stock code (종목코드). The paper gateway accepts the bare 6-digit
+/// ticker (e.g. `"005930"` for 삼성전자), confirmed on a live paper smoke.
+#[derive(Serialize, Debug, Clone)]
+pub struct T3320InBlock {
+    /// Stock code / 종목코드 (bare 6-digit ticker, e.g. `"005930"`).
+    pub gicode: String,
+}
+
+/// `t3320` request — wraps the in-block under `t3320InBlock`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T3320Request {
+    #[serde(rename = "t3320InBlock")]
+    pub inblock: T3320InBlock,
+}
+impl T3320Request {
+    /// Build a `t3320` company-summary request for one FnGuide company code.
+    pub fn new(gicode: impl Into<String>) -> Self {
+        T3320Request {
+            inblock: T3320InBlock {
+                gicode: gicode.into(),
+            },
+        }
+    }
+}
+
+/// `t3320OutBlock` — the company-summary header (single Object in the raw
+/// capture). A representative, spec-grounded subset; numeric-bearing fields via
+/// [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T3320OutBlock {
+    /// Korean company name / 한글기업명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub company: String,
+    /// Market segment name / 시장구분명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub marketnm: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Previous close / 전일종가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jnilclose: String,
+    /// Market capitalization / 시가총액.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sigavalue: String,
+}
+
+/// `t3320OutBlock1` — the financial-ratios block (single Object in the raw
+/// capture). A representative subset (PER/EPS/PBR/BPS); numerics via
+/// [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T3320OutBlock1 {
+    /// Company code / 기업코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gicode: String,
+    /// Price-to-earnings ratio / PER.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub per: String,
+    /// Earnings per share / EPS.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub eps: String,
+    /// Price-to-book ratio / PBR.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub pbr: String,
+    /// Book value per share / BPS.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bps: String,
+}
+
+/// `t3320` response — the summary `t3320OutBlock` + ratios `t3320OutBlock1`
+/// (both single Objects per the raw capture).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T3320Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t3320OutBlock", default)]
+    pub outblock: T3320OutBlock,
+    #[serde(rename = "t3320OutBlock1", default)]
+    pub outblock1: T3320OutBlock1,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -3861,6 +4139,34 @@ impl MarketSession {
     pub async fn fo_multi_quote(&self, req: &T8434Request) -> LsResult<T8434Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T8434_POLICY, req)
+            .await
+    }
+
+    /// Read the ELW underlying-asset list (기초자산리스트조회) via `t1988`.
+    /// Non-paginated; `mkt_gb` selects the market segment, all condition filters
+    /// off. Routes through `market_session` (KTD3 — the placeholder
+    /// `owner_class: standalone` is OAuth-only and cannot host a data read).
+    pub async fn elw_underlying_list(&self, req: &T1988Request) -> LsResult<T1988Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1988_POLICY, req)
+            .await
+    }
+
+    /// Read a news body (뉴스본문) via `t3102`. Non-paginated; keyed by a news
+    /// number (`sNewsno`) sourced only from the realtime `NWS` WebSocket feed.
+    /// Routes through `market_session` (KTD3).
+    pub async fn news_body(&self, req: &T3102Request) -> LsResult<T3102Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T3102_POLICY, req)
+            .await
+    }
+
+    /// Read the FnGuide company summary (FNG_요약) via `t3320`. Non-paginated;
+    /// keyed by a 7-char FnGuide company code (`gicode`). Routes through
+    /// `market_session` (KTD3).
+    pub async fn company_summary(&self, req: &T3320Request) -> LsResult<T3320Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T3320_POLICY, req)
             .await
     }
 }
