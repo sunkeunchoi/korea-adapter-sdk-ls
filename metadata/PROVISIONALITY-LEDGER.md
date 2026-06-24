@@ -51,7 +51,7 @@ call-auction screens are the most likely to differ (`krx_extended`).
 | t1964 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 | ~~t1988~~ | ~~`krx_regular`~~ | **RETIRED (U3, 2026-06-24)**: implemented, non-empty success on a live KRX-regular paper smoke (`assets=71`) | — |
 | t3102 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to (HELD — input-unresolved, see §13) |
-| t3320 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
+| ~~t3320~~ | ~~`krx_regular`~~ | **RETIRED (U3, 2026-06-24)**: implemented, non-empty success on a live KRX-regular paper smoke (`summary=1`) | — |
 | t8430 | `krx_regular` | best-effort: stock (`[주식]`) read, KRX regular session assumed | confirm the session the read is actually scoped to |
 
 ## 2. `caller_supplied_identifiers`
@@ -70,7 +70,7 @@ it is recorded. The true required-input set is confirmed at implementation.
 | t1964 | `[item, issuercd]` | best-effort: request-shape input fields that look like instrument/record identifiers | confirm the true caller-supplied identifier set against a live request |
 | ~~t1988~~ | ~~`[]`~~ | **RETIRED (U3, 2026-06-24)**: implemented; `mkt_gb`+filter-flags only, no instrument identifier, accepted live (`[]` confirmed) | — |
 | t3102 | `[sNewsno]` | best-effort: request-shape input fields that look like instrument/record identifiers | confirm the true caller-supplied identifier set against a live request |
-| t3320 | `[gicode]` | best-effort: request-shape input fields that look like instrument/record identifiers | confirm the true caller-supplied identifier set against a live request |
+| ~~t3320~~ | ~~`[gicode]`~~ | **RETIRED (U3, 2026-06-24)**: implemented; bare 6-digit `gicode=005930` accepted live (the `A`-prefixed FnGuide form returned a sparse body, found via raw-probe A/B, KTD9) | — |
 | t8430 | `[]` | best-effort: no obvious instrument/record identifier in the request shape (filter/`gubun`-style screen) | confirm no caller-supplied identifier is required |
 
 ## 3. Weak discovery-style relationships

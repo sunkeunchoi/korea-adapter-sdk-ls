@@ -409,7 +409,7 @@ trs:
     venue_session: krx_regular
   t3320:
     file: trs/t3320.yaml
-    owner_class: standalone
+    owner_class: market_session
     protocol: rest
     instrument_domain: stock
     venue_session: krx_regular
