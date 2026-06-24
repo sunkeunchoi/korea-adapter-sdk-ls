@@ -20,20 +20,20 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `CSPAQ12300` | BEP단가조회 | `account` | implemented | [CSPAQ12300](./CSPAQ12300.md) |
 | `CSPAQ22200` | 현물계좌예수금 주문가능금액 총평가2 | `account` | implemented | [CSPAQ22200](./CSPAQ22200.md) |
 | `CSPAT00601` | 현물 정규주문 (cash equity order submission) | `orders` | tracked | [CSPAT00601](./CSPAT00601.md) |
-| `FC9` | 선물 체결 실시간 시세 | `realtime` | tracked | [FC9](./FC9.md) |
-| `FH9` | 선물 호가 실시간 시세 | `realtime` | tracked | [FH9](./FH9.md) |
-| `GSC` | 해외주식 체결 실시간 시세 | `realtime` | tracked | [GSC](./GSC.md) |
-| `GSH` | 해외주식 호가 실시간 시세 | `realtime` | tracked | [GSH](./GSH.md) |
+| `FC9` | 선물 체결 실시간 시세 | `realtime` | implemented | [FC9](./FC9.md) |
+| `FH9` | 선물 호가 실시간 시세 | `realtime` | implemented | [FH9](./FH9.md) |
+| `GSC` | 해외주식 체결 실시간 시세 | `realtime` | implemented | [GSC](./GSC.md) |
+| `GSH` | 해외주식 호가 실시간 시세 | `realtime` | implemented | [GSH](./GSH.md) |
 | `H01` | 선물옵션 주문정정취소 실시간 | `realtime` | tracked | [H01](./H01.md) |
-| `H1_` | KOSPI 호가 실시간 시세 | `realtime` | tracked | [H1_](./H1_.md) |
-| `HA_` | KOSDAQ 호가 실시간 시세 | `realtime` | tracked | [HA_](./HA_.md) |
+| `H1_` | KOSPI 호가 실시간 시세 | `realtime` | implemented | [H1_](./H1_.md) |
+| `HA_` | KOSDAQ 호가 실시간 시세 | `realtime` | implemented | [HA_](./HA_.md) |
 | `K3_` | KOSDAQ 체결 실시간 시세 | `realtime` | implemented | [K3_](./K3_.md) |
 | `O01` | 선물옵션 주문접수 실시간 | `realtime` | tracked | [O01](./O01.md) |
-| `OC0` | 옵션 체결 실시간 시세 | `realtime` | tracked | [OC0](./OC0.md) |
-| `OH0` | 옵션 호가 실시간 시세 | `realtime` | tracked | [OH0](./OH0.md) |
-| `OVC` | 해외선물 체결 실시간 시세 | `realtime` | tracked | [OVC](./OVC.md) |
-| `OVH` | 해외선물 호가 실시간 시세 | `realtime` | tracked | [OVH](./OVH.md) |
-| `S2_` | KOSPI 우선호가 실시간 시세 | `realtime` | tracked | [S2_](./S2_.md) |
+| `OC0` | 옵션 체결 실시간 시세 | `realtime` | implemented | [OC0](./OC0.md) |
+| `OH0` | 옵션 호가 실시간 시세 | `realtime` | implemented | [OH0](./OH0.md) |
+| `OVC` | 해외선물 체결 실시간 시세 | `realtime` | implemented | [OVC](./OVC.md) |
+| `OVH` | 해외선물 호가 실시간 시세 | `realtime` | implemented | [OVH](./OVH.md) |
+| `S2_` | KOSPI 우선호가 실시간 시세 | `realtime` | implemented | [S2_](./S2_.md) |
 | `S3_` | KOSPI 체결 실시간 시세 | `realtime` | recommended | [S3_](./S3_.md) |
 | `SC0` | 주식 주문접수 실시간 | `realtime` | tracked | [SC0](./SC0.md) |
 | `SC1` | 주식 주문체결 실시간 | `realtime` | tracked | [SC1](./SC1.md) |
@@ -43,9 +43,9 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `TC1` | 해외선물 주문접수 실시간 | `realtime` | tracked | [TC1](./TC1.md) |
 | `TC2` | 해외선물 주문응답 실시간 | `realtime` | tracked | [TC2](./TC2.md) |
 | `TC3` | 해외선물 주문체결 실시간 | `realtime` | tracked | [TC3](./TC3.md) |
-| `UH1` | 통합 호가 실시간 시세 | `realtime` | tracked | [UH1](./UH1.md) |
-| `US2` | 통합 우선호가 실시간 시세 | `realtime` | tracked | [US2](./US2.md) |
-| `US3` | 통합 체결 실시간 시세 | `realtime` | tracked | [US3](./US3.md) |
+| `UH1` | 통합 호가 실시간 시세 | `realtime` | implemented | [UH1](./UH1.md) |
+| `US2` | 통합 우선호가 실시간 시세 | `realtime` | implemented | [US2](./US2.md) |
+| `US3` | 통합 체결 실시간 시세 | `realtime` | implemented | [US3](./US3.md) |
 | `g3101` | 해외주식 API 현재가 조회 | `market_session` | tracked | [g3101](./g3101.md) |
 | `g3102` | 해외주식 API 시간대별 | `market_session` | tracked | [g3102](./g3102.md) |
 | `g3103` | 해외주식 API 일주월 조회 | `market_session` | tracked | [g3103](./g3103.md) |

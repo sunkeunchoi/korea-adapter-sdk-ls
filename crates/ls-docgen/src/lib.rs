@@ -920,6 +920,8 @@ mod tests {
             "t1988", "t3320",
             "o3101", "o3121",
             "K3_",
+            "H1_", "HA_", "S2_", "US3", "UH1", "US2", "GSC", "GSH", "OVC", "OVH", "OC0", "OH0",
+            "FC9", "FH9",
         ];
         for tr in banner_trs {
             let page = reference
@@ -982,9 +984,13 @@ mod tests {
         // ARRAY out-block; non-empty 2-row paper smoke) adds one more.
         // K3_ (realtime flip wave, KOSDAQ 체결 WebSocket; clean paper lifecycle smoke,
         // connection-reachable-only per KTD6=NOT-OBSERVABLE) adds one more.
+        // P1 market-data WS lane (realtime flip wave): H1_/HA_/S2_/US3/UH1/US2 (stock),
+        // GSC/GSH (overseas stock), OVC/OVH (overseas futures), OC0/OH0/FC9/FH9 (F/O) —
+        // 14 TRs, each a clean paper lifecycle smoke via the live-smoke-ws-p1 sweep,
+        // connection-reachable-only per KTD6 — add 14 more.
         assert_eq!(
             reference.len(),
-            64,
+            78,
             "index + the implemented reference pages"
         );
 

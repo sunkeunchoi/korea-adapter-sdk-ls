@@ -7,7 +7,7 @@ KOSDAQ 호가 실시간 시세
 ## Support
 
 - Tracked: yes
-- Implemented: no
+- Implemented: yes
 - Recommended: no
 
 ## Ownership
