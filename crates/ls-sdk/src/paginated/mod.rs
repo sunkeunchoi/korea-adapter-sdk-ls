@@ -174,4 +174,15 @@ impl Paginated {
             .post_paginated(&ls_core::endpoint_policy::T1481_POLICY, req)
             .await
     }
+
+    /// Fetch a SINGLE page of `t1482` after-hours top volume (시간외거래량상위).
+    ///
+    /// Dispatches through [`ls_core::Inner::post_paginated`] with empty header
+    /// cursors; the body `idx` (first page `0`, serialized as a number) is the
+    /// continuation. Single-page scope — no multi-page body-`idx` collection.
+    pub async fn after_hours_top_volume(&self, req: &T1482Request) -> LsResult<T1482Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1482_POLICY, req)
+            .await
+    }
 }

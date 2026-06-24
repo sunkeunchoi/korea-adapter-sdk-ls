@@ -526,6 +526,21 @@ pub const T1481_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(1),
 };
 
+/// t1482 — 시간외거래량상위 (after-hours top volume; single-page body-`idx`
+/// paginated). `has_pagination: true` mirrors `facets.self_paginated`.
+pub const T1482_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1482",
+    path: "/stock/high-item",
+    module: "stock",
+    group: "[주식] 상위종목",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
 /// t1403 — 신규상장종목조회 (newly-listed stocks; single-page body-`idx` paginated).
 pub const T1403_POLICY: EndpointPolicy = EndpointPolicy {
     tr_code: "t1403",
@@ -912,6 +927,7 @@ mod tests {
             T1537_POLICY,
             T1452_POLICY,
             T1481_POLICY,
+            T1482_POLICY,
             T1403_POLICY,
             T1441_POLICY,
             T1463_POLICY,

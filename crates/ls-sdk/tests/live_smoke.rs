@@ -32,7 +32,8 @@ use ls_sdk::market_session::{
 };
 use ls_sdk::paginated::{
     T1403Request, T1441Request, T1452Request, T1463Request, T1466Request, T1481Request,
-    T1489Request, T1492Request, T1514Request, T1866Request, T3341Request, T8412Request,
+    T1482Request, T1489Request, T1492Request, T1514Request, T1866Request, T3341Request,
+    T8412Request,
 };
 use ls_sdk::realtime::S3Trade;
 use ls_sdk::LsSdk;
@@ -748,6 +749,40 @@ async fn live_smoke_t1481() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t1481 market-data failure (not evidence)");
             panic!("live-smoke-t1481 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1482`: single-page `t1482` after-hours top volume
+/// (시간외거래량상위; all-segment, ascending sort, permissive filters, first-page
+/// `idx`).
+///
+/// `after_hours_top_volume` returning `Ok` with a non-empty `outblock1` proves the
+/// read is callable and the raw-capture row shape round-trips. The recorded line
+/// carries only `rsp_cd` + a public row count (no `rsp_msg`, token, or account
+/// text) and is self-dated; a failed run emits a distinct `SMOKE-FAIL` stderr line,
+/// never a capturable `LIVE-SMOKE` line. An empty success (`00707`) outside an
+/// after-hours session is the PENDING case, not a defect.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1482`"]
+async fn live_smoke_t1482() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    // sort_gbn=0, all-segment, permissive volume flag, first page.
+    let req = T1482Request::new("0", "0", "0");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.paginated().after_hours_top_volume(&req).await {
+        Ok(resp) => record(
+            "live-smoke-t1482",
+            &format!("env=paper sort_gbn=0 idx=0 date={date}"),
+            &smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line"),
+        ),
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1482 market-data failure (not evidence)");
+            panic!("live-smoke-t1482 failed: {e}");
         }
     }
 }

@@ -190,7 +190,7 @@ ship pending; t1860 reclassified out of scope. Every one of the 7 is decided:
 | t1852 | market_session | **PENDING — input-unresolved** | required `sFileData` blob (~26.8 KB) unsourced |
 | t1856 | market_session | **PENDING — input-unresolved** | required `sFileData` blob (~26.8 KB) unsourced |
 | t1481 | paginated (body-`idx`) | **implemented (U2 reach wave)** | `rsp_cd=00000 rows=20`; `caller_supplied_identifiers: []` confirmed accepted; `venue_session` retained (regular-vs-extended unresolved by a single regular-session run, KTD7) |
-| t1482 | paginated (body-`idx`) | **PENDING — session-unresolved** | no in-session window run; `venue_session` unresolved |
+| t1482 | paginated (body-`idx`) | **implemented (U2 reach wave)** | `rsp_cd=00000 rows=20`; `caller_supplied_identifiers: []` confirmed accepted; `venue_session` retained (regular-vs-extended unresolved by a single regular-session run, KTD7) |
 
 **Spine proven end-to-end.** A live `t1866` list supplies a `query_index` that
 `t1859`'s chained smoke accepts (a non-empty success), so the `t1866 → t1859`
@@ -222,18 +222,24 @@ call), so no ledger row is left silently live (R11):
   uncorrected here because the field is unconfirmed in-window (the sourcing wave
   reconciles it on a confirming call). owner_class stays the `standalone`
   placeholder (not reclassified absent a live confirmation).
-- **t1481 / t1482** — `venue_session` (§1) retained and explicitly
-  **session-unresolved**: no SDK/core field carries session phase, and an
-  off-session smoke cannot resolve `krx_regular` vs `krx_extended` (the
-  `t1489`/`t1492` precedent in §5). Resolving it needs an in-session live-run
-  window diffed against a regular-session run.
+- **t1481 / t1482** — both **implemented** in the U2 reach wave on green paper
+  smokes (`rsp_cd=00000 rows=20` each); their `caller_supplied_identifiers` (§2,
+  `[]`) is confirmed accepted (each call sent only filter flags + the body `idx`,
+  no instrument identifier, and succeeded). Their `venue_session` (§1) is **NOT
+  retired** and stays explicitly **session-unresolved**: no SDK/core field carries
+  session phase, and a single regular-session smoke cannot resolve `krx_regular`
+  vs `krx_extended` (the `t1489`/`t1492` precedent in §5). Resolving it needs an
+  in-session vs after-hours live-run window diff — deferred to the
+  session-semantics follow-up below.
 
 **Follow-up roadmap (opened as issues).**
 1. **sFileData sourcing wave** — source a representative ~26.8 KB `sFileData`
    screening-condition blob, then implement `t1852`/`t1856` and reconcile their
    §2 caller-input rows to `[sFileData]`.
-2. **Session-semantics wave** — run an in-session window to resolve `t1481`/`t1482`'s
-   `venue_session`, then implement them at single-page body-`idx` scope.
+2. **Session-semantics wave** — `t1481`/`t1482` are now implemented (U2 reach wave,
+   single-page body-`idx` scope); the residual task is to run an in-session vs
+   after-hours window diff to resolve their `venue_session` (§1, `krx_regular` vs
+   `krx_extended`) and retire that facet — needed before any Recommended promotion.
 3. **Realtime lifecycle / AFR design** — model the `t1860` register/deregister
    lifecycle and the AFR (사용자조건검색실시간) realtime channel if that capability
    is pursued.

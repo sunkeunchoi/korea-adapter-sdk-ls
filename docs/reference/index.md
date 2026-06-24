@@ -20,6 +20,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t1463` | 거래대금상위 | `paginated` | implemented, not yet recommended |
 | `t1466` | 전일동시간대비거래급증 | `paginated` | implemented, not yet recommended |
 | `t1481` | 시간외등락율상위 | `paginated` | implemented, not yet recommended |
+| `t1482` | 시간외거래량상위 | `paginated` | implemented, not yet recommended |
 | `t1485` | 예상지수 | `market_session` | implemented, not yet recommended |
 | `t1489` | 예상체결량상위조회 | `paginated` | implemented, not yet recommended |
 | `t1492` | 단일가예상등락율상위 | `paginated` | implemented, not yet recommended |
