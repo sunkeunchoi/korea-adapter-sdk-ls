@@ -125,6 +125,16 @@ fixture hand-authored from the raw `res_example` exercises decode (no live realt
 capture exists and the smoke never observes a row), asserting array-vs-single
 matches the raw shape.
 
+> **Combined-sweep lane (high-volume waves).** When implementing a whole lane at
+> once, instead of one `make` target per TR you may add a single resilient sweep
+> test (e.g. `live_smoke_ws_p1`) that iterates `(tr_cd, tr_key, lane)` tuples on a
+> FRESH manager each, records a per-TR `LIVE-SMOKE` line, and fails red only if ANY
+> TR failed (use a non-panicking `ws_lifecycle_try`-style helper so one bad TR
+> doesn't abort the sweep). Point all that lane's `smoke-map.md` rows at the one
+> combined target, and have each per-TR `record(...)` emit that SAME combined make
+> target in `target=` (carry per-TR identity in `inputs=[tr_cd=…]`) — never a
+> `live-smoke-<tr>` label that maps to no Makefile target.
+
 ## 5. Run the smoke; interpret per the lifecycle state machine
 
 Run the smoke (it loads `.env` and hits the real **paper** gateway).

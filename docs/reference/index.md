@@ -6,12 +6,43 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 
 | TR | Name | Owner class | Status |
 |----|------|-------------|--------|
+| `AS0` | 해외주식 주문접수 실시간 | `realtime` | implemented, not yet recommended |
+| `AS1` | 해외주식 주문체결 실시간 | `realtime` | implemented, not yet recommended |
+| `AS2` | 해외주식 주문정정 실시간 | `realtime` | implemented, not yet recommended |
+| `AS3` | 해외주식 주문취소 실시간 | `realtime` | implemented, not yet recommended |
+| `AS4` | 해외주식 주문거부 실시간 | `realtime` | implemented, not yet recommended |
+| `C01` | 선물옵션 주문체결 실시간 | `realtime` | implemented, not yet recommended |
 | `CFOAQ10100` | 선물옵션 주문가능수량조회 | `account` | implemented, not yet recommended |
 | `CFOBQ10500` | 선물옵션 계좌예탁금증거금조회 | `account` | implemented, not yet recommended |
 | `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | recommended |
 | `CSPAQ12300` | BEP단가조회 | `account` | implemented, not yet recommended |
 | `CSPAQ22200` | 현물계좌예수금 주문가능금액 총평가2 | `account` | implemented, not yet recommended |
+| `FC9` | 선물 체결 실시간 시세 | `realtime` | implemented, not yet recommended |
+| `FH9` | 선물 호가 실시간 시세 | `realtime` | implemented, not yet recommended |
+| `GSC` | 해외주식 체결 실시간 시세 | `realtime` | implemented, not yet recommended |
+| `GSH` | 해외주식 호가 실시간 시세 | `realtime` | implemented, not yet recommended |
+| `H01` | 선물옵션 주문정정취소 실시간 | `realtime` | implemented, not yet recommended |
+| `H1_` | KOSPI 호가 실시간 시세 | `realtime` | implemented, not yet recommended |
+| `HA_` | KOSDAQ 호가 실시간 시세 | `realtime` | implemented, not yet recommended |
+| `K3_` | KOSDAQ 체결 실시간 시세 | `realtime` | implemented, not yet recommended |
+| `O01` | 선물옵션 주문접수 실시간 | `realtime` | implemented, not yet recommended |
+| `OC0` | 옵션 체결 실시간 시세 | `realtime` | implemented, not yet recommended |
+| `OH0` | 옵션 호가 실시간 시세 | `realtime` | implemented, not yet recommended |
+| `OVC` | 해외선물 체결 실시간 시세 | `realtime` | implemented, not yet recommended |
+| `OVH` | 해외선물 호가 실시간 시세 | `realtime` | implemented, not yet recommended |
+| `S2_` | KOSPI 우선호가 실시간 시세 | `realtime` | implemented, not yet recommended |
 | `S3_` | KOSPI 체결 실시간 시세 | `realtime` | recommended |
+| `SC0` | 주식 주문접수 실시간 | `realtime` | implemented, not yet recommended |
+| `SC1` | 주식 주문체결 실시간 | `realtime` | implemented, not yet recommended |
+| `SC2` | 주식 주문정정 실시간 | `realtime` | implemented, not yet recommended |
+| `SC3` | 주식 주문취소 실시간 | `realtime` | implemented, not yet recommended |
+| `SC4` | 주식 주문거부 실시간 | `realtime` | implemented, not yet recommended |
+| `TC1` | 해외선물 주문접수 실시간 | `realtime` | implemented, not yet recommended |
+| `TC2` | 해외선물 주문응답 실시간 | `realtime` | implemented, not yet recommended |
+| `TC3` | 해외선물 주문체결 실시간 | `realtime` | implemented, not yet recommended |
+| `UH1` | 통합 호가 실시간 시세 | `realtime` | implemented, not yet recommended |
+| `US2` | 통합 우선호가 실시간 시세 | `realtime` | implemented, not yet recommended |
+| `US3` | 통합 체결 실시간 시세 | `realtime` | implemented, not yet recommended |
 | `o3101` | 해외선물마스터조회 | `market_session` | implemented, not yet recommended |
 | `o3121` | 해외선물옵션 마스터 조회 | `market_session` | implemented, not yet recommended |
 | `revoke` | 접근토큰 폐기 (OAuth2 token revoke) | `standalone` | implemented, not yet recommended |

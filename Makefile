@@ -15,7 +15,7 @@
 # Export command-line / make variables (e.g. LS_LIVE_SMOKE_*) to recipe shells.
 export
 
-.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-ws-negative live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1481 live-smoke-t1482 live-smoke-t1866 live-smoke-t1859 live-smoke-t1826 live-smoke-t1825 live-smoke-t9905 live-smoke-t9907 live-smoke-t8431 live-smoke-t9942 live-smoke-t1958 live-smoke-t1964 live-smoke-t1601 live-smoke-t1615 live-smoke-t1640 live-smoke-t1662 live-smoke-t1664 live-smoke-t3341 live-smoke-t8424 live-smoke-t1511 live-smoke-t1485 live-smoke-t1516 live-smoke-t1514 live-smoke-cspaq12300 live-smoke-cspaq22200 live-smoke-cfobq10500 live-smoke-ccenq90200 live-smoke-cfoaq10100 live-smoke-ccenq10100 live-smoke-t2301 live-smoke-t2522 live-smoke-t8401 live-smoke-t8426 live-smoke-t8433 live-smoke-t8435 live-smoke-t8467 live-smoke-t9943 live-smoke-t9944 live-smoke-t2111 live-smoke-t2112 live-smoke-t2106 live-smoke-t8402 live-smoke-t8403 live-smoke-t8434 live-smoke-t1988 live-smoke-t3320 live-smoke-t8455 live-smoke-t8460 live-smoke-t8463 live-smoke-g3101 live-smoke-g3104 live-smoke-g3106 live-smoke-g3102 live-smoke-g3103 live-smoke-g3190 live-smoke-o3101 live-smoke-o3121 live-smoke-o3105 live-smoke-o3106 live-smoke-o3125 live-smoke-o3126 raw-probe
+.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-ws-negative live-smoke-k3 live-smoke-ws-p1 live-smoke-ws-p2 live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1481 live-smoke-t1482 live-smoke-t1866 live-smoke-t1859 live-smoke-t1826 live-smoke-t1825 live-smoke-t9905 live-smoke-t9907 live-smoke-t8431 live-smoke-t9942 live-smoke-t1958 live-smoke-t1964 live-smoke-t1601 live-smoke-t1615 live-smoke-t1640 live-smoke-t1662 live-smoke-t1664 live-smoke-t3341 live-smoke-t8424 live-smoke-t1511 live-smoke-t1485 live-smoke-t1516 live-smoke-t1514 live-smoke-cspaq12300 live-smoke-cspaq22200 live-smoke-cfobq10500 live-smoke-ccenq90200 live-smoke-cfoaq10100 live-smoke-ccenq10100 live-smoke-t2301 live-smoke-t2522 live-smoke-t8401 live-smoke-t8426 live-smoke-t8433 live-smoke-t8435 live-smoke-t8467 live-smoke-t9943 live-smoke-t9944 live-smoke-t2111 live-smoke-t2112 live-smoke-t2106 live-smoke-t8402 live-smoke-t8403 live-smoke-t8434 live-smoke-t1988 live-smoke-t3320 live-smoke-t8455 live-smoke-t8460 live-smoke-t8463 live-smoke-g3101 live-smoke-g3104 live-smoke-g3106 live-smoke-g3102 live-smoke-g3103 live-smoke-g3190 live-smoke-o3101 live-smoke-o3121 live-smoke-o3105 live-smoke-o3106 live-smoke-o3125 live-smoke-o3126 raw-probe
 
 # $(1) = exact test name in crates/ls-sdk/tests/live_smoke.rs
 define run_smoke
@@ -75,6 +75,32 @@ live-smoke-ccenq10100:
 ## Runs the generic ws_lifecycle_smoke helper for S3_ (market-data, tr_type 3).
 live-smoke-ws:
 	$(call run_smoke,live_smoke_ws)
+
+## K3_ (KOSDAQ 체결) lifecycle smoke — the flip gate for K3_ (market-data, tr_type
+## 3). Per KTD6 (NOT-OBSERVABLE), a clean run proves connection reachability only.
+## Set LS_LIVE_SMOKE_SHCODE to a KOSDAQ code for a venue-representative run.
+live-smoke-k3:
+	$(call run_smoke,live_smoke_k3)
+
+## Combined P1 market-data WS smoke — the ONE command that gates the 14-TR wave
+## (H1_/HA_/S2_/US3/UH1/US2 stock, GSC/GSH overseas-stock, OVC/OVH overseas-
+## futures, OC0/OH0/FC9/FH9 F-O). Each TR runs on a fresh manager; a per-TR
+## failure is recorded (not abort) and the run fails red iff any TR failed. Per
+## KTD6 (NOT-OBSERVABLE) a clean run proves connection reachability only. Override
+## the stock key via LS_LIVE_SMOKE_SHCODE; overseas/F-O keys are public symbols.
+live-smoke-ws-p1:
+	$(call run_smoke,live_smoke_ws_p1)
+
+## Combined P2 order-event WS smoke — the ONE command that gates the 16-TR wave
+## (SC0-SC4 stock, C01/O01/H01 F-O, AS0-AS4 overseas-stock, TC1-TC3 overseas-
+## futures). OBSERVATION-ONLY: subscribes/unsubscribes order-event feeds; NEVER
+## places, amends, or cancels an order. Each TR runs on a fresh manager; a per-TR
+## failure is recorded (not abort) and the run fails red iff any TR failed. SC*
+## are account-bound (empty tr_key); others use cert symbols. Per KTD6
+## (NOT-OBSERVABLE) and unestablished paper reachability a clean run proves
+## connection reachability only — a meaningful share may stay Tracked-only.
+live-smoke-ws-p2:
+	$(call run_smoke,live_smoke_ws_p2)
 
 ## WebSocket NEGATIVE control (KTD6): subscribe a deliberately-INVALID tr_cd and
 ## record whether the paper gateway emits an OBSERVABLE rejection in the timebox.

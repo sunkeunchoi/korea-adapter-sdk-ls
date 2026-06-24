@@ -1299,6 +1299,495 @@ pub const S3_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: None,
 };
 
+/// K3_ — KOSDAQ체결 실시간 시세 (real-time KOSDAQ trade feed, WebSocket).
+///
+/// WebSocket TR: no REST dispatch; the policy const mirrors the metadata index
+/// for cross-checking. Ported verbatim from the migration source's `K3_POLICY`.
+pub const K3_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "K3_",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// H1_ — KOSPI호가잔량 실시간 시세 (real-time KOSPI order-book feed, WebSocket).
+///
+/// WebSocket TR: no REST dispatch; the policy const mirrors the metadata index
+/// for cross-checking. Ported verbatim from the migration source's `H1_POLICY`.
+pub const H1_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "H1_",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// HA_ — KOSDAQ호가잔량 실시간 시세 (real-time KOSDAQ order-book feed, WebSocket).
+///
+/// WebSocket TR: no REST dispatch; the policy const mirrors the metadata index
+/// for cross-checking. Ported verbatim from the migration source's `HA_POLICY`.
+pub const HA_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "HA_",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// S2_ — KOSPI우선호가 실시간 시세 (real-time KOSPI best-quote feed, WebSocket).
+///
+/// WebSocket TR: no REST dispatch; the policy const mirrors the metadata index
+/// for cross-checking. Ported verbatim from the migration source's `S2_POLICY`.
+pub const S2_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "S2_",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// US3 — (통합)체결 실시간 시세 (real-time integrated trade feed, WebSocket).
+///
+/// WebSocket TR: no REST dispatch; the policy const mirrors the metadata index
+/// for cross-checking. Ported verbatim from the migration source's `US3_POLICY`.
+pub const US3_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "US3",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// UH1 — (통합)호가잔량 실시간 시세 (real-time integrated order-book feed, WebSocket).
+///
+/// WebSocket TR: no REST dispatch; the policy const mirrors the metadata index
+/// for cross-checking. Ported verbatim from the migration source's `UH1_POLICY`.
+pub const UH1_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "UH1",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// US2 — (통합)우선호가 실시간 시세 (real-time integrated best-quote feed, WebSocket).
+///
+/// WebSocket TR: no REST dispatch; the policy const mirrors the metadata index
+/// for cross-checking. Ported verbatim from the migration source's `US2_POLICY`.
+pub const US2_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "US2",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// GSC — 해외주식 체결 실시간 시세 (real-time overseas-stock trade feed, WebSocket).
+///
+/// WebSocket TR: no REST dispatch; the policy const mirrors the metadata index
+/// for cross-checking. Ported verbatim from the migration source's `GSC_POLICY`.
+pub const GSC_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "GSC",
+    path: "/websocket",
+    module: "overseas_stock",
+    group: "[해외주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// GSH — 해외주식 호가 실시간 시세 (real-time overseas-stock order-book feed, WebSocket).
+///
+/// WebSocket TR: no REST dispatch; the policy const mirrors the metadata index
+/// for cross-checking. Ported verbatim from the migration source's `GSH_POLICY`.
+pub const GSH_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "GSH",
+    path: "/websocket",
+    module: "overseas_stock",
+    group: "[해외주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// OVC — 해외선물 체결 실시간 시세 (real-time overseas-futures trade feed, WebSocket).
+///
+/// WebSocket TR: no REST dispatch; the policy const mirrors the metadata index
+/// for cross-checking. Ported verbatim from the migration source's `OVC_POLICY`.
+pub const OVC_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "OVC",
+    path: "/websocket",
+    module: "overseas_futures",
+    group: "[해외선물] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// OVH — 해외선물 호가 실시간 시세 (real-time overseas-futures order-book feed, WebSocket).
+///
+/// WebSocket TR: no REST dispatch; the policy const mirrors the metadata index
+/// for cross-checking. Ported verbatim from the migration source's `OVH_POLICY`.
+pub const OVH_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "OVH",
+    path: "/websocket",
+    module: "overseas_futures",
+    group: "[해외선물] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// OC0 — KOSPI200옵션체결 실시간 시세 (real-time option trade feed, WebSocket).
+///
+/// WebSocket TR: no REST dispatch; the policy const mirrors the metadata index
+/// for cross-checking. Ported verbatim from the migration source's `OC0_POLICY`.
+pub const OC0_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "OC0",
+    path: "/websocket",
+    module: "futures_options",
+    group: "[선물/옵션] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// OH0 — KOSPI200옵션호가 실시간 시세 (real-time option order-book feed, WebSocket).
+///
+/// WebSocket TR: no REST dispatch; the policy const mirrors the metadata index
+/// for cross-checking. Ported verbatim from the migration source's `OH0_POLICY`.
+pub const OH0_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "OH0",
+    path: "/websocket",
+    module: "futures_options",
+    group: "[선물/옵션] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// FC9 — KOSPI200선물체결 실시간 시세 (real-time futures trade feed, WebSocket).
+///
+/// WebSocket TR: no REST dispatch; the policy const mirrors the metadata index
+/// for cross-checking. Ported verbatim from the migration source's `FC9_POLICY`.
+pub const FC9_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "FC9",
+    path: "/websocket",
+    module: "futures_options",
+    group: "[선물/옵션] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// FH9 — KOSPI200선물호가 실시간 시세 (real-time futures order-book feed, WebSocket).
+///
+/// WebSocket TR: no REST dispatch; the policy const mirrors the metadata index
+/// for cross-checking. Ported verbatim from the migration source's `FH9_POLICY`.
+pub const FH9_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "FH9",
+    path: "/websocket",
+    module: "futures_options",
+    group: "[선물/옵션] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+// =============================================================================
+// P2 order-event realtime lane (WebSocket; observation-only 주문/체결 feeds).
+//
+// Ported verbatim from the migration source's `<tr>_POLICY`. NOTE: in the source
+// every one of these 16 order-event channels carries `category: MarketData` and
+// `is_order: false` (they sit under the module's "실시간 시세" group), so they need
+// no MarketData re-pin to match the U4 `market_data` rate_bucket in metadata —
+// the crosscheck passes as-is. WebSocket policies carry no rate limits.
+// =============================================================================
+
+/// SC0 — 주식주문접수 실시간 (real-time stock order-accept feed, WebSocket).
+pub const SC0_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "SC0",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// SC1 — 주식주문체결 실시간 (real-time stock order-fill feed, WebSocket).
+pub const SC1_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "SC1",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// SC2 — 주식주문정정 실시간 (real-time stock order-amend feed, WebSocket).
+pub const SC2_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "SC2",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// SC3 — 주식주문취소 실시간 (real-time stock order-cancel feed, WebSocket).
+pub const SC3_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "SC3",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// SC4 — 주식주문거부 실시간 (real-time stock order-reject feed, WebSocket).
+pub const SC4_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "SC4",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// C01 — 선물주문체결 실시간 (real-time F-O order-fill feed, WebSocket).
+pub const C01_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "C01",
+    path: "/websocket",
+    module: "futures_options",
+    group: "[선물/옵션] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// O01 — 선물접수 실시간 (real-time F-O order-accept feed, WebSocket).
+pub const O01_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "O01",
+    path: "/websocket",
+    module: "futures_options",
+    group: "[선물/옵션] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// H01 — 선물주문정정취소 실시간 (real-time F-O order-amend-cancel feed, WebSocket).
+pub const H01_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "H01",
+    path: "/websocket",
+    module: "futures_options",
+    group: "[선물/옵션] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// AS0 — 해외주식주문접수(미국) 실시간 (real-time overseas-stock order-accept, WebSocket).
+pub const AS0_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "AS0",
+    path: "/websocket",
+    module: "overseas_stock",
+    group: "[해외주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// AS1 — 해외주식주문체결(미국) 실시간 (real-time overseas-stock order-fill, WebSocket).
+pub const AS1_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "AS1",
+    path: "/websocket",
+    module: "overseas_stock",
+    group: "[해외주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// AS2 — 해외주식주문정정(미국) 실시간 (real-time overseas-stock order-amend, WebSocket).
+pub const AS2_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "AS2",
+    path: "/websocket",
+    module: "overseas_stock",
+    group: "[해외주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// AS3 — 해외주식주문취소(미국) 실시간 (real-time overseas-stock order-cancel, WebSocket).
+pub const AS3_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "AS3",
+    path: "/websocket",
+    module: "overseas_stock",
+    group: "[해외주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// AS4 — 해외주식주문거부(미국) 실시간 (real-time overseas-stock order-reject, WebSocket).
+pub const AS4_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "AS4",
+    path: "/websocket",
+    module: "overseas_stock",
+    group: "[해외주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// TC1 — 해외선물 주문접수 실시간 (real-time overseas-futures order-accept, WebSocket).
+pub const TC1_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "TC1",
+    path: "/websocket",
+    module: "overseas_futures",
+    group: "[해외선물] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// TC2 — 해외선물 주문응답 실시간 (real-time overseas-futures order-response, WebSocket).
+pub const TC2_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "TC2",
+    path: "/websocket",
+    module: "overseas_futures",
+    group: "[해외선물] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// TC3 — 해외선물 주문체결 실시간 (real-time overseas-futures order-fill, WebSocket).
+pub const TC3_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "TC3",
+    path: "/websocket",
+    module: "overseas_futures",
+    group: "[해외선물] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
 #[cfg(test)]
 mod tests {
     use super::*;

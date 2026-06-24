@@ -1723,6 +1723,210 @@ async fn live_smoke_ws() {
     );
 }
 
+/// `make live-smoke-k3`: lifecycle smoke for `K3_` (KOSDAQ 체결, market-data).
+///
+/// The flip gate for K3_. Set `LS_LIVE_SMOKE_SHCODE` to a KOSDAQ code for a
+/// venue-representative run (the migration source's cert used `005930`). Per the
+/// KTD6 result (`NOT-OBSERVABLE`), a clean lifecycle here proves **connection
+/// reachability only**, not per-TR reachability — flip the metadata with that
+/// weaker claim.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-k3`"]
+async fn live_smoke_k3() {
+    let symbol = resolve_symbol();
+    let row_note = ws_lifecycle_smoke("K3_", &symbol, WsLane::MarketData).await;
+    record(
+        "live-smoke-k3",
+        &format!("symbol={symbol} ws_port=29443 tr_type=3"),
+        &row_note,
+    );
+}
+
+/// Non-panicking sibling of [`ws_lifecycle_smoke`] for the combined P1 wave run.
+///
+/// Wraps the FULL lifecycle (paper guard → port-29443 assertion → fresh-manager
+/// subscribe → timeboxed bonus row → unsubscribe) in a `Result`, so a single bad
+/// TR records its failure as a line and does NOT panic-abort the whole 14-TR
+/// sweep (the resilience requirement of `live_smoke_ws_p1`). Mirrors
+/// `ws_lifecycle_smoke` step-for-step; `ws_lifecycle_smoke`'s own callers are
+/// untouched (they still want the fail-fast panic). NO raw-frame logging.
+async fn ws_lifecycle_try(tr_cd: &str, tr_key: &str, lane: WsLane) -> Result<String, String> {
+    paper_guard().map_err(|e| format!("paper guard failed: {e}"))?;
+    let config = LsConfig::from_env().map_err(|e| format!("config from env failed: {e}"))?;
+    if !config.environment.is_paper() {
+        return Err("resolved environment is not Paper".to_string());
+    }
+
+    let ws_url = ls_core::config::Environment::resolve_ws_url(&config);
+    if !ws_url.contains("29443") {
+        return Err("resolved WS URL is not the paper port 29443".to_string());
+    }
+
+    // Fresh SDK → fresh, isolated WsManager (KTD2 — no shared-manager poisoning).
+    let sdk = LsSdk::new(config).map_err(|e| format!("sdk construction failed: {e}"))?;
+    let ws = sdk.realtime();
+
+    let (handle, mut stream) = ws
+        .subscribe_typed::<WsLifecycleRow>(tr_cd, tr_key, lane)
+        .await
+        .map_err(|e| format!("subscribe/lifecycle failed: {e}"))?;
+
+    // BONUS: a row may or may not arrive; absence is not a failure.
+    let row_note = match timeout(Duration::from_secs(5), stream.next()).await {
+        Ok(Some(Ok(row))) if !row.rsp_cd.is_empty() => {
+            format!("inbound body carried rsp_cd={} (rejection-shaped)", row.rsp_cd)
+        }
+        Ok(Some(Ok(_))) => "row received (lifecycle bonus)".to_string(),
+        Ok(Some(Err(e))) => format!("frame decode error: {e}"),
+        Ok(None) => "stream ended without a row".to_string(),
+        Err(_) => "no row within timeout (not a failure)".to_string(),
+    };
+
+    handle
+        .unsubscribe()
+        .await
+        .map_err(|e| format!("unsubscribe failed: {e}"))?;
+
+    Ok(row_note)
+}
+
+/// `make live-smoke-ws-p1`: COMBINED lifecycle smoke for the 14 P1 market-data
+/// realtime TRs (the operator runs ONE command to gate the whole wave).
+///
+/// Iterates all 14 `(tr_cd, tr_key, WsLane::MarketData)` tuples, each on a FRESH
+/// manager via [`ws_lifecycle_try`]. RESILIENT: a per-TR subscribe/lifecycle
+/// failure is CAUGHT and recorded as that TR's `record(...)` line, so one bad TR
+/// cannot hide the other 13. After the sweep, panics only if ANY TR failed (so
+/// the make target reports red) — but every TR's line is emitted first.
+///
+/// Default `tr_key`s are public symbols (the migration-source cert keys — stock
+/// `005930`, overseas-stock `TSLA`, overseas-futures `CLZ25`, F-O `101TC000`),
+/// safe to hardcode. Override the stock key via `LS_LIVE_SMOKE_SHCODE`. Per KTD6
+/// (`NOT-OBSERVABLE`), a clean lifecycle here proves **connection reachability
+/// only**, not per-TR reachability — flip each TR's metadata with that weaker
+/// claim. NO raw-frame logging.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-ws-p1`"]
+async fn live_smoke_ws_p1() {
+    let stock_key = resolve_symbol();
+    // (tr_cd, tr_key) — public cert symbols; stock key overridable via env.
+    let trs: [(&str, &str); 14] = [
+        ("H1_", stock_key.as_str()),
+        ("HA_", stock_key.as_str()),
+        ("S2_", stock_key.as_str()),
+        ("US3", stock_key.as_str()),
+        ("UH1", stock_key.as_str()),
+        ("US2", stock_key.as_str()),
+        ("GSC", "TSLA"),
+        ("GSH", "TSLA"),
+        ("OVC", "CLZ25"),
+        ("OVH", "CLZ25"),
+        ("OC0", "101TC000"),
+        ("OH0", "101TC000"),
+        ("FC9", "101TC000"),
+        ("FH9", "101TC000"),
+    ];
+
+    let mut failures = 0usize;
+    for (tr_cd, tr_key) in trs {
+        // Each TR on a fresh manager; a failure is recorded, never propagated.
+        let result = ws_lifecycle_try(tr_cd, tr_key, WsLane::MarketData).await;
+        let row_note = match result {
+            Ok(note) => note,
+            Err(err) => {
+                failures += 1;
+                format!("LIFECYCLE-FAIL: {err}")
+            }
+        };
+        // target= names the REAL runnable make target (the combined sweep); the
+        // per-TR identity is carried by tr_cd= in inputs. Avoids emitting a
+        // `live-smoke-<tr>` label that maps to no Makefile target.
+        record(
+            "live-smoke-ws-p1",
+            &format!("tr_cd={tr_cd} tr_key={tr_key} ws_port=29443 tr_type=3"),
+            &row_note,
+        );
+    }
+
+    assert_eq!(
+        failures, 0,
+        "{failures} of 14 P1 market-data TRs failed their lifecycle (see per-TR lines above)"
+    );
+}
+
+/// `make live-smoke-ws-p2`: COMBINED lifecycle smoke for the 16 P2 ORDER-EVENT
+/// realtime TRs (the operator runs ONE command to gate the whole wave).
+///
+/// Iterates all 16 `(tr_cd, tr_key, WsLane::OrderEvent)` tuples, each on a FRESH
+/// manager via [`ws_lifecycle_try`]. RESILIENT: a per-TR subscribe/lifecycle
+/// failure is CAUGHT and recorded as that TR's `record(...)` line, so one bad TR
+/// cannot hide the other 15. After the sweep, panics only if ANY TR failed (so
+/// the make target reports red) — but every TR's line is emitted first.
+///
+/// **OBSERVATION-ONLY:** order-event channels are 주문/체결 EVENT feeds. This smoke
+/// ONLY subscribes and unsubscribes — it NEVER places, amends, or cancels an
+/// order. `WsLane::OrderEvent` registers with `tr_type "1"` (계좌등록) and
+/// deregisters with `"2"`.
+///
+/// The default `tr_key`s are the migration-source certification keys: the stock
+/// `SC*` feeds are account-bound so they pass an EMPTY string `""` (the gateway
+/// scopes by the registered account), while F-O `C01/O01/H01` pass `101TC000`,
+/// overseas-stock `AS*` pass `TSLA`, and overseas-futures `TC*` pass `CLZ25`.
+/// This inconsistency is inherited from the cert fixtures; the smoke records
+/// per-TR which keys actually open a lifecycle. Per KTD6 (`NOT-OBSERVABLE`) and
+/// the UNESTABLISHED paper reachability for these feeds, a clean lifecycle here
+/// proves **connection reachability only** — flip each TR's metadata with that
+/// weaker claim, and a meaningful share may stay Tracked-only. NO raw-frame
+/// logging.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-ws-p2`"]
+async fn live_smoke_ws_p2() {
+    // (tr_cd, tr_key) — migration-source cert keys; SC* are account-bound (empty).
+    let trs: [(&str, &str); 16] = [
+        ("SC0", ""),
+        ("SC1", ""),
+        ("SC2", ""),
+        ("SC3", ""),
+        ("SC4", ""),
+        ("C01", "101TC000"),
+        ("O01", "101TC000"),
+        ("H01", "101TC000"),
+        ("AS0", "TSLA"),
+        ("AS1", "TSLA"),
+        ("AS2", "TSLA"),
+        ("AS3", "TSLA"),
+        ("AS4", "TSLA"),
+        ("TC1", "CLZ25"),
+        ("TC2", "CLZ25"),
+        ("TC3", "CLZ25"),
+    ];
+
+    let mut failures = 0usize;
+    for (tr_cd, tr_key) in trs {
+        // Each TR on a fresh manager; a failure is recorded, never propagated.
+        // OBSERVATION-ONLY: subscribe + unsubscribe, never an order action.
+        let result = ws_lifecycle_try(tr_cd, tr_key, WsLane::OrderEvent).await;
+        let row_note = match result {
+            Ok(note) => note,
+            Err(err) => {
+                failures += 1;
+                format!("LIFECYCLE-FAIL: {err}")
+            }
+        };
+        // target= names the REAL runnable make target; per-TR identity via tr_cd=.
+        record(
+            "live-smoke-ws-p2",
+            &format!("tr_cd={tr_cd} tr_key={tr_key} ws_port=29443 tr_type=1"),
+            &row_note,
+        );
+    }
+
+    assert_eq!(
+        failures, 0,
+        "{failures} of 16 P2 order-event TRs failed their lifecycle (see per-TR lines above)"
+    );
+}
+
 /// `make live-smoke-ws-negative`: LIVE half of the KTD6 negative control.
 ///
 /// Subscribes a deliberately-INVALID `tr_cd` and reports whether the paper

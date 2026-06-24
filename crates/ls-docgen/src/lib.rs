@@ -919,6 +919,11 @@ mod tests {
             "t2111", "t2112", "t8402", "t8403", "t8434",
             "t1988", "t3320",
             "o3101", "o3121",
+            "K3_",
+            "H1_", "HA_", "S2_", "US3", "UH1", "US2", "GSC", "GSH", "OVC", "OVH", "OC0", "OH0",
+            "FC9", "FH9",
+            "SC0", "SC1", "SC2", "SC3", "SC4", "C01", "O01", "H01", "AS0", "AS1", "AS2", "AS3",
+            "AS4", "TC1", "TC2", "TC3",
         ];
         for tr in banner_trs {
             let page = reference
@@ -979,9 +984,19 @@ mod tests {
         // out-block; non-empty 85-row paper smoke) adds one more.
         // o3121 (U8 reach wave, overseas-future-option master; market_session,
         // ARRAY out-block; non-empty 2-row paper smoke) adds one more.
+        // K3_ (realtime flip wave, KOSDAQ 체결 WebSocket; clean paper lifecycle smoke,
+        // connection-reachable-only per KTD6=NOT-OBSERVABLE) adds one more.
+        // P1 market-data WS lane (realtime flip wave): H1_/HA_/S2_/US3/UH1/US2 (stock),
+        // GSC/GSH (overseas stock), OVC/OVH (overseas futures), OC0/OH0/FC9/FH9 (F/O) —
+        // 14 TRs, each a clean paper lifecycle smoke via the live-smoke-ws-p1 sweep,
+        // connection-reachable-only per KTD6 — add 14 more.
+        // P2 order-event WS lane (realtime flip wave): SC0-SC4 (stock), C01/O01/H01 (F/O),
+        // AS0-AS4 (overseas stock), TC1-TC3 (overseas futures) — 16 TRs, each a clean
+        // order-event (tr_type "1"/"2") lifecycle via the live-smoke-ws-p2 sweep,
+        // observation-only + connection-reachable-only per KTD6 — add 16 more.
         assert_eq!(
             reference.len(),
-            63,
+            94,
             "index + the implemented reference pages"
         );
 

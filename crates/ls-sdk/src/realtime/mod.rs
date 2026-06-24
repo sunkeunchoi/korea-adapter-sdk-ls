@@ -39,7 +39,12 @@ mod frame;
 mod overflow;
 mod stream;
 
-pub use frame::{composite_key, S3Trade, WsLane};
+pub use frame::{
+    composite_key, AS0Event, AS1Event, AS2Event, AS3Event, AS4Event, C01Event, FC9Trade, FH9Trade,
+    GSCTrade, GSHTrade, H01Event, H1Trade, HATrade, K3Trade, O01Event, OC0Trade, OH0Trade, OVCTrade,
+    OVHTrade, S2Trade, S3Trade, SC0Event, SC1Event, SC2Event, SC3Event, SC4Event, TC1Event,
+    TC2Event, TC3Event, UH1Trade, US2Trade, US3Trade, WsLane,
+};
 pub use stream::WsStream;
 
 pub(crate) use dispatch::{DispatchEntry, WS_OUTBOUND_CHANNEL_CAPACITY};
