@@ -11,6 +11,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | recommended |
 | `CSPAQ12300` | BEP단가조회 | `account` | implemented, not yet recommended |
 | `CSPAQ22200` | 현물계좌예수금 주문가능금액 총평가2 | `account` | implemented, not yet recommended |
+| `K3_` | KOSDAQ 체결 실시간 시세 | `realtime` | implemented, not yet recommended |
 | `S3_` | KOSPI 체결 실시간 시세 | `realtime` | recommended |
 | `o3101` | 해외선물마스터조회 | `market_session` | implemented, not yet recommended |
 | `o3121` | 해외선물옵션 마스터 조회 | `market_session` | implemented, not yet recommended |

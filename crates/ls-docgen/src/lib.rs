@@ -919,6 +919,7 @@ mod tests {
             "t2111", "t2112", "t8402", "t8403", "t8434",
             "t1988", "t3320",
             "o3101", "o3121",
+            "K3_",
         ];
         for tr in banner_trs {
             let page = reference
@@ -979,9 +980,11 @@ mod tests {
         // out-block; non-empty 85-row paper smoke) adds one more.
         // o3121 (U8 reach wave, overseas-future-option master; market_session,
         // ARRAY out-block; non-empty 2-row paper smoke) adds one more.
+        // K3_ (realtime flip wave, KOSDAQ 체결 WebSocket; clean paper lifecycle smoke,
+        // connection-reachable-only per KTD6=NOT-OBSERVABLE) adds one more.
         assert_eq!(
             reference.len(),
-            63,
+            64,
             "index + the implemented reference pages"
         );
 

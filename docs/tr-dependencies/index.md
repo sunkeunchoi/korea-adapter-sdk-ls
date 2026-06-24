@@ -27,7 +27,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `H01` | 선물옵션 주문정정취소 실시간 | `realtime` | tracked | [H01](./H01.md) |
 | `H1_` | KOSPI 호가 실시간 시세 | `realtime` | tracked | [H1_](./H1_.md) |
 | `HA_` | KOSDAQ 호가 실시간 시세 | `realtime` | tracked | [HA_](./HA_.md) |
-| `K3_` | KOSDAQ 체결 실시간 시세 | `realtime` | tracked | [K3_](./K3_.md) |
+| `K3_` | KOSDAQ 체결 실시간 시세 | `realtime` | implemented | [K3_](./K3_.md) |
 | `O01` | 선물옵션 주문접수 실시간 | `realtime` | tracked | [O01](./O01.md) |
 | `OC0` | 옵션 체결 실시간 시세 | `realtime` | tracked | [OC0](./OC0.md) |
 | `OH0` | 옵션 호가 실시간 시세 | `realtime` | tracked | [OH0](./OH0.md) |
