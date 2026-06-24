@@ -1851,6 +1851,78 @@ async fn live_smoke_ws_p1() {
     );
 }
 
+/// `make live-smoke-ws-p2`: COMBINED lifecycle smoke for the 16 P2 ORDER-EVENT
+/// realtime TRs (the operator runs ONE command to gate the whole wave).
+///
+/// Iterates all 16 `(tr_cd, tr_key, WsLane::OrderEvent)` tuples, each on a FRESH
+/// manager via [`ws_lifecycle_try`]. RESILIENT: a per-TR subscribe/lifecycle
+/// failure is CAUGHT and recorded as that TR's `record(...)` line, so one bad TR
+/// cannot hide the other 15. After the sweep, panics only if ANY TR failed (so
+/// the make target reports red) — but every TR's line is emitted first.
+///
+/// **OBSERVATION-ONLY:** order-event channels are 주문/체결 EVENT feeds. This smoke
+/// ONLY subscribes and unsubscribes — it NEVER places, amends, or cancels an
+/// order. `WsLane::OrderEvent` registers with `tr_type "1"` (계좌등록) and
+/// deregisters with `"2"`.
+///
+/// The default `tr_key`s are the migration-source certification keys: the stock
+/// `SC*` feeds are account-bound so they pass an EMPTY string `""` (the gateway
+/// scopes by the registered account), while F-O `C01/O01/H01` pass `101TC000`,
+/// overseas-stock `AS*` pass `TSLA`, and overseas-futures `TC*` pass `CLZ25`.
+/// This inconsistency is inherited from the cert fixtures; the smoke records
+/// per-TR which keys actually open a lifecycle. Per KTD6 (`NOT-OBSERVABLE`) and
+/// the UNESTABLISHED paper reachability for these feeds, a clean lifecycle here
+/// proves **connection reachability only** — flip each TR's metadata with that
+/// weaker claim, and a meaningful share may stay Tracked-only. NO raw-frame
+/// logging.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-ws-p2`"]
+async fn live_smoke_ws_p2() {
+    // (tr_cd, tr_key) — migration-source cert keys; SC* are account-bound (empty).
+    let trs: [(&str, &str); 16] = [
+        ("SC0", ""),
+        ("SC1", ""),
+        ("SC2", ""),
+        ("SC3", ""),
+        ("SC4", ""),
+        ("C01", "101TC000"),
+        ("O01", "101TC000"),
+        ("H01", "101TC000"),
+        ("AS0", "TSLA"),
+        ("AS1", "TSLA"),
+        ("AS2", "TSLA"),
+        ("AS3", "TSLA"),
+        ("AS4", "TSLA"),
+        ("TC1", "CLZ25"),
+        ("TC2", "CLZ25"),
+        ("TC3", "CLZ25"),
+    ];
+
+    let mut failures = 0usize;
+    for (tr_cd, tr_key) in trs {
+        // Each TR on a fresh manager; a failure is recorded, never propagated.
+        // OBSERVATION-ONLY: subscribe + unsubscribe, never an order action.
+        let result = ws_lifecycle_try(tr_cd, tr_key, WsLane::OrderEvent).await;
+        let row_note = match result {
+            Ok(note) => note,
+            Err(err) => {
+                failures += 1;
+                format!("LIFECYCLE-FAIL: {err}")
+            }
+        };
+        record(
+            &format!("live-smoke-{}", tr_cd.to_lowercase()),
+            &format!("tr_cd={tr_cd} tr_key={tr_key} ws_port=29443 tr_type=1"),
+            &row_note,
+        );
+    }
+
+    assert_eq!(
+        failures, 0,
+        "{failures} of 16 P2 order-event TRs failed their lifecycle (see per-TR lines above)"
+    );
+}
+
 /// `make live-smoke-ws-negative`: LIVE half of the KTD6 negative control.
 ///
 /// Subscribes a deliberately-INVALID `tr_cd` and reports whether the paper

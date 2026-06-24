@@ -767,6 +767,421 @@ pub struct FH9Trade {
     pub futcode: String,
 }
 
+// =============================================================================
+// P2 order-event lane: 주문/체결 event push rows (observation-only).
+//
+// These channels register with tr_type "1" (계좌등록) / deregister "2"
+// (WsLane::OrderEvent). Per KTD6 they are NOT-OBSERVABLE on bare paper, so a
+// clean lifecycle proves connection reachability only. Every <Base>Event struct
+// is a SINGLE-object out-block (verified against its migration-source
+// <Base>Response — each is a bare struct, not a Vec) and carries a
+// representative, spec-grounded subset of order/execution fields with the real
+// LS wire names (+ any #[serde(rename)] the source used). Account number and
+// password fields are DELIBERATELY OMITTED (never test-surface a secret-shaped
+// field). Every field is string_or_number-coerced and #[serde(default)] so a
+// sparse registration-ACK body decodes without aborting the stream.
+// =============================================================================
+
+/// Decoded SC0 (주식 주문접수 / stock order-accept) realtime push row.
+///
+/// **Structurally-verified** against the migration source's `SC0Response`
+/// (`korea-broker-sdk-ls` `generated/stock.rs`): a single-object out-block.
+/// Account/password header fields are omitted; this is the order-identity subset.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(default)]
+pub struct SC0Event {
+    /// Order number / 주문번호.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ordno: String,
+    /// Original order number / 원주문번호.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub orgordno: String,
+    /// Order/execution classification / 주문체결구분 (01:주문 11:체결 14:거부 …).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ordchegb: String,
+    /// Order classification / 주문구분 (01:현금매도 02:현금매수 …).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ordgb: String,
+    /// Short stock code / 단축종목번호.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shtcode: String,
+    /// Stock name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Order qty / 주문수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ordqty: String,
+    /// Order price / 주문가격.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ordprice: String,
+}
+
+/// Decoded SC1 (주식 주문체결 / stock order-fill) realtime push row.
+///
+/// **Structurally-verified** against the migration source's `SC1Response`
+/// (`generated/stock.rs`): a single-object out-block. Preserves the source's
+/// `shtnIsuno`/`Isunm` wire renames. Account fields omitted.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(default)]
+pub struct SC1Event {
+    /// Order number / 주문번호.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ordno: String,
+    /// Execution number / 체결번호.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub execno: String,
+    /// Short stock code / 단축종목번호.
+    #[serde(rename = "shtnIsuno", deserialize_with = "ls_core::string_or_number")]
+    pub shtnisuno: String,
+    /// Stock name / 종목명.
+    #[serde(rename = "Isunm", deserialize_with = "ls_core::string_or_number")]
+    pub isunm: String,
+    /// Order qty / 주문수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ordqty: String,
+    /// Order price / 주문가격.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ordprc: String,
+    /// Execution qty / 체결수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub execqty: String,
+    /// Execution price / 체결가격.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub execprc: String,
+}
+
+/// Decoded SC2 (주식 주문정정 / stock order-amend) realtime push row.
+///
+/// **Structurally-verified, no documented body fields** — the migration source's
+/// `SC2Response` is a bare struct (single-object out-block; the gateway carries
+/// the registration-ACK header only). Decodes any sparse body without aborting.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(default)]
+pub struct SC2Event {}
+
+/// Decoded SC3 (주식 주문취소 / stock order-cancel) realtime push row.
+///
+/// **Structurally-verified, no documented body fields** — bare-struct sibling of
+/// `SC2Event`, mirroring the migration source's empty `SC3Response`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(default)]
+pub struct SC3Event {}
+
+/// Decoded SC4 (주식 주문거부 / stock order-reject) realtime push row.
+///
+/// **Structurally-verified, no documented body fields** — bare-struct sibling of
+/// `SC2Event`, mirroring the migration source's empty `SC4Response`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(default)]
+pub struct SC4Event {}
+
+/// Decoded C01 (선물 주문체결 / F-O order-fill) realtime push row.
+///
+/// **Structurally-verified** against the migration source's `C01Response`
+/// (`generated/futures_options.rs`): a single-object out-block. Account fields
+/// omitted; this is the order/execution-identity subset.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(default)]
+pub struct C01Event {
+    /// Order number / 주문번호.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ordno: String,
+    /// Original order number / 원주문번호.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ordordno: String,
+    /// Item code / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub expcode: String,
+    /// Execution price / 체결가격.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cheprice: String,
+    /// Execution qty / 체결수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub chevol: String,
+    /// Execution date / 체결일자.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub chedate: String,
+    /// Execution time / 체결시각.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub chetime: String,
+    /// Sell/buy classification / 매도수구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dosugb: String,
+}
+
+/// Decoded O01 (선물 접수 / F-O order-accept) realtime push row.
+///
+/// **Structurally-verified, no documented body fields** — the migration source's
+/// `O01Response` is a bare struct (single-object out-block).
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(default)]
+pub struct O01Event {}
+
+/// Decoded H01 (선물 주문정정취소 / F-O order-amend-cancel) realtime push row.
+///
+/// **Structurally-verified, no documented body fields** — the migration source's
+/// `H01Response` is a bare struct (single-object out-block).
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(default)]
+pub struct H01Event {}
+
+/// Decoded AS0 (해외주식 주문접수(미국) / overseas-stock order-accept) push row.
+///
+/// **Structurally-verified** against the migration source's `AS0Response`
+/// (`generated/overseas_stock.rs`): a single-object out-block carrying `s`-prefixed
+/// wire names (renames preserved). Account fields omitted.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(default)]
+pub struct AS0Event {
+    /// Order number / 주문번호.
+    #[serde(rename = "sOrdNo", deserialize_with = "ls_core::string_or_number")]
+    pub sordno: String,
+    /// Original order number / 원주문번호.
+    #[serde(rename = "sOrgOrdNo", deserialize_with = "ls_core::string_or_number")]
+    pub sorgordno: String,
+    /// Short item number / 단축종목번호.
+    #[serde(rename = "sShtnIsuNo", deserialize_with = "ls_core::string_or_number")]
+    pub sshtnisuno: String,
+    /// Item name / 종목명.
+    #[serde(rename = "sIsuNm", deserialize_with = "ls_core::string_or_number")]
+    pub sisunm: String,
+    /// Order qty / 주문수량.
+    #[serde(rename = "sOrdQty", deserialize_with = "ls_core::string_or_number")]
+    pub sordqty: String,
+    /// Order price / 주문가.
+    #[serde(rename = "sOrdPrc", deserialize_with = "ls_core::string_or_number")]
+    pub sordprc: String,
+}
+
+/// Decoded AS1 (해외주식 주문체결(미국) / overseas-stock order-fill) push row.
+///
+/// **Structurally-verified** against the migration source's `AS1Response`
+/// (`generated/overseas_stock.rs`): a single-object out-block; `s`-prefixed wire
+/// renames preserved. Adds the execution fields over `AS0Event`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(default)]
+pub struct AS1Event {
+    /// Order number / 주문번호.
+    #[serde(rename = "sOrdNo", deserialize_with = "ls_core::string_or_number")]
+    pub sordno: String,
+    /// Short item number / 단축종목번호.
+    #[serde(rename = "sShtnIsuNo", deserialize_with = "ls_core::string_or_number")]
+    pub sshtnisuno: String,
+    /// Item name / 종목명.
+    #[serde(rename = "sIsuNm", deserialize_with = "ls_core::string_or_number")]
+    pub sisunm: String,
+    /// Order qty / 주문수량.
+    #[serde(rename = "sOrdQty", deserialize_with = "ls_core::string_or_number")]
+    pub sordqty: String,
+    /// Order price / 주문가.
+    #[serde(rename = "sOrdPrc", deserialize_with = "ls_core::string_or_number")]
+    pub sordprc: String,
+    /// Execution number / 체결번호.
+    #[serde(rename = "sExecNO", deserialize_with = "ls_core::string_or_number")]
+    pub sexecno: String,
+    /// Execution qty / 체결수량.
+    #[serde(rename = "sExecQty", deserialize_with = "ls_core::string_or_number")]
+    pub sexecqty: String,
+    /// Execution price / 체결가.
+    #[serde(rename = "sExecPrc", deserialize_with = "ls_core::string_or_number")]
+    pub sexecprc: String,
+}
+
+/// Decoded AS2 (해외주식 주문정정(미국) / overseas-stock order-amend) push row.
+///
+/// **Structurally-verified** against the migration source's `AS2Response`
+/// (`generated/overseas_stock.rs`): a single-object out-block; `s`-prefixed renames
+/// preserved (note `sIsuNo`, not `sShtnIsuNo`, on the amend/cancel/reject feeds).
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(default)]
+pub struct AS2Event {
+    /// Order number / 주문번호.
+    #[serde(rename = "sOrdNo", deserialize_with = "ls_core::string_or_number")]
+    pub sordno: String,
+    /// Original order number / 원주문번호.
+    #[serde(rename = "sOrgOrdNo", deserialize_with = "ls_core::string_or_number")]
+    pub sorgordno: String,
+    /// Item number / 종목번호.
+    #[serde(rename = "sIsuNo", deserialize_with = "ls_core::string_or_number")]
+    pub sisuno: String,
+    /// Item name / 종목명.
+    #[serde(rename = "sIsuNm", deserialize_with = "ls_core::string_or_number")]
+    pub sisunm: String,
+    /// Order qty / 주문수량.
+    #[serde(rename = "sOrdQty", deserialize_with = "ls_core::string_or_number")]
+    pub sordqty: String,
+    /// Order price / 주문가.
+    #[serde(rename = "sOrdPrc", deserialize_with = "ls_core::string_or_number")]
+    pub sordprc: String,
+}
+
+/// Decoded AS3 (해외주식 주문취소(미국) / overseas-stock order-cancel) push row.
+///
+/// **Structurally-verified** against the migration source's `AS3Response`
+/// (`generated/overseas_stock.rs`): a single-object out-block; schema-sibling of
+/// `AS2Event` (`sIsuNo` short-code rename).
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(default)]
+pub struct AS3Event {
+    /// Order number / 주문번호.
+    #[serde(rename = "sOrdNo", deserialize_with = "ls_core::string_or_number")]
+    pub sordno: String,
+    /// Original order number / 원주문번호.
+    #[serde(rename = "sOrgOrdNo", deserialize_with = "ls_core::string_or_number")]
+    pub sorgordno: String,
+    /// Item number / 종목번호.
+    #[serde(rename = "sIsuNo", deserialize_with = "ls_core::string_or_number")]
+    pub sisuno: String,
+    /// Item name / 종목명.
+    #[serde(rename = "sIsuNm", deserialize_with = "ls_core::string_or_number")]
+    pub sisunm: String,
+    /// Order qty / 주문수량.
+    #[serde(rename = "sOrdQty", deserialize_with = "ls_core::string_or_number")]
+    pub sordqty: String,
+    /// Order price / 주문가.
+    #[serde(rename = "sOrdPrc", deserialize_with = "ls_core::string_or_number")]
+    pub sordprc: String,
+}
+
+/// Decoded AS4 (해외주식 주문거부(미국) / overseas-stock order-reject) push row.
+///
+/// **Structurally-verified** against the migration source's `AS4Response`
+/// (`generated/overseas_stock.rs`): a single-object out-block; schema-sibling of
+/// `AS2Event` (`sIsuNo` short-code rename).
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(default)]
+pub struct AS4Event {
+    /// Order number / 주문번호.
+    #[serde(rename = "sOrdNo", deserialize_with = "ls_core::string_or_number")]
+    pub sordno: String,
+    /// Original order number / 원주문번호.
+    #[serde(rename = "sOrgOrdNo", deserialize_with = "ls_core::string_or_number")]
+    pub sorgordno: String,
+    /// Item number / 종목번호.
+    #[serde(rename = "sIsuNo", deserialize_with = "ls_core::string_or_number")]
+    pub sisuno: String,
+    /// Item name / 종목명.
+    #[serde(rename = "sIsuNm", deserialize_with = "ls_core::string_or_number")]
+    pub sisunm: String,
+    /// Order qty / 주문수량.
+    #[serde(rename = "sOrdQty", deserialize_with = "ls_core::string_or_number")]
+    pub sordqty: String,
+    /// Order price / 주문가.
+    #[serde(rename = "sOrdPrc", deserialize_with = "ls_core::string_or_number")]
+    pub sordprc: String,
+}
+
+/// Decoded TC1 (해외선물 주문접수 / overseas-futures order-accept) push row.
+///
+/// **Structurally-verified** against the migration source's `TC1Response`
+/// (`generated/overseas_futures.rs`): a single-object out-block with snake_case
+/// wire names (no renames). Account number (`ac_no`) omitted.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(default)]
+pub struct TC1Event {
+    /// Service id / 서비스ID (HO01:주문ACK HO04:주문Pending).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub svc_id: String,
+    /// Order number / 주문번호.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ordr_no: String,
+    /// Original order number / 원주문번호.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub orgn_ordr_no: String,
+    /// Item code / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub is_cd: String,
+    /// Sell/buy type / 매도매수유형 (1:매도 2:매수).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub s_b_ccd: String,
+    /// Amend/cancel type / 정정취소유형 (1:신규 2:정정 3:취소).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ordr_ccd: String,
+    /// Order price / 주문가격.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ordr_prc: String,
+    /// Order qty / 주문수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ordr_q: String,
+    /// Order time / 주문시간.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ordr_tm: String,
+}
+
+/// Decoded TC2 (해외선물 주문응답 / overseas-futures order-response) push row.
+///
+/// **Structurally-verified** against the migration source's `TC2Response`
+/// (`generated/overseas_futures.rs`): a single-object out-block; adds the
+/// confirm/reject fields over `TC1Event`. Account number omitted.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(default)]
+pub struct TC2Event {
+    /// Service id / 서비스ID (HO02:확인 HO03:거부).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub svc_id: String,
+    /// Order number / 주문번호.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ordr_no: String,
+    /// Original order number / 원주문번호.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub orgn_ordr_no: String,
+    /// Item code / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub is_cd: String,
+    /// Amend/cancel type / 정정취소유형.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ordr_ccd: String,
+    /// Order price / 주문가격.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ordr_prc: String,
+    /// Order qty / 주문수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ordr_q: String,
+    /// Quote-confirm qty / 호가확인수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cnfr_q: String,
+    /// Quote-reject reason code / 호가거부사유코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub rfsl_cd: String,
+}
+
+/// Decoded TC3 (해외선물 주문체결 / overseas-futures order-fill) push row.
+///
+/// **Structurally-verified** against the migration source's `TC3Response`
+/// (`generated/overseas_futures.rs`): a single-object out-block; the execution
+/// (체결) subset. Account number omitted.
+#[derive(Serialize, Deserialize, Debug, Clone, Default, PartialEq)]
+#[serde(default)]
+pub struct TC3Event {
+    /// Service id / 서비스ID (CH01).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub svc_id: String,
+    /// Order number / 주문번호.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ordr_no: String,
+    /// Item code / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub is_cd: String,
+    /// Sell/buy type / 매도매수유형.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub s_b_ccd: String,
+    /// Execution qty / 체결수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ccls_q: String,
+    /// Execution price / 체결가격.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ccls_prc: String,
+    /// Execution number / 체결번호.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ccls_no: String,
+    /// Execution time / 체결시간.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ccls_tm: String,
+    /// Current price / 현재가격.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub now_prc: String,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1106,5 +1521,164 @@ mod tests {
         assert_eq!(ovc.ydiffsign, "2");
         let oc0: OC0Trade = serde_json::from_value(serde_json::json!({ "k200jisu": 350 })).unwrap();
         assert_eq!(oc0.k200jisu, "350");
+    }
+
+    // --- P2 order-event wave: per-TR single-object decode tests --------------
+    // Each TR's out-block is a SINGLE object (verified against its migration-
+    // source `<Base>Response`). The empty bare-struct feeds (SC2/SC3/SC4/O01/H01)
+    // decode any sparse/empty registration-ACK body without aborting the stream.
+
+    #[test]
+    fn sc0_event_decodes_single_object_order_accept() {
+        let body = serde_json::json!({
+            "ordno": "0000012345", "orgordno": "0000000000",
+            "ordchegb": "01", "ordgb": "02",
+            "shtcode": "005930", "hname": "삼성전자",
+            "ordqty": "10", "ordprice": "55500",
+        });
+        let row: SC0Event = serde_json::from_value(body).expect("decode SC0 body");
+        assert_eq!(row.ordno, "0000012345");
+        assert_eq!(row.ordchegb, "01");
+        assert_eq!(row.shtcode, "005930");
+        assert_eq!(row.ordprice, "55500");
+    }
+
+    #[test]
+    fn sc1_event_decodes_single_object_fill_with_renames() {
+        // SC1 carries short-code as `shtnIsuno` and name as `Isunm` on the wire.
+        let body = serde_json::json!({
+            "ordno": "0000012345", "execno": "0000099999",
+            "shtnIsuno": "005930", "Isunm": "삼성전자",
+            "ordqty": "10", "ordprc": "55500",
+            "execqty": "5", "execprc": "55500",
+        });
+        let row: SC1Event = serde_json::from_value(body).expect("decode SC1 body");
+        assert_eq!(row.shtnisuno, "005930", "shtnIsuno wire key must map to shtnisuno");
+        assert_eq!(row.isunm, "삼성전자", "Isunm wire key must map to isunm");
+        assert_eq!(row.execprc, "55500");
+        assert_eq!(row.execqty, "5");
+    }
+
+    #[test]
+    fn empty_order_event_feeds_decode_sparse_body() {
+        // SC2/SC3/SC4/O01/H01 are bare structs — a sparse or empty ACK body
+        // (and unknown extra fields) decode without aborting the stream.
+        let body = serde_json::json!({ "anything": "ignored" });
+        let _sc2: SC2Event = serde_json::from_value(body.clone()).expect("SC2");
+        let _sc3: SC3Event = serde_json::from_value(body.clone()).expect("SC3");
+        let _sc4: SC4Event = serde_json::from_value(body.clone()).expect("SC4");
+        let _o01: O01Event = serde_json::from_value(body.clone()).expect("O01");
+        let _h01: H01Event = serde_json::from_value(serde_json::json!({})).expect("H01");
+        assert_eq!(SC2Event::default(), _sc2);
+    }
+
+    #[test]
+    fn c01_event_decodes_single_object_fo_fill() {
+        let body = serde_json::json!({
+            "ordno": "0000012345", "ordordno": "0000000000",
+            "expcode": "101S6000", "cheprice": "350.50", "chevol": "3",
+            "chedate": "20260624", "chetime": "153000", "dosugb": "2",
+        });
+        let row: C01Event = serde_json::from_value(body).expect("decode C01 body");
+        assert_eq!(row.cheprice, "350.50");
+        assert_eq!(row.chevol, "3");
+        assert_eq!(row.expcode, "101S6000");
+    }
+
+    #[test]
+    fn as0_event_decodes_single_object_with_s_renames() {
+        // AS0 carries `s`-prefixed wire names.
+        let body = serde_json::json!({
+            "sOrdNo": "0000012345", "sOrgOrdNo": "0000000000",
+            "sShtnIsuNo": "TSLA", "sIsuNm": "TESLA INC",
+            "sOrdQty": "10", "sOrdPrc": "250.55",
+        });
+        let row: AS0Event = serde_json::from_value(body).expect("decode AS0 body");
+        assert_eq!(row.sordno, "0000012345", "sOrdNo must map to sordno");
+        assert_eq!(row.sshtnisuno, "TSLA");
+        assert_eq!(row.sordprc, "250.55");
+    }
+
+    #[test]
+    fn as1_event_decodes_single_object_fill() {
+        let body = serde_json::json!({
+            "sOrdNo": "0000012345", "sShtnIsuNo": "TSLA", "sIsuNm": "TESLA INC",
+            "sOrdQty": "10", "sOrdPrc": "250.55",
+            "sExecNO": "0000099999", "sExecQty": "5", "sExecPrc": "250.55",
+        });
+        let row: AS1Event = serde_json::from_value(body).expect("decode AS1 body");
+        assert_eq!(row.sexecno, "0000099999", "sExecNO must map to sexecno");
+        assert_eq!(row.sexecprc, "250.55");
+    }
+
+    #[test]
+    fn as2_amend_event_decodes_single_object_with_sisuno() {
+        // The amend/cancel/reject feeds carry the short-code as `sIsuNo`.
+        let body = serde_json::json!({
+            "sOrdNo": "0000012345", "sOrgOrdNo": "0000011111",
+            "sIsuNo": "TSLA", "sIsuNm": "TESLA INC",
+            "sOrdQty": "10", "sOrdPrc": "250.55",
+        });
+        let row: AS2Event = serde_json::from_value(body).expect("decode AS2 body");
+        assert_eq!(row.sisuno, "TSLA", "sIsuNo must map to sisuno");
+        assert_eq!(row.sorgordno, "0000011111");
+        // AS3/AS4 share AS2's schema.
+        let r3: AS3Event = serde_json::from_value(serde_json::json!({ "sIsuNo": "AAPL" })).unwrap();
+        assert_eq!(r3.sisuno, "AAPL");
+        let r4: AS4Event = serde_json::from_value(serde_json::json!({ "sIsuNo": "AAPL" })).unwrap();
+        assert_eq!(r4.sisuno, "AAPL");
+    }
+
+    #[test]
+    fn tc1_event_decodes_single_object_ovfut_accept() {
+        let body = serde_json::json!({
+            "svc_id": "HO01", "ordr_no": "0000012345", "orgn_ordr_no": "0000000000",
+            "is_cd": "CLZ25", "s_b_ccd": "2", "ordr_ccd": "1",
+            "ordr_prc": "75.55000000000", "ordr_q": "1", "ordr_tm": "153000",
+        });
+        let row: TC1Event = serde_json::from_value(body).expect("decode TC1 body");
+        assert_eq!(row.svc_id, "HO01");
+        assert_eq!(row.is_cd, "CLZ25");
+        assert_eq!(row.ordr_q, "1");
+    }
+
+    #[test]
+    fn tc2_event_decodes_single_object_ovfut_response() {
+        let body = serde_json::json!({
+            "svc_id": "HO02", "ordr_no": "0000012345", "orgn_ordr_no": "0000000000",
+            "is_cd": "CLZ25", "ordr_ccd": "1", "ordr_prc": "75.55000000000",
+            "ordr_q": "1", "cnfr_q": "1", "rfsl_cd": "0000",
+        });
+        let row: TC2Event = serde_json::from_value(body).expect("decode TC2 body");
+        assert_eq!(row.svc_id, "HO02");
+        assert_eq!(row.cnfr_q, "1");
+        assert_eq!(row.rfsl_cd, "0000");
+    }
+
+    #[test]
+    fn tc3_event_decodes_single_object_ovfut_fill() {
+        let body = serde_json::json!({
+            "svc_id": "CH01", "ordr_no": "0000012345", "is_cd": "CLZ25",
+            "s_b_ccd": "2", "ccls_q": "1", "ccls_prc": "75.55000000000",
+            "ccls_no": "0000099999", "ccls_tm": "153000", "now_prc": "75.60000000000",
+        });
+        let row: TC3Event = serde_json::from_value(body).expect("decode TC3 body");
+        assert_eq!(row.ccls_prc, "75.55000000000");
+        assert_eq!(row.ccls_no, "0000099999");
+        assert_eq!(row.is_cd, "CLZ25");
+    }
+
+    #[test]
+    fn p2_order_event_rows_coerce_numeric_wire_shape() {
+        // string_or_number across the P2 lane: numeric (not string) wire fields
+        // still decode, covering renamed and snake_case slots.
+        let sc0: SC0Event = serde_json::from_value(serde_json::json!({ "ordqty": 10 })).unwrap();
+        assert_eq!(sc0.ordqty, "10");
+        let sc1: SC1Event = serde_json::from_value(serde_json::json!({ "execqty": 5 })).unwrap();
+        assert_eq!(sc1.execqty, "5");
+        let as0: AS0Event = serde_json::from_value(serde_json::json!({ "sOrdQty": 10 })).unwrap();
+        assert_eq!(as0.sordqty, "10");
+        let tc1: TC1Event = serde_json::from_value(serde_json::json!({ "ordr_q": 1 })).unwrap();
+        assert_eq!(tc1.ordr_q, "1");
     }
 }
