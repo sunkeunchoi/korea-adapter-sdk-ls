@@ -14,12 +14,18 @@ The dispatch class a TR is routed through, naming which SDK handle exposes it an
 ### Facet
 A single classified property of a TR (its session scope, instrument domain, rate bucket, pagination behavior, caller-supplied identifiers, and similar). A facet is either hard-accurate (confirmed against the captured spec) or provisional (best-effort, pending live confirmation — tracked in the Provisionality Ledger).
 
+### In-block / Out-block
+The named blocks of a TR's wire payload: an in-block carries the caller-supplied request fields, an out-block carries one section of the response. A single TR may expose several out-blocks — commonly a single-record header block alongside a repeated-row array block — and each block's name is the load-bearing key the SDK struct binds to.
+
 ## Support lifecycle
 
 A TR climbs a three-rung support ladder; each rung is a deliberate, separately-gated promotion.
 
+### Raw
+Below Tracked: the TR's wire shape exists in the captured OpenAPI universe (raw capture, `code-set.json`, migration-source dependency map) but it has no committed `metadata/trs/<tr>.yaml` and no normalized baseline, so it is not yet observed for drift and the `implement-tr` recipe cannot derive structs for it. Bringing a raw TR to Tracked — authoring metadata and pinning a baseline from the raw capture — is a prerequisite step that earlier waves did not face because their members were already Tracked.
+
 ### Tracked
-The lowest rung: the TR has committed metadata and a maintained baseline but no callable code. It is observed for drift, nothing more.
+The lowest *maintained* rung: the TR has committed metadata and a maintained baseline but no callable code. It is observed for drift, nothing more.
 
 ### Implemented
 The middle rung: the TR has hand-authored callable Rust and has passed a Paper Live Smoke (a representative call that constructs, returns a success code, yields a non-empty result, and deserializes). An Implemented TR is callable but carries no recommendation and no recorded evidence — explicitly *not* endorsed for production use.
@@ -28,7 +34,7 @@ The middle rung: the TR has hand-authored callable Rust and has passed a Paper L
 The top rung: an Implemented TR additionally cleared for production use, backed by recorded Focused Evidence and a recommendation block. Promotion to Recommended is a separate, deliberate act beyond Implemented.
 
 ### Paper Live Smoke
-A credential-gated integration test that hits the real LS *paper* gateway with real credentials to prove a TR is genuinely callable. It is the gate for flipping a TR to Implemented; a smoke that returns an empty result leaves the TR callable-but-unconfirmed (pending), not Implemented.
+A credential-gated integration test that hits the real LS *paper* gateway with real credentials to prove a TR is genuinely callable. It is the gate for flipping a TR to Implemented; a smoke that returns an empty result leaves the TR callable-but-unconfirmed (pending), not Implemented. For `realtime`/websocket TRs the gate is instead *lifecycle (Transport) reachability* — a clean connect → subscribe → unsubscribe — and a row that does or does not arrive is bonus, not the gate; row contents stay provisional until a separate FrameDecode pass.
 
 ### Focused Evidence
 A recorded, credential-free result of a Paper Live Smoke that backs a Recommended TR's claim. A smoke run gates Implementation; it only becomes Focused Evidence when a TR is deliberately promoted to Recommended.
