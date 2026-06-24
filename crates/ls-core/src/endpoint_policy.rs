@@ -863,6 +863,96 @@ pub const T9944_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+/// t2111 — 선물/옵션현재가(시세)조회 (F/O current-price quote; non-paginated F/O
+/// market-data read). Keyed by a contract `focode`.
+pub const T2111_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t2111",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(5),
+};
+
+/// t2112 — 선물/옵션현재가호가조회 (F/O current-price order book; non-paginated F/O
+/// market-data read). Keyed by a contract `shcode`.
+pub const T2112_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t2112",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(5),
+};
+
+/// t2106 — 선물/옵션현재가시세메모 (F/O price memo; non-paginated F/O market-data
+/// read). Keyed by a contract `code`.
+pub const T2106_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t2106",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8402 — 주식선물현재가조회(API용) (stock-futures current price; non-paginated F/O
+/// market-data read). Keyed by a stock-futures contract `focode`.
+pub const T8402_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8402",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(2),
+};
+
+/// t8403 — 주식선물호가조회(API용) (stock-futures order book; non-paginated F/O
+/// market-data read). Keyed by a stock-futures contract `shcode`.
+pub const T8403_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8403",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(2),
+};
+
+/// t8434 — 선물/옵션멀티현재가조회 (F/O multi current-price; non-paginated F/O
+/// market-data read). Keyed by a numeric `qrycnt` + one or more `focode` codes.
+pub const T8434_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8434",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(3),
+    corp_rate_limit_per_sec: Some(5),
+};
+
 /// S3_ — KOSPI체결 실시간 시세 (real-time KOSPI trade feed, WebSocket).
 ///
 /// WebSocket TR: there is no REST dispatch, but the policy const is retained as
@@ -968,6 +1058,12 @@ mod tests {
             T8467_POLICY,
             T9943_POLICY,
             T9944_POLICY,
+            T2111_POLICY,
+            T2112_POLICY,
+            T2106_POLICY,
+            T8402_POLICY,
+            T8403_POLICY,
+            T8434_POLICY,
         ] {
             assert!(!p.is_order, "{} must not be an order endpoint", p.tr_code);
             assert!(p.is_rest(), "{} must be a REST endpoint", p.tr_code);

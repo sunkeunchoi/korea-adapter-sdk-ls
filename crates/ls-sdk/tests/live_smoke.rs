@@ -29,6 +29,7 @@ use ls_sdk::market_session::{
     T8431Request,
     T8436Request,
     T9905Request, T9907Request, T9942Request,
+    T2106Request, T2111Request, T2112Request, T8402Request, T8403Request, T8434Request,
 };
 use ls_sdk::paginated::{
     T1403Request, T1441Request, T1452Request, T1463Request, T1466Request, T1481Request,
@@ -2232,6 +2233,300 @@ async fn live_smoke_t9944() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t9944 market-data failure (not evidence)");
             panic!("live-smoke-t9944 failed: {e}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// U5 (reach wave) — F/O quote/master reads. All `/futureoption/market-data`,
+// `[선물/옵션] 시세`, non-paginated market_session. Each smoke self-sources a live
+// contract code from an F/O master (t8467 index-futures master / t8401
+// stock-futures master) so it needs no hardcoded contract code; the example
+// codes in the raw capture are stale. One "anytime F/O" probe covers the lane.
+// Out-block keys + array-ness were read from the RAW capture (KTD5).
+// ---------------------------------------------------------------------------
+
+/// `make live-smoke-t2111`: paper guard → token → fetch one index-futures contract
+/// via `t8467` → one `t2111` F/O current-price read for that contract.
+///
+/// `focode` is public contract reference data (printed); credential-free, self-dated.
+/// A failure emits SMOKE-FAIL, never a LIVE-SMOKE line.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t2111`"]
+async fn live_smoke_t2111() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let masters = sdk
+        .market_session()
+        .index_futures_master(&T8467Request::new("Q"))
+        .await
+        .expect("t8467 index-futures master (contract source) failed");
+    if masters.outblock.is_empty() {
+        eprintln!(
+            "SMOKE-FAIL target=live-smoke-t2111 t8467 contract source empty (rsp_cd={})",
+            masters.rsp_cd
+        );
+        panic!("live-smoke-t2111: no contract to key the read");
+    }
+    let focode = masters.outblock[0].shcode.clone();
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().fo_quote(&T2111Request::new(&focode)).await {
+        Ok(resp) => {
+            if resp.outblock.price.is_empty() && resp.outblock.focode.is_empty() {
+                eprintln!(
+                    "SMOKE-FAIL target=live-smoke-t2111 empty out-block (rsp_cd={})",
+                    resp.rsp_cd
+                );
+                panic!("live-smoke-t2111: empty out-block (00707) — PENDING, not Implemented");
+            }
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), 1)), "quote")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t2111",
+                &format!("env=paper focode={focode} date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t2111 market-data failure (not evidence)");
+            panic!("live-smoke-t2111 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t2112`: paper guard → token → fetch one index-futures contract
+/// via `t8467` → one `t2112` F/O order-book read for that contract.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t2112`"]
+async fn live_smoke_t2112() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let masters = sdk
+        .market_session()
+        .index_futures_master(&T8467Request::new("Q"))
+        .await
+        .expect("t8467 index-futures master (contract source) failed");
+    if masters.outblock.is_empty() {
+        eprintln!(
+            "SMOKE-FAIL target=live-smoke-t2112 t8467 contract source empty (rsp_cd={})",
+            masters.rsp_cd
+        );
+        panic!("live-smoke-t2112: no contract to key the read");
+    }
+    let shcode = masters.outblock[0].shcode.clone();
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().fo_order_book(&T2112Request::new(&shcode)).await {
+        Ok(resp) => {
+            if resp.outblock.price.is_empty() && resp.outblock.shcode.is_empty() {
+                eprintln!(
+                    "SMOKE-FAIL target=live-smoke-t2112 empty out-block (rsp_cd={})",
+                    resp.rsp_cd
+                );
+                panic!("live-smoke-t2112: empty out-block (00707) — PENDING, not Implemented");
+            }
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), 1)), "book")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t2112",
+                &format!("env=paper shcode={shcode} date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t2112 market-data failure (not evidence)");
+            panic!("live-smoke-t2112 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t2106`: paper guard → token → fetch one index-futures contract
+/// via `t8467` → one `t2106` F/O price-memo read for that contract.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t2106`"]
+async fn live_smoke_t2106() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let masters = sdk
+        .market_session()
+        .index_futures_master(&T8467Request::new("Q"))
+        .await
+        .expect("t8467 index-futures master (contract source) failed");
+    if masters.outblock.is_empty() {
+        eprintln!(
+            "SMOKE-FAIL target=live-smoke-t2106 t8467 contract source empty (rsp_cd={})",
+            masters.rsp_cd
+        );
+        panic!("live-smoke-t2106: no contract to key the read");
+    }
+    let code = masters.outblock[0].shcode.clone();
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().fo_price_memo(&T2106Request::new(&code)).await {
+        Ok(resp) => {
+            if resp.outblock1.is_empty() {
+                eprintln!(
+                    "SMOKE-FAIL target=live-smoke-t2106 empty memo array (rsp_cd={})",
+                    resp.rsp_cd
+                );
+                panic!("live-smoke-t2106: empty memo array (00707) — PENDING, not Implemented");
+            }
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "memos")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t2106",
+                &format!("env=paper code={code} date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t2106 market-data failure (not evidence)");
+            panic!("live-smoke-t2106 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t8402`: paper guard → token → fetch one stock-futures contract
+/// via `t8401` → one `t8402` stock-futures current-price read for that contract.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8402`"]
+async fn live_smoke_t8402() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let masters = sdk
+        .market_session()
+        .stock_futures_master(&T8401Request::new())
+        .await
+        .expect("t8401 stock-futures master (contract source) failed");
+    if masters.outblock.is_empty() {
+        eprintln!(
+            "SMOKE-FAIL target=live-smoke-t8402 t8401 contract source empty (rsp_cd={})",
+            masters.rsp_cd
+        );
+        panic!("live-smoke-t8402: no contract to key the read");
+    }
+    let focode = masters.outblock[0].shcode.clone();
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().stock_futures_quote(&T8402Request::new(&focode)).await {
+        Ok(resp) => {
+            if resp.outblock.price.is_empty() && resp.outblock.hname.is_empty() {
+                eprintln!(
+                    "SMOKE-FAIL target=live-smoke-t8402 empty out-block (rsp_cd={})",
+                    resp.rsp_cd
+                );
+                panic!("live-smoke-t8402: empty out-block (00707) — PENDING, not Implemented");
+            }
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), 1)), "quote")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t8402",
+                &format!("env=paper focode={focode} date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8402 market-data failure (not evidence)");
+            panic!("live-smoke-t8402 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t8403`: paper guard → token → fetch one stock-futures contract
+/// via `t8401` → one `t8403` stock-futures order-book read for that contract.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8403`"]
+async fn live_smoke_t8403() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let masters = sdk
+        .market_session()
+        .stock_futures_master(&T8401Request::new())
+        .await
+        .expect("t8401 stock-futures master (contract source) failed");
+    if masters.outblock.is_empty() {
+        eprintln!(
+            "SMOKE-FAIL target=live-smoke-t8403 t8401 contract source empty (rsp_cd={})",
+            masters.rsp_cd
+        );
+        panic!("live-smoke-t8403: no contract to key the read");
+    }
+    let shcode = masters.outblock[0].shcode.clone();
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().stock_futures_order_book(&T8403Request::new(&shcode)).await {
+        Ok(resp) => {
+            if resp.outblock.price.is_empty() && resp.outblock.hname.is_empty() {
+                eprintln!(
+                    "SMOKE-FAIL target=live-smoke-t8403 empty out-block (rsp_cd={})",
+                    resp.rsp_cd
+                );
+                panic!("live-smoke-t8403: empty out-block (00707) — PENDING, not Implemented");
+            }
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), 1)), "book")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t8403",
+                &format!("env=paper shcode={shcode} date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8403 market-data failure (not evidence)");
+            panic!("live-smoke-t8403 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t8434`: paper guard → token → fetch one index-futures contract
+/// via `t8467` → one `t8434` F/O multi current-price read (qrycnt=1) for it.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8434`"]
+async fn live_smoke_t8434() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let masters = sdk
+        .market_session()
+        .index_futures_master(&T8467Request::new("Q"))
+        .await
+        .expect("t8467 index-futures master (contract source) failed");
+    if masters.outblock.is_empty() {
+        eprintln!(
+            "SMOKE-FAIL target=live-smoke-t8434 t8467 contract source empty (rsp_cd={})",
+            masters.rsp_cd
+        );
+        panic!("live-smoke-t8434: no contract to key the read");
+    }
+    let focode = masters.outblock[0].shcode.clone();
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().fo_multi_quote(&T8434Request::new("1", &focode)).await {
+        Ok(resp) => {
+            if resp.outblock1.is_empty() {
+                eprintln!(
+                    "SMOKE-FAIL target=live-smoke-t8434 empty result array (rsp_cd={})",
+                    resp.rsp_cd
+                );
+                panic!("live-smoke-t8434: empty result array (00707) — PENDING, not Implemented");
+            }
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-t8434",
+                &format!("env=paper qrycnt=1 focode={focode} date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8434 market-data failure (not evidence)");
+            panic!("live-smoke-t8434 failed: {e}");
         }
     }
 }

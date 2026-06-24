@@ -2962,6 +2962,482 @@ pub struct T9944Response {
     pub outblock: Vec<T9944OutBlock>,
 }
 
+// ---------------------------------------------------------------------------
+// U5 (reach wave) — F/O quote/master reads. All `/futureoption/market-data`,
+// `[선물/옵션] 시세`, non-paginated market_session. Out-block keys + array-ness
+// read from the RAW capture (KTD5): t2111/t2112/t8402/t8403 carry a SINGLE
+// out-block; t2106 carries a single summary + an ARRAY detail block; t8434
+// carries an ARRAY out-block (`t8434OutBlock1`). t8434's `qrycnt` is a numeric
+// REQUEST field serialized as a JSON number (`string_as_number`, KTD4).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t2111` — 선물/옵션현재가(시세)조회 (F/O current-price quote).
+///
+/// `focode` is the futures/option contract short code (단축코드), a
+/// caller-supplied identifier sourced from an F/O master (e.g.
+/// [`MarketSession::index_futures_master`]'s `shcode`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T2111InBlock {
+    /// Short code / 단축코드 (F/O contract code).
+    pub focode: String,
+}
+
+/// `t2111` request — serializes to `{"t2111InBlock":{"focode":...}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T2111Request {
+    #[serde(rename = "t2111InBlock")]
+    pub inblock: T2111InBlock,
+}
+impl T2111Request {
+    /// Build a `t2111` F/O current-price request for one contract code.
+    pub fn new(focode: impl Into<String>) -> Self {
+        T2111Request {
+            inblock: T2111InBlock {
+                focode: focode.into(),
+            },
+        }
+    }
+}
+
+/// `t2111OutBlock` — the F/O current-price snapshot (single object).
+///
+/// A representative, spec-grounded subset of the `t2111OutBlock`; every
+/// numeric-bearing field uses [`ls_core::string_or_number`]. `pricejisu`
+/// (종합지수) and `kospijisu` (KOSPI200지수) are modeled as DISTINCT index fields
+/// (not collapsed) so a fixture can pin each separately (KTD6). All
+/// `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T2111OutBlock {
+    /// Korean name / 한글명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change vs. previous close / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Volume / 거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Open interest / 미결제량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub mgjv: String,
+    /// Composite index / 종합지수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub pricejisu: String,
+    /// KOSPI200 index / KOSPI200지수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub kospijisu: String,
+    /// Contract code / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub focode: String,
+}
+
+/// `t2111` response envelope. `outblock` is the snapshot under the
+/// `t2111OutBlock` key (single object). All `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T2111Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t2111OutBlock", default)]
+    pub outblock: T2111OutBlock,
+}
+
+/// Input block for `t2112` — 선물/옵션현재가호가조회 (F/O current-price order book).
+///
+/// `shcode` is the F/O contract short code (단축코드), a caller-supplied
+/// identifier sourced from an F/O master.
+#[derive(Serialize, Debug, Clone)]
+pub struct T2112InBlock {
+    /// Short code / 단축코드 (F/O contract code).
+    pub shcode: String,
+}
+
+/// `t2112` request — serializes to `{"t2112InBlock":{"shcode":...}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T2112Request {
+    #[serde(rename = "t2112InBlock")]
+    pub inblock: T2112InBlock,
+}
+impl T2112Request {
+    /// Build a `t2112` F/O order-book request for one contract code.
+    pub fn new(shcode: impl Into<String>) -> Self {
+        T2112Request {
+            inblock: T2112InBlock {
+                shcode: shcode.into(),
+            },
+        }
+    }
+}
+
+/// `t2112OutBlock` — the F/O current-price + 5-level order book (single object).
+///
+/// A representative subset of the `t2112OutBlock`: the price header plus the
+/// level-1 bid/offer aggregates. Every numeric-bearing field uses
+/// [`ls_core::string_or_number`]; all `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T2112OutBlock {
+    /// Korean name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Volume / 거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Best offer (ask) / 매도호가1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerho1: String,
+    /// Best bid / 매수호가1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidho1: String,
+    /// Best offer quantity / 매도호가수량1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerrem1: String,
+    /// Best bid quantity / 매수호가수량1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidrem1: String,
+    /// Short code / 단축코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+}
+
+/// `t2112` response envelope. `outblock` is the order book under the
+/// `t2112OutBlock` key (single object). All `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T2112Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t2112OutBlock", default)]
+    pub outblock: T2112OutBlock,
+}
+
+/// Input block for `t2106` — 선물/옵션현재가시세메모 (F/O price-memo read).
+///
+/// `code` is the F/O contract code (종목코드); `nrec` is the requested memo
+/// count (건수). The spec's `t2106InBlock` carries `code` + `nrec`; the optional
+/// `t2106InBlock1` condition array is not modeled (the read is keyed by `code`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T2106InBlock {
+    /// Contract code / 종목코드 (F/O contract code).
+    pub code: String,
+    /// Requested count / 건수 (empty = default).
+    pub nrec: String,
+}
+
+/// `t2106` request — serializes to `{"t2106InBlock":{"code":...,"nrec":...}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T2106Request {
+    #[serde(rename = "t2106InBlock")]
+    pub inblock: T2106InBlock,
+}
+impl T2106Request {
+    /// Build a `t2106` price-memo request for one contract code (`nrec` defaults
+    /// to empty — the gateway returns the default memo set).
+    pub fn new(code: impl Into<String>) -> Self {
+        T2106Request {
+            inblock: T2106InBlock {
+                code: code.into(),
+                nrec: String::new(),
+            },
+        }
+    }
+}
+
+/// `t2106OutBlock` — the price-memo summary block (single object).
+///
+/// `nrec` (출력건수) is the modeled non-key signal. Via
+/// [`ls_core::string_or_number`]; `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T2106OutBlock {
+    /// Output count / 출력건수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub nrec: String,
+}
+
+/// `t2106OutBlock1` — one price-memo row (`t2106OutBlock1[]`, an ARRAY block).
+///
+/// The repeated detail block (the spec marks `t2106OutBlock1` an array); each
+/// row is index/condition/value. Every field via [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T2106OutBlock1 {
+    /// Index / 인덱스.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub indx: String,
+    /// Condition distinction / 조건구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gubn: String,
+    /// Output value / 출력값.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub vals: String,
+}
+
+/// `t2106` response envelope.
+///
+/// `outblock` is the memo summary; `outblock1` is the memo-row array under the
+/// `t2106OutBlock1` key, tolerated as single-or-array via
+/// [`ls_core::de_vec_or_single`]. All `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T2106Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t2106OutBlock", default)]
+    pub outblock: T2106OutBlock,
+    #[serde(
+        rename = "t2106OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T2106OutBlock1>,
+}
+
+/// Input block for `t8402` — 주식선물현재가조회(API용) (stock-futures current price).
+///
+/// `focode` is the stock-futures contract short code (단축코드), a
+/// caller-supplied identifier sourced from the stock-futures master
+/// ([`MarketSession::stock_futures_master`]'s `shcode`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T8402InBlock {
+    /// Short code / 단축코드 (stock-futures contract code).
+    pub focode: String,
+}
+
+/// `t8402` request — serializes to `{"t8402InBlock":{"focode":...}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8402Request {
+    #[serde(rename = "t8402InBlock")]
+    pub inblock: T8402InBlock,
+}
+impl T8402Request {
+    /// Build a `t8402` stock-futures current-price request for one contract code.
+    pub fn new(focode: impl Into<String>) -> Self {
+        T8402Request {
+            inblock: T8402InBlock {
+                focode: focode.into(),
+            },
+        }
+    }
+}
+
+/// `t8402OutBlock` — the stock-futures current-price snapshot (single object).
+///
+/// A representative subset; every numeric field via
+/// [`ls_core::string_or_number`]. `basehname` (기초자산한글명) is a DISTINCT
+/// underlying-name string modeled separately from the futures `hname` so a
+/// fixture can pin each (KTD6). All `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8402OutBlock {
+    /// Korean name / 한글명 (the stock-futures contract name).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Volume / 거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Open interest / 미결제량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub mgjv: String,
+    /// Underlying short code / 기초자산단축코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Underlying Korean name / 기초자산한글명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub basehname: String,
+    /// Underlying current price / 기초자산현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub baseprice: String,
+}
+
+/// `t8402` response envelope. `outblock` is the snapshot under the
+/// `t8402OutBlock` key (single object). All `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8402Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t8402OutBlock", default)]
+    pub outblock: T8402OutBlock,
+}
+
+/// Input block for `t8403` — 주식선물호가조회(API용) (stock-futures order book).
+///
+/// `shcode` is the stock-futures contract short code (단축코드), a
+/// caller-supplied identifier sourced from the stock-futures master.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8403InBlock {
+    /// Short code / 단축코드 (stock-futures contract code).
+    pub shcode: String,
+}
+
+/// `t8403` request — serializes to `{"t8403InBlock":{"shcode":...}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8403Request {
+    #[serde(rename = "t8403InBlock")]
+    pub inblock: T8403InBlock,
+}
+impl T8403Request {
+    /// Build a `t8403` stock-futures order-book request for one contract code.
+    pub fn new(shcode: impl Into<String>) -> Self {
+        T8403Request {
+            inblock: T8403InBlock {
+                shcode: shcode.into(),
+            },
+        }
+    }
+}
+
+/// `t8403OutBlock` — the stock-futures current-price + 10-level order book
+/// (single object).
+///
+/// A representative subset: the price header plus the level-1 bid/offer
+/// aggregates. Every numeric-bearing field via [`ls_core::string_or_number`];
+/// all `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8403OutBlock {
+    /// Korean name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Volume / 거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Best offer (ask) / 매도호가1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerho1: String,
+    /// Best bid / 매수호가1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidho1: String,
+    /// Best offer quantity / 매도호가수량1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerrem1: String,
+    /// Best bid quantity / 매수호가수량1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidrem1: String,
+    /// Short code / 단축코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+}
+
+/// `t8403` response envelope. `outblock` is the order book under the
+/// `t8403OutBlock` key (single object). All `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8403Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t8403OutBlock", default)]
+    pub outblock: T8403OutBlock,
+}
+
+/// Input block for `t8434` — 선물/옵션멀티현재가조회 (F/O multi current-price).
+///
+/// `qrycnt` is the requested contract COUNT (건수), a numeric REQUEST field
+/// serialized as a JSON number via [`ls_core::string_as_number`] (KTD4 — the
+/// string form risks `IGW40011`). `focode` is a comma-joined list of F/O
+/// contract codes (단축코드, up to length 400).
+#[derive(Serialize, Debug, Clone)]
+pub struct T8434InBlock {
+    /// Requested count / 건수 (serialized as a JSON number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub qrycnt: String,
+    /// Short code(s) / 단축코드 (one or more F/O contract codes).
+    pub focode: String,
+}
+
+/// `t8434` request — serializes to `{"t8434InBlock":{"qrycnt":1,"focode":...}}`
+/// (`qrycnt` as a JSON number).
+#[derive(Serialize, Debug, Clone)]
+pub struct T8434Request {
+    #[serde(rename = "t8434InBlock")]
+    pub inblock: T8434InBlock,
+}
+impl T8434Request {
+    /// Build a `t8434` multi current-price request for `qrycnt` contracts keyed
+    /// by `focode` (a single code or a comma-joined list).
+    pub fn new(qrycnt: impl Into<String>, focode: impl Into<String>) -> Self {
+        T8434Request {
+            inblock: T8434InBlock {
+                qrycnt: qrycnt.into(),
+                focode: focode.into(),
+            },
+        }
+    }
+}
+
+/// `t8434OutBlock1` — one F/O current-price row (`t8434OutBlock1[]`, an ARRAY
+/// block).
+///
+/// The multi-quote response is a repeated row array (the spec marks
+/// `t8434OutBlock1` an array). Every numeric-bearing field via
+/// [`ls_core::string_or_number`]; `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8434OutBlock1 {
+    /// Korean name / 한글명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change vs. previous close / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Accumulated volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Short code / 단축코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub focode: String,
+}
+
+/// `t8434` response envelope.
+///
+/// `outblock1` is the multi-quote row array under the `t8434OutBlock1` key,
+/// tolerated as single-or-array via [`ls_core::de_vec_or_single`]. All
+/// `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8434Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t8434OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T8434OutBlock1>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -3333,6 +3809,58 @@ impl MarketSession {
     ) -> LsResult<T9944Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T9944_POLICY, req)
+            .await
+    }
+
+    /// Read the F/O current-price (시세) snapshot via `t2111`. Non-paginated;
+    /// keyed by a futures/option contract `focode`. Single out-block.
+    pub async fn fo_quote(&self, req: &T2111Request) -> LsResult<T2111Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T2111_POLICY, req)
+            .await
+    }
+
+    /// Read the F/O current-price order book via `t2112`. Non-paginated; keyed by
+    /// a contract `shcode`. Single out-block (5-level book).
+    pub async fn fo_order_book(&self, req: &T2112Request) -> LsResult<T2112Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T2112_POLICY, req)
+            .await
+    }
+
+    /// Read the F/O price-memo (시세메모) via `t2106`. Non-paginated; keyed by a
+    /// contract `code`. Returns a summary block + a memo-row array.
+    pub async fn fo_price_memo(&self, req: &T2106Request) -> LsResult<T2106Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T2106_POLICY, req)
+            .await
+    }
+
+    /// Read the stock-futures current price via `t8402`. Non-paginated; keyed by
+    /// a stock-futures contract `focode`. Single out-block.
+    pub async fn stock_futures_quote(&self, req: &T8402Request) -> LsResult<T8402Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8402_POLICY, req)
+            .await
+    }
+
+    /// Read the stock-futures order book via `t8403`. Non-paginated; keyed by a
+    /// stock-futures contract `shcode`. Single out-block (10-level book).
+    pub async fn stock_futures_order_book(
+        &self,
+        req: &T8403Request,
+    ) -> LsResult<T8403Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8403_POLICY, req)
+            .await
+    }
+
+    /// Read the F/O multi current-price via `t8434`. Non-paginated; keyed by a
+    /// `qrycnt` count (a JSON number) + one or more `focode` contract codes.
+    /// Returns a row array.
+    pub async fn fo_multi_quote(&self, req: &T8434Request) -> LsResult<T8434Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8434_POLICY, req)
             .await
     }
 }

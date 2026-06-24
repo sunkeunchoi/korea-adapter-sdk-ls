@@ -65,6 +65,12 @@ TR marked `ready` is a promote-tr candidate.
 | `t8467` | `live-smoke-t8467` | `live_smoke_t8467` | any session; `gubun="Q"` (KOSDAQ150 index-futures) — F/O index-futures master read, non-empty off-session | implemented-only | paper F/O index-futures master (PR-B U10) |
 | `t9943` | `live-smoke-t9943` | `live_smoke_t9943` | any session; `gubun="V"` (volatility index-futures) — F/O index-futures master read, non-empty off-session | implemented-only | paper F/O index-futures master (PR-B U11) |
 | `t9944` | `live-smoke-t9944` | `live_smoke_t9944` | any session; no caller input (`dummy`) — F/O index-option master read, non-empty off-session | implemented-only | paper F/O index-option master (PR-B U12) |
+| `t2111` | `live-smoke-t2111` | `live_smoke_t2111` | anytime F/O; self-sources a contract `focode` from `t8467` — F/O current-price read (empty out-block off-session → PENDING) | implemented-only | paper F/O current-price quote (U5) |
+| `t2112` | `live-smoke-t2112` | `live_smoke_t2112` | anytime F/O; self-sources a contract `shcode` from `t8467` — F/O order-book read (empty out-block off-session → PENDING) | implemented-only | paper F/O current-price order book (U5) |
+| `t2106` | `live-smoke-t2106` | `live_smoke_t2106` | anytime F/O; self-sources a contract `code` from `t8467` — F/O price-memo read (empty memo array off-session → PENDING) | implemented-only | paper F/O price memo (U5) |
+| `t8402` | `live-smoke-t8402` | `live_smoke_t8402` | anytime F/O; self-sources a contract `focode` from `t8401` — stock-futures current-price read (empty out-block off-session → PENDING) | implemented-only | paper stock-futures current price (U5) |
+| `t8403` | `live-smoke-t8403` | `live_smoke_t8403` | anytime F/O; self-sources a contract `shcode` from `t8401` — stock-futures order-book read (empty out-block off-session → PENDING) | implemented-only | paper stock-futures order book (U5) |
+| `t8434` | `live-smoke-t8434` | `live_smoke_t8434` | anytime F/O; self-sources a contract `focode` from `t8467`, `qrycnt=1` (JSON number) — F/O multi current-price read (empty array off-session → PENDING) | implemented-only | paper F/O multi current-price (U5) |
 
 Notes:
 - `live-smoke` (default) issues the OAuth token *then* a `t1102` quote in one run,
