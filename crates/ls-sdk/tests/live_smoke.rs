@@ -1838,8 +1838,11 @@ async fn live_smoke_ws_p1() {
                 format!("LIFECYCLE-FAIL: {err}")
             }
         };
+        // target= names the REAL runnable make target (the combined sweep); the
+        // per-TR identity is carried by tr_cd= in inputs. Avoids emitting a
+        // `live-smoke-<tr>` label that maps to no Makefile target.
         record(
-            &format!("live-smoke-{}", tr_cd.to_lowercase().trim_end_matches('_')),
+            "live-smoke-ws-p1",
             &format!("tr_cd={tr_cd} tr_key={tr_key} ws_port=29443 tr_type=3"),
             &row_note,
         );
@@ -1910,8 +1913,9 @@ async fn live_smoke_ws_p2() {
                 format!("LIFECYCLE-FAIL: {err}")
             }
         };
+        // target= names the REAL runnable make target; per-TR identity via tr_cd=.
         record(
-            &format!("live-smoke-{}", tr_cd.to_lowercase()),
+            "live-smoke-ws-p2",
             &format!("tr_cd={tr_cd} tr_key={tr_key} ws_port=29443 tr_type=1"),
             &row_note,
         );
