@@ -914,3 +914,169 @@ pub struct T3341Response {
     )]
     pub outblock1: Vec<T3341OutBlock1>,
 }
+
+// --- t1481 — 시간외등락율상위 (after-hours top change rate; single-page) -------
+// Single-page body-`idx` sub-pattern: `idx` is an ordinary in-block field
+// serialized as a JSON number (first page = `"0"`), NOT a `#[serde(skip)]` header
+// cursor. The summary `t1481OutBlock` carries only the next-page `idx`; the row
+// array rides under `t1481OutBlock1` (out-block shape read from the raw capture).
+
+/// Input block for `t1481` — 시간외등락율상위 (after-hours top change rate).
+///
+/// A rank-screen filter. `gubun1`/`gubun2`/`jongchk` are division flags and
+/// `volume` a length-1 min-volume flag (all length-1 strings); `idx` is the body
+/// continuation cursor serialized as a JSON number (first page = `"0"`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1481InBlock {
+    /// Division / 구분.
+    pub gubun1: String,
+    /// Up/down / 상승하락.
+    pub gubun2: String,
+    /// Issue-type check / 종목체크.
+    pub jongchk: String,
+    /// Min-volume flag / 거래량 (a length-1 flag here; serialized as a string).
+    pub volume: String,
+    /// Body continuation cursor / IDX (first page = `"0"`; serialized as a number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub idx: String,
+}
+
+/// `t1481` request (single-page; `idx` in the body, header cursors skipped).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1481Request {
+    #[serde(rename = "t1481InBlock")]
+    pub inblock: T1481InBlock,
+    #[serde(skip)]
+    pub tr_cont: String,
+    #[serde(skip)]
+    pub tr_cont_key: String,
+}
+ls_core::impl_has_pagination!(T1481Request);
+impl T1481Request {
+    /// Build a single-page `t1481` after-hours top-change-rate request. `idx`
+    /// defaults to the first-page convention (`"0"`); header cursors start empty.
+    pub fn new(
+        gubun1: impl Into<String>,
+        gubun2: impl Into<String>,
+        jongchk: impl Into<String>,
+        volume: impl Into<String>,
+    ) -> Self {
+        T1481Request {
+            inblock: T1481InBlock {
+                gubun1: gubun1.into(),
+                gubun2: gubun2.into(),
+                jongchk: jongchk.into(),
+                volume: volume.into(),
+                idx: "0".to_string(),
+            },
+            tr_cont: String::new(),
+            tr_cont_key: String::new(),
+        }
+    }
+}
+idx_summary!(T1481OutBlock, "`t1481OutBlock` — summary (next-page `idx`).");
+rank_row!(
+    T1481OutBlock1,
+    "`t1481OutBlock1` — one after-hours ranked stock row."
+);
+
+/// `t1481` response (single page). `outblock` is the summary (next-page `idx`);
+/// `outblock1` is the ranked-row array under `t1481OutBlock1`, tolerated as
+/// single-or-array via [`ls_core::de_vec_or_single`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1481Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1481OutBlock", default)]
+    pub outblock: T1481OutBlock,
+    #[serde(
+        rename = "t1481OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1481OutBlock1>,
+}
+
+// --- t1482 — 시간외거래량상위 (after-hours top volume; single-page) ------------
+// Same single-page body-`idx` sub-pattern as t1481. The in-block carries a
+// numeric `sort_gbn` sort flag (serialized as a number) alongside the `idx`
+// cursor; the summary `t1482OutBlock` carries only the next-page `idx`, and the
+// row array rides under `t1482OutBlock1` (out-block shape read from the raw
+// capture).
+
+/// Input block for `t1482` — 시간외거래량상위 (after-hours top volume).
+///
+/// `sort_gbn` is a numeric sort flag (serialized as a JSON number); `gubun` and
+/// `jongchk` are length-1 string flags; `idx` is the body continuation cursor
+/// serialized as a JSON number (first page = `"0"`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1482InBlock {
+    /// Sort division / 정렬구분 (numeric flag; serialized as a number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub sort_gbn: String,
+    /// Division / 구분.
+    pub gubun: String,
+    /// Issue-type check / 종목체크 (a length-1 flag here; serialized as a string).
+    pub jongchk: String,
+    /// Body continuation cursor / IDX (first page = `"0"`; serialized as a number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub idx: String,
+}
+
+/// `t1482` request (single-page; `idx` in the body, header cursors skipped).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1482Request {
+    #[serde(rename = "t1482InBlock")]
+    pub inblock: T1482InBlock,
+    #[serde(skip)]
+    pub tr_cont: String,
+    #[serde(skip)]
+    pub tr_cont_key: String,
+}
+ls_core::impl_has_pagination!(T1482Request);
+impl T1482Request {
+    /// Build a single-page `t1482` after-hours top-volume request. `idx` defaults
+    /// to the first-page convention (`"0"`); header cursors start empty.
+    pub fn new(
+        sort_gbn: impl Into<String>,
+        gubun: impl Into<String>,
+        jongchk: impl Into<String>,
+    ) -> Self {
+        T1482Request {
+            inblock: T1482InBlock {
+                sort_gbn: sort_gbn.into(),
+                gubun: gubun.into(),
+                jongchk: jongchk.into(),
+                idx: "0".to_string(),
+            },
+            tr_cont: String::new(),
+            tr_cont_key: String::new(),
+        }
+    }
+}
+idx_summary!(T1482OutBlock, "`t1482OutBlock` — summary (next-page `idx`).");
+rank_row!(
+    T1482OutBlock1,
+    "`t1482OutBlock1` — one after-hours top-volume stock row."
+);
+
+/// `t1482` response (single page). `outblock` is the summary (next-page `idx`);
+/// `outblock1` is the ranked-row array under `t1482OutBlock1`, tolerated as
+/// single-or-array via [`ls_core::de_vec_or_single`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1482Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1482OutBlock", default)]
+    pub outblock: T1482OutBlock,
+    #[serde(
+        rename = "t1482OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1482OutBlock1>,
+}

@@ -674,8 +674,10 @@ mod tests {
     /// `t1101`, `t1102`, `t8412`, `CSPAQ12200`, `S3_`, `CSPAT00601`) plus the 41
     /// read-only stock/sector TRs brought into tracked-only maintenance ownership
     /// (incl. the Wave A sector cluster t8424/t1511/t1514/t1516/t1485).
-    const TRACKED_TRS: [&str; 70] = [
+    const TRACKED_TRS: [&str; 85] = [
+        "CCENQ10100",
         "CCENQ90200",
+        "CFOAQ10100",
         "CFOBQ10500",
         "CSPAQ12200",
         "CSPAQ12300",
@@ -683,10 +685,17 @@ mod tests {
         "CSPAT00601",
         "S3_",
         "g3101",
+        "g3102",
+        "g3103",
         "g3104",
         "g3106",
+        "g3190",
         "o3101",
+        "o3105",
+        "o3106",
         "o3121",
+        "o3125",
+        "o3126",
         "revoke",
         "t1101",
         "t1102",
@@ -720,12 +729,17 @@ mod tests {
         "t1958",
         "t1964",
         "t1988",
+        "t2106",
+        "t2111",
+        "t2112",
         "t2301",
         "t2522",
         "t3102",
         "t3320",
         "t3341",
         "t8401",
+        "t8402",
+        "t8403",
         "t8412",
         "t8424",
         "t8425",
@@ -733,6 +747,7 @@ mod tests {
         "t8430",
         "t8431",
         "t8433",
+        "t8434",
         "t8435",
         "t8436",
         "t8455",
@@ -863,11 +878,16 @@ mod tests {
 
         // The still-unrecommended implemented TRs each carry the banner.
         let banner_trs = [
-            "CFOBQ10500", "CSPAQ12300", "CSPAQ22200", "revoke", "t1403", "t1441", "t1452", "t1463",
-            "t1466", "t1485", "t1489", "t1492", "t1511", "t1514", "t1516", "t1531", "t1537", "t1601",
+            "CFOAQ10100", "CFOBQ10500", "CSPAQ12300", "CSPAQ22200", "revoke", "t1403", "t1441",
+            "t1452", "t1463",
+            "t1466", "t1481", "t1482", "t1485", "t1489", "t1492", "t1511", "t1514", "t1516", "t1531",
+            "t1537", "t1601",
             "t1615", "t1640", "t1662", "t1664", "t1825", "t1826", "t1859", "t1866", "t1958",
             "t2301", "t2522", "t3341", "t8401", "t8424", "t8425", "t8426", "t8433", "t8435",
             "t8467", "t9943", "t9944", "t8431", "t8436", "t9905", "t9907", "t9942",
+            "t2111", "t2112", "t8402", "t8403", "t8434",
+            "t1988", "t3320",
+            "o3101", "o3121",
         ];
         for tr in banner_trs {
             let page = reference
@@ -908,9 +928,29 @@ mod tests {
         // t9943 (PR-B U11) adds one more (F/O index-futures master, array out-block).
         // t9944 (PR-B U12) adds one more (F/O index-option master, array out-block).
         // (Wave 1 t1988 + t1964 ship PENDING — not implemented, not counted.)
+        // t1481 + t1482 (U2 reach wave, paginated body-`idx`) add one each.
+        // t2111 (U5 reach wave, F/O current-price quote) adds one more.
+        // t2112 (U5 reach wave, F/O current-price order book) adds one more.
+        // t8402 (U5 reach wave, stock-futures current price) adds one more.
+        // t8403 (U5 reach wave, stock-futures order book) adds one more.
+        // t8434 (U5 reach wave, F/O multi current-price, array out-block) adds one more.
+        // (t2106 ships PENDING — empty memo array off-session — not counted.)
+        // CFOAQ10100 (U4 reach wave, F/O orderable-quantity inquiry) adds one more.
+        // (CCENQ90200 + CCENQ10100 ship Tracked/paper-incompatible (gateway 01900) —
+        // not implemented, not counted.)
+        // t1988 (U3 reach wave, ELW underlying-asset list; standalone→market_session,
+        // IGW40011 cleared by the `from_rate`/`to_rate` wire-type fix) adds one more.
+        // t3320 (U3 reach wave, FnGuide company summary; standalone→market_session,
+        // bare-6-digit gicode found via raw-probe A/B) adds one more.
+        // (t3102 ships HELD input-unresolved (sNewsno only from realtime NWS) —
+        // not counted.)
+        // o3101 (U8 reach wave, overseas-futures master; market_session, ARRAY
+        // out-block; non-empty 85-row paper smoke) adds one more.
+        // o3121 (U8 reach wave, overseas-future-option master; market_session,
+        // ARRAY out-block; non-empty 2-row paper smoke) adds one more.
         assert_eq!(
             reference.len(),
-            51,
+            63,
             "index + the implemented reference pages"
         );
 

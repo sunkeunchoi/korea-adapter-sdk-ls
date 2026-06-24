@@ -29,8 +29,9 @@ use std::sync::Arc;
 
 use ls_core::{Inner, LsError};
 use ls_sdk::account::{
-    CFOBQ10500Request, CFOBQ10500Response, CSPAQ12200Request, CSPAQ12200Response, CSPAQ12300Request,
-    CSPAQ12300Response, CSPAQ22200Request, CSPAQ22200Response,
+    CCENQ10100Request, CCENQ10100Response, CCENQ90200Request, CCENQ90200Response, CFOAQ10100Request,
+    CFOAQ10100Response, CFOBQ10500Request, CFOBQ10500Response, CSPAQ12200Request, CSPAQ12200Response,
+    CSPAQ12300Request, CSPAQ12300Response, CSPAQ22200Request, CSPAQ22200Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token, TEST_ACCOUNT_NO};
@@ -48,6 +49,20 @@ const CSPAQ22200_FIXTURE: &str = include_str!("fixtures/CSPAQ22200_resp.json");
 
 /// The spec-derived, SYNTHETIC `CFOBQ10500` response fixture.
 const CFOBQ10500_FIXTURE: &str = include_str!("fixtures/CFOBQ10500_resp.json");
+
+/// The spec-derived, SYNTHETIC `CCENQ90200` response fixture.
+const CCENQ90200_FIXTURE: &str = include_str!("fixtures/CCENQ90200_resp.json");
+
+/// The spec-derived, SYNTHETIC `CFOAQ10100` response fixture.
+const CFOAQ10100_FIXTURE: &str = include_str!("fixtures/CFOAQ10100_resp.json");
+
+/// The spec-derived, SYNTHETIC `CCENQ10100` response fixture.
+const CCENQ10100_FIXTURE: &str = include_str!("fixtures/CCENQ10100_resp.json");
+
+/// The shared REST path for the `/futureoption/accno` account TRs (`CFOBQ10500`,
+/// `CCENQ90200`, `CFOAQ10100`, `CCENQ10100`) — they mount the same endpoint and
+/// discriminate on the `tr_cd` header.
+const FUTUREOPTION_ACCNO_PATH: &str = "/futureoption/accno";
 
 /// The shared REST path for the `/stock/accno` account TRs (`CSPAQ12200`,
 /// `CSPAQ12300`, `CSPAQ22200`) — they mount the same endpoint and discriminate
@@ -703,4 +718,429 @@ fn cfobq10500_out_blocks_single_object_deserialize_to_one_element_vecs() {
         "OutBlock3 single object becomes a 1-element Vec"
     );
     assert_eq!(resp.outblock3[0].maintmgn, "1050000");
+}
+
+// ---------------------------------------------------------------------------
+// CCENQ90200 — KRX야간파생 잔고조회 (read-only night-derivatives account balance,
+// krx_extended). InBlock1: RecCnt (JSON number) + two evaluation-shape enums.
+// THREE out-blocks: OutBlock1 single + OutBlock2 + OutBlock3 (a true JSON array).
+// ---------------------------------------------------------------------------
+
+/// `::new` serializes the record count (as a JSON number, KTD4) + two enums under
+/// `CCENQ90200InBlock1` with NO account number / caller leak. The account is
+/// config-supplied, never threaded into the body.
+#[test]
+fn ccenq90200_request_serializes_inblock_only_no_account_leak() {
+    let req = CCENQ90200Request::new("1", "0", "0");
+    let value = serde_json::to_value(&req).expect("serialize CCENQ90200 request");
+
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "request must have exactly one top-level key");
+    assert!(
+        obj.contains_key("CCENQ90200InBlock1"),
+        "missing CCENQ90200InBlock1 key"
+    );
+
+    let inblock = &value["CCENQ90200InBlock1"];
+    // RecCnt serializes as a JSON NUMBER, not a string (KTD4 — avoids IGW40011).
+    assert!(
+        inblock["RecCnt"].is_number(),
+        "RecCnt must serialize as a JSON number"
+    );
+    assert_eq!(inblock["RecCnt"], 1);
+    assert_eq!(inblock["BalEvalTp"], "0");
+    assert_eq!(inblock["FutsPrcEvalTp"], "0");
+    assert_eq!(
+        inblock.as_object().expect("inblock is an object").len(),
+        3,
+        "InBlock1 carries only the three shape fields (no account number)"
+    );
+
+    // No account number anywhere in the serialized request.
+    let serialized = serde_json::to_string(&req).expect("serialize CCENQ90200 request");
+    assert!(
+        !serialized.contains(TEST_ACCOUNT_NO),
+        "the account number must never appear in the request body"
+    );
+}
+
+/// A representative success body deserializes and the canonical OutBlock2 field
+/// (`EvalDpsamtTotamt` = 평가예탁금총액, KTD6) holds its exact value. Distinct
+/// neighbours carry distinct values so a mislabel cannot be masked. The OutBlock3
+/// array deserializes into a Vec.
+#[tokio::test]
+async fn ccenq90200_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(FUTUREOPTION_ACCNO_PATH))
+        .and(header("tr_cd", "CCENQ90200"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(CCENQ90200_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let req = CCENQ90200Request::new("1", "0", "0");
+    let resp = sdk
+        .account()
+        .night_balance(&req)
+        .await
+        .expect("CCENQ90200 night-balance inquiry should succeed");
+
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock1.acntno, TEST_ACCOUNT_NO);
+    assert_eq!(resp.outblock1.balevaltp, "2");
+
+    assert_eq!(resp.outblock2.len(), 1, "one balance row");
+    let bal = &resp.outblock2[0];
+    // Canonical field by Korean name (평가예탁금총액) — exact value, not !is_empty().
+    assert_eq!(bal.evaldpsamttotamt, "34399538", "EvalDpsamtTotamt (평가예탁금총액)");
+    // Distinct neighbours hold distinct values (no collapse / mislabel).
+    assert_eq!(bal.dpsamttotamt, "31925203", "DpsamtTotamt (예탁금총액)");
+    assert_eq!(bal.psnoutabletotamt, "20321010", "PsnOutAbleTotAmt (인출가능총금액)");
+    assert_eq!(bal.ordabletotamt, "20327175", "OrdAbleTotAmt (주문가능총금액)");
+    assert_eq!(bal.mnyordableamt, "20327176", "MnyOrdAbleAmt (현금주문가능금액)");
+    assert_eq!(bal.evalpnlsum, "6288000", "EvalPnlSum (평가손익합계)");
+
+    // OutBlock3 is a true JSON array in the raw capture → Vec.
+    assert_eq!(resp.outblock3.len(), 1, "one position row");
+    assert_eq!(resp.outblock3[0].fnoisuno, "105W6000", "FnoIsuNo");
+    assert_eq!(resp.outblock3[0].unsttqty, "2", "UnsttQty (미결제수량)");
+    assert_eq!(resp.outblock3[0].evalamt, "40658000", "EvalAmt (평가금액)");
+}
+
+/// Numeric-bearing out-block fields parse via `string_or_number` from BOTH string
+/// and number JSON.
+#[test]
+fn ccenq90200_numeric_fields_parse_from_string_and_number() {
+    let as_number = serde_json::json!({
+        "rsp_cd": "00000",
+        "CCENQ90200OutBlock2": { "EvalDpsamtTotamt": 999, "EvalPnlSum": 42 }
+    });
+    let resp: CCENQ90200Response =
+        serde_json::from_value(as_number).expect("number JSON must deserialize");
+    assert_eq!(resp.outblock2[0].evaldpsamttotamt, "999");
+    assert_eq!(resp.outblock2[0].evalpnlsum, "42");
+
+    let as_string = serde_json::json!({
+        "rsp_cd": "00000",
+        "CCENQ90200OutBlock2": { "EvalDpsamtTotamt": "999", "EvalPnlSum": "42" }
+    });
+    let resp: CCENQ90200Response =
+        serde_json::from_value(as_string).expect("string JSON must deserialize");
+    assert_eq!(resp.outblock2[0].evaldpsamttotamt, "999");
+    assert_eq!(resp.outblock2[0].evalpnlsum, "42");
+}
+
+/// An empty result (`rsp_cd 00707`, empty out-blocks) deserializes and is recognized
+/// as the empty/pending case (off the krx_extended night window or a position-less
+/// account).
+#[test]
+fn ccenq90200_empty_00707_deserializes_as_empty() {
+    let json = serde_json::json!({
+        "rsp_cd": "00707",
+        "CCENQ90200OutBlock2": [],
+        "CCENQ90200OutBlock3": []
+    });
+    let resp: CCENQ90200Response =
+        serde_json::from_value(json).expect("empty out-blocks must deserialize");
+    assert_eq!(resp.rsp_cd, "00707");
+    assert!(
+        resp.outblock2.is_empty(),
+        "00707 yields an empty balance Vec (the PENDING case)"
+    );
+    assert!(resp.outblock3.is_empty(), "00707 yields an empty position Vec");
+}
+
+/// Both `CCENQ90200OutBlock2` and `CCENQ90200OutBlock3` arriving as a SINGLE object
+/// deserialize via `de_vec_or_single` into 1-element Vecs.
+#[test]
+fn ccenq90200_out_blocks_single_object_deserialize_to_one_element_vecs() {
+    let json = serde_json::json!({
+        "rsp_cd": "00000",
+        "CCENQ90200OutBlock2": { "EvalDpsamtTotamt": 34399538, "EvalPnlSum": 6288000 },
+        "CCENQ90200OutBlock3": { "FnoIsuNo": "105W6000", "EvalAmt": 40658000 }
+    });
+    let resp: CCENQ90200Response =
+        serde_json::from_value(json).expect("single-object out-blocks must deserialize");
+    assert_eq!(resp.outblock2.len(), 1, "OutBlock2 single → 1-element Vec");
+    assert_eq!(resp.outblock2[0].evaldpsamttotamt, "34399538");
+    assert_eq!(resp.outblock3.len(), 1, "OutBlock3 single → 1-element Vec");
+    assert_eq!(resp.outblock3[0].fnoisuno, "105W6000");
+}
+
+// ---------------------------------------------------------------------------
+// CFOAQ10100 — 선물옵션 주문가능수량조회 (read-only orderable-quantity INQUIRY, NOT an
+// order). InBlock1: four numeric fields (RecCnt/OrdAmt/RatVal/FnoOrdPrc) as JSON
+// numbers + caller-supplied order-shape enums incl. FnoIsuNo. OutBlock1 single +
+// OutBlock2 (orderable-quantity result).
+// ---------------------------------------------------------------------------
+
+/// `::new` serializes the order-shape inputs under `CFOAQ10100InBlock1` with the
+/// four numeric fields as JSON numbers (KTD4) and NO account number / caller leak.
+#[test]
+fn cfoaq10100_request_serializes_numeric_fields_and_no_account_leak() {
+    let req = CFOAQ10100Request::new("1", "1", "0", "0", "101T6000", "1", "0", "00");
+    let value = serde_json::to_value(&req).expect("serialize CFOAQ10100 request");
+
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "request must have exactly one top-level key");
+    assert!(
+        obj.contains_key("CFOAQ10100InBlock1"),
+        "missing CFOAQ10100InBlock1 key"
+    );
+
+    let inblock = &value["CFOAQ10100InBlock1"];
+    // The four numeric fields serialize as JSON numbers (KTD4 — avoids IGW40011).
+    assert!(inblock["RecCnt"].is_number(), "RecCnt must be a JSON number");
+    assert!(inblock["OrdAmt"].is_number(), "OrdAmt must be a JSON number");
+    assert!(inblock["RatVal"].is_number(), "RatVal must be a JSON number");
+    assert!(
+        inblock["FnoOrdPrc"].is_number(),
+        "FnoOrdPrc must be a JSON number"
+    );
+    // The caller's instrument rides in the body (this read IS keyed on FnoIsuNo).
+    assert_eq!(inblock["FnoIsuNo"], "101T6000");
+    assert_eq!(inblock["QryTp"], "1");
+    assert_eq!(inblock["BnsTpCode"], "1");
+    assert_eq!(inblock["FnoOrdprcPtnCode"], "00");
+
+    // No account number anywhere in the serialized request.
+    let serialized = serde_json::to_string(&req).expect("serialize CFOAQ10100 request");
+    assert!(
+        !serialized.contains(TEST_ACCOUNT_NO),
+        "the account number must never appear in the request body"
+    );
+}
+
+/// A representative success body deserializes and the canonical OutBlock2 field
+/// (`OrdAbleQty` = 주문가능수량, KTD6) holds its exact value. Distinct neighbours
+/// carry distinct values so a mislabel cannot be masked.
+#[tokio::test]
+async fn cfoaq10100_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(FUTUREOPTION_ACCNO_PATH))
+        .and(header("tr_cd", "CFOAQ10100"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(CFOAQ10100_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let req = CFOAQ10100Request::new("1", "1", "0", "0", "101T6000", "1", "0", "00");
+    let resp = sdk
+        .account()
+        .fo_orderable_qty(&req)
+        .await
+        .expect("CFOAQ10100 orderable-quantity inquiry should succeed");
+
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock1.acntno, TEST_ACCOUNT_NO);
+    assert_eq!(resp.outblock1.fnoisuno, "101T6000");
+
+    assert_eq!(resp.outblock2.len(), 1, "one result row");
+    let r = &resp.outblock2[0];
+    // Canonical field by Korean name (주문가능수량) — exact value, not !is_empty().
+    assert_eq!(r.ordableqty, "38", "OrdAbleQty (주문가능수량)");
+    // Distinct neighbours hold distinct values (no collapse / mislabel).
+    assert_eq!(r.newordableqty, "36", "NewOrdAbleQty (신규주문가능수량)");
+    assert_eq!(r.lqdtordableqty, "2", "LqdtOrdAbleQty (청산주문가능수량)");
+    assert_eq!(r.ordableamt, "230782886", "OrdAbleAmt (주문가능금액)");
+    assert_eq!(r.mnyordableamt, "230782887", "MnyOrdAbleAmt (현금주문가능금액)");
+}
+
+/// Numeric-bearing out-block fields parse via `string_or_number` from BOTH string
+/// and number JSON.
+#[test]
+fn cfoaq10100_numeric_fields_parse_from_string_and_number() {
+    let as_number = serde_json::json!({
+        "rsp_cd": "00000",
+        "CFOAQ10100OutBlock2": { "OrdAbleQty": 38, "OrdAbleAmt": 42 }
+    });
+    let resp: CFOAQ10100Response =
+        serde_json::from_value(as_number).expect("number JSON must deserialize");
+    assert_eq!(resp.outblock2[0].ordableqty, "38");
+    assert_eq!(resp.outblock2[0].ordableamt, "42");
+
+    let as_string = serde_json::json!({
+        "rsp_cd": "00000",
+        "CFOAQ10100OutBlock2": { "OrdAbleQty": "38", "OrdAbleAmt": "42" }
+    });
+    let resp: CFOAQ10100Response =
+        serde_json::from_value(as_string).expect("string JSON must deserialize");
+    assert_eq!(resp.outblock2[0].ordableqty, "38");
+    assert_eq!(resp.outblock2[0].ordableamt, "42");
+}
+
+/// An empty result (`rsp_cd 00707`, empty out-block) deserializes and is recognized
+/// as the empty/pending case (a position-less paper account).
+#[test]
+fn cfoaq10100_empty_00707_deserializes_as_empty() {
+    let json = serde_json::json!({
+        "rsp_cd": "00707",
+        "CFOAQ10100OutBlock2": []
+    });
+    let resp: CFOAQ10100Response =
+        serde_json::from_value(json).expect("empty out-block must deserialize");
+    assert_eq!(resp.rsp_cd, "00707");
+    assert!(
+        resp.outblock2.is_empty(),
+        "00707 yields an empty result Vec (the PENDING case)"
+    );
+}
+
+/// `CFOAQ10100OutBlock2` arriving as a SINGLE object deserializes via
+/// `de_vec_or_single` into a 1-element Vec.
+#[test]
+fn cfoaq10100_out_block2_single_object_deserializes_to_one_element_vec() {
+    let json = serde_json::json!({
+        "rsp_cd": "00000",
+        "CFOAQ10100OutBlock2": { "OrdAbleQty": 38, "OrdAbleAmt": 230782886 }
+    });
+    let resp: CFOAQ10100Response =
+        serde_json::from_value(json).expect("single-object out-block must deserialize");
+    assert_eq!(resp.outblock2.len(), 1, "single object becomes a 1-element Vec");
+    assert_eq!(resp.outblock2[0].ordableqty, "38");
+}
+
+// ---------------------------------------------------------------------------
+// CCENQ10100 — KRX야간파생 주문가능수량 조회 (read-only orderable-quantity INQUIRY on
+// the night/krx_extended account, NOT an order). Same shape/discipline as
+// CFOAQ10100.
+// ---------------------------------------------------------------------------
+
+/// `::new` serializes the order-shape inputs under `CCENQ10100InBlock1` with the
+/// four numeric fields as JSON numbers (KTD4) and NO account number / caller leak.
+#[test]
+fn ccenq10100_request_serializes_numeric_fields_and_no_account_leak() {
+    let req = CCENQ10100Request::new("1", "1", "0", "0", "101W6000", "1", "0", "00");
+    let value = serde_json::to_value(&req).expect("serialize CCENQ10100 request");
+
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "request must have exactly one top-level key");
+    assert!(
+        obj.contains_key("CCENQ10100InBlock1"),
+        "missing CCENQ10100InBlock1 key"
+    );
+
+    let inblock = &value["CCENQ10100InBlock1"];
+    assert!(inblock["RecCnt"].is_number(), "RecCnt must be a JSON number");
+    assert!(inblock["OrdAmt"].is_number(), "OrdAmt must be a JSON number");
+    assert!(inblock["RatVal"].is_number(), "RatVal must be a JSON number");
+    assert!(
+        inblock["FnoOrdPrc"].is_number(),
+        "FnoOrdPrc must be a JSON number"
+    );
+    assert_eq!(inblock["FnoIsuNo"], "101W6000");
+
+    // No account number anywhere in the serialized request.
+    let serialized = serde_json::to_string(&req).expect("serialize CCENQ10100 request");
+    assert!(
+        !serialized.contains(TEST_ACCOUNT_NO),
+        "the account number must never appear in the request body"
+    );
+}
+
+/// A representative success body deserializes and the canonical OutBlock2 field
+/// (`OrdAbleQty` = 주문가능수량, KTD6) holds its exact value. Distinct neighbours
+/// carry distinct values so a mislabel cannot be masked.
+#[tokio::test]
+async fn ccenq10100_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(FUTUREOPTION_ACCNO_PATH))
+        .and(header("tr_cd", "CCENQ10100"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(CCENQ10100_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let req = CCENQ10100Request::new("1", "1", "0", "0", "101W6000", "1", "0", "00");
+    let resp = sdk
+        .account()
+        .night_orderable_qty(&req)
+        .await
+        .expect("CCENQ10100 night orderable-quantity inquiry should succeed");
+
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock1.acntno, TEST_ACCOUNT_NO);
+    assert_eq!(resp.outblock1.fnoisuno, "101W6000");
+
+    assert_eq!(resp.outblock2.len(), 1, "one result row");
+    let r = &resp.outblock2[0];
+    // Canonical field by Korean name (주문가능수량) — exact value, not !is_empty().
+    assert_eq!(r.ordableqty, "2", "OrdAbleQty (주문가능수량)");
+    // Distinct neighbours hold distinct values (no collapse / mislabel).
+    assert_eq!(r.newordableqty, "3", "NewOrdAbleQty (신규주문가능수량)");
+    assert_eq!(r.lqdtordableqty, "1", "LqdtOrdAbleQty (청산주문가능수량)");
+    assert_eq!(r.ordableamt, "20327175", "OrdAbleAmt (주문가능금액)");
+    assert_eq!(r.mnyordableamt, "20327176", "MnyOrdAbleAmt (현금주문가능금액)");
+}
+
+/// Numeric-bearing out-block fields parse via `string_or_number` from BOTH string
+/// and number JSON.
+#[test]
+fn ccenq10100_numeric_fields_parse_from_string_and_number() {
+    let as_number = serde_json::json!({
+        "rsp_cd": "00000",
+        "CCENQ10100OutBlock2": { "OrdAbleQty": 2, "OrdAbleAmt": 42 }
+    });
+    let resp: CCENQ10100Response =
+        serde_json::from_value(as_number).expect("number JSON must deserialize");
+    assert_eq!(resp.outblock2[0].ordableqty, "2");
+    assert_eq!(resp.outblock2[0].ordableamt, "42");
+
+    let as_string = serde_json::json!({
+        "rsp_cd": "00000",
+        "CCENQ10100OutBlock2": { "OrdAbleQty": "2", "OrdAbleAmt": "42" }
+    });
+    let resp: CCENQ10100Response =
+        serde_json::from_value(as_string).expect("string JSON must deserialize");
+    assert_eq!(resp.outblock2[0].ordableqty, "2");
+    assert_eq!(resp.outblock2[0].ordableamt, "42");
+}
+
+/// An empty result (`rsp_cd 00707`, empty out-block) deserializes and is recognized
+/// as the empty/pending case (off the night window or a position-less account).
+#[test]
+fn ccenq10100_empty_00707_deserializes_as_empty() {
+    let json = serde_json::json!({
+        "rsp_cd": "00707",
+        "CCENQ10100OutBlock2": []
+    });
+    let resp: CCENQ10100Response =
+        serde_json::from_value(json).expect("empty out-block must deserialize");
+    assert_eq!(resp.rsp_cd, "00707");
+    assert!(
+        resp.outblock2.is_empty(),
+        "00707 yields an empty result Vec (the PENDING case)"
+    );
+}
+
+/// `CCENQ10100OutBlock2` arriving as a SINGLE object deserializes via
+/// `de_vec_or_single` into a 1-element Vec.
+#[test]
+fn ccenq10100_out_block2_single_object_deserializes_to_one_element_vec() {
+    let json = serde_json::json!({
+        "rsp_cd": "00000",
+        "CCENQ10100OutBlock2": { "OrdAbleQty": 2, "OrdAbleAmt": 20327175 }
+    });
+    let resp: CCENQ10100Response =
+        serde_json::from_value(json).expect("single-object out-block must deserialize");
+    assert_eq!(resp.outblock2.len(), 1, "single object becomes a 1-element Vec");
+    assert_eq!(resp.outblock2[0].ordableqty, "2");
 }

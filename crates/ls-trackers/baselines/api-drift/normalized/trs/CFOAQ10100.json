@@ -1,0 +1,405 @@
+{
+  "tr_code": "CFOAQ10100",
+  "tr_name": "선물옵션 주문가능수량조회",
+  "protocol": "rest",
+  "is_websocket": false,
+  "endpoint_path": "/futureoption/accno",
+  "api_group_id": "09a668df-d7e8-4b5c-977f-91d1429b931a",
+  "source_group_name": "[선물/옵션] 계좌",
+  "request_blocks": [
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 1,
+      "field_name": "authorization",
+      "korean_name": "접근토큰",
+      "type": "String",
+      "length": 1000,
+      "required": true,
+      "description_hash": "62956eed2a6e506a"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 2,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 3,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 4,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 5,
+      "field_name": "mac_address",
+      "korean_name": "MAC 주소",
+      "type": "String",
+      "length": 12,
+      "required": true,
+      "description_hash": "1d2213655779faf2"
+    },
+    {
+      "direction": "request",
+      "block_name": "CFOAQ10100InBlock1",
+      "field_index": 0,
+      "field_name": "QryTp",
+      "korean_name": "조회구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "2e13b381057fe39f"
+    },
+    {
+      "direction": "request",
+      "block_name": "CFOAQ10100InBlock1",
+      "field_index": 1,
+      "field_name": "OrdAmt",
+      "korean_name": "주문금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "CFOAQ10100InBlock1",
+      "field_index": 2,
+      "field_name": "RatVal",
+      "korean_name": "비율값",
+      "type": "Number",
+      "required": true,
+      "description_hash": "af63ad4c86019caf"
+    },
+    {
+      "direction": "request",
+      "block_name": "CFOAQ10100InBlock1",
+      "field_index": 3,
+      "field_name": "FnoIsuNo",
+      "korean_name": "선물옵션종목번호",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "CFOAQ10100InBlock1",
+      "field_index": 4,
+      "field_name": "BnsTpCode",
+      "korean_name": "매매구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "8f42ecf12a4cd4c0"
+    },
+    {
+      "direction": "request",
+      "block_name": "CFOAQ10100InBlock1",
+      "field_index": 5,
+      "field_name": "FnoOrdPrc",
+      "korean_name": "선물옵션주문가격",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "CFOAQ10100InBlock1",
+      "field_index": 6,
+      "field_name": "FnoOrdprcPtnCode",
+      "korean_name": "선물옵션호가유형코드",
+      "type": "String",
+      "length": 2,
+      "required": true,
+      "description_hash": "55778cbfea981bc4"
+    }
+  ],
+  "response_blocks": [
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 1,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 2,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 3,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOAQ10100OutBlock1",
+      "field_index": 0,
+      "field_name": "RecCnt",
+      "korean_name": "레코드갯수",
+      "type": "Number",
+      "length": 5,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOAQ10100OutBlock1",
+      "field_index": 1,
+      "field_name": "AcntNo",
+      "korean_name": "계좌번호",
+      "type": "String",
+      "length": 20,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOAQ10100OutBlock1",
+      "field_index": 2,
+      "field_name": "Pwd",
+      "korean_name": "비밀번호",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOAQ10100OutBlock1",
+      "field_index": 3,
+      "field_name": "QryTp",
+      "korean_name": "조회구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOAQ10100OutBlock1",
+      "field_index": 4,
+      "field_name": "OrdAmt",
+      "korean_name": "주문금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOAQ10100OutBlock1",
+      "field_index": 5,
+      "field_name": "RatVal",
+      "korean_name": "비율값",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOAQ10100OutBlock1",
+      "field_index": 6,
+      "field_name": "FnoIsuNo",
+      "korean_name": "선물옵션종목번호",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOAQ10100OutBlock1",
+      "field_index": 7,
+      "field_name": "BnsTpCode",
+      "korean_name": "매매구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOAQ10100OutBlock1",
+      "field_index": 8,
+      "field_name": "FnoOrdPrc",
+      "korean_name": "선물옵션주문가격",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOAQ10100OutBlock1",
+      "field_index": 9,
+      "field_name": "FnoOrdprcPtnCode",
+      "korean_name": "선물옵션호가유형코드",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOAQ10100OutBlock2",
+      "field_index": 0,
+      "field_name": "RecCnt",
+      "korean_name": "레코드갯수",
+      "type": "Number",
+      "length": 5,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOAQ10100OutBlock2",
+      "field_index": 1,
+      "field_name": "AcntNm",
+      "korean_name": "계좌명",
+      "type": "String",
+      "length": 40,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOAQ10100OutBlock2",
+      "field_index": 2,
+      "field_name": "QryDt",
+      "korean_name": "조회일",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOAQ10100OutBlock2",
+      "field_index": 3,
+      "field_name": "FnoNowPrc",
+      "korean_name": "선물옵션현재가",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOAQ10100OutBlock2",
+      "field_index": 4,
+      "field_name": "OrdAbleQty",
+      "korean_name": "주문가능수량",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOAQ10100OutBlock2",
+      "field_index": 5,
+      "field_name": "NewOrdAbleQty",
+      "korean_name": "신규주문가능수량",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOAQ10100OutBlock2",
+      "field_index": 6,
+      "field_name": "LqdtOrdAbleQty",
+      "korean_name": "청산주문가능수량",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOAQ10100OutBlock2",
+      "field_index": 7,
+      "field_name": "UsePreargMgn",
+      "korean_name": "사용예정증거금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOAQ10100OutBlock2",
+      "field_index": 8,
+      "field_name": "UsePreargMnyMgn",
+      "korean_name": "사용예정현금증거금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOAQ10100OutBlock2",
+      "field_index": 9,
+      "field_name": "OrdAbleAmt",
+      "korean_name": "주문가능금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CFOAQ10100OutBlock2",
+      "field_index": 10,
+      "field_name": "MnyOrdAbleAmt",
+      "korean_name": "현금주문가능금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    }
+  ],
+  "rate_limit_per_sec": 1,
+  "corp_rate_limit_per_sec": 10,
+  "rate_source_group": "09a668df-d7e8-4b5c-977f-91d1429b931a"
+}

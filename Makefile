@@ -15,7 +15,7 @@
 # Export command-line / make variables (e.g. LS_LIVE_SMOKE_*) to recipe shells.
 export
 
-.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1866 live-smoke-t1859 live-smoke-t1826 live-smoke-t1825 live-smoke-t9905 live-smoke-t9907 live-smoke-t8431 live-smoke-t9942 live-smoke-t1958 live-smoke-t1964 live-smoke-t1601 live-smoke-t1615 live-smoke-t1640 live-smoke-t1662 live-smoke-t1664 live-smoke-t3341 live-smoke-t8424 live-smoke-t1511 live-smoke-t1485 live-smoke-t1516 live-smoke-t1514 live-smoke-cspaq12300 live-smoke-cspaq22200 live-smoke-cfobq10500 live-smoke-t2301 live-smoke-t2522 live-smoke-t8401 live-smoke-t8426 live-smoke-t8433 live-smoke-t8435 live-smoke-t8467 live-smoke-t9943 live-smoke-t9944 raw-probe
+.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1481 live-smoke-t1482 live-smoke-t1866 live-smoke-t1859 live-smoke-t1826 live-smoke-t1825 live-smoke-t9905 live-smoke-t9907 live-smoke-t8431 live-smoke-t9942 live-smoke-t1958 live-smoke-t1964 live-smoke-t1601 live-smoke-t1615 live-smoke-t1640 live-smoke-t1662 live-smoke-t1664 live-smoke-t3341 live-smoke-t8424 live-smoke-t1511 live-smoke-t1485 live-smoke-t1516 live-smoke-t1514 live-smoke-cspaq12300 live-smoke-cspaq22200 live-smoke-cfobq10500 live-smoke-ccenq90200 live-smoke-cfoaq10100 live-smoke-ccenq10100 live-smoke-t2301 live-smoke-t2522 live-smoke-t8401 live-smoke-t8426 live-smoke-t8433 live-smoke-t8435 live-smoke-t8467 live-smoke-t9943 live-smoke-t9944 live-smoke-t2111 live-smoke-t2112 live-smoke-t2106 live-smoke-t8402 live-smoke-t8403 live-smoke-t8434 live-smoke-t1988 live-smoke-t3320 live-smoke-t8455 live-smoke-t8460 live-smoke-t8463 live-smoke-g3101 live-smoke-g3104 live-smoke-g3106 live-smoke-g3102 live-smoke-g3103 live-smoke-g3190 live-smoke-o3101 live-smoke-o3121 live-smoke-o3105 live-smoke-o3106 live-smoke-o3125 live-smoke-o3126 raw-probe
 
 # $(1) = exact test name in crates/ls-sdk/tests/live_smoke.rs
 define run_smoke
@@ -56,6 +56,21 @@ live-smoke-cspaq22200:
 live-smoke-cfobq10500:
 	$(call run_smoke,live_smoke_cfobq10500)
 
+## KRX night-derivatives balance smoke: read-only CCENQ90200 (krx_extended; an
+## empty/off-window result → PENDING, the regular clock does not apply).
+live-smoke-ccenq90200:
+	$(call run_smoke,live_smoke_ccenq90200)
+
+## F/O orderable-quantity smoke: read-only CFOAQ10100 inquiry (NOT an order);
+## set LS_LIVE_SMOKE_FNOISU to a current KOSPI200-futures code.
+live-smoke-cfoaq10100:
+	$(call run_smoke,live_smoke_cfoaq10100)
+
+## KRX night-derivatives orderable-quantity smoke: read-only CCENQ10100 inquiry
+## (NOT an order; krx_extended). Set LS_LIVE_SMOKE_FNOISU to a current code.
+live-smoke-ccenq10100:
+	$(call run_smoke,live_smoke_ccenq10100)
+
 ## WebSocket smoke: S3_ connect/subscribe/unsubscribe lifecycle (timeboxed).
 live-smoke-ws:
 	$(call run_smoke,live_smoke_ws)
@@ -93,6 +108,16 @@ live-smoke-t1489:
 	$(call run_smoke,live_smoke_t1489)
 live-smoke-t1492:
 	$(call run_smoke,live_smoke_t1492)
+
+## t1481 (시간외등락율상위) smoke: token -> one single-page after-hours top
+## change-rate read (body idx serialized as a number at first-page convention 0).
+live-smoke-t1481:
+	$(call run_smoke,live_smoke_t1481)
+
+## t1482 (시간외거래량상위) smoke: token -> one single-page after-hours top-volume
+## read (sort_gbn + body idx serialized as numbers at first-page convention 0).
+live-smoke-t1482:
+	$(call run_smoke,live_smoke_t1482)
 
 ## t1866 (서버저장조건 리스트조회) smoke: token -> server-saved condition list (the
 ## saved-condition spine producer). Requires LS_PAPER_USER_ID + a seeded condition.
@@ -205,6 +230,98 @@ live-smoke-t9943:
 ## t9944 (지수옵션마스터조회) smoke: token -> one F/O index-option master read (no caller input). Master read.
 live-smoke-t9944:
 	$(call run_smoke,live_smoke_t9944)
+
+## t2111 (선물/옵션현재가시세) smoke: token -> t8467 contract source -> one F/O current-price read.
+live-smoke-t2111:
+	$(call run_smoke,live_smoke_t2111)
+
+## t2112 (선물/옵션현재가호가) smoke: token -> t8467 contract source -> one F/O order-book read.
+live-smoke-t2112:
+	$(call run_smoke,live_smoke_t2112)
+
+## t2106 (선물/옵션현재가시세메모) smoke: token -> t8467 contract source -> one F/O price-memo read.
+live-smoke-t2106:
+	$(call run_smoke,live_smoke_t2106)
+
+## t8402 (주식선물현재가) smoke: token -> t8401 contract source -> one stock-futures current-price read.
+live-smoke-t8402:
+	$(call run_smoke,live_smoke_t8402)
+
+## t8403 (주식선물호가) smoke: token -> t8401 contract source -> one stock-futures order-book read.
+live-smoke-t8403:
+	$(call run_smoke,live_smoke_t8403)
+
+## t8434 (선물/옵션멀티현재가) smoke: token -> t8467 contract source -> one F/O multi current-price read (qrycnt=1).
+live-smoke-t8434:
+	$(call run_smoke,live_smoke_t8434)
+
+## t1988 (기초자산리스트조회) smoke: token -> one ELW underlying-asset list read (all markets, filters off).
+live-smoke-t1988:
+	$(call run_smoke,live_smoke_t1988)
+
+## t3320 (FNG_요약) smoke: token -> one FnGuide company-summary read (public gicode A005930).
+live-smoke-t3320:
+	$(call run_smoke,live_smoke_t3320)
+
+## t8455 (KRX야간파생 마스터조회) smoke: token -> one night-derivatives master read (gubun=NF).
+## venue_session krx_extended: meaningful only in the night session (~18:00-05:00 KST).
+live-smoke-t8455:
+	$(call run_smoke,live_smoke_t8455)
+
+## t8460 (KRX야간파생 옵션 전광판) smoke: token -> one night-option-board read (gubun=G, near month).
+## venue_session krx_extended (~18:00-05:00 KST).
+live-smoke-t8460:
+	$(call run_smoke,live_smoke_t8460)
+
+## t8463 (KRX야간파생 투자자시간대별) smoke: token -> one investor-by-timeslot read (N/F/101).
+## venue_session krx_extended (~18:00-05:00 KST).
+live-smoke-t8463:
+	$(call run_smoke,live_smoke_t8463)
+
+## Overseas-stock reads (reach wave U7): token -> one read keyed by a public US
+## ticker (82/TSLA = TSLA on NASDAQ). Domain overseas_stock, market_session route.
+live-smoke-g3101:
+	$(call run_smoke,live_smoke_g3101)
+
+live-smoke-g3104:
+	$(call run_smoke,live_smoke_g3104)
+
+live-smoke-g3106:
+	$(call run_smoke,live_smoke_g3106)
+
+live-smoke-g3102:
+	$(call run_smoke,live_smoke_g3102)
+
+live-smoke-g3103:
+	$(call run_smoke,live_smoke_g3103)
+
+## g3190 (해외주식 마스터): token -> one master-list read (US, exchange 2, 10 rows).
+live-smoke-g3190:
+	$(call run_smoke,live_smoke_g3190)
+
+## o3101 (해외선물 마스터): token -> one futures-master read (gubun=all).
+live-smoke-o3101:
+	$(call run_smoke,live_smoke_o3101)
+
+## o3121 (해외선물옵션 마스터): token -> one option-master read (MktGb=O).
+live-smoke-o3121:
+	$(call run_smoke,live_smoke_o3121)
+
+## o3105 (해외선물 현재가): token -> one futures-quote read (CUSN23).
+live-smoke-o3105:
+	$(call run_smoke,live_smoke_o3105)
+
+## o3106 (해외선물 현재가호가): token -> one futures-order-book read (ADM23).
+live-smoke-o3106:
+	$(call run_smoke,live_smoke_o3106)
+
+## o3125 (해외선물옵션 현재가): token -> one option-quote read (F/HSIM23).
+live-smoke-o3125:
+	$(call run_smoke,live_smoke_o3125)
+
+## o3126 (해외선물옵션 현재가호가): token -> one option-order-book read (F/ADM23).
+live-smoke-o3126:
+	$(call run_smoke,live_smoke_o3126)
 
 ## Failure classifier (implement-tr R6): one credential-safe raw-HTTP POST that
 ## bypasses the SDK's typed deserialize. Requires LS_PROBE_TR_CD, LS_PROBE_PATH,

@@ -1,0 +1,24 @@
+tr_code: t8402
+name: 주식선물현재가조회(API용)
+owner_class: market_session
+facets:
+  protocol: rest
+  instrument_domain: futures_options
+  venue_session: krx_regular
+  date_sensitive: false
+  self_paginated: false
+  account_state: false
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: market_data
+  caller_supplied_identifiers: [focode]
+dependencies:
+  self_continuation_fields: []
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: true
+  recommended: false
+maintenance:
+  source_spec_hash: d4e5f6a7b8c9
+  last_reviewed: 2026-06-24

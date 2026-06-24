@@ -511,6 +511,36 @@ pub const T1452_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+/// t1481 — 시간외등락율상위 (after-hours top change rate; single-page body-`idx`
+/// paginated). `has_pagination: true` mirrors `facets.self_paginated`.
+pub const T1481_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1481",
+    path: "/stock/high-item",
+    module: "stock",
+    group: "[주식] 상위종목",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
+/// t1482 — 시간외거래량상위 (after-hours top volume; single-page body-`idx`
+/// paginated). `has_pagination: true` mirrors `facets.self_paginated`.
+pub const T1482_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1482",
+    path: "/stock/high-item",
+    module: "stock",
+    group: "[주식] 상위종목",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
 /// t1403 — 신규상장종목조회 (newly-listed stocks; single-page body-`idx` paginated).
 pub const T1403_POLICY: EndpointPolicy = EndpointPolicy {
     tr_code: "t1403",
@@ -692,6 +722,60 @@ pub const CFOBQ10500_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(10),
 };
 
+/// CCENQ90200 — KRX야간파생 잔고조회 (KRX night-derivatives account balance inquiry,
+/// read-only). Account-gated, krx_extended session.
+///
+/// Dispatches through plain `Inner::post` (non-paginated): the result is
+/// single-page (`facets.self_paginated: false`), so `has_pagination: false`.
+pub const CCENQ90200_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CCENQ90200",
+    path: "/futureoption/accno",
+    module: "futureoption",
+    group: "[선물/옵션] 계좌",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Account,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
+/// CFOAQ10100 — 선물옵션 주문가능수량조회 (F/O orderable-quantity inquiry, read-only —
+/// an inquiry, NOT an order).
+///
+/// Dispatches through plain `Inner::post` (non-paginated): the result is
+/// single-page (`facets.self_paginated: false`), so `has_pagination: false`.
+pub const CFOAQ10100_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CFOAQ10100",
+    path: "/futureoption/accno",
+    module: "futureoption",
+    group: "[선물/옵션] 계좌",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Account,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(10),
+};
+
+/// CCENQ10100 — KRX야간파생 주문가능수량 조회 (KRX night-derivatives orderable-quantity
+/// inquiry, read-only — an inquiry, NOT an order). krx_extended session.
+///
+/// Dispatches through plain `Inner::post` (non-paginated): the result is
+/// single-page (`facets.self_paginated: false`), so `has_pagination: false`.
+pub const CCENQ10100_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CCENQ10100",
+    path: "/futureoption/accno",
+    module: "futureoption",
+    group: "[선물/옵션] 계좌",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Account,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(10),
+};
+
 /// t2301 — 옵션전광판 (F/O option board; non-paginated market read). Keyed by a
 /// contract month + mini/regular selector.
 pub const T2301_POLICY: EndpointPolicy = EndpointPolicy {
@@ -833,6 +917,371 @@ pub const T9944_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+/// t2111 — 선물/옵션현재가(시세)조회 (F/O current-price quote; non-paginated F/O
+/// market-data read). Keyed by a contract `focode`.
+pub const T2111_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t2111",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(5),
+};
+
+/// t2112 — 선물/옵션현재가호가조회 (F/O current-price order book; non-paginated F/O
+/// market-data read). Keyed by a contract `shcode`.
+pub const T2112_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t2112",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(5),
+};
+
+/// t2106 — 선물/옵션현재가시세메모 (F/O price memo; non-paginated F/O market-data
+/// read). Keyed by a contract `code`.
+pub const T2106_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t2106",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8402 — 주식선물현재가조회(API용) (stock-futures current price; non-paginated F/O
+/// market-data read). Keyed by a stock-futures contract `focode`.
+pub const T8402_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8402",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(2),
+};
+
+/// t8403 — 주식선물호가조회(API용) (stock-futures order book; non-paginated F/O
+/// market-data read). Keyed by a stock-futures contract `shcode`.
+pub const T8403_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8403",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(2),
+};
+
+/// t8434 — 선물/옵션멀티현재가조회 (F/O multi current-price; non-paginated F/O
+/// market-data read). Keyed by a numeric `qrycnt` + one or more `focode` codes.
+pub const T8434_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8434",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(3),
+    corp_rate_limit_per_sec: Some(5),
+};
+
+/// t1988 — 기초자산리스트조회 (ELW underlying-asset list; non-paginated market-data
+/// read). Routes through `market_session` (KTD3 — placeholder `standalone`
+/// owner_class is OAuth-only). `from_rate`/`to_rate` are numeric request slots.
+pub const T1988_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1988",
+    path: "/stock/elw",
+    module: "stock",
+    group: "[주식] ELW",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t3102 — 뉴스본문 (news body; non-paginated market-data read). Keyed by a news
+/// number (`sNewsno`). Routes through `market_session` (KTD3).
+pub const T3102_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t3102",
+    path: "/stock/investinfo",
+    module: "stock",
+    group: "[주식] 투자정보",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t3320 — FNG_요약 (FnGuide company summary; non-paginated market-data read).
+/// Keyed by a 7-char FnGuide company code (`gicode`). Routes through
+/// `market_session` (KTD3).
+pub const T3320_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t3320",
+    path: "/stock/investinfo",
+    module: "stock",
+    group: "[주식] 투자정보",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8455 — KRX야간파생 마스터조회(API용) (night-derivatives master; non-paginated
+/// F/O market-data read). `venue_session: krx_extended` (KTD7). Keyed by a
+/// `gubun` class selector.
+pub const T8455_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8455",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8460 — KRX야간파생 옵션 전광판 (night-derivatives option board; non-paginated
+/// F/O market-data read). `venue_session: krx_extended` (KTD7). Keyed by a
+/// contract month `yyyymm` + an index `gubun`.
+pub const T8460_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8460",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8463 — KRX야간파생 투자자시간대별(API용) (night-derivatives investor-by-timeslot;
+/// non-paginated F/O investor read). `venue_session: krx_extended` (KTD7). Keyed
+/// by `tm_rng`/`fot_clsf_cd`/`bsc_asts_id`; `cnt` is a numeric request slot.
+pub const T8463_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8463",
+    path: "/futureoption/investor",
+    module: "futureoption",
+    group: "[선물/옵션] 투자자",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// g3101 — 해외주식 현재가 조회 (overseas current-price; non-paginated market-data
+/// read). Domain `overseas_stock`; routes through `market_session`.
+pub const G3101_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "g3101",
+    path: "/overseas-stock/market-data",
+    module: "overseas-stock",
+    group: "[해외주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(50),
+};
+
+/// g3104 — 해외주식 종목정보 조회 (overseas stock-info master; non-paginated
+/// market-data read).
+pub const G3104_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "g3104",
+    path: "/overseas-stock/market-data",
+    module: "overseas-stock",
+    group: "[해외주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(50),
+};
+
+/// g3106 — 해외주식 현재가호가 조회 (overseas current-price + order book;
+/// non-paginated market-data read).
+pub const G3106_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "g3106",
+    path: "/overseas-stock/market-data",
+    module: "overseas-stock",
+    group: "[해외주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(50),
+};
+
+/// g3102 — 해외주식 시간대별 (overseas time-series ticks; non-paginated market-data
+/// read). `readcnt`/`cts_seq` are numeric request slots (KTD4).
+pub const G3102_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "g3102",
+    path: "/overseas-stock/market-data",
+    module: "overseas-stock",
+    group: "[해외주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(50),
+};
+
+/// g3103 — 해외주식 일주월 조회 (overseas daily/weekly/monthly chart; non-paginated
+/// market-data read; lower-rate chart bucket).
+pub const G3103_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "g3103",
+    path: "/overseas-stock/chart",
+    module: "overseas-stock",
+    group: "[해외주식] 차트",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(10),
+};
+
+/// g3190 — 해외주식 마스터 조회 (overseas master list; non-paginated market-data
+/// read). `readcnt` is a numeric request slot (KTD4).
+pub const G3190_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "g3190",
+    path: "/overseas-stock/market-data",
+    module: "overseas-stock",
+    group: "[해외주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(50),
+};
+
+/// o3101 — 해외선물마스터조회 (overseas-futures master list; non-paginated
+/// market-data read; ARRAY out-block). `gubun` filters, no instrument id.
+pub const O3101_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3101",
+    path: "/overseas-futureoption/market-data",
+    module: "overseas-futureoption",
+    group: "[해외선물] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(10),
+};
+
+/// o3121 — 해외선물옵션 마스터 조회 (overseas-future-option master list;
+/// non-paginated market-data read; ARRAY out-block).
+pub const O3121_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3121",
+    path: "/overseas-futureoption/market-data",
+    module: "overseas-futureoption",
+    group: "[해외선물] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(10),
+};
+
+/// o3105 — 해외선물 현재가(종목정보) 조회 (overseas-futures current price /
+/// symbol info; non-paginated market-data read; single out-block).
+pub const O3105_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3105",
+    path: "/overseas-futureoption/market-data",
+    module: "overseas-futureoption",
+    group: "[해외선물] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(50),
+};
+
+/// o3106 — 해외선물 현재가호가 조회 (overseas-futures current price + order book;
+/// non-paginated market-data read; single out-block).
+pub const O3106_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3106",
+    path: "/overseas-futureoption/market-data",
+    module: "overseas-futureoption",
+    group: "[해외선물] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(50),
+};
+
+/// o3125 — 해외선물옵션 현재가(종목정보) 조회 (overseas-future-option current price /
+/// symbol info; non-paginated market-data read; single out-block).
+pub const O3125_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3125",
+    path: "/overseas-futureoption/market-data",
+    module: "overseas-futureoption",
+    group: "[해외선물] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(50),
+};
+
+/// o3126 — 해외선물옵션 현재가호가 조회 (overseas-future-option current price +
+/// order book; non-paginated market-data read; single out-block).
+pub const O3126_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3126",
+    path: "/overseas-futureoption/market-data",
+    module: "overseas-futureoption",
+    group: "[해외선물] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(50),
+};
+
 /// S3_ — KOSPI체결 실시간 시세 (real-time KOSPI trade feed, WebSocket).
 ///
 /// WebSocket TR: there is no REST dispatch, but the policy const is retained as
@@ -896,6 +1345,8 @@ mod tests {
             T1531_POLICY,
             T1537_POLICY,
             T1452_POLICY,
+            T1481_POLICY,
+            T1482_POLICY,
             T1403_POLICY,
             T1441_POLICY,
             T1463_POLICY,
@@ -927,6 +1378,9 @@ mod tests {
             CSPAQ12300_POLICY,
             CSPAQ22200_POLICY,
             CFOBQ10500_POLICY,
+            CCENQ90200_POLICY,
+            CFOAQ10100_POLICY,
+            CCENQ10100_POLICY,
             T2301_POLICY,
             T2522_POLICY,
             T8401_POLICY,
@@ -936,6 +1390,30 @@ mod tests {
             T8467_POLICY,
             T9943_POLICY,
             T9944_POLICY,
+            T2111_POLICY,
+            T2112_POLICY,
+            T2106_POLICY,
+            T8402_POLICY,
+            T8403_POLICY,
+            T8434_POLICY,
+            T1988_POLICY,
+            T3102_POLICY,
+            T3320_POLICY,
+            T8455_POLICY,
+            T8460_POLICY,
+            T8463_POLICY,
+            G3101_POLICY,
+            G3104_POLICY,
+            G3106_POLICY,
+            G3102_POLICY,
+            G3103_POLICY,
+            G3190_POLICY,
+            O3101_POLICY,
+            O3121_POLICY,
+            O3105_POLICY,
+            O3106_POLICY,
+            O3125_POLICY,
+            O3126_POLICY,
         ] {
             assert!(!p.is_order, "{} must not be an order endpoint", p.tr_code);
             assert!(p.is_rest(), "{} must be a REST endpoint", p.tr_code);

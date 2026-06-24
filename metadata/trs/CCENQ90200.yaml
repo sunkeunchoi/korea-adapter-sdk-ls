@@ -8,7 +8,7 @@ facets:
   date_sensitive: false
   self_paginated: false
   account_state: true
-  paper_incompatible: false
+  paper_incompatible: true
   certification_path: none
   rate_bucket: account
   caller_supplied_identifiers: []

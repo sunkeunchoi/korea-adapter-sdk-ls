@@ -1,6 +1,7 @@
 ---
 title: "LS gateway IGW40011 — numeric request-body fields must serialize as JSON numbers, not strings"
 date: 2026-06-23
+last_updated: 2026-06-24
 category: integration-issues
 module: ls-sdk TR request modeling
 problem_type: integration_issue
@@ -34,6 +35,7 @@ The LS-securities (Korea) paper gateway rejects a request with **HTTP 500 / `rsp
 
 - Treating `IGW40011` as a value/filter problem and sweeping input values (all `"0"`, empty strings, `mkt_gb="1"`, wide ranges) — every variant reproduced it identically, because the defect was the type, not the value.
 - Modeling the field as a plain `String` (the default for most LS in-block fields) — that serializes as a quoted string, which is exactly what the gateway rejects for numeric slots.
+- **Concluding "environmental" from a persistent IGW40011 without auditing *every* numeric request field.** `t1988` was first dispositioned PENDING/"environmental" (ledger §8) on a persistent IGW40011 — but the real cause was its **two** numeric fields `from_rate`/`to_rate` still serializing as quoted strings. A persistent IGW40011 across input *value* forms is not evidence of environmental; it is evidence an unaudited numeric slot is still quoted. Once both were emitted as JSON numbers (`string_as_number`), the very next paper smoke returned `rsp_cd=00000` (71 assets) and `t1988` flipped to Implemented (`feat/readonly-rest-reach-wave`, 2026-06-24).
 
 ## Solution
 
@@ -87,11 +89,11 @@ LS is asymmetric about JSON types. **Response** fields arrive inconsistently as 
 - On any `IGW40011`, suspect wire type first: A/B the body with `make raw-probe` (quoted vs unquoted) before touching values.
 - **Sibling gateway codes seen the same session:**
   - `IGW00201` ("호출 거래건수를 초과") = call-count / rate throttle, usually **self-inflicted** by a tight self-sourcing loop — pace it (`tokio::time::sleep`), don't treat it as a TR defect.
-  - A TR that returns `IGW40011` for *every* request form (e.g. `t1988`) after the type is correct is environmental/provisioning → ship **PENDING**, don't flip.
+  - **Conclude "environmental → ship PENDING" only after confirming EVERY numeric request field serializes as a JSON number.** A TR with more than one numeric slot (e.g. `t1988`'s `from_rate`/`to_rate`) keeps returning `IGW40011` until the *last* one is unquoted — so a persistent IGW40011 across input-value forms means "re-audit the wire types," not "environmental." `t1988` was wrongly shipped PENDING/environmental on exactly this trap (ledger §8) and later flipped Implemented once both fields were emitted as numbers. Only after every numeric slot is a confirmed JSON number (assert `.is_number()` on each) and the gateway *still* rejects every form is the failure genuinely environmental/provisioning.
 - The *response-side* counterpart to this request-side learning — the normalized baseline hides an out-block's true wire key and array-ness, so read them from the raw capture and model array blocks as `Vec` via `de_vec_or_single` — has its own canonical home: `docs/solutions/conventions/tr-out-block-shape-from-raw-capture.md`. (A large `body_len` from the same raw probe is the tell that a "single"-looking block is a runtime array.)
 
 ## Related Issues
 
 - `docs/solutions/architecture-patterns/ls-sdk-pagination-modeling.md` — the single-page body-`idx` pattern (the `string_as_number` rule for `idx` specifically); this doc is the gateway-error/diagnostic counterpart and generalizes it to all numeric request fields.
 - `docs/solutions/integration-issues/makefile-include-env-quotes-gateway-403.md` — the sibling gateway-diagnostic case (surface the gateway body via a raw POST to isolate the layer).
-- `metadata/PROVISIONALITY-LEDGER.md` §8 — records `t1988` PENDING on persistent `IGW40011` and the `t3341.idx` / `t1664.cnt` numeric-serialization notes.
+- `metadata/PROVISIONALITY-LEDGER.md` §8 — originally recorded `t1988` PENDING on persistent `IGW40011`; the `feat/readonly-rest-reach-wave` run (2026-06-24) re-derived the root cause as the `from_rate`/`to_rate` wire type, fixed it, and flipped `t1988` to Implemented, superseding the "environmental" conclusion. Also holds the `t3341.idx` / `t1664.cnt` numeric-serialization notes.
