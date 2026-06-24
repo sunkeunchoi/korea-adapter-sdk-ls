@@ -8,7 +8,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 |----|------|-------------|---------|------|
 | `CCENQ10100` | KRX야간파생 주문가능수량 조회 | `account` | tracked | [CCENQ10100](./CCENQ10100.md) |
 | `CCENQ90200` | KRX야간파생 잔고조회 | `account` | tracked | [CCENQ90200](./CCENQ90200.md) |
-| `CFOAQ10100` | 선물옵션 주문가능수량조회 | `account` | tracked | [CFOAQ10100](./CFOAQ10100.md) |
+| `CFOAQ10100` | 선물옵션 주문가능수량조회 | `account` | implemented | [CFOAQ10100](./CFOAQ10100.md) |
 | `CFOBQ10500` | 선물옵션 계좌예탁금증거금조회 | `account` | implemented | [CFOBQ10500](./CFOBQ10500.md) |
 | `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | recommended | [CSPAQ12200](./CSPAQ12200.md) |
 | `CSPAQ12300` | BEP단가조회 | `account` | implemented | [CSPAQ12300](./CSPAQ12300.md) |

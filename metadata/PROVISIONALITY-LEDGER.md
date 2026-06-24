@@ -570,3 +570,38 @@ by a passing smoke.
 **Residual provisionality.** None for this wave — all five are implemented; no
 pending/held members. Recommended tier untouched: `EVIDENCE-FRESHNESS.md` stays at
 six Recommended TRs; no `metadata/evidence/<tr>.yaml` exists for any of the five.
+
+---
+
+## 12. Reach wave U4 — Account/F&O lane (CCENQ90200, CFOAQ10100, CCENQ10100) (2026-06-24)
+
+Three account-gated read-only inquiries routed through `account` (mirroring
+`CSPAQ12200`'s account-identity discipline — the account number comes from
+config, never a caller field; verified absent from each serialized in-block).
+**1 implemented, 2 Tracked/paper-incompatible.**
+
+| TR | End state | Disposition (credential-free) |
+|---|---|---|
+| CFOAQ10100 | **implemented** | `rsp_cd=00136 qtyrows=1` (선물옵션 주문가능수량조회; `FnoIsuNo=A0169000` KOSPI200 Sep-2026 index future, accepted live; canonical out-block field `OrdAbleQty`/주문가능수량, single object → 1-element Vec). A read-only inquiry (조회), not an order. |
+| CCENQ90200 | Tracked, **paper_incompatible** | gateway `rsp_cd=01900` (`is_paper_incompatible()` true) — KRX 야간파생 night-derivatives balance is not provided in paper trading. No runtime flip this wave; `venue_session: krx_extended` row (§11.1) **retained** (ships venue-provisional, never confirmed). |
+| CCENQ10100 | Tracked, **paper_incompatible** | gateway `rsp_cd=01900` (`is_paper_incompatible()` true) — KRX 야간파생 night-derivatives orderable-quantity is not provided in paper trading. No runtime flip this wave; `venue_session: krx_extended` retained. |
+
+**`01900`, not off-window empty.** Both night reads return a definitive gateway
+`01900` (paper-incompatible) regardless of the krx_extended window — a hard venue
+rejection, not a `00707`/off-window empty result. By the disposition state machine
+this is the `gateway 01900 paper-incompatible` terminal: Tracked with
+`paper_incompatible: true`, no runtime authored. The SDK structs/policies/smoke
+harnesses for both ship anyway (callable the day paper supports them), but they are
+NOT flipped to Implemented. The night window therefore did not gate the outcome;
+no in-window retry would change a `01900`.
+
+**`caller_supplied_identifiers` (CFOAQ10100, `[FnoIsuNo]`).** Confirmed accepted —
+`A0169000` (the live KOSPI200 Sep-2026 index future, discovered via the t8467/t9943
+index-futures masters; the raw-capture `101*6000` codes are obsolete and return
+`01414`/`01706`). The provisional caller-input facet is **retired** for CFOAQ10100.
+
+**Residual provisionality (CFOAQ10100).** `venue_session: unspecified` is
+session-agnostic (account read); the F/O orderable-quantity read returned a
+non-empty success during the KRX regular session, consistent with
+session-independence. Field-level `type` facets stay flagged (a clean deserialize
+does not confirm the HTTP-500-seeded types). Recommended tier untouched.

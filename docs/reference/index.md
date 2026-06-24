@@ -6,6 +6,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 
 | TR | Name | Owner class | Status |
 |----|------|-------------|--------|
+| `CFOAQ10100` | 선물옵션 주문가능수량조회 | `account` | implemented, not yet recommended |
 | `CFOBQ10500` | 선물옵션 계좌예탁금증거금조회 | `account` | implemented, not yet recommended |
 | `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | recommended |
 | `CSPAQ12300` | BEP단가조회 | `account` | implemented, not yet recommended |

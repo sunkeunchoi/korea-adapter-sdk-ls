@@ -878,7 +878,8 @@ mod tests {
 
         // The still-unrecommended implemented TRs each carry the banner.
         let banner_trs = [
-            "CFOBQ10500", "CSPAQ12300", "CSPAQ22200", "revoke", "t1403", "t1441", "t1452", "t1463",
+            "CFOAQ10100", "CFOBQ10500", "CSPAQ12300", "CSPAQ22200", "revoke", "t1403", "t1441",
+            "t1452", "t1463",
             "t1466", "t1481", "t1482", "t1485", "t1489", "t1492", "t1511", "t1514", "t1516", "t1531",
             "t1537", "t1601",
             "t1615", "t1640", "t1662", "t1664", "t1825", "t1826", "t1859", "t1866", "t1958",
@@ -932,9 +933,12 @@ mod tests {
         // t8403 (U5 reach wave, stock-futures order book) adds one more.
         // t8434 (U5 reach wave, F/O multi current-price, array out-block) adds one more.
         // (t2106 ships PENDING — empty memo array off-session — not counted.)
+        // CFOAQ10100 (U4 reach wave, F/O orderable-quantity inquiry) adds one more.
+        // (CCENQ90200 + CCENQ10100 ship Tracked/paper-incompatible (gateway 01900) —
+        // not implemented, not counted.)
         assert_eq!(
             reference.len(),
-            58,
+            59,
             "index + the implemented reference pages"
         );
 
