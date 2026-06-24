@@ -30,6 +30,9 @@ use ls_sdk::market_session::{
     T3320Request, T3320Response,
     T8455OutBlock, T8455Request, T8455Response, T8460Request, T8460Response, T8463OutBlock,
     T8463Request, T8463Response,
+    G3101OutBlock, G3101Request, G3101Response, G3102Request, G3102Response, G3103Request,
+    G3103Response, G3104OutBlock, G3104Request, G3104Response, G3106OutBlock, G3106Request,
+    G3106Response, G3190Request, G3190Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
@@ -3406,4 +3409,309 @@ fn t8463_off_window_empty_is_rerun_disposition_not_flip_not_drop() {
     .expect("off-window empty still deserializes (the night window is closed)");
     assert_eq!(empty.rsp_cd, "00707");
     assert!(empty.outblock1.is_empty(), "empty time-series array is the re-run case");
+}
+
+// ---------------------------------------------------------------------------
+// Overseas-stock reads (reach wave U7). Domain `overseas_stock` (`g`-prefix).
+// Out-block keys/array-ness from the raw capture (KTD5): g3101/g3104/g3106 are
+// single Object out-blocks; g3102/g3103/g3190 carry a header Object + an
+// Object-Array detail (`…OutBlock1`). Canonical price/name field pinned by
+// baseline `korean_name` from a NON-COLLAPSING fixture (price≠open≠high≠low),
+// KTD6. Numeric request counts (`readcnt`/`cts_seq`) assert `.is_number()`,
+// KTD4. The `01900` paper-incompatible disposition is covered explicitly on
+// g3101 (representative): the member stays Tracked, no flip.
+// ---------------------------------------------------------------------------
+
+/// `g3101` request rename (no caller leak) + a NON-COLLAPSING success body:
+/// `price` (현재가, canonical KTD6) is pinned exactly and is distinct from
+/// open/high/low so a mislabel cannot hide.
+#[test]
+fn g3101_request_renames_and_price_round_trips() {
+    let value = serde_json::to_value(G3101Request::new("R", "82TSLA", "82", "TSLA"))
+        .expect("serialize g3101");
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "exactly one top-level key");
+    assert_eq!(value["g3101InBlock"]["exchcd"], "82");
+    assert_eq!(value["g3101InBlock"]["symbol"], "TSLA");
+    assert!(value.get("g3101OutBlock").is_none(), "no out-block leaks into the request");
+
+    let resp: G3101Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "g3101OutBlock": {
+            "korname": "테슬라", "symbol": "TSLA", "price": "283.8200", "sign": "5",
+            "diff": "1.1300", "volume": 414175, "open": "285.0900", "high": "285.3100",
+            "low": "281.8400", "currency": "USD"
+        }
+    }))
+    .expect("representative g3101 success must deserialize");
+    // Canonical 현재가 pinned exactly, distinct from open/high/low (KTD6).
+    assert_eq!(resp.outblock.price, "283.8200", "현재가");
+    assert_eq!(resp.outblock.open, "285.0900", "시가");
+    assert_eq!(resp.outblock.high, "285.3100", "고가");
+    assert_eq!(resp.outblock.low, "281.8400", "저가");
+    assert_ne!(resp.outblock.price, resp.outblock.open, "non-collapsing: price≠open");
+    assert_eq!(resp.outblock.korname, "테슬라", "한글종목명");
+}
+
+/// `g3101` numeric out-block field parses from BOTH string and number JSON.
+#[test]
+fn g3101_numeric_field_string_or_number() {
+    let from_num: G3101OutBlock =
+        serde_json::from_value(serde_json::json!({ "volume": 414175 })).expect("number form");
+    let from_str: G3101OutBlock =
+        serde_json::from_value(serde_json::json!({ "volume": "414175" })).expect("string form");
+    assert_eq!(from_num.volume, "414175");
+    assert_eq!(from_str.volume, "414175");
+}
+
+/// `g3101` empty result (00707, empty out-block) deserializes as the pending case.
+#[test]
+fn g3101_empty_result_deserializes_as_pending() {
+    let empty: G3101Response =
+        serde_json::from_value(serde_json::json!({ "rsp_cd": "00707" })).expect("empty");
+    assert!(empty.outblock.price.is_empty(), "empty snapshot is the pending case");
+}
+
+/// `g3101` `01900` classifies as paper-incompatible — the member stays Tracked,
+/// no flip (KTD5/disposition state machine). Representative for the lane.
+#[tokio::test]
+async fn g3101_code_01900_classifies_as_paper_incompatible() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path("/overseas-stock/market-data"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "rsp_cd": "01900",
+            "rsp_msg": "모의투자에서는 해당업무가 제공되지 않습니다."
+        })))
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let err = sdk
+        .market_session()
+        .overseas_quote(&G3101Request::new("R", "82TSLA", "82", "TSLA"))
+        .await
+        .expect_err("01900 must surface as an error");
+    match &err {
+        LsError::ApiError { code, .. } => {
+            assert_eq!(code, "01900", "exact code preserved");
+            assert!(ls_core::is_paper_incompatible(code), "01900 paper-incompatible");
+        }
+        other => panic!("expected ApiError, got {other:?}"),
+    }
+}
+
+/// `g3104` rename + canonical 한글종목명 (`korname`, KTD6) pinned exactly.
+#[test]
+fn g3104_request_renames_and_korname_round_trips() {
+    let value = serde_json::to_value(G3104Request::new("R", "82TSLA", "82", "TSLA"))
+        .expect("serialize g3104");
+    assert_eq!(value["g3104InBlock"]["symbol"], "TSLA");
+    assert!(value.get("g3104OutBlock").is_none(), "no out-block leaks");
+
+    let resp: G3104Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "g3104OutBlock": {
+            "korname": "테슬라", "engname": "TESLA INC", "symbol": "TSLA",
+            "exchange_name": "나스닥", "nation_name": "미국", "currency": "USD",
+            "share": 3216520000i64, "pcls": "284.9500"
+        }
+    }))
+    .expect("representative g3104 success must deserialize");
+    assert_eq!(resp.outblock.korname, "테슬라", "한글종목명");
+    assert_eq!(resp.outblock.engname, "TESLA INC", "영문종목명");
+    assert_ne!(resp.outblock.korname, resp.outblock.engname, "non-collapsing: kor≠eng");
+}
+
+/// `g3104` numeric out-block field parses from BOTH string and number JSON.
+#[test]
+fn g3104_numeric_field_string_or_number() {
+    let from_num: G3104OutBlock =
+        serde_json::from_value(serde_json::json!({ "share": 3216520000i64 })).expect("number");
+    let from_str: G3104OutBlock =
+        serde_json::from_value(serde_json::json!({ "share": "3216520000" })).expect("string");
+    assert_eq!(from_num.share, "3216520000");
+    assert_eq!(from_str.share, "3216520000");
+}
+
+/// `g3104` empty result (00707) deserializes as the pending case.
+#[test]
+fn g3104_empty_result_deserializes_as_pending() {
+    let empty: G3104Response =
+        serde_json::from_value(serde_json::json!({ "rsp_cd": "00707" })).expect("empty");
+    assert!(empty.outblock.korname.is_empty(), "empty master is the pending case");
+}
+
+/// `g3106` rename + canonical 현재가 (`price`, KTD6) from a non-collapsing body.
+#[test]
+fn g3106_request_renames_and_price_round_trips() {
+    let value = serde_json::to_value(G3106Request::new("R", "82TSLA", "82", "TSLA"))
+        .expect("serialize g3106");
+    assert_eq!(value["g3106InBlock"]["symbol"], "TSLA");
+    assert!(value.get("g3106OutBlock").is_none(), "no out-block leaks");
+
+    let resp: G3106Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "g3106OutBlock": {
+            "korname": "테슬라", "symbol": "TSLA", "price": "283.0200", "sign": "5",
+            "diff": "1.9300", "volume": 431173, "offerho1": "283.1100", "bidho1": "283.0200"
+        }
+    }))
+    .expect("representative g3106 success must deserialize");
+    assert_eq!(resp.outblock.price, "283.0200", "현재가");
+    assert_eq!(resp.outblock.offerho1, "283.1100", "매도호가1");
+    assert_eq!(resp.outblock.bidho1, "283.0200", "매수호가1");
+    assert_ne!(resp.outblock.offerho1, resp.outblock.bidho1, "non-collapsing: offer≠bid");
+}
+
+/// `g3106` numeric out-block field parses from BOTH string and number JSON.
+#[test]
+fn g3106_numeric_field_string_or_number() {
+    let from_num: G3106OutBlock =
+        serde_json::from_value(serde_json::json!({ "volume": 431173 })).expect("number");
+    let from_str: G3106OutBlock =
+        serde_json::from_value(serde_json::json!({ "volume": "431173" })).expect("string");
+    assert_eq!(from_num.volume, "431173");
+    assert_eq!(from_str.volume, "431173");
+}
+
+/// `g3106` empty result (00707) deserializes as the pending case.
+#[test]
+fn g3106_empty_result_deserializes_as_pending() {
+    let empty: G3106Response =
+        serde_json::from_value(serde_json::json!({ "rsp_cd": "00707" })).expect("empty");
+    assert!(empty.outblock.price.is_empty(), "empty order book is the pending case");
+}
+
+/// `g3102` numeric request fields serialize as JSON NUMBERS (KTD4); the header +
+/// Object-Array detail round-trips; canonical 현재가 (`price`) pinned exactly from
+/// a non-collapsing row (KTD6); a single detail row collapses to a one-element
+/// Vec (KTD5).
+#[test]
+fn g3102_request_serializes_counts_as_numbers_and_array_round_trips() {
+    let value = serde_json::to_value(G3102Request::new("R", "82TSLA", "82", "TSLA", "30", "0"))
+        .expect("serialize g3102");
+    assert!(
+        value["g3102InBlock"]["readcnt"].is_number(),
+        "readcnt is a JSON number, not a string (IGW40011 guard)"
+    );
+    assert!(
+        value["g3102InBlock"]["cts_seq"].is_number(),
+        "cts_seq is a JSON number, not a string (IGW40011 guard)"
+    );
+    assert_eq!(value["g3102InBlock"]["readcnt"], 30);
+    assert_eq!(value["g3102InBlock"]["cts_seq"], 0);
+
+    let resp: G3102Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "g3102OutBlock": { "symbol": "TSLA", "cts_seq": 20250428014018000i64, "rec_count": 30 },
+        "g3102OutBlock1": [
+            { "locdate": "20250428", "loctime": "014101", "price": "283.9500", "open": "285.0900", "high": "285.3100", "low": "281.8400", "exevol": 20 },
+            { "locdate": "20250428", "loctime": "014055", "price": "284.0000", "open": "285.0900", "high": "285.3100", "low": "281.8400", "exevol": 10 }
+        ]
+    }))
+    .expect("representative g3102 success must deserialize");
+    assert_eq!(resp.outblock1.len(), 2);
+    assert_eq!(resp.outblock1[0].price, "283.9500", "현재가");
+    assert_ne!(resp.outblock1[0].price, resp.outblock1[0].open, "non-collapsing: price≠open");
+    assert_eq!(resp.outblock.rec_count, "30", "레코드카운트");
+
+    // single row object → one-element Vec (KTD5).
+    let single: G3102Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "g3102OutBlock": { "symbol": "TSLA", "rec_count": "1" },
+        "g3102OutBlock1": { "locdate": "20250428", "price": "283.9500" }
+    }))
+    .expect("single row deserializes");
+    assert_eq!(single.outblock1.len(), 1, "single object becomes a one-element Vec");
+
+    let empty: G3102Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "g3102OutBlock1": []
+    }))
+    .expect("empty deserializes");
+    assert!(empty.outblock1.is_empty(), "empty array is the pending case");
+}
+
+/// `g3103` rename + header/bar Object-Array round-trips; canonical 현재가
+/// (`price`) pinned exactly from a non-collapsing bar (KTD6); single → Vec (KTD5).
+#[test]
+fn g3103_request_renames_and_bar_array_round_trips() {
+    let value = serde_json::to_value(G3103Request::new("R", "82TSLA", "82", "TSLA", "4", "20250120"))
+        .expect("serialize g3103");
+    assert_eq!(value["g3103InBlock"]["gubun"], "4");
+    assert_eq!(value["g3103InBlock"]["date"], "20250120");
+    assert!(value.get("g3103OutBlock").is_none(), "no out-block leaks");
+
+    let resp: G3103Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "g3103OutBlock": { "symbol": "TSLA", "gubun": "4", "date": "20221031" },
+        "g3103OutBlock1": [
+            { "chedate": "20250428", "price": "283.4300", "volume": 2568819717i64, "open": "263.8000", "high": "286.8500", "low": "214.2500" },
+            { "chedate": "20250331", "price": "259.1600", "volume": 2721582212i64, "open": "300.3400", "high": "303.9400", "low": "217.0200" }
+        ]
+    }))
+    .expect("representative g3103 success must deserialize");
+    assert_eq!(resp.outblock1.len(), 2);
+    assert_eq!(resp.outblock1[0].chedate, "20250428", "영업일자");
+    assert_eq!(resp.outblock1[0].price, "283.4300", "현재가");
+    assert_ne!(resp.outblock1[0].price, resp.outblock1[0].high, "non-collapsing: price≠high");
+
+    let single: G3103Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "g3103OutBlock": { "symbol": "TSLA" },
+        "g3103OutBlock1": { "chedate": "20250428", "price": "283.4300" }
+    }))
+    .expect("single bar deserializes");
+    assert_eq!(single.outblock1.len(), 1, "single object becomes a one-element Vec");
+
+    let empty: G3103Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "g3103OutBlock1": []
+    }))
+    .expect("empty deserializes");
+    assert!(empty.outblock1.is_empty(), "empty bar array is the pending case");
+}
+
+/// `g3190` numeric request field serializes as a JSON NUMBER (KTD4); header +
+/// master Object-Array round-trips; canonical 한글종목명 (`korname`) pinned exactly
+/// (KTD6); single → Vec (KTD5).
+#[test]
+fn g3190_request_serializes_count_as_number_and_array_round_trips() {
+    let value = serde_json::to_value(G3190Request::new("R", "US", "2", "10", ""))
+        .expect("serialize g3190");
+    assert!(
+        value["g3190InBlock"]["readcnt"].is_number(),
+        "readcnt is a JSON number, not a string (IGW40011 guard)"
+    );
+    assert_eq!(value["g3190InBlock"]["readcnt"], 10);
+    assert_eq!(value["g3190InBlock"]["natcode"], "US");
+    // cts_value is a genuine string token (first page = "").
+    assert!(value["g3190InBlock"]["cts_value"].is_string());
+
+    let resp: G3190Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "g3190OutBlock": { "natcode": "US", "cts_value": "0000000000000011", "rec_count": 10 },
+        "g3190OutBlock1": [
+            { "keysymbol": "82AACB", "symbol": "AACB", "korname": "ARTIUS II ACQUISITION INC", "engname": "ARTIUS II ACQUISITION INC", "currency": "USD", "pcls": "9.9200" },
+            { "keysymbol": "82AACG", "symbol": "AACG", "korname": "ATA 크리에티비티 글로벌(ADR)", "engname": "ATA CREATIVITY GLOBAL", "currency": "USD", "pcls": "0.9050" }
+        ]
+    }))
+    .expect("representative g3190 success must deserialize");
+    assert_eq!(resp.outblock1.len(), 2);
+    assert_eq!(resp.outblock1[1].korname, "ATA 크리에티비티 글로벌(ADR)", "한글종목명");
+    assert_eq!(resp.outblock.rec_count, "10", "레코드카운트");
+
+    let single: G3190Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "g3190OutBlock": { "natcode": "US", "rec_count": "1" },
+        "g3190OutBlock1": { "keysymbol": "82AACB", "symbol": "AACB", "korname": "ARTIUS II ACQUISITION INC" }
+    }))
+    .expect("single row deserializes");
+    assert_eq!(single.outblock1.len(), 1, "single object becomes a one-element Vec");
+
+    let empty: G3190Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "g3190OutBlock1": []
+    }))
+    .expect("empty deserializes");
+    assert!(empty.outblock1.is_empty(), "empty master array is the pending case");
 }

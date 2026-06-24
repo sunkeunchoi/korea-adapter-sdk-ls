@@ -33,6 +33,7 @@ use ls_sdk::market_session::{
     T2106Request, T2111Request, T2112Request, T8402Request, T8403Request, T8434Request,
     T1988Request, T3320Request,
     T8455Request, T8460Request, T8463Request,
+    G3101Request, G3102Request, G3103Request, G3104Request, G3106Request, G3190Request,
 };
 use ls_sdk::paginated::{
     T1403Request, T1441Request, T1452Request, T1463Request, T1466Request, T1481Request,
@@ -2829,6 +2830,242 @@ async fn live_smoke_t8463() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t8463 market-data failure (not evidence)");
             panic!("live-smoke-t8463 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-g3101`: paper guard → token → one overseas current-price
+/// read keyed by a public US ticker (`82`/`TSLA` = TSLA on NASDAQ). Domain
+/// `overseas_stock`, routes through `market_session` (KTD3). An empty out-block
+/// (`price` empty) is the `00707` PENDING case, not Implemented.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-g3101`"]
+async fn live_smoke_g3101() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .market_session()
+        .overseas_quote(&G3101Request::new("R", "82TSLA", "82", "TSLA"))
+        .await
+    {
+        Ok(resp) => {
+            if resp.outblock.price.is_empty() {
+                eprintln!(
+                    "SMOKE-FAIL target=live-smoke-g3101 empty out-block (rsp_cd={})",
+                    resp.rsp_cd
+                );
+                panic!("live-smoke-g3101: empty out-block (00707) — PENDING, not Implemented");
+            }
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), 1)), "quote")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-g3101",
+                &format!("env=paper exchcd=82 symbol=TSLA date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-g3101 market-data failure (not evidence)");
+            panic!("live-smoke-g3101 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-g3104`: paper guard → token → one overseas stock-info master
+/// read (`82`/`TSLA`). Routes through `market_session` (KTD3). Empty `korname`
+/// out-block is the `00707` PENDING case.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-g3104`"]
+async fn live_smoke_g3104() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .market_session()
+        .overseas_stock_info(&G3104Request::new("R", "82TSLA", "82", "TSLA"))
+        .await
+    {
+        Ok(resp) => {
+            if resp.outblock.korname.is_empty() {
+                eprintln!(
+                    "SMOKE-FAIL target=live-smoke-g3104 empty out-block (rsp_cd={})",
+                    resp.rsp_cd
+                );
+                panic!("live-smoke-g3104: empty out-block (00707) — PENDING, not Implemented");
+            }
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), 1)), "master")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-g3104",
+                &format!("env=paper exchcd=82 symbol=TSLA date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-g3104 market-data failure (not evidence)");
+            panic!("live-smoke-g3104 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-g3106`: paper guard → token → one overseas current-price +
+/// order-book read (`82`/`TSLA`). Routes through `market_session` (KTD3). Empty
+/// `price` out-block is the `00707` PENDING case.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-g3106`"]
+async fn live_smoke_g3106() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .market_session()
+        .overseas_order_book(&G3106Request::new("R", "82TSLA", "82", "TSLA"))
+        .await
+    {
+        Ok(resp) => {
+            if resp.outblock.price.is_empty() {
+                eprintln!(
+                    "SMOKE-FAIL target=live-smoke-g3106 empty out-block (rsp_cd={})",
+                    resp.rsp_cd
+                );
+                panic!("live-smoke-g3106: empty out-block (00707) — PENDING, not Implemented");
+            }
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), 1)), "book")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-g3106",
+                &format!("env=paper exchcd=82 symbol=TSLA date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-g3106 market-data failure (not evidence)");
+            panic!("live-smoke-g3106 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-g3102`: paper guard → token → one overseas time-series read
+/// (`82`/`TSLA`, 30 rows, first page). `readcnt`/`cts_seq` serialize as JSON
+/// numbers (KTD4). Empty row array is the `00707` PENDING case.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-g3102`"]
+async fn live_smoke_g3102() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .market_session()
+        .overseas_time_series(&G3102Request::new("R", "82TSLA", "82", "TSLA", "30", "0"))
+        .await
+    {
+        Ok(resp) => {
+            if resp.outblock1.is_empty() {
+                eprintln!(
+                    "SMOKE-FAIL target=live-smoke-g3102 empty result array (rsp_cd={})",
+                    resp.rsp_cd
+                );
+                panic!("live-smoke-g3102: empty result array (00707) — PENDING, not Implemented");
+            }
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "ticks")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-g3102",
+                &format!("env=paper exchcd=82 symbol=TSLA readcnt=30 date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-g3102 market-data failure (not evidence)");
+            panic!("live-smoke-g3102 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-g3103`: paper guard → token → one overseas period-chart read
+/// (`82`/`TSLA`, monthly `gubun="4"`). Empty bar array is the `00707` PENDING
+/// case. `date` is the reference date; the public ticker keys the read.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-g3103`"]
+async fn live_smoke_g3103() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let today = Utc::now().format("%Y%m%d").to_string();
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .market_session()
+        .overseas_period_chart(&G3103Request::new("R", "82TSLA", "82", "TSLA", "4", &today))
+        .await
+    {
+        Ok(resp) => {
+            if resp.outblock1.is_empty() {
+                eprintln!(
+                    "SMOKE-FAIL target=live-smoke-g3103 empty result array (rsp_cd={})",
+                    resp.rsp_cd
+                );
+                panic!("live-smoke-g3103: empty result array (00707) — PENDING, not Implemented");
+            }
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "bars")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-g3103",
+                &format!("env=paper exchcd=82 symbol=TSLA gubun=4 date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-g3103 market-data failure (not evidence)");
+            panic!("live-smoke-g3103 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-g3190`: paper guard → token → one overseas master-list read
+/// (US, exchange `2`, 10 rows, first page). `readcnt` serializes as a JSON
+/// number (KTD4). Empty row array is the `00707` PENDING case.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-g3190`"]
+async fn live_smoke_g3190() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .market_session()
+        .overseas_master(&G3190Request::new("R", "US", "2", "10", ""))
+        .await
+    {
+        Ok(resp) => {
+            if resp.outblock1.is_empty() {
+                eprintln!(
+                    "SMOKE-FAIL target=live-smoke-g3190 empty result array (rsp_cd={})",
+                    resp.rsp_cd
+                );
+                panic!("live-smoke-g3190: empty result array (00707) — PENDING, not Implemented");
+            }
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record(
+                "live-smoke-g3190",
+                &format!("env=paper natcode=US exgubun=2 readcnt=10 date={date}"),
+                &line,
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-g3190 market-data failure (not evidence)");
+            panic!("live-smoke-g3190 failed: {e}");
         }
     }
 }

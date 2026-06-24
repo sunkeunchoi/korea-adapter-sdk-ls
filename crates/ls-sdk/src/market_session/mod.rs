@@ -4019,6 +4019,607 @@ pub struct T8463Response {
     pub outblock1: Vec<T8463OutBlock1>,
 }
 
+// ---------------------------------------------------------------------------
+// Overseas-stock reads (reach wave U7). Domain `overseas_stock` (`g`-prefix),
+// path `/overseas-stock/{market-data,chart}`. Non-paginated market-data reads
+// keyed by an exchange code + symbol (e.g. `82`/`TSLA`). `venue_session:
+// unspecified` (uncharted). Out-block keys/array-ness from the raw capture
+// (KTD5); canonical price/name field by `korean_name` from non-collapsing
+// fixtures (KTD6). Numeric request counts serialize as JSON numbers (KTD4).
+// ---------------------------------------------------------------------------
+
+/// Input block for `g3101` — 해외주식 현재가 조회 (overseas current-price). Keyed by
+/// an exchange code (`exchcd`, e.g. `"82"` = NASDAQ) + `symbol` plus the
+/// composite `keysymbol` (= exchcd+symbol). `delaygb` is the realtime/delayed
+/// distinction (`"R"` = realtime).
+#[derive(Serialize, Debug, Clone)]
+pub struct G3101InBlock {
+    /// Realtime/delayed distinction / 지연구분 (`"R"` = realtime).
+    pub delaygb: String,
+    /// Composite key / KEY종목코드 (`exchcd` + `symbol`).
+    pub keysymbol: String,
+    /// Exchange code / 거래소코드.
+    pub exchcd: String,
+    /// Symbol / 종목코드.
+    pub symbol: String,
+}
+
+/// `g3101` request — serializes to `{"g3101InBlock":{...}}`. Non-paginated.
+#[derive(Serialize, Debug, Clone)]
+pub struct G3101Request {
+    #[serde(rename = "g3101InBlock")]
+    pub inblock: G3101InBlock,
+}
+impl G3101Request {
+    /// Build a `g3101` current-price request for one overseas symbol.
+    pub fn new(
+        delaygb: impl Into<String>,
+        keysymbol: impl Into<String>,
+        exchcd: impl Into<String>,
+        symbol: impl Into<String>,
+    ) -> Self {
+        G3101Request {
+            inblock: G3101InBlock {
+                delaygb: delaygb.into(),
+                keysymbol: keysymbol.into(),
+                exchcd: exchcd.into(),
+                symbol: symbol.into(),
+            },
+        }
+    }
+}
+
+/// `g3101OutBlock` — the overseas current-price snapshot (single object).
+///
+/// A representative subset; every numeric-bearing field via
+/// [`ls_core::string_or_number`]. `price` (현재가) is the canonical price field
+/// (KTD6).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct G3101OutBlock {
+    /// Korean name / 한글종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub korname: String,
+    /// Symbol / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub symbol: String,
+    /// Current price / 현재가 (canonical field, KTD6).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change vs. previous close / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Accumulated volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Open / 시가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    /// High / 고가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    /// Low / 저가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    /// Currency / 통화.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub currency: String,
+}
+
+/// `g3101` response envelope. `outblock` is the snapshot under the
+/// `g3101OutBlock` key (single object). All `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct G3101Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "g3101OutBlock", default)]
+    pub outblock: G3101OutBlock,
+}
+
+/// Input block for `g3104` — 해외주식 종목정보 조회 (overseas stock-info master).
+/// Same key shape as `g3101`.
+#[derive(Serialize, Debug, Clone)]
+pub struct G3104InBlock {
+    /// Realtime/delayed distinction / 지연구분.
+    pub delaygb: String,
+    /// Composite key / KEY종목코드.
+    pub keysymbol: String,
+    /// Exchange code / 거래소코드.
+    pub exchcd: String,
+    /// Symbol / 종목코드.
+    pub symbol: String,
+}
+
+/// `g3104` request — serializes to `{"g3104InBlock":{...}}`. Non-paginated.
+#[derive(Serialize, Debug, Clone)]
+pub struct G3104Request {
+    #[serde(rename = "g3104InBlock")]
+    pub inblock: G3104InBlock,
+}
+impl G3104Request {
+    /// Build a `g3104` stock-info request for one overseas symbol.
+    pub fn new(
+        delaygb: impl Into<String>,
+        keysymbol: impl Into<String>,
+        exchcd: impl Into<String>,
+        symbol: impl Into<String>,
+    ) -> Self {
+        G3104Request {
+            inblock: G3104InBlock {
+                delaygb: delaygb.into(),
+                keysymbol: keysymbol.into(),
+                exchcd: exchcd.into(),
+                symbol: symbol.into(),
+            },
+        }
+    }
+}
+
+/// `g3104OutBlock` — the overseas stock-info master (single object).
+///
+/// `korname` (한글종목명) is the canonical name field (KTD6). Every
+/// numeric-bearing field via [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct G3104OutBlock {
+    /// Korean name / 한글종목명 (canonical field, KTD6).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub korname: String,
+    /// English name / 영문종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub engname: String,
+    /// Symbol / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub symbol: String,
+    /// Exchange name / 거래소명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub exchange_name: String,
+    /// Nation name / 국가명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub nation_name: String,
+    /// Currency / 통화.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub currency: String,
+    /// Listed shares / 상장주식수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub share: String,
+    /// Previous close / 전일종가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub pcls: String,
+}
+
+/// `g3104` response envelope (single out-block).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct G3104Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "g3104OutBlock", default)]
+    pub outblock: G3104OutBlock,
+}
+
+/// Input block for `g3106` — 해외주식 현재가호가 조회 (overseas current-price +
+/// order book). Same key shape as `g3101`.
+#[derive(Serialize, Debug, Clone)]
+pub struct G3106InBlock {
+    /// Realtime/delayed distinction / 지연구분.
+    pub delaygb: String,
+    /// Composite key / KEY종목코드.
+    pub keysymbol: String,
+    /// Exchange code / 거래소코드.
+    pub exchcd: String,
+    /// Symbol / 종목코드.
+    pub symbol: String,
+}
+
+/// `g3106` request — serializes to `{"g3106InBlock":{...}}`. Non-paginated.
+#[derive(Serialize, Debug, Clone)]
+pub struct G3106Request {
+    #[serde(rename = "g3106InBlock")]
+    pub inblock: G3106InBlock,
+}
+impl G3106Request {
+    /// Build a `g3106` current-price+order-book request for one overseas symbol.
+    pub fn new(
+        delaygb: impl Into<String>,
+        keysymbol: impl Into<String>,
+        exchcd: impl Into<String>,
+        symbol: impl Into<String>,
+    ) -> Self {
+        G3106Request {
+            inblock: G3106InBlock {
+                delaygb: delaygb.into(),
+                keysymbol: keysymbol.into(),
+                exchcd: exchcd.into(),
+                symbol: symbol.into(),
+            },
+        }
+    }
+}
+
+/// `g3106OutBlock` — the overseas current-price + level-1 order book (single
+/// object).
+///
+/// `price` (현재가) is the canonical price field (KTD6). Every numeric-bearing
+/// field via [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct G3106OutBlock {
+    /// Korean name / 한글종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub korname: String,
+    /// Symbol / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub symbol: String,
+    /// Current price / 현재가 (canonical field, KTD6).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change vs. previous close / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Accumulated volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Best offer (ask) price / 매도호가1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerho1: String,
+    /// Best bid price / 매수호가1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidho1: String,
+}
+
+/// `g3106` response envelope (single out-block).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct G3106Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "g3106OutBlock", default)]
+    pub outblock: G3106OutBlock,
+}
+
+/// Input block for `g3102` — 해외주식 시간대별 (overseas time-series tick read).
+/// `readcnt` is the requested row COUNT and `cts_seq` the continuation
+/// sequence — both numeric REQUEST fields serialized as JSON numbers
+/// (`string_as_number`, KTD4).
+#[derive(Serialize, Debug, Clone)]
+pub struct G3102InBlock {
+    /// Realtime/delayed distinction / 지연구분.
+    pub delaygb: String,
+    /// Composite key / KEY종목코드.
+    pub keysymbol: String,
+    /// Exchange code / 거래소코드.
+    pub exchcd: String,
+    /// Symbol / 종목코드.
+    pub symbol: String,
+    /// Requested row count / 요청건수 (serialized as a JSON number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub readcnt: String,
+    /// Continuation sequence / 연속조회키 (serialized as a JSON number; `"0"`
+    /// first page).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub cts_seq: String,
+}
+
+/// `g3102` request — serializes to `{"g3102InBlock":{...}}` with `readcnt` /
+/// `cts_seq` as JSON numbers.
+#[derive(Serialize, Debug, Clone)]
+pub struct G3102Request {
+    #[serde(rename = "g3102InBlock")]
+    pub inblock: G3102InBlock,
+}
+impl G3102Request {
+    /// Build a `g3102` time-series request for one overseas symbol.
+    pub fn new(
+        delaygb: impl Into<String>,
+        keysymbol: impl Into<String>,
+        exchcd: impl Into<String>,
+        symbol: impl Into<String>,
+        readcnt: impl Into<String>,
+        cts_seq: impl Into<String>,
+    ) -> Self {
+        G3102Request {
+            inblock: G3102InBlock {
+                delaygb: delaygb.into(),
+                keysymbol: keysymbol.into(),
+                exchcd: exchcd.into(),
+                symbol: symbol.into(),
+                readcnt: readcnt.into(),
+                cts_seq: cts_seq.into(),
+            },
+        }
+    }
+}
+
+/// `g3102OutBlock` — the time-series header (single object): the echo + the
+/// row count.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct G3102OutBlock {
+    /// Symbol / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub symbol: String,
+    /// Continuation sequence / 연속조회키.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cts_seq: String,
+    /// Returned row count / 레코드카운트.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub rec_count: String,
+}
+
+/// `g3102OutBlock1` — one time-series tick row (`g3102OutBlock1[]`, an ARRAY
+/// block). `price` (현재가) is the canonical price field (KTD6).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct G3102OutBlock1 {
+    /// Local date / 현지일자.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub locdate: String,
+    /// Local time / 현지시간.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub loctime: String,
+    /// Current price / 현재가 (canonical field, KTD6).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Open / 시가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    /// High / 고가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    /// Low / 저가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    /// Execution volume / 체결량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub exevol: String,
+}
+
+/// `g3102` response envelope: header out-block + the row array under the
+/// `g3102OutBlock1` key, tolerated as single-or-array via
+/// [`ls_core::de_vec_or_single`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct G3102Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "g3102OutBlock", default)]
+    pub outblock: G3102OutBlock,
+    #[serde(
+        rename = "g3102OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<G3102OutBlock1>,
+}
+
+/// Input block for `g3103` — 해외주식 일주월 조회 (overseas daily/weekly/monthly
+/// chart). `gubun` selects the period (`"4"` = monthly) and `date` is the
+/// reference date (조회일자).
+#[derive(Serialize, Debug, Clone)]
+pub struct G3103InBlock {
+    /// Realtime/delayed distinction / 지연구분.
+    pub delaygb: String,
+    /// Composite key / KEY종목코드.
+    pub keysymbol: String,
+    /// Exchange code / 거래소코드.
+    pub exchcd: String,
+    /// Symbol / 종목코드.
+    pub symbol: String,
+    /// Period distinction / 주기구분 (`"4"` = monthly).
+    pub gubun: String,
+    /// Reference date / 조회일자 (`YYYYMMDD`).
+    pub date: String,
+}
+
+/// `g3103` request — serializes to `{"g3103InBlock":{...}}`. Non-paginated.
+#[derive(Serialize, Debug, Clone)]
+pub struct G3103Request {
+    #[serde(rename = "g3103InBlock")]
+    pub inblock: G3103InBlock,
+}
+impl G3103Request {
+    /// Build a `g3103` period-chart request for one overseas symbol.
+    pub fn new(
+        delaygb: impl Into<String>,
+        keysymbol: impl Into<String>,
+        exchcd: impl Into<String>,
+        symbol: impl Into<String>,
+        gubun: impl Into<String>,
+        date: impl Into<String>,
+    ) -> Self {
+        G3103Request {
+            inblock: G3103InBlock {
+                delaygb: delaygb.into(),
+                keysymbol: keysymbol.into(),
+                exchcd: exchcd.into(),
+                symbol: symbol.into(),
+                gubun: gubun.into(),
+                date: date.into(),
+            },
+        }
+    }
+}
+
+/// `g3103OutBlock` — the chart header (single object): the symbol echo + the
+/// reference date.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct G3103OutBlock {
+    /// Symbol / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub symbol: String,
+    /// Period distinction / 주기구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gubun: String,
+    /// Reference date / 조회일자.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+}
+
+/// `g3103OutBlock1` — one chart bar row (`g3103OutBlock1[]`, an ARRAY block).
+/// `price` (현재가) is the canonical price field (KTD6).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct G3103OutBlock1 {
+    /// Business date / 영업일자.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub chedate: String,
+    /// Current (close) price / 현재가 (canonical field, KTD6).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Accumulated volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Open / 시가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    /// High / 고가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    /// Low / 저가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+}
+
+/// `g3103` response envelope: header out-block + the bar array under the
+/// `g3103OutBlock1` key, tolerated as single-or-array via
+/// [`ls_core::de_vec_or_single`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct G3103Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "g3103OutBlock", default)]
+    pub outblock: G3103OutBlock,
+    #[serde(
+        rename = "g3103OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<G3103OutBlock1>,
+}
+
+/// Input block for `g3190` — 해외주식 마스터 조회 (overseas master list). Keyed by a
+/// nation code (`natcode`, e.g. `"US"`) + exchange distinction (`exgubun`).
+/// `readcnt` is the requested row COUNT, a numeric REQUEST field serialized as a
+/// JSON number (`string_as_number`, KTD4). `cts_value` is the (string)
+/// continuation token (`""` first page).
+#[derive(Serialize, Debug, Clone)]
+pub struct G3190InBlock {
+    /// Realtime/delayed distinction / 지연구분.
+    pub delaygb: String,
+    /// Nation code / 국가코드 (`"US"`).
+    pub natcode: String,
+    /// Exchange distinction / 거래소구분.
+    pub exgubun: String,
+    /// Requested row count / 요청건수 (serialized as a JSON number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub readcnt: String,
+    /// Continuation token / 연속조회키 (`""` first page).
+    pub cts_value: String,
+}
+
+/// `g3190` request — serializes to `{"g3190InBlock":{...}}` with `readcnt` as a
+/// JSON number.
+#[derive(Serialize, Debug, Clone)]
+pub struct G3190Request {
+    #[serde(rename = "g3190InBlock")]
+    pub inblock: G3190InBlock,
+}
+impl G3190Request {
+    /// Build a `g3190` master-list request for one nation/exchange.
+    pub fn new(
+        delaygb: impl Into<String>,
+        natcode: impl Into<String>,
+        exgubun: impl Into<String>,
+        readcnt: impl Into<String>,
+        cts_value: impl Into<String>,
+    ) -> Self {
+        G3190Request {
+            inblock: G3190InBlock {
+                delaygb: delaygb.into(),
+                natcode: natcode.into(),
+                exgubun: exgubun.into(),
+                readcnt: readcnt.into(),
+                cts_value: cts_value.into(),
+            },
+        }
+    }
+}
+
+/// `g3190OutBlock` — the master-list header (single object): the echo + the
+/// continuation token + the row count.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct G3190OutBlock {
+    /// Nation code / 국가코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub natcode: String,
+    /// Continuation token / 연속조회키.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cts_value: String,
+    /// Returned row count / 레코드카운트.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub rec_count: String,
+}
+
+/// `g3190OutBlock1` — one master row (`g3190OutBlock1[]`, an ARRAY block).
+/// `korname` (한글종목명) is the canonical name field (KTD6).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct G3190OutBlock1 {
+    /// Composite key / KEY종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub keysymbol: String,
+    /// Symbol / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub symbol: String,
+    /// Korean name / 한글종목명 (canonical field, KTD6).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub korname: String,
+    /// English name / 영문종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub engname: String,
+    /// Currency / 통화.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub currency: String,
+    /// Previous close / 전일종가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub pcls: String,
+}
+
+/// `g3190` response envelope: header out-block + the master row array under the
+/// `g3190OutBlock1` key, tolerated as single-or-array via
+/// [`ls_core::de_vec_or_single`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct G3190Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "g3190OutBlock", default)]
+    pub outblock: G3190OutBlock,
+    #[serde(
+        rename = "g3190OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<G3190OutBlock1>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -4501,6 +5102,59 @@ impl MarketSession {
     pub async fn night_investor_timeslot(&self, req: &T8463Request) -> LsResult<T8463Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T8463_POLICY, req)
+            .await
+    }
+
+    /// Read the overseas current price (해외주식 현재가) via `g3101`. Non-paginated;
+    /// keyed by an exchange code + symbol (e.g. `82`/`TSLA`). Single out-block.
+    /// `instrument_domain: overseas_stock`, `venue_session: unspecified`.
+    pub async fn overseas_quote(&self, req: &G3101Request) -> LsResult<G3101Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::G3101_POLICY, req)
+            .await
+    }
+
+    /// Read the overseas stock-info master (해외주식 종목정보) via `g3104`.
+    /// Non-paginated; keyed by an exchange code + symbol. Single out-block.
+    pub async fn overseas_stock_info(&self, req: &G3104Request) -> LsResult<G3104Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::G3104_POLICY, req)
+            .await
+    }
+
+    /// Read the overseas current price + order book (해외주식 현재가호가) via
+    /// `g3106`. Non-paginated; keyed by an exchange code + symbol. Single
+    /// out-block (level-1 book).
+    pub async fn overseas_order_book(&self, req: &G3106Request) -> LsResult<G3106Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::G3106_POLICY, req)
+            .await
+    }
+
+    /// Read the overseas time-series ticks (해외주식 시간대별) via `g3102`.
+    /// Non-paginated; keyed by an exchange code + symbol; `readcnt`/`cts_seq` are
+    /// numeric request fields (JSON numbers, KTD4). Returns a header + tick array.
+    pub async fn overseas_time_series(&self, req: &G3102Request) -> LsResult<G3102Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::G3102_POLICY, req)
+            .await
+    }
+
+    /// Read the overseas period chart (해외주식 일주월) via `g3103`. Non-paginated;
+    /// keyed by an exchange code + symbol + period `gubun` + `date`. Returns a
+    /// header + bar array.
+    pub async fn overseas_period_chart(&self, req: &G3103Request) -> LsResult<G3103Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::G3103_POLICY, req)
+            .await
+    }
+
+    /// Read the overseas master list (해외주식 마스터) via `g3190`. Non-paginated;
+    /// keyed by a nation code + exchange distinction; `readcnt` is a numeric
+    /// request field (JSON number, KTD4). Returns a header + master row array.
+    pub async fn overseas_master(&self, req: &G3190Request) -> LsResult<G3190Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::G3190_POLICY, req)
             .await
     }
 }

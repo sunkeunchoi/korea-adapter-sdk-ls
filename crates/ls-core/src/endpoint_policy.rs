@@ -1102,6 +1102,96 @@ pub const T8463_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+/// g3101 — 해외주식 현재가 조회 (overseas current-price; non-paginated market-data
+/// read). Domain `overseas_stock`; routes through `market_session`.
+pub const G3101_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "g3101",
+    path: "/overseas-stock/market-data",
+    module: "overseas-stock",
+    group: "[해외주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(50),
+};
+
+/// g3104 — 해외주식 종목정보 조회 (overseas stock-info master; non-paginated
+/// market-data read).
+pub const G3104_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "g3104",
+    path: "/overseas-stock/market-data",
+    module: "overseas-stock",
+    group: "[해외주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(50),
+};
+
+/// g3106 — 해외주식 현재가호가 조회 (overseas current-price + order book;
+/// non-paginated market-data read).
+pub const G3106_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "g3106",
+    path: "/overseas-stock/market-data",
+    module: "overseas-stock",
+    group: "[해외주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(50),
+};
+
+/// g3102 — 해외주식 시간대별 (overseas time-series ticks; non-paginated market-data
+/// read). `readcnt`/`cts_seq` are numeric request slots (KTD4).
+pub const G3102_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "g3102",
+    path: "/overseas-stock/market-data",
+    module: "overseas-stock",
+    group: "[해외주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(50),
+};
+
+/// g3103 — 해외주식 일주월 조회 (overseas daily/weekly/monthly chart; non-paginated
+/// market-data read; lower-rate chart bucket).
+pub const G3103_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "g3103",
+    path: "/overseas-stock/chart",
+    module: "overseas-stock",
+    group: "[해외주식] 차트",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(10),
+};
+
+/// g3190 — 해외주식 마스터 조회 (overseas master list; non-paginated market-data
+/// read). `readcnt` is a numeric request slot (KTD4).
+pub const G3190_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "g3190",
+    path: "/overseas-stock/market-data",
+    module: "overseas-stock",
+    group: "[해외주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(50),
+};
+
 /// S3_ — KOSPI체결 실시간 시세 (real-time KOSPI trade feed, WebSocket).
 ///
 /// WebSocket TR: there is no REST dispatch, but the policy const is retained as
@@ -1222,6 +1312,12 @@ mod tests {
             T8455_POLICY,
             T8460_POLICY,
             T8463_POLICY,
+            G3101_POLICY,
+            G3104_POLICY,
+            G3106_POLICY,
+            G3102_POLICY,
+            G3103_POLICY,
+            G3190_POLICY,
         ] {
             assert!(!p.is_order, "{} must not be an order endpoint", p.tr_code);
             assert!(p.is_rest(), "{} must be a REST endpoint", p.tr_code);
