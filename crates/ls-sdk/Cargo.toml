@@ -22,6 +22,9 @@ tokio-tungstenite.workspace = true
 tokio-stream.workspace = true
 reqwest.workspace = true
 dashmap.workspace = true
+# Order reconciliation evidence record: HMAC-SHA256 keyed account/request hashes.
+sha2.workspace = true
+hmac.workspace = true
 
 [dev-dependencies]
 ls-sdk-test-support = { path = "../ls-sdk-test-support" }

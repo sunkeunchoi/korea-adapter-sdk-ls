@@ -37,6 +37,10 @@ use serde::{Deserialize, Serialize};
 
 use ls_core::{Inner, LsResult};
 
+pub mod reconcile;
+
+pub use reconcile::{reconcile, OrderIntent, OrderState, ReconcileOutcome, ReconciliationRecord};
+
 /// Input block for `CSPAT00601` — the nine required order fields.
 ///
 /// `OrdQty`/`OrdPrc` carry [`ls_core::string_as_number`]: the gateway requires
@@ -252,6 +256,151 @@ impl CSPAT00601Response {
     }
 }
 
+// ---------------------------------------------------------------------------
+// t0425 — 주식체결/미체결 (stock filled/unfilled order inquiry).
+//
+// The read-only reconciliation companion. is_order: false; dispatches through
+// post_paginated. Self-paginates on the cts_ordno body cursor.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t0425` — symbol filter, fill/side/sort flags, and the
+/// `cts_ordno` cursor. Wire field names are lowercase, matching the raw capture.
+#[derive(Serialize, Debug, Clone)]
+pub struct T0425InBlock {
+    /// Issue (symbol) number / 종목번호. Empty queries all symbols.
+    pub expcode: String,
+    /// Fill distinction / 체결구분 (`"0"` all, `"1"` filled, `"2"` unfilled).
+    pub chegb: String,
+    /// Buy/sell distinction / 매매구분 (`"0"` all, `"1"` sell, `"2"` buy).
+    pub medosu: String,
+    /// Sort order / 정렬순서.
+    pub sortgb: String,
+    /// Order-number cursor / 주문번호 — the `cts_ordno` continuation cursor
+    /// (`" "` on the first page).
+    pub cts_ordno: String,
+}
+
+/// `t0425` request — wraps the input block under the `t0425InBlock` key.
+///
+/// Self-paginates on the `cts_ordno` body cursor; the `tr_cont`/`tr_cont_key`
+/// header tokens are threaded defensively via [`ls_core::HasPagination`] (they
+/// ride as HTTP headers, never the body).
+#[derive(Serialize, Debug, Clone)]
+pub struct T0425Request {
+    #[serde(rename = "t0425InBlock")]
+    pub inblock: T0425InBlock,
+    #[serde(skip)]
+    pub tr_cont: String,
+    #[serde(skip)]
+    pub tr_cont_key: String,
+}
+
+ls_core::impl_has_pagination!(T0425Request);
+
+impl T0425Request {
+    /// A reconciliation query for one symbol: all fills, both sides, first page.
+    pub fn for_symbol(expcode: impl Into<String>) -> Self {
+        T0425Request {
+            inblock: T0425InBlock {
+                expcode: expcode.into(),
+                chegb: "0".into(),
+                medosu: "0".into(),
+                sortgb: "2".into(),
+                cts_ordno: " ".into(),
+            },
+            tr_cont: String::new(),
+            tr_cont_key: String::new(),
+        }
+    }
+}
+
+/// `t0425OutBlock` — the order-totals summary (single object).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T0425OutBlock {
+    /// Total order quantity / 총주문수량.
+    #[serde(rename = "tqty", deserialize_with = "ls_core::string_or_number")]
+    pub tqty: String,
+    /// Total filled quantity / 총체결수량.
+    #[serde(rename = "tcheqty", deserialize_with = "ls_core::string_or_number")]
+    pub tcheqty: String,
+    /// Total unfilled quantity / 총미체결수량.
+    #[serde(rename = "tordrem", deserialize_with = "ls_core::string_or_number")]
+    pub tordrem: String,
+    /// Order-number cursor / 주문번호 (the next-page `cts_ordno`).
+    #[serde(rename = "cts_ordno", deserialize_with = "ls_core::string_or_number")]
+    pub cts_ordno: String,
+}
+
+/// `t0425OutBlock1` — one order/execution row.
+///
+/// `ordno` is the order number (a `Number` on the wire), matched against
+/// `CSPAT00601OutBlock2.OrdNo` after normalization. `medosu` is the side as
+/// Korean text (`"매수"`/`"매도"`); `status` (상태) is the order state text
+/// (`"접수"`/`"체결"`/`"취소"`/...).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T0425OutBlock1 {
+    /// Order number / 주문번호.
+    #[serde(rename = "ordno", deserialize_with = "ls_core::string_or_number")]
+    pub ordno: String,
+    /// Issue (symbol) number / 종목번호.
+    #[serde(rename = "expcode", deserialize_with = "ls_core::string_or_number")]
+    pub expcode: String,
+    /// Side / 구분 (Korean text `"매수"`/`"매도"`).
+    #[serde(rename = "medosu", deserialize_with = "ls_core::string_or_number")]
+    pub medosu: String,
+    /// Order quantity / 주문수량.
+    #[serde(rename = "qty", deserialize_with = "ls_core::string_or_number")]
+    pub qty: String,
+    /// Order price / 주문가격.
+    #[serde(rename = "price", deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Filled quantity / 체결수량.
+    #[serde(rename = "cheqty", deserialize_with = "ls_core::string_or_number")]
+    pub cheqty: String,
+    /// Unfilled remaining / 미체결잔량.
+    #[serde(rename = "ordrem", deserialize_with = "ls_core::string_or_number")]
+    pub ordrem: String,
+    /// Order state / 상태 (`"접수"`/`"체결"`/`"취소"`/`"정정"`/...).
+    #[serde(rename = "status", deserialize_with = "ls_core::string_or_number")]
+    pub status: String,
+    /// Original order number / 원주문번호 (for a modify/cancel).
+    #[serde(rename = "orgordno", deserialize_with = "ls_core::string_or_number")]
+    pub orgordno: String,
+    /// Order time / 주문시간.
+    #[serde(rename = "ordtime", deserialize_with = "ls_core::string_or_number")]
+    pub ordtime: String,
+}
+
+/// `t0425` response envelope.
+///
+/// `outblock1` is the row array (tolerated as a single object OR an array via
+/// [`ls_core::de_vec_or_single`]); `outblock` is the totals summary. Implements
+/// [`ls_core::HasPagination`] so `cts_ordno`-cursor continuation can be driven.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T0425Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t0425OutBlock", default)]
+    pub outblock: T0425OutBlock,
+    #[serde(
+        rename = "t0425OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T0425OutBlock1>,
+    /// Pagination continuation (injected by dispatch from the response headers).
+    #[serde(default)]
+    pub tr_cont: String,
+    #[serde(default)]
+    pub tr_cont_key: String,
+}
+
+ls_core::impl_has_pagination!(T0425Response);
+
 /// The orders dependency class handle.
 pub struct Orders {
     inner: Arc<Inner>,
@@ -282,5 +431,31 @@ impl Orders {
         self.inner
             .post_order(&ls_core::endpoint_policy::CSPAT00601_POLICY, req)
             .await
+    }
+
+    /// Query order/execution state via the `t0425` read (the reconciliation
+    /// companion). A READ — dispatches through [`ls_core::Inner::post_paginated`]
+    /// (`is_order: false`), never the order path.
+    pub async fn inquiry(&self, req: &T0425Request) -> LsResult<T0425Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T0425_POLICY, req)
+            .await
+    }
+
+    /// Reconcile a local order intent against live exchange state (order-safety
+    /// §3). After an ambiguous send, query `t0425` for the intent's symbol and
+    /// classify the outcome (Accepted / Rejected / Duplicate / Modified /
+    /// Canceled / Unknown). A `dedup_hit` short-circuits to Duplicate without a
+    /// query. A failed query fails toward Unknown (never silent Accepted); a
+    /// clean query with no matching order proves absence and is safe to retry.
+    pub async fn reconcile(&self, intent: &OrderIntent, dedup_hit: bool) -> ReconcileOutcome {
+        if dedup_hit {
+            return ReconcileOutcome::duplicate();
+        }
+        let req = T0425Request::for_symbol(&intent.symbol);
+        let result = self.inquiry(&req).await;
+        // `None` => the query itself failed: fail toward Unknown, not safe to
+        // retry (we could not prove the order's absence).
+        reconcile(intent, result.as_ref().ok(), dedup_hit)
     }
 }

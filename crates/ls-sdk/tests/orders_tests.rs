@@ -10,7 +10,9 @@
 use std::sync::Arc;
 
 use ls_core::{Inner, LsError};
-use ls_sdk::orders::{CSPAT00601Request, CSPAT00601Response};
+use ls_sdk::orders::{
+    CSPAT00601Request, CSPAT00601Response, OrderIntent, OrderState, T0425Request,
+};
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
 use wiremock::matchers::{method, path};
@@ -18,6 +20,19 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// The REST path for the order endpoint.
 const ORDER_PATH: &str = "/stock/order";
+
+/// The REST path for the `t0425` reconciliation read.
+const T0425_PATH: &str = "/stock/accno";
+
+/// A spec-grounded `t0425` response with one open order row (`ordno=32004`).
+const T0425_ONE_ROW: &str = r#"{
+    "rsp_cd": "00000",
+    "t0425OutBlock": { "tqty": 1, "tcheqty": 0, "tordrem": 1, "cts_ordno": "" },
+    "t0425OutBlock1": [
+        { "ordno": 32004, "expcode": "005930", "medosu": "매수", "qty": 1, "price": 60000,
+          "cheqty": 0, "ordrem": 1, "status": "접수", "orgordno": 0, "ordtime": "153257702" }
+    ]
+}"#;
 
 /// A spec-grounded buy-ack response (`rsp_cd=00040`, `OrdNo=32004`), modeled on
 /// the raw `CSPAT00601` response example.
@@ -158,4 +173,117 @@ async fn submit_routes_through_post_order_observable_via_kill_switch() {
         0,
         "the order path must halt before HTTP — proving submit() uses post_order"
     );
+}
+
+/// The `t0425` read dispatches through `post_paginated` (is_order: false) and
+/// deserializes its rows.
+#[tokio::test]
+async fn t0425_inquiry_dispatches_and_deserializes_rows() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(T0425_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_string(T0425_ONE_ROW))
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let resp = sdk
+        .orders()
+        .inquiry(&T0425Request::for_symbol("005930"))
+        .await
+        .expect("t0425 query succeeds");
+    assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock1[0].ordno, "32004");
+    assert_eq!(resp.outblock1[0].status, "접수");
+}
+
+/// AE2: after an ambiguous send, `reconcile()` queries `t0425` and a matching
+/// order classifies Accepted (proving the order landed — it is not resubmitted).
+#[tokio::test]
+async fn reconcile_after_ambiguous_finds_accepted_order() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(T0425_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_string(T0425_ONE_ROW))
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let intent = OrderIntent {
+        account_no: "00000000-01".into(),
+        symbol: "005930".into(),
+        side: "2".into(),
+        qty: "1".into(),
+        price: "60000".into(),
+        order_no: Some("32004".into()),
+    };
+    let outcome = sdk.orders().reconcile(&intent, false).await;
+    assert_eq!(outcome.state, OrderState::Accepted);
+    assert!(!outcome.safe_to_retry, "an accepted order is never retried");
+}
+
+/// A `dedup_hit` short-circuits reconciliation to Duplicate with no `t0425`
+/// query at all.
+#[tokio::test]
+async fn reconcile_dedup_hit_is_duplicate_without_query() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let hits_inner = hits.clone();
+    Mock::given(method("POST"))
+        .and(path(T0425_PATH))
+        .respond_with(move |_req: &wiremock::Request| {
+            hits_inner.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            ResponseTemplate::new(200).set_body_string(T0425_ONE_ROW)
+        })
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let intent = OrderIntent {
+        account_no: "00000000-01".into(),
+        symbol: "005930".into(),
+        side: "2".into(),
+        qty: "1".into(),
+        price: "60000".into(),
+        order_no: Some("32004".into()),
+    };
+    let outcome = sdk.orders().reconcile(&intent, true).await;
+    assert_eq!(outcome.state, OrderState::Duplicate);
+    assert_eq!(
+        hits.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "a dedup hit must not issue a t0425 query"
+    );
+}
+
+/// A failed `t0425` query fails toward Unknown (never silent Accepted) and is
+/// not safe to retry.
+#[tokio::test]
+async fn reconcile_failed_query_is_unknown_not_safe() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(T0425_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "rsp_cd": "IGW40013",
+            "rsp_msg": "조회 실패"
+        })))
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let intent = OrderIntent {
+        account_no: "00000000-01".into(),
+        symbol: "005930".into(),
+        side: "2".into(),
+        qty: "1".into(),
+        price: "60000".into(),
+        order_no: Some("32004".into()),
+    };
+    let outcome = sdk.orders().reconcile(&intent, false).await;
+    assert_eq!(outcome.state, OrderState::Unknown);
+    assert!(!outcome.safe_to_retry);
 }

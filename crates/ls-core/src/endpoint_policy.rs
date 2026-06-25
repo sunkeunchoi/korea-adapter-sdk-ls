@@ -713,6 +713,26 @@ pub const CSPAT00601_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(10),
 };
 
+/// t0425 — 주식체결/미체결 (stock filled/unfilled order inquiry).
+///
+/// The reconciliation companion to `CSPAT00601` — a READ (`is_order: false`),
+/// NOT an order, so it dispatches through `post_paginated`. Self-paginates on the
+/// `cts_ordno` body cursor (`has_pagination: true`) and charges the `MarketData`
+/// bucket (KTD5). Registered in BOTH the policy-index crosscheck AND
+/// `slice_rest_policies_are_non_order_rest` (it is a non-order REST read, R12).
+pub const T0425_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t0425",
+    path: "/stock/accno",
+    module: "stock",
+    group: "[주식] 계좌",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(10),
+};
+
 /// CSPAQ12300 — BEP단가조회 (account BEP / balance inquiry, read-only).
 ///
 /// Dispatches through plain `Inner::post` (non-paginated): the result is
@@ -1910,6 +1930,9 @@ mod tests {
             CSPAQ12200_POLICY,
             CSPAQ12300_POLICY,
             CSPAQ22200_POLICY,
+            // t0425 IS a non-order REST read — it belongs here AND in the
+            // crosscheck. CSPAT00601 (is_order: true) deliberately does NOT.
+            T0425_POLICY,
             CFOBQ10500_POLICY,
             CCENQ90200_POLICY,
             CFOAQ10100_POLICY,
