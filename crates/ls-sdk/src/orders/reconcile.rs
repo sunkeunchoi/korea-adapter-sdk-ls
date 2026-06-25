@@ -17,10 +17,11 @@
 //! `account_no`), so it is keyed-hashed too. The bare dedup key is never written.
 
 use hmac::{Hmac, Mac};
+use ls_core::LsError;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
 
-use super::T0425Response;
+use super::{T0425OutBlock1, T0425Response};
 
 type HmacSha256 = Hmac<Sha256>;
 
@@ -28,6 +29,13 @@ type HmacSha256 = Hmac<Sha256>;
 /// the §4 manual-evidence freshness window — evidence older than this should be
 /// re-collected before relying on it.
 pub const EVIDENCE_RETENTION_DAYS: u32 = 7;
+
+/// Minimum HMAC key length (bytes). A short/empty key collapses HMAC-SHA256 to a
+/// publicly-reproducible keyed hash, which for a low-entropy account number is
+/// brute-forceable exactly like a bare SHA-256 — voiding the §5 redaction. The
+/// record builder rejects a shorter key rather than producing a falsely-redacted
+/// artifact.
+pub const MIN_HMAC_KEY_LEN: usize = 32;
 
 /// The six-state order reconciliation model (order-safety §3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -147,14 +155,16 @@ fn row_matches(intent: &OrderIntent, row: &super::T0425OutBlock1) -> bool {
 /// Classify a matched row's `status` (상태) text into a state. A row that exists
 /// in `t0425` means the order reached the venue, so the floor is Accepted.
 fn classify_status(status: &str) -> OrderState {
-    if status.contains("취소") {
+    // Check the rejection markers FIRST: a composite status such as `정정거부`
+    // (modification rejected) or `취소거부` (cancel rejected) means the modify /
+    // cancel did NOT take effect and the original order is still live — so it
+    // must not be read as Modified / Canceled.
+    if status.contains("거부") || status.contains("거절") {
+        OrderState::Rejected
+    } else if status.contains("취소") {
         OrderState::Canceled
     } else if status.contains("정정") {
         OrderState::Modified
-    } else if status.contains("거부") || status.contains("거절") {
-        // Defensive: rejected orders normally carry no t0425 row, but honor an
-        // explicit rejection text if present.
-        OrderState::Rejected
     } else {
         // 접수 (received) / 체결 (filled) / 확인 (confirmed) / anything else: the
         // order is present at the venue.
@@ -185,7 +195,36 @@ pub fn reconcile(
             safe_to_retry: false,
         };
     };
-    for row in &resp.outblock1 {
+    // A single response only proves absence if it is the TERMINAL page — an
+    // unfinished `tr_cont` continuation means more rows exist that we have not
+    // inspected, so a no-match there is NOT proven absence.
+    reconcile_rows(intent, &resp.outblock1, response_is_terminal(resp), false)
+}
+
+/// `true` if a `t0425` response is the last page (no `tr_cont` continuation).
+fn response_is_terminal(resp: &T0425Response) -> bool {
+    let c = resp.tr_cont.trim();
+    c.is_empty() || c.eq_ignore_ascii_case("n")
+}
+
+/// Classify an ambiguous send against the FULL set of `t0425` rows.
+///
+/// `query_complete` MUST be true only when every page was inspected (a terminal
+/// single page, or an exhausted `collect_all`). This is the load-bearing
+/// safety gate: `safe_to_retry` is `true` ONLY on a no-match over a *complete*
+/// query — a truncated or partial query that finds no match fails toward
+/// Unknown + not-safe, so an order sitting on an un-fetched page can never
+/// green-light a resubmit (the double-fill the package exists to prevent).
+pub fn reconcile_rows(
+    intent: &OrderIntent,
+    rows: &[T0425OutBlock1],
+    query_complete: bool,
+    dedup_hit: bool,
+) -> ReconcileOutcome {
+    if dedup_hit {
+        return ReconcileOutcome::duplicate();
+    }
+    for row in rows {
         if row_matches(intent, row) {
             return ReconcileOutcome {
                 state: classify_status(&row.status),
@@ -193,10 +232,10 @@ pub fn reconcile(
             };
         }
     }
-    // Clean query, no matching order: proven absent for this symbol's window.
     ReconcileOutcome {
         state: OrderState::Unknown,
-        safe_to_retry: true,
+        // Proven absent ONLY if the query was complete.
+        safe_to_retry: query_complete,
     }
 }
 
@@ -241,6 +280,9 @@ impl ReconciliationRecord {
     /// / request hashes; it is consumed only to compute the refs and is never
     /// stored on the record. `dedup_key` is the bare order dedup key (kept out of
     /// the record — only its keyed hash, `request_ref`, is written).
+    ///
+    /// FAIL-CLOSED: a key shorter than [`MIN_HMAC_KEY_LEN`] is rejected with
+    /// `LsError::Config` rather than producing a falsely-redacted record.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         recorded_at: impl Into<String>,
@@ -250,8 +292,15 @@ impl ReconciliationRecord {
         dedup_key: &str,
         outcome: ReconcileOutcome,
         error: Option<String>,
-    ) -> Self {
-        ReconciliationRecord {
+    ) -> Result<Self, LsError> {
+        if hmac_key.len() < MIN_HMAC_KEY_LEN {
+            return Err(LsError::Config(format!(
+                "reconciliation HMAC key must be at least {MIN_HMAC_KEY_LEN} bytes to redact \
+                 the low-entropy account number; got {} bytes",
+                hmac_key.len()
+            )));
+        }
+        Ok(ReconciliationRecord {
             recorded_at: recorded_at.into(),
             tr_code: tr_code.into(),
             account_ref: keyed_hash(hmac_key, intent.account_no.as_bytes()),
@@ -264,7 +313,7 @@ impl ReconciliationRecord {
             safe_to_retry: outcome.safe_to_retry,
             error,
             retention_days: EVIDENCE_RETENTION_DAYS,
-        }
+        })
     }
 
     /// Serialize to the credential-free JSON written to the evidence location.
@@ -426,6 +475,53 @@ mod tests {
     }
 
     #[test]
+    fn rejection_status_classifies_rejected_even_when_composite() {
+        assert_eq!(classify_status("거부"), OrderState::Rejected);
+        assert_eq!(classify_status("거절"), OrderState::Rejected);
+        // A rejected modify/cancel must NOT read as Modified/Canceled — the
+        // original order is still live.
+        assert_eq!(classify_status("정정거부"), OrderState::Rejected);
+        assert_eq!(classify_status("취소거부"), OrderState::Rejected);
+        assert_eq!(
+            reconcile(&intent(Some("84")), Some(&resp(vec![row("84", "거부")])), false).state,
+            OrderState::Rejected
+        );
+    }
+
+    #[test]
+    fn no_match_on_a_non_terminal_page_is_not_safe_to_retry() {
+        // A response with an unfinished tr_cont continuation is incomplete: a
+        // no-match must NOT be treated as proven absence (the order could sit on
+        // an un-fetched page — the double-fill guard).
+        let mut truncated = resp(vec![row("84", "접수")]);
+        truncated.tr_cont = "Y".into();
+        let out = reconcile(&intent(Some("999")), Some(&truncated), false);
+        assert_eq!(out.state, OrderState::Unknown);
+        assert!(
+            !out.safe_to_retry,
+            "a truncated query proves nothing about absence"
+        );
+        // reconcile_rows with query_complete=false is likewise not safe.
+        assert!(!reconcile_rows(&intent(Some("999")), &[], false, false).safe_to_retry);
+        // A complete empty query IS safe.
+        assert!(reconcile_rows(&intent(Some("999")), &[], true, false).safe_to_retry);
+    }
+
+    #[test]
+    fn weak_hmac_key_is_rejected_fail_closed() {
+        let intent = intent(Some("84"));
+        let outcome = ReconcileOutcome {
+            state: OrderState::Accepted,
+            safe_to_retry: false,
+        };
+        let err = ReconciliationRecord::new(
+            "t", "CSPAT00601", b"short", &intent, "deadbeef", outcome, None,
+        )
+        .expect_err("a sub-32-byte key must be rejected");
+        assert!(matches!(err, LsError::Config(_)));
+    }
+
+    #[test]
     fn evidence_record_redacts_account_and_request_hash() {
         let intent = intent(Some("84"));
         let dedup_key = "deadbeefcafebabe0123456789abcdef"; // a bare dedup key
@@ -436,12 +532,13 @@ mod tests {
         let rec = ReconciliationRecord::new(
             "2026-06-25T00:00:00Z",
             "CSPAT00601",
-            b"operator-hmac-key",
+            b"operator-hmac-key-at-least-32-bytes-long!!",
             &intent,
             dedup_key,
             outcome,
             Some("timeout".into()),
-        );
+        )
+        .expect("a >=32-byte key is accepted");
         let json = rec.to_json().unwrap();
 
         // No cleartext account number.

@@ -558,6 +558,16 @@ impl Inner {
         }
         span.record("dedup_hit", false);
 
+        // Reserve the key for the duration of this dispatch. A CONCURRENT
+        // identical submit (one whose first attempt has not yet cached) observes
+        // the reservation and is rejected as a duplicate rather than dispatching a
+        // second live order. The guard releases on every exit (success, rejection,
+        // ambiguity, or panic) via Drop.
+        let _reservation = match self.order_dedup.try_reserve(&dedup_key) {
+            Some(guard) => guard,
+            None => return Err(LsError::DuplicateOrder),
+        };
+
         // Charge the Orders bucket exactly once — there is no retry loop to
         // re-charge it.
         self.rate_limiter.wait(policy.category).await;
@@ -1453,6 +1463,48 @@ mod tests {
         // A rejection is never cached: a corrected resubmission must reach the
         // exchange. Both attempts dispatched.
         assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn post_order_concurrent_identical_submits_dispatch_exactly_once() {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let hits_inner = hits.clone();
+        // A small delay keeps the first dispatch in flight while the second runs,
+        // so the second observes the reservation rather than a cached response.
+        Mock::given(method("POST"))
+            .and(path("/order/path"))
+            .respond_with(move |_req: &Request| {
+                hits_inner.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                ResponseTemplate::new(200)
+                    .set_delay(std::time::Duration::from_millis(150))
+                    .set_body_json(serde_json::json!({"rsp_cd": "00040", "value": "ordno-1"}))
+            })
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        let req = serde_json::json!({"IsuNo": "005930", "OrdQty": 1, "OrdPrc": 100});
+        let policy = order_policy();
+        // Two identical submits race. Exactly one must reach the exchange; the
+        // other is rejected as a duplicate (the concurrent double-fill guard).
+        let (a, b) = tokio::join!(
+            inner.post_order::<_, EchoRes>(&policy, &req),
+            inner.post_order::<_, EchoRes>(&policy, &req),
+        );
+        let oks = [&a, &b].iter().filter(|r| r.is_ok()).count();
+        let dups = [&a, &b]
+            .iter()
+            .filter(|r| matches!(r, Err(LsError::DuplicateOrder)))
+            .count();
+        assert_eq!(oks, 1, "exactly one concurrent submit dispatches: a={a:?} b={b:?}");
+        assert_eq!(dups, 1, "the other is rejected as DuplicateOrder: a={a:?} b={b:?}");
+        assert_eq!(
+            hits.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "only one order may reach the exchange"
+        );
     }
 
     // --- Order redaction / tracing contract (order-safety §5) -----------------

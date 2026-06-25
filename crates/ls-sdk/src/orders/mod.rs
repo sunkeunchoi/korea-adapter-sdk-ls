@@ -39,7 +39,9 @@ use ls_core::{Inner, LsResult};
 
 pub mod reconcile;
 
-pub use reconcile::{reconcile, OrderIntent, OrderState, ReconcileOutcome, ReconciliationRecord};
+pub use reconcile::{
+    reconcile, reconcile_rows, OrderIntent, OrderState, ReconcileOutcome, ReconciliationRecord,
+};
 
 /// Input block for `CSPAT00601` — the nine required order fields.
 ///
@@ -143,8 +145,14 @@ pub struct CSPAT00601OutBlock1 {
     /// Record count / 레코드갯수.
     #[serde(rename = "RecCnt", deserialize_with = "ls_core::string_or_number")]
     pub reccnt: String,
-    /// Account number / 계좌번호 (account-sensitive; redacted in Debug).
-    #[serde(rename = "AcntNo", deserialize_with = "ls_core::string_or_number")]
+    /// Account number / 계좌번호 (account-sensitive). Redacted in `Debug` AND
+    /// `skip_serializing` — it never reaches a JSON sink or the dedup cache, so
+    /// the Serialize path cannot leak it the way Debug redaction prevents.
+    #[serde(
+        rename = "AcntNo",
+        deserialize_with = "ls_core::string_or_number",
+        skip_serializing
+    )]
     pub acntno: String,
     /// Issue (symbol) number / 종목번호.
     #[serde(rename = "IsuNo", deserialize_with = "ls_core::string_or_number")]
@@ -205,8 +213,13 @@ pub struct CSPAT00601OutBlock2 {
     /// Reserved order number / 예약주문번호 (auxiliary, not the live order number).
     #[serde(rename = "RsvOrdNo", deserialize_with = "ls_core::string_or_number")]
     pub rsvordno: String,
-    /// Account name / 계좌명 (account-sensitive; redacted in Debug).
-    #[serde(rename = "AcntNm", deserialize_with = "ls_core::string_or_number")]
+    /// Account name / 계좌명 (account-sensitive). Redacted in `Debug` AND
+    /// `skip_serializing` — never reaches a JSON sink or the dedup cache.
+    #[serde(
+        rename = "AcntNm",
+        deserialize_with = "ls_core::string_or_number",
+        skip_serializing
+    )]
     pub acntnm: String,
     /// Issue name / 종목명.
     #[serde(rename = "IsuNm", deserialize_with = "ls_core::string_or_number")]
@@ -461,10 +474,40 @@ impl Orders {
         if dedup_hit {
             return ReconcileOutcome::duplicate();
         }
-        let req = T0425Request::for_symbol(&intent.symbol);
-        let result = self.inquiry(&req).await;
-        // `None` => the query itself failed: fail toward Unknown, not safe to
-        // retry (we could not prove the order's absence).
-        reconcile(intent, result.as_ref().ok(), dedup_hit)
+        // Exhaust ALL t0425 pages before concluding anything: a single page
+        // cannot PROVE an order's absence, so matching against only the first
+        // page could green-light a resubmit of an order sitting on a later page
+        // (a double fill). `collect_all` follows the `cts_ordno`/`tr_cont`
+        // continuation to the terminal page.
+        let base = T0425Request::for_symbol(&intent.symbol);
+        let inner = Arc::clone(&self.inner);
+        let pages = self
+            .inner
+            .collect_all(base, move |req| {
+                let inner = Arc::clone(&inner);
+                async move {
+                    inner
+                        .post_paginated::<T0425Request, T0425Response>(
+                            &ls_core::endpoint_policy::T0425_POLICY,
+                            &req,
+                        )
+                        .await
+                }
+            })
+            .await;
+        match pages {
+            Ok(pages) => {
+                let rows: Vec<T0425OutBlock1> =
+                    pages.into_iter().flat_map(|p| p.outblock1).collect();
+                // Every page was fetched -> the query is complete.
+                reconcile_rows(intent, &rows, true, false)
+            }
+            // A failed OR truncated (PaginationLimit) query cannot prove absence:
+            // fail toward Unknown, NOT safe to retry.
+            Err(_) => ReconcileOutcome {
+                state: OrderState::Unknown,
+                safe_to_retry: false,
+            },
+        }
     }
 }

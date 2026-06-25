@@ -57,6 +57,12 @@ struct CacheEntry {
 /// Per-client order deduplication cache (§2).
 pub struct OrderDeduplicator {
     cache: DashMap<String, CacheEntry>,
+    /// Keys with a dispatch CURRENTLY in flight. The cache only holds *completed*
+    /// responses, so without this set two concurrent identical submits would both
+    /// miss the cache (the first has not inserted yet) and both reach the exchange
+    /// — a double fill. A reservation closes that window: the second concurrent
+    /// submit observes the in-flight key and is rejected as a duplicate.
+    in_flight: DashMap<String, ()>,
     ttl: Duration,
     /// Epoch the cache was created — the reference for the monotonic sweep gate.
     created: Instant,
@@ -65,14 +71,49 @@ pub struct OrderDeduplicator {
     last_sweep_millis: AtomicU64,
 }
 
+/// RAII reservation for an in-flight order key. Holding it marks the key as
+/// dispatching; dropping it (on success, rejection, ambiguity, or panic) releases
+/// the key so a later identical submit can proceed (and, on success, find the
+/// cached response instead).
+pub struct ReservationGuard<'a> {
+    dedup: &'a OrderDeduplicator,
+    key: String,
+}
+
+impl Drop for ReservationGuard<'_> {
+    fn drop(&mut self) {
+        self.dedup.in_flight.remove(&self.key);
+    }
+}
+
 impl OrderDeduplicator {
     /// Build a deduplicator with the given TTL window.
     pub fn new(ttl: Duration) -> Self {
         Self {
             cache: DashMap::new(),
+            in_flight: DashMap::new(),
             ttl,
             created: Instant::now(),
             last_sweep_millis: AtomicU64::new(0),
+        }
+    }
+
+    /// Atomically reserve `key` for an in-flight dispatch. Returns a
+    /// [`ReservationGuard`] (released on drop) on success, or `None` if an
+    /// identical order is already dispatching — the caller should treat `None` as
+    /// a duplicate and NOT dispatch. The check-and-insert is atomic per shard, so
+    /// two concurrent reservers cannot both succeed.
+    pub fn try_reserve(&self, key: &str) -> Option<ReservationGuard<'_>> {
+        use dashmap::mapref::entry::Entry;
+        match self.in_flight.entry(key.to_string()) {
+            Entry::Occupied(_) => None,
+            Entry::Vacant(v) => {
+                v.insert(());
+                Some(ReservationGuard {
+                    dedup: self,
+                    key: key.to_string(),
+                })
+            }
         }
     }
 
@@ -165,6 +206,16 @@ impl OrderDeduplicator {
     /// Number of entries currently held (test/observability helper).
     pub fn len(&self) -> usize {
         self.cache.len()
+    }
+
+    /// Run one bounded `retain` sweep directly (test-only). Mirrors the body of
+    /// the time-gated [`sweep_expired_if_due`] so the no-deadlock / memory-bound
+    /// `retain`-without-guard property is exercised without waiting out the
+    /// wall-clock sweep interval.
+    #[cfg(test)]
+    pub(crate) fn force_sweep_for_test(&self) {
+        let ttl = self.ttl;
+        self.cache.retain(|_k, entry| entry.inserted.elapsed() < ttl);
     }
 
     /// `true` if the cache holds no entries.
@@ -268,22 +319,41 @@ mod tests {
     }
 
     #[test]
-    fn write_path_sweep_does_not_deadlock_and_bounds_memory() {
-        // SWEEP_INTERVAL of 0 in a fresh cache would not fire on the very first
-        // insert (now == last == 0). Force the gate by constructing with a tiny
-        // TTL so every prior entry is expired, then insert enough to cross the
-        // sweep interval via elapsed time is impractical in a unit test; instead
-        // assert the contended-insert path itself never deadlocks.
+    fn sweep_drops_expired_entries_with_no_guard_held_no_deadlock() {
+        // Zero TTL → every entry is immediately expired.
         let d = OrderDeduplicator::new(Duration::from_secs(0));
         for i in 0..1000 {
             let key = OrderDeduplicator::key("acct", "CSPAT00601", &order(i, 100)).unwrap();
             d.insert(key, serde_json::json!({"i": i}));
         }
-        // With a zero TTL, read-path eviction keeps reads from returning stale
-        // data; the sweep is what bounds resident memory without a worker.
-        // (We cannot deterministically trigger the time-gated sweep in a fast
-        // test, so this asserts the insert path is deadlock-free under volume.)
-        assert!(d.len() <= 1000);
+        // The retain sweep (the load-bearing no-DashMap-guard path) drops every
+        // expired entry and does not deadlock — bounding memory without a worker.
+        d.force_sweep_for_test();
+        assert_eq!(d.len(), 0, "the sweep must drop all expired entries");
+
+        // A live entry survives the sweep.
+        let d2 = OrderDeduplicator::with_default_ttl();
+        let k = OrderDeduplicator::key("acct", "CSPAT00601", &order(1, 100)).unwrap();
+        d2.insert(k, serde_json::json!({"ok": true}));
+        d2.force_sweep_for_test();
+        assert_eq!(d2.len(), 1, "a live entry must survive the sweep");
+    }
+
+    #[test]
+    fn try_reserve_blocks_a_second_concurrent_reservation_until_drop() {
+        let d = OrderDeduplicator::with_default_ttl();
+        let guard = d.try_reserve("k").expect("first reservation succeeds");
+        assert!(
+            d.try_reserve("k").is_none(),
+            "a second reservation is blocked while the first is in flight"
+        );
+        // A different key is independent.
+        assert!(d.try_reserve("other").is_some());
+        drop(guard);
+        assert!(
+            d.try_reserve("k").is_some(),
+            "the key is reservable again after the guard drops"
+        );
     }
 
     #[test]

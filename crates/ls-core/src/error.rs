@@ -9,7 +9,12 @@
 use thiserror::Error;
 
 /// All errors produced by the SDK public API.
+///
+/// `#[non_exhaustive]`: the order surface will keep adding error variants
+/// (modify/cancel acks, more order TRs), so downstream crates must include a
+/// wildcard arm — adding a variant is then additive, not a breaking change.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum LsError {
     /// Authentication problem — empty credentials, failed OAuth2 exchange,
     /// expired revoked token, missing appkey/appsecretkey, etc.

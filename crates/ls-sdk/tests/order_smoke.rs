@@ -275,7 +275,9 @@ impl OrderEvidence {
         }
     }
 
-    /// Print a credential-free evidence line.
+    /// Print a credential-free evidence line. `rsp_msg` is gateway-controlled
+    /// localized text that can embed an account number, so it is scrubbed of
+    /// account-number-like digit runs before printing (§4/§5).
     fn record(&self) {
         println!(
             "ORDER-SMOKE tr={} scenario={} cert={} rsp_cd={} order_no={} recon={} \
@@ -287,9 +289,37 @@ impl OrderEvidence {
             self.order_no.as_deref().unwrap_or("-"),
             self.reconciliation.as_deref().unwrap_or("-"),
             self.production_not_run,
-            self.rsp_msg,
+            scrub_digit_runs(&self.rsp_msg),
         );
     }
+}
+
+/// Mask any run of 6+ digits (account-number-like) with `***`, so a localized
+/// broker `rsp_msg` cannot leak an account number into recorded evidence.
+fn scrub_digit_runs(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut run = 0usize;
+    let mut buf = String::new();
+    let flush = |out: &mut String, buf: &mut String, run: usize| {
+        if run >= 6 {
+            out.push_str("***");
+        } else {
+            out.push_str(buf);
+        }
+        buf.clear();
+    };
+    for c in s.chars() {
+        if c.is_ascii_digit() {
+            run += 1;
+            buf.push(c);
+        } else {
+            flush(&mut out, &mut buf, run);
+            run = 0;
+            out.push(c);
+        }
+    }
+    flush(&mut out, &mut buf, run);
+    out
 }
 
 /// Operator order parameters, validated BEFORE SDK construction.
@@ -407,6 +437,15 @@ fn resting_prices_sit_inside_the_band_and_reject_price_is_outside() {
         band.out_of_band_buy_price() < band.dnlmt,
         "out-of-band price must be below the floor"
     );
+}
+
+#[test]
+fn scrub_masks_account_number_like_digit_runs() {
+    // A 6+ digit run (account-number-like) is masked; short numbers survive.
+    assert_eq!(scrub_digit_runs("계좌 1234567890 거부"), "계좌 *** 거부");
+    assert_eq!(scrub_digit_runs("qty 12 price 100"), "qty 12 price 100");
+    assert_eq!(scrub_digit_runs("주문완료"), "주문완료");
+    assert!(!scrub_digit_runs("acct 0000000001 done").contains("0000000001"));
 }
 
 #[test]
