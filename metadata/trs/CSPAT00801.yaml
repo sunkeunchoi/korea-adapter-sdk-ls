@@ -1,0 +1,34 @@
+tr_code: CSPAT00801
+name: 현물취소주문 (cash equity order cancel)
+owner_class: orders
+facets:
+  protocol: rest
+  instrument_domain: stock
+  venue_session: krx_regular
+  date_sensitive: false
+  self_paginated: false
+  account_state: true
+  paper_incompatible: false
+  certification_path: manual
+  rate_bucket: orders
+  # IsuNo (종목번호) and OrgOrdNo (원주문번호) are the caller-supplied inputs that
+  # select the order being canceled. OrdQty is the cancel quantity, not an
+  # identifier.
+  caller_supplied_identifiers: [OrgOrdNo, IsuNo]
+dependencies:
+  self_continuation_fields: []
+  # Order-identity fields — the semantically strong inputs that define a unique
+  # cancel for deduplication. A cancel re-sent identically within the dedup TTL is
+  # the "same order" action (the OrgOrdNo it targets is already gone), so it must
+  # dedup rather than re-dispatch.
+  strong_order_fields: [OrgOrdNo, IsuNo, OrdQty]
+support:
+  # Tracked-not-implemented: the order class is recorded in metadata so upstream
+  # changes can be reasoned about, but the live-paper-order Implemented gate
+  # (ADR 0008 / order-safety §4) has not been run for this TR yet.
+  tracked: true
+  implemented: false
+  recommended: false
+maintenance:
+  source_spec_hash: be317c823cc5
+  last_reviewed: 2026-06-25
