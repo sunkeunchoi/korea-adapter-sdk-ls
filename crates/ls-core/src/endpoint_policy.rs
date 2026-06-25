@@ -688,6 +688,31 @@ pub const CSPAQ12200_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(1),
 };
 
+// ---------------------------------------------------------------------------
+// Order class — the first `is_order: true` policy.
+// ---------------------------------------------------------------------------
+
+/// CSPAT00601 — 현물 정규주문 (domestic cash-equity order submission).
+///
+/// The FIRST `is_order: true` policy in the repo. It MUST route through
+/// [`Inner::post_order`](crate::Inner::post_order) — the no-retry / dedup / kill
+/// switch path — never `post`/`post_paginated`; `guard_order` enforces that.
+/// Charges the `Orders` rate bucket. Registered in the policy-index crosscheck
+/// ONLY — it must NOT appear in `slice_rest_policies_are_non_order_rest`, which
+/// asserts every member is a non-order endpoint (R12).
+pub const CSPAT00601_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CSPAT00601",
+    path: "/stock/order",
+    module: "stock",
+    group: "[주식] 주문",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Orders,
+    is_order: true,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(10),
+};
+
 /// CSPAQ12300 — BEP단가조회 (account BEP / balance inquiry, read-only).
 ///
 /// Dispatches through plain `Inner::post` (non-paginated): the result is
