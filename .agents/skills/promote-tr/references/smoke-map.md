@@ -123,6 +123,13 @@ TR marked `ready` is a promote-tr candidate.
 | `o3106` | `live-smoke-o3106` | `live_smoke_o3106` | overseas_futures→`market_session`; symbol `HSIM26` (front-month, refreshed from o3101; ADM absent from master); canonical 현재가 `price` (KTD6) — overseas-futures current-price+order-book (non-empty on paper → IMPLEMENTED) | implemented-only | paper overseas-futures order book (U8) |
 | `o3125` | `live-smoke-o3125` | `live_smoke_o3125` | overseas_futures→`market_session`; `mktgb=F`/`HSIM26` (front-month, refreshed from o3101); canonical 체결가격 `trd_p` (KTD6) — overseas-future-option current-price (non-empty on paper → IMPLEMENTED) | implemented-only | paper overseas-future-option quote (U8) |
 | `o3126` | `live-smoke-o3126` | `live_smoke_o3126` | overseas_futures→`market_session`; `mktgb=F`/`HSIM26` (front-month, refreshed from o3101; ADM absent from master); canonical 현재가 `price` (KTD6) — overseas-future-option current-price+order-book (non-empty on paper → IMPLEMENTED) | implemented-only | paper overseas-future-option order book (U8) |
+| `t9945` | `live-smoke-t9945` | `live_smoke_t9945` | any session; `gubun="1"` (KOSPI) — stock master read, non-empty off-session (2469 tickers) | implemented-only | paper stock master (plan -004) |
+| `t3202` | `live-smoke-t3202` | `live_smoke_t3202` | any session; `shcode="001200"` — per-stock schedule read, non-empty off-session | implemented-only | paper per-stock market schedule (plan -004) |
+| `t3401` | `live-smoke-t3401` | `live_smoke_t3401` | any session; `shcode="011200"`; single-page (`cts_date` first page) — investment-opinion history, non-empty off-session | implemented-only | paper investment-opinion history (plan -004) |
+| `t8410` | `live-smoke-t8410` | `live_smoke_t8410` | any session; `shcode="078020"` `gubun="2"` (daily) `edate="99999999"` — D/W/M/Y stock chart, non-empty off-session (historical candles) | implemented-only | paper stock D/W/M/Y chart, single page (plan -004) |
+| `t8451` | `live-smoke-t8451` | `live_smoke_t8451` | any session; `shcode="010950"` `gubun="2"` `edate="99999999"` — integrated D/W/M/Y stock chart, non-empty off-session | implemented-only | paper integrated stock chart, single page (plan -004) |
+| `t8419` | `live-smoke-t8419` | `live_smoke_t8419` | any session; `shcode="001"` `gubun="2"` `edate="99999999"` — sector D/W/M chart, non-empty off-session | implemented-only | paper sector D/W/M chart, single page (plan -004) |
+| `t4203` | `live-smoke-t4203` | `live_smoke_t4203` | any session; `shcode="001"` `gubun="2"` `edate="99999999"` — composite sector chart, non-empty off-session | implemented-only | paper composite sector chart, single page (plan -004) |
 
 Notes:
 - `live-smoke` (default) issues the OAuth token *then* a `t1102` quote in one run,

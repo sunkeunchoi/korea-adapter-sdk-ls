@@ -530,7 +530,9 @@ impl T8451Request {
     }
 }
 
-/// `t8451OutBlock` — chart summary (OHLC + limits + NXT pre/after-market times).
+/// `t8451OutBlock` — chart summary (prior-day OHLC + current-day OHLC + limits +
+/// echoed `cts_date` cursor). NXT pre/after-market session times and `dshmin`
+/// exist in the wire spec but are omitted from this representative model.
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(default)]
 pub struct T8451OutBlock {
@@ -552,6 +554,15 @@ pub struct T8451OutBlock {
     /// Prior-day volume / 전일거래량.
     #[serde(deserialize_with = "ls_core::string_or_number")]
     pub jivolume: String,
+    /// Current open / 당일시가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub disiga: String,
+    /// Current high / 당일고가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dihigh: String,
+    /// Current low / 당일저가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dilow: String,
     /// Current close / 당일종가.
     #[serde(deserialize_with = "ls_core::string_or_number")]
     pub diclose: String,
@@ -567,6 +578,12 @@ pub struct T8451OutBlock {
     /// Returned row count / 레코드카운트.
     #[serde(deserialize_with = "ls_core::string_or_number")]
     pub rec_count: String,
+    /// Static-VI upper / 정적VI상한가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub svi_uplmtprice: String,
+    /// Static-VI lower / 정적VI하한가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub svi_dnlmtprice: String,
 }
 
 /// `t8451OutBlock1` — one candle row (same layout as `t8410OutBlock1`).
@@ -597,6 +614,15 @@ pub struct T8451OutBlock1 {
     /// Adjust flag / 수정구분.
     #[serde(deserialize_with = "ls_core::string_or_number")]
     pub jongchk: String,
+    /// Adjust ratio / 수정비율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub rate: String,
+    /// Adjusted item / 수정주가반영항목.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub pricechk: String,
+    /// Adjusted-ratio value / 수정비율반영거래대금.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ratevalue: String,
     /// Close sign / 종가등락구분.
     #[serde(deserialize_with = "ls_core::string_or_number")]
     pub sign: String,
@@ -698,6 +724,15 @@ pub struct T8419OutBlock {
     /// Prior-day volume / 전일거래량.
     #[serde(deserialize_with = "ls_core::string_or_number")]
     pub jivolume: String,
+    /// Current open index / 당일시가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub disiga: String,
+    /// Current high index / 당일고가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dihigh: String,
+    /// Current low index / 당일저가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dilow: String,
     /// Current close index / 당일종가.
     #[serde(deserialize_with = "ls_core::string_or_number")]
     pub diclose: String,
@@ -850,6 +885,15 @@ pub struct T4203OutBlock {
     /// Prior-day volume / 전일거래량.
     #[serde(deserialize_with = "ls_core::string_or_number")]
     pub jivolume: String,
+    /// Current open index / 당일시가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub disiga: String,
+    /// Current high index / 당일고가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dihigh: String,
+    /// Current low index / 당일저가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dilow: String,
     /// Current close index / 당일종가.
     #[serde(deserialize_with = "ls_core::string_or_number")]
     pub diclose: String,

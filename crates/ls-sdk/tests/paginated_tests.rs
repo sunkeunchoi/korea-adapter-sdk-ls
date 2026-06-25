@@ -1074,12 +1074,14 @@ async fn t8451_deserializes_spec_fixture() {
         .expect("t8451 should succeed");
     assert_eq!(resp.rsp_cd, "00000");
     assert_eq!(resp.outblock.shcode, "010950");
+    assert_eq!(resp.outblock.disiga, "60400", "current-day open from header");
+    assert_eq!(resp.outblock.svi_uplmtprice, "66300", "static-VI upper limit");
     assert!(resp.outblock1.len() >= 2, "candle rows round-trip");
     assert_eq!(resp.outblock1[0].date, "20250304");
 }
 
 #[test]
-fn t8451_response_round_trips_single_or_array() {
+fn t8451_response_round_trips_single_or_array_and_empty() {
     let single: T8451Response = serde_json::from_value(serde_json::json!({
         "rsp_cd": "00000",
         "t8451OutBlock": { "shcode": "010950" },
@@ -1088,6 +1090,12 @@ fn t8451_response_round_trips_single_or_array() {
     .expect("single candle tolerated as array");
     assert_eq!(single.outblock1.len(), 1);
     assert_eq!(single.outblock1[0].close, "56000");
+
+    let empty: T8451Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8451OutBlock": { "shcode": "" }, "t8451OutBlock1": []
+    }))
+    .expect("empty result deserializes");
+    assert!(empty.outblock1.is_empty(), "empty is the pending case");
 }
 
 // --- t8419 — 업종차트(일주월) -------------------------------------------------
@@ -1125,6 +1133,7 @@ async fn t8419_deserializes_spec_fixture() {
         .expect("t8419 should succeed");
     assert_eq!(resp.rsp_cd, "00000");
     assert_eq!(resp.outblock.shcode, "001");
+    assert_eq!(resp.outblock.disiga, "2617.43", "current-day open index from header");
     assert!(resp.outblock1.len() >= 2, "sector candle rows round-trip");
     assert_eq!(resp.outblock1[0].close, "2585.52", "index close as string");
 }
@@ -1182,12 +1191,13 @@ async fn t4203_deserializes_spec_fixture() {
         .expect("t4203 should succeed");
     assert_eq!(resp.rsp_cd, "00000");
     assert_eq!(resp.outblock.shcode, "001");
+    assert_eq!(resp.outblock.disiga, "2617.43", "current-day open index from header");
     assert!(!resp.outblock1.is_empty(), "composite rows round-trip");
     assert_eq!(resp.outblock1[0].time, "102800", "row carries an intraday time");
 }
 
 #[test]
-fn t4203_response_round_trips_single_or_array() {
+fn t4203_response_round_trips_single_or_array_and_empty() {
     let single: T4203Response = serde_json::from_value(serde_json::json!({
         "rsp_cd": "00000",
         "t4203OutBlock": { "shcode": "001" },
@@ -1195,6 +1205,12 @@ fn t4203_response_round_trips_single_or_array() {
     }))
     .expect("single composite row tolerated as array");
     assert_eq!(single.outblock1.len(), 1);
+
+    let empty: T4203Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t4203OutBlock": { "shcode": "" }, "t4203OutBlock1": []
+    }))
+    .expect("empty result deserializes");
+    assert!(empty.outblock1.is_empty(), "empty is the pending case");
 }
 
 // --- t3401 — 투자의견 --------------------------------------------------------
