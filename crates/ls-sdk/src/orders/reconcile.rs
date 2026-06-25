@@ -146,10 +146,21 @@ fn row_matches(intent: &OrderIntent, row: &super::T0425OutBlock1) -> bool {
             return n == normalize_ordno(&row.ordno);
         }
     }
+    // Field corroboration (also the no-order-number path). Price is compared
+    // only for a priced (limit) order: a marketable/market order submits OrdPrc
+    // "0" while the t0425 row carries the executed/venue price, so requiring
+    // price equality there would wrongly exclude a landed order and falsely
+    // green-light a retry. A zero/empty intent price drops the price predicate
+    // (match on symbol+side+qty) — strictly more conservative against a double
+    // fill.
+    let intent_price = intent.price.trim();
+    let price_ok = intent_price.is_empty()
+        || intent_price == "0"
+        || row.price.trim() == intent_price;
     row.expcode.trim() == intent.symbol.trim()
         && side_matches(&intent.side, &row.medosu)
         && row.qty.trim() == intent.qty.trim()
-        && row.price.trim() == intent.price.trim()
+        && price_ok
 }
 
 /// Classify a matched row's `status` (상태) text into a state. A row that exists
