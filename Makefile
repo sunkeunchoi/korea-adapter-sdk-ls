@@ -44,6 +44,21 @@ live-smoke-order:
 	echo "$$out"; \
 	echo "$$out" | grep -q "1 passed" || { echo "FAIL: order smoke did not run (0 tests) or did not pass"; exit 1; }
 
+## Guarded CHAINED paper-order evidence run (submit -> modify -> cancel). The
+## FIRST leg is gate 1's evidence (CSPAT00601 + t0425); the modify/cancel legs are
+## gate 2's (CSPAT00701 + CSPAT00801). Cancel is the PRIMARY teardown; paper-reset
+## is the fallback when the cancel link fails or a resting order fills unexpectedly.
+## Same EXPLICIT opt-in as live-smoke-order (LS_ORDER_SMOKE=1 beyond the paper
+## guard). Records Pending (still "passes") if the paper account cannot place/
+## modify/cancel in-window — gate 1 never waits on gate 2.
+##   make live-smoke-order-chain        # symbol defaults to 005930, MbrNo to NXT
+live-smoke-order-chain:
+	@set -a; [ -f .env ] && . ./.env; set +a; \
+	export LS_ORDER_SMOKE=1 LS_ORDER_SMOKE_TR=CSPAT00601; \
+	out=$$(cargo test -p ls-sdk --test order_smoke -- --ignored --exact --nocapture order_chained_smoke 2>&1); \
+	echo "$$out"; \
+	echo "$$out" | grep -q "1 passed" || { echo "FAIL: chained order smoke did not run (0 tests) or did not pass"; exit 1; }
+
 ## Order-book smoke: paper guard -> OAuth token -> one t1101 호가 quote (no date
 ## needed). Must run during an open KRX regular session for live depth.
 live-smoke-book:

@@ -23,19 +23,30 @@
 //!
 //! If the paper account cannot place an order in-window (not order-capable, paper
 //! returns `01900`, or empty), the run records **Pending** — the TRs stay
-//! callable-but-unconfirmed, no flip (AE5). Cleanup of any resting order is by
-//! paper reset (the only verified teardown — cancel TRs are deferred); a missing
-//! in-window clearing mechanism is a blocking Pending condition, not a silent gap.
+//! callable-but-unconfirmed, no flip (AE5).
+//!
+//! Two live runs share these guards/helpers:
+//! - `order_smoke_matrix` (`make live-smoke-order`) — the submit-only matrix
+//!   (resting buy/sell, marketable, deliberate reject), gate 1's broad predicate
+//!   evidence. Teardown is by paper reset.
+//! - `order_chained_smoke` (`make live-smoke-order-chain`) — submit → modify →
+//!   cancel against one real order number. Its FIRST leg is gate 1's evidence; the
+//!   modify/cancel legs are gate 2's. **Cancel is now the primary teardown** (the
+//!   wave that adds `CSPAT00801`); paper reset is the fallback when the cancel link
+//!   fails or a resting order fills unexpectedly. A failure after gate 1 leaves
+//!   only gate 2 Pending — gate 1 never waits on gate 2.
 //!
 //! The offline `#[test]`s below prove the fail-closed contract and run in the
-//! normal suite. The live matrix is `#[ignore]` and runs only via
-//! `make live-smoke-order` with `.env` credentials.
+//! normal suite. The live runs are `#[ignore]` and run only via the make targets
+//! with `.env` credentials.
 
 #![allow(dead_code)] // helpers are exercised by offline tests + the ignored live run.
 
 use ls_core::{LsConfig, LsError, LsResult};
 use ls_sdk::market_session::T1102Request;
-use ls_sdk::orders::{CSPAT00601Request, OrderIntent, OrderState};
+use ls_sdk::orders::{
+    CSPAT00601Request, CSPAT00701Request, CSPAT00801Request, OrderIntent, OrderState,
+};
 use ls_sdk::LsSdk;
 
 // ---------------------------------------------------------------------------
@@ -87,16 +98,27 @@ fn order_smoke_sdk() -> LsResult<LsSdk> {
 // Explicit TR selection (no default)
 // ---------------------------------------------------------------------------
 
-/// The only order TR this harness can place. Selection is EXPLICIT.
+/// The submit order TR (the matrix harness places only this one).
 const ORDER_TR: &str = "CSPAT00601";
 
-/// Select the order TR from `LS_ORDER_SMOKE_TR`. NO default: unset or any value
-/// other than the supported TR is a fail-closed "not certified" condition.
+/// The order TRs this harness can dispatch. The submit matrix places `CSPAT00601`;
+/// the chained smoke additionally drives the modify/cancel TRs against a real order
+/// number. Selection is EXPLICIT — there is no default. (The non-place TRs the chain
+/// uses are still allow-listed here so a misconfigured selection fails closed.)
+const ORDER_TR_ALLOWLIST: [&str; 3] = ["CSPAT00601", "CSPAT00701", "CSPAT00801"];
+
+/// Select the submit-matrix order TR from `LS_ORDER_SMOKE_TR`. NO default: unset or
+/// any value not in the allowlist is a fail-closed "not certified" condition. The
+/// submit matrix only places `CSPAT00601`.
 fn select_order_tr() -> Result<&'static str, String> {
     match std::env::var("LS_ORDER_SMOKE_TR") {
         Ok(v) if v == ORDER_TR => Ok(ORDER_TR),
+        Ok(v) if ORDER_TR_ALLOWLIST.contains(&v.as_str()) => Err(format!(
+            "TR '{v}' is order-class but the submit matrix places only {ORDER_TR} \
+             (the chained smoke drives modify/cancel)"
+        )),
         Ok(v) => Err(format!(
-            "unsupported order TR selection '{v}' (only {ORDER_TR} is supported)"
+            "unsupported order TR selection '{v}' (allowed: {ORDER_TR_ALLOWLIST:?})"
         )),
         Err(_) => Err(format!(
             "no order TR selected (set LS_ORDER_SMOKE_TR={ORDER_TR}); refusing to default"
@@ -614,5 +636,231 @@ async fn order_smoke_matrix() {
     println!(
         "ORDER-SMOKE teardown=paper-reset note=[operator must reset the paper book; \
          any unexpected fill is unwound out-of-band]"
+    );
+}
+
+#[test]
+fn chain_tr_allowlist_recognizes_modify_cancel_but_matrix_places_only_submit() {
+    let saved = std::env::var("LS_ORDER_SMOKE_TR").ok();
+    // The chain's order-class TRs are recognized (distinct message), but the
+    // submit MATRIX still places only CSPAT00601.
+    for tr in ["CSPAT00701", "CSPAT00801"] {
+        std::env::set_var("LS_ORDER_SMOKE_TR", tr);
+        let err = select_order_tr().expect_err("the matrix places only the submit TR");
+        assert!(err.contains("modify/cancel"), "unexpected message: {err}");
+    }
+    std::env::set_var("LS_ORDER_SMOKE_TR", "NOTATR");
+    assert!(select_order_tr().unwrap_err().contains("unsupported"));
+    match saved {
+        Some(v) => std::env::set_var("LS_ORDER_SMOKE_TR", v),
+        None => std::env::remove_var("LS_ORDER_SMOKE_TR"),
+    }
+}
+
+// ===========================================================================
+// Chained live run (submit → modify → cancel) — gate 2 evidence; its FIRST leg
+// is gate 1's. `#[ignore]`; runs only via `make live-smoke-order-chain`.
+// ===========================================================================
+
+/// A blank Pending evidence record for one chain leg (a specific order TR).
+fn leg_evidence(tr_code: &str, scenario: &str) -> OrderEvidence {
+    OrderEvidence {
+        tr_code: tr_code.into(),
+        scenario: scenario.into(),
+        certification: Certification::Pending,
+        rsp_cd: String::new(),
+        rsp_msg: String::new(),
+        order_no: None,
+        reconciliation: None,
+        production_not_run: true,
+    }
+}
+
+/// Dump the credential-free `t0425` rows for the referenced order so the operator
+/// can PIN the modify-replace shape (KTD4): whether the original `OrgOrdNo` row
+/// moves to `정정`/`정정확인` or stays `접수`, and whether `t0425.orgordno` carries
+/// the immediate parent. Prints only order numbers + status (no account, no creds);
+/// `rsp_msg`-style free text is not emitted here.
+async fn dump_t0425_rows(sdk: &LsSdk, symbol: &str, org_ordno: &str) {
+    match sdk
+        .orders()
+        .inquiry(&ls_sdk::orders::T0425Request::for_symbol(symbol))
+        .await
+    {
+        Ok(resp) => {
+            for r in &resp.outblock1 {
+                println!(
+                    "ORDER-CHAIN t0425-row org_ref={org_ordno} ordno={} orgordno={} \
+                     status=[{}] ordrem={} cheqty={}",
+                    r.ordno, r.orgordno, r.status, r.ordrem, r.cheqty
+                );
+            }
+        }
+        Err(e) => println!("ORDER-CHAIN t0425-dump failed: {e}"),
+    }
+}
+
+/// Guarded CHAINED paper-order evidence run: submit a resting far-from-market
+/// order (gate 1 evidence), modify it, then cancel it as teardown — each observed
+/// via `t0425`. Cancel is the PRIMARY teardown; paper-reset is the fallback when
+/// the cancel link itself fails or a resting order fills unexpectedly (AE5). Records
+/// Pending (never fails the build) when the paper account cannot place/modify/cancel
+/// in-window. `#[ignore]` — runs only via `make live-smoke-order-chain`.
+#[tokio::test]
+#[ignore = "guarded chained paper order: needs credentials + LS_ORDER_SMOKE=1; run via `make live-smoke-order-chain`"]
+async fn order_chained_smoke() {
+    let symbol = std::env::var("LS_ORDER_SMOKE_SHCODE").unwrap_or_else(|_| "005930".into());
+    let member_no = std::env::var("LS_ORDER_SMOKE_MBRNO").unwrap_or_else(|_| "NXT".into());
+    let params = match validate_params(&symbol, &member_no) {
+        Ok(p) => p,
+        Err(e) => {
+            OrderEvidence::not_certified("preflight", &e).record();
+            panic!("invalid operator params: {e}");
+        }
+    };
+
+    let sdk = order_smoke_sdk().expect("both guards + paper config must succeed");
+    let account = sdk.orders().account_no().to_string();
+
+    // Fetch + validate the daily band (KTD8); a degenerate band records not-certified.
+    let band = match sdk
+        .market_session()
+        .quote(&T1102Request::new(&params.symbol, "K"))
+        .await
+    {
+        Ok(resp) => match validate_band(&resp.outblock.uplmtprice, &resp.outblock.dnlmtprice) {
+            Ok(b) => b,
+            Err(e) => {
+                OrderEvidence::not_certified("band", &e).record();
+                OrderEvidence::pending("chain", "degenerate band; chain not run").record();
+                return;
+            }
+        },
+        Err(e) => {
+            OrderEvidence::pending("band", &format!("t1102 band fetch failed: {e}")).record();
+            return;
+        }
+    };
+
+    // ---- SUBMIT leg (gate 1 evidence): a resting buy at the band floor. ----
+    let resting_price = band.resting_buy_price();
+    let submit_req =
+        CSPAT00601Request::limit(&params.symbol, "1", resting_price.to_string(), "2", &params.member_no);
+    let mut sev = leg_evidence("CSPAT00601", "submit_resting_buy");
+    let submit_ordno = match sdk.orders().submit(&submit_req).await {
+        Ok(resp) => {
+            sev.certification = Certification::Certified;
+            sev.rsp_cd = resp.rsp_cd.clone();
+            sev.rsp_msg = resp.rsp_msg.clone();
+            sev.order_no = Some(resp.order_no().to_string());
+            let intent = OrderIntent::submit(
+                &account,
+                params.symbol.clone(),
+                submit_req.inblock.bnstpcode.clone(),
+                submit_req.inblock.ordqty.clone(),
+                submit_req.inblock.ordprc.clone(),
+                Some(resp.order_no().to_string()),
+            );
+            sev.reconciliation = Some(sdk.orders().reconcile(&intent, false).await.state.as_str().into());
+            sev.record();
+            resp.order_no().to_string()
+        }
+        Err(LsError::ApiError { code, message }) if code == "01900" => {
+            sev.rsp_cd = code;
+            sev.rsp_msg = message;
+            sev.record();
+            OrderEvidence::pending("chain", "paper account not order-capable (01900); chain not run")
+                .record();
+            return;
+        }
+        Err(e) => {
+            sev.rsp_msg = format!("submit failed: {e}");
+            sev.record();
+            OrderEvidence::pending("chain", "submit leg did not place; chain not run").record();
+            return;
+        }
+    };
+    if submit_ordno.trim().is_empty() || submit_ordno.trim() == "0" {
+        OrderEvidence::pending("chain", "submit returned no usable order number; chain not run")
+            .record();
+        return;
+    }
+
+    // ---- MODIFY leg: amend the resting order to a new (still far-from-market)
+    // price. The modify is absolute (full target), KTD4. ----
+    let modify_price = band.dnlmt.saturating_add(tick(band.dnlmt)).min(band.uplmt);
+    let modify_req = CSPAT00701Request::limit(&submit_ordno, &params.symbol, "1", modify_price.to_string());
+    let mut mev = leg_evidence("CSPAT00701", "modify_resting");
+    let live_ordno = match sdk.orders().modify(&modify_req).await {
+        Ok(resp) => {
+            mev.certification = Certification::Certified;
+            mev.rsp_cd = resp.rsp_cd.clone();
+            mev.rsp_msg = resp.rsp_msg.clone();
+            mev.order_no = Some(resp.order_no().to_string());
+            let intent = modify_req.reconcile_intent(&account);
+            mev.reconciliation = Some(sdk.orders().reconcile(&intent, false).await.state.as_str().into());
+            mev.record();
+            // PIN the replace shape (KTD4) from this NON-ambiguous read.
+            dump_t0425_rows(&sdk, &params.symbol, &submit_ordno).await;
+            // The live order to cancel: the modify's NEW order number if present,
+            // else the original (an in-place modify).
+            let n = resp.order_no().to_string();
+            if n.trim().is_empty() || n.trim() == "0" { submit_ordno.clone() } else { n }
+        }
+        Err(e) => {
+            // Gate 1 already flipped on the submit leg; gate 2 stays Pending.
+            mev.rsp_msg = format!("modify failed: {e}");
+            mev.record();
+            OrderEvidence::pending("chain", "modify link failed; gate 2 not flipped (gate 1 stands)")
+                .record();
+            // Still tear down the resting submit order via cancel below.
+            submit_ordno.clone()
+        }
+    };
+
+    // ---- CANCEL leg (PRIMARY teardown + gate 2 evidence). ----
+    let cancel_req = CSPAT00801Request::new(&live_ordno, &params.symbol, "1");
+    let mut cev = leg_evidence("CSPAT00801", "cancel_teardown");
+    match sdk.orders().cancel(&cancel_req).await {
+        Ok(resp) => {
+            cev.certification = Certification::Certified;
+            cev.rsp_cd = resp.rsp_cd.clone();
+            cev.rsp_msg = resp.rsp_msg.clone();
+            cev.order_no = Some(resp.order_no().to_string());
+            let intent = cancel_req.reconcile_intent(&account);
+            let outcome = sdk.orders().reconcile(&intent, false).await;
+            cev.reconciliation = Some(outcome.state.as_str().into());
+            cev.record();
+            if outcome.state != OrderState::Canceled {
+                // The cancel acked but the book is not provably clean — fall back to
+                // paper reset and flag for review (inverted-risk guard, R7).
+                println!(
+                    "ORDER-CHAIN warning=[cancel acked but t0425 not provably 취소: {}] \
+                     teardown=paper-reset",
+                    outcome.state.as_str()
+                );
+            }
+        }
+        Err(e) => {
+            // The cancel link itself failed → paper-reset fallback teardown; gate 2
+            // does not flip; gate 1 is unaffected (AE5).
+            cev.rsp_msg = format!("cancel failed: {e}");
+            cev.record();
+            OrderEvidence::pending(
+                "chain",
+                "cancel link failed; paper-reset fallback teardown; gate 2 not flipped",
+            )
+            .record();
+            println!(
+                "ORDER-CHAIN teardown=paper-reset note=[cancel failed; operator must reset the \
+                 paper book to clear order {live_ordno}]"
+            );
+            return;
+        }
+    }
+
+    println!(
+        "ORDER-CHAIN teardown=cancel note=[cancel is the primary teardown; if an unexpected fill \
+         occurred mid-chain, operator unwinds out-of-band via paper reset]"
     );
 }
