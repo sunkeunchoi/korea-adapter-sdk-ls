@@ -509,6 +509,49 @@ trs:
     protocol: rest
     instrument_domain: sector_index
     venue_session: krx_regular
+  # Domestic stock master/reference breadth wave (raw→Tracked, plan -004).
+  t9945:
+    file: trs/t9945.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t3202:
+    file: trs/t3202.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t3401:
+    file: trs/t3401.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t8410:
+    file: trs/t8410.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t8451:
+    file: trs/t8451.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t8419:
+    file: trs/t8419.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: sector_index
+    venue_session: krx_regular
+  t4203:
+    file: trs/t4203.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: sector_index
+    venue_session: krx_regular
   t2106:
     file: trs/t2106.yaml
     owner_class: market_session
