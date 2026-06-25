@@ -140,6 +140,20 @@ impl LsClient {
         self.inner.collect_all(req, f).await
     }
 
+    /// Engage or release the global order kill switch (order-safety §1).
+    ///
+    /// `set_orders_enabled(false)` is the operator emergency halt: every
+    /// subsequent order dispatch halts before dedup, rate limiting, or HTTP I/O.
+    /// Non-order reads (`post`/`post_paginated`) are unaffected.
+    pub fn set_orders_enabled(&self, enabled: bool) {
+        self.inner.set_orders_enabled(enabled);
+    }
+
+    /// `true` if order dispatch is currently enabled (the default).
+    pub fn orders_enabled(&self) -> bool {
+        self.inner.orders_enabled()
+    }
+
     /// Revoke the in-memory bearer token.
     ///
     /// Idempotent: if no token is cached, returns `Ok(())`. Otherwise POSTs to

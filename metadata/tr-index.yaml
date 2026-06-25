@@ -245,6 +245,12 @@ trs:
     protocol: rest
     instrument_domain: stock
     venue_session: krx_regular
+  t0425:
+    file: trs/t0425.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
   t1403:
     file: trs/t1403.yaml
     owner_class: paginated

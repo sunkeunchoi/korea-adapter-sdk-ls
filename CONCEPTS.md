@@ -50,3 +50,19 @@ The repository-level sidecar that records, per TR, which authored facets are sti
 
 ### Pending
 A TR whose Paper Live Smoke ran but did not open the Implemented gate — callable yet shape-unconfirmed (empty result), or blocked by an unresolved input or an environmental gateway rejection. A pending TR ships without flipping to Implemented and keeps its provisional ledger rows.
+
+## Order safety
+
+The order class is the one place where a bug is a real, irreversible market action rather than a stale read, so it carries its own machinery and vocabulary.
+
+### Double fill
+The cardinal order-class failure: the same order placed twice at the exchange. The whole order-safety package (no-retry dispatch, the deduplicator, reconciliation) exists to make a double fill structurally hard. Its asymmetry drives the design — a false "already done" is harmless (reconcile and skip), a false "not done, safe to retry" causes the irreversible second fill — so every order guard fails toward the not-safe conclusion.
+
+### Ambiguous order outcome
+An order send whose result cannot be proven Accepted or Rejected: a transport timeout / 5xx, or an order acknowledgement carrying the generic-success code (`00000`/empty) that — unlike a read — does not prove acceptance. Because dispatch is no-retry, an ambiguous outcome is surfaced (as `LsError::AmbiguousOrder` or a transport error) and resolved by [[Order reconciliation]], never blindly retried. Distinct from a clean rejection (a recognized broker reject code → `ApiError`).
+
+### Order reconciliation
+The post-ambiguity resolution: query the order/execution read (`t0425`) for the symbol, match candidate rows against the local intent (by order number, else symbol/side/quantity/price), and classify the outcome into one of six states — Accepted, Rejected, Duplicate, Modified, Canceled, Unknown. A retry is authorized only when a *complete* query proves no matching order was accepted; a failed or truncated query, or a degenerate match key, fails toward Unknown + not-safe.
+
+### Guarded paper order
+The order class's Implemented gate — an operator-initiated, paper-only evidence matrix (a resting far-from-market buy and sell, one marketable order, one deliberate rejection) that pins the order success predicate from observed real broker codes. It replaces the read class's [[Paper Live Smoke]] (the automated gate never submits a live order) and the realtime class's lifecycle gate. If the paper account cannot place in-window, the run records [[Pending]] and the order TRs do not flip.

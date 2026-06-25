@@ -1,9 +1,16 @@
 # Order-Safety Design Contract
 
-**Status:** design-only. No order runtime ships in the first vertical slice
-(ADR 0008). This note records the contract the order runtime MUST satisfy
-before it lands, so the metadata-tracked order class (`CSPAT00601`, and the
-~order TRs that follow) has a written safety bar to build against.
+**Status:** machinery-complete, evidence-pending (updated 2026-06-25). The first
+order package has built the runtime this contract requires —
+`Inner::post_order` (no-retry, §1), the `OrderDeduplicator` (§2), the global
+kill switch (§1), the order success predicate (§1), the redaction/tracing
+contract (§5), the six-state reconciliation matcher (§3), the re-added
+`LsError::DuplicateOrder` variant, and the guarded paper-order evidence harness
+(§4, `make live-smoke-order`). The order logic is proven against mocks
+(`crates/ls-sdk/tests/order_logic_gate.rs`). What has NOT yet happened is the
+guarded **live paper order** that gates Implemented (§4): until that in-window
+run, `CSPAT00601` and `t0425` stay Tracked-not-Implemented and the §1 accepted
+codes are seed-only/unconfirmed. This note remains the live safety bar.
 
 The order class is the one place where a bug is not a stale quote but a real,
 irreversible market action. Everything below exists to make a duplicate or
@@ -159,6 +166,18 @@ never run as part of the automated Change-Scoped Gate. The gate proves order
 submits a live order. Live evidence is an operator-initiated, deliberately
 out-of-band step.
 
+**The Implemented gate for an order TR is a single guarded live paper order**
+(not the automated Paper Live Smoke every read-only TR uses, and not the
+realtime class's lifecycle-reachability gate). An order TR flips to Implemented
+only after an operator runs the guarded paper-order evidence matrix
+(`make live-smoke-order`) out-of-band and records a clean, credential-free
+result — a resting far-from-market limit buy and sell, one marketable order, and
+one deliberate rejection — pinning the §1 accepted-code set from observed real
+`rsp_cd` codes. If the paper account cannot place an order in-window, the run
+records **Pending** and the TR stays callable-but-unconfirmed; the machinery
+still ships. This strengthens the older posture (which reserved manual evidence
+for Recommended): a guarded paper order is now the order class's Implemented bar.
+
 Manual evidence must fail closed:
 
 - A selected order TR must be explicit; an unset selection must not default to
@@ -198,16 +217,21 @@ contract; it is a safety constraint, not just observability hygiene. (Provenance
 
 ## What ships now vs later
 
-- **Now (this slice):** `CSPAT00601` exists in `TR Maintenance Metadata` as
-  `tracked: true, implemented: false, recommended: false`, with
-  `strong_order_fields` populated. No order code in `ls-core`/`ls-sdk`.
-- **Later (first order runtime package):** `CSPAT00601` order placement and
-  `t0425` order/execution inquiry ship together with `post_order` (no-retry),
-  `OrderDeduplicator` (with the §2 eviction contract), reconciliation, the
-  `LsError::DuplicateOrder` variant re-added, and per-class freshness windows
-  tightened for orders. `CSPAT00601` is the domestic-stock prerequisite producer
-  for order numbers, and `t0425` is the reconciliation path after ambiguous
-  outcomes.
+- **Landed (first order runtime package, 2026-06-25):** the order runtime
+  machinery is in `ls-core`/`ls-sdk` — `Inner::post_order` (no-retry), the
+  `OrderDeduplicator` (the §2 eviction contract), the global kill switch, the
+  order success predicate, the redaction/tracing contract (§5), the six-state
+  reconciliation matcher, and the re-added `LsError::DuplicateOrder` variant.
+  `CSPAT00601` (submit) and `t0425` (the reconciliation read) are callable
+  through the `Orders` handle, and the guarded paper-order evidence harness
+  exists (`make live-smoke-order`). The order logic is proven against mocks
+  (`order_logic_gate`).
+- **Pending (the Implemented flip):** `CSPAT00601` and `t0425` remain
+  `tracked: true, implemented: false` in `TR Maintenance Metadata` until a clean
+  in-window guarded paper-order run (§4). The §1 accepted codes
+  (`00039`/`00040`) are the seed-only/unconfirmed hypothesis until that run
+  observes the real surface. A clean run flips both TRs and supersedes ADR 0008.
 - **Later (after the first package):** domestic-stock modify/cancel TRs such as
   `CSPAT00701` and `CSPAT00801` can be considered only after the SDK can safely
-  produce and reconcile the order numbers they consume.
+  produce and reconcile the order numbers they consume — and are implemented via
+  the frozen `.agents/skills/implement-order-tr/` recipe.

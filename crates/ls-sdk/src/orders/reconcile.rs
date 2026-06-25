@@ -1,0 +1,576 @@
+//! Order reconciliation (order-safety §3) — resolve an ambiguous send against
+//! live exchange state, and the redacting local-evidence record (§3 step 2, §5).
+//!
+//! Because order dispatch is no-retry (§1), an ambiguous outcome (transport
+//! timeout / 5xx / an ambiguous `rsp_cd`) is expected and must be *resolved*, not
+//! swallowed. After such a send the SDK queries `t0425` and matches candidate
+//! orders by account, symbol, side, quantity, price, time window, and — when
+//! known — the order number, classifying the result into the six-state model. It
+//! retries only after proving no matching order was accepted, or on an explicit
+//! operator override.
+//!
+//! The local-evidence record persists the order intent for an operator to read,
+//! so it carries the same at-rest posture as the rest of the order surface: the
+//! account identifier is **keyed-hashed (HMAC-SHA256), never bare `SHA256`** —
+//! account numbers are low-entropy and a bare hash is reversible by brute force.
+//! The "request hash" field equals the dedup key (which itself embeds
+//! `account_no`), so it is keyed-hashed too. The bare dedup key is never written.
+
+use hmac::{Hmac, Mac};
+use ls_core::LsError;
+use serde::{Deserialize, Serialize};
+use sha2::Sha256;
+
+use super::{T0425OutBlock1, T0425Response};
+
+type HmacSha256 = Hmac<Sha256>;
+
+/// Stated retention bound for a reconciliation evidence record (days). Matches
+/// the §4 manual-evidence freshness window — evidence older than this should be
+/// re-collected before relying on it.
+pub const EVIDENCE_RETENTION_DAYS: u32 = 7;
+
+/// Minimum HMAC key length (bytes). A short/empty key collapses HMAC-SHA256 to a
+/// publicly-reproducible keyed hash, which for a low-entropy account number is
+/// brute-forceable exactly like a bare SHA-256 — voiding the §5 redaction. The
+/// record builder rejects a shorter key rather than producing a falsely-redacted
+/// artifact.
+pub const MIN_HMAC_KEY_LEN: usize = 32;
+
+/// The six-state order reconciliation model (order-safety §3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum OrderState {
+    /// LS accepted the order for processing (order present at the venue).
+    Accepted,
+    /// LS rejected the order (no order at the venue).
+    Rejected,
+    /// The SDK returned a cached response for an identical request (`dedup_hit`).
+    Duplicate,
+    /// A pending order was changed by a modify TR.
+    Modified,
+    /// A pending order was canceled by a cancel TR.
+    Canceled,
+    /// The SDK cannot prove accepted versus not accepted.
+    Unknown,
+}
+
+impl OrderState {
+    /// A short stable token for the evidence record / logs.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            OrderState::Accepted => "accepted",
+            OrderState::Rejected => "rejected",
+            OrderState::Duplicate => "duplicate",
+            OrderState::Modified => "modified",
+            OrderState::Canceled => "canceled",
+            OrderState::Unknown => "unknown",
+        }
+    }
+}
+
+/// The local intent for an order — what the caller tried to submit. Used both to
+/// match against `t0425` rows and to build the redacting evidence record.
+#[derive(Debug, Clone)]
+pub struct OrderIntent {
+    /// Account number (cleartext here; never persisted in the clear — see
+    /// [`ReconciliationRecord`]).
+    pub account_no: String,
+    /// Symbol / 종목번호 (the `t0425` query filter and a match field).
+    pub symbol: String,
+    /// Side as the `CSPAT00601` `BnsTpCode` (`"1"` sell / `"2"` buy).
+    pub side: String,
+    /// Order quantity.
+    pub qty: String,
+    /// Order price.
+    pub price: String,
+    /// The order number from the `CSPAT00601` ack, when one was returned. The
+    /// strongest match key.
+    pub order_no: Option<String>,
+}
+
+/// The reconciliation outcome: the classified state plus whether a retry is safe.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReconcileOutcome {
+    /// The classified six-state outcome.
+    pub state: OrderState,
+    /// `true` only when reconciliation proved no matching order was accepted (a
+    /// clean query with no match). Never `true` for a failed/ambiguous query.
+    pub safe_to_retry: bool,
+}
+
+impl ReconcileOutcome {
+    /// A `dedup_hit` short-circuit: Duplicate, never safe to retry.
+    pub fn duplicate() -> Self {
+        ReconcileOutcome {
+            state: OrderState::Duplicate,
+            safe_to_retry: false,
+        }
+    }
+}
+
+/// Normalize an order number for cross-TR equality: `CSPAT00601.OrdNo` and the
+/// `t0425` row `ordno` both arrive as decimal strings (via `string_or_number`),
+/// possibly with whitespace or leading zeros. Compare numerically when possible.
+pub fn normalize_ordno(s: &str) -> String {
+    let t = s.trim();
+    t.parse::<u64>().map(|n| n.to_string()).unwrap_or_else(|_| t.to_string())
+}
+
+/// Map a `CSPAT00601` `BnsTpCode` (`"1"` sell / `"2"` buy) to the `t0425` row
+/// `medosu` Korean side text (`"매도"` / `"매수"`).
+fn side_matches(bnstpcode: &str, row_medosu: &str) -> bool {
+    match bnstpcode.trim() {
+        "1" => row_medosu.contains("매도"),
+        "2" => row_medosu.contains("매수"),
+        // An unrecognized/absent side code cannot be corroborated. Return `true`
+        // (inconclusive, not excluding) so the row is still matched on its other
+        // fields — never declaring a FALSE absence that would green-light a retry
+        // of an order that may have landed. (In practice the side is always the
+        // CSPAT00601 BnsTpCode "1"/"2".)
+        _ => true,
+    }
+}
+
+/// `true` if a `t0425` row corresponds to the intent.
+///
+/// When the order number is known it is the sole, strongest key (a venue order
+/// number is unique). Otherwise corroborate on symbol + side + quantity + price.
+fn row_matches(intent: &OrderIntent, row: &super::T0425OutBlock1) -> bool {
+    if let Some(ordno) = &intent.order_no {
+        let n = normalize_ordno(ordno);
+        // A USABLE (non-empty, non-zero) order number is the authoritative key.
+        // An empty/zero ack order number is NOT a usable key — `""` would
+        // spuriously equal a blank row `ordno`, matching an unrelated row — so we
+        // fall through to field corroboration instead of trusting it.
+        if !n.is_empty() && n != "0" {
+            return n == normalize_ordno(&row.ordno);
+        }
+    }
+    // Field corroboration (also the no-order-number path). Price is compared
+    // only for a priced (limit) order: a marketable/market order submits OrdPrc
+    // "0" while the t0425 row carries the executed/venue price, so requiring
+    // price equality there would wrongly exclude a landed order and falsely
+    // green-light a retry. A zero/empty intent price drops the price predicate
+    // (match on symbol+side+qty) — strictly more conservative against a double
+    // fill.
+    let intent_price = intent.price.trim();
+    let price_ok = intent_price.is_empty()
+        || intent_price == "0"
+        || row.price.trim() == intent_price;
+    row.expcode.trim() == intent.symbol.trim()
+        && side_matches(&intent.side, &row.medosu)
+        && row.qty.trim() == intent.qty.trim()
+        && price_ok
+}
+
+/// Classify a matched row's `status` (상태) text into a state. A row that exists
+/// in `t0425` means the order reached the venue, so the floor is Accepted.
+fn classify_status(status: &str) -> OrderState {
+    // Check the rejection markers FIRST: a composite status such as `정정거부`
+    // (modification rejected) or `취소거부` (cancel rejected) means the modify /
+    // cancel did NOT take effect and the original order is still live — so it
+    // must not be read as Modified / Canceled.
+    if status.contains("거부") || status.contains("거절") {
+        OrderState::Rejected
+    } else if status.contains("취소") {
+        OrderState::Canceled
+    } else if status.contains("정정") {
+        OrderState::Modified
+    } else {
+        // 접수 (received) / 체결 (filled) / 확인 (confirmed) / anything else: the
+        // order is present at the venue.
+        OrderState::Accepted
+    }
+}
+
+/// Classify an ambiguous send against a `t0425` inquiry (order-safety §3).
+///
+/// - `dedup_hit` → Duplicate.
+/// - `inquiry: None` (the query failed) → Unknown, **not** safe to retry.
+/// - a matching row → its status classification (Accepted/Canceled/Modified),
+///   not safe to retry — the order is at the venue.
+/// - a clean query with no matching row → Unknown but **safe to retry**: a
+///   successful query proved no matching order was accepted (§3 step 6).
+pub fn reconcile(
+    intent: &OrderIntent,
+    inquiry: Option<&T0425Response>,
+    dedup_hit: bool,
+) -> ReconcileOutcome {
+    if dedup_hit {
+        return ReconcileOutcome::duplicate();
+    }
+    let Some(resp) = inquiry else {
+        // Query failed — we cannot prove the order's presence or absence.
+        return ReconcileOutcome {
+            state: OrderState::Unknown,
+            safe_to_retry: false,
+        };
+    };
+    // A single response only proves absence if it is the TERMINAL page — an
+    // unfinished `tr_cont` continuation means more rows exist that we have not
+    // inspected, so a no-match there is NOT proven absence.
+    reconcile_rows(intent, &resp.outblock1, response_is_terminal(resp), false)
+}
+
+/// `true` if a `t0425` response is the last page (no `tr_cont` continuation).
+fn response_is_terminal(resp: &T0425Response) -> bool {
+    let c = resp.tr_cont.trim();
+    c.is_empty() || c.eq_ignore_ascii_case("n")
+}
+
+/// Classify an ambiguous send against the FULL set of `t0425` rows.
+///
+/// `query_complete` MUST be true only when every page was inspected (a terminal
+/// single page, or an exhausted `collect_all`). This is the load-bearing
+/// safety gate: `safe_to_retry` is `true` ONLY on a no-match over a *complete*
+/// query — a truncated or partial query that finds no match fails toward
+/// Unknown + not-safe, so an order sitting on an un-fetched page can never
+/// green-light a resubmit (the double-fill the package exists to prevent).
+pub fn reconcile_rows(
+    intent: &OrderIntent,
+    rows: &[T0425OutBlock1],
+    query_complete: bool,
+    dedup_hit: bool,
+) -> ReconcileOutcome {
+    if dedup_hit {
+        return ReconcileOutcome::duplicate();
+    }
+    for row in rows {
+        if row_matches(intent, row) {
+            return ReconcileOutcome {
+                state: classify_status(&row.status),
+                safe_to_retry: false,
+            };
+        }
+    }
+    ReconcileOutcome {
+        state: OrderState::Unknown,
+        // Proven absent ONLY if the query was complete.
+        safe_to_retry: query_complete,
+    }
+}
+
+/// A redacting local-evidence record (order-safety §3 step 2 / §5).
+///
+/// Built through this single serializer — NEVER the raw response struct — so an
+/// account number or the bare dedup key can never leak into an at-rest artifact.
+/// `account_ref` and `request_ref` are HMAC-SHA256 keyed hashes (low-entropy
+/// account numbers must not be bare-hashed). The HMAC key is supplied by the
+/// operator and is NOT part of the record.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReconciliationRecord {
+    /// Caller-supplied record timestamp (the runtime has no clock).
+    pub recorded_at: String,
+    /// The order TR code.
+    pub tr_code: String,
+    /// Keyed hash of the account number — NOT cleartext, NOT a bare SHA-256.
+    pub account_ref: String,
+    /// Keyed hash of the dedup key (which embeds the account) — the "request
+    /// hash" of §3, never the bare dedup key.
+    pub request_ref: String,
+    /// Symbol / 종목번호.
+    pub symbol: String,
+    /// Side (`BnsTpCode`).
+    pub side: String,
+    /// Order quantity.
+    pub qty: String,
+    /// Order price.
+    pub price: String,
+    /// The reconciled state.
+    pub state: String,
+    /// Whether a retry was proven safe.
+    pub safe_to_retry: bool,
+    /// The error that triggered reconciliation, if any.
+    pub error: Option<String>,
+    /// Stated retention bound (days).
+    pub retention_days: u32,
+}
+
+impl ReconciliationRecord {
+    /// Build a record. `hmac_key` is the operator-held key for the keyed account
+    /// / request hashes; it is consumed only to compute the refs and is never
+    /// stored on the record. `dedup_key` is the bare order dedup key (kept out of
+    /// the record — only its keyed hash, `request_ref`, is written).
+    ///
+    /// FAIL-CLOSED: a key shorter than [`MIN_HMAC_KEY_LEN`] is rejected with
+    /// `LsError::Config` rather than producing a falsely-redacted record.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        recorded_at: impl Into<String>,
+        tr_code: impl Into<String>,
+        hmac_key: &[u8],
+        intent: &OrderIntent,
+        dedup_key: &str,
+        outcome: ReconcileOutcome,
+        error: Option<String>,
+    ) -> Result<Self, LsError> {
+        if hmac_key.len() < MIN_HMAC_KEY_LEN {
+            return Err(LsError::Config(format!(
+                "reconciliation HMAC key must be at least {MIN_HMAC_KEY_LEN} bytes to redact \
+                 the low-entropy account number; got {} bytes",
+                hmac_key.len()
+            )));
+        }
+        Ok(ReconciliationRecord {
+            recorded_at: recorded_at.into(),
+            tr_code: tr_code.into(),
+            account_ref: keyed_hash(hmac_key, intent.account_no.as_bytes()),
+            request_ref: keyed_hash(hmac_key, dedup_key.as_bytes()),
+            symbol: intent.symbol.clone(),
+            side: intent.side.clone(),
+            qty: intent.qty.clone(),
+            price: intent.price.clone(),
+            state: outcome.state.as_str().to_string(),
+            safe_to_retry: outcome.safe_to_retry,
+            error,
+            retention_days: EVIDENCE_RETENTION_DAYS,
+        })
+    }
+
+    /// Serialize to the credential-free JSON written to the evidence location.
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string_pretty(self)
+    }
+}
+
+/// HMAC-SHA256 keyed hash, hex-encoded. Keyed (not bare) so a low-entropy input
+/// such as an account number cannot be recovered by brute force from the record.
+fn keyed_hash(key: &[u8], data: &[u8]) -> String {
+    let mut mac = HmacSha256::new_from_slice(key).expect("HMAC accepts any key length");
+    mac.update(data);
+    let bytes = mac.finalize().into_bytes();
+    let mut s = String::with_capacity(bytes.len() * 2);
+    use std::fmt::Write;
+    for b in bytes {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::orders::{T0425OutBlock1, T0425Response};
+
+    fn intent(order_no: Option<&str>) -> OrderIntent {
+        OrderIntent {
+            account_no: "00000000-01".into(),
+            symbol: "005930".into(),
+            side: "2".into(), // buy
+            qty: "2".into(),
+            price: "60000".into(),
+            order_no: order_no.map(|s| s.to_string()),
+        }
+    }
+
+    fn row(ordno: &str, status: &str) -> T0425OutBlock1 {
+        T0425OutBlock1 {
+            ordno: ordno.into(),
+            expcode: "005930".into(),
+            medosu: "매수".into(),
+            qty: "2".into(),
+            price: "60000".into(),
+            status: status.into(),
+            ..Default::default()
+        }
+    }
+
+    fn resp(rows: Vec<T0425OutBlock1>) -> T0425Response {
+        T0425Response {
+            rsp_cd: "00000".into(),
+            outblock1: rows,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn matching_order_number_classifies_accepted_not_resubmitted() {
+        let out = reconcile(&intent(Some("84")), Some(&resp(vec![row("84", "접수")])), false);
+        assert_eq!(out.state, OrderState::Accepted);
+        assert!(!out.safe_to_retry, "an accepted order must never be retried");
+    }
+
+    #[test]
+    fn ordno_normalizes_across_leading_zero_and_whitespace() {
+        // CSPAT00601.OrdNo "84" vs a t0425 row " 0084 " must match.
+        let out = reconcile(&intent(Some("84")), Some(&resp(vec![row(" 0084 ", "체결")])), false);
+        assert_eq!(out.state, OrderState::Accepted);
+    }
+
+    #[test]
+    fn no_matching_order_is_unknown_but_safe_to_retry() {
+        let out = reconcile(&intent(Some("999")), Some(&resp(vec![row("84", "접수")])), false);
+        assert_eq!(out.state, OrderState::Unknown);
+        assert!(out.safe_to_retry, "a clean query proving absence is safe to retry");
+    }
+
+    #[test]
+    fn empty_response_is_unknown_never_silent_accepted() {
+        let out = reconcile(&intent(Some("84")), Some(&resp(vec![])), false);
+        assert_eq!(out.state, OrderState::Unknown);
+        assert_ne!(out.state, OrderState::Accepted);
+    }
+
+    #[test]
+    fn failed_query_is_unknown_and_not_safe_to_retry() {
+        let out = reconcile(&intent(Some("84")), None, false);
+        assert_eq!(out.state, OrderState::Unknown);
+        assert!(!out.safe_to_retry, "a failed query cannot prove absence");
+    }
+
+    #[test]
+    fn dedup_hit_is_duplicate_without_a_query() {
+        let out = reconcile(&intent(Some("84")), None, true);
+        assert_eq!(out.state, OrderState::Duplicate);
+    }
+
+    #[test]
+    fn match_without_order_number_uses_symbol_side_qty_price() {
+        // No order number known: corroborate on the order fields.
+        let out = reconcile(&intent(None), Some(&resp(vec![row("84", "접수")])), false);
+        assert_eq!(out.state, OrderState::Accepted);
+        // A side mismatch (sell vs the buy row) must NOT match.
+        let mut sell = intent(None);
+        sell.side = "1".into();
+        let out2 = reconcile(&sell, Some(&resp(vec![row("84", "접수")])), false);
+        assert_eq!(out2.state, OrderState::Unknown);
+        assert!(out2.safe_to_retry);
+    }
+
+    #[test]
+    fn empty_or_zero_order_number_falls_through_to_field_corroboration() {
+        // An empty ack order number must NOT spuriously equal a blank row ordno;
+        // it falls through to symbol+side+qty+price corroboration instead.
+        let mut empty = intent(Some(""));
+        empty.order_no = Some("".into());
+        // A row whose fields match (ordno blank) is found via corroboration.
+        let blank_row = T0425OutBlock1 {
+            ordno: "".into(),
+            expcode: "005930".into(),
+            medosu: "매수".into(),
+            qty: "2".into(),
+            price: "60000".into(),
+            status: "접수".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            reconcile(&empty, Some(&resp(vec![blank_row])), false).state,
+            OrderState::Accepted,
+            "empty ordno must corroborate on fields, not match a blank ordno blindly"
+        );
+        // A "0" order number likewise corroborates rather than matching ordno 0.
+        let mut zero = intent(Some("0"));
+        zero.order_no = Some("0".into());
+        // No field match (different symbol) -> not found, safe to retry.
+        let other = T0425OutBlock1 {
+            ordno: "0".into(),
+            expcode: "000660".into(),
+            medosu: "매수".into(),
+            ..Default::default()
+        };
+        let out = reconcile(&zero, Some(&resp(vec![other])), false);
+        assert_eq!(out.state, OrderState::Unknown);
+        assert!(out.safe_to_retry);
+    }
+
+    #[test]
+    fn canceled_and_modified_status_classify_distinctly() {
+        assert_eq!(
+            reconcile(&intent(Some("84")), Some(&resp(vec![row("84", "취소")])), false).state,
+            OrderState::Canceled
+        );
+        assert_eq!(
+            reconcile(&intent(Some("84")), Some(&resp(vec![row("84", "정정")])), false).state,
+            OrderState::Modified
+        );
+    }
+
+    #[test]
+    fn rejection_status_classifies_rejected_even_when_composite() {
+        assert_eq!(classify_status("거부"), OrderState::Rejected);
+        assert_eq!(classify_status("거절"), OrderState::Rejected);
+        // A rejected modify/cancel must NOT read as Modified/Canceled — the
+        // original order is still live.
+        assert_eq!(classify_status("정정거부"), OrderState::Rejected);
+        assert_eq!(classify_status("취소거부"), OrderState::Rejected);
+        assert_eq!(
+            reconcile(&intent(Some("84")), Some(&resp(vec![row("84", "거부")])), false).state,
+            OrderState::Rejected
+        );
+    }
+
+    #[test]
+    fn no_match_on_a_non_terminal_page_is_not_safe_to_retry() {
+        // A response with an unfinished tr_cont continuation is incomplete: a
+        // no-match must NOT be treated as proven absence (the order could sit on
+        // an un-fetched page — the double-fill guard).
+        let mut truncated = resp(vec![row("84", "접수")]);
+        truncated.tr_cont = "Y".into();
+        let out = reconcile(&intent(Some("999")), Some(&truncated), false);
+        assert_eq!(out.state, OrderState::Unknown);
+        assert!(
+            !out.safe_to_retry,
+            "a truncated query proves nothing about absence"
+        );
+        // reconcile_rows with query_complete=false is likewise not safe.
+        assert!(!reconcile_rows(&intent(Some("999")), &[], false, false).safe_to_retry);
+        // A complete empty query IS safe.
+        assert!(reconcile_rows(&intent(Some("999")), &[], true, false).safe_to_retry);
+    }
+
+    #[test]
+    fn weak_hmac_key_is_rejected_fail_closed() {
+        let intent = intent(Some("84"));
+        let outcome = ReconcileOutcome {
+            state: OrderState::Accepted,
+            safe_to_retry: false,
+        };
+        let err = ReconciliationRecord::new(
+            "t", "CSPAT00601", b"short", &intent, "deadbeef", outcome, None,
+        )
+        .expect_err("a sub-32-byte key must be rejected");
+        assert!(matches!(err, LsError::Config(_)));
+    }
+
+    #[test]
+    fn evidence_record_redacts_account_and_request_hash() {
+        let intent = intent(Some("84"));
+        let dedup_key = "deadbeefcafebabe0123456789abcdef"; // a bare dedup key
+        let outcome = ReconcileOutcome {
+            state: OrderState::Accepted,
+            safe_to_retry: false,
+        };
+        let rec = ReconciliationRecord::new(
+            "2026-06-25T00:00:00Z",
+            "CSPAT00601",
+            b"operator-hmac-key-at-least-32-bytes-long!!",
+            &intent,
+            dedup_key,
+            outcome,
+            Some("timeout".into()),
+        )
+        .expect("a >=32-byte key is accepted");
+        let json = rec.to_json().unwrap();
+
+        // No cleartext account number.
+        assert!(!json.contains("00000000-01"), "account leaked: {json}");
+        // Not a BARE sha256 of the account number.
+        let bare_account = {
+            use sha2::Digest;
+            let d = Sha256::digest(intent.account_no.as_bytes());
+            let mut s = String::new();
+            use std::fmt::Write;
+            for b in d {
+                let _ = write!(s, "{b:02x}");
+            }
+            s
+        };
+        assert!(!json.contains(&bare_account), "bare SHA256(account) present");
+        // The bare dedup key is never written (only its keyed hash).
+        assert!(!json.contains(dedup_key), "bare dedup key leaked: {json}");
+        // The keyed refs ARE present and are stable hex.
+        assert_eq!(rec.account_ref.len(), 64);
+        assert_eq!(rec.request_ref.len(), 64);
+        assert_eq!(rec.retention_days, EVIDENCE_RETENTION_DAYS);
+    }
+}

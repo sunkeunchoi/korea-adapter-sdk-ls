@@ -12,6 +12,7 @@
 //!
 //! No order-dispatch path exists here.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use backon::{ExponentialBuilder, Retryable};
@@ -22,6 +23,7 @@ use serde::Serialize;
 use crate::auth::TokenManager;
 use crate::config_resolve::ResolvedConfig;
 use crate::endpoint_policy::EndpointPolicy;
+use crate::order_dedup::OrderDeduplicator;
 use crate::pagination::HasPagination;
 use crate::rate_limiter::RateLimiterManager;
 use crate::{LsConfig, LsError, LsResult};
@@ -60,6 +62,51 @@ fn rsp_cd_is_success(code: &str) -> bool {
     matches!(code, "00136" | "00707")
 }
 
+/// Order acknowledgement classification — distinct from the read predicate.
+///
+/// Orders MUST NOT reuse [`rsp_cd_is_success`]: the read predicate trusts
+/// `00000`/empty as success, but for an order those are the gateway's
+/// *generic* success codes and cannot prove the exchange accepted the order.
+/// See [`classify_order_rsp_cd`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OrderAck {
+    /// A recognized order acknowledgement code (`00039`/`00040`).
+    Accepted,
+    /// A recognized rejection — surfaced as `LsError::ApiError`, code/message
+    /// preserved.
+    Rejected,
+    /// Neither provably accepted nor safely rejected — fail toward Unknown and
+    /// route to reconciliation rather than resubmitting.
+    Ambiguous,
+}
+
+/// The order success seed set (`00039` sell-ack / `00040` buy-ack), recorded in
+/// `docs/design/order-safety-design.md` §1. This is the mock-gate baseline; the
+/// guarded live evidence run confirms or amends it (a widened live set forces a
+/// mock-gate re-run before any flip — KTD2/KTD4).
+fn rsp_cd_is_order_success(code: &str) -> bool {
+    matches!(code, "00039" | "00040")
+}
+
+/// Classify an order `rsp_cd` into [`OrderAck`].
+///
+/// - `00039`/`00040` → `Accepted` (the seed set).
+/// - `00000`/empty → `Ambiguous`. These are the read path's generic-success
+///   codes; an order that came back `00000` may well have landed at the venue,
+///   so it must never be treated as a rejection (resubmitting risks a double
+///   fill). Fail toward Unknown → reconciliation.
+/// - anything else → `Rejected` (preserve the broker code/message). This is why
+///   `00136`/`00707`, which the read predicate accepts, are *not* order-success.
+fn classify_order_rsp_cd(code: &str) -> OrderAck {
+    if rsp_cd_is_order_success(code) {
+        OrderAck::Accepted
+    } else if code.is_empty() || code == "00000" {
+        OrderAck::Ambiguous
+    } else {
+        OrderAck::Rejected
+    }
+}
+
 /// Return `true` if the error should trigger a retry.
 ///
 /// - `LsError::Http` with a 5xx status → true (server error)
@@ -84,6 +131,15 @@ pub struct Inner {
     pub token_manager: Arc<TokenManager>,
     /// Per-category rate limiter. Charged inside the retry closure.
     pub rate_limiter: Arc<RateLimiterManager>,
+    /// Global order kill switch (order-safety contract §1). `true` = orders may
+    /// dispatch; `false` = the operator emergency halt is engaged and every
+    /// `post_order` call halts before dedup, rate limiting, or HTTP I/O.
+    /// Non-order dispatch (`post`/`post_paginated`) never consults it. Interior
+    /// mutability so `set_orders_enabled` works through a shared `Arc<Inner>`.
+    pub orders_enabled: AtomicBool,
+    /// Per-client order deduplication cache (order-safety §2). Consulted by
+    /// `post_order` after the kill switch, before rate limiting.
+    pub order_dedup: OrderDeduplicator,
 }
 
 impl Inner {
@@ -111,7 +167,26 @@ impl Inner {
             config: resolved,
             token_manager,
             rate_limiter,
+            // Orders dispatch is enabled by default; the operator engages the
+            // kill switch explicitly via `set_orders_enabled(false)`.
+            orders_enabled: AtomicBool::new(true),
+            order_dedup: OrderDeduplicator::with_default_ttl(),
         }))
+    }
+
+    /// Engage or release the global order kill switch (order-safety §1).
+    ///
+    /// `set_orders_enabled(false)` is the operator emergency halt: every
+    /// subsequent `post_order` halts before dedup, rate limiting, or HTTP I/O.
+    /// Reconciliation reads the switch but MUST NOT re-enable it. Non-order
+    /// dispatch is unaffected.
+    pub fn set_orders_enabled(&self, enabled: bool) {
+        self.orders_enabled.store(enabled, Ordering::SeqCst);
+    }
+
+    /// `true` if order dispatch is currently enabled (the default).
+    pub fn orders_enabled(&self) -> bool {
+        self.orders_enabled.load(Ordering::SeqCst)
     }
 
     /// Single HTTP attempt — no retry, no rate limit. The SINGLE auth/transport
@@ -192,29 +267,54 @@ impl Inner {
 
         if !status.is_success() {
             // LS returns JSON error bodies even on HTTP 5xx. Try to extract
-            // rsp_cd/rsp_msg so callers get ApiError instead of an opaque Http.
+            // rsp_cd/rsp_msg so callers get a structured error instead of an
+            // opaque Http.
             let e = resp.error_for_status_ref().unwrap_err();
             let body_text = resp.text().await.unwrap_or_default();
-            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&body_text) {
-                if let Some(code) = val.get("rsp_cd").and_then(|v| v.as_str()) {
-                    if !code.is_empty() {
-                        let message = val
-                            .get("rsp_msg")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or("")
-                            .to_string();
-                        tracing::debug!(
-                            status = %status,
-                            rsp_cd = %code,
-                            rsp_msg = %message,
-                            "dispatch_once: API business error via non-2xx status"
-                        );
-                        return Err(LsError::ApiError {
-                            code: code.to_string(),
-                            message,
-                        });
-                    }
+            let envelope = serde_json::from_str::<serde_json::Value>(&body_text).ok();
+            let code = envelope
+                .as_ref()
+                .and_then(|v| v.get("rsp_cd"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let message = envelope
+                .as_ref()
+                .and_then(|v| v.get("rsp_msg"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            // ORDER PATH (second classification site): a non-2xx HTTP status on
+            // an order is *ambiguous* regardless of the body — the order may or
+            // may not have reached the exchange. Never collapse it to a clean
+            // rejection; fail toward Unknown so the caller reconciles via
+            // `t0425` rather than blindly resubmitting (order-safety §1/§3).
+            if policy.is_order {
+                if !code.is_empty() {
+                    span.record("rsp_cd", code);
                 }
+                tracing::debug!(
+                    status = %status,
+                    rsp_cd = %code,
+                    "dispatch_once: ambiguous order outcome on non-2xx status"
+                );
+                return Err(LsError::AmbiguousOrder {
+                    code: code.to_string(),
+                    message,
+                });
+            }
+
+            if !code.is_empty() {
+                tracing::debug!(
+                    status = %status,
+                    rsp_cd = %code,
+                    rsp_msg = %message,
+                    "dispatch_once: API business error via non-2xx status"
+                );
+                return Err(LsError::ApiError {
+                    code: code.to_string(),
+                    message,
+                });
             }
             tracing::debug!(
                 status = %status,
@@ -236,10 +336,46 @@ impl Inner {
             map.insert("tr_cont".into(), serde_json::json!(resp_tr_cont));
             map.insert("tr_cont_key".into(), serde_json::json!(resp_tr_cont_key));
         }
-        // Inspect rsp_cd before deserializing into Res. Missing/empty rsp_cd is
-        // treated as success. `01900` (paper-incompatible) is NOT collapsed — it
-        // surfaces as ApiError with its exact code preserved.
-        if let Some(code) = val.get("rsp_cd").and_then(|v| v.as_str()) {
+        // Inspect rsp_cd before deserializing into Res. The classification is
+        // policy-dependent: order endpoints use the order predicate (the read
+        // predicate trusts `00000`/empty, which an order must not), non-order
+        // endpoints use the read predicate.
+        if policy.is_order {
+            // ORDER PATH (first classification site).
+            let code = val.get("rsp_cd").and_then(|v| v.as_str()).unwrap_or("");
+            span.record("rsp_cd", code);
+            let message = || {
+                val.get("rsp_msg")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string()
+            };
+            match classify_order_rsp_cd(code) {
+                // Accepted — fall through to deserialize into Res. The test
+                // asserts this is NOT an ApiError, proving the predicate ran.
+                OrderAck::Accepted => {}
+                OrderAck::Rejected => {
+                    tracing::debug!(rsp_cd = %code, "dispatch_once: order rejected");
+                    return Err(LsError::ApiError {
+                        code: code.to_string(),
+                        message: message(),
+                    });
+                }
+                OrderAck::Ambiguous => {
+                    tracing::debug!(
+                        rsp_cd = %code,
+                        "dispatch_once: ambiguous order acknowledgement code -> reconcile"
+                    );
+                    return Err(LsError::AmbiguousOrder {
+                        code: code.to_string(),
+                        message: message(),
+                    });
+                }
+            }
+        } else if let Some(code) = val.get("rsp_cd").and_then(|v| v.as_str()) {
+            // NON-ORDER PATH. Missing/empty rsp_cd is treated as success.
+            // `01900` (paper-incompatible) is NOT collapsed — it surfaces as
+            // ApiError with its exact code preserved.
             span.record("rsp_cd", code);
             if !rsp_cd_is_success(code) {
                 let message = val
@@ -367,6 +503,98 @@ impl Inner {
         .await
     }
 
+    /// Order POST — the no-retry order dispatch path (order-safety contract §1).
+    ///
+    /// Unlike [`post`], this issues **exactly one** HTTP attempt: there is no
+    /// `backon` retry loop, because a transport timeout / 5xx on an order is
+    /// ambiguous (the exchange may or may not have filled), and a blind retry
+    /// risks a double fill. An ambiguous outcome surfaces as
+    /// [`LsError::AmbiguousOrder`] (or [`LsError::Http`] on transport failure)
+    /// for the caller to reconcile via `t0425`, never retried here.
+    ///
+    /// Order classification runs *inside* `dispatch_once` (the order predicate,
+    /// keyed on `policy.is_order`), so a `00039`/`00040` ack deserializes into
+    /// `Res` while `00000`/empty fails toward Unknown.
+    ///
+    /// `instrument(skip_all)` keeps credentials and the request body out of the
+    /// span; only the four structural fields are recorded (order-safety §5).
+    ///
+    /// [`post`]: Inner::post
+    #[tracing::instrument(skip_all, fields(tr_code, path, category, dedup_hit))]
+    pub async fn post_order<Req, Res>(&self, policy: &EndpointPolicy, req: &Req) -> LsResult<Res>
+    where
+        Req: Serialize + Sync,
+        Res: DeserializeOwned + Send + Serialize,
+    {
+        // Kill switch FIRST — the operator emergency halt stops all order
+        // dispatch before dedup, rate limiting, or any I/O (order-safety §1).
+        if !self.orders_enabled() {
+            return Err(LsError::ApiError {
+                code: "orders-disabled".into(),
+                message: format!(
+                    "order dispatch is halted by the kill switch; order '{}' was not sent",
+                    policy.tr_code
+                ),
+            });
+        }
+        // Defense-in-depth: reject a non-order policy before any HTTP I/O.
+        policy.guard_order()?;
+        let span = tracing::Span::current();
+        span.record("tr_code", policy.tr_code);
+        span.record("path", policy.path);
+        span.record("category", policy.category.as_str());
+
+        // Dedup AFTER the kill switch, BEFORE rate limiting (order-safety §2).
+        // The key embeds account_no and is fail-closed: a serialization failure
+        // dispatches nothing. The key itself is NEVER logged or traced — only
+        // the dedup_hit boolean is observable.
+        let dedup_key =
+            OrderDeduplicator::key(&self.config.account_no, policy.tr_code, req)?;
+        if let Some(cached) = self.order_dedup.get(&dedup_key) {
+            // Cache hit: return the cached response, bypassing rate limiting and
+            // HTTP entirely. Reconciliation reads dedup_hit to classify Duplicate.
+            span.record("dedup_hit", true);
+            return serde_json::from_value::<Res>(cached).map_err(LsError::Decode);
+        }
+        span.record("dedup_hit", false);
+
+        // Reserve the key for the duration of this dispatch. A CONCURRENT
+        // identical submit (one whose first attempt has not yet cached) observes
+        // the reservation and is rejected as a duplicate rather than dispatching a
+        // second live order. The guard releases on every exit (success, rejection,
+        // ambiguity, or panic) via Drop.
+        let _reservation = match self.order_dedup.try_reserve(&dedup_key) {
+            Some(guard) => guard,
+            None => return Err(LsError::DuplicateOrder),
+        };
+
+        // Charge the Orders bucket exactly once — there is no retry loop to
+        // re-charge it.
+        self.rate_limiter.wait(policy.category).await;
+        let res: Res = self
+            .dispatch_once::<Req, Res>(policy, req, None, None)
+            .await?;
+        // Cache only a successful (Accepted) response — `dispatch_once` already
+        // returned `Err` for a rejection (`ApiError`) or an ambiguous outcome
+        // (`AmbiguousOrder`) via the order predicate, so reaching here means
+        // Accepted. A corrected resubmission of a rejected order must reach the
+        // exchange, and an ambiguous send is resolved by reconciliation, not the
+        // dedup window. Round-tripping Res through JSON is lossless for its own
+        // fields, which is all the caller observes.
+        match serde_json::to_value(&res) {
+            Ok(value) => self.order_dedup.insert(dedup_key, value),
+            // Surface (do not swallow) a cache-write failure: the order WAS
+            // placed, so we still return Ok, but the dedup window will not protect
+            // an identical resubmit. For an all-string order Res this never fires.
+            Err(e) => tracing::warn!(
+                error = %e,
+                "post_order: caching the accepted order response failed; an identical \
+                 resubmit within the TTL will re-dispatch"
+            ),
+        }
+        Ok(res)
+    }
+
     /// Collect all pages of a paginated TR by looping until the `tr_cont`
     /// response header is empty/`"N"` or `max_pages` is reached.
     ///
@@ -476,9 +704,10 @@ mod tests {
             .await;
     }
 
-    #[derive(Debug, Deserialize, PartialEq)]
+    #[derive(Debug, Deserialize, Serialize, PartialEq)]
     struct EchoRes {
         rsp_cd: String,
+        #[serde(default)]
         rsp_msg: String,
         #[serde(default)]
         value: String,
@@ -843,5 +1072,588 @@ mod tests {
         assert!(rsp_cd_is_success("00707"));
         assert!(!rsp_cd_is_success("01900"));
         assert!(!rsp_cd_is_success("IGW40013"));
+    }
+
+    // --- Order dispatch: the no-retry path + the order success predicate ------
+
+    /// A minimal `is_order: true` policy for the order dispatch tests.
+    fn order_policy() -> EndpointPolicy {
+        EndpointPolicy {
+            tr_code: "CSPAT00601",
+            path: "/order/path",
+            is_order: true,
+            category: RateLimitCategory::Orders,
+            ..test_policy()
+        }
+    }
+
+    #[test]
+    fn order_rsp_cd_classification() {
+        // Seed accepts.
+        assert_eq!(classify_order_rsp_cd("00039"), OrderAck::Accepted);
+        assert_eq!(classify_order_rsp_cd("00040"), OrderAck::Accepted);
+        // Generic-success codes are AMBIGUOUS for orders, never Rejected — the
+        // double-fill guard, since the read path trusts 00000.
+        assert_eq!(classify_order_rsp_cd("00000"), OrderAck::Ambiguous);
+        assert_eq!(classify_order_rsp_cd(""), OrderAck::Ambiguous);
+        // Read-success codes are NOT order-success — proves the read predicate
+        // is not reused for orders.
+        assert_eq!(classify_order_rsp_cd("00136"), OrderAck::Rejected);
+        assert_eq!(classify_order_rsp_cd("00707"), OrderAck::Rejected);
+        // A recognized rejection preserves code/message downstream.
+        assert_eq!(classify_order_rsp_cd("IGW40011"), OrderAck::Rejected);
+        // The seed predicate excludes the generic-success codes.
+        assert!(rsp_cd_is_order_success("00039"));
+        assert!(rsp_cd_is_order_success("00040"));
+        assert!(!rsp_cd_is_order_success("00000"));
+    }
+
+    #[tokio::test]
+    async fn post_order_buy_ack_00040_classifies_accepted_and_deserializes() {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        Mock::given(method("POST"))
+            .and(path("/order/path"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "rsp_cd": "00040",
+                "rsp_msg": "매수주문이 완료되었습니다",
+                "value": "ordno-123"
+            })))
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        // The defining assertion: an accepted ack deserializes into Res rather
+        // than surfacing as ApiError — proving the order predicate runs INSIDE
+        // dispatch_once, before Res deserialization.
+        let res: EchoRes = inner
+            .post_order(&order_policy(), &serde_json::json!({"OrdQty": 1}))
+            .await
+            .expect("00040 ack must classify Accepted and deserialize");
+        assert_eq!(res.rsp_cd, "00040");
+        assert_eq!(res.value, "ordno-123");
+    }
+
+    #[tokio::test]
+    async fn post_order_sell_ack_00039_classifies_accepted() {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        Mock::given(method("POST"))
+            .and(path("/order/path"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "rsp_cd": "00039",
+                "rsp_msg": "매도주문이 완료되었습니다"
+            })))
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        let res: EchoRes = inner
+            .post_order(&order_policy(), &serde_json::json!({}))
+            .await
+            .expect("00039 ack must classify Accepted");
+        assert_eq!(res.rsp_cd, "00039");
+    }
+
+    #[tokio::test]
+    async fn post_order_read_success_codes_are_not_order_success() {
+        // 00136/00707 are read-success codes; for an order they are rejections.
+        for code in ["00136", "00707"] {
+            let server = MockServer::start().await;
+            mount_token(&server).await;
+            Mock::given(method("POST"))
+                .and(path("/order/path"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "rsp_cd": code,
+                    "rsp_msg": "not an order ack"
+                })))
+                .mount(&server)
+                .await;
+            let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+            let err = inner
+                .post_order::<_, EchoRes>(&order_policy(), &serde_json::json!({}))
+                .await
+                .expect_err("read-success code must not be order-success");
+            match err {
+                LsError::ApiError { code: c, .. } => assert_eq!(c, code),
+                other => panic!("expected ApiError for {code}, got {other:?}"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn post_order_generic_success_00000_is_ambiguous_not_rejected() {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        Mock::given(method("POST"))
+            .and(path("/order/path"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "rsp_cd": "00000",
+                "rsp_msg": "정상처리"
+            })))
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        let err = inner
+            .post_order::<_, EchoRes>(&order_policy(), &serde_json::json!({}))
+            .await
+            .expect_err("00000 must not deserialize as a proven order accept");
+        // KTD2 fail-safe: ambiguous, NOT a rejection — so a possibly-filled
+        // order is reconciled, never resubmitted.
+        match err {
+            LsError::AmbiguousOrder { code, .. } => assert_eq!(code, "00000"),
+            other => panic!("expected AmbiguousOrder, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn post_order_rejects_non_order_policy_before_any_http() {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let hits_inner = hits.clone();
+        Mock::given(method("POST"))
+            .and(path("/test/path"))
+            .respond_with(move |_req: &Request| {
+                hits_inner.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"rsp_cd": "00000"}))
+            })
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        // test_policy() is is_order:false — guard_order must reject it.
+        let err = inner
+            .post_order::<_, EchoRes>(&test_policy(), &serde_json::json!({}))
+            .await
+            .expect_err("non-order policy must be rejected by guard_order");
+        match err {
+            LsError::ApiError { code, .. } => assert_eq!(code, "non-order-dispatch"),
+            other => panic!("expected guard_order ApiError, got {other:?}"),
+        }
+        assert_eq!(
+            hits.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "guard_order must reject before any HTTP call"
+        );
+    }
+
+    #[tokio::test]
+    async fn post_order_does_not_retry_on_503_single_attempt() {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        // 503 forever. `post` would retry up to 4 times; `post_order` must not.
+        Mock::given(method("POST"))
+            .and(path("/order/path"))
+            .respond_with(FlakyResponder {
+                hits: hits.clone(),
+                fail_first: usize::MAX,
+            })
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        let err = inner
+            .post_order::<_, EchoRes>(&order_policy(), &serde_json::json!({}))
+            .await
+            .expect_err("503 must surface, not be retried");
+        // The order body is empty JSON on a 503 → AmbiguousOrder (the order path
+        // never collapses a non-2xx to a clean rejection).
+        assert!(
+            matches!(err, LsError::AmbiguousOrder { .. } | LsError::Http(_)),
+            "expected ambiguous/transport error, got {err:?}"
+        );
+        // The defining difference from `post`: EXACTLY ONE attempt.
+        let total = hits.load(std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(total, 1, "order dispatch must issue exactly one attempt, got {total}");
+    }
+
+    #[tokio::test]
+    async fn post_order_ack_on_non_2xx_status_is_ambiguous() {
+        // An order ack code arriving on a non-2xx status routes ambiguous, not
+        // Rejected — covers the second classification site.
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        Mock::given(method("POST"))
+            .and(path("/order/path"))
+            .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                "rsp_cd": "00040",
+                "rsp_msg": "ack on a failed status"
+            })))
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        let err = inner
+            .post_order::<_, EchoRes>(&order_policy(), &serde_json::json!({}))
+            .await
+            .expect_err("non-2xx must not deserialize as accepted");
+        match err {
+            LsError::AmbiguousOrder { code, .. } => assert_eq!(code, "00040"),
+            other => panic!("expected AmbiguousOrder on non-2xx, got {other:?}"),
+        }
+    }
+
+    // --- Kill switch (AE4) ----------------------------------------------------
+
+    #[tokio::test]
+    async fn kill_switch_halts_order_before_any_http_while_reads_succeed() {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        let order_hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let order_hits_inner = order_hits.clone();
+        Mock::given(method("POST"))
+            .and(path("/order/path"))
+            .respond_with(move |_req: &Request| {
+                order_hits_inner.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"rsp_cd": "00040"}))
+            })
+            .mount(&server)
+            .await;
+        // A market-data read on the SAME Inner must keep working.
+        Mock::given(method("POST"))
+            .and(path("/test/path"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "rsp_cd": "00000",
+                "rsp_msg": "ok",
+                "value": "still-reading"
+            })))
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        inner.set_orders_enabled(false);
+        assert!(!inner.orders_enabled());
+
+        let err = inner
+            .post_order::<_, EchoRes>(&order_policy(), &serde_json::json!({}))
+            .await
+            .expect_err("disabled orders must halt");
+        match err {
+            LsError::ApiError { code, .. } => assert_eq!(code, "orders-disabled"),
+            other => panic!("expected orders-disabled ApiError, got {other:?}"),
+        }
+        assert_eq!(
+            order_hits.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "kill switch must halt before any order HTTP call"
+        );
+
+        // The non-order read on the same Inner is unaffected.
+        let res: EchoRes = inner
+            .post(&test_policy(), &serde_json::json!({}))
+            .await
+            .expect("non-order read must be unaffected by the kill switch");
+        assert_eq!(res.value, "still-reading");
+    }
+
+    #[tokio::test]
+    async fn kill_switch_re_enable_restores_dispatch() {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        Mock::given(method("POST"))
+            .and(path("/order/path"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "rsp_cd": "00040",
+                "rsp_msg": "ack"
+            })))
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        inner.set_orders_enabled(false);
+        assert!(inner
+            .post_order::<_, EchoRes>(&order_policy(), &serde_json::json!({}))
+            .await
+            .is_err());
+        // Toggling mid-session is observed on the very next call.
+        inner.set_orders_enabled(true);
+        let res: EchoRes = inner
+            .post_order(&order_policy(), &serde_json::json!({}))
+            .await
+            .expect("re-enabling must restore order dispatch");
+        assert_eq!(res.rsp_cd, "00040");
+    }
+
+    // --- Dedup integration through post_order (AE1) ---------------------------
+
+    #[tokio::test]
+    async fn post_order_dedup_hit_returns_cached_and_skips_second_http() {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let hits_inner = hits.clone();
+        Mock::given(method("POST"))
+            .and(path("/order/path"))
+            .respond_with(move |_req: &Request| {
+                hits_inner.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "rsp_cd": "00040",
+                    "rsp_msg": "ack",
+                    "value": "ordno-777"
+                }))
+            })
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        let req = serde_json::json!({"IsuNo": "005930", "OrdQty": 1, "OrdPrc": 100});
+
+        let first: EchoRes = inner
+            .post_order(&order_policy(), &req)
+            .await
+            .expect("first submit dispatches");
+        assert_eq!(first.value, "ordno-777");
+
+        // An identical request within the TTL is a cache hit: same response, no
+        // second HTTP call.
+        let second: EchoRes = inner
+            .post_order(&order_policy(), &req)
+            .await
+            .expect("identical submit is a dedup hit");
+        assert_eq!(second, first);
+        assert_eq!(
+            hits.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the dedup hit must bypass HTTP entirely"
+        );
+
+        // A request differing only in OrdQty is a distinct order -> cache miss.
+        let req2 = serde_json::json!({"IsuNo": "005930", "OrdQty": 2, "OrdPrc": 100});
+        let _third: EchoRes = inner
+            .post_order(&order_policy(), &req2)
+            .await
+            .expect("distinct order dispatches");
+        assert_eq!(
+            hits.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "a quantity change must miss the cache and dispatch"
+        );
+    }
+
+    #[tokio::test]
+    async fn post_order_does_not_cache_rejections() {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let hits_inner = hits.clone();
+        Mock::given(method("POST"))
+            .and(path("/order/path"))
+            .respond_with(move |_req: &Request| {
+                hits_inner.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "rsp_cd": "IGW40011",
+                    "rsp_msg": "rejected"
+                }))
+            })
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        let req = serde_json::json!({"OrdQty": 1});
+        for _ in 0..2 {
+            let err = inner
+                .post_order::<_, EchoRes>(&order_policy(), &req)
+                .await
+                .expect_err("rejection");
+            assert!(matches!(err, LsError::ApiError { .. }));
+        }
+        // A rejection is never cached: a corrected resubmission must reach the
+        // exchange. Both attempts dispatched.
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn post_order_concurrent_identical_submits_dispatch_exactly_once() {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let hits_inner = hits.clone();
+        // A small delay keeps the first dispatch in flight while the second runs,
+        // so the second observes the reservation rather than a cached response.
+        Mock::given(method("POST"))
+            .and(path("/order/path"))
+            .respond_with(move |_req: &Request| {
+                hits_inner.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                ResponseTemplate::new(200)
+                    .set_delay(std::time::Duration::from_millis(150))
+                    .set_body_json(serde_json::json!({"rsp_cd": "00040", "value": "ordno-1"}))
+            })
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        let req = serde_json::json!({"IsuNo": "005930", "OrdQty": 1, "OrdPrc": 100});
+        let policy = order_policy();
+        // Two identical submits race. Exactly one must reach the exchange; the
+        // other is rejected as a duplicate (the concurrent double-fill guard).
+        let (a, b) = tokio::join!(
+            inner.post_order::<_, EchoRes>(&policy, &req),
+            inner.post_order::<_, EchoRes>(&policy, &req),
+        );
+        let oks = [&a, &b].iter().filter(|r| r.is_ok()).count();
+        let dups = [&a, &b]
+            .iter()
+            .filter(|r| matches!(r, Err(LsError::DuplicateOrder)))
+            .count();
+        assert_eq!(oks, 1, "exactly one concurrent submit dispatches: a={a:?} b={b:?}");
+        assert_eq!(dups, 1, "the other is rejected as DuplicateOrder: a={a:?} b={b:?}");
+        assert_eq!(
+            hits.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "only one order may reach the exchange"
+        );
+    }
+
+    // --- Order redaction / tracing contract (order-safety §5) -----------------
+
+    /// A process-global tracing layer that records every span/event field into a
+    /// per-thread sink. A global subscriber is required (not a thread-local
+    /// `with_default`) because tracing's callsite-interest cache is global: with
+    /// the parallel test harness, a concurrent test would otherwise evaluate the
+    /// order-span callsite under the no-op subscriber and poison it to "never",
+    /// so a thread-local subscriber never gets consulted. Installing a permissive
+    /// global once keeps every callsite enabled; each thread reads only its own
+    /// sink, so concurrent tests do not interfere.
+    mod capture {
+        use std::cell::RefCell;
+        use std::sync::OnceLock;
+        use tracing::field::{Field, Visit};
+        use tracing::span::{Attributes, Record};
+        use tracing_subscriber::layer::{Context, Layer};
+        use tracing_subscriber::layer::SubscriberExt;
+
+        thread_local! {
+            static SINK: RefCell<Vec<(String, String)>> = const { RefCell::new(Vec::new()) };
+        }
+
+        static INSTALLED: OnceLock<()> = OnceLock::new();
+
+        /// Install the global capture subscriber exactly once.
+        pub fn ensure_installed() {
+            INSTALLED.get_or_init(|| {
+                let subscriber = tracing_subscriber::registry().with(CaptureLayer);
+                let _ = tracing::subscriber::set_global_default(subscriber);
+            });
+        }
+
+        /// Clear the current thread's sink before a capture run.
+        pub fn reset() {
+            SINK.with(|s| s.borrow_mut().clear());
+        }
+
+        /// `name=value` of every field this thread captured.
+        pub fn joined() -> String {
+            SINK.with(|s| {
+                s.borrow()
+                    .iter()
+                    .map(|(n, v)| format!("{n}={v}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+        }
+
+        /// The field names this thread captured.
+        pub fn field_names() -> Vec<String> {
+            SINK.with(|s| s.borrow().iter().map(|(n, _)| n.clone()).collect())
+        }
+
+        struct V;
+        impl Visit for V {
+            fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+                SINK.with(|s| {
+                    s.borrow_mut()
+                        .push((field.name().to_string(), format!("{value:?}")))
+                });
+            }
+            fn record_str(&mut self, field: &Field, value: &str) {
+                SINK.with(|s| s.borrow_mut().push((field.name().to_string(), value.to_string())));
+            }
+        }
+
+        struct CaptureLayer;
+        impl<S> Layer<S> for CaptureLayer
+        where
+            S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+        {
+            fn on_new_span(&self, attrs: &Attributes<'_>, _id: &tracing::Id, _c: Context<'_, S>) {
+                attrs.record(&mut V);
+            }
+            fn on_record(&self, _id: &tracing::Id, values: &Record<'_>, _c: Context<'_, S>) {
+                values.record(&mut V);
+            }
+            fn on_event(&self, event: &tracing::Event<'_>, _c: Context<'_, S>) {
+                event.record(&mut V);
+            }
+        }
+    }
+
+    #[test]
+    fn order_span_records_only_structural_fields_never_credentials_or_body() {
+        capture::ensure_installed();
+        // A current-thread runtime keeps every awaited span on this thread, so
+        // this thread's sink captures exactly the order dispatch's fields.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        rt.block_on(async {
+            let server = MockServer::start().await;
+            mount_token(&server).await;
+            // The response carries a sentinel that MUST NOT be auto-emitted to
+            // any sink (only rsp_cd is an allowed structural field).
+            Mock::given(method("POST"))
+                .and(path("/order/path"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "rsp_cd": "00040",
+                    "rsp_msg": "ack",
+                    "OrdNo": "RESP_SENTINEL_ORDNO"
+                })))
+                .mount(&server)
+                .await;
+
+            let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+            // Reset AFTER setup (token mount/Inner::new emit their own spans);
+            // capture only the order dispatch itself.
+            capture::reset();
+            // The request body carries a sentinel that MUST NOT reach a span.
+            let req = serde_json::json!({
+                "IsuNo": "005930",
+                "OrdQty": 1,
+                "REQ_SENTINEL": "REQ_SENTINEL_BODY_VALUE"
+            });
+            let _res: EchoRes = inner
+                .post_order(&order_policy(), &req)
+                .await
+                .expect("order dispatches");
+        });
+
+        let names = capture::field_names();
+        // The four allowed structural fields were recorded on the order span.
+        for f in ["tr_code", "path", "category", "dedup_hit"] {
+            assert!(
+                names.iter().any(|n| n == f),
+                "order span must record `{f}`; got {names:?}"
+            );
+        }
+
+        let all = capture::joined();
+        // No credential VALUE reached any span or event.
+        assert!(!all.contains("test-appkey"), "app key leaked: {all}");
+        assert!(!all.contains("test-appsecretkey"), "app secret leaked");
+        assert!(!all.contains("00000000-01"), "account number leaked");
+        assert!(!all.contains("test-token"), "access token leaked");
+        // No request body value reached any span or event.
+        assert!(
+            !all.contains("REQ_SENTINEL_BODY_VALUE"),
+            "request body leaked into tracing: {all}"
+        );
+        // The response body is not auto-emitted absent an explicit surface call.
+        assert!(
+            !all.contains("RESP_SENTINEL_ORDNO"),
+            "response body auto-emitted to a sink: {all}"
+        );
     }
 }

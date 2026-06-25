@@ -59,6 +59,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `o3125` | 해외선물옵션 현재가(종목정보) 조회 | `market_session` | implemented | [o3125](./o3125.md) |
 | `o3126` | 해외선물옵션 현재가호가 조회 | `market_session` | implemented | [o3126](./o3126.md) |
 | `revoke` | 접근토큰 폐기 (OAuth2 token revoke) | `standalone` | implemented | [revoke](./revoke.md) |
+| `t0425` | 주식체결/미체결 (stock filled/unfilled order inquiry) | `paginated` | tracked | [t0425](./t0425.md) |
 | `t1101` | 주식 현재가호가 조회 | `market_session` | recommended | [t1101](./t1101.md) |
 | `t1102` | 주식 현재가(시세) 조회 | `market_session` | recommended | [t1102](./t1102.md) |
 | `t1403` | 신규상장종목조회 | `paginated` | implemented | [t1403](./t1403.md) |

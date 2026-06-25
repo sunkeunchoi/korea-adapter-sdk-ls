@@ -16,6 +16,7 @@ use ls_core::{Inner, LsClient, LsConfig, LsResult};
 
 pub mod account;
 pub mod market_session;
+pub mod orders;
 pub mod paginated;
 pub mod realtime;
 pub mod standalone;
@@ -76,6 +77,13 @@ impl LsSdk {
     /// inquiry. The account number is sourced from config, not the caller.
     pub fn account(&self) -> account::Account {
         account::Account::new(Arc::clone(&self.inner))
+    }
+
+    /// The orders dependency class: the `CSPAT00601` domestic cash-equity order
+    /// submit and (once implemented) the `t0425` reconciliation read. The submit
+    /// routes through the no-retry / dedup / kill-switch `post_order` path.
+    pub fn orders(&self) -> orders::Orders {
+        orders::Orders::new(Arc::clone(&self.inner))
     }
 
     /// The realtime dependency class: the S3_ KOSPI-trade WebSocket subscription.

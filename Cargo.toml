@@ -38,6 +38,10 @@ tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }
 dashmap           = "6"
 tokio-stream      = "0.1"
 rust_decimal      = "1.36"
+# Order-safety crypto: SHA-256 for the OrderDeduplicator key (order-safety §2),
+# HMAC for the keyed account hash in reconciliation evidence records (§3/§5).
+sha2              = "0.10"
+hmac              = "0.12"
 # HTML/DOM scraping for the LS `/apiservice` menu (API Drift Tracker fetch).
 # Enabled per-crate (`ls-trackers`); other crates do not pull it in.
 scraper           = "0.20"

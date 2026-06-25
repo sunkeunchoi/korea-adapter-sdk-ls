@@ -9,7 +9,12 @@
 use thiserror::Error;
 
 /// All errors produced by the SDK public API.
+///
+/// `#[non_exhaustive]`: the order surface will keep adding error variants
+/// (modify/cancel acks, more order TRs), so downstream crates must include a
+/// wildcard arm — adding a variant is then additive, not a breaking change.
 #[derive(Debug, Error)]
+#[non_exhaustive]
 pub enum LsError {
     /// Authentication problem — empty credentials, failed OAuth2 exchange,
     /// expired revoked token, missing appkey/appsecretkey, etc.
@@ -32,6 +37,26 @@ pub enum LsError {
     /// LS API returned a parseable error envelope with `code` + `message`.
     #[error("API error {code}: {message}")]
     ApiError { code: String, message: String },
+
+    /// An order acknowledgement that can neither be proven Accepted nor safely
+    /// classified Rejected. Carries the broker `code`/`message` when one was
+    /// present (empty when the failure was transport-level on the order path).
+    ///
+    /// This is the order-dispatch "fail toward Unknown" signal (order-safety
+    /// contract §1/§3): the generic-success code `00000`/empty, or any order
+    /// response on a non-2xx HTTP status, lands here so a possibly-filled order
+    /// is never blindly resubmitted. The caller routes it to reconciliation
+    /// (query `t0425`, match against exchange state) rather than retrying.
+    #[error("ambiguous order outcome {code}: {message}")]
+    AmbiguousOrder { code: String, message: String },
+
+    /// An identical order was already submitted within the dedup TTL window —
+    /// the `OrderDeduplicator` short-circuited it (order-safety §2). Reserved for
+    /// callers / reconciliation that prefer an explicit duplicate signal over the
+    /// silently-returned cached response; the default `post_order` path returns
+    /// the cached response with `dedup_hit=true` rather than this error.
+    #[error("duplicate order within the dedup window")]
+    DuplicateOrder,
 
     /// Rate limiter rejected the request.
     #[error("rate limited")]
