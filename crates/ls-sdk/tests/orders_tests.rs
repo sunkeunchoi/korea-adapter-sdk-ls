@@ -211,14 +211,8 @@ async fn reconcile_after_ambiguous_finds_accepted_order() {
         .await;
 
     let sdk = sdk_for(&server);
-    let intent = OrderIntent {
-        account_no: "00000000-01".into(),
-        symbol: "005930".into(),
-        side: "2".into(),
-        qty: "1".into(),
-        price: "60000".into(),
-        order_no: Some("32004".into()),
-    };
+    let intent =
+        OrderIntent::submit("00000000-01", "005930", "2", "1", "60000", Some("32004".into()));
     let outcome = sdk.orders().reconcile(&intent, false).await;
     assert_eq!(outcome.state, OrderState::Accepted);
     assert!(!outcome.safe_to_retry, "an accepted order is never retried");
@@ -242,14 +236,8 @@ async fn reconcile_dedup_hit_is_duplicate_without_query() {
         .await;
 
     let sdk = sdk_for(&server);
-    let intent = OrderIntent {
-        account_no: "00000000-01".into(),
-        symbol: "005930".into(),
-        side: "2".into(),
-        qty: "1".into(),
-        price: "60000".into(),
-        order_no: Some("32004".into()),
-    };
+    let intent =
+        OrderIntent::submit("00000000-01", "005930", "2", "1", "60000", Some("32004".into()));
     let outcome = sdk.orders().reconcile(&intent, true).await;
     assert_eq!(outcome.state, OrderState::Duplicate);
     assert_eq!(
@@ -275,14 +263,8 @@ async fn reconcile_failed_query_is_unknown_not_safe() {
         .await;
 
     let sdk = sdk_for(&server);
-    let intent = OrderIntent {
-        account_no: "00000000-01".into(),
-        symbol: "005930".into(),
-        side: "2".into(),
-        qty: "1".into(),
-        price: "60000".into(),
-        order_no: Some("32004".into()),
-    };
+    let intent =
+        OrderIntent::submit("00000000-01", "005930", "2", "1", "60000", Some("32004".into()));
     let outcome = sdk.orders().reconcile(&intent, false).await;
     assert_eq!(outcome.state, OrderState::Unknown);
     assert!(!outcome.safe_to_retry);

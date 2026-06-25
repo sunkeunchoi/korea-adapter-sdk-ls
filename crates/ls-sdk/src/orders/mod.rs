@@ -40,7 +40,8 @@ use ls_core::{Inner, LsResult};
 pub mod reconcile;
 
 pub use reconcile::{
-    reconcile, reconcile_rows, OrderIntent, OrderState, ReconcileOutcome, ReconciliationRecord,
+    reconcile, reconcile_rows, OrderAction, OrderIntent, OrderState, ReconcileOutcome,
+    ReconciliationRecord,
 };
 
 /// Input block for `CSPAT00601` — the nine required order fields.

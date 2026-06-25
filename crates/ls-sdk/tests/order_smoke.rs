@@ -559,14 +559,14 @@ async fn order_smoke_matrix() {
                 ev.order_no = Some(resp.order_no().to_string());
                 // Reconcile resting orders via t0425.
                 if matches!(scenario, Scenario::RestingBuy | Scenario::RestingSell) {
-                    let intent = OrderIntent {
-                        account_no: sdk.orders().account_no().to_string(),
-                        symbol: params.symbol.clone(),
-                        side: req.inblock.bnstpcode.clone(),
-                        qty: req.inblock.ordqty.clone(),
-                        price: req.inblock.ordprc.clone(),
-                        order_no: Some(resp.order_no().to_string()),
-                    };
+                    let intent = OrderIntent::submit(
+                        sdk.orders().account_no().to_string(),
+                        params.symbol.clone(),
+                        req.inblock.bnstpcode.clone(),
+                        req.inblock.ordqty.clone(),
+                        req.inblock.ordprc.clone(),
+                        Some(resp.order_no().to_string()),
+                    );
                     let outcome = sdk.orders().reconcile(&intent, false).await;
                     ev.reconciliation = Some(outcome.state.as_str().to_string());
                     if outcome.state == OrderState::Accepted {

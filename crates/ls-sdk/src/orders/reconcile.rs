@@ -68,9 +68,25 @@ impl OrderState {
     }
 }
 
+/// Which order action an intent represents. The reconciliation direction differs
+/// by action: a submit asks "did a brand-new order appear?", a modify asks "did
+/// the target change land?" (idempotent-by-target), and a cancel asks "is the
+/// referenced order *gone*?" — with cancel failing toward still-live (R7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum OrderAction {
+    /// A new-order submit (`CSPAT00601`). The default so existing call sites that
+    /// build an intent for a submit reconcile unchanged.
+    #[default]
+    Submit,
+    /// A modify (`CSPAT00701`) against an existing order number (`OrgOrdNo`).
+    Modify,
+    /// A cancel (`CSPAT00801`) against an existing order number (`OrgOrdNo`).
+    Cancel,
+}
+
 /// The local intent for an order — what the caller tried to submit. Used both to
 /// match against `t0425` rows and to build the redacting evidence record.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct OrderIntent {
     /// Account number (cleartext here; never persisted in the clear — see
     /// [`ReconciliationRecord`]).
@@ -83,9 +99,83 @@ pub struct OrderIntent {
     pub qty: String,
     /// Order price.
     pub price: String,
-    /// The order number from the `CSPAT00601` ack, when one was returned. The
-    /// strongest match key.
+    /// The order number from a *submit* ack, when one was returned. For a submit
+    /// this is the strongest match key; for a modify/cancel it is the NEW order
+    /// number and is usually unknown after an ambiguous send (use `org_order_no`).
     pub order_no: Option<String>,
+    /// The *referenced* original order number (`OrgOrdNo`) for a modify/cancel —
+    /// the order whose transition we are reconciling. Matched against both
+    /// `t0425.ordno` (the original row) and `t0425.orgordno` (a modify/cancel-child
+    /// row). `None`/empty for a submit.
+    pub org_order_no: Option<String>,
+    /// Submit (default), Modify, or Cancel — drives the reconciliation direction.
+    pub action: OrderAction,
+}
+
+impl OrderIntent {
+    /// Build a submit intent (the default action). `order_no` is the submit ack's
+    /// order number when known.
+    pub fn submit(
+        account_no: impl Into<String>,
+        symbol: impl Into<String>,
+        side: impl Into<String>,
+        qty: impl Into<String>,
+        price: impl Into<String>,
+        order_no: Option<String>,
+    ) -> Self {
+        OrderIntent {
+            account_no: account_no.into(),
+            symbol: symbol.into(),
+            side: side.into(),
+            qty: qty.into(),
+            price: price.into(),
+            order_no,
+            org_order_no: None,
+            action: OrderAction::Submit,
+        }
+    }
+
+    /// Build a modify intent referencing an existing order number (`OrgOrdNo`).
+    /// `qty`/`price` are the modify's absolute target values (KTD4).
+    pub fn modify(
+        account_no: impl Into<String>,
+        symbol: impl Into<String>,
+        side: impl Into<String>,
+        qty: impl Into<String>,
+        price: impl Into<String>,
+        org_order_no: impl Into<String>,
+    ) -> Self {
+        OrderIntent {
+            account_no: account_no.into(),
+            symbol: symbol.into(),
+            side: side.into(),
+            qty: qty.into(),
+            price: price.into(),
+            order_no: None,
+            org_order_no: Some(org_order_no.into()),
+            action: OrderAction::Modify,
+        }
+    }
+
+    /// Build a cancel intent referencing an existing order number (`OrgOrdNo`).
+    pub fn cancel(
+        account_no: impl Into<String>,
+        symbol: impl Into<String>,
+        side: impl Into<String>,
+        qty: impl Into<String>,
+        org_order_no: impl Into<String>,
+    ) -> Self {
+        OrderIntent {
+            account_no: account_no.into(),
+            symbol: symbol.into(),
+            side: side.into(),
+            qty: qty.into(),
+            price: String::new(),
+            order_no: None,
+            org_order_no: Some(org_order_no.into()),
+            action: OrderAction::Cancel,
+        }
+    }
 }
 
 /// The reconciliation outcome: the classified state plus whether a retry is safe.
@@ -131,20 +221,38 @@ fn side_matches(bnstpcode: &str, row_medosu: &str) -> bool {
     }
 }
 
+/// The order number an intent references for matching: the submit's own
+/// `order_no`, or — for a modify/cancel — the referenced original `org_order_no`.
+/// Returns the normalized number only when it is USABLE (non-empty, non-zero); a
+/// `""`/`"0"` key would spuriously equal a blank row field and match an unrelated
+/// row, so it yields `None` and the caller falls through to field corroboration.
+fn reference_order_no(intent: &OrderIntent) -> Option<String> {
+    let raw = match intent.action {
+        OrderAction::Submit => intent.order_no.as_deref(),
+        OrderAction::Modify | OrderAction::Cancel => intent.org_order_no.as_deref(),
+    };
+    let n = normalize_ordno(raw.unwrap_or(""));
+    (!n.is_empty() && n != "0").then_some(n)
+}
+
+/// `true` if `row` is a modify/cancel-child row of the referenced order — i.e. its
+/// `orgordno` (원주문번호) points back at `refno`. Only meaningful for a
+/// modify/cancel intent; a submit has no children to find.
+fn row_is_child_of(intent: &OrderIntent, row: &super::T0425OutBlock1, refno: &str) -> bool {
+    matches!(intent.action, OrderAction::Modify | OrderAction::Cancel)
+        && normalize_ordno(&row.orgordno) == refno
+}
+
 /// `true` if a `t0425` row corresponds to the intent.
 ///
-/// When the order number is known it is the sole, strongest key (a venue order
-/// number is unique). Otherwise corroborate on symbol + side + quantity + price.
+/// When a usable reference order number is known it is the sole, strongest key (a
+/// venue order number is unique). For a modify/cancel the row matches on EITHER the
+/// original order (`row.ordno == OrgOrdNo`) OR a child row created by the
+/// modify/cancel (`row.orgordno == OrgOrdNo`). Otherwise corroborate on symbol +
+/// side + quantity + price.
 fn row_matches(intent: &OrderIntent, row: &super::T0425OutBlock1) -> bool {
-    if let Some(ordno) = &intent.order_no {
-        let n = normalize_ordno(ordno);
-        // A USABLE (non-empty, non-zero) order number is the authoritative key.
-        // An empty/zero ack order number is NOT a usable key — `""` would
-        // spuriously equal a blank row `ordno`, matching an unrelated row — so we
-        // fall through to field corroboration instead of trusting it.
-        if !n.is_empty() && n != "0" {
-            return n == normalize_ordno(&row.ordno);
-        }
+    if let Some(refno) = reference_order_no(intent) {
+        return normalize_ordno(&row.ordno) == refno || row_is_child_of(intent, row, &refno);
     }
     // Field corroboration (also the no-order-number path). Price is compared
     // only for a priced (limit) order: a marketable/market order submits OrdPrc
@@ -187,8 +295,9 @@ fn classify_status(status: &str) -> OrderState {
 ///
 /// - `dedup_hit` → Duplicate.
 /// - `inquiry: None` (the query failed) → Unknown, **not** safe to retry.
-/// - a matching row → its status classification (Accepted/Canceled/Modified),
-///   not safe to retry — the order is at the venue.
+/// - matching rows → an **action-aware** classification (see [`reconcile_rows`]):
+///   a submit reads the order's status; a modify lands only on `정정`/a child row;
+///   a cancel fails toward still-live unless an explicit `취소` row is present.
 /// - a clean query with no matching row → Unknown but **safe to retry**: a
 ///   successful query proved no matching order was accepted (§3 step 6).
 pub fn reconcile(
@@ -235,18 +344,90 @@ pub fn reconcile_rows(
     if dedup_hit {
         return ReconcileOutcome::duplicate();
     }
-    for row in rows {
-        if row_matches(intent, row) {
-            return ReconcileOutcome {
-                state: classify_status(&row.status),
-                safe_to_retry: false,
-            };
-        }
+    // Scan ALL matching rows — NEVER early-return on the first. A landed modify can
+    // leave the original `OrgOrdNo` row at `접수` (which classifies Accepted), so a
+    // first-row early-return would falsely report an un-applied modify as "landed";
+    // and a cancel can show a still-`접수` original row alongside a `취소` row. We
+    // must inspect every matched row and take the strongest classification.
+    let matched: Vec<&T0425OutBlock1> = rows.iter().filter(|r| row_matches(intent, r)).collect();
+    if matched.is_empty() {
+        return ReconcileOutcome {
+            state: OrderState::Unknown,
+            // Proven absent ONLY if the query was complete.
+            safe_to_retry: query_complete,
+        };
     }
-    ReconcileOutcome {
-        state: OrderState::Unknown,
-        // Proven absent ONLY if the query was complete.
-        safe_to_retry: query_complete,
+
+    let any = |state: OrderState| {
+        matched
+            .iter()
+            .any(|r| classify_status(&r.status) == state)
+    };
+    let any_rejected = any(OrderState::Rejected);
+    let any_canceled = any(OrderState::Canceled);
+    let any_modified = any(OrderState::Modified);
+    // A modify/cancel-child row (`orgordno == OrgOrdNo`) is direct evidence the
+    // transition produced a new order, independent of its own status text.
+    let has_child = reference_order_no(intent).is_some_and(|refno| {
+        matched.iter().any(|r| row_is_child_of(intent, r, &refno))
+    });
+
+    match intent.action {
+        // Submit: the matched row's status is the outcome (order is at the venue),
+        // rejection-first across rows. Never safe to retry — an order is present.
+        OrderAction::Submit => {
+            let state = if any_rejected {
+                OrderState::Rejected
+            } else if any_canceled {
+                OrderState::Canceled
+            } else if any_modified {
+                OrderState::Modified
+            } else {
+                OrderState::Accepted
+            };
+            ReconcileOutcome { state, safe_to_retry: false }
+        }
+        // Modify is absolute (idempotent-by-target, KTD4): landed iff a `정정`
+        // transition OR a (non-rejected) child row exists. A bare still-`접수`
+        // original row with neither is NOT landed — and because re-applying the
+        // same absolute target is harmless, that case is safe to retry. We never
+        // classify a still-resting original row as Accepted/landed for a modify.
+        OrderAction::Modify => {
+            if any_modified || (has_child && !any_rejected) {
+                ReconcileOutcome {
+                    state: OrderState::Modified,
+                    safe_to_retry: false,
+                }
+            } else {
+                // Not landed: `정정거부` → Rejected, else still-`접수`/체결 → Unknown.
+                // Idempotent-by-target, so a re-send is safe either way.
+                let state = if any_rejected {
+                    OrderState::Rejected
+                } else {
+                    OrderState::Unknown
+                };
+                ReconcileOutcome { state, safe_to_retry: true }
+            }
+        }
+        // Cancel INVERTS the risk (R7, AE1): a matched row is canceled ONLY on an
+        // explicit `취소` row. Anything else — a still-`접수`/체결 original, a `정정`,
+        // or a `취소거부` rejection — means the order may still rest, so we fail
+        // toward still-live (never Accepted) and never clear retry.
+        OrderAction::Cancel => {
+            if any_canceled {
+                ReconcileOutcome {
+                    state: OrderState::Canceled,
+                    safe_to_retry: false,
+                }
+            } else {
+                let state = if any_rejected {
+                    OrderState::Rejected
+                } else {
+                    OrderState::Unknown
+                };
+                ReconcileOutcome { state, safe_to_retry: false }
+            }
+        }
     }
 }
 
@@ -360,6 +541,8 @@ mod tests {
             qty: "2".into(),
             price: "60000".into(),
             order_no: order_no.map(|s| s.to_string()),
+            org_order_no: None,
+            action: OrderAction::Submit,
         }
     }
 
@@ -372,6 +555,15 @@ mod tests {
             price: "60000".into(),
             status: status.into(),
             ..Default::default()
+        }
+    }
+
+    /// A modify/cancel-child row: its own `ordno` plus an `orgordno` pointing back
+    /// at the referenced original order.
+    fn child_row(ordno: &str, orgordno: &str, status: &str) -> T0425OutBlock1 {
+        T0425OutBlock1 {
+            orgordno: orgordno.into(),
+            ..row(ordno, status)
         }
     }
 
@@ -516,6 +708,132 @@ mod tests {
         assert!(!reconcile_rows(&intent(Some("999")), &[], false, false).safe_to_retry);
         // A complete empty query IS safe.
         assert!(reconcile_rows(&intent(Some("999")), &[], true, false).safe_to_retry);
+    }
+
+    // ---- Modify/cancel order-state reconciliation (U2) ----------------------
+
+    /// A modify whose referenced `OrgOrdNo` row shows `정정` classifies Modified.
+    #[test]
+    fn modify_with_jeongjeong_original_row_classifies_modified() {
+        let intent = OrderIntent::modify("00000000-01", "005930", "2", "1", "8350", "84005");
+        let out = reconcile_rows(&intent, &[row("84005", "정정")], true, false);
+        assert_eq!(out.state, OrderState::Modified);
+        assert!(!out.safe_to_retry);
+    }
+
+    /// A modify where a CHILD row exists (`orgordno == OrgOrdNo`) classifies
+    /// Modified/landed even though the new child's own status is a fresh `접수`
+    /// (KTD4: a landed modify creates a new order number).
+    #[test]
+    fn modify_with_child_row_classifies_modified_landed() {
+        let intent = OrderIntent::modify("00000000-01", "005930", "2", "1", "8350", "84005");
+        let rows = [
+            row("84005", "접수"),               // the original, still resting
+            child_row("84006", "84005", "접수"), // the modify's new child order
+        ];
+        let out = reconcile_rows(&intent, &rows, true, false);
+        assert_eq!(out.state, OrderState::Modified, "a child row proves the modify landed");
+        assert!(!out.safe_to_retry);
+    }
+
+    /// REGRESSION GUARD (review-flagged P1): a modify whose original `OrgOrdNo` row
+    /// is still `접수` with NO `정정` row and NO child row is NOT landed — it must
+    /// classify safe-to-retry (idempotent-by-target), NEVER Accepted. This proves
+    /// the matcher does not early-return Accepted on a still-resting original row.
+    #[test]
+    fn modify_with_bare_jeopsu_original_is_not_landed_safe_to_retry() {
+        let intent = OrderIntent::modify("00000000-01", "005930", "2", "1", "8350", "84005");
+        let out = reconcile_rows(&intent, &[row("84005", "접수")], true, false);
+        assert_ne!(out.state, OrderState::Accepted, "a still-resting original is NOT a landed modify");
+        assert_ne!(out.state, OrderState::Modified);
+        assert_eq!(out.state, OrderState::Unknown);
+        assert!(out.safe_to_retry, "an un-applied absolute modify is safe to re-send");
+    }
+
+    /// A modify rejected at the venue (`정정거부`) classifies Rejected (the original
+    /// is unchanged), and is safe to retry — the absolute target re-applies cleanly.
+    #[test]
+    fn modify_rejected_classifies_rejected_and_safe_to_retry() {
+        let intent = OrderIntent::modify("00000000-01", "005930", "2", "1", "8350", "84005");
+        let out = reconcile_rows(&intent, &[row("84005", "정정거부")], true, false);
+        assert_eq!(out.state, OrderState::Rejected);
+        assert!(out.safe_to_retry);
+    }
+
+    /// AE1: a cancel whose `t0425` row still shows a resting `접수` with `ordrem > 0`
+    /// classifies NOT-canceled / still-live — never Accepted — and never clears
+    /// retry. The inverted-risk direction: a cancel is success ONLY on proof.
+    #[test]
+    fn cancel_with_still_resting_original_is_not_canceled_never_accepted() {
+        let intent = OrderIntent::cancel("00000000-01", "005930", "2", "2", "84005");
+        let mut resting = row("84005", "접수");
+        resting.ordrem = "2".into(); // still unfilled at the venue
+        let out = reconcile_rows(&intent, &[resting], true, false);
+        assert_ne!(out.state, OrderState::Accepted, "a cancel must never read as Accepted");
+        assert_ne!(out.state, OrderState::Canceled, "the order still rests — not canceled");
+        assert_eq!(out.state, OrderState::Unknown);
+        assert!(!out.safe_to_retry, "never clear retry while the order may rest");
+    }
+
+    /// STRONGEST-CLASSIFICATION (review-flagged P1): a cancel whose page contains
+    /// BOTH a still-`접수` original row AND a `취소` row for the referenced order
+    /// classifies Canceled — proving the matcher scans all rows rather than
+    /// returning on the first `ordno`/`접수` hit.
+    #[test]
+    fn cancel_scans_all_rows_and_takes_strongest_canceled() {
+        let intent = OrderIntent::cancel("00000000-01", "005930", "2", "1", "84005");
+        let rows = [
+            row("84005", "접수"),               // original row, would read Accepted alone
+            child_row("84006", "84005", "취소"), // the cancel transition
+        ];
+        let out = reconcile_rows(&intent, &rows, true, false);
+        assert_eq!(out.state, OrderState::Canceled, "a 취소 row outranks a still-접수 original");
+        assert!(!out.safe_to_retry);
+    }
+
+    /// A cancel rejected at the venue (`취소거부`) is still-live: Rejected, never
+    /// Canceled, never safe to assume gone.
+    #[test]
+    fn cancel_rejected_is_still_live_rejected() {
+        let intent = OrderIntent::cancel("00000000-01", "005930", "2", "1", "84005");
+        let out = reconcile_rows(&intent, &[row("84005", "취소거부")], true, false);
+        assert_eq!(out.state, OrderState::Rejected);
+        assert!(!out.safe_to_retry);
+    }
+
+    /// An ambiguous modify/cancel with NO matching row over a COMPLETE query is
+    /// safe to retry; over an INCOMPLETE query it stays Unknown and never clears
+    /// retry (the order could sit on an un-fetched page).
+    #[test]
+    fn modify_cancel_no_match_respects_query_completeness() {
+        let intent = OrderIntent::cancel("00000000-01", "005930", "2", "1", "84005");
+        // Unrelated order number only — no match.
+        let rows = [row("99999", "접수")];
+        assert!(reconcile_rows(&intent, &rows, true, false).safe_to_retry);
+        assert!(!reconcile_rows(&intent, &rows, false, false).safe_to_retry);
+    }
+
+    /// An empty/zero referenced `OrgOrdNo` falls back to symbol/side/qty/price
+    /// corroboration (resolving the origin open question) rather than blindly
+    /// matching a blank row field.
+    #[test]
+    fn modify_cancel_empty_org_order_no_falls_back_to_corroboration() {
+        // Cancel with an empty OrgOrdNo: corroborate on the order fields instead.
+        let mut intent = OrderIntent::cancel("00000000-01", "005930", "2", "2", "");
+        intent.org_order_no = Some(String::new());
+        // A field-matching resting row is found via corroboration -> not-canceled.
+        let mut resting = row("84005", "접수");
+        resting.ordrem = "2".into();
+        let out = reconcile_rows(&intent, &[resting], true, false);
+        assert_eq!(out.state, OrderState::Unknown, "corroborated resting row is not-canceled");
+        assert!(!out.safe_to_retry);
+        // A blank reference must NOT spuriously match a blank `ordno` of an
+        // unrelated symbol -> no match, safe to retry over a complete query.
+        let other = T0425OutBlock1 {
+            expcode: "000660".into(),
+            ..Default::default()
+        };
+        assert!(reconcile_rows(&intent, &[other], true, false).safe_to_retry);
     }
 
     #[test]

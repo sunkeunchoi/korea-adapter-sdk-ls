@@ -168,14 +168,8 @@ async fn reconciliation_reaches_the_six_states() {
             .mount(&server)
             .await;
         let sdk = sdk_for(&server);
-        let intent = OrderIntent {
-            account_no: "00000000-01".into(),
-            symbol: "005930".into(),
-            side: "2".into(),
-            qty: "1".into(),
-            price: "60000".into(),
-            order_no: Some("32004".into()),
-        };
+        let intent =
+            OrderIntent::submit("00000000-01", "005930", "2", "1", "60000", Some("32004".into()));
         let o = sdk.orders().reconcile(&intent, dedup_hit).await;
         (o.state, o.safe_to_retry)
     }

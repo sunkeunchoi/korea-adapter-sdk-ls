@@ -80,17 +80,27 @@ enum OrderAck {
     Ambiguous,
 }
 
-/// The order success seed set (`00039` sell-ack / `00040` buy-ack), recorded in
-/// `docs/design/order-safety-design.md` §1. This is the mock-gate baseline; the
-/// guarded live evidence run confirms or amends it (a widened live set forces a
-/// mock-gate re-run before any flip — KTD2/KTD4).
+/// The order success seed set, recorded in
+/// `docs/design/ls-gateway-response-semantics.md` §Order-Specific Codes:
+/// - `00039` sell-ack / `00040` buy-ack — the submit codes (order-safety §1).
+/// - `00462` — modify (`CSPAT00701`) completed.
+/// - `00463` / `00156` — cancel (`CSPAT00801`) completed (`00156` is the spec
+///   alternative cancel-completion code; the raw `CSPAT00801` success example
+///   carries `00156`).
+///
+/// The modify/cancel codes are **seed-only/unconfirmed** at this rung — they were
+/// empirically observed in the old migration source (2026-05-21) but not yet
+/// re-confirmed against the live paper gateway in this wave. The guarded live
+/// evidence run (U6) confirms or amends this set; a wider live set forces a
+/// mock-gate re-run before any flip — KTD2/R2/R8.
 fn rsp_cd_is_order_success(code: &str) -> bool {
-    matches!(code, "00039" | "00040")
+    matches!(code, "00039" | "00040" | "00462" | "00463" | "00156")
 }
 
 /// Classify an order `rsp_cd` into [`OrderAck`].
 ///
-/// - `00039`/`00040` → `Accepted` (the seed set).
+/// - `00039`/`00040` (submit) + `00462` (modify) + `00463`/`00156` (cancel) →
+///   `Accepted` (the seed set; the modify/cancel codes are seed-only — KTD2).
 /// - `00000`/empty → `Ambiguous`. These are the read path's generic-success
 ///   codes; an order that came back `00000` may well have landed at the venue,
 ///   so it must never be treated as a rejection (resubmitting risks a double
@@ -1089,9 +1099,13 @@ mod tests {
 
     #[test]
     fn order_rsp_cd_classification() {
-        // Seed accepts.
+        // Submit seed accepts.
         assert_eq!(classify_order_rsp_cd("00039"), OrderAck::Accepted);
         assert_eq!(classify_order_rsp_cd("00040"), OrderAck::Accepted);
+        // Modify (00462) + cancel (00463/00156) seed accepts (KTD2, seed-only).
+        assert_eq!(classify_order_rsp_cd("00462"), OrderAck::Accepted);
+        assert_eq!(classify_order_rsp_cd("00463"), OrderAck::Accepted);
+        assert_eq!(classify_order_rsp_cd("00156"), OrderAck::Accepted);
         // Generic-success codes are AMBIGUOUS for orders, never Rejected — the
         // double-fill guard, since the read path trusts 00000.
         assert_eq!(classify_order_rsp_cd("00000"), OrderAck::Ambiguous);
@@ -1100,11 +1114,16 @@ mod tests {
         // is not reused for orders.
         assert_eq!(classify_order_rsp_cd("00136"), OrderAck::Rejected);
         assert_eq!(classify_order_rsp_cd("00707"), OrderAck::Rejected);
-        // A recognized rejection preserves code/message downstream.
+        // A recognized rejection preserves code/message downstream. A modify price-
+        // band reject (03181, the raw CSPAT00701 example) is Rejected, not Accepted.
         assert_eq!(classify_order_rsp_cd("IGW40011"), OrderAck::Rejected);
-        // The seed predicate excludes the generic-success codes.
+        assert_eq!(classify_order_rsp_cd("03181"), OrderAck::Rejected);
+        // The seed predicate accepts the order-ack codes, never the generic ones.
         assert!(rsp_cd_is_order_success("00039"));
         assert!(rsp_cd_is_order_success("00040"));
+        assert!(rsp_cd_is_order_success("00462"));
+        assert!(rsp_cd_is_order_success("00463"));
+        assert!(rsp_cd_is_order_success("00156"));
         assert!(!rsp_cd_is_order_success("00000"));
     }
 
