@@ -36,6 +36,7 @@ use ls_sdk::market_session::{
     O3101OutBlock, O3101Request, O3101Response, O3105OutBlock, O3105Request, O3105Response,
     O3106OutBlock, O3106Request, O3106Response, O3121Request, O3121Response, O3125OutBlock,
     O3125Request, O3125Response, O3126OutBlock, O3126Request, O3126Response,
+    T9945Request, T9945Response, T3202Request, T3202Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
@@ -4057,4 +4058,168 @@ fn o3126_empty_result_deserializes_as_pending() {
     let empty: O3126Response =
         serde_json::from_value(serde_json::json!({ "rsp_cd": "00707" })).expect("empty");
     assert!(empty.outblock.price.is_empty(), "empty order book is the pending case");
+}
+
+// ---------------------------------------------------------------------------
+// Domestic stock master/reference breadth wave (plan -004). market_session,
+// non-paginated, single Object-Array out-blocks via `de_vec_or_single`.
+// ---------------------------------------------------------------------------
+
+/// `T9945_POLICY.path` — stock-master endpoint (shared with t1102; tr_cd
+/// distinguishes). `T3202_POLICY.path` — the investinfo endpoint.
+const STOCK_INVESTINFO_PATH: &str = "/stock/investinfo";
+
+/// The spec-derived fixtures.
+const T9945_FIXTURE: &str = include_str!("fixtures/t9945_resp.json");
+const T3202_FIXTURE: &str = include_str!("fixtures/t3202_resp.json");
+
+/// Covers R4, R7. `t9945` serializes to `{"t9945InBlock":{"gubun":"1"}}`; no
+/// continuation tokens (non-paginated).
+#[test]
+fn t9945_request_serializes_to_inblock() {
+    let value = serde_json::to_value(T9945Request::new("1")).expect("serialize t9945 request");
+    assert_eq!(value["t9945InBlock"]["gubun"], "1", "gubun stays a string");
+    assert!(value.get("tr_cont").is_none(), "non-paginated: no tr_cont");
+}
+
+/// Covers R4, R6. The stock-master array deserializes through REAL dispatch; the
+/// canonical fields read their exact expected values (cross-checked vs korean_name).
+#[tokio::test]
+async fn t9945_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(T1102_PATH))
+        .and(header("tr_cd", "t9945"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T9945_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let resp = sdk_for(&server)
+        .market_session()
+        .stock_master(&T9945Request::new("1"))
+        .await
+        .expect("t9945 stock_master should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert!(resp.outblock.len() >= 3, "master rows round-trip");
+    assert_eq!(resp.outblock[0].shcode, "000020", "first 단축코드");
+    assert_eq!(resp.outblock[0].hname, "동화약품", "first 종목명");
+    assert_eq!(resp.outblock[2].etfchk, "1", "ETF flag on the ETF row");
+}
+
+/// Covers R4. A single-object `t9945OutBlock` (one ticker) still deserializes via
+/// `de_vec_or_single` — guards the array-vs-single mis-model.
+#[test]
+fn t9945_single_object_outblock_deserializes() {
+    let resp: T9945Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t9945OutBlock": { "hname": "삼성전자", "shcode": "005930", "expcode": "KR7005930003" }
+    }))
+    .expect("single-object t9945OutBlock must deserialize");
+    assert_eq!(resp.outblock.len(), 1);
+    assert_eq!(resp.outblock[0].shcode, "005930");
+}
+
+/// Covers R6. An empty `t9945` master list (00707) deserializes as the pending case.
+#[test]
+fn t9945_empty_result_set_deserializes_as_pending() {
+    let empty: T9945Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t9945OutBlock": []
+    }))
+    .expect("empty master list deserializes");
+    assert!(empty.outblock.is_empty(), "empty list is the pending case");
+}
+
+/// Error: a `01900` response surfaces as `LsError::ApiError` with the exact
+/// broker code preserved, classified paper-incompatible.
+#[tokio::test]
+async fn t9945_code_01900_classifies_as_paper_incompatible() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(T1102_PATH))
+        .and(header("tr_cd", "t9945"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string("{\"rsp_cd\":\"01900\",\"rsp_msg\":\"모의투자 미지원\"}")
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let err = sdk_for(&server)
+        .market_session()
+        .stock_master(&T9945Request::new("1"))
+        .await
+        .expect_err("01900 must surface as an error");
+    match err {
+        LsError::ApiError { ref code, .. } => {
+            assert_eq!(code, "01900", "exact code preserved");
+            assert!(err.is_paper_incompatible(), "01900 is paper-incompatible");
+        }
+        other => panic!("expected ApiError, got {other:?}"),
+    }
+}
+
+/// Covers R4, R7. `t3202` serializes to `{"t3202InBlock":{"shcode":"...","date":""}}`.
+#[test]
+fn t3202_request_serializes_to_inblock() {
+    let value = serde_json::to_value(T3202Request::new("001200")).expect("serialize t3202 request");
+    assert_eq!(value["t3202InBlock"]["shcode"], "001200");
+    assert_eq!(value["t3202InBlock"]["date"], "", "date defaults empty (all)");
+    assert!(value.get("tr_cont").is_none(), "non-paginated: no tr_cont");
+}
+
+/// Covers R4, R6. The schedule array deserializes through REAL dispatch; the
+/// canonical event label reads its exact expected value.
+#[tokio::test]
+async fn t3202_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(STOCK_INVESTINFO_PATH))
+        .and(header("tr_cd", "t3202"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T3202_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let resp = sdk_for(&server)
+        .market_session()
+        .stock_schedule(&T3202Request::new("001200"))
+        .await
+        .expect("t3202 stock_schedule should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert!(resp.outblock.len() >= 2, "schedule rows round-trip");
+    assert_eq!(resp.outblock[0].upunm, "주주총회", "canonical 업무명 event label");
+    assert_eq!(resp.outblock[0].custnm, "유진투자증권(주)", "발행회사명");
+}
+
+/// Covers R4. A single-object `t3202OutBlock` still deserializes via `de_vec_or_single`.
+#[test]
+fn t3202_single_object_outblock_deserializes() {
+    let resp: T3202Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t3202OutBlock": { "shcode": "001200", "upunm": "배당", "recdt": "20240101" }
+    }))
+    .expect("single-object t3202OutBlock must deserialize");
+    assert_eq!(resp.outblock.len(), 1);
+    assert_eq!(resp.outblock[0].upunm, "배당");
+}
+
+/// Covers R6. An empty `t3202` schedule (00707) deserializes as the pending case.
+#[test]
+fn t3202_empty_result_set_deserializes_as_pending() {
+    let empty: T3202Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t3202OutBlock": []
+    }))
+    .expect("empty schedule deserializes");
+    assert!(empty.outblock.is_empty(), "empty schedule is the pending case");
 }

@@ -1156,6 +1156,36 @@ pub const T3320_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+/// t9945 — 주식마스터조회 (stock master; non-paginated `market_session` read).
+/// One market per call; returns the full ticker master array (plan -004).
+pub const T9945_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t9945",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t3202 — 종목별증시일정 (per-stock market schedule; non-paginated
+/// `market_session` read). Keyed by `shcode` (plan -004).
+pub const T3202_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t3202",
+    path: "/stock/investinfo",
+    module: "stock",
+    group: "[주식] 투자정보",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// t8455 — KRX야간파생 마스터조회(API용) (night-derivatives master; non-paginated
 /// F/O market-data read). `venue_session: krx_extended` (KTD7). Keyed by a
 /// `gubun` class selector.
@@ -1993,6 +2023,10 @@ mod tests {
             T1988_POLICY,
             T3102_POLICY,
             T3320_POLICY,
+            // Domestic stock master/reference breadth wave (plan -004): non-order
+            // REST reads — registered in BOTH crosscheck lists.
+            T9945_POLICY,
+            T3202_POLICY,
             T8455_POLICY,
             T8460_POLICY,
             T8463_POLICY,
