@@ -3509,7 +3509,7 @@ async fn live_smoke_o3121() {
 }
 
 /// `make live-smoke-o3105`: paper guard → token → one overseas-futures
-/// current-price read keyed by a public symbol (`CUSN23`). Routes through
+/// current-price read keyed by a public symbol (`CUSN26`). Routes through
 /// `market_session` (KTD3). Empty `trd_p` out-block is the `00707` PENDING case.
 #[tokio::test]
 #[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-o3105`"]
@@ -3521,7 +3521,7 @@ async fn live_smoke_o3105() {
     let date = Utc::now().format("%Y-%m-%d");
     match sdk
         .market_session()
-        .overseas_futures_quote(&O3105Request::new("CUSN23  "))
+        .overseas_futures_quote(&O3105Request::new("CUSN26  "))
         .await
     {
         Ok(resp) => {
@@ -3536,7 +3536,7 @@ async fn live_smoke_o3105() {
                 .expect("an Ok outcome yields a result line");
             record(
                 "live-smoke-o3105",
-                &format!("env=paper symbol=CUSN23 date={date}"),
+                &format!("env=paper symbol=CUSN26 date={date}"),
                 &line,
             );
         }
@@ -3548,7 +3548,7 @@ async fn live_smoke_o3105() {
 }
 
 /// `make live-smoke-o3106`: paper guard → token → one overseas-futures
-/// current-price + order-book read (`ADM23`). Routes through `market_session`
+/// current-price + order-book read (`HSIM26`). Routes through `market_session`
 /// (KTD3). Empty `price` out-block is the `00707` PENDING case.
 #[tokio::test]
 #[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-o3106`"]
@@ -3560,7 +3560,7 @@ async fn live_smoke_o3106() {
     let date = Utc::now().format("%Y-%m-%d");
     match sdk
         .market_session()
-        .overseas_futures_order_book(&O3106Request::new("ADM23"))
+        .overseas_futures_order_book(&O3106Request::new("HSIM26"))
         .await
     {
         Ok(resp) => {
@@ -3575,7 +3575,7 @@ async fn live_smoke_o3106() {
                 .expect("an Ok outcome yields a result line");
             record(
                 "live-smoke-o3106",
-                &format!("env=paper symbol=ADM23 date={date}"),
+                &format!("env=paper symbol=HSIM26 date={date}"),
                 &line,
             );
         }
@@ -3587,7 +3587,7 @@ async fn live_smoke_o3106() {
 }
 
 /// `make live-smoke-o3125`: paper guard → token → one overseas-future-option
-/// current-price read (`mktgb="F"`, `HSIM23`). Routes through `market_session`
+/// current-price read (`mktgb="F"`, `HSIM26`). Routes through `market_session`
 /// (KTD3). Empty `trd_p` out-block is the `00707` PENDING case.
 #[tokio::test]
 #[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-o3125`"]
@@ -3599,7 +3599,7 @@ async fn live_smoke_o3125() {
     let date = Utc::now().format("%Y-%m-%d");
     match sdk
         .market_session()
-        .overseas_option_quote(&O3125Request::new("F", "HSIM23          "))
+        .overseas_option_quote(&O3125Request::new("F", "HSIM26          "))
         .await
     {
         Ok(resp) => {
@@ -3614,7 +3614,7 @@ async fn live_smoke_o3125() {
                 .expect("an Ok outcome yields a result line");
             record(
                 "live-smoke-o3125",
-                &format!("env=paper mktgb=F symbol=HSIM23 date={date}"),
+                &format!("env=paper mktgb=F symbol=HSIM26 date={date}"),
                 &line,
             );
         }
@@ -3626,7 +3626,7 @@ async fn live_smoke_o3125() {
 }
 
 /// `make live-smoke-o3126`: paper guard → token → one overseas-future-option
-/// current-price + order-book read (`mktgb="F"`, `ADM23`). Routes through
+/// current-price + order-book read (`mktgb="F"`, `HSIM26`). Routes through
 /// `market_session` (KTD3). Empty `price` out-block is the `00707` PENDING case.
 #[tokio::test]
 #[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-o3126`"]
@@ -3638,7 +3638,7 @@ async fn live_smoke_o3126() {
     let date = Utc::now().format("%Y-%m-%d");
     match sdk
         .market_session()
-        .overseas_option_order_book(&O3126Request::new("F", "ADM23"))
+        .overseas_option_order_book(&O3126Request::new("F", "HSIM26"))
         .await
     {
         Ok(resp) => {
@@ -3653,7 +3653,7 @@ async fn live_smoke_o3126() {
                 .expect("an Ok outcome yields a result line");
             record(
                 "live-smoke-o3126",
-                &format!("env=paper mktgb=F symbol=ADM23 date={date}"),
+                &format!("env=paper mktgb=F symbol=HSIM26 date={date}"),
                 &line,
             );
         }
