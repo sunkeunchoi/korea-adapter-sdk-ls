@@ -388,6 +388,22 @@ live-smoke-o3125:
 live-smoke-o3126:
 	$(call run_smoke,live_smoke_o3126)
 
+## Domestic stock master/reference breadth wave (plan -004).
+live-smoke-t9945:
+	$(call run_smoke,live_smoke_t9945)
+live-smoke-t3202:
+	$(call run_smoke,live_smoke_t3202)
+live-smoke-t3401:
+	$(call run_smoke,live_smoke_t3401)
+live-smoke-t8410:
+	$(call run_smoke,live_smoke_t8410)
+live-smoke-t8451:
+	$(call run_smoke,live_smoke_t8451)
+live-smoke-t8419:
+	$(call run_smoke,live_smoke_t8419)
+live-smoke-t4203:
+	$(call run_smoke,live_smoke_t4203)
+
 ## Failure classifier (implement-tr R6): one credential-safe raw-HTTP POST that
 ## bypasses the SDK's typed deserialize. Requires LS_PROBE_TR_CD, LS_PROBE_PATH,
 ## and LS_PROBE_BODY. Prints a RAW-PROBE line (never a LIVE-SMOKE evidence line).

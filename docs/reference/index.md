@@ -82,12 +82,17 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t2112` | 선물/옵션현재가호가조회 | `market_session` | implemented, not yet recommended |
 | `t2301` | 옵션전광판 | `market_session` | implemented, not yet recommended |
 | `t2522` | 주식선물기초자산조회 | `market_session` | implemented, not yet recommended |
+| `t3202` | 종목별증시일정 | `market_session` | implemented, not yet recommended |
 | `t3320` | FNG_요약 | `market_session` | implemented, not yet recommended |
 | `t3341` | 재무순위종합 | `paginated` | implemented, not yet recommended |
+| `t3401` | 투자의견 | `paginated` | implemented, not yet recommended |
+| `t4203` | 업종차트(종합) | `paginated` | implemented, not yet recommended |
 | `t8401` | 주식선물마스터조회(API용) | `market_session` | implemented, not yet recommended |
 | `t8402` | 주식선물현재가조회(API용) | `market_session` | implemented, not yet recommended |
 | `t8403` | 주식선물호가조회(API용) | `market_session` | implemented, not yet recommended |
+| `t8410` | API전용주식차트(일주월년) | `paginated` | implemented, not yet recommended |
 | `t8412` | 주식 차트(N분봉) 조회 | `paginated` | recommended |
+| `t8419` | 업종차트(일주월) | `paginated` | implemented, not yet recommended |
 | `t8424` | 전체업종 | `market_session` | implemented, not yet recommended |
 | `t8425` | 전체테마 | `market_session` | implemented, not yet recommended |
 | `t8426` | 상품선물마스터조회(API용) | `market_session` | implemented, not yet recommended |
@@ -96,10 +101,12 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t8434` | 선물/옵션멀티현재가조회 | `market_session` | implemented, not yet recommended |
 | `t8435` | 파생종목마스터조회API용 | `market_session` | implemented, not yet recommended |
 | `t8436` | 주식종목조회 API용 | `market_session` | implemented, not yet recommended |
+| `t8451` | (통합)주식챠트(일주월년) API용 | `paginated` | implemented, not yet recommended |
 | `t8467` | 지수선물마스터조회API용 | `market_session` | implemented, not yet recommended |
 | `t9905` | 기초자산리스트조회 | `market_session` | implemented, not yet recommended |
 | `t9907` | 만기월조회 | `market_session` | implemented, not yet recommended |
 | `t9942` | ELW마스터조회API용 | `market_session` | implemented, not yet recommended |
 | `t9943` | 지수선물마스터조회API용 | `market_session` | implemented, not yet recommended |
 | `t9944` | 지수옵션마스터조회API용 | `market_session` | implemented, not yet recommended |
+| `t9945` | 주식마스터조회API용 | `market_session` | implemented, not yet recommended |
 | `token` | 접근토큰 발급 (OAuth2 token issue) | `standalone` | recommended |

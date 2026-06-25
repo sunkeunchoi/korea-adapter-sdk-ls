@@ -100,17 +100,17 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t2301` | 옵션전광판 | `market_session` | implemented | [t2301](./t2301.md) |
 | `t2522` | 주식선물기초자산조회 | `market_session` | implemented | [t2522](./t2522.md) |
 | `t3102` | 뉴스본문 | `standalone` | tracked | [t3102](./t3102.md) |
-| `t3202` | 종목별증시일정 | `market_session` | tracked | [t3202](./t3202.md) |
+| `t3202` | 종목별증시일정 | `market_session` | implemented | [t3202](./t3202.md) |
 | `t3320` | FNG_요약 | `market_session` | implemented | [t3320](./t3320.md) |
 | `t3341` | 재무순위종합 | `paginated` | implemented | [t3341](./t3341.md) |
-| `t3401` | 투자의견 | `paginated` | tracked | [t3401](./t3401.md) |
-| `t4203` | 업종차트(종합) | `paginated` | tracked | [t4203](./t4203.md) |
+| `t3401` | 투자의견 | `paginated` | implemented | [t3401](./t3401.md) |
+| `t4203` | 업종차트(종합) | `paginated` | implemented | [t4203](./t4203.md) |
 | `t8401` | 주식선물마스터조회(API용) | `market_session` | implemented | [t8401](./t8401.md) |
 | `t8402` | 주식선물현재가조회(API용) | `market_session` | implemented | [t8402](./t8402.md) |
 | `t8403` | 주식선물호가조회(API용) | `market_session` | implemented | [t8403](./t8403.md) |
-| `t8410` | API전용주식차트(일주월년) | `paginated` | tracked | [t8410](./t8410.md) |
+| `t8410` | API전용주식차트(일주월년) | `paginated` | implemented | [t8410](./t8410.md) |
 | `t8412` | 주식 차트(N분봉) 조회 | `paginated` | recommended | [t8412](./t8412.md) |
-| `t8419` | 업종차트(일주월) | `paginated` | tracked | [t8419](./t8419.md) |
+| `t8419` | 업종차트(일주월) | `paginated` | implemented | [t8419](./t8419.md) |
 | `t8424` | 전체업종 | `market_session` | implemented | [t8424](./t8424.md) |
 | `t8425` | 전체테마 | `market_session` | implemented | [t8425](./t8425.md) |
 | `t8426` | 상품선물마스터조회(API용) | `market_session` | implemented | [t8426](./t8426.md) |
@@ -120,7 +120,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t8434` | 선물/옵션멀티현재가조회 | `market_session` | implemented | [t8434](./t8434.md) |
 | `t8435` | 파생종목마스터조회API용 | `market_session` | implemented | [t8435](./t8435.md) |
 | `t8436` | 주식종목조회 API용 | `market_session` | implemented | [t8436](./t8436.md) |
-| `t8451` | (통합)주식챠트(일주월년) API용 | `paginated` | tracked | [t8451](./t8451.md) |
+| `t8451` | (통합)주식챠트(일주월년) API용 | `paginated` | implemented | [t8451](./t8451.md) |
 | `t8455` | KRX야간파생 마스터조회(API용) | `market_session` | tracked | [t8455](./t8455.md) |
 | `t8460` | KRX야간파생 옵션 전광판 | `market_session` | tracked | [t8460](./t8460.md) |
 | `t8463` | KRX야간파생 투자자시간대별(API용) | `market_session` | tracked | [t8463](./t8463.md) |
@@ -130,5 +130,5 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t9942` | ELW마스터조회API용 | `market_session` | implemented | [t9942](./t9942.md) |
 | `t9943` | 지수선물마스터조회API용 | `market_session` | implemented | [t9943](./t9943.md) |
 | `t9944` | 지수옵션마스터조회API용 | `market_session` | implemented | [t9944](./t9944.md) |
-| `t9945` | 주식마스터조회API용 | `market_session` | tracked | [t9945](./t9945.md) |
+| `t9945` | 주식마스터조회API용 | `market_session` | implemented | [t9945](./t9945.md) |
 | `token` | 접근토큰 발급 (OAuth2 token issue) | `standalone` | recommended | [token](./token.md) |

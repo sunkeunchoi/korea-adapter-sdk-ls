@@ -928,6 +928,7 @@ mod tests {
             "t8467", "t9943", "t9944", "t8431", "t8436", "t9905", "t9907", "t9942",
             "t2111", "t2112", "t8402", "t8403", "t8434",
             "t1988", "t3320",
+            "t9945", "t3202", "t3401", "t8410", "t8451", "t8419", "t4203",
             "o3101", "o3121",
             "K3_",
             "H1_", "HA_", "S2_", "US3", "UH1", "US2", "GSC", "GSH", "OVC", "OVH", "OC0", "OH0",
@@ -1008,9 +1009,12 @@ mod tests {
         // o3105/o3106/o3125/o3126 flipped on clean non-empty paper smokes once their
         // smoke symbols were refreshed to current front-month contracts (the stale
         // 2023-expiry symbols had masked a provisioned feed as empty) — add 4 more.
+        // Domestic stock master/reference breadth wave (plan -004): the seven reads
+        // t9945/t3202/t3401/t8410/t8451/t8419/t4203 each flipped on a clean non-empty
+        // paper smoke — add 7 more.
         assert_eq!(
             reference.len(),
-            98,
+            105,
             "index + the implemented reference pages"
         );
 
