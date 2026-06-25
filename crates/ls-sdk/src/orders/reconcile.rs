@@ -73,6 +73,7 @@ impl OrderState {
 /// the target change land?" (idempotent-by-target), and a cancel asks "is the
 /// referenced order *gone*?" — with cancel failing toward still-live (R7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
 pub enum OrderAction {
     /// A new-order submit (`CSPAT00601`). The default so existing call sites that
     /// build an intent for a submit reconcile unchanged.
@@ -86,7 +87,13 @@ pub enum OrderAction {
 
 /// The local intent for an order — what the caller tried to submit. Used both to
 /// match against `t0425` rows and to build the redacting evidence record.
+///
+/// `#[non_exhaustive]`: build it through [`OrderIntent::submit`] /
+/// [`OrderIntent::modify`] / [`OrderIntent::cancel`], never a struct literal — the
+/// order surface keeps growing fields and the constructors set the action
+/// discriminator + referenced order number coherently.
 #[derive(Debug, Clone, Default)]
+#[non_exhaustive]
 pub struct OrderIntent {
     /// Account number (cleartext here; never persisted in the clear — see
     /// [`ReconciliationRecord`]).
@@ -366,15 +373,28 @@ pub fn reconcile_rows(
     let any_rejected = any(OrderState::Rejected);
     let any_canceled = any(OrderState::Canceled);
     let any_modified = any(OrderState::Modified);
-    // A modify/cancel-child row (`orgordno == OrgOrdNo`) is direct evidence the
-    // transition produced a new order, independent of its own status text.
-    let has_child = reference_order_no(intent).is_some_and(|refno| {
-        matched.iter().any(|r| row_is_child_of(intent, r, &refno))
+    // A LIVE modify/cancel-child row (`orgordno == OrgOrdNo`) is direct evidence the
+    // transition produced a new resting order — but ONLY when the child is itself
+    // live (a `접수`/`체결`/`정정` status, i.e. classified Accepted or Modified). A
+    // `취소`/`거부` child is NOT a landed-modify witness: a canceled or rejected
+    // child must not be counted as a new resting order (it would mislabel a canceled
+    // or rejected order as a landed modify — review-flagged).
+    let has_live_child = reference_order_no(intent).is_some_and(|refno| {
+        matched.iter().any(|r| {
+            row_is_child_of(intent, r, &refno)
+                && matches!(
+                    classify_status(&r.status),
+                    OrderState::Accepted | OrderState::Modified
+                )
+        })
     });
 
     match intent.action {
         // Submit: the matched row's status is the outcome (order is at the venue),
-        // rejection-first across rows. Never safe to retry — an order is present.
+        // rejection-first across all matched rows (a venue order number is unique,
+        // so multiple matches are implausible — but if present, the strongest
+        // transition wins: Rejected > Canceled > Modified > Accepted). Never safe to
+        // retry — an order is present.
         OrderAction::Submit => {
             let state = if any_rejected {
                 OrderState::Rejected
@@ -387,32 +407,53 @@ pub fn reconcile_rows(
             };
             ReconcileOutcome { state, safe_to_retry: false }
         }
-        // Modify is absolute (idempotent-by-target, KTD4): landed iff a `정정`
-        // transition OR a (non-rejected) child row exists. A bare still-`접수`
-        // original row with neither is NOT landed — and because re-applying the
-        // same absolute target is harmless, that case is safe to retry. We never
-        // classify a still-resting original row as Accepted/landed for a modify.
+        // Modify is absolute (idempotent-by-target, KTD4). Precedence across all
+        // matched rows, strongest transition first:
+        //   1. a `취소` row → the referenced order was Canceled (by someone) — the
+        //      modify did NOT land and the order is gone; never read this as
+        //      Modified, never clear retry.
+        //   2. a `정정` row OR a LIVE child (new resting order) → Modified/landed.
+        //      A landed child witness must NOT be masked by a `정정거부` sibling
+        //      (e.g. a prior rejected modify of the same original) — a live child
+        //      means an order rests, so we do not clear retry (review-flagged).
+        //   3. a `정정거부` with no landed child → Rejected, but safe to re-send
+        //      (the absolute target re-applies cleanly).
+        //   4. a bare still-`접수`/`체결` original → not landed, safe to re-send.
+        // We never classify a still-resting original row as Accepted/landed.
         OrderAction::Modify => {
-            if any_modified || (has_child && !any_rejected) {
+            if any_canceled {
+                ReconcileOutcome {
+                    state: OrderState::Canceled,
+                    safe_to_retry: false,
+                }
+            } else if any_modified || has_live_child {
                 ReconcileOutcome {
                     state: OrderState::Modified,
                     safe_to_retry: false,
                 }
+            } else if any_rejected {
+                // `정정거부` — modify rejected, original unchanged; idempotent-by-
+                // target, so a re-send is safe.
+                ReconcileOutcome {
+                    state: OrderState::Rejected,
+                    safe_to_retry: true,
+                }
             } else {
-                // Not landed: `정정거부` → Rejected, else still-`접수`/체결 → Unknown.
-                // Idempotent-by-target, so a re-send is safe either way.
-                let state = if any_rejected {
-                    OrderState::Rejected
-                } else {
-                    OrderState::Unknown
-                };
-                ReconcileOutcome { state, safe_to_retry: true }
+                // Bare still-`접수`/`체결` original — not landed, safe to re-send.
+                ReconcileOutcome {
+                    state: OrderState::Unknown,
+                    safe_to_retry: true,
+                }
             }
         }
         // Cancel INVERTS the risk (R7, AE1): a matched row is canceled ONLY on an
         // explicit `취소` row. Anything else — a still-`접수`/체결 original, a `정정`,
         // or a `취소거부` rejection — means the order may still rest, so we fail
-        // toward still-live (never Accepted) and never clear retry.
+        // toward still-live (never Accepted) and never clear retry. NOTE the
+        // ASYMMETRY vs Modify: a rejected cancel keeps `safe_to_retry: false` (the
+        // order may still be live, so do not invite an auto-clear), whereas a
+        // rejected modify is `safe_to_retry: true` (idempotent-by-target). Do NOT
+        // "align" these — the inverted cancel risk is the whole point of this lane.
         OrderAction::Cancel => {
             if any_canceled {
                 ReconcileOutcome {
@@ -758,6 +799,46 @@ mod tests {
         let out = reconcile_rows(&intent, &[row("84005", "정정거부")], true, false);
         assert_eq!(out.state, OrderState::Rejected);
         assert!(out.safe_to_retry);
+    }
+
+    /// REVIEW-FLAGGED: a modify whose referenced order shows a `취소` child (the
+    /// order was canceled by someone) must NOT read as Modified — the modify did
+    /// not land and the order is gone. A `취소` child is not a landed-modify witness.
+    #[test]
+    fn modify_with_canceled_child_classifies_canceled_not_modified() {
+        let intent = OrderIntent::modify("00000000-01", "005930", "2", "1", "8350", "84005");
+        let rows = [
+            row("84005", "접수"),               // the original
+            child_row("84006", "84005", "취소"), // a cancel of the original landed
+        ];
+        let out = reconcile_rows(&intent, &rows, true, false);
+        assert_eq!(out.state, OrderState::Canceled, "a 취소 child is not a landed modify");
+        assert_ne!(out.state, OrderState::Modified);
+        assert!(!out.safe_to_retry);
+    }
+
+    /// REVIEW-FLAGGED: a modify with a LIVE landed child (new resting order) must
+    /// stay Modified even when a `정정거부` sibling is also present (e.g. a prior
+    /// rejected modify of the same original). A live child means an order rests, so
+    /// the rejection must NOT mask it into a safe-to-retry verdict.
+    #[test]
+    fn modify_with_landed_child_and_rejected_sibling_stays_modified() {
+        let intent = OrderIntent::modify("00000000-01", "005930", "2", "1", "8350", "84005");
+        let rows = [
+            row("84005", "접수"),                   // the original
+            child_row("84008", "84005", "정정거부"), // a prior rejected modify
+            child_row("84007", "84005", "접수"),     // the modify that landed (live child)
+        ];
+        let out = reconcile_rows(&intent, &rows, true, false);
+        assert_eq!(
+            out.state,
+            OrderState::Modified,
+            "a live landed child must not be masked by a rejected sibling"
+        );
+        assert!(
+            !out.safe_to_retry,
+            "a resting child order must never green-light a blind re-send"
+        );
     }
 
     /// AE1: a cancel whose `t0425` row still shows a resting `접수` with `ordrem > 0`
