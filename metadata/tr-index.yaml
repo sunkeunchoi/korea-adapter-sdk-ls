@@ -245,6 +245,18 @@ trs:
     protocol: rest
     instrument_domain: stock
     venue_session: krx_regular
+  CSPAT00701:
+    file: trs/CSPAT00701.yaml
+    owner_class: orders
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  CSPAT00801:
+    file: trs/CSPAT00801.yaml
+    owner_class: orders
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
   t0425:
     file: trs/t0425.yaml
     owner_class: paginated

@@ -11,7 +11,8 @@ use std::sync::Arc;
 
 use ls_core::{Inner, LsError};
 use ls_sdk::orders::{
-    CSPAT00601Request, CSPAT00601Response, OrderIntent, OrderState, T0425Request,
+    CSPAT00601Request, CSPAT00601Response, CSPAT00701Request, CSPAT00701Response, CSPAT00801Request,
+    CSPAT00801Response, OrderAction, OrderIntent, OrderState, T0425Request,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
@@ -211,14 +212,8 @@ async fn reconcile_after_ambiguous_finds_accepted_order() {
         .await;
 
     let sdk = sdk_for(&server);
-    let intent = OrderIntent {
-        account_no: "00000000-01".into(),
-        symbol: "005930".into(),
-        side: "2".into(),
-        qty: "1".into(),
-        price: "60000".into(),
-        order_no: Some("32004".into()),
-    };
+    let intent =
+        OrderIntent::submit("00000000-01", "005930", "2", "1", "60000", Some("32004".into()));
     let outcome = sdk.orders().reconcile(&intent, false).await;
     assert_eq!(outcome.state, OrderState::Accepted);
     assert!(!outcome.safe_to_retry, "an accepted order is never retried");
@@ -242,14 +237,8 @@ async fn reconcile_dedup_hit_is_duplicate_without_query() {
         .await;
 
     let sdk = sdk_for(&server);
-    let intent = OrderIntent {
-        account_no: "00000000-01".into(),
-        symbol: "005930".into(),
-        side: "2".into(),
-        qty: "1".into(),
-        price: "60000".into(),
-        order_no: Some("32004".into()),
-    };
+    let intent =
+        OrderIntent::submit("00000000-01", "005930", "2", "1", "60000", Some("32004".into()));
     let outcome = sdk.orders().reconcile(&intent, true).await;
     assert_eq!(outcome.state, OrderState::Duplicate);
     assert_eq!(
@@ -275,15 +264,322 @@ async fn reconcile_failed_query_is_unknown_not_safe() {
         .await;
 
     let sdk = sdk_for(&server);
-    let intent = OrderIntent {
-        account_no: "00000000-01".into(),
-        symbol: "005930".into(),
-        side: "2".into(),
-        qty: "1".into(),
-        price: "60000".into(),
-        order_no: Some("32004".into()),
-    };
+    let intent =
+        OrderIntent::submit("00000000-01", "005930", "2", "1", "60000", Some("32004".into()));
     let outcome = sdk.orders().reconcile(&intent, false).await;
     assert_eq!(outcome.state, OrderState::Unknown);
     assert!(!outcome.safe_to_retry);
+}
+
+// ===========================================================================
+// CSPAT00701 — 현물정정주문 (modify). Offline, credential-free, no live order.
+// ===========================================================================
+
+/// A spec-grounded modify-ack response (`rsp_cd=00462`): the new order number is
+/// `OutBlock2.OrdNo=84007`, the parent `PrntOrdNo=84005` (KTD4).
+const MODIFY_ACK: &str = r#"{
+    "CSPAT00701OutBlock1": { "RecCnt": 1, "OrgOrdNo": 84005, "AcntNo": "20*********",
+        "IsuNo": "A005930", "OrdQty": 1, "OrdPrc": "8400.00" },
+    "CSPAT00701OutBlock2": { "RecCnt": 1, "OrdNo": 84007, "PrntOrdNo": 84005,
+        "OrdTime": "133018980", "OrdMktCode": "10", "ShtnIsuNo": "A005930",
+        "OrdAmt": 8400, "AcntNm": "***", "IsuNm": "삼성전자" },
+    "rsp_cd": "00462",
+    "rsp_msg": "모의투자 정정주문이 완료 되었습니다."
+}"#;
+
+/// Edge (IGW40011 guard): `OrgOrdNo`/`OrdQty`/`OrdPrc` serialize as JSON numbers.
+#[test]
+fn modify_request_serializes_numeric_fields_as_json_numbers() {
+    let req = CSPAT00701Request::limit("84005", "005930", "1", "8400");
+    let wire = serde_json::to_string(&req).expect("serialize");
+    assert!(wire.contains("\"CSPAT00701InBlock1\""), "wire: {wire}");
+    assert!(wire.contains("\"OrgOrdNo\":84005"), "OrgOrdNo must be a JSON number: {wire}");
+    assert!(wire.contains("\"OrdQty\":1"), "OrdQty must be a JSON number: {wire}");
+    assert!(wire.contains("\"OrdPrc\":8400"), "OrdPrc must be a JSON number: {wire}");
+    assert!(wire.contains("\"IsuNo\":\"005930\""), "wire: {wire}");
+}
+
+/// Happy (offline): a captured `00462` modify-ack deserializes; the NEW order
+/// number is read from `OutBlock2`, with the parent order number alongside.
+#[test]
+fn modify_response_deserializes_00462_and_reads_new_ordno() {
+    let res: CSPAT00701Response = serde_json::from_str(MODIFY_ACK).expect("deserialize modify-ack");
+    assert_eq!(res.rsp_cd, "00462");
+    assert_eq!(res.order_no(), "84007", "the modify creates a NEW order number");
+    assert_eq!(res.parent_order_no(), "84005", "the parent is the original order");
+    assert_eq!(res.outblock1.orgordno, "84005");
+}
+
+/// Integration: `modify()` flows through `post_order` and a `00462` ack
+/// classifies Accepted (the widened predicate), returning the new order number.
+#[tokio::test]
+async fn modify_dispatches_via_post_order_and_returns_new_ordno() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(ORDER_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_string(MODIFY_ACK))
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let req = CSPAT00701Request::limit("84005", "005930", "1", "8400");
+    let res = sdk.orders().modify(&req).await.expect("00462 modify-ack is Accepted");
+    assert_eq!(res.rsp_cd, "00462");
+    assert_eq!(res.order_no(), "84007");
+}
+
+/// Error: a modify rejection (`03181` price-band, the raw capture's example)
+/// surfaces as `ApiError` with the broker code/message preserved.
+#[tokio::test]
+async fn modify_rejection_surfaces_apierror_with_code() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(ORDER_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "rsp_cd": "03181",
+            "rsp_msg": "주문가격이 하한가 미달입니다."
+        })))
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let req = CSPAT00701Request::limit("84005", "005930", "1", "1");
+    let err = sdk
+        .orders()
+        .modify(&req)
+        .await
+        .expect_err("a modify rejection must surface as ApiError");
+    match err {
+        LsError::ApiError { code, message } => {
+            assert_eq!(code, "03181");
+            assert!(message.contains("하한가"));
+        }
+        other => panic!("expected ApiError, got {other:?}"),
+    }
+}
+
+/// Integration: `modify()` routes through `post_order`, NOT `post` — proven by the
+/// kill switch, which only the order path consults.
+#[tokio::test]
+async fn modify_routes_through_post_order_observable_via_kill_switch() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let hits_inner = hits.clone();
+    Mock::given(method("POST"))
+        .and(path(ORDER_PATH))
+        .respond_with(move |_req: &wiremock::Request| {
+            hits_inner.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            ResponseTemplate::new(200).set_body_string(MODIFY_ACK)
+        })
+        .mount(&server)
+        .await;
+
+    let inner = Inner::new(mock_config(&server.uri())).expect("valid mock config");
+    inner.set_orders_enabled(false);
+    let sdk = LsSdk::from_inner(inner);
+    let req = CSPAT00701Request::limit("84005", "005930", "1", "8400");
+    let err = sdk.orders().modify(&req).await.expect_err("kill switch halts the modify");
+    match err {
+        LsError::ApiError { code, .. } => assert_eq!(code, "orders-disabled"),
+        other => panic!("expected orders-disabled, got {other:?}"),
+    }
+    assert_eq!(
+        hits.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the order path must halt before HTTP — proving modify() uses post_order"
+    );
+}
+
+/// The reconciliation intent built for a modify carries the referenced `OrgOrdNo`
+/// and the Modify action — so U2's order-state reconciliation keys off it.
+#[test]
+fn modify_reconcile_intent_carries_org_order_no_and_action() {
+    let req = CSPAT00701Request::limit("84005", "A005930", "1", "8400");
+    let intent = req.reconcile_intent("00000000-01");
+    assert_eq!(intent.org_order_no.as_deref(), Some("84005"));
+    assert_eq!(intent.action, OrderAction::Modify);
+    // The IsuNo market prefix is normalized to the t0425 expcode form.
+    assert_eq!(intent.symbol, "005930");
+    assert_eq!(intent.qty, "1");
+    assert_eq!(intent.price, "8400");
+}
+
+// ===========================================================================
+// CSPAT00801 — 현물취소주문 (cancel). Offline, credential-free, no live order.
+// ===========================================================================
+
+/// A spec-grounded cancel-ack response (`rsp_cd=00156`, the raw `CSPAT00801`
+/// success example): the new cancel order number is `OutBlock2.OrdNo=84006`, the
+/// parent `PrntOrdNo=84005`.
+const CANCEL_ACK: &str = r#"{
+    "rsp_cd": "00156",
+    "rsp_msg": "취소주문이 완료되었습니다.",
+    "CSPAT00801OutBlock1": { "RecCnt": 1, "OrgOrdNo": 84005, "AcntNo": "20*********",
+        "IsuNo": "A005930", "OrdQty": 1 },
+    "CSPAT00801OutBlock2": { "RecCnt": 1, "OrdNo": 84006, "PrntOrdNo": 84005,
+        "OrdTime": "133018980", "OrdMktCode": "10", "ShtnIsuNo": "A005930",
+        "BnsTpCode": "2", "AcntNm": "***", "IsuNm": "삼성전자" }
+}"#;
+
+/// Edge (IGW40011 guard): `OrgOrdNo`/`OrdQty` serialize as JSON numbers.
+#[test]
+fn cancel_request_serializes_numeric_fields_as_json_numbers() {
+    let req = CSPAT00801Request::new("84005", "005930", "1");
+    let wire = serde_json::to_string(&req).expect("serialize");
+    assert!(wire.contains("\"CSPAT00801InBlock1\""), "wire: {wire}");
+    assert!(wire.contains("\"OrgOrdNo\":84005"), "OrgOrdNo must be a JSON number: {wire}");
+    assert!(wire.contains("\"OrdQty\":1"), "OrdQty must be a JSON number: {wire}");
+    assert!(wire.contains("\"IsuNo\":\"005930\""), "wire: {wire}");
+}
+
+/// Happy (offline): a captured `00156` cancel-ack deserializes; the cancel order
+/// number is read from `OutBlock2`, with the parent order number alongside.
+#[test]
+fn cancel_response_deserializes_00156_and_reads_cancel_ordno() {
+    let res: CSPAT00801Response = serde_json::from_str(CANCEL_ACK).expect("deserialize cancel-ack");
+    assert_eq!(res.rsp_cd, "00156");
+    assert_eq!(res.order_no(), "84006", "the cancel creates a new order number");
+    assert_eq!(res.parent_order_no(), "84005");
+    assert_eq!(res.outblock1.orgordno, "84005");
+}
+
+/// Both the `00463` and the spec-alternative `00156` cancel-ack codes classify
+/// Accepted (dispatch via `post_order`).
+#[tokio::test]
+async fn cancel_dispatches_via_post_order_for_both_ack_codes() {
+    for ack in ["00463", "00156"] {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        let body = serde_json::json!({
+            "rsp_cd": ack,
+            "rsp_msg": "취소주문이 완료되었습니다.",
+            "CSPAT00801OutBlock2": { "RecCnt": 1, "OrdNo": 84006, "PrntOrdNo": 84005 }
+        });
+        Mock::given(method("POST"))
+            .and(path(ORDER_PATH))
+            .respond_with(ResponseTemplate::new(200).set_body_json(body))
+            .mount(&server)
+            .await;
+
+        let sdk = sdk_for(&server);
+        let req = CSPAT00801Request::new("84005", "005930", "1");
+        let res = sdk
+            .orders()
+            .cancel(&req)
+            .await
+            .unwrap_or_else(|e| panic!("cancel ack {ack} must be Accepted, got {e:?}"));
+        assert_eq!(res.rsp_cd, ack);
+        assert_eq!(res.order_no(), "84006");
+    }
+}
+
+/// AE6: an identical cancel re-sent SEQUENTIALLY within the dedup TTL (after the
+/// first returned an Accepted ack) returns the cached response with ZERO second
+/// HTTP dispatch — idempotent cancel for free (KTD5; relies on U2's widened
+/// predicate so the first ack reaches the cache).
+#[tokio::test]
+async fn cancel_identical_resend_hits_dedup_cache_zero_second_dispatch() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let hits_inner = hits.clone();
+    Mock::given(method("POST"))
+        .and(path(ORDER_PATH))
+        .respond_with(move |_req: &wiremock::Request| {
+            hits_inner.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            ResponseTemplate::new(200).set_body_string(CANCEL_ACK)
+        })
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let req = CSPAT00801Request::new("84005", "005930", "1");
+    let first = sdk.orders().cancel(&req).await.expect("first cancel acks");
+    assert_eq!(first.rsp_cd, "00156");
+    // Identical re-send within the TTL: cache hit, no second exchange dispatch.
+    let second = sdk.orders().cancel(&req).await.expect("second cancel is a dedup cache hit");
+    assert_eq!(second.order_no(), "84006");
+    assert_eq!(
+        hits.load(std::sync::atomic::Ordering::SeqCst),
+        1,
+        "an identical cancel within the TTL must NOT re-dispatch — idempotent for free"
+    );
+}
+
+/// Error: a cancel rejection surfaces as `ApiError` with the broker code/message.
+#[tokio::test]
+async fn cancel_rejection_surfaces_apierror_with_code() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(ORDER_PATH))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "rsp_cd": "00302",
+            "rsp_msg": "취소가능수량을 초과하였습니다."
+        })))
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let req = CSPAT00801Request::new("84005", "005930", "9");
+    let err = sdk
+        .orders()
+        .cancel(&req)
+        .await
+        .expect_err("a cancel rejection must surface as ApiError");
+    match err {
+        LsError::ApiError { code, message } => {
+            assert_eq!(code, "00302");
+            assert!(message.contains("취소"));
+        }
+        other => panic!("expected ApiError, got {other:?}"),
+    }
+}
+
+/// Integration: `cancel()` routes through `post_order`, NOT `post` — proven by the
+/// kill switch.
+#[tokio::test]
+async fn cancel_routes_through_post_order_observable_via_kill_switch() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    let hits = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let hits_inner = hits.clone();
+    Mock::given(method("POST"))
+        .and(path(ORDER_PATH))
+        .respond_with(move |_req: &wiremock::Request| {
+            hits_inner.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            ResponseTemplate::new(200).set_body_string(CANCEL_ACK)
+        })
+        .mount(&server)
+        .await;
+
+    let inner = Inner::new(mock_config(&server.uri())).expect("valid mock config");
+    inner.set_orders_enabled(false);
+    let sdk = LsSdk::from_inner(inner);
+    let req = CSPAT00801Request::new("84005", "005930", "1");
+    let err = sdk.orders().cancel(&req).await.expect_err("kill switch halts the cancel");
+    match err {
+        LsError::ApiError { code, .. } => assert_eq!(code, "orders-disabled"),
+        other => panic!("expected orders-disabled, got {other:?}"),
+    }
+    assert_eq!(
+        hits.load(std::sync::atomic::Ordering::SeqCst),
+        0,
+        "the order path must halt before HTTP — proving cancel() uses post_order"
+    );
+}
+
+/// The reconciliation intent built for a cancel carries the referenced `OrgOrdNo`
+/// and the Cancel action — so U2's inverted-risk reconciliation applies.
+#[test]
+fn cancel_reconcile_intent_carries_org_order_no_and_action() {
+    let req = CSPAT00801Request::new("84005", "A005930", "1");
+    let intent = req.reconcile_intent("00000000-01");
+    assert_eq!(intent.org_order_no.as_deref(), Some("84005"));
+    assert_eq!(intent.action, OrderAction::Cancel);
+    assert_eq!(intent.symbol, "005930");
+    assert_eq!(intent.qty, "1");
 }

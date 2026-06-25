@@ -103,7 +103,7 @@ fn committed_token_shape_exposes_scope_under_v2() {
     let manifest: Manifest = read_committed("normalized/manifest.json");
     assert_eq!(manifest.normalizer_version, 2, "re-seeded at normalizer v2");
     assert_eq!(manifest.upstream_tr_count, 365);
-    assert_eq!(manifest.maintained_tr_count, 117);
+    assert_eq!(manifest.maintained_tr_count, 119);
 
     let code_set: CodeSet = read_committed("code-set.json");
     assert_eq!(code_set.len(), 365, "full inventory code-set preserved");

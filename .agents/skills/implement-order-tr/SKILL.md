@@ -100,9 +100,29 @@ ways — get all five right:
 
 The order success predicate, the kill switch, the dedup window, and the
 redaction/tracing span are already enforced inside `post_order` — you do not
-re-author them per TR. If this TR's accepted-code set differs from the seed
-(`00039` sell / `00040` buy), widen `classify_order_rsp_cd` in
-`crates/ls-core/src/inner.rs` and re-run the mock gate (§3) before any flip.
+re-author them per TR. If this TR's accepted-code set differs from the seed,
+widen `classify_order_rsp_cd` in `crates/ls-core/src/inner.rs` and re-run the
+mock gate (§3) before any flip. The seed set, per
+`docs/design/ls-gateway-response-semantics.md` §Order-Specific Codes, is
+`00039` sell / `00040` buy (submit), `00462` (modify), `00463`/`00156`
+(cancel). The modify/cancel codes are **seed-only/unconfirmed** until a live run
+re-confirms them — confirm-or-widen from the run, never silently trust the seed.
+
+**Modify/cancel lane (the order TRs that target an EXISTING order number).** A
+modify (`CSPAT00701`) / cancel (`CSPAT00801`) references the original order via
+`OrgOrdNo` (a numeric request field — `string_as_number`, KTD6) and returns a
+**new** order number in `OutBlock2.OrdNo` with the original in `OutBlock2.PrntOrdNo`
+(KTD4). Beyond the five load-bearing differences above, get these right:
+
+- A modify is **absolute** — it carries the full target `OrdQty`/`OrdPrc`, no
+  delta — so a blind re-send re-applies the same target (idempotent-by-target), it
+  does not compound. A cancel is idempotent for free from the dedup key (the full
+  body, incl. `OrgOrdNo`, is hashed, KTD5).
+- Build the reconciliation intent from the request via a `reconcile_intent(account_no)`
+  helper that sets `OrderIntent::{modify,cancel}(…)` with `org_order_no = OrgOrdNo`
+  and the `OrderAction` discriminator, normalizing the `IsuNo` market prefix to the
+  `t0425` `expcode` form. The matcher (§3) keys off `org_order_no`, not the new
+  order number (which an ambiguous send never returns).
 
 ## 2. Wire the guarded evidence harness (hard prerequisite)
 
@@ -114,12 +134,27 @@ and the Makefile:
 - build the scenario matrix for this TR's class — for a submit: a resting
   far-from-market limit buy and sell (priced at the daily band's far edge from
   `t1102`'s `uplmtprice`/`dnlmtprice`, KTD8), one marketable order, and one
-  deliberate out-of-band rejection; for a modify/cancel: a place → modify/cancel →
-  observe sequence keyed by a real order number,
-- a `live-smoke-order-<tr>` (or shared `live-smoke-order`) `make` target gated on
-  `LS_TRADING_ENV=paper` **and** an explicit `LS_ORDER_SMOKE=1` opt-in,
+  deliberate out-of-band rejection; for a modify/cancel: a **chained** place →
+  modify → observe → cancel → observe sequence keyed by the real order number the
+  submit leg returns (see the chained smoke below),
+- a `live-smoke-order-<tr>` (or shared `live-smoke-order` / `live-smoke-order-chain`)
+  `make` target gated on `LS_TRADING_ENV=paper` **and** an explicit `LS_ORDER_SMOKE=1`
+  opt-in,
 - keep every scenario's order params DISTINCT so an identical re-run misses the
   dedup cache and regenerates fresh broker codes (AE3).
+
+**The chained modify/cancel evidence sequence (extends the submit harness).** A
+modify/cancel cannot be evidenced in isolation — it needs a live order number to
+target. Drive one chained run: submit a resting far-from-market order (this leg is
+ALSO the submit pair's gate evidence) → observe it via `t0425` → modify it keyed by
+the submit's `OrdNo` → observe (a **non-ambiguous** read here PINS the KTD4 replace
+shape: does the original `OrgOrdNo` row move to `정정`/`정정확인` or stay `접수`, and
+does `t0425.orgordno` carry the immediate parent) → cancel the live order
+(the modify's new `OrdNo`, or the original on an in-place modify) → observe the book
+clean. **Cancel is the PRIMARY teardown** once a cancel TR exists; paper reset is the
+**fallback** when the cancel link itself fails or a resting order fills unexpectedly.
+A failure after the submit leg leaves only the modify/cancel pair Pending — the
+submit gate never waits on the modify/cancel gate (independent flip gates).
 
 The harness MUST fail closed: explicit TR selection with no default, operator
 params validated before SDK construction, a degenerate `t1102` band
@@ -142,6 +177,26 @@ live order). Extend `crates/ls-sdk/tests/order_logic_gate.rs` (and the `ls-core`
 - **reconciliation:** the six states (Accepted/Rejected/Duplicate/Modified/
   Canceled/Unknown) are reachable, and a failed query fails toward Unknown.
 
+For a **modify/cancel** TR, the reconciliation matcher is **order-state-aware** and
+keys off the *referenced* order number, not "did a new order appear". The matcher
+`reconcile_rows` **scans ALL matched rows and takes the strongest classification**
+(it must NOT early-return on the first row) — matching `OrgOrdNo` against both
+`t0425.ordno` (the original) and `t0425.orgordno` (a modify/cancel child). Mock-gate
+these classifications explicitly:
+
+- **Cancel INVERTS the risk (R7, AE1):** a matched row is `Canceled` ONLY on an
+  explicit `취소` row. A still-`접수`/체결 original, a `정정`, or a `취소거부` is
+  "still-live / not-canceled" (Unknown or Rejected) — never `Accepted`, and it
+  **never clears retry**. A cancel wrongly believed successful leaves a live order.
+- **Modify is idempotent-by-target:** landed iff a `정정` row OR a non-rejected
+  child row (`orgordno == OrgOrdNo`) exists. A bare still-`접수` original with
+  neither is **not landed** and safe to re-send (the absolute target re-applies).
+  Regression guard: a still-`접수` original must NOT classify `Accepted`/landed for
+  a modify — that false "landed" verdict is exactly what this lane prevents.
+- **Strongest-classification guard:** a page with BOTH a still-`접수` original row
+  AND a `취소`/`정정` row must classify on the transition row (the matcher scans all
+  rows), not on whichever `ordno` hits first.
+
 Run `cargo test` and confirm green before §4.
 
 ## 4. Run the guarded paper-order matrix; interpret per the state machine
@@ -162,10 +217,12 @@ the recorded evidence:
 - **ambiguous outcome** on a scenario → PENDING that scenario and reconcile; an
   ambiguous send is never evidence of an accept.
 
-A missing in-window clearing mechanism (the resting order cannot be cleared by
-paper reset or an out-of-band operator action) is a **blocking Pending**
-condition, not a silent gap — cancel TRs are deferred, so paper reset is the only
-verified teardown.
+A missing in-window clearing mechanism (the resting order cannot be cleared) is a
+**blocking Pending** condition, not a silent gap. The in-wave `CSPAT00801` cancel
+is now the **primary** teardown (the chained smoke cancels its own resting order);
+paper reset is the **fallback** when the cancel link itself fails or a resting order
+fills unexpectedly. For a class with no cancel TR yet, paper reset is the only
+verified teardown and its absence is the blocking Pending.
 
 ## 5. Secret-safety blocking check (before any committed/recorded line)
 

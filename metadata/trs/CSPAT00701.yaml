@@ -1,0 +1,34 @@
+tr_code: CSPAT00701
+name: 현물정정주문 (cash equity order modify)
+owner_class: orders
+facets:
+  protocol: rest
+  instrument_domain: stock
+  venue_session: krx_regular
+  date_sensitive: false
+  self_paginated: false
+  account_state: true
+  paper_incompatible: false
+  certification_path: manual
+  rate_bucket: orders
+  # IsuNo (종목번호) and OrgOrdNo (원주문번호) are the caller-supplied inputs that
+  # select the order being modified. The remaining required fields (OrdQty/OrdPrc/
+  # OrdprcPtnCode/OrdCndiTpCode) are the new target values, not identifiers.
+  caller_supplied_identifiers: [OrgOrdNo, IsuNo]
+dependencies:
+  self_continuation_fields: []
+  # Order-identity fields — the semantically strong inputs that define a unique
+  # modify for deduplication. A modify is absolute (it carries the full target
+  # OrdQty/OrdPrc), so two identical re-sends against the same OrgOrdNo are the
+  # "same order" action and must dedup.
+  strong_order_fields: [OrgOrdNo, IsuNo, OrdQty, OrdPrc]
+support:
+  # Tracked-not-implemented: the order class is recorded in metadata so upstream
+  # changes can be reasoned about, but the live-paper-order Implemented gate
+  # (ADR 0008 / order-safety §4) has not been run for this TR yet.
+  tracked: true
+  implemented: false
+  recommended: false
+maintenance:
+  source_spec_hash: bfd073603ce2
+  last_reviewed: 2026-06-25

@@ -20,6 +20,8 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `CSPAQ12300` | BEP단가조회 | `account` | implemented | [CSPAQ12300](./CSPAQ12300.md) |
 | `CSPAQ22200` | 현물계좌예수금 주문가능금액 총평가2 | `account` | implemented | [CSPAQ22200](./CSPAQ22200.md) |
 | `CSPAT00601` | 현물 정규주문 (cash equity order submission) | `orders` | tracked | [CSPAT00601](./CSPAT00601.md) |
+| `CSPAT00701` | 현물정정주문 (cash equity order modify) | `orders` | tracked | [CSPAT00701](./CSPAT00701.md) |
+| `CSPAT00801` | 현물취소주문 (cash equity order cancel) | `orders` | tracked | [CSPAT00801](./CSPAT00801.md) |
 | `FC9` | 선물 체결 실시간 시세 | `realtime` | implemented | [FC9](./FC9.md) |
 | `FH9` | 선물 호가 실시간 시세 | `realtime` | implemented | [FH9](./FH9.md) |
 | `GSC` | 해외주식 체결 실시간 시세 | `realtime` | implemented | [GSC](./GSC.md) |
