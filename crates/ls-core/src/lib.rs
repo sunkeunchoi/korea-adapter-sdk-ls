@@ -11,6 +11,7 @@ pub mod config_resolve;
 pub mod endpoint_policy;
 pub mod error;
 pub mod inner;
+pub mod order_dedup;
 pub mod pagination;
 pub mod parse;
 pub mod rate_limiter;
@@ -22,6 +23,7 @@ pub use config_resolve::{ResolvedConfig, ResolvedRateLimits};
 pub use endpoint_policy::{EndpointPolicy, Protocol};
 pub use error::{LsError, LsResult};
 pub use inner::{is_paper_incompatible, Inner, PAPER_INCOMPATIBLE_CODE};
+pub use order_dedup::OrderDeduplicator;
 pub use pagination::HasPagination;
 pub use rate_limiter::{RateLimitCategory, RateLimiterManager};
 

@@ -45,6 +45,14 @@ pub enum LsError {
     #[error("ambiguous order outcome {code}: {message}")]
     AmbiguousOrder { code: String, message: String },
 
+    /// An identical order was already submitted within the dedup TTL window —
+    /// the `OrderDeduplicator` short-circuited it (order-safety §2). Reserved for
+    /// callers / reconciliation that prefer an explicit duplicate signal over the
+    /// silently-returned cached response; the default `post_order` path returns
+    /// the cached response with `dedup_hit=true` rather than this error.
+    #[error("duplicate order within the dedup window")]
+    DuplicateOrder,
+
     /// Rate limiter rejected the request.
     #[error("rate limited")]
     RateLimited,

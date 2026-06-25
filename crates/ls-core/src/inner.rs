@@ -23,6 +23,7 @@ use serde::Serialize;
 use crate::auth::TokenManager;
 use crate::config_resolve::ResolvedConfig;
 use crate::endpoint_policy::EndpointPolicy;
+use crate::order_dedup::OrderDeduplicator;
 use crate::pagination::HasPagination;
 use crate::rate_limiter::RateLimiterManager;
 use crate::{LsConfig, LsError, LsResult};
@@ -136,6 +137,9 @@ pub struct Inner {
     /// Non-order dispatch (`post`/`post_paginated`) never consults it. Interior
     /// mutability so `set_orders_enabled` works through a shared `Arc<Inner>`.
     pub orders_enabled: AtomicBool,
+    /// Per-client order deduplication cache (order-safety §2). Consulted by
+    /// `post_order` after the kill switch, before rate limiting.
+    pub order_dedup: OrderDeduplicator,
 }
 
 impl Inner {
@@ -166,6 +170,7 @@ impl Inner {
             // Orders dispatch is enabled by default; the operator engages the
             // kill switch explicitly via `set_orders_enabled(false)`.
             orders_enabled: AtomicBool::new(true),
+            order_dedup: OrderDeduplicator::with_default_ttl(),
         }))
     }
 
@@ -519,7 +524,7 @@ impl Inner {
     pub async fn post_order<Req, Res>(&self, policy: &EndpointPolicy, req: &Req) -> LsResult<Res>
     where
         Req: Serialize + Sync,
-        Res: DeserializeOwned + Send,
+        Res: DeserializeOwned + Send + Serialize,
     {
         // Kill switch FIRST — the operator emergency halt stops all order
         // dispatch before dedup, rate limiting, or any I/O (order-safety §1).
@@ -538,13 +543,36 @@ impl Inner {
         span.record("tr_code", policy.tr_code);
         span.record("path", policy.path);
         span.record("category", policy.category.as_str());
-        // No dedup yet at this layer (added in the OrderDeduplicator unit); a
-        // direct dispatch is never a cache hit.
+
+        // Dedup AFTER the kill switch, BEFORE rate limiting (order-safety §2).
+        // The key embeds account_no and is fail-closed: a serialization failure
+        // dispatches nothing. The key itself is NEVER logged or traced — only
+        // the dedup_hit boolean is observable.
+        let dedup_key =
+            OrderDeduplicator::key(&self.config.account_no, policy.tr_code, req)?;
+        if let Some(cached) = self.order_dedup.get(&dedup_key) {
+            // Cache hit: return the cached response, bypassing rate limiting and
+            // HTTP entirely. Reconciliation reads dedup_hit to classify Duplicate.
+            span.record("dedup_hit", true);
+            return serde_json::from_value::<Res>(cached).map_err(LsError::Decode);
+        }
         span.record("dedup_hit", false);
+
         // Charge the Orders bucket exactly once — there is no retry loop to
         // re-charge it.
         self.rate_limiter.wait(policy.category).await;
-        self.dispatch_once::<Req, Res>(policy, req, None, None).await
+        let res: Res = self
+            .dispatch_once::<Req, Res>(policy, req, None, None)
+            .await?;
+        // Cache only a successful (Accepted) response. Rejections and ambiguous
+        // outcomes are NOT cached — a corrected resubmission must reach the
+        // exchange, and an ambiguous send is resolved by reconciliation, not the
+        // dedup window. Round-tripping Res through JSON is lossless for its own
+        // fields, which is all the caller observes.
+        if let Ok(value) = serde_json::to_value(&res) {
+            self.order_dedup.insert(dedup_key, value);
+        }
+        Ok(res)
     }
 
     /// Collect all pages of a paginated TR by looping until the `tr_cont`
@@ -656,9 +684,10 @@ mod tests {
             .await;
     }
 
-    #[derive(Debug, Deserialize, PartialEq)]
+    #[derive(Debug, Deserialize, Serialize, PartialEq)]
     struct EchoRes {
         rsp_cd: String,
+        #[serde(default)]
         rsp_msg: String,
         #[serde(default)]
         value: String,
@@ -1326,5 +1355,93 @@ mod tests {
             .await
             .expect("re-enabling must restore order dispatch");
         assert_eq!(res.rsp_cd, "00040");
+    }
+
+    // --- Dedup integration through post_order (AE1) ---------------------------
+
+    #[tokio::test]
+    async fn post_order_dedup_hit_returns_cached_and_skips_second_http() {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let hits_inner = hits.clone();
+        Mock::given(method("POST"))
+            .and(path("/order/path"))
+            .respond_with(move |_req: &Request| {
+                hits_inner.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "rsp_cd": "00040",
+                    "rsp_msg": "ack",
+                    "value": "ordno-777"
+                }))
+            })
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        let req = serde_json::json!({"IsuNo": "005930", "OrdQty": 1, "OrdPrc": 100});
+
+        let first: EchoRes = inner
+            .post_order(&order_policy(), &req)
+            .await
+            .expect("first submit dispatches");
+        assert_eq!(first.value, "ordno-777");
+
+        // An identical request within the TTL is a cache hit: same response, no
+        // second HTTP call.
+        let second: EchoRes = inner
+            .post_order(&order_policy(), &req)
+            .await
+            .expect("identical submit is a dedup hit");
+        assert_eq!(second, first);
+        assert_eq!(
+            hits.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the dedup hit must bypass HTTP entirely"
+        );
+
+        // A request differing only in OrdQty is a distinct order -> cache miss.
+        let req2 = serde_json::json!({"IsuNo": "005930", "OrdQty": 2, "OrdPrc": 100});
+        let _third: EchoRes = inner
+            .post_order(&order_policy(), &req2)
+            .await
+            .expect("distinct order dispatches");
+        assert_eq!(
+            hits.load(std::sync::atomic::Ordering::SeqCst),
+            2,
+            "a quantity change must miss the cache and dispatch"
+        );
+    }
+
+    #[tokio::test]
+    async fn post_order_does_not_cache_rejections() {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        let hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let hits_inner = hits.clone();
+        Mock::given(method("POST"))
+            .and(path("/order/path"))
+            .respond_with(move |_req: &Request| {
+                hits_inner.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "rsp_cd": "IGW40011",
+                    "rsp_msg": "rejected"
+                }))
+            })
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        let req = serde_json::json!({"OrdQty": 1});
+        for _ in 0..2 {
+            let err = inner
+                .post_order::<_, EchoRes>(&order_policy(), &req)
+                .await
+                .expect_err("rejection");
+            assert!(matches!(err, LsError::ApiError { .. }));
+        }
+        // A rejection is never cached: a corrected resubmission must reach the
+        // exchange. Both attempts dispatched.
+        assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 }
