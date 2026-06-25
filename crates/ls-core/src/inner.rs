@@ -46,6 +46,27 @@ pub fn is_paper_incompatible(code: &str) -> bool {
     code == PAPER_INCOMPATIBLE_CODE
 }
 
+/// The LS Paper "account not order-capable" signal.
+///
+/// `01491` (모의투자 주문이 불가한 계좌입니다 — "this is an account on which
+/// simulated/paper orders are not possible") is returned by the order TRs when
+/// the configured paper account is provisioned read/inquiry-only and is not
+/// enabled for paper order placement. The order request reaches the gateway and
+/// is cleanly business-rejected; nothing is placed.
+///
+/// Distinct from [`PAPER_INCOMPATIBLE_CODE`] (`01900`, a per-*service* signal):
+/// `01491` is a per-*account* capability gate, so swapping in an order-enabled
+/// paper account clears it, where `01900` cannot be cleared by any account. Both
+/// mean "this paper setup cannot produce order-flip evidence," for different
+/// reasons.
+pub const PAPER_ORDER_INCAPABLE_CODE: &str = "01491";
+
+/// Returns `true` if `code` is the paper account-not-order-capable signal
+/// (`01491`). See [`PAPER_ORDER_INCAPABLE_CODE`].
+pub fn is_paper_order_incapable(code: &str) -> bool {
+    code == PAPER_ORDER_INCAPABLE_CODE
+}
+
 /// Classify an LS `rsp_cd` response code as success.
 ///
 /// `"00000"` (and an absent/empty code) is the universal success code for query
@@ -809,6 +830,28 @@ mod tests {
         );
         // A different non-success code must NOT classify as paper-incompatible.
         assert!(!is_paper_incompatible("IGW40013"));
+    }
+
+    /// `01491` (account not order-capable) is a distinct, narrower signal than
+    /// `01900` (service not provided in Paper): the two classifiers must not
+    /// alias, so a read-only paper account's order rejection is never mistaken
+    /// for a service-level incompatibility (or vice versa).
+    #[test]
+    fn code_01491_classifies_as_paper_order_incapable_only() {
+        assert!(is_paper_order_incapable(PAPER_ORDER_INCAPABLE_CODE));
+        assert!(is_paper_order_incapable("01491"));
+        // Not the service-level signal, and the service-level signal is not this.
+        assert!(!is_paper_incompatible("01491"));
+        assert!(!is_paper_order_incapable("01900"));
+        // A real broker code is neither.
+        assert!(!is_paper_order_incapable("IGW40013"));
+
+        let err = LsError::ApiError {
+            code: "01491".to_string(),
+            message: "모의투자 주문이 불가한 계좌입니다.".to_string(),
+        };
+        assert!(err.is_paper_order_incapable());
+        assert!(!err.is_paper_incompatible());
     }
 
     /// rsp_cd classification is load-bearing on BOTH 2xx and non-2xx. A non-2xx

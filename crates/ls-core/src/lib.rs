@@ -22,7 +22,10 @@ pub use config::{Environment, LsConfig, RateLimitConfig, WsOverflowPolicy};
 pub use config_resolve::{ResolvedConfig, ResolvedRateLimits};
 pub use endpoint_policy::{EndpointPolicy, Protocol};
 pub use error::{LsError, LsResult};
-pub use inner::{is_paper_incompatible, Inner, PAPER_INCOMPATIBLE_CODE};
+pub use inner::{
+    is_paper_incompatible, is_paper_order_incapable, Inner, PAPER_INCOMPATIBLE_CODE,
+    PAPER_ORDER_INCAPABLE_CODE,
+};
 pub use order_dedup::OrderDeduplicator;
 pub use pagination::HasPagination;
 pub use rate_limiter::{RateLimitCategory, RateLimiterManager};

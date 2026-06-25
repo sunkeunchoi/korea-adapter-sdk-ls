@@ -21,9 +21,9 @@
 //! are priced at the band's far edge (buy at `dnlmtprice`, sell at `uplmtprice`):
 //! valid yet far from market, so they rest unfilled and are observable by `t0425`.
 //!
-//! If the paper account cannot place an order in-window (not order-capable, paper
-//! returns `01900`, or empty), the run records **Pending** — the TRs stay
-//! callable-but-unconfirmed, no flip (AE5).
+//! If the paper account cannot place an order in-window (paper returns `01900`
+//! service-not-provided, `01491` account-not-order-capable, or empty), the run
+//! records **Pending** — the TRs stay callable-but-unconfirmed, no flip (AE5).
 //!
 //! Two live runs share these guards/helpers:
 //! - `order_smoke_matrix` (`make live-smoke-order`) — the submit-only matrix
@@ -602,8 +602,12 @@ async fn order_smoke_matrix() {
                 // A deliberate rejection is the EXPECTED outcome here.
                 ev.certification = if scenario == Scenario::DeliberateReject {
                     Certification::Certified
-                } else if code == "01900" {
-                    Certification::Pending // paper-incompatible → not order-capable
+                } else if ls_core::is_paper_incompatible(&code)
+                    || ls_core::is_paper_order_incapable(&code)
+                {
+                    // 01900 (service not in Paper) or 01491 (account not
+                    // order-capable) → cannot prove order-capability; not evidence.
+                    Certification::Pending
                 } else {
                     Certification::Certified // a real broker code is valid evidence
                 };
@@ -765,12 +769,18 @@ async fn order_chained_smoke() {
             sev.record();
             resp.order_no().to_string()
         }
-        Err(LsError::ApiError { code, message }) if code == "01900" => {
+        Err(LsError::ApiError { code, message })
+            if ls_core::is_paper_incompatible(&code)
+                || ls_core::is_paper_order_incapable(&code) =>
+        {
+            // 01900 (service not in Paper) or 01491 (account provisioned
+            // read/inquiry-only) — the request reached the gateway and was
+            // cleanly rejected; nothing placed, so the chain cannot run.
+            let reason = format!("paper account not order-capable ({code}); chain not run");
             sev.rsp_cd = code;
             sev.rsp_msg = message;
             sev.record();
-            OrderEvidence::pending("chain", "paper account not order-capable (01900); chain not run")
-                .record();
+            OrderEvidence::pending("chain", &reason).record();
             return;
         }
         Err(e) => {
