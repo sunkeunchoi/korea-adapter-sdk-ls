@@ -66,6 +66,25 @@ impl EndpointPolicy {
         Ok(())
     }
 
+    /// Runtime guard: the order dispatch path (`Inner::post_order`) must not be
+    /// used for non-order endpoints — the inverse of [`guard_non_order`]. This is
+    /// defense-in-depth against routing a market-data or account inquiry through
+    /// the no-retry/dedup order path (order-safety contract §1).
+    ///
+    /// [`guard_non_order`]: EndpointPolicy::guard_non_order
+    pub fn guard_order(&self) -> LsResult<()> {
+        if !self.is_order {
+            return Err(LsError::ApiError {
+                code: "non-order-dispatch".into(),
+                message: format!(
+                    "non-order endpoint '{}' must not use the order dispatch path",
+                    self.tr_code
+                ),
+            });
+        }
+        Ok(())
+    }
+
     /// `true` if this endpoint uses REST HTTP.
     pub const fn is_rest(&self) -> bool {
         matches!(self.protocol, Protocol::Rest)

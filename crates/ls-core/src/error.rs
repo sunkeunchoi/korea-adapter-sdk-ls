@@ -33,6 +33,18 @@ pub enum LsError {
     #[error("API error {code}: {message}")]
     ApiError { code: String, message: String },
 
+    /// An order acknowledgement that can neither be proven Accepted nor safely
+    /// classified Rejected. Carries the broker `code`/`message` when one was
+    /// present (empty when the failure was transport-level on the order path).
+    ///
+    /// This is the order-dispatch "fail toward Unknown" signal (order-safety
+    /// contract §1/§3): the generic-success code `00000`/empty, or any order
+    /// response on a non-2xx HTTP status, lands here so a possibly-filled order
+    /// is never blindly resubmitted. The caller routes it to reconciliation
+    /// (query `t0425`, match against exchange state) rather than retrying.
+    #[error("ambiguous order outcome {code}: {message}")]
+    AmbiguousOrder { code: String, message: String },
+
     /// Rate limiter rejected the request.
     #[error("rate limited")]
     RateLimited,
