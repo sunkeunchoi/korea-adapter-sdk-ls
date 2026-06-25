@@ -994,9 +994,13 @@ mod tests {
         // AS0-AS4 (overseas stock), TC1-TC3 (overseas futures) — 16 TRs, each a clean
         // order-event (tr_type "1"/"2") lifecycle via the live-smoke-ws-p2 sweep,
         // observation-only + connection-reachable-only per KTD6 — add 16 more.
+        // Night/overseas/ELW wave: the four overseas-futures/-option reads
+        // o3105/o3106/o3125/o3126 flipped on clean non-empty paper smokes once their
+        // smoke symbols were refreshed to current front-month contracts (the stale
+        // 2023-expiry symbols had masked a provisioned feed as empty) — add 4 more.
         assert_eq!(
             reference.len(),
-            94,
+            98,
             "index + the implemented reference pages"
         );
 

@@ -44,7 +44,11 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `US2` | 통합 우선호가 실시간 시세 | `realtime` | implemented, not yet recommended |
 | `US3` | 통합 체결 실시간 시세 | `realtime` | implemented, not yet recommended |
 | `o3101` | 해외선물마스터조회 | `market_session` | implemented, not yet recommended |
+| `o3105` | 해외선물 현재가(종목정보) 조회 | `market_session` | implemented, not yet recommended |
+| `o3106` | 해외선물 현재가호가 조회 | `market_session` | implemented, not yet recommended |
 | `o3121` | 해외선물옵션 마스터 조회 | `market_session` | implemented, not yet recommended |
+| `o3125` | 해외선물옵션 현재가(종목정보) 조회 | `market_session` | implemented, not yet recommended |
+| `o3126` | 해외선물옵션 현재가호가 조회 | `market_session` | implemented, not yet recommended |
 | `revoke` | 접근토큰 폐기 (OAuth2 token revoke) | `standalone` | implemented, not yet recommended |
 | `t1101` | 주식 현재가호가 조회 | `market_session` | recommended |
 | `t1102` | 주식 현재가(시세) 조회 | `market_session` | recommended |

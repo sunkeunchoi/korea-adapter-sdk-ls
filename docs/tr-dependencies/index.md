@@ -53,11 +53,11 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `g3106` | 해외주식 API 현재가호가 조회 | `market_session` | tracked | [g3106](./g3106.md) |
 | `g3190` | 해외주식 API 마스터 조회 | `market_session` | tracked | [g3190](./g3190.md) |
 | `o3101` | 해외선물마스터조회 | `market_session` | implemented | [o3101](./o3101.md) |
-| `o3105` | 해외선물 현재가(종목정보) 조회 | `market_session` | tracked | [o3105](./o3105.md) |
-| `o3106` | 해외선물 현재가호가 조회 | `market_session` | tracked | [o3106](./o3106.md) |
+| `o3105` | 해외선물 현재가(종목정보) 조회 | `market_session` | implemented | [o3105](./o3105.md) |
+| `o3106` | 해외선물 현재가호가 조회 | `market_session` | implemented | [o3106](./o3106.md) |
 | `o3121` | 해외선물옵션 마스터 조회 | `market_session` | implemented | [o3121](./o3121.md) |
-| `o3125` | 해외선물옵션 현재가(종목정보) 조회 | `market_session` | tracked | [o3125](./o3125.md) |
-| `o3126` | 해외선물옵션 현재가호가 조회 | `market_session` | tracked | [o3126](./o3126.md) |
+| `o3125` | 해외선물옵션 현재가(종목정보) 조회 | `market_session` | implemented | [o3125](./o3125.md) |
+| `o3126` | 해외선물옵션 현재가호가 조회 | `market_session` | implemented | [o3126](./o3126.md) |
 | `revoke` | 접근토큰 폐기 (OAuth2 token revoke) | `standalone` | implemented | [revoke](./revoke.md) |
 | `t1101` | 주식 현재가호가 조회 | `market_session` | recommended | [t1101](./t1101.md) |
 | `t1102` | 주식 현재가(시세) 조회 | `market_session` | recommended | [t1102](./t1102.md) |
