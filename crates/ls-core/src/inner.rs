@@ -1444,4 +1444,154 @@ mod tests {
         // exchange. Both attempts dispatched.
         assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
+
+    // --- Order redaction / tracing contract (order-safety §5) -----------------
+
+    /// A process-global tracing layer that records every span/event field into a
+    /// per-thread sink. A global subscriber is required (not a thread-local
+    /// `with_default`) because tracing's callsite-interest cache is global: with
+    /// the parallel test harness, a concurrent test would otherwise evaluate the
+    /// order-span callsite under the no-op subscriber and poison it to "never",
+    /// so a thread-local subscriber never gets consulted. Installing a permissive
+    /// global once keeps every callsite enabled; each thread reads only its own
+    /// sink, so concurrent tests do not interfere.
+    mod capture {
+        use std::cell::RefCell;
+        use std::sync::OnceLock;
+        use tracing::field::{Field, Visit};
+        use tracing::span::{Attributes, Record};
+        use tracing_subscriber::layer::{Context, Layer};
+        use tracing_subscriber::layer::SubscriberExt;
+
+        thread_local! {
+            static SINK: RefCell<Vec<(String, String)>> = const { RefCell::new(Vec::new()) };
+        }
+
+        static INSTALLED: OnceLock<()> = OnceLock::new();
+
+        /// Install the global capture subscriber exactly once.
+        pub fn ensure_installed() {
+            INSTALLED.get_or_init(|| {
+                let subscriber = tracing_subscriber::registry().with(CaptureLayer);
+                let _ = tracing::subscriber::set_global_default(subscriber);
+            });
+        }
+
+        /// Clear the current thread's sink before a capture run.
+        pub fn reset() {
+            SINK.with(|s| s.borrow_mut().clear());
+        }
+
+        /// `name=value` of every field this thread captured.
+        pub fn joined() -> String {
+            SINK.with(|s| {
+                s.borrow()
+                    .iter()
+                    .map(|(n, v)| format!("{n}={v}"))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+        }
+
+        /// The field names this thread captured.
+        pub fn field_names() -> Vec<String> {
+            SINK.with(|s| s.borrow().iter().map(|(n, _)| n.clone()).collect())
+        }
+
+        struct V;
+        impl Visit for V {
+            fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
+                SINK.with(|s| {
+                    s.borrow_mut()
+                        .push((field.name().to_string(), format!("{value:?}")))
+                });
+            }
+            fn record_str(&mut self, field: &Field, value: &str) {
+                SINK.with(|s| s.borrow_mut().push((field.name().to_string(), value.to_string())));
+            }
+        }
+
+        struct CaptureLayer;
+        impl<S> Layer<S> for CaptureLayer
+        where
+            S: tracing::Subscriber + for<'a> tracing_subscriber::registry::LookupSpan<'a>,
+        {
+            fn on_new_span(&self, attrs: &Attributes<'_>, _id: &tracing::Id, _c: Context<'_, S>) {
+                attrs.record(&mut V);
+            }
+            fn on_record(&self, _id: &tracing::Id, values: &Record<'_>, _c: Context<'_, S>) {
+                values.record(&mut V);
+            }
+            fn on_event(&self, event: &tracing::Event<'_>, _c: Context<'_, S>) {
+                event.record(&mut V);
+            }
+        }
+    }
+
+    #[test]
+    fn order_span_records_only_structural_fields_never_credentials_or_body() {
+        capture::ensure_installed();
+        // A current-thread runtime keeps every awaited span on this thread, so
+        // this thread's sink captures exactly the order dispatch's fields.
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        rt.block_on(async {
+            let server = MockServer::start().await;
+            mount_token(&server).await;
+            // The response carries a sentinel that MUST NOT be auto-emitted to
+            // any sink (only rsp_cd is an allowed structural field).
+            Mock::given(method("POST"))
+                .and(path("/order/path"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "rsp_cd": "00040",
+                    "rsp_msg": "ack",
+                    "OrdNo": "RESP_SENTINEL_ORDNO"
+                })))
+                .mount(&server)
+                .await;
+
+            let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+            // Reset AFTER setup (token mount/Inner::new emit their own spans);
+            // capture only the order dispatch itself.
+            capture::reset();
+            // The request body carries a sentinel that MUST NOT reach a span.
+            let req = serde_json::json!({
+                "IsuNo": "005930",
+                "OrdQty": 1,
+                "REQ_SENTINEL": "REQ_SENTINEL_BODY_VALUE"
+            });
+            let _res: EchoRes = inner
+                .post_order(&order_policy(), &req)
+                .await
+                .expect("order dispatches");
+        });
+
+        let names = capture::field_names();
+        // The four allowed structural fields were recorded on the order span.
+        for f in ["tr_code", "path", "category", "dedup_hit"] {
+            assert!(
+                names.iter().any(|n| n == f),
+                "order span must record `{f}`; got {names:?}"
+            );
+        }
+
+        let all = capture::joined();
+        // No credential VALUE reached any span or event.
+        assert!(!all.contains("test-appkey"), "app key leaked: {all}");
+        assert!(!all.contains("test-appsecretkey"), "app secret leaked");
+        assert!(!all.contains("00000000-01"), "account number leaked");
+        assert!(!all.contains("test-token"), "access token leaked");
+        // No request body value reached any span or event.
+        assert!(
+            !all.contains("REQ_SENTINEL_BODY_VALUE"),
+            "request body leaked into tracing: {all}"
+        );
+        // The response body is not auto-emitted absent an explicit surface call.
+        assert!(
+            !all.contains("RESP_SENTINEL_ORDNO"),
+            "response body auto-emitted to a sink: {all}"
+        );
+    }
 }
