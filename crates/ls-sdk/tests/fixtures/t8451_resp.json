@@ -1,0 +1,21 @@
+{
+    "rsp_cd": "00000",
+    "rsp_msg": "정상적으로 조회가 완료되었습니다.",
+    "t8451OutBlock": {
+        "shcode": "010950",
+        "jisiga": 62200,
+        "jihigh": 62200,
+        "jilow": 59700,
+        "jiclose": 60500,
+        "jivolume": 55839,
+        "diclose": 60600,
+        "highend": 78200,
+        "lowend": 42200,
+        "cts_date": "",
+        "rec_count": 7
+    },
+    "t8451OutBlock1": [
+        { "date": "20250304", "open": 57100, "high": 57350, "low": 55800, "close": 56000, "jdiff_vol": 14583, "value": 817, "jongchk": 0, "sign": "5" },
+        { "date": "20250305", "open": 55700, "high": 57200, "low": 55500, "close": 57200, "jdiff_vol": 17087, "value": 963, "jongchk": 0, "sign": "2" }
+    ]
+}

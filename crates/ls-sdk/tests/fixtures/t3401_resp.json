@@ -1,0 +1,17 @@
+{
+    "rsp_cd": "00000",
+    "t3401OutBlock1": [
+        { "date": "20230209", "tradno": "010", "tradname": "메리츠", "bopn": "HOLD", "shcode": "011200", "noga": 24000, "boga": 0, "nopn": "", "close": 21700 },
+        { "date": "20230208", "tradno": "010", "tradname": "메리츠", "bopn": "HOLD", "shcode": "011200", "noga": 24000, "boga": 27000, "nopn": "HOLD", "close": 22050 }
+    ],
+    "t3401OutBlock": {
+        "volume": 650972,
+        "cts_date": "20211109",
+        "price": 17800,
+        "change": 240,
+        "sign": "2",
+        "diff": "001.37",
+        "value": 11639
+    },
+    "rsp_msg": "정상적으로 조회가 완료되었습니다."
+}

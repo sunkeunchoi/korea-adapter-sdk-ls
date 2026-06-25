@@ -1,0 +1,38 @@
+{
+    "rsp_cd": "00000",
+    "rsp_msg": "정상적으로 조회가 완료되었습니다.",
+    "t8410OutBlock": {
+        "cts_date": "",
+        "shcode": "078020",
+        "highend": 5880,
+        "svi_dnlmtprice": 4095,
+        "jivolume": 32336,
+        "jisiga": 4500,
+        "svi_uplmtprice": 5010,
+        "jilow": 4470,
+        "diclose": 4530,
+        "disiga": 4550,
+        "lowend": 3170,
+        "dihigh": 4600,
+        "jihigh": 4565,
+        "rec_count": 1,
+        "dilow": 4520,
+        "jiclose": 4525
+    },
+    "t8410OutBlock1": [
+        {
+            "date": "20230605",
+            "jdiff_vol": 33764,
+            "high": 4600,
+            "jongchk": 0,
+            "pricechk": 0,
+            "low": 4520,
+            "rate": "000.00",
+            "ratevalue": 0,
+            "sign": "2",
+            "close": 4530,
+            "value": 153,
+            "open": 4550
+        }
+    ]
+}

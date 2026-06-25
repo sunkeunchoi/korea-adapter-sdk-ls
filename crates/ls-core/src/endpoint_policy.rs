@@ -1186,6 +1186,82 @@ pub const T3202_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+/// t3401 — 투자의견 (per-broker investment-opinion history; self-paginated on the
+/// body `cts_date` cursor). `has_pagination: true` mirrors `facets.self_paginated`
+/// (plan -004).
+pub const T3401_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t3401",
+    path: "/stock/investinfo",
+    module: "stock",
+    group: "[주식] 투자정보",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8410 — API전용주식차트(일주월년) (stock D/W/M/Y chart; self-paginated on the
+/// body `cts_date` cursor) (plan -004).
+pub const T8410_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8410",
+    path: "/stock/chart",
+    module: "stock",
+    group: "[주식] 차트",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8451 — (통합)주식챠트(일주월년) (integrated stock D/W/M/Y chart; self-paginated
+/// on the body `cts_date` cursor) (plan -004).
+pub const T8451_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8451",
+    path: "/stock/chart",
+    module: "stock",
+    group: "[주식] 차트",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8419 — 업종차트(일주월) (sector D/W/M chart; self-paginated on the body
+/// `cts_date` cursor). `module: indtp` (plan -004).
+pub const T8419_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8419",
+    path: "/indtp/chart",
+    module: "indtp",
+    group: "[업종] 차트",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t4203 — 업종차트(종합) (composite sector chart; self-paginated on the body
+/// `cts_date`/`cts_time` cursors). `module: indtp` (plan -004).
+pub const T4203_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t4203",
+    path: "/indtp/chart",
+    module: "indtp",
+    group: "[업종] 차트",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// t8455 — KRX야간파생 마스터조회(API용) (night-derivatives master; non-paginated
 /// F/O market-data read). `venue_session: krx_extended` (KTD7). Keyed by a
 /// `gubun` class selector.
@@ -2027,6 +2103,11 @@ mod tests {
             // REST reads — registered in BOTH crosscheck lists.
             T9945_POLICY,
             T3202_POLICY,
+            T3401_POLICY,
+            T8410_POLICY,
+            T8451_POLICY,
+            T8419_POLICY,
+            T4203_POLICY,
             T8455_POLICY,
             T8460_POLICY,
             T8463_POLICY,

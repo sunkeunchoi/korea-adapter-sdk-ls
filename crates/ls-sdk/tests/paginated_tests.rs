@@ -18,6 +18,8 @@ use ls_sdk::paginated::{
     T1482Request, T1482Response, T1489Request, T1489Response, T1492Request, T1492Response,
     T1514Request, T1514Response, T1866Request, T1866Response, T3341Request, T3341Response,
     T8412OutBlock1, T8412Request, T8412Response,
+    T8410Request, T8410Response, T8451Request, T8451Response, T8419Request, T8419Response,
+    T4203Request, T4203Response, T3401Request, T3401Response,
 };
 use ls_core::endpoint_policy::T1514_POLICY;
 use ls_sdk::LsSdk;
@@ -956,4 +958,297 @@ fn t1482_single_or_array_string_or_number_and_empty_pending() {
     .expect("empty result set deserializes");
     assert_eq!(empty.rsp_cd, "00707");
     assert!(empty.outblock1.is_empty(), "empty is the pending case, not a flip");
+}
+
+// ===========================================================================
+// Domestic stock / sector master/reference charts + invest-opinion (plan -004).
+// Self-paginated on the body cts_* cursor; single-page facade scope. Numeric
+// request counts (qrycnt/ncnt) serialize as JSON numbers; header cursors skipped.
+// ===========================================================================
+
+const INDTP_CHART_PATH: &str = "/indtp/chart";
+const STOCK_INVESTINFO_PATH: &str = "/stock/investinfo";
+
+const T8410_FIXTURE: &str = include_str!("fixtures/t8410_resp.json");
+const T8451_FIXTURE: &str = include_str!("fixtures/t8451_resp.json");
+const T8419_FIXTURE: &str = include_str!("fixtures/t8419_resp.json");
+const T4203_FIXTURE: &str = include_str!("fixtures/t4203_resp.json");
+const T3401_FIXTURE: &str = include_str!("fixtures/t3401_resp.json");
+
+// --- t8410 — API전용주식차트(일주월년) ----------------------------------------
+
+/// Covers R8/KTD4. `qrycnt` serializes as a JSON **number** (string → IGW40011);
+/// `cts_date`/`shcode` stay strings; header cursors skipped.
+#[test]
+fn t8410_request_serializes_qrycnt_as_number() {
+    let value = serde_json::to_value(T8410Request::new("078020", "2", "200", "", "99999999"))
+        .expect("serialize t8410 request");
+    let inblock = &value["t8410InBlock"];
+    assert!(inblock["qrycnt"].is_number(), "qrycnt is a JSON number");
+    assert!(inblock["cts_date"].is_string(), "cts_date cursor stays a string");
+    assert_eq!(inblock["shcode"], "078020");
+    assert_eq!(inblock["gubun"], "2");
+    assert!(value.get("tr_cont").is_none(), "header cursor skipped from body");
+}
+
+/// Covers R6. The first-page fixture deserializes through REAL paginated dispatch:
+/// the header summary + the candle array round-trip with exact values.
+#[tokio::test]
+async fn t8410_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(T8412_PATH))
+        .and(header("tr_cd", "t8410"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T8410_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let resp = sdk_for(&server)
+        .paginated()
+        .stock_chart_period(&T8410Request::new("078020", "2", "200", "", "99999999"))
+        .await
+        .expect("t8410 stock_chart_period should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock.shcode, "078020", "header 단축코드");
+    assert!(!resp.outblock1.is_empty(), "candle rows round-trip");
+    assert_eq!(resp.outblock1[0].date, "20230605", "first candle date");
+    assert_eq!(resp.outblock1[0].close, "4530", "first candle close");
+}
+
+/// Covers R8. The candle array tolerates single-or-array + empty (pending) forms.
+#[test]
+fn t8410_response_round_trips_single_or_array_and_empty() {
+    let single: T8410Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8410OutBlock": { "shcode": "078020" },
+        "t8410OutBlock1": { "date": "20230605", "close": 4530, "open": 4550 }
+    }))
+    .expect("single candle tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].close, "4530", "close from JSON number");
+
+    let empty: T8410Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8410OutBlock": { "shcode": "" }, "t8410OutBlock1": []
+    }))
+    .expect("empty result deserializes");
+    assert!(empty.outblock1.is_empty(), "empty first page is the pending case");
+}
+
+// --- t8451 — (통합)주식챠트(일주월년) ----------------------------------------
+
+#[test]
+fn t8451_request_serializes_qrycnt_as_number() {
+    let value = serde_json::to_value(T8451Request::new("010950", "2", "10", "", "99999999"))
+        .expect("serialize t8451 request");
+    let inblock = &value["t8451InBlock"];
+    assert!(inblock["qrycnt"].is_number(), "qrycnt is a JSON number");
+    assert!(inblock["cts_date"].is_string());
+    assert_eq!(inblock["exchgubun"], "N");
+    assert!(value.get("tr_cont").is_none());
+}
+
+#[tokio::test]
+async fn t8451_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(T8412_PATH))
+        .and(header("tr_cd", "t8451"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T8451_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let resp = sdk_for(&server)
+        .paginated()
+        .stock_chart_period_unified(&T8451Request::new("010950", "2", "10", "", "99999999"))
+        .await
+        .expect("t8451 should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock.shcode, "010950");
+    assert!(resp.outblock1.len() >= 2, "candle rows round-trip");
+    assert_eq!(resp.outblock1[0].date, "20250304");
+}
+
+#[test]
+fn t8451_response_round_trips_single_or_array() {
+    let single: T8451Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8451OutBlock": { "shcode": "010950" },
+        "t8451OutBlock1": { "date": "20250304", "close": 56000 }
+    }))
+    .expect("single candle tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].close, "56000");
+}
+
+// --- t8419 — 업종차트(일주월) -------------------------------------------------
+
+#[test]
+fn t8419_request_serializes_qrycnt_as_number() {
+    let value = serde_json::to_value(T8419Request::new("001", "2", "5", "", "99999999"))
+        .expect("serialize t8419 request");
+    let inblock = &value["t8419InBlock"];
+    assert!(inblock["qrycnt"].is_number(), "qrycnt is a JSON number");
+    assert!(inblock["cts_date"].is_string());
+    assert_eq!(inblock["shcode"], "001", "sector code stays a string");
+    assert!(value.get("tr_cont").is_none());
+}
+
+#[tokio::test]
+async fn t8419_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(INDTP_CHART_PATH))
+        .and(header("tr_cd", "t8419"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T8419_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let resp = sdk_for(&server)
+        .paginated()
+        .sector_chart_period(&T8419Request::new("001", "2", "5", "", "99999999"))
+        .await
+        .expect("t8419 should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock.shcode, "001");
+    assert!(resp.outblock1.len() >= 2, "sector candle rows round-trip");
+    assert_eq!(resp.outblock1[0].close, "2585.52", "index close as string");
+}
+
+#[test]
+fn t8419_response_round_trips_single_or_array_and_empty() {
+    let single: T8419Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8419OutBlock": { "shcode": "001" },
+        "t8419OutBlock1": { "date": "20230530", "close": "2585.52" }
+    }))
+    .expect("single sector candle tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+
+    let empty: T8419Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8419OutBlock": { "shcode": "" }, "t8419OutBlock1": []
+    }))
+    .expect("empty result deserializes");
+    assert!(empty.outblock1.is_empty(), "empty is the pending case");
+}
+
+// --- t4203 — 업종차트(종합) --------------------------------------------------
+
+#[test]
+fn t4203_request_serializes_ncnt_and_qrycnt_as_numbers() {
+    let value = serde_json::to_value(T4203Request::new("001", "2", "1", "1", "", ""))
+        .expect("serialize t4203 request");
+    let inblock = &value["t4203InBlock"];
+    assert!(inblock["ncnt"].is_number(), "ncnt is a JSON number");
+    assert!(inblock["qrycnt"].is_number(), "qrycnt is a JSON number");
+    assert!(inblock["cts_date"].is_string());
+    assert!(inblock["cts_time"].is_string());
+    assert!(value.get("tr_cont").is_none());
+}
+
+#[tokio::test]
+async fn t4203_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(INDTP_CHART_PATH))
+        .and(header("tr_cd", "t4203"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T4203_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let resp = sdk_for(&server)
+        .paginated()
+        .sector_chart_composite(&T4203Request::new("001", "2", "1", "1", "", ""))
+        .await
+        .expect("t4203 should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock.shcode, "001");
+    assert!(!resp.outblock1.is_empty(), "composite rows round-trip");
+    assert_eq!(resp.outblock1[0].time, "102800", "row carries an intraday time");
+}
+
+#[test]
+fn t4203_response_round_trips_single_or_array() {
+    let single: T4203Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t4203OutBlock": { "shcode": "001" },
+        "t4203OutBlock1": { "date": "20230605", "time": "102800", "close": "2610.85" }
+    }))
+    .expect("single composite row tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+}
+
+// --- t3401 — 투자의견 --------------------------------------------------------
+
+#[test]
+fn t3401_request_serializes_to_inblock() {
+    let value = serde_json::to_value(T3401Request::new("011200")).expect("serialize t3401 request");
+    let inblock = &value["t3401InBlock"];
+    assert_eq!(inblock["shcode"], "011200");
+    assert!(inblock["cts_date"].is_string(), "cts_date cursor stays a string");
+    assert!(value.get("tr_cont").is_none(), "header cursor skipped from body");
+}
+
+#[tokio::test]
+async fn t3401_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(STOCK_INVESTINFO_PATH))
+        .and(header("tr_cd", "t3401"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T3401_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let resp = sdk_for(&server)
+        .paginated()
+        .investment_opinions(&T3401Request::new("011200"))
+        .await
+        .expect("t3401 should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert!(resp.outblock1.len() >= 2, "opinion rows round-trip");
+    assert_eq!(resp.outblock1[0].bopn, "HOLD", "canonical 투자의견변경후");
+    assert_eq!(resp.outblock1[0].tradname, "메리츠", "회원사명");
+    assert_eq!(resp.outblock1[0].noga, "24000", "목표가변경후 from JSON number");
+}
+
+#[test]
+fn t3401_response_round_trips_single_or_array_and_empty() {
+    let single: T3401Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t3401OutBlock": { "price": 17800 },
+        "t3401OutBlock1": { "date": "20230209", "bopn": "BUY", "shcode": "011200", "noga": 24000 }
+    }))
+    .expect("single opinion row tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].bopn, "BUY");
+
+    let empty: T3401Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t3401OutBlock": {}, "t3401OutBlock1": []
+    }))
+    .expect("empty result deserializes");
+    assert!(empty.outblock1.is_empty(), "empty is the pending case");
 }
