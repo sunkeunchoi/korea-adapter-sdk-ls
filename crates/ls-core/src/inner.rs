@@ -12,6 +12,7 @@
 //!
 //! No order-dispatch path exists here.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use backon::{ExponentialBuilder, Retryable};
@@ -129,6 +130,12 @@ pub struct Inner {
     pub token_manager: Arc<TokenManager>,
     /// Per-category rate limiter. Charged inside the retry closure.
     pub rate_limiter: Arc<RateLimiterManager>,
+    /// Global order kill switch (order-safety contract §1). `true` = orders may
+    /// dispatch; `false` = the operator emergency halt is engaged and every
+    /// `post_order` call halts before dedup, rate limiting, or HTTP I/O.
+    /// Non-order dispatch (`post`/`post_paginated`) never consults it. Interior
+    /// mutability so `set_orders_enabled` works through a shared `Arc<Inner>`.
+    pub orders_enabled: AtomicBool,
 }
 
 impl Inner {
@@ -156,7 +163,25 @@ impl Inner {
             config: resolved,
             token_manager,
             rate_limiter,
+            // Orders dispatch is enabled by default; the operator engages the
+            // kill switch explicitly via `set_orders_enabled(false)`.
+            orders_enabled: AtomicBool::new(true),
         }))
+    }
+
+    /// Engage or release the global order kill switch (order-safety §1).
+    ///
+    /// `set_orders_enabled(false)` is the operator emergency halt: every
+    /// subsequent `post_order` halts before dedup, rate limiting, or HTTP I/O.
+    /// Reconciliation reads the switch but MUST NOT re-enable it. Non-order
+    /// dispatch is unaffected.
+    pub fn set_orders_enabled(&self, enabled: bool) {
+        self.orders_enabled.store(enabled, Ordering::SeqCst);
+    }
+
+    /// `true` if order dispatch is currently enabled (the default).
+    pub fn orders_enabled(&self) -> bool {
+        self.orders_enabled.load(Ordering::SeqCst)
     }
 
     /// Single HTTP attempt — no retry, no rate limit. The SINGLE auth/transport
@@ -496,6 +521,17 @@ impl Inner {
         Req: Serialize + Sync,
         Res: DeserializeOwned + Send,
     {
+        // Kill switch FIRST — the operator emergency halt stops all order
+        // dispatch before dedup, rate limiting, or any I/O (order-safety §1).
+        if !self.orders_enabled() {
+            return Err(LsError::ApiError {
+                code: "orders-disabled".into(),
+                message: format!(
+                    "order dispatch is halted by the kill switch; order '{}' was not sent",
+                    policy.tr_code
+                ),
+            });
+        }
         // Defense-in-depth: reject a non-order policy before any HTTP I/O.
         policy.guard_order()?;
         let span = tracing::Span::current();
@@ -1209,5 +1245,86 @@ mod tests {
             LsError::AmbiguousOrder { code, .. } => assert_eq!(code, "00040"),
             other => panic!("expected AmbiguousOrder on non-2xx, got {other:?}"),
         }
+    }
+
+    // --- Kill switch (AE4) ----------------------------------------------------
+
+    #[tokio::test]
+    async fn kill_switch_halts_order_before_any_http_while_reads_succeed() {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        let order_hits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let order_hits_inner = order_hits.clone();
+        Mock::given(method("POST"))
+            .and(path("/order/path"))
+            .respond_with(move |_req: &Request| {
+                order_hits_inner.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({"rsp_cd": "00040"}))
+            })
+            .mount(&server)
+            .await;
+        // A market-data read on the SAME Inner must keep working.
+        Mock::given(method("POST"))
+            .and(path("/test/path"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "rsp_cd": "00000",
+                "rsp_msg": "ok",
+                "value": "still-reading"
+            })))
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        inner.set_orders_enabled(false);
+        assert!(!inner.orders_enabled());
+
+        let err = inner
+            .post_order::<_, EchoRes>(&order_policy(), &serde_json::json!({}))
+            .await
+            .expect_err("disabled orders must halt");
+        match err {
+            LsError::ApiError { code, .. } => assert_eq!(code, "orders-disabled"),
+            other => panic!("expected orders-disabled ApiError, got {other:?}"),
+        }
+        assert_eq!(
+            order_hits.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "kill switch must halt before any order HTTP call"
+        );
+
+        // The non-order read on the same Inner is unaffected.
+        let res: EchoRes = inner
+            .post(&test_policy(), &serde_json::json!({}))
+            .await
+            .expect("non-order read must be unaffected by the kill switch");
+        assert_eq!(res.value, "still-reading");
+    }
+
+    #[tokio::test]
+    async fn kill_switch_re_enable_restores_dispatch() {
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        Mock::given(method("POST"))
+            .and(path("/order/path"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "rsp_cd": "00040",
+                "rsp_msg": "ack"
+            })))
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        inner.set_orders_enabled(false);
+        assert!(inner
+            .post_order::<_, EchoRes>(&order_policy(), &serde_json::json!({}))
+            .await
+            .is_err());
+        // Toggling mid-session is observed on the very next call.
+        inner.set_orders_enabled(true);
+        let res: EchoRes = inner
+            .post_order(&order_policy(), &serde_json::json!({}))
+            .await
+            .expect("re-enabling must restore order dispatch");
+        assert_eq!(res.rsp_cd, "00040");
     }
 }
