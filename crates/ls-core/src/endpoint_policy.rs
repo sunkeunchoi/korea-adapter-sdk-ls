@@ -713,6 +713,44 @@ pub const CSPAT00601_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(10),
 };
 
+/// CSPAT00701 — 현물정정주문 (domestic cash-equity order MODIFY).
+///
+/// An `is_order: true` policy: routes through [`Inner::post_order`](crate::Inner::post_order)
+/// — the no-retry / dedup / kill switch path — never `post`/`post_paginated`.
+/// Charges the `Orders` rate bucket. Registered in the policy-index crosscheck
+/// ONLY — it must NOT appear in `slice_rest_policies_are_non_order_rest` (R12).
+pub const CSPAT00701_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CSPAT00701",
+    path: "/stock/order",
+    module: "stock",
+    group: "[주식] 주문",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Orders,
+    is_order: true,
+    has_pagination: false,
+    rate_limit_per_sec: Some(3),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// CSPAT00801 — 현물취소주문 (domestic cash-equity order CANCEL).
+///
+/// An `is_order: true` policy, same dispatch contract as `CSPAT00701`. A cancel
+/// re-sent identically within the dedup TTL is idempotent-for-free (the full body,
+/// incl. `OrgOrdNo`, is the dedup key — KTD5). Registered in the policy-index
+/// crosscheck ONLY (R12).
+pub const CSPAT00801_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CSPAT00801",
+    path: "/stock/order",
+    module: "stock",
+    group: "[주식] 주문",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Orders,
+    is_order: true,
+    has_pagination: false,
+    rate_limit_per_sec: Some(3),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// t0425 — 주식체결/미체결 (stock filled/unfilled order inquiry).
 ///
 /// The reconciliation companion to `CSPAT00601` — a READ (`is_order: false`),

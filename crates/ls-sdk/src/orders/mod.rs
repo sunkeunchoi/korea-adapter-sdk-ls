@@ -44,6 +44,18 @@ pub use reconcile::{
     ReconciliationRecord,
 };
 
+/// Normalize an order `IsuNo` to the `t0425` `expcode` form for reconciliation:
+/// strip a single leading market-prefix letter (e.g. `"A005930"` → `"005930"`) so
+/// the reconciliation query filter and symbol corroboration line up with the
+/// 6-digit `t0425` row symbol. A symbol with no alpha prefix is returned unchanged.
+fn normalize_symbol(isuno: &str) -> String {
+    let t = isuno.trim();
+    match t.chars().next() {
+        Some(c) if c.is_ascii_alphabetic() => t[c.len_utf8()..].to_string(),
+        _ => t.to_string(),
+    }
+}
+
 /// Input block for `CSPAT00601` — the nine required order fields.
 ///
 /// `OrdQty`/`OrdPrc` carry [`ls_core::string_as_number`]: the gateway requires
@@ -270,6 +282,418 @@ impl CSPAT00601Response {
     }
 }
 
+// ===========================================================================
+// CSPAT00701 — 현물정정주문 (domestic cash-equity order MODIFY).
+//
+// A modify references an existing order by `OrgOrdNo` and carries the FULL target
+// `OrdQty`/`OrdPrc` (absolute, no delta field — KTD4), so a blind re-send re-applies
+// the same target rather than compounding. It routes EXCLUSIVELY through
+// `post_order` (no-retry / dedup / kill switch) like every order. The numeric
+// request fields `OrgOrdNo`/`OrdQty`/`OrdPrc` serialize as JSON numbers (KTD6).
+// `OutBlock2.OrdNo` is a NEW order number; `OutBlock2.PrntOrdNo` is the original.
+// ===========================================================================
+
+/// Input block for `CSPAT00701` — the six required modify fields.
+///
+/// `OrgOrdNo`/`OrdQty`/`OrdPrc` carry [`ls_core::string_as_number`]: the gateway
+/// requires them as JSON numbers (KTD6). The rest are wire strings.
+#[derive(Serialize, Debug, Clone)]
+pub struct CSPAT00701InBlock1 {
+    /// Original order number / 원주문번호 — the order being modified (JSON number).
+    #[serde(rename = "OrgOrdNo", serialize_with = "ls_core::string_as_number")]
+    pub orgordno: String,
+    /// Issue (symbol) number / 종목번호.
+    #[serde(rename = "IsuNo")]
+    pub isuno: String,
+    /// New order quantity / 주문수량 (absolute target, serialized as a JSON number).
+    #[serde(rename = "OrdQty", serialize_with = "ls_core::string_as_number")]
+    pub ordqty: String,
+    /// Order-price pattern code / 호가유형코드 (e.g. `"00"` limit).
+    #[serde(rename = "OrdprcPtnCode")]
+    pub ordprcptncode: String,
+    /// Order-condition distinction / 주문조건구분 (e.g. `"0"`).
+    #[serde(rename = "OrdCndiTpCode")]
+    pub ordcnditpcode: String,
+    /// New order price / 주문가 (absolute target, serialized as a JSON number).
+    #[serde(rename = "OrdPrc", serialize_with = "ls_core::string_as_number")]
+    pub ordprc: String,
+}
+
+/// `CSPAT00701` request — wraps the input block under the `CSPAT00701InBlock1`
+/// key. Dispatches once via [`ls_core::Inner::post_order`] with no continuation.
+#[derive(Serialize, Debug, Clone)]
+pub struct CSPAT00701Request {
+    #[serde(rename = "CSPAT00701InBlock1")]
+    pub inblock: CSPAT00701InBlock1,
+}
+
+impl CSPAT00701Request {
+    /// Build a domestic cash-equity order modify against an existing order number.
+    ///
+    /// `orgordno`/`ordqty`/`ordprc` are decimal strings and serialize as JSON
+    /// numbers. The modify carries the full absolute target (KTD4).
+    pub fn new(
+        orgordno: impl Into<String>,
+        isuno: impl Into<String>,
+        ordqty: impl Into<String>,
+        ordprc: impl Into<String>,
+        ordprcptncode: impl Into<String>,
+        ordcnditpcode: impl Into<String>,
+    ) -> Self {
+        CSPAT00701Request {
+            inblock: CSPAT00701InBlock1 {
+                orgordno: orgordno.into(),
+                isuno: isuno.into(),
+                ordqty: ordqty.into(),
+                ordprc: ordprc.into(),
+                ordprcptncode: ordprcptncode.into(),
+                ordcnditpcode: ordcnditpcode.into(),
+            },
+        }
+    }
+
+    /// A plain limit modify with conventional defaults: `OrdprcPtnCode="00"`
+    /// (limit), `OrdCndiTpCode="0"`.
+    pub fn limit(
+        orgordno: impl Into<String>,
+        isuno: impl Into<String>,
+        ordqty: impl Into<String>,
+        ordprc: impl Into<String>,
+    ) -> Self {
+        Self::new(orgordno, isuno, ordqty, ordprc, "00", "0")
+    }
+
+    /// Build the reconciliation intent for this modify, keyed off the referenced
+    /// `OrgOrdNo`. The matcher finds it across `t0425.ordno` (the original) and
+    /// `t0425.orgordno` (the modify child). `account_no` is the config account.
+    pub fn reconcile_intent(&self, account_no: impl Into<String>) -> OrderIntent {
+        OrderIntent::modify(
+            account_no,
+            normalize_symbol(&self.inblock.isuno),
+            "", // a modify request carries no side; reconciliation keys off OrgOrdNo
+            self.inblock.ordqty.clone(),
+            self.inblock.ordprc.clone(),
+            self.inblock.orgordno.clone(),
+        )
+    }
+}
+
+/// `CSPAT00701OutBlock1` — the request-echo block (single object).
+///
+/// Account-sensitive `AcntNo` is redacted in `Debug` and never serialized.
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct CSPAT00701OutBlock1 {
+    /// Record count / 레코드갯수.
+    #[serde(rename = "RecCnt", deserialize_with = "ls_core::string_or_number")]
+    pub reccnt: String,
+    /// Original order number / 원주문번호.
+    #[serde(rename = "OrgOrdNo", deserialize_with = "ls_core::string_or_number")]
+    pub orgordno: String,
+    /// Account number / 계좌번호 (account-sensitive). Redacted in `Debug` AND
+    /// `skip_serializing` — never reaches a JSON sink or the dedup cache.
+    #[serde(
+        rename = "AcntNo",
+        deserialize_with = "ls_core::string_or_number",
+        skip_serializing
+    )]
+    pub acntno: String,
+    /// Issue (symbol) number / 종목번호.
+    #[serde(rename = "IsuNo", deserialize_with = "ls_core::string_or_number")]
+    pub isuno: String,
+    /// New order quantity / 주문수량.
+    #[serde(rename = "OrdQty", deserialize_with = "ls_core::string_or_number")]
+    pub ordqty: String,
+    /// New order price / 주문가.
+    #[serde(rename = "OrdPrc", deserialize_with = "ls_core::string_or_number")]
+    pub ordprc: String,
+}
+
+impl std::fmt::Debug for CSPAT00701OutBlock1 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CSPAT00701OutBlock1")
+            .field("reccnt", &self.reccnt)
+            .field("orgordno", &self.orgordno)
+            .field("acntno", &"<redacted>")
+            .field("isuno", &self.isuno)
+            .field("ordqty", &self.ordqty)
+            .field("ordprc", &self.ordprc)
+            .finish()
+    }
+}
+
+/// `CSPAT00701OutBlock2` — the order-result block (single object).
+///
+/// `OrdNo` is the NEW order number produced by the modify (KTD4); `PrntOrdNo` is
+/// the original (parent) order number. Account-sensitive `AcntNm` is redacted.
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct CSPAT00701OutBlock2 {
+    /// Record count / 레코드갯수.
+    #[serde(rename = "RecCnt", deserialize_with = "ls_core::string_or_number")]
+    pub reccnt: String,
+    /// New order number / 주문번호 — the modify's new order number.
+    #[serde(rename = "OrdNo", deserialize_with = "ls_core::string_or_number")]
+    pub ordno: String,
+    /// Parent (original) order number / 모주문번호.
+    #[serde(rename = "PrntOrdNo", deserialize_with = "ls_core::string_or_number")]
+    pub prntordno: String,
+    /// Order time / 주문시각.
+    #[serde(rename = "OrdTime", deserialize_with = "ls_core::string_or_number")]
+    pub ordtime: String,
+    /// Order market code / 주문시장코드.
+    #[serde(rename = "OrdMktCode", deserialize_with = "ls_core::string_or_number")]
+    pub ordmktcode: String,
+    /// Short issue number / 단축종목번호.
+    #[serde(rename = "ShtnIsuNo", deserialize_with = "ls_core::string_or_number")]
+    pub shtnisuno: String,
+    /// Order amount / 주문금액.
+    #[serde(rename = "OrdAmt", deserialize_with = "ls_core::string_or_number")]
+    pub ordamt: String,
+    /// Account name / 계좌명 (account-sensitive). Redacted in `Debug` AND
+    /// `skip_serializing` — never reaches a JSON sink or the dedup cache.
+    #[serde(
+        rename = "AcntNm",
+        deserialize_with = "ls_core::string_or_number",
+        skip_serializing
+    )]
+    pub acntnm: String,
+    /// Issue name / 종목명.
+    #[serde(rename = "IsuNm", deserialize_with = "ls_core::string_or_number")]
+    pub isunm: String,
+}
+
+impl std::fmt::Debug for CSPAT00701OutBlock2 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CSPAT00701OutBlock2")
+            .field("reccnt", &self.reccnt)
+            .field("ordno", &self.ordno)
+            .field("prntordno", &self.prntordno)
+            .field("ordtime", &self.ordtime)
+            .field("ordmktcode", &self.ordmktcode)
+            .field("shtnisuno", &self.shtnisuno)
+            .field("ordamt", &self.ordamt)
+            .field("acntnm", &"<redacted>")
+            .field("isunm", &self.isunm)
+            .finish()
+    }
+}
+
+/// `CSPAT00701` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are classified by the order predicate in `ls-core` dispatch
+/// before this struct is built (`00462` modify-ack is Accepted, KTD2). `outblock1`
+/// echoes the request; `outblock2` carries the new order number.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct CSPAT00701Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "CSPAT00701OutBlock1", default)]
+    pub outblock1: CSPAT00701OutBlock1,
+    #[serde(rename = "CSPAT00701OutBlock2", default)]
+    pub outblock2: CSPAT00701OutBlock2,
+}
+
+impl CSPAT00701Response {
+    /// The modify's NEW order number (`OutBlock2.OrdNo`), KTD4.
+    pub fn order_no(&self) -> &str {
+        &self.outblock2.ordno
+    }
+    /// The parent (original) order number (`OutBlock2.PrntOrdNo`).
+    pub fn parent_order_no(&self) -> &str {
+        &self.outblock2.prntordno
+    }
+}
+
+// ===========================================================================
+// CSPAT00801 — 현물취소주문 (domestic cash-equity order CANCEL).
+//
+// A cancel references an existing order by `OrgOrdNo`. It routes through
+// `post_order` like every order. Cancel idempotency comes FREE from the dedup key
+// (the full body — incl. `OrgOrdNo` — is hashed, KTD5): an identical cancel
+// re-sent within the 300s TTL hits the cache (AE6). The numeric request fields
+// `OrgOrdNo`/`OrdQty` serialize as JSON numbers (KTD6). `OutBlock2.OrdNo` is the
+// NEW cancel order number; `OutBlock2.PrntOrdNo` is the original.
+// ===========================================================================
+
+/// Input block for `CSPAT00801` — the three required cancel fields.
+///
+/// `OrgOrdNo`/`OrdQty` carry [`ls_core::string_as_number`] (JSON numbers, KTD6).
+#[derive(Serialize, Debug, Clone)]
+pub struct CSPAT00801InBlock1 {
+    /// Original order number / 원주문번호 — the order being canceled (JSON number).
+    #[serde(rename = "OrgOrdNo", serialize_with = "ls_core::string_as_number")]
+    pub orgordno: String,
+    /// Issue (symbol) number / 종목번호.
+    #[serde(rename = "IsuNo")]
+    pub isuno: String,
+    /// Cancel quantity / 주문수량 (serialized as a JSON number).
+    #[serde(rename = "OrdQty", serialize_with = "ls_core::string_as_number")]
+    pub ordqty: String,
+}
+
+/// `CSPAT00801` request — wraps the input block under the `CSPAT00801InBlock1` key.
+#[derive(Serialize, Debug, Clone)]
+pub struct CSPAT00801Request {
+    #[serde(rename = "CSPAT00801InBlock1")]
+    pub inblock: CSPAT00801InBlock1,
+}
+
+impl CSPAT00801Request {
+    /// Build a domestic cash-equity order cancel against an existing order number.
+    pub fn new(
+        orgordno: impl Into<String>,
+        isuno: impl Into<String>,
+        ordqty: impl Into<String>,
+    ) -> Self {
+        CSPAT00801Request {
+            inblock: CSPAT00801InBlock1 {
+                orgordno: orgordno.into(),
+                isuno: isuno.into(),
+                ordqty: ordqty.into(),
+            },
+        }
+    }
+
+    /// Build the reconciliation intent for this cancel, keyed off the referenced
+    /// `OrgOrdNo`. The cancel-aware matcher (U2) fails toward still-live: a matched
+    /// non-`취소` row is never read as success.
+    pub fn reconcile_intent(&self, account_no: impl Into<String>) -> OrderIntent {
+        OrderIntent::cancel(
+            account_no,
+            normalize_symbol(&self.inblock.isuno),
+            "", // a cancel request carries no side; reconciliation keys off OrgOrdNo
+            self.inblock.ordqty.clone(),
+            self.inblock.orgordno.clone(),
+        )
+    }
+}
+
+/// `CSPAT00801OutBlock1` — the request-echo block (single object).
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct CSPAT00801OutBlock1 {
+    /// Record count / 레코드갯수.
+    #[serde(rename = "RecCnt", deserialize_with = "ls_core::string_or_number")]
+    pub reccnt: String,
+    /// Original order number / 원주문번호.
+    #[serde(rename = "OrgOrdNo", deserialize_with = "ls_core::string_or_number")]
+    pub orgordno: String,
+    /// Account number / 계좌번호 (account-sensitive). Redacted in `Debug` AND
+    /// `skip_serializing`.
+    #[serde(
+        rename = "AcntNo",
+        deserialize_with = "ls_core::string_or_number",
+        skip_serializing
+    )]
+    pub acntno: String,
+    /// Issue (symbol) number / 종목번호.
+    #[serde(rename = "IsuNo", deserialize_with = "ls_core::string_or_number")]
+    pub isuno: String,
+    /// Cancel quantity / 주문수량.
+    #[serde(rename = "OrdQty", deserialize_with = "ls_core::string_or_number")]
+    pub ordqty: String,
+}
+
+impl std::fmt::Debug for CSPAT00801OutBlock1 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CSPAT00801OutBlock1")
+            .field("reccnt", &self.reccnt)
+            .field("orgordno", &self.orgordno)
+            .field("acntno", &"<redacted>")
+            .field("isuno", &self.isuno)
+            .field("ordqty", &self.ordqty)
+            .finish()
+    }
+}
+
+/// `CSPAT00801OutBlock2` — the order-result block (single object).
+///
+/// `OrdNo` is the NEW cancel order number; `PrntOrdNo` is the original (parent)
+/// order number. Account-sensitive `AcntNm` is redacted.
+#[derive(Serialize, Deserialize, Clone, Default)]
+#[serde(default)]
+pub struct CSPAT00801OutBlock2 {
+    /// Record count / 레코드갯수.
+    #[serde(rename = "RecCnt", deserialize_with = "ls_core::string_or_number")]
+    pub reccnt: String,
+    /// New cancel order number / 주문번호.
+    #[serde(rename = "OrdNo", deserialize_with = "ls_core::string_or_number")]
+    pub ordno: String,
+    /// Parent (original) order number / 모주문번호.
+    #[serde(rename = "PrntOrdNo", deserialize_with = "ls_core::string_or_number")]
+    pub prntordno: String,
+    /// Order time / 주문시각.
+    #[serde(rename = "OrdTime", deserialize_with = "ls_core::string_or_number")]
+    pub ordtime: String,
+    /// Order market code / 주문시장코드.
+    #[serde(rename = "OrdMktCode", deserialize_with = "ls_core::string_or_number")]
+    pub ordmktcode: String,
+    /// Short issue number / 단축종목번호.
+    #[serde(rename = "ShtnIsuNo", deserialize_with = "ls_core::string_or_number")]
+    pub shtnisuno: String,
+    /// Buy/sell distinction / 매매구분.
+    #[serde(rename = "BnsTpCode", deserialize_with = "ls_core::string_or_number")]
+    pub bnstpcode: String,
+    /// Account name / 계좌명 (account-sensitive). Redacted in `Debug` AND
+    /// `skip_serializing`.
+    #[serde(
+        rename = "AcntNm",
+        deserialize_with = "ls_core::string_or_number",
+        skip_serializing
+    )]
+    pub acntnm: String,
+    /// Issue name / 종목명.
+    #[serde(rename = "IsuNm", deserialize_with = "ls_core::string_or_number")]
+    pub isunm: String,
+}
+
+impl std::fmt::Debug for CSPAT00801OutBlock2 {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CSPAT00801OutBlock2")
+            .field("reccnt", &self.reccnt)
+            .field("ordno", &self.ordno)
+            .field("prntordno", &self.prntordno)
+            .field("ordtime", &self.ordtime)
+            .field("ordmktcode", &self.ordmktcode)
+            .field("shtnisuno", &self.shtnisuno)
+            .field("bnstpcode", &self.bnstpcode)
+            .field("acntnm", &"<redacted>")
+            .field("isunm", &self.isunm)
+            .finish()
+    }
+}
+
+/// `CSPAT00801` response envelope.
+///
+/// `rsp_cd`/`rsp_msg` are classified by the order predicate before this struct is
+/// built (`00463`/`00156` cancel-ack is Accepted, KTD2; the raw `CSPAT00801`
+/// success example carries `00156`).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct CSPAT00801Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "CSPAT00801OutBlock1", default)]
+    pub outblock1: CSPAT00801OutBlock1,
+    #[serde(rename = "CSPAT00801OutBlock2", default)]
+    pub outblock2: CSPAT00801OutBlock2,
+}
+
+impl CSPAT00801Response {
+    /// The cancel's NEW order number (`OutBlock2.OrdNo`).
+    pub fn order_no(&self) -> &str {
+        &self.outblock2.ordno
+    }
+    /// The parent (original) order number (`OutBlock2.PrntOrdNo`).
+    pub fn parent_order_no(&self) -> &str {
+        &self.outblock2.prntordno
+    }
+}
+
 // ---------------------------------------------------------------------------
 // t0425 — 주식체결/미체결 (stock filled/unfilled order inquiry).
 //
@@ -453,6 +877,37 @@ impl Orders {
     pub async fn submit(&self, req: &CSPAT00601Request) -> LsResult<CSPAT00601Response> {
         self.inner
             .post_order(&ls_core::endpoint_policy::CSPAT00601_POLICY, req)
+            .await
+    }
+
+    /// Modify an existing domestic cash-equity order via `CSPAT00701`.
+    ///
+    /// Routes EXCLUSIVELY through [`ls_core::Inner::post_order`] — the same
+    /// no-retry / dedup / kill-switch path as [`Orders::submit`], never
+    /// `post`/`post_paginated`. The modify is absolute (it carries the full target
+    /// `OrdQty`/`OrdPrc`, KTD4): a within-window identical re-send hits the dedup
+    /// cache, and an ambiguous outcome is reconciled by referenced order number via
+    /// [`Orders::reconcile`] with the intent from
+    /// [`CSPAT00701Request::reconcile_intent`] — never blindly resubmitted.
+    pub async fn modify(&self, req: &CSPAT00701Request) -> LsResult<CSPAT00701Response> {
+        self.inner
+            .post_order(&ls_core::endpoint_policy::CSPAT00701_POLICY, req)
+            .await
+    }
+
+    /// Cancel an existing domestic cash-equity order via `CSPAT00801`.
+    ///
+    /// Routes EXCLUSIVELY through [`ls_core::Inner::post_order`]. Cancel is
+    /// idempotent within the dedup TTL for free (the full body incl. `OrgOrdNo` is
+    /// the dedup key, KTD5): an identical sequential re-send returns the cached ack
+    /// with zero second dispatch (AE6), while a concurrent duplicate is rejected as
+    /// [`ls_core::LsError::DuplicateOrder`]. An ambiguous cancel is reconciled by
+    /// referenced order number via [`Orders::reconcile`] with the intent from
+    /// [`CSPAT00801Request::reconcile_intent`] — and INVERTS the risk: it is never
+    /// assumed successful unless `t0425` proves a `취소` (R7, AE1).
+    pub async fn cancel(&self, req: &CSPAT00801Request) -> LsResult<CSPAT00801Response> {
+        self.inner
+            .post_order(&ls_core::endpoint_policy::CSPAT00801_POLICY, req)
             .await
     }
 
