@@ -1,6 +1,7 @@
 ---
 title: "LS SDK pagination modeling: has_pagination is a metadata mirror (one-way implication with self_paginated), and the single-page body-idx sub-pattern"
 date: 2026-06-21
+last_updated: 2026-06-25
 category: architecture-patterns
 module: crates/ls-core, crates/ls-sdk
 problem_type: architecture_pattern
@@ -11,6 +12,7 @@ applies_when:
   - "Reconciling endpoint_policy.rs consts against metadata facets (self_paginated)"
   - "Implementing a TR whose continuation cursor is a request-body field (idx), not the tr_cont/tr_cont_key headers"
   - "Deciding whether a paginated TR can be promoted at single-page scope"
+  - "Implementing a header+rows cursor read (chart, period-trend) — pick the t1514 single-page shape, not t8412 multi-page"
 tags:
   - ls-core
   - ls-sdk
@@ -156,3 +158,77 @@ pub async fn top_volume(&self, req: &T1452Request) -> LsResult<T1452Response> {
 
 Contrast with `t8412`, where `tr_cont`/`tr_cont_key` are the real cursors
 (`#[serde(skip)]` header transport) and `chart_all` walks pages.
+
+## 3. A header-cursor read defaults to the single-page `t1514` shape, not the multi-page `t8412` shape
+
+### Context
+
+`t8412` is the SDK's only *multi-page* paginated TR: it implements
+`HasPagination` on **both** the request and the response, exposes a `chart_all`
+facade that drives `collect_all`, and walks `tr_cont`/`tr_cont_key` response
+headers until they go empty. Because it is the most prominent paginated exemplar,
+it is tempting to copy it for every new chart or period-trend TR with a `cts_*`
+cursor. That is almost always more machinery than the wave needs — and it is more
+surface to get wrong (the response-side `HasPagination`, the `collect_all`
+closure, the `max_pages` cap).
+
+The breadth wave -004 charts (`t8410`/`t8451`/`t8419`/`t4203`) and the
+investment-opinion read (`t3401`) are all header-summary + `cts_*`-cursor reads,
+and all were modeled on **`t1514`**, not `t8412`.
+
+### Guidance
+
+For a header+rows read whose continuation is a body `cts_date`/`cts_time` cursor,
+mirror **`t1514`** (`crates/ls-sdk/src/paginated/sector_index.rs`) unless multi-page
+collection is an actual requirement:
+
+- `impl_has_pagination!` on the **request only** — its `tr_cont`/`tr_cont_key` are
+  `#[serde(skip)]` and stay empty (first page). This exists only to satisfy
+  `post_paginated`'s `Req: HasPagination` bound (same reason as §2's body-`idx`
+  case). The response does **not** implement `HasPagination`.
+- Model `<tr>OutBlock` as the single header summary and `<tr>OutBlock1` as a
+  `Vec<...>` via `de_vec_or_single` (true wire keys + array-ness from the raw
+  `res_example`, per `../conventions/tr-out-block-shape-from-raw-capture.md`).
+- Numeric request counts (`qrycnt`, `ncnt`) serialize as JSON numbers via
+  `string_as_number` (IGW40011 guard).
+- Facade returns **one page** via `Inner::post_paginated` — no `*_all`, no
+  `collect_all`. The smoke validates a single page; multi-page correctness is out
+  of scope (mirroring `t8412`'s own recommendation, which excludes multi-page).
+
+Reach for the full `t8412` shape (response `HasPagination` + `collect_all` + a
+`*_all` facade) only when a caller genuinely needs every page concatenated.
+
+### When to Apply
+
+- Implementing any chart / period-trend / history read with a `cts_*` body cursor.
+- Reviewing a new paginated TR that copied `t8412` wholesale — check whether
+  single-page `t1514` would have been the lighter, correct choice.
+
+### Examples
+
+```rust
+// t1514-shape header-cursor read (single page): HasPagination on the REQUEST only.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8410Request {
+    #[serde(rename = "t8410InBlock")]
+    pub inblock: T8410InBlock,
+    #[serde(skip)] pub tr_cont: String,       // header cursor — first page, empty
+    #[serde(skip)] pub tr_cont_key: String,
+}
+ls_core::impl_has_pagination!(T8410Request);  // satisfies post_paginated's bound
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8410Response {                    // NO impl_has_pagination! — single page
+    #[serde(rename = "t8410OutBlock", default)] pub outblock: T8410OutBlock,
+    #[serde(rename = "t8410OutBlock1", default, deserialize_with = "ls_core::de_vec_or_single")]
+    pub outblock1: Vec<T8410OutBlock1>,
+    // rsp_cd / rsp_msg ...
+}
+
+pub async fn stock_chart_period(&self, req: &T8410Request) -> LsResult<T8410Response> {
+    self.inner.post_paginated(&ls_core::endpoint_policy::T8410_POLICY, req).await
+}
+```
+
+`t8412` is the contrast: `impl_has_pagination!(T8412Response)` too, plus a
+`chart_all` facade driving `collect_all` over the response `tr_cont` headers.
