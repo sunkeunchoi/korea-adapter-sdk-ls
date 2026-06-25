@@ -35,11 +35,13 @@ use ls_sdk::market_session::{
     T8455Request, T8460Request, T8463Request,
     G3101Request, G3102Request, G3103Request, G3104Request, G3106Request, G3190Request,
     O3101Request, O3105Request, O3106Request, O3121Request, O3125Request, O3126Request,
+    T9945Request, T3202Request,
 };
 use ls_sdk::paginated::{
     T1403Request, T1441Request, T1452Request, T1463Request, T1466Request, T1481Request,
     T1482Request, T1489Request, T1492Request, T1514Request, T1866Request, T3341Request,
     T8412Request,
+    T8410Request, T8451Request, T8419Request, T4203Request, T3401Request,
 };
 use ls_sdk::realtime::WsLane;
 use ls_sdk::LsSdk;
@@ -3660,6 +3662,209 @@ async fn live_smoke_o3126() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-o3126 market-data failure (not evidence)");
             panic!("live-smoke-o3126 failed: {e}");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Domestic stock master/reference breadth wave (plan -004). Seven reads flipped
+// on a clean non-empty paper smoke. Each MUST assert the out-block non-empty
+// BEFORE record(): a success rsp_cd with an empty block (00707) deserializes
+// fine and would green-flip on empty data (the 00707 trap).
+// ---------------------------------------------------------------------------
+
+/// `make live-smoke-t9945`: paper guard → token → one `t9945` KOSPI stock-master
+/// read. A non-empty master array proves the read is callable and round-trips.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t9945`"]
+async fn live_smoke_t9945() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T9945Request::new("1");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().stock_master(&req).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock.is_empty(),
+                "live-smoke-t9945: empty master (00707) — PENDING, not Implemented"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "tickers")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t9945", &format!("env=paper gubun=1 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t9945 market-data failure (not evidence)");
+            panic!("live-smoke-t9945 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t3202`: paper guard → token → one `t3202` schedule read for
+/// `shcode=001200`. A non-empty schedule array proves the read round-trips.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t3202`"]
+async fn live_smoke_t3202() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T3202Request::new("001200");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().stock_schedule(&req).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock.is_empty(),
+                "live-smoke-t3202: empty schedule (00707) — PENDING, not Implemented"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "events")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t3202", &format!("env=paper shcode=001200 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t3202 market-data failure (not evidence)");
+            panic!("live-smoke-t3202 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t3401`: paper guard → token → one `t3401` investment-opinion
+/// read for `shcode=011200`. A non-empty opinion array proves the read round-trips.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t3401`"]
+async fn live_smoke_t3401() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T3401Request::new("011200");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.paginated().investment_opinions(&req).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock1.is_empty(),
+                "live-smoke-t3401: empty opinions (00707) — PENDING, not Implemented"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "opinions")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t3401", &format!("env=paper shcode=011200 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t3401 market-data failure (not evidence)");
+            panic!("live-smoke-t3401 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t8410`: paper guard → token → one `t8410` daily stock chart
+/// (`shcode=078020`, gubun=2). A non-empty candle array proves the read round-trips.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8410`"]
+async fn live_smoke_t8410() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T8410Request::new("078020", "2", "20", "", "99999999");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.paginated().stock_chart_period(&req).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock1.is_empty(),
+                "live-smoke-t8410: empty chart (00707) — PENDING, not Implemented"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "candles")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t8410", &format!("env=paper shcode=078020 gubun=2 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8410 market-data failure (not evidence)");
+            panic!("live-smoke-t8410 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t8451`: paper guard → token → one `t8451` integrated daily
+/// stock chart (`shcode=010950`, gubun=2). Non-empty candle array → round-trips.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8451`"]
+async fn live_smoke_t8451() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T8451Request::new("010950", "2", "20", "", "99999999");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.paginated().stock_chart_period_unified(&req).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock1.is_empty(),
+                "live-smoke-t8451: empty chart (00707) — PENDING, not Implemented"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "candles")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t8451", &format!("env=paper shcode=010950 gubun=2 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8451 market-data failure (not evidence)");
+            panic!("live-smoke-t8451 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t8419`: paper guard → token → one `t8419` daily sector chart
+/// (`shcode=001`, gubun=2). Non-empty candle array → round-trips.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8419`"]
+async fn live_smoke_t8419() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T8419Request::new("001", "2", "20", "", "99999999");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.paginated().sector_chart_period(&req).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock1.is_empty(),
+                "live-smoke-t8419: empty chart (00707) — PENDING, not Implemented"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "candles")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t8419", &format!("env=paper shcode=001 gubun=2 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8419 market-data failure (not evidence)");
+            panic!("live-smoke-t8419 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t4203`: paper guard → token → one `t4203` composite daily
+/// sector chart (`shcode=001`, gubun=2). Non-empty candle array → round-trips.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t4203`"]
+async fn live_smoke_t4203() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T4203Request::new("001", "2", "1", "20", "", "99999999");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.paginated().sector_chart_composite(&req).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock1.is_empty(),
+                "live-smoke-t4203: empty chart (00707) — PENDING, not Implemented"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "candles")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t4203", &format!("env=paper shcode=001 gubun=2 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t4203 market-data failure (not evidence)");
+            panic!("live-smoke-t4203 failed: {e}");
         }
     }
 }

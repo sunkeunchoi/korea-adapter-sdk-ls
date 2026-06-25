@@ -17,10 +17,12 @@ use std::sync::Arc;
 use ls_core::{Inner, LsResult};
 
 mod chart;
+mod invest_opinion;
 mod rank_screen;
 mod sector_index;
 
 pub use chart::*;
+pub use invest_opinion::*;
 pub use rank_screen::*;
 pub use sector_index::*;
 
@@ -183,6 +185,49 @@ impl Paginated {
     pub async fn after_hours_top_volume(&self, req: &T1482Request) -> LsResult<T1482Response> {
         self.inner
             .post_paginated(&ls_core::endpoint_policy::T1482_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t8410` stock chart (일주월년). Self-paginated on the
+    /// body `cts_date` cursor; single-page scope (plan -004).
+    pub async fn stock_chart_period(&self, req: &T8410Request) -> LsResult<T8410Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T8410_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t8451` integrated stock chart (일주월년).
+    /// Self-paginated on the body `cts_date` cursor; single-page scope (plan -004).
+    pub async fn stock_chart_period_unified(
+        &self,
+        req: &T8451Request,
+    ) -> LsResult<T8451Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T8451_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t8419` sector chart (일주월). Self-paginated on the
+    /// body `cts_date` cursor; single-page scope (plan -004).
+    pub async fn sector_chart_period(&self, req: &T8419Request) -> LsResult<T8419Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T8419_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t4203` composite sector chart (종합). Self-paginated
+    /// on the body `cts_date`/`cts_time` cursors; single-page scope (plan -004).
+    pub async fn sector_chart_composite(&self, req: &T4203Request) -> LsResult<T4203Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T4203_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t3401` investment-opinion history (투자의견).
+    /// Self-paginated on the body `cts_date` cursor; single-page scope (plan -004).
+    pub async fn investment_opinions(&self, req: &T3401Request) -> LsResult<T3401Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T3401_POLICY, req)
             .await
     }
 }

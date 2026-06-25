@@ -5081,6 +5081,148 @@ pub struct O3126Response {
     pub outblock: O3126OutBlock,
 }
 
+// ---------------------------------------------------------------------------
+// Domestic stock master/reference breadth wave (plan -004). Non-paginated
+// `market_session` reads; each out-block is a single Object-Array modeled as a
+// `Vec<...>` via `de_vec_or_single` with the literal `<tr>OutBlock` key read from
+// the raw `res_example` (KTD3). No numeric request fields here, so no
+// `string_as_number`.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t9945` — 주식마스터조회 (stock master). `gubun` selects the
+/// market: `"1"` = KOSPI (KSP), `"2"` = KOSDAQ (KSD).
+#[derive(Serialize, Debug, Clone)]
+pub struct T9945InBlock {
+    /// Market selector / 구분 (KSP:1 KSD:2).
+    pub gubun: String,
+}
+
+/// `t9945` request — serializes to `{"t9945InBlock":{"gubun":"1"}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T9945Request {
+    #[serde(rename = "t9945InBlock")]
+    pub inblock: T9945InBlock,
+}
+impl T9945Request {
+    /// Build a `t9945` stock-master request for one market (`"1"`=KOSPI, `"2"`=KOSDAQ).
+    pub fn new(gubun: impl Into<String>) -> Self {
+        T9945Request {
+            inblock: T9945InBlock {
+                gubun: gubun.into(),
+            },
+        }
+    }
+}
+
+/// `t9945OutBlock` — one stock-master row: the ticker, its codes, and Korean name.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T9945OutBlock {
+    /// Stock name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Short code / 단축코드 (the canonical 6-digit ticker).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Expanded code / 확장코드 (ISIN).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub expcode: String,
+    /// ETF flag / ETF구분 (`"1"` = ETF).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub etfchk: String,
+    /// NXT-listing flag / NXT상장구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub nxt_chk: String,
+    /// Reserved filler / filler.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub filler: String,
+}
+
+/// `t9945` response — the stock-master array under `t9945OutBlock`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T9945Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t9945OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T9945OutBlock>,
+}
+
+/// Input block for `t3202` — 종목별증시일정 (per-stock market schedule). `date`
+/// is an optional filter (empty = the full schedule for the ticker).
+#[derive(Serialize, Debug, Clone)]
+pub struct T3202InBlock {
+    /// Short code / 종목코드.
+    pub shcode: String,
+    /// Date filter / 일자 (empty = all).
+    pub date: String,
+}
+
+/// `t3202` request — serializes to `{"t3202InBlock":{"shcode":"...","date":""}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T3202Request {
+    #[serde(rename = "t3202InBlock")]
+    pub inblock: T3202InBlock,
+}
+impl T3202Request {
+    /// Build a `t3202` schedule request for one ticker (full schedule, no date filter).
+    pub fn new(shcode: impl Into<String>) -> Self {
+        T3202Request {
+            inblock: T3202InBlock {
+                shcode: shcode.into(),
+                date: String::new(),
+            },
+        }
+    }
+}
+
+/// `t3202OutBlock` — one schedule row: the corporate event for the ticker.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T3202OutBlock {
+    /// Issuer number / 발행체번호.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub custno: String,
+    /// Issuer name / 발행회사명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub custnm: String,
+    /// Reference date / 기준일 (YYYYMMDD).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub recdt: String,
+    /// Short code / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Table id / 테이블아이디.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tableid: String,
+    /// Event name / 업무명 (the canonical schedule label, e.g. 주주총회).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub upunm: String,
+    /// Event class / 업무구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub upgu: String,
+}
+
+/// `t3202` response — the schedule array under `t3202OutBlock`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T3202Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t3202OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T3202OutBlock>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -5676,6 +5818,23 @@ impl MarketSession {
     ) -> LsResult<O3126Response> {
         self.inner
             .post(&ls_core::endpoint_policy::O3126_POLICY, req)
+            .await
+    }
+
+    /// Read the stock master (주식마스터조회) via `t9945`. Non-paginated; one
+    /// market per call (`"1"`=KOSPI, `"2"`=KOSDAQ). Returns the full ticker
+    /// master (code/ISIN/name) array.
+    pub async fn stock_master(&self, req: &T9945Request) -> LsResult<T9945Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T9945_POLICY, req)
+            .await
+    }
+
+    /// Read a ticker's market schedule (종목별증시일정) via `t3202`. Non-paginated;
+    /// keyed by `shcode`. Returns the corporate-event schedule rows.
+    pub async fn stock_schedule(&self, req: &T3202Request) -> LsResult<T3202Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T3202_POLICY, req)
             .await
     }
 }

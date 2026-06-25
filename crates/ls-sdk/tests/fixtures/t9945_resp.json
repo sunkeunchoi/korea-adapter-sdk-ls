@@ -1,0 +1,27 @@
+{
+    "rsp_cd": "00000",
+    "rsp_msg": "정상적으로 조회가 완료되었습니다.",
+    "t9945OutBlock": [
+        {
+            "etfchk": "0",
+            "shcode": "000020",
+            "filler": "",
+            "expcode": "KR7000020008",
+            "hname": "동화약품"
+        },
+        {
+            "etfchk": "0",
+            "shcode": "000040",
+            "filler": "",
+            "expcode": "KR7000040006",
+            "hname": "KR모터스"
+        },
+        {
+            "etfchk": "1",
+            "shcode": "238720",
+            "filler": "",
+            "expcode": "KR7238720007",
+            "hname": "ACE 일본Nikkei225(H)"
+        }
+    ]
+}

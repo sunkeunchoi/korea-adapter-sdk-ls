@@ -1,0 +1,24 @@
+{
+    "rsp_cd": "00000",
+    "t3202OutBlock": [
+        {
+            "custno": "00120",
+            "custnm": "유진투자증권(주)",
+            "recdt": "00000000",
+            "shcode": "001200",
+            "tableid": "SA02BS",
+            "upunm": "주주총회",
+            "upgu": "09"
+        },
+        {
+            "custno": "00120",
+            "custnm": "유진투자증권(주)",
+            "recdt": "20000527",
+            "shcode": "001200",
+            "tableid": "SA02BS",
+            "upunm": "주주총회",
+            "upgu": "09"
+        }
+    ],
+    "rsp_msg": "정상적으로 조회가 완료되었습니다."
+}
