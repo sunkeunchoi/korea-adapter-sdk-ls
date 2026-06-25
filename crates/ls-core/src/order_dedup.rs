@@ -103,20 +103,23 @@ impl OrderDeduplicator {
     /// Look up a live (non-expired) cached response. Read-path lazy eviction:
     /// an expired entry is dropped on lookup. Returns the cached JSON on a hit.
     pub fn get(&self, key: &str) -> Option<serde_json::Value> {
-        // Borrow the entry only long enough to decide. If it is live we return
-        // its value (the guard drops on return); if it is expired we record that
-        // and drop the guard BEFORE removing — never hold a per-entry guard
-        // across a structural mutation.
-        let expired = match self.cache.get(key) {
-            Some(entry) if entry.inserted.elapsed() < self.ttl => {
-                return Some(entry.value.clone());
-            }
-            Some(_) => true,
-            None => return None,
+        // Phase 1 — read under a short-lived guard. The guard is dropped at the
+        // end of this block (whether the entry was live, expired, or absent), so
+        // no per-entry guard is held across the structural mutation below.
+        let live_value = match self.cache.get(key) {
+            Some(entry) if entry.inserted.elapsed() < self.ttl => Some(entry.value.clone()),
+            _ => None,
         };
-        if expired {
-            self.cache.remove(key);
+        if live_value.is_some() {
+            return live_value;
         }
+        // Phase 2 — evict ONLY if the entry is still expired. `remove_if` re-checks
+        // under the shard lock, closing the race where another thread inserted a
+        // fresh entry (a legitimate re-dispatch of the same order) between our
+        // expiry read and the removal — a bare `remove` would delete that fresh
+        // entry and let the next identical submit re-hit the exchange.
+        self.cache
+            .remove_if(key, |_, entry| entry.inserted.elapsed() >= self.ttl);
         None
     }
 

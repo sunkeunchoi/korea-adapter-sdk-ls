@@ -427,6 +427,15 @@ impl Orders {
     /// surfaces as [`ls_core::LsError::ApiError`] with the broker code/message; an
     /// ambiguous outcome surfaces as [`ls_core::LsError::AmbiguousOrder`] for the
     /// caller to reconcile via `t0425`.
+    ///
+    /// Dedup observability (known limitation): a within-window duplicate returns
+    /// the cached response as `Ok` — indistinguishable at this return type from a
+    /// fresh ack — with `dedup_hit=true` recorded only on the dispatch span. The
+    /// safety property (no second exchange dispatch) holds, but a caller that
+    /// needs the reconciliation `Duplicate` state must track its own submission
+    /// identity and pass `dedup_hit` to [`Orders::reconcile`] (the evidence
+    /// harness does this by varying scenario params). A first-class duplicate
+    /// signal on the return value is a deliberate follow-up, not shipped here.
     pub async fn submit(&self, req: &CSPAT00601Request) -> LsResult<CSPAT00601Response> {
         self.inner
             .post_order(&ls_core::endpoint_policy::CSPAT00601_POLICY, req)

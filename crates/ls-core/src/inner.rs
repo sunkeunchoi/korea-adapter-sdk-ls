@@ -564,13 +564,23 @@ impl Inner {
         let res: Res = self
             .dispatch_once::<Req, Res>(policy, req, None, None)
             .await?;
-        // Cache only a successful (Accepted) response. Rejections and ambiguous
-        // outcomes are NOT cached — a corrected resubmission must reach the
+        // Cache only a successful (Accepted) response — `dispatch_once` already
+        // returned `Err` for a rejection (`ApiError`) or an ambiguous outcome
+        // (`AmbiguousOrder`) via the order predicate, so reaching here means
+        // Accepted. A corrected resubmission of a rejected order must reach the
         // exchange, and an ambiguous send is resolved by reconciliation, not the
         // dedup window. Round-tripping Res through JSON is lossless for its own
         // fields, which is all the caller observes.
-        if let Ok(value) = serde_json::to_value(&res) {
-            self.order_dedup.insert(dedup_key, value);
+        match serde_json::to_value(&res) {
+            Ok(value) => self.order_dedup.insert(dedup_key, value),
+            // Surface (do not swallow) a cache-write failure: the order WAS
+            // placed, so we still return Ok, but the dedup window will not protect
+            // an identical resubmit. For an all-string order Res this never fires.
+            Err(e) => tracing::warn!(
+                error = %e,
+                "post_order: caching the accepted order response failed; an identical \
+                 resubmit within the TTL will re-dispatch"
+            ),
         }
         Ok(res)
     }

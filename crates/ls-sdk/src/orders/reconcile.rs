@@ -111,14 +111,16 @@ pub fn normalize_ordno(s: &str) -> String {
 /// Map a `CSPAT00601` `BnsTpCode` (`"1"` sell / `"2"` buy) to the `t0425` row
 /// `medosu` Korean side text (`"매도"` / `"매수"`).
 fn side_matches(bnstpcode: &str, row_medosu: &str) -> bool {
-    let expected = match bnstpcode.trim() {
-        "1" => "매도",
-        "2" => "매수",
-        // An unrecognized code can't be matched on side; fall back to a loose
-        // contains check so matching does not silently exclude.
-        other => return row_medosu.contains(other),
-    };
-    row_medosu.contains(expected)
+    match bnstpcode.trim() {
+        "1" => row_medosu.contains("매도"),
+        "2" => row_medosu.contains("매수"),
+        // An unrecognized/absent side code cannot be corroborated. Return `true`
+        // (inconclusive, not excluding) so the row is still matched on its other
+        // fields — never declaring a FALSE absence that would green-light a retry
+        // of an order that may have landed. (In practice the side is always the
+        // CSPAT00601 BnsTpCode "1"/"2".)
+        _ => true,
+    }
 }
 
 /// `true` if a `t0425` row corresponds to the intent.
@@ -127,7 +129,14 @@ fn side_matches(bnstpcode: &str, row_medosu: &str) -> bool {
 /// number is unique). Otherwise corroborate on symbol + side + quantity + price.
 fn row_matches(intent: &OrderIntent, row: &super::T0425OutBlock1) -> bool {
     if let Some(ordno) = &intent.order_no {
-        return normalize_ordno(ordno) == normalize_ordno(&row.ordno);
+        let n = normalize_ordno(ordno);
+        // A USABLE (non-empty, non-zero) order number is the authoritative key.
+        // An empty/zero ack order number is NOT a usable key — `""` would
+        // spuriously equal a blank row `ordno`, matching an unrelated row — so we
+        // fall through to field corroboration instead of trusting it.
+        if !n.is_empty() && n != "0" {
+            return n == normalize_ordno(&row.ordno);
+        }
     }
     row.expcode.trim() == intent.symbol.trim()
         && side_matches(&intent.side, &row.medosu)
@@ -366,6 +375,42 @@ mod tests {
         let out2 = reconcile(&sell, Some(&resp(vec![row("84", "접수")])), false);
         assert_eq!(out2.state, OrderState::Unknown);
         assert!(out2.safe_to_retry);
+    }
+
+    #[test]
+    fn empty_or_zero_order_number_falls_through_to_field_corroboration() {
+        // An empty ack order number must NOT spuriously equal a blank row ordno;
+        // it falls through to symbol+side+qty+price corroboration instead.
+        let mut empty = intent(Some(""));
+        empty.order_no = Some("".into());
+        // A row whose fields match (ordno blank) is found via corroboration.
+        let blank_row = T0425OutBlock1 {
+            ordno: "".into(),
+            expcode: "005930".into(),
+            medosu: "매수".into(),
+            qty: "2".into(),
+            price: "60000".into(),
+            status: "접수".into(),
+            ..Default::default()
+        };
+        assert_eq!(
+            reconcile(&empty, Some(&resp(vec![blank_row])), false).state,
+            OrderState::Accepted,
+            "empty ordno must corroborate on fields, not match a blank ordno blindly"
+        );
+        // A "0" order number likewise corroborates rather than matching ordno 0.
+        let mut zero = intent(Some("0"));
+        zero.order_no = Some("0".into());
+        // No field match (different symbol) -> not found, safe to retry.
+        let other = T0425OutBlock1 {
+            ordno: "0".into(),
+            expcode: "000660".into(),
+            medosu: "매수".into(),
+            ..Default::default()
+        };
+        let out = reconcile(&zero, Some(&resp(vec![other])), false);
+        assert_eq!(out.state, OrderState::Unknown);
+        assert!(out.safe_to_retry);
     }
 
     #[test]
