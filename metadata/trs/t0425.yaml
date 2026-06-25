@@ -1,0 +1,31 @@
+tr_code: t0425
+name: 주식체결/미체결 (stock filled/unfilled order inquiry)
+# Read-only order/execution inquiry — the reconciliation companion to the
+# CSPAT00601 submit. Classed `paginated` (not `account`) because it self-continues
+# on the `cts_ordno` order-number cursor; routed through the market_data bucket
+# (KTD5). is_order is false — this is a read.
+owner_class: paginated
+facets:
+  protocol: rest
+  instrument_domain: stock
+  venue_session: krx_regular
+  date_sensitive: false
+  self_paginated: true
+  account_state: false
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: market_data
+  # `expcode` (종목번호) is the only caller-supplied identifier; chegb/medosu/sortgb
+  # are mode/filter flags and cts_ordno is the pagination cursor — none are
+  # identifiers.
+  caller_supplied_identifiers: [expcode]
+dependencies:
+  self_continuation_fields: [cts_ordno]
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: false
+  recommended: false
+maintenance:
+  source_spec_hash: e6eff49b1783
+  last_reviewed: 2026-06-25
