@@ -86,6 +86,19 @@ impl LsError {
     pub fn is_paper_incompatible(&self) -> bool {
         matches!(self, LsError::ApiError { code, .. } if crate::inner::is_paper_incompatible(code))
     }
+
+    /// Returns `true` if this error is the LS Paper "account not order-capable"
+    /// signal — an `ApiError` carrying `01491` (모의투자 주문이 불가한 계좌입니다,
+    /// "this is an account on which simulated/paper orders are not possible").
+    ///
+    /// Unlike [`Self::is_paper_incompatible`] (`01900`, a service Paper never
+    /// provides), `01491` is an account-capability gate that an order-enabled
+    /// paper account clears. The order TRs return it when the configured paper
+    /// account is provisioned read/inquiry-only. See
+    /// [`crate::is_paper_order_incapable`].
+    pub fn is_paper_order_incapable(&self) -> bool {
+        matches!(self, LsError::ApiError { code, .. } if crate::inner::is_paper_order_incapable(code))
+    }
 }
 
 /// Canonical result alias used throughout the crate.
