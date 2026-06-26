@@ -869,6 +869,7 @@ async fn t1404_deserializes_raw_capture_shape() {
     assert_eq!(resp.outblock1[0].hname, "흥국화재2우B", "real non-default Korean name");
     assert_eq!(resp.outblock1[0].reason, "5102", "real non-default reason code");
     assert_eq!(resp.outblock1[0].price, "16500", "price from JSON number");
+    assert_eq!(resp.outblock1[0].tprice, "16200", "designation-date price from JSON number");
 }
 
 /// Covers R4. The designation array tolerates single-or-array + empty (the
@@ -878,11 +879,12 @@ async fn t1404_deserializes_raw_capture_shape() {
 fn t1404_response_round_trips_single_or_array_and_empty() {
     let single: T1404Response = serde_json::from_value(serde_json::json!({
         "rsp_cd": "00000",
-        "t1404OutBlock": { "cts_shcode": "" },
+        "t1404OutBlock": { "cts_shcode": "000547" },
         "t1404OutBlock1": { "hname": "JTC", "shcode": "950170", "price": "3920", "volume": "5492" }
     }))
     .expect("single designation row tolerated as array");
     assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock.cts_shcode, "000547", "next-page cursor round-trips (non-empty)");
     assert_eq!(single.outblock1[0].price, "3920", "price from JSON string");
 
     let number: T1404Response = serde_json::from_value(serde_json::json!({

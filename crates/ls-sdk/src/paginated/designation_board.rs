@@ -99,6 +99,15 @@ pub struct T1404OutBlock1 {
     /// Designation date / 지정일.
     #[serde(deserialize_with = "ls_core::string_or_number")]
     pub date: String,
+    /// Price on the designation date / 지정일주가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tprice: String,
+    /// Change vs. the designation date / 지정일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tchange: String,
+    /// Rate vs. the designation date / 대비율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tdiff: String,
     /// Designation reason code / 사유.
     #[serde(deserialize_with = "ls_core::string_or_number")]
     pub reason: String,
