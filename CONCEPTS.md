@@ -42,6 +42,9 @@ The calibrated reachability claim a `realtime`/websocket TR carries when its lif
 ### WebSocket negative control
 The check that calibrates a realtime reachability claim: subscribe a deliberately-invalid `tr_cd` and observe whether the gateway signals a rejection. A `tr_cd`-attributable inbound body (non-empty `rsp_cd`) is `OBSERVABLE` (per-TR reachability is provable); a bare stream close or decode error is `INCONCLUSIVE`; pure silence is `NOT-OBSERVABLE` (flips are [[Connection-reachable-only]]). It has a deterministic mock-WS twin and a live half (`make live-smoke-ws-negative`); its verdict gates how strong a flip's claim may be, not whether the flip happens.
 
+### Closed-window reachable
+A curated per-TR judgment that a read's [[Paper Live Smoke]] can certify a non-empty result while KRX is closed, because the read's *shape* does not depend on the live session: a historical-bar pull (a stored time series addressed by symbol + time cursor) or a persistent status board (a standing administrative list that survives across sessions). It is NOT a metadata facet — every candidate carries the same `venue_session: krx_regular` as the session-gated reads — so the call is hand-made and backstopped by the non-empty-assert-before-record gate (a wrong guess dispositions to pending, not a false flip). Contrast: live quotes/order-books/expected-index reads return empty `00707` under closure and must wait for an open window.
+
 ### Focused Evidence
 A recorded, credential-free result of a Paper Live Smoke that backs a Recommended TR's claim. A smoke run gates Implementation; it only becomes Focused Evidence when a TR is deliberately promoted to Recommended.
 

@@ -587,6 +587,38 @@ pub const T1514_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(1),
 };
 
+/// t1310 — 주식당일전일분틱조회 (today/prev tick-or-min chart; self-paginated on the
+/// body `cts_time` cursor). `has_pagination: true` mirrors `facets.self_paginated`
+/// (plan -003).
+pub const T1310_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1310",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1404 — 관리/불성실/투자유의조회 (administrative-designation board; self-paginated
+/// on the body `cts_shcode` cursor). `has_pagination: true` mirrors
+/// `facets.self_paginated` (plan -003).
+pub const T1404_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1404",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// t1452 — 거래량상위 (top trading volume; single-page body-`idx` paginated).
 pub const T1452_POLICY: EndpointPolicy = EndpointPolicy {
     tr_code: "t1452",
@@ -2147,6 +2179,9 @@ mod tests {
             T1105_POLICY,
             T1104_POLICY,
             T1305_POLICY,
+            // Closed-window flip wave (plan -003): self-paginated stock reads.
+            T1310_POLICY,
+            T1404_POLICY,
             CSPAQ12200_POLICY,
             CSPAQ12300_POLICY,
             CSPAQ22200_POLICY,
