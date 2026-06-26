@@ -445,7 +445,7 @@ trs:
     venue_session: krx_regular
   t8430:
     file: trs/t8430.yaml
-    owner_class: standalone
+    owner_class: market_session
     protocol: rest
     instrument_domain: stock
     venue_session: krx_regular

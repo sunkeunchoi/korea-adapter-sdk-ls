@@ -56,22 +56,22 @@ fn authored_slice_metadata_validates_clean() {
         );
     }
 
-    // t8430 is now tracked-only: the array-shape blocker gates *implementation*
-    // (Item 2), not *tracking* — tracking pulls shape from the committed raw,
-    // which already carries t8430. It must be present in metadata but neither
-    // implemented nor recommended (the not-implemented intent is preserved).
+    // t8430 is implemented (tracked-and-raw flip wave): the supposed array-shape
+    // blocker was just a header-less Object Array response, modeled as
+    // Vec<T8430OutBlock> via `de_vec_or_single` and confirmed on a clean paper
+    // smoke (4291 issues). Implemented, not yet recommended.
     let t8430 = report
         .trs
         .get("t8430")
-        .expect("t8430 is tracked-only and must be present in the slice metadata");
+        .expect("t8430 must be present in the slice metadata");
     assert!(t8430.support.tracked, "t8430 is tracked");
     assert!(
-        !t8430.support.implemented,
-        "t8430 is not implemented (array-shape blocker, Item 2)"
+        t8430.support.implemented,
+        "t8430 is implemented (array-shape resolved via de_vec_or_single)"
     );
     assert!(
         !t8430.support.recommended,
-        "t8430 is not recommended (tracked-only)"
+        "t8430 is not recommended (Implemented only)"
     );
 }
 

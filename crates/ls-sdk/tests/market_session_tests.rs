@@ -20,7 +20,7 @@ use ls_sdk::market_session::{
     T8433Request, T8433Response, T8435OutBlock, T8435Request, T8435Response, T8467OutBlock,
     T8467Request, T8467Response, T9943OutBlock, T9943Request, T9943Response, T9944OutBlock,
     T9944Request, T9944Response, T8425Request,
-    T8425Response, T8431OutBlock, T8431Request,
+    T8425Response, T8430OutBlock, T8430Request, T8430Response, T8431OutBlock, T8431Request,
     T8431Response, T8436Request, T8436Response, T9905OutBlock1, T9905Request, T9905Response,
     T9907Request, T9907Response, T9942Request, T9942Response,
     T2106Request, T2106Response, T2111OutBlock, T2111Request, T2111Response, T2112OutBlock,
@@ -1265,6 +1265,63 @@ fn t8431_recprice_number_or_string_yields_same_value() {
         serde_json::from_value(serde_json::json!({ "recprice": "105" })).expect("string");
     assert_eq!(n.recprice, "105");
     assert_eq!(n.recprice, s.recprice);
+}
+
+/// Covers AE1. `t8430` stock-issue list round-trips; `gubun` request is a plain
+/// code string ("0" all); numeric-bearing fields parse number-or-string;
+/// single-or-array tolerated; empty `00707` is the pending case.
+#[test]
+fn t8430_request_and_response_round_trip() {
+    let value = serde_json::to_value(T8430Request::all()).expect("serialize t8430");
+    assert_eq!(value["t8430InBlock"]["gubun"], "0", "all-markets code string");
+
+    let resp: T8430Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8430OutBlock": [
+            { "hname": "삼성전자", "shcode": "005930", "expcode": "KR7005930003",
+              "etfgubun": "0", "uplmtprice": 91900, "dnlmtprice": "49500",
+              "jnilclose": 70700, "memedan": "1", "recprice": 70700, "gubun": "1" },
+            { "hname": "에코프로", "shcode": "086520", "expcode": "KR7086520004",
+              "etfgubun": "0", "uplmtprice": "120000", "dnlmtprice": 64600,
+              "jnilclose": "92300", "memedan": "1", "recprice": "92300", "gubun": "2" }
+        ]
+    }))
+    .expect("representative t8430 success must deserialize");
+    assert_eq!(resp.outblock.len(), 2);
+    assert_eq!(resp.outblock[0].shcode, "005930", "shcode populated");
+    assert_eq!(
+        resp.outblock[0].uplmtprice, "91900",
+        "uplmtprice from JSON number"
+    );
+    assert_eq!(
+        resp.outblock[1].uplmtprice, "120000",
+        "uplmtprice from JSON string"
+    );
+    assert_eq!(resp.outblock[1].gubun, "2", "KOSDAQ market flag");
+
+    let single: T8430Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8430OutBlock": { "shcode": "005930", "hname": "삼성전자" }
+    }))
+    .expect("single row tolerated as array");
+    assert_eq!(single.outblock.len(), 1);
+
+    let empty: T8430Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8430OutBlock": []
+    }))
+    .expect("empty result deserializes");
+    assert!(empty.outblock.is_empty(), "empty is the pending case");
+}
+
+/// Covers AE1. `T8430OutBlock` numeric-bearing fields parse number-or-string alike.
+#[test]
+fn t8430_price_number_or_string_yields_same_value() {
+    let n: T8430OutBlock =
+        serde_json::from_value(serde_json::json!({ "uplmtprice": 91900 })).expect("number");
+    let s: T8430OutBlock =
+        serde_json::from_value(serde_json::json!({ "uplmtprice": "91900" })).expect("string");
+    assert_eq!(n.uplmtprice, "91900");
+    assert_eq!(n.uplmtprice, s.uplmtprice);
 }
 
 /// Covers AE1. `t9942` ELW master list round-trips; single-or-array tolerated;
