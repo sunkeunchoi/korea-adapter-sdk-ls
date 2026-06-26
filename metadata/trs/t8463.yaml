@@ -8,7 +8,7 @@ facets:
   date_sensitive: false
   self_paginated: false
   account_state: false
-  paper_incompatible: false
+  paper_incompatible: true
   certification_path: none
   rate_bucket: market_data
   caller_supplied_identifiers: [bsc_asts_id]
@@ -21,4 +21,4 @@ support:
   recommended: false
 maintenance:
   source_spec_hash: ec2a3b4c5d6e
-  last_reviewed: 2026-06-23
+  last_reviewed: 2026-06-26

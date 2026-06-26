@@ -648,3 +648,57 @@ can source a news number and implement it.
 **Field-`type` facets (§4)** stay inventory-wide retired; nothing to retire here.
 Recommended tier untouched (no Focused Evidence, no `recommendation` block, no
 `metadata/evidence/<tr>.yaml`, no `EVIDENCE-FRESHNESS.md` edit).
+
+---
+
+## 14. Night-overseas implement wave — paper-unavailable reclassification (2026-06-26)
+
+Plan `docs/plans/2026-06-25-001-feat-night-overseas-elw-implement-wave-plan.md`
+re-ran the Paper Live Smokes for the KRX-night derivatives trio and the
+overseas-stock sextet **inside their nominal session windows** (01:11 KST — inside
+the `krx_extended` ~18:00–05:00 window; 12:11 ET — inside the US regular session).
+**Every contingent feed returned empty**, so none flipped; the nine are reclassified
+**paper-unavailable** (callable, Tracked, never flip on paper). **0 implemented, 9
+reclassified.**
+
+| TR | Window at smoke | Disposition (credential-free) |
+|---|---|---|
+| t8455 | in `krx_extended` (01:11 KST) | `rsp_cd=00000` empty master array (`00707`) — KRX 야간파생 master, no paper feed |
+| t8460 | in `krx_extended` | `rsp_cd=00000` empty option board (`00707`) — KRX 야간파생 option board, no paper feed |
+| t8463 | in `krx_extended` | `rsp_cd=00000` empty investor-by-time array (`00707`) — KRX 야간파생, no paper feed |
+| g3101 | in US regular session (12:11 ET) | empty out-block (`00707`) — overseas current-price, no paper feed |
+| g3102 | in US regular session | empty result array (`00707`) — overseas time-series, no paper feed |
+| g3103 | in US regular session | `rsp_cd=00009 해당 자료가 없습니다` — overseas period chart, no paper data |
+| g3104 | in US regular session | empty out-block (`00707`) — overseas stock-info master, no paper feed |
+| g3106 | in US regular session | empty out-block (`00707`) — overseas order book, no paper feed |
+| g3190 | in US regular session | `rsp_cd=00000` empty result array (`00707`) — overseas master list, no paper feed |
+
+**Empty/no-data, NOT `01900` service-rejection (the §12 distinction, inverted).**
+Unlike the CCENQ night pair (§12), which returns a hard gateway `01900`, these nine
+return a paper-unavailable empty result even when smoked inside the correct session
+window: eight return a *clean* `rsp_cd=00000` with an **empty body** (`00707`), and
+g3103 returns `rsp_cd=00009 해당 자료가 없습니다` — both are no-data terminals, neither is
+`01900`. The request shape is accepted (no `01900`, no `IGW40011`); the paper
+environment simply carries no data for these feeds. An in-window re-run does not recover
+them — the plan's `pending:off-window` premise (a timing miss) was falsified by these
+in-window-empty smokes, so they land at the paper-unavailable terminal instead.
+
+**Facet vs. runtime classifier — a deliberate divergence.**
+`facets.paper_incompatible: true` is set on all nine as the machine-readable
+"won't flip on paper" documentation/routing signal, so the discovery query and future
+waves skip them. **This does NOT imply the runtime `ls_core::is_paper_incompatible()`
+fires** — that check is `01900`-specific and these return `00707`. The facet here means
+"no paper data feed (feed-unprovisioned)", distinct from §12's "gateway 01900". The
+pre-existing `venue_session` rows are **retained**, unconfirmed: §11.1 covers the night
+trio (`krx_extended`) and the Wave-0 overseas reads g3101/g3104/g3106 (`unspecified`).
+g3102/g3103/g3190 were batch-tracked later (no §11.1 row); their `venue_session:
+unspecified` facets were set at tracking time and are recorded here in §14 for the first
+time.
+
+**No flip, no docgen change.** `support.implemented` stays `false` for all nine;
+`reference.len()` and `banner_trs` are unchanged (zero flips this wave). The four
+overseas-futures reads (`o3105`/`o3106`/`o3125`/`o3126`) were already Implemented in a
+prior wave (front-month symbol refresh) and are untouched. `t2106` (domestic F/O
+price-memo, empty memo) and `t1964` (ELW board, input-unresolved) keep their existing
+PENDING dispositions — both are domestic, not part of this night/overseas
+reclassification. Recommended tier untouched.
