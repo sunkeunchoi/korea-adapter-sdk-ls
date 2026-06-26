@@ -990,6 +990,8 @@ fn scrub_secrets_masks_account_with_suffix_and_tokens_keeps_order_numbers() {
     // A bearer-token / appkey-shaped string (20+ alnum) is masked.
     let token = "eyJhbGciOiJIUzI1Niabcdef012345";
     assert_eq!(scrub_secrets(&format!("Bearer {token}")), "Bearer ***");
+    // A pure-ALPHA 21-char token (no 6-digit run) exercises the length branch alone.
+    assert_eq!(scrub_secrets("appkey AbcdefghijklmnopqrstU end"), "appkey *** end");
     // A plain 6+ digit account run is masked (superset of scrub_digit_runs).
     assert_eq!(scrub_secrets("계좌 1234567890 거부"), "계좌 *** 거부");
     // Short numbers (qty/price) survive.
@@ -1267,14 +1269,19 @@ async fn dump_t0425_rows(sdk: &LsSdk, symbol: &str, org_ordno: &str) {
     {
         Ok(resp) => {
             for r in &resp.outblock1 {
+                // ordno/orgordno/ordrem/cheqty are order numbers + quantities (not
+                // secrets); status is broker text → routed through scrub_secrets
+                // defensively (Korean status text passes through unchanged).
                 println!(
                     "ORDER-CHAIN t0425-row org_ref={org_ordno} ordno={} orgordno={} \
                      status=[{}] ordrem={} cheqty={}",
-                    r.ordno, r.orgordno, r.status, r.ordrem, r.cheqty
+                    r.ordno, r.orgordno, scrub_secrets(&r.status), r.ordrem, r.cheqty
                 );
             }
         }
-        Err(e) => println!("ORDER-CHAIN t0425-dump failed: {e}"),
+        // The error carries a raw LsError whose Display embeds the broker rsp_msg —
+        // scrub it (the only chain output path that previously bypassed the scrubber).
+        Err(e) => println!("ORDER-CHAIN t0425-dump failed: {}", scrub_secrets(&e.to_string())),
     }
 }
 
@@ -1498,9 +1505,22 @@ async fn order_chained_smoke() {
             return;
         }
         Err(e) => {
+            // The catch-all submit error — including `LsError::AmbiguousOrder`, which
+            // means the order MAY have reached the gateway (an ambiguous send is
+            // reconciled, never assumed not-placed). With no operator to clean up, run
+            // the account-wide flat assertion BEFORE recording Pending: a resting order
+            // is retry-canceled then hard-failed naming it; a clean transport failure
+            // (nothing placed) positively confirms flat and falls through to Pending
+            // (R3/R5). The proven-not-placed arm above (01900/01491) is the only
+            // post-submit path that may skip this.
             sev.rsp_msg = format!("submit failed: {}", scrub_secrets(&e.to_string()));
             sev.record();
-            OrderEvidence::pending("chain", "submit leg did not place; chain not run").record();
+            assert_account_flat(&sdk).await;
+            OrderEvidence::pending(
+                "chain",
+                "submit leg did not cleanly place; account confirmed flat; chain not run",
+            )
+            .record();
             return;
         }
     };

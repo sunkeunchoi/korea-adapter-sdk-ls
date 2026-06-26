@@ -1123,6 +1123,12 @@ async fn live_smoke_t1901() {
     let date = Utc::now().format("%Y-%m-%d");
     match sdk.market_session().etf_quote(&T1901Request::new(&shcode)).await {
         Ok(resp) => {
+            // Non-empty guard: a session-dependent read can return 00000 with empty
+            // fields off-session — that is PENDING, not Implemented (mirror t1305).
+            assert!(
+                !resp.outblock.hname.is_empty() && !resp.outblock.price.is_empty(),
+                "live-smoke-t1901: empty ETF quote (00707/off-session) — PENDING, not Implemented"
+            );
             record(
                 "live-smoke-t1901",
                 &format!("env=paper shcode={shcode} date={date}"),
@@ -1181,6 +1187,11 @@ async fn live_smoke_t1105() {
     let date = Utc::now().format("%Y-%m-%d");
     match sdk.market_session().pivot_demark(&T1105Request::new(&shcode, "K")).await {
         Ok(resp) => {
+            // Non-empty guard: off-session can return 00000 with empty fields → PENDING.
+            assert!(
+                !resp.outblock.shcode.is_empty() && !resp.outblock.pbot.is_empty(),
+                "live-smoke-t1105: empty pivot/demark (00707/off-session) — PENDING, not Implemented"
+            );
             record(
                 "live-smoke-t1105",
                 &format!("env=paper shcode={shcode} date={date}"),
@@ -1206,6 +1217,13 @@ async fn live_smoke_t1104() {
     let date = Utc::now().format("%Y-%m-%d");
     match sdk.market_session().price_memo(&T1104Request::new(&code, "1", "K")).await {
         Ok(resp) => {
+            // Non-empty guard: a success rsp_cd with zero memo rows is an empty result
+            // (off-session / 00707) → PENDING, not Implemented.
+            assert!(
+                resp.rsp_cd == "00000" && !resp.outblock1.is_empty(),
+                "live-smoke-t1104: empty price memo (rsp_cd={}, rows=0) — PENDING, not Implemented",
+                resp.rsp_cd
+            );
             record(
                 "live-smoke-t1104",
                 &format!("env=paper code={code} date={date}"),
