@@ -1,4 +1,4 @@
-//! Plan -004 batch C — static reference / designation / ranking boards
+//! Plan -004 batch C — static reference / ranking / status boards
 //! (시가총액상위, 상·하한, 신고/신저가, 매매정지, ELW rankings, 신용거래동향).
 //!
 //! Self-paginated single-page reads on a body `idx`/`cts_shcode` cursor (header

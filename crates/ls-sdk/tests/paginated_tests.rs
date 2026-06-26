@@ -1702,19 +1702,21 @@ fn t8405_request_and_response_round_trip() {
 
 // === plan -004 batch C — paginated reference/ranking offline coverage =======
 
-/// t1444 — numeric request fields are JSON numbers; representative body round-trips; empty 00707.
+/// t1444 — numeric request fields are JSON numbers; representative body round-trips (response numerics via string_or_number); empty 00707.
 #[test]
 fn t1444_request_and_response_round_trip() {
     let v = serde_json::to_value(T1444Request::new("001")).expect("serialize t1444");
     assert!(v["t1444InBlock"]["idx"].is_number(), "idx numeric");
-    let resp: T1444Response = serde_json::from_str(r#"{"rsp_cd": "00000", "t1444OutBlock": {"idx": "x"}, "t1444OutBlock1": [{"hname": "X1"}]}"#).expect("t1444 body round-trips");
+    let _ = &v;
+    let resp: T1444Response = serde_json::from_str(r#"{"rsp_cd": "00000", "t1444OutBlock": {"idx": "x"}, "t1444OutBlock1": [{"hname": "X1", "price": 41945}]}"#).expect("t1444 body round-trips");
     assert_eq!(resp.outblock1[0].hname, "X1");
     assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock1[0].price, "41945", "price from JSON number via string_or_number");
     let empty: T1444Response = serde_json::from_str(r#"{"rsp_cd":"00707","t1444OutBlock":{},"t1444OutBlock1":[]}"#).expect("empty deserializes");
     assert!(empty.outblock1.is_empty());
 }
 
-/// t1422 — numeric request fields are JSON numbers; representative body round-trips; empty 00707.
+/// t1422 — numeric request fields are JSON numbers; representative body round-trips (response numerics via string_or_number); empty 00707.
 #[test]
 fn t1422_request_and_response_round_trip() {
     let v = serde_json::to_value(T1422Request::new()).expect("serialize t1422");
@@ -1723,14 +1725,16 @@ fn t1422_request_and_response_round_trip() {
     assert!(v["t1422InBlock"]["eprice"].is_number(), "eprice numeric");
     assert!(v["t1422InBlock"]["volume"].is_number(), "volume numeric");
     assert!(v["t1422InBlock"]["idx"].is_number(), "idx numeric");
-    let resp: T1422Response = serde_json::from_str(r#"{"rsp_cd": "00000", "t1422OutBlock": {"cnt": "x", "idx": "x"}, "t1422OutBlock1": [{"hname": "X1"}]}"#).expect("t1422 body round-trips");
+    let _ = &v;
+    let resp: T1422Response = serde_json::from_str(r#"{"rsp_cd": "00000", "t1422OutBlock": {"cnt": "x", "idx": "x"}, "t1422OutBlock1": [{"hname": "X1", "price": 41945}]}"#).expect("t1422 body round-trips");
     assert_eq!(resp.outblock1[0].hname, "X1");
     assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock1[0].price, "41945", "price from JSON number via string_or_number");
     let empty: T1422Response = serde_json::from_str(r#"{"rsp_cd":"00707","t1422OutBlock":{},"t1422OutBlock1":[]}"#).expect("empty deserializes");
     assert!(empty.outblock1.is_empty());
 }
 
-/// t1427 — numeric request fields are JSON numbers; representative body round-trips; empty 00707.
+/// t1427 — numeric request fields are JSON numbers; representative body round-trips (response numerics via string_or_number); empty 00707.
 #[test]
 fn t1427_request_and_response_round_trip() {
     let v = serde_json::to_value(T1427Request::new()).expect("serialize t1427");
@@ -1740,14 +1744,16 @@ fn t1427_request_and_response_round_trip() {
     assert!(v["t1427InBlock"]["eprice"].is_number(), "eprice numeric");
     assert!(v["t1427InBlock"]["volume"].is_number(), "volume numeric");
     assert!(v["t1427InBlock"]["idx"].is_number(), "idx numeric");
-    let resp: T1427Response = serde_json::from_str(r#"{"rsp_cd": "00000", "t1427OutBlock": {"cnt": "x", "idx": "x"}, "t1427OutBlock1": [{"hname": "X1"}]}"#).expect("t1427 body round-trips");
+    let _ = &v;
+    let resp: T1427Response = serde_json::from_str(r#"{"rsp_cd": "00000", "t1427OutBlock": {"cnt": "x", "idx": "x"}, "t1427OutBlock1": [{"hname": "X1", "price": 41945}]}"#).expect("t1427 body round-trips");
     assert_eq!(resp.outblock1[0].hname, "X1");
     assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock1[0].price, "41945", "price from JSON number via string_or_number");
     let empty: T1427Response = serde_json::from_str(r#"{"rsp_cd":"00707","t1427OutBlock":{},"t1427OutBlock1":[]}"#).expect("empty deserializes");
     assert!(empty.outblock1.is_empty());
 }
 
-/// t1442 — numeric request fields are JSON numbers; representative body round-trips; empty 00707.
+/// t1442 — numeric request fields are JSON numbers; representative body round-trips (response numerics via string_or_number); empty 00707.
 #[test]
 fn t1442_request_and_response_round_trip() {
     let v = serde_json::to_value(T1442Request::new()).expect("serialize t1442");
@@ -1757,26 +1763,29 @@ fn t1442_request_and_response_round_trip() {
     assert!(v["t1442InBlock"]["volume"].is_number(), "volume numeric");
     assert!(v["t1442InBlock"]["idx"].is_number(), "idx numeric");
     assert!(v["t1442InBlock"]["jc_num2"].is_number(), "jc_num2 numeric");
-    let resp: T1442Response = serde_json::from_str(r#"{"rsp_cd": "00000", "t1442OutBlock": {"idx": "x"}, "t1442OutBlock1": [{"hname": "X1"}]}"#).expect("t1442 body round-trips");
+    let _ = &v;
+    let resp: T1442Response = serde_json::from_str(r#"{"rsp_cd": "00000", "t1442OutBlock": {"idx": "x"}, "t1442OutBlock1": [{"hname": "X1", "price": 41945}]}"#).expect("t1442 body round-trips");
     assert_eq!(resp.outblock1[0].hname, "X1");
     assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock1[0].price, "41945", "price from JSON number via string_or_number");
     let empty: T1442Response = serde_json::from_str(r#"{"rsp_cd":"00707","t1442OutBlock":{},"t1442OutBlock1":[]}"#).expect("empty deserializes");
     assert!(empty.outblock1.is_empty());
 }
 
-/// t1405 — numeric request fields are JSON numbers; representative body round-trips; empty 00707.
+/// t1405 — representative body round-trips (response numerics via string_or_number); empty 00707.
 #[test]
 fn t1405_request_and_response_round_trip() {
     let v = serde_json::to_value(T1405Request::new("0", "1")).expect("serialize t1405");
-    
-    let resp: T1405Response = serde_json::from_str(r#"{"rsp_cd": "00000", "t1405OutBlock": {"cts_shcode": "x"}, "t1405OutBlock1": [{"hname": "X1"}]}"#).expect("t1405 body round-trips");
+    let _ = &v;
+    let resp: T1405Response = serde_json::from_str(r#"{"rsp_cd": "00000", "t1405OutBlock": {"cts_shcode": "x"}, "t1405OutBlock1": [{"hname": "X1", "price": 41945}]}"#).expect("t1405 body round-trips");
     assert_eq!(resp.outblock1[0].hname, "X1");
     assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock1[0].price, "41945", "price from JSON number via string_or_number");
     let empty: T1405Response = serde_json::from_str(r#"{"rsp_cd":"00707","t1405OutBlock":{},"t1405OutBlock1":[]}"#).expect("empty deserializes");
     assert!(empty.outblock1.is_empty());
 }
 
-/// t1960 — numeric request fields are JSON numbers; representative body round-trips; empty 00707.
+/// t1960 — numeric request fields are JSON numbers; representative body round-trips (response numerics via string_or_number); empty 00707.
 #[test]
 fn t1960_request_and_response_round_trip() {
     let v = serde_json::to_value(T1960Request::new()).expect("serialize t1960");
@@ -1786,14 +1795,16 @@ fn t1960_request_and_response_round_trip() {
     assert!(v["t1960InBlock"]["sjanday"].is_number(), "sjanday numeric");
     assert!(v["t1960InBlock"]["ejanday"].is_number(), "ejanday numeric");
     assert!(v["t1960InBlock"]["idx"].is_number(), "idx numeric");
-    let resp: T1960Response = serde_json::from_str(r#"{"rsp_cd": "00000", "t1960OutBlock": {"idx": "x"}, "t1960OutBlock1": [{"hname": "X1"}]}"#).expect("t1960 body round-trips");
+    let _ = &v;
+    let resp: T1960Response = serde_json::from_str(r#"{"rsp_cd": "00000", "t1960OutBlock": {"idx": "x"}, "t1960OutBlock1": [{"hname": "X1", "price": 41945}]}"#).expect("t1960 body round-trips");
     assert_eq!(resp.outblock1[0].hname, "X1");
     assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock1[0].price, "41945", "price from JSON number via string_or_number");
     let empty: T1960Response = serde_json::from_str(r#"{"rsp_cd":"00707","t1960OutBlock":{},"t1960OutBlock1":[]}"#).expect("empty deserializes");
     assert!(empty.outblock1.is_empty());
 }
 
-/// t1961 — numeric request fields are JSON numbers; representative body round-trips; empty 00707.
+/// t1961 — numeric request fields are JSON numbers; representative body round-trips (response numerics via string_or_number); empty 00707.
 #[test]
 fn t1961_request_and_response_round_trip() {
     let v = serde_json::to_value(T1961Request::new()).expect("serialize t1961");
@@ -1803,14 +1814,16 @@ fn t1961_request_and_response_round_trip() {
     assert!(v["t1961InBlock"]["sjanday"].is_number(), "sjanday numeric");
     assert!(v["t1961InBlock"]["ejanday"].is_number(), "ejanday numeric");
     assert!(v["t1961InBlock"]["idx"].is_number(), "idx numeric");
-    let resp: T1961Response = serde_json::from_str(r#"{"rsp_cd": "00000", "t1961OutBlock": {"idx": "x"}, "t1961OutBlock1": [{"hname": "X1"}]}"#).expect("t1961 body round-trips");
+    let _ = &v;
+    let resp: T1961Response = serde_json::from_str(r#"{"rsp_cd": "00000", "t1961OutBlock": {"idx": "x"}, "t1961OutBlock1": [{"hname": "X1", "price": 41945}]}"#).expect("t1961 body round-trips");
     assert_eq!(resp.outblock1[0].hname, "X1");
     assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock1[0].price, "41945", "price from JSON number via string_or_number");
     let empty: T1961Response = serde_json::from_str(r#"{"rsp_cd":"00707","t1961OutBlock":{},"t1961OutBlock1":[]}"#).expect("empty deserializes");
     assert!(empty.outblock1.is_empty());
 }
 
-/// t1966 — numeric request fields are JSON numbers; representative body round-trips; empty 00707.
+/// t1966 — numeric request fields are JSON numbers; representative body round-trips (response numerics via string_or_number); empty 00707.
 #[test]
 fn t1966_request_and_response_round_trip() {
     let v = serde_json::to_value(T1966Request::new()).expect("serialize t1966");
@@ -1820,21 +1833,25 @@ fn t1966_request_and_response_round_trip() {
     assert!(v["t1966InBlock"]["sjanday"].is_number(), "sjanday numeric");
     assert!(v["t1966InBlock"]["ejanday"].is_number(), "ejanday numeric");
     assert!(v["t1966InBlock"]["idx"].is_number(), "idx numeric");
-    let resp: T1966Response = serde_json::from_str(r#"{"rsp_cd": "00000", "t1966OutBlock": {"idx": "x"}, "t1966OutBlock1": [{"hname": "X1"}]}"#).expect("t1966 body round-trips");
+    let _ = &v;
+    let resp: T1966Response = serde_json::from_str(r#"{"rsp_cd": "00000", "t1966OutBlock": {"idx": "x"}, "t1966OutBlock1": [{"hname": "X1", "price": 41945}]}"#).expect("t1966 body round-trips");
     assert_eq!(resp.outblock1[0].hname, "X1");
     assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock1[0].price, "41945", "price from JSON number via string_or_number");
     let empty: T1966Response = serde_json::from_str(r#"{"rsp_cd":"00707","t1966OutBlock":{},"t1966OutBlock1":[]}"#).expect("empty deserializes");
     assert!(empty.outblock1.is_empty());
 }
 
-/// t1921 — numeric request fields are JSON numbers; representative body round-trips; empty 00707.
+/// t1921 — numeric request fields are JSON numbers; representative body round-trips (response numerics via string_or_number); empty 00707.
 #[test]
 fn t1921_request_and_response_round_trip() {
     let v = serde_json::to_value(T1921Request::new("005930")).expect("serialize t1921");
     assert!(v["t1921InBlock"]["idx"].is_number(), "idx numeric");
-    let resp: T1921Response = serde_json::from_str(r#"{"rsp_cd": "00000", "t1921OutBlock": {"date": "x", "cnt": "x", "idx": "x"}, "t1921OutBlock1": [{"mmdate": "X1"}]}"#).expect("t1921 body round-trips");
+    let _ = &v;
+    let resp: T1921Response = serde_json::from_str(r#"{"rsp_cd": "00000", "t1921OutBlock": {"date": "x", "cnt": "x", "idx": "x"}, "t1921OutBlock1": [{"mmdate": "X1", "close": 41945}]}"#).expect("t1921 body round-trips");
     assert_eq!(resp.outblock1[0].mmdate, "X1");
     assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock1[0].close, "41945", "close from JSON number via string_or_number");
     let empty: T1921Response = serde_json::from_str(r#"{"rsp_cd":"00707","t1921OutBlock":{},"t1921OutBlock1":[]}"#).expect("empty deserializes");
     assert!(empty.outblock1.is_empty());
 }
