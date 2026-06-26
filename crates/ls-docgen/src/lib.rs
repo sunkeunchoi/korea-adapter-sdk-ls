@@ -937,6 +937,7 @@ mod tests {
             "t2111", "t2112", "t8402", "t8403", "t8434",
             "t1988", "t3320",
             "t9945", "t3202", "t3401", "t8410", "t8451", "t8419", "t4203",
+            "t1901",
             "CSPAT00601", "CSPAT00701", "CSPAT00801", "t0425",
             "o3101", "o3121",
             "K3_",
@@ -1025,9 +1026,11 @@ mod tests {
         // CSPAT00701 (modify)/CSPAT00801 (cancel) + t0425 (reconcile read) each certified
         // on a clean guarded paper order-chain smoke (`make live-smoke-order-chain`) —
         // add 4 more. They stop at Implemented; Recommended is gated on ADR 0008.
+        // t1901 ETF현재가 flipped Implemented on a clean typed paper smoke
+        // (`make live-smoke-t1901`, rsp_cd 00000) — add 1 more (plan -002 Track 2).
         assert_eq!(
             reference.len(),
-            110,
+            111,
             "index + the implemented reference pages"
         );
 

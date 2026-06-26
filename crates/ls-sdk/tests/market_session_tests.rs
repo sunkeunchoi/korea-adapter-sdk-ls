@@ -14,7 +14,8 @@ use ls_sdk::market_session::{
     T1664Request, T1664Response, T1825OutBlock1, T1825Request, T1825Response, T1826OutBlock,
     T1826Request, T1826Response, T1859OutBlock1, T1859Request, T1859Response, T1958Request,
     T1958Response, T1964OutBlock1, T1964Request, T1964Response, T1485Request, T1485Response,
-    T1511Request, T1511Response, T1516Request, T1516Response, T8424Request, T8424Response,
+    T1511Request, T1511Response, T1516Request, T1516Response, T1901Request, T1901Response,
+    T8424Request, T8424Response,
     T2301Request, T2301Response, T2522OutBlock1, T2522Request, T2522Response, T8401OutBlock,
     T8401Request, T8401Response, T8426OutBlock, T8426Request, T8426Response, T8433OutBlock,
     T8433Request, T8433Response, T8435OutBlock, T8435Request, T8435Response, T8467OutBlock,
@@ -1718,6 +1719,46 @@ fn t1511_volume_number_or_string_yields_same_value() {
     .expect("string volume must deserialize");
     assert_eq!(as_number.outblock.volume, "263165");
     assert_eq!(as_number.outblock.volume, as_string.outblock.volume);
+}
+
+// ---- t1901 ETF현재가 (plan -002 Track 2; market_session single-object read) ----
+
+/// `t1901` serializes to `{"t1901InBlock":{"shcode":"069500"}}` (shcode-only,
+/// non-paginated — no tr_cont tokens in the body).
+#[test]
+fn t1901_request_serializes_to_inblock() {
+    let value = serde_json::to_value(T1901Request::new("069500")).expect("serialize t1901 request");
+    assert_eq!(value["t1901InBlock"]["shcode"], "069500", "shcode stays a string");
+    assert!(value.get("tr_cont").is_none(), "non-paginated: no tr_cont");
+}
+
+/// The numeric `price` field tolerates a JSON number or string via
+/// `string_or_number` (the gateway sends ETF prices as integers).
+#[test]
+fn t1901_price_number_or_string_yields_same_value() {
+    let as_number: T1901Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "t1901OutBlock": { "hname": "KODEX 200", "price": 135155 }
+    }))
+    .expect("number price must deserialize");
+    let as_string: T1901Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "t1901OutBlock": { "hname": "KODEX 200", "price": "135155" }
+    }))
+    .expect("string price must deserialize");
+    assert_eq!(as_number.outblock.price, "135155");
+    assert_eq!(as_number.outblock.price, as_string.outblock.price);
+}
+
+/// An empty/sparse result (e.g. a `00707` no-data envelope with no out-block)
+/// deserializes cleanly to defaults — no panic on a missing `t1901OutBlock`.
+#[test]
+fn t1901_empty_result_deserializes_to_defaults() {
+    let empty: T1901Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "rsp_msg": "조회할 자료가 없습니다."
+    }))
+    .expect("an empty t1901 envelope must deserialize");
+    assert_eq!(empty.rsp_cd, "00707");
+    assert!(empty.outblock.hname.is_empty(), "no out-block → default hname");
+    assert!(empty.outblock.price.is_empty(), "no out-block → default price");
 }
 
 /// Covers R4, R7. `t1485` serializes to `{"t1485InBlock":{"upcode":"001","gubun":"1"}}`.

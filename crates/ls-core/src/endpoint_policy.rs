@@ -145,6 +145,20 @@ pub const T1102_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(5),
 };
 
+/// t1901 — ETF현재가(시세)조회 (ETF current-price snapshot; non-paginated).
+pub const T1901_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1901",
+    path: "/stock/etf",
+    module: "stock",
+    group: "[주식] ETF",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// t1101 — 주식 현재가호가 조회 (market-data current-price + order book).
 pub const T1101_POLICY: EndpointPolicy = EndpointPolicy {
     tr_code: "t1101",
@@ -2087,6 +2101,7 @@ mod tests {
             T1485_POLICY,
             T1516_POLICY,
             T1514_POLICY,
+            T1901_POLICY,
             CSPAQ12200_POLICY,
             CSPAQ12300_POLICY,
             CSPAQ22200_POLICY,

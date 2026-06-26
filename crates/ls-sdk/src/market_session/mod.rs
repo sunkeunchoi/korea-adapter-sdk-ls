@@ -132,6 +132,98 @@ pub struct T1102Response {
     pub outblock: T1102OutBlock,
 }
 
+// ---------------------------------------------------------------------------
+// t1901 — ETF현재가(시세)조회 (ETF current-price snapshot). market_session read,
+// single OutBlock object; path /stock/etf. Mirrors t1102's single-object shape.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1901` — the ETF short code (단축코드). `shcode`-only.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1901InBlock {
+    /// Short code / 단축코드 (e.g. `"069500"` KODEX 200).
+    pub shcode: String,
+}
+
+/// `t1901` request — serializes to `{"t1901InBlock":{"shcode":...}}`. Not paginated.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1901Request {
+    #[serde(rename = "t1901InBlock")]
+    pub inblock: T1901InBlock,
+}
+
+impl T1901Request {
+    /// Build a `t1901` ETF quote request for one short code.
+    pub fn new(shcode: impl Into<String>) -> Self {
+        T1901Request {
+            inblock: T1901InBlock {
+                shcode: shcode.into(),
+            },
+        }
+    }
+}
+
+/// `t1901OutBlock` — the ETF snapshot quote (a representative, spec-grounded subset
+/// of the LS `t1901OutBlock`). Numeric-bearing fields use [`ls_core::string_or_number`]
+/// (the gateway sends numbers or strings); `#[serde(default)]` lets a sparse out-block
+/// deserialize, and unknown fields are ignored.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1901OutBlock {
+    /// Korean name / 한글 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Sign / 전일대비 구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change vs. previous close / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Rate of change (%) / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Accumulated volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Reference (base) price / 기준가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub recprice: String,
+    /// Open / 시가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    /// High / 고가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    /// Low / 저가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    /// Upper limit price / 상한가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub uplmtprice: String,
+    /// Lower limit price / 하한가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dnlmtprice: String,
+    /// Short code / 단축코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Trading value / 누적거래대금.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub value: String,
+}
+
+/// `t1901` response envelope — the ETF snapshot under the `t1901OutBlock` key.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1901Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1901OutBlock", default)]
+    pub outblock: T1901OutBlock,
+}
+
 /// Input block for `t1101` — the symbol to look up.
 ///
 /// `shcode` is the 6-digit short code (단축코드). Unlike `t1102`, the `t1101`
@@ -5335,6 +5427,15 @@ impl MarketSession {
     pub async fn quote(&self, req: &T1102Request) -> LsResult<T1102Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T1102_POLICY, req)
+            .await
+    }
+
+    /// Fetch the ETF current-price (시세) snapshot for one short code via `t1901`.
+    /// Non-paginated; dispatches through [`ls_core::Inner::post`] on the MarketData
+    /// bucket.
+    pub async fn etf_quote(&self, req: &T1901Request) -> LsResult<T1901Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1901_POLICY, req)
             .await
     }
 

@@ -80,6 +80,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t1826` | 종목Q클릭검색리스트조회(씽큐스마트) | `market_session` | implemented, not yet recommended |
 | `t1859` | 서버저장조건 조건검색 | `market_session` | implemented, not yet recommended |
 | `t1866` | 서버저장조건 리스트조회 | `paginated` | implemented, not yet recommended |
+| `t1901` | ETF현재가(시세)조회 | `market_session` | implemented, not yet recommended |
 | `t1958` | ELW종목비교 | `market_session` | implemented, not yet recommended |
 | `t1988` | 기초자산리스트조회 | `market_session` | implemented, not yet recommended |
 | `t2111` | 선물/옵션현재가(시세)조회 | `market_session` | implemented, not yet recommended |
