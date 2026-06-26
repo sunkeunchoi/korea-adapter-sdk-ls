@@ -23,11 +23,11 @@ dependencies:
   # dedup rather than re-dispatch.
   strong_order_fields: [OrgOrdNo, IsuNo, OrdQty]
 support:
-  # Tracked-not-implemented: the order class is recorded in metadata so upstream
-  # changes can be reasoned about, but the live-paper-order Implemented gate
-  # (ADR 0008 / order-safety §4) has not been run for this TR yet.
+  # Implemented: cancel leg certified on a clean guarded paper order-chain smoke
+  # (rsp_cd 00463 취소주문 완료; `make live-smoke-order-chain`, plan -005). Stops at
+  # Implemented — Recommended is a separate pass (ADR 0008 / order-safety §4).
   tracked: true
-  implemented: false
+  implemented: true
   recommended: false
 maintenance:
   source_spec_hash: be317c823cc5

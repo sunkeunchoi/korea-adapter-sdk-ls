@@ -17,6 +17,9 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | recommended |
 | `CSPAQ12300` | BEP단가조회 | `account` | implemented, not yet recommended |
 | `CSPAQ22200` | 현물계좌예수금 주문가능금액 총평가2 | `account` | implemented, not yet recommended |
+| `CSPAT00601` | 현물 정규주문 (cash equity order submission) | `orders` | implemented, not yet recommended |
+| `CSPAT00701` | 현물정정주문 (cash equity order modify) | `orders` | implemented, not yet recommended |
+| `CSPAT00801` | 현물취소주문 (cash equity order cancel) | `orders` | implemented, not yet recommended |
 | `FC9` | 선물 체결 실시간 시세 | `realtime` | implemented, not yet recommended |
 | `FH9` | 선물 호가 실시간 시세 | `realtime` | implemented, not yet recommended |
 | `GSC` | 해외주식 체결 실시간 시세 | `realtime` | implemented, not yet recommended |
@@ -50,6 +53,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `o3125` | 해외선물옵션 현재가(종목정보) 조회 | `market_session` | implemented, not yet recommended |
 | `o3126` | 해외선물옵션 현재가호가 조회 | `market_session` | implemented, not yet recommended |
 | `revoke` | 접근토큰 폐기 (OAuth2 token revoke) | `standalone` | implemented, not yet recommended |
+| `t0425` | 주식체결/미체결 (stock filled/unfilled order inquiry) | `paginated` | implemented, not yet recommended |
 | `t1101` | 주식 현재가호가 조회 | `market_session` | recommended |
 | `t1102` | 주식 현재가(시세) 조회 | `market_session` | recommended |
 | `t1403` | 신규상장종목조회 | `paginated` | implemented, not yet recommended |

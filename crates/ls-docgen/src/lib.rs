@@ -521,7 +521,7 @@ fn render_reference_index(implemented: &BTreeMap<&String, &TrMetadata>) -> Strin
 /// keyed by repo-relative path.
 ///
 /// Filters to `support.implemented == true`, so a tracked-but-unimplemented TR
-/// such as `CSPAT00601` is excluded from Reference while still appearing in the
+/// such as `t1964` is excluded from Reference while still appearing in the
 /// Dependency Docs (R3). Each entry carries the "not yet recommended" banner
 /// whenever `support.recommended == false` (R4).
 pub fn render_reference_docs(
@@ -929,6 +929,7 @@ mod tests {
             "t2111", "t2112", "t8402", "t8403", "t8434",
             "t1988", "t3320",
             "t9945", "t3202", "t3401", "t8410", "t8451", "t8419", "t4203",
+            "CSPAT00601", "CSPAT00701", "CSPAT00801", "t0425",
             "o3101", "o3121",
             "K3_",
             "H1_", "HA_", "S2_", "US3", "UH1", "US2", "GSC", "GSH", "OVC", "OVH", "OC0", "OH0",
@@ -1012,19 +1013,27 @@ mod tests {
         // Domestic stock master/reference breadth wave (plan -004): the seven reads
         // t9945/t3202/t3401/t8410/t8451/t8419/t4203 each flipped on a clean non-empty
         // paper smoke — add 7 more.
+        // Order flip-certify wave (plan -005): the three order TRs CSPAT00601 (submit)/
+        // CSPAT00701 (modify)/CSPAT00801 (cancel) + t0425 (reconcile read) each certified
+        // on a clean guarded paper order-chain smoke (`make live-smoke-order-chain`) —
+        // add 4 more. They stop at Implemented; Recommended is gated on ADR 0008.
         assert_eq!(
             reference.len(),
-            105,
+            109,
             "index + the implemented reference pages"
         );
 
-        // The tracked-but-unimplemented order TR is excluded from Reference …
-        assert!(!reference.contains_key(Path::new("docs/reference/CSPAT00601.md")));
+        // A tracked-but-unimplemented TR (t1964, empty-board ELW, still Tracked) is
+        // excluded from Reference …
+        assert!(!reference.contains_key(Path::new("docs/reference/t1964.md")));
         let ref_index = &reference[Path::new("docs/reference/index.md")];
-        assert!(!ref_index.contains("CSPAT00601"));
+        assert!(!ref_index.contains("t1964"));
 
         // … but still appears in the Dependency Docs.
-        assert!(dependency.contains_key(Path::new("docs/tr-dependencies/CSPAT00601.md")));
+        assert!(dependency.contains_key(Path::new("docs/tr-dependencies/t1964.md")));
+
+        // The now-implemented order TRs DO appear in Reference (banner-carrying).
+        assert!(reference.contains_key(Path::new("docs/reference/CSPAT00601.md")));
     }
 
     #[test]

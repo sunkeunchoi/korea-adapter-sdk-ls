@@ -1,7 +1,7 @@
 //! Integration coverage for the API Drift signal model (U4) against the real
 //! authored metadata — the Acceptance Examples' support-aware exit gating.
 //!
-//! Support states come from `<repo>/metadata` (t1102 implemented, CSPAT00601
+//! Support states come from `<repo>/metadata` (t1102 implemented, t1964
 //! tracked-only), so these assert the end-to-end R17b contract, not a synthetic
 //! support map.
 
@@ -330,15 +330,15 @@ fn removal_via_code_set_is_support_aware() {
     assert!(!removed.gates, "an untracked removal is report-only (R12)");
     assert!(!report.gates());
 
-    // A maintained tracked-only TR (CSPAT00601) absent from the staged inventory
-    // → real removal, gates.
-    let committed = run(vec![shape("t1102", vec![])], &["CSPAT00601"]);
+    // A maintained tracked-only TR (t1964, empty-board ELW, still Tracked) absent
+    // from the staged inventory → real removal, gates.
+    let committed = run(vec![shape("t1102", vec![])], &["t1964"]);
     let staged = run(vec![shape("t1102", vec![])], &[]);
     let report = compare(&committed, &staged, &trs);
     let removed = report
         .findings
         .iter()
-        .find(|f| f.tr_code == "CSPAT00601")
+        .find(|f| f.tr_code == "t1964")
         .unwrap();
     assert_eq!(removed.severity, Severity::Maintenance);
     assert!(
