@@ -674,7 +674,7 @@ mod tests {
     /// `t1101`, `t1102`, `t8412`, `CSPAQ12200`, `S3_`, `CSPAT00601`) plus the 41
     /// read-only stock/sector TRs brought into tracked-only maintenance ownership
     /// (incl. the Wave A sector cluster t8424/t1511/t1514/t1516/t1485).
-    const TRACKED_TRS: [&str; 127] = [
+    const TRACKED_TRS: [&str; 129] = [
         "AS0",
         "AS1",
         "AS2",
@@ -733,7 +733,9 @@ mod tests {
         "t0425",
         "t1101",
         "t1102",
+        "t1305",
         "t1403",
+        "t1404",
         "t1441",
         "t1452",
         "t1463",
