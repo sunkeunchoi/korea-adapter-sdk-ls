@@ -5558,6 +5558,122 @@ pub struct T3202Response {
     pub outblock: Vec<T3202OutBlock>,
 }
 
+// ---------------------------------------------------------------------------
+// t1302 — 주식분별주가조회 (minute-by-minute price). Non-paginated; a `cts_time`
+// summary out-block + a `t1302OutBlock1[]` minute-row array (de_vec_or_single).
+// `cnt` is the genuinely-numeric request count (JSON number / IGW40011 guard);
+// `gubun`/`time`/`exchgubun` stay strings. Wire keys from the raw res_example
+// (KTD3). Plan -004 batch flip.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1302` — 주식분별주가 query (one symbol, minute interval).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1302InBlock {
+    /// Short code / 단축코드.
+    pub shcode: String,
+    /// Interval division / 분주기 (0:30초 1:1분 ...).
+    pub gubun: String,
+    /// Base time / 기준시간 (HHMMSS; empty = latest).
+    pub time: String,
+    /// Requested row count / 요청건수 (serialized as a JSON number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub cnt: String,
+    /// Exchange distinction / 거래소구분 (K/N/U).
+    pub exchgubun: String,
+}
+
+/// `t1302` request — wraps the input block under the `t1302InBlock` key.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1302Request {
+    #[serde(rename = "t1302InBlock")]
+    pub inblock: T1302InBlock,
+}
+
+impl T1302Request {
+    /// Build a `t1302` minute-price request. `time` empty (latest), `exchgubun`="K".
+    pub fn new(
+        shcode: impl Into<String>,
+        gubun: impl Into<String>,
+        cnt: impl Into<String>,
+    ) -> Self {
+        T1302Request {
+            inblock: T1302InBlock {
+                shcode: shcode.into(),
+                gubun: gubun.into(),
+                time: String::new(),
+                cnt: cnt.into(),
+                exchgubun: "K".to_string(),
+            },
+        }
+    }
+}
+
+/// `t1302OutBlock` — the minute-price summary (echoed continuation time).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1302OutBlock {
+    /// Echoed continuation time / 연속시간.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cts_time: String,
+}
+
+/// `t1302OutBlock1` — one minute-price row (representative subset).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1302OutBlock1 {
+    /// Trade time / 체결시간.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub chetime: String,
+    /// Open / 시가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    /// High / 고가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    /// Low / 저가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    /// Close / 종가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub close: String,
+    /// Change vs prior / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Accumulated volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Interval volume / 분거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cvolume: String,
+    /// Sell-trade volume / 매도체결량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub mdvolume: String,
+    /// Buy-trade volume / 매수체결량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub msvolume: String,
+}
+
+/// `t1302` response: summary `outblock` + `outblock1` minute-row array
+/// (single-or-array tolerant).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1302Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1302OutBlock", default)]
+    pub outblock: T1302OutBlock,
+    #[serde(
+        rename = "t1302OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1302OutBlock1>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -5582,6 +5698,14 @@ impl MarketSession {
     pub async fn quote(&self, req: &T1102Request) -> LsResult<T1102Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T1102_POLICY, req)
+            .await
+    }
+
+    /// Fetch minute-by-minute prices (분별주가) for one symbol via `t1302`.
+    /// Non-paginated single call on the MarketData bucket (plan -004).
+    pub async fn minute_prices(&self, req: &T1302Request) -> LsResult<T1302Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1302_POLICY, req)
             .await
     }
 

@@ -8,6 +8,7 @@
 
 use ls_core::{Inner, LsError};
 use ls_sdk::market_session::{
+    T1302Request, T1302Response,
     T1101OutBlock, T1101Request, T1101Response, T1102OutBlock, T1102Request, T1102Response,
     T1531Request, T1531Response, T1537Request, T1537Response, T1601Request, T1601Response,
     T1615Request, T1615Response, T1640Request, T1640Response, T1662Request, T1662Response,
@@ -4395,4 +4396,37 @@ fn t3202_empty_result_set_deserializes_as_pending() {
     }))
     .expect("empty schedule deserializes");
     assert!(empty.outblock.is_empty(), "empty schedule is the pending case");
+}
+
+// === plan -004 batch A — t1302 분별주가 offline coverage =====================
+
+/// t1302 — 주식분별주가. `cnt` is a JSON number (IGW40011 guard); a representative
+/// minute-row body round-trips with a real value; empty 00707 recognized.
+#[test]
+fn t1302_request_and_response_round_trip() {
+    let v = serde_json::to_value(T1302Request::new("001200", "0", "20")).expect("serialize t1302");
+    let ib = &v["t1302InBlock"];
+    assert!(ib["cnt"].is_number(), "cnt is a JSON number (IGW40011 guard)");
+    assert_eq!(ib["shcode"], "001200", "shcode stays a string");
+    assert_eq!(ib["exchgubun"], "K");
+
+    let resp: T1302Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1302OutBlock": { "cts_time": "101700" },
+        "t1302OutBlock1": [{ "chetime": "102700", "close": 3685, "volume": 321201, "sign": "2" }]
+    })).expect("t1302 body round-trips");
+    assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock1[0].close, "3685", "close from JSON number");
+    assert_eq!(resp.outblock1[0].volume, "321201", "volume from JSON number");
+
+    let single: T1302Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "t1302OutBlock": { "cts_time": "" },
+        "t1302OutBlock1": { "chetime": "102700", "close": 3685 }
+    })).expect("single row tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+
+    let empty: T1302Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t1302OutBlock": { "cts_time": "" }, "t1302OutBlock1": []
+    })).expect("empty 00707 deserializes");
+    assert!(empty.outblock1.is_empty(), "empty board is the pending case");
 }

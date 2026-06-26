@@ -1090,3 +1090,762 @@ pub struct T4203Response {
     )]
     pub outblock1: Vec<T4203OutBlock1>,
 }
+
+// ---------------------------------------------------------------------------
+// t8417 — 업종차트(틱/n틱) (plan -004 batch flip). Chart family: header summary
+// out-block + `de_vec_or_single` candle-row array, self-paginated on the body
+// `cts_date`/`cts_time` cursor (header `tr_cont`/`tr_cont_key` skipped). Numeric
+// request counts (`ncnt`/`qrycnt`) serialize as JSON numbers (IGW40011 guard).
+// Wire keys + array-ness read from the raw `res_example` (KTD3).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t8417` — 업종차트(틱/n틱) chart query.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8417InBlock {
+    /// Short/sector code / 단축코드.
+    pub shcode: String,
+    /// Tick/N-min count / 주기 (JSON number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub ncnt: String,
+    /// Requested row count / 요청건수 (JSON number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub qrycnt: String,
+    /// 조회영업일수.
+    pub nday: String,
+    /// 시작일자.
+    pub sdate: String,
+    /// 시작시간.
+    pub stime: String,
+    /// 종료일자.
+    pub edate: String,
+    /// 종료시간.
+    pub etime: String,
+    /// 연속일자(body cursor).
+    pub cts_date: String,
+    /// 연속시간(body cursor).
+    pub cts_time: String,
+    /// 압축여부.
+    pub comp_yn: String,
+}
+
+/// `t8417` request (self-paginated; body cursor, header cursors skipped).
+#[derive(Serialize, Debug, Clone)]
+pub struct T8417Request {
+    #[serde(rename = "t8417InBlock")]
+    pub inblock: T8417InBlock,
+    #[serde(skip)]
+    pub tr_cont: String,
+    #[serde(skip)]
+    pub tr_cont_key: String,
+}
+ls_core::impl_has_pagination!(T8417Request);
+impl T8417Request {
+    /// Build a first-page `t8417` chart request. Continuation/time fields start empty.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(shcode: impl Into<String>, ncnt: impl Into<String>, qrycnt: impl Into<String>, nday: impl Into<String>, sdate: impl Into<String>, edate: impl Into<String>, comp_yn: impl Into<String>) -> Self {
+        T8417Request {
+            inblock: T8417InBlock {
+                shcode: shcode.into(),
+                ncnt: ncnt.into(),
+                qrycnt: qrycnt.into(),
+                nday: nday.into(),
+                sdate: sdate.into(),
+                stime: String::new(),
+                edate: edate.into(),
+                etime: String::new(),
+                cts_date: String::new(),
+                cts_time: String::new(),
+                comp_yn: comp_yn.into(),
+            },
+            tr_cont: String::new(),
+            tr_cont_key: String::new(),
+        }
+    }
+}
+
+/// `t8417OutBlock` — chart summary (OHLC aggregates + echoed cursor).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8417OutBlock {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jisiga: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jihigh: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jilow: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jiclose: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jivolume: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub disiga: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dihigh: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dilow: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diclose: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cts_date: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cts_time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub s_time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub e_time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dshmin: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub rec_count: String,
+}
+
+/// `t8417OutBlock1` — one chart candle row.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8417OutBlock1 {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub close: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jdiff_vol: String,
+}
+
+/// `t8417` response (single page): summary `outblock` + `outblock1` candle array.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8417Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t8417OutBlock", default)]
+    pub outblock: T8417OutBlock,
+    #[serde(rename = "t8417OutBlock1", default, deserialize_with = "ls_core::de_vec_or_single")]
+    pub outblock1: Vec<T8417OutBlock1>,
+}
+
+// ---------------------------------------------------------------------------
+// t8418 — 업종차트(N분) (plan -004 batch flip). Chart family: header summary
+// out-block + `de_vec_or_single` candle-row array, self-paginated on the body
+// `cts_date`/`cts_time` cursor (header `tr_cont`/`tr_cont_key` skipped). Numeric
+// request counts (`ncnt`/`qrycnt`) serialize as JSON numbers (IGW40011 guard).
+// Wire keys + array-ness read from the raw `res_example` (KTD3).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t8418` — 업종차트(N분) chart query.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8418InBlock {
+    /// Short/sector code / 단축코드.
+    pub shcode: String,
+    /// Tick/N-min count / 주기 (JSON number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub ncnt: String,
+    /// Requested row count / 요청건수 (JSON number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub qrycnt: String,
+    /// 조회영업일수.
+    pub nday: String,
+    /// 시작일자.
+    pub sdate: String,
+    /// 시작시간.
+    pub stime: String,
+    /// 종료일자.
+    pub edate: String,
+    /// 종료시간.
+    pub etime: String,
+    /// 연속일자(body cursor).
+    pub cts_date: String,
+    /// 연속시간(body cursor).
+    pub cts_time: String,
+    /// 압축여부.
+    pub comp_yn: String,
+}
+
+/// `t8418` request (self-paginated; body cursor, header cursors skipped).
+#[derive(Serialize, Debug, Clone)]
+pub struct T8418Request {
+    #[serde(rename = "t8418InBlock")]
+    pub inblock: T8418InBlock,
+    #[serde(skip)]
+    pub tr_cont: String,
+    #[serde(skip)]
+    pub tr_cont_key: String,
+}
+ls_core::impl_has_pagination!(T8418Request);
+impl T8418Request {
+    /// Build a first-page `t8418` chart request. Continuation/time fields start empty.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(shcode: impl Into<String>, ncnt: impl Into<String>, qrycnt: impl Into<String>, nday: impl Into<String>, sdate: impl Into<String>, edate: impl Into<String>, comp_yn: impl Into<String>) -> Self {
+        T8418Request {
+            inblock: T8418InBlock {
+                shcode: shcode.into(),
+                ncnt: ncnt.into(),
+                qrycnt: qrycnt.into(),
+                nday: nday.into(),
+                sdate: sdate.into(),
+                stime: String::new(),
+                edate: edate.into(),
+                etime: String::new(),
+                cts_date: String::new(),
+                cts_time: String::new(),
+                comp_yn: comp_yn.into(),
+            },
+            tr_cont: String::new(),
+            tr_cont_key: String::new(),
+        }
+    }
+}
+
+/// `t8418OutBlock` — chart summary (OHLC aggregates + echoed cursor).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8418OutBlock {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jisiga: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jihigh: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jilow: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jiclose: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jivolume: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub disiga: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dihigh: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dilow: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diclose: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub disvalue: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cts_date: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cts_time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub s_time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub e_time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dshmin: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub rec_count: String,
+}
+
+/// `t8418OutBlock1` — one chart candle row.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8418OutBlock1 {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub close: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jdiff_vol: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub value: String,
+}
+
+/// `t8418` response (single page): summary `outblock` + `outblock1` candle array.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8418Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t8418OutBlock", default)]
+    pub outblock: T8418OutBlock,
+    #[serde(rename = "t8418OutBlock1", default, deserialize_with = "ls_core::de_vec_or_single")]
+    pub outblock1: Vec<T8418OutBlock1>,
+}
+
+// ---------------------------------------------------------------------------
+// t8411 — 주식차트(틱/n틱) (plan -004 batch flip). Chart family: header summary
+// out-block + `de_vec_or_single` candle-row array, self-paginated on the body
+// `cts_date`/`cts_time` cursor (header `tr_cont`/`tr_cont_key` skipped). Numeric
+// request counts (`ncnt`/`qrycnt`) serialize as JSON numbers (IGW40011 guard).
+// Wire keys + array-ness read from the raw `res_example` (KTD3).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t8411` — 주식차트(틱/n틱) chart query.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8411InBlock {
+    /// Short/sector code / 단축코드.
+    pub shcode: String,
+    /// Tick/N-min count / 주기 (JSON number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub ncnt: String,
+    /// Requested row count / 요청건수 (JSON number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub qrycnt: String,
+    /// 조회영업일수.
+    pub nday: String,
+    /// 시작일자.
+    pub sdate: String,
+    /// 시작시간.
+    pub stime: String,
+    /// 종료일자.
+    pub edate: String,
+    /// 종료시간.
+    pub etime: String,
+    /// 연속일자(body cursor).
+    pub cts_date: String,
+    /// 연속시간(body cursor).
+    pub cts_time: String,
+    /// 압축여부.
+    pub comp_yn: String,
+}
+
+/// `t8411` request (self-paginated; body cursor, header cursors skipped).
+#[derive(Serialize, Debug, Clone)]
+pub struct T8411Request {
+    #[serde(rename = "t8411InBlock")]
+    pub inblock: T8411InBlock,
+    #[serde(skip)]
+    pub tr_cont: String,
+    #[serde(skip)]
+    pub tr_cont_key: String,
+}
+ls_core::impl_has_pagination!(T8411Request);
+impl T8411Request {
+    /// Build a first-page `t8411` chart request. Continuation/time fields start empty.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(shcode: impl Into<String>, ncnt: impl Into<String>, qrycnt: impl Into<String>, nday: impl Into<String>, sdate: impl Into<String>, edate: impl Into<String>, comp_yn: impl Into<String>) -> Self {
+        T8411Request {
+            inblock: T8411InBlock {
+                shcode: shcode.into(),
+                ncnt: ncnt.into(),
+                qrycnt: qrycnt.into(),
+                nday: nday.into(),
+                sdate: sdate.into(),
+                stime: String::new(),
+                edate: edate.into(),
+                etime: String::new(),
+                cts_date: String::new(),
+                cts_time: String::new(),
+                comp_yn: comp_yn.into(),
+            },
+            tr_cont: String::new(),
+            tr_cont_key: String::new(),
+        }
+    }
+}
+
+/// `t8411OutBlock` — chart summary (OHLC aggregates + echoed cursor).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8411OutBlock {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jisiga: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jihigh: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jilow: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jiclose: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jivolume: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub disiga: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dihigh: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dilow: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diclose: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub highend: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub lowend: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cts_date: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cts_time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub s_time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub e_time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dshmin: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub rec_count: String,
+}
+
+/// `t8411OutBlock1` — one chart candle row.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8411OutBlock1 {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub close: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jdiff_vol: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub value: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jongchk: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub rate: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+}
+
+/// `t8411` response (single page): summary `outblock` + `outblock1` candle array.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8411Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t8411OutBlock", default)]
+    pub outblock: T8411OutBlock,
+    #[serde(rename = "t8411OutBlock1", default, deserialize_with = "ls_core::de_vec_or_single")]
+    pub outblock1: Vec<T8411OutBlock1>,
+}
+
+// ---------------------------------------------------------------------------
+// t8452 — (통합)주식챠트(N분) (plan -004 batch flip). Chart family: header summary
+// out-block + `de_vec_or_single` candle-row array, self-paginated on the body
+// `cts_date`/`cts_time` cursor (header `tr_cont`/`tr_cont_key` skipped). Numeric
+// request counts (`ncnt`/`qrycnt`) serialize as JSON numbers (IGW40011 guard).
+// Wire keys + array-ness read from the raw `res_example` (KTD3).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t8452` — (통합)주식챠트(N분) chart query.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8452InBlock {
+    /// Short/sector code / 단축코드.
+    pub shcode: String,
+    /// Tick/N-min count / 주기 (JSON number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub ncnt: String,
+    /// Requested row count / 요청건수 (JSON number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub qrycnt: String,
+    /// 조회영업일수.
+    pub nday: String,
+    /// 시작일자.
+    pub sdate: String,
+    /// 시작시간.
+    pub stime: String,
+    /// 종료일자.
+    pub edate: String,
+    /// 종료시간.
+    pub etime: String,
+    /// 연속일자(body cursor).
+    pub cts_date: String,
+    /// 연속시간(body cursor).
+    pub cts_time: String,
+    /// 압축여부.
+    pub comp_yn: String,
+    /// Exchange distinction / 거래소구분 (K/N/U).
+    pub exchgubun: String,
+}
+
+/// `t8452` request (self-paginated; body cursor, header cursors skipped).
+#[derive(Serialize, Debug, Clone)]
+pub struct T8452Request {
+    #[serde(rename = "t8452InBlock")]
+    pub inblock: T8452InBlock,
+    #[serde(skip)]
+    pub tr_cont: String,
+    #[serde(skip)]
+    pub tr_cont_key: String,
+}
+ls_core::impl_has_pagination!(T8452Request);
+impl T8452Request {
+    /// Build a first-page `t8452` chart request. Continuation/time fields start empty.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(shcode: impl Into<String>, ncnt: impl Into<String>, qrycnt: impl Into<String>, nday: impl Into<String>, sdate: impl Into<String>, edate: impl Into<String>, comp_yn: impl Into<String>, exchgubun: impl Into<String>) -> Self {
+        T8452Request {
+            inblock: T8452InBlock {
+                shcode: shcode.into(),
+                ncnt: ncnt.into(),
+                qrycnt: qrycnt.into(),
+                nday: nday.into(),
+                sdate: sdate.into(),
+                stime: String::new(),
+                edate: edate.into(),
+                etime: String::new(),
+                cts_date: String::new(),
+                cts_time: String::new(),
+                comp_yn: comp_yn.into(),
+                exchgubun: exchgubun.into(),
+            },
+            tr_cont: String::new(),
+            tr_cont_key: String::new(),
+        }
+    }
+}
+
+/// `t8452OutBlock` — chart summary (OHLC aggregates + echoed cursor).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8452OutBlock {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jisiga: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jihigh: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jilow: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jiclose: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jivolume: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub disiga: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dihigh: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dilow: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diclose: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub highend: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub lowend: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cts_date: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cts_time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub s_time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub e_time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dshmin: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub rec_count: String,
+}
+
+/// `t8452OutBlock1` — one chart candle row.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8452OutBlock1 {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub close: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jdiff_vol: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub value: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jongchk: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub rate: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+}
+
+/// `t8452` response (single page): summary `outblock` + `outblock1` candle array.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8452Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t8452OutBlock", default)]
+    pub outblock: T8452OutBlock,
+    #[serde(rename = "t8452OutBlock1", default, deserialize_with = "ls_core::de_vec_or_single")]
+    pub outblock1: Vec<T8452OutBlock1>,
+}
+
+// ---------------------------------------------------------------------------
+// t8453 — (통합)주식챠트(틱/N틱) (plan -004 batch flip). Chart family: header summary
+// out-block + `de_vec_or_single` candle-row array, self-paginated on the body
+// `cts_date`/`cts_time` cursor (header `tr_cont`/`tr_cont_key` skipped). Numeric
+// request counts (`ncnt`/`qrycnt`) serialize as JSON numbers (IGW40011 guard).
+// Wire keys + array-ness read from the raw `res_example` (KTD3).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t8453` — (통합)주식챠트(틱/N틱) chart query.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8453InBlock {
+    /// Short/sector code / 단축코드.
+    pub shcode: String,
+    /// Tick/N-min count / 주기 (JSON number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub ncnt: String,
+    /// Requested row count / 요청건수 (JSON number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub qrycnt: String,
+    /// 조회영업일수.
+    pub nday: String,
+    /// 시작일자.
+    pub sdate: String,
+    /// 시작시간.
+    pub stime: String,
+    /// 종료일자.
+    pub edate: String,
+    /// 종료시간.
+    pub etime: String,
+    /// 연속일자(body cursor).
+    pub cts_date: String,
+    /// 연속시간(body cursor).
+    pub cts_time: String,
+    /// 압축여부.
+    pub comp_yn: String,
+    /// Exchange distinction / 거래소구분 (K/N/U).
+    pub exchgubun: String,
+}
+
+/// `t8453` request (self-paginated; body cursor, header cursors skipped).
+#[derive(Serialize, Debug, Clone)]
+pub struct T8453Request {
+    #[serde(rename = "t8453InBlock")]
+    pub inblock: T8453InBlock,
+    #[serde(skip)]
+    pub tr_cont: String,
+    #[serde(skip)]
+    pub tr_cont_key: String,
+}
+ls_core::impl_has_pagination!(T8453Request);
+impl T8453Request {
+    /// Build a first-page `t8453` chart request. Continuation/time fields start empty.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(shcode: impl Into<String>, ncnt: impl Into<String>, qrycnt: impl Into<String>, nday: impl Into<String>, sdate: impl Into<String>, edate: impl Into<String>, comp_yn: impl Into<String>, exchgubun: impl Into<String>) -> Self {
+        T8453Request {
+            inblock: T8453InBlock {
+                shcode: shcode.into(),
+                ncnt: ncnt.into(),
+                qrycnt: qrycnt.into(),
+                nday: nday.into(),
+                sdate: sdate.into(),
+                stime: String::new(),
+                edate: edate.into(),
+                etime: String::new(),
+                cts_date: String::new(),
+                cts_time: String::new(),
+                comp_yn: comp_yn.into(),
+                exchgubun: exchgubun.into(),
+            },
+            tr_cont: String::new(),
+            tr_cont_key: String::new(),
+        }
+    }
+}
+
+/// `t8453OutBlock` — chart summary (OHLC aggregates + echoed cursor).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8453OutBlock {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jisiga: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jihigh: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jilow: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jiclose: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jivolume: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub disiga: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dihigh: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dilow: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diclose: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub highend: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub lowend: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cts_date: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cts_time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub s_time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub e_time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dshmin: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub rec_count: String,
+}
+
+/// `t8453OutBlock1` — one chart candle row.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8453OutBlock1 {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub close: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jdiff_vol: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jongchk: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub rate: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub pricechk: String,
+}
+
+/// `t8453` response (single page): summary `outblock` + `outblock1` candle array.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8453Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t8453OutBlock", default)]
+    pub outblock: T8453OutBlock,
+    #[serde(rename = "t8453OutBlock1", default, deserialize_with = "ls_core::de_vec_or_single")]
+    pub outblock1: Vec<T8453OutBlock1>,
+}

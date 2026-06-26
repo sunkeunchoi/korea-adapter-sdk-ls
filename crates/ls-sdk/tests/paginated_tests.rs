@@ -22,6 +22,8 @@ use ls_sdk::paginated::{
     T8410Request, T8410Response, T8451Request, T8451Response, T8419Request, T8419Response,
     T4203Request, T4203Response, T3401Request, T3401Response,
     T1310Request, T1310Response, T1404Request, T1404Response,
+    T8417Request, T8417Response, T8418Request, T8418Response, T8411Request, T8411Response,
+    T8452Request, T8452Response, T8453Request, T8453Response,
 };
 use ls_core::endpoint_policy::{T1310_POLICY, T1404_POLICY, T1514_POLICY};
 use ls_sdk::LsSdk;
@@ -1502,4 +1504,112 @@ fn t3401_response_round_trips_single_or_array_and_empty() {
     }))
     .expect("empty result deserializes");
     assert!(empty.outblock1.is_empty(), "empty is the pending case");
+}
+
+// === plan -004 batch A — chart/price family offline coverage =================
+// Covers AE1 (representative body round-trips with a real value), AE4 (numeric
+// request field is a JSON number), AE2 (empty 00707 recognized).
+
+/// t8417 — 업종차트(틱/n틱). ncnt/qrycnt as numbers; cursor strings; no header leak.
+#[test]
+fn t8417_request_and_response_round_trip() {
+    let v = serde_json::to_value(T8417Request::new("001", "1", "20", "0", "", "99999999", "N"))
+        .expect("serialize t8417");
+    let ib = &v["t8417InBlock"];
+    assert!(ib["ncnt"].is_number(), "ncnt is a JSON number (IGW40011 guard)");
+    assert!(ib["qrycnt"].is_number(), "qrycnt is a JSON number");
+    assert!(ib["cts_date"].is_string(), "cursor stays a string");
+    assert_eq!(ib["shcode"], "001", "sector code stays a string");
+    assert!(v.get("tr_cont").is_none(), "header cursor skipped from body");
+
+    let resp: T8417Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8417OutBlock": { "shcode": "001", "diclose": "2610.85" },
+        "t8417OutBlock1": { "date": "20230605", "close": "2610.85", "jdiff_vol": 215 }
+    })).expect("single candle tolerated as array");
+    assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock.diclose, "2610.85", "real summary value round-trips");
+    assert_eq!(resp.outblock1[0].jdiff_vol, "215", "volume from JSON number");
+
+    let empty: T8417Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8417OutBlock": {}, "t8417OutBlock1": []
+    })).expect("empty 00707 deserializes");
+    assert!(empty.outblock1.is_empty(), "empty board is the pending case");
+}
+
+/// t8418 — 업종차트(N분).
+#[test]
+fn t8418_request_and_response_round_trip() {
+    let v = serde_json::to_value(T8418Request::new("001", "1", "20", "0", "", "99999999", "N"))
+        .expect("serialize t8418");
+    assert!(v["t8418InBlock"]["qrycnt"].is_number());
+    let resp: T8418Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8418OutBlock": { "shcode": "001", "disvalue": 3886266 },
+        "t8418OutBlock1": [{ "date": "20230605", "close": "2610.97", "value": 19176 }]
+    })).expect("t8418 body round-trips");
+    assert_eq!(resp.outblock1[0].close, "2610.97");
+    assert_eq!(resp.outblock.disvalue, "3886266", "traded value from JSON number");
+    let empty: T8418Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8418OutBlock": {}, "t8418OutBlock1": []
+    })).expect("empty deserializes");
+    assert!(empty.outblock1.is_empty());
+}
+
+/// t8411 — 주식차트(틱/n틱).
+#[test]
+fn t8411_request_and_response_round_trip() {
+    let v = serde_json::to_value(T8411Request::new("005930", "1", "20", "0", "", "99999999", "N"))
+        .expect("serialize t8411");
+    assert!(v["t8411InBlock"]["ncnt"].is_number());
+    assert!(v.get("tr_cont").is_none());
+    let resp: T8411Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8411OutBlock": { "shcode": "005930", "diclose": 60500 },
+        "t8411OutBlock1": { "date": "20250312", "close": 60600, "jdiff_vol": 288 }
+    })).expect("single candle tolerated as array");
+    assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock1[0].close, "60600", "close from JSON number");
+    let empty: T8411Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8411OutBlock": {}, "t8411OutBlock1": []
+    })).expect("empty deserializes");
+    assert!(empty.outblock1.is_empty());
+}
+
+/// t8452 — (통합)주식챠트(N분). Carries the exchgubun selector.
+#[test]
+fn t8452_request_and_response_round_trip() {
+    let v = serde_json::to_value(T8452Request::new("010950", "1", "20", "0", "", "99999999", "N", "K"))
+        .expect("serialize t8452");
+    assert!(v["t8452InBlock"]["qrycnt"].is_number());
+    assert_eq!(v["t8452InBlock"]["exchgubun"], "K");
+    let resp: T8452Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8452OutBlock": { "shcode": "010950", "diclose": 60500 },
+        "t8452OutBlock1": [{ "date": "20250312", "time": "141900", "close": 60600, "sign": "2" }]
+    })).expect("t8452 body round-trips");
+    assert_eq!(resp.outblock1[0].close, "60600");
+    let empty: T8452Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8452OutBlock": {}, "t8452OutBlock1": []
+    })).expect("empty deserializes");
+    assert!(empty.outblock1.is_empty());
+}
+
+/// t8453 — (통합)주식챠트(틱/N틱).
+#[test]
+fn t8453_request_and_response_round_trip() {
+    let v = serde_json::to_value(T8453Request::new("010950", "1", "20", "0", "", "99999999", "N", "K"))
+        .expect("serialize t8453");
+    assert!(v["t8453InBlock"]["ncnt"].is_number());
+    assert_eq!(v["t8453InBlock"]["exchgubun"], "K");
+    let resp: T8453Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8453OutBlock": { "shcode": "010950", "diclose": 60600 },
+        "t8453OutBlock1": [{ "date": "20250312", "time": "142127", "close": 60700, "pricechk": 0 }]
+    })).expect("t8453 body round-trips");
+    assert_eq!(resp.outblock1[0].close, "60700");
+    let empty: T8453Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8453OutBlock": {}, "t8453OutBlock1": []
+    })).expect("empty deserializes");
+    assert!(empty.outblock1.is_empty());
 }

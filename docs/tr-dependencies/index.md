@@ -68,7 +68,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t1105` | 주식피봇/디마크조회 | `market_session` | implemented | [t1105](./t1105.md) |
 | `t1109` | 시간외체결량 | `paginated` | tracked | [t1109](./t1109.md) |
 | `t1301` | 주식시간대별체결조회 | `paginated` | tracked | [t1301](./t1301.md) |
-| `t1302` | 주식분별주가조회 | `market_session` | tracked | [t1302](./t1302.md) |
+| `t1302` | 주식분별주가조회 | `market_session` | implemented | [t1302](./t1302.md) |
 | `t1305` | 기간별주가 | `paginated` | implemented | [t1305](./t1305.md) |
 | `t1308` | 주식시간대별체결조회챠트 | `market_session` | tracked | [t1308](./t1308.md) |
 | `t1310` | 주식당일전일분틱조회 | `paginated` | implemented | [t1310](./t1310.md) |
@@ -184,10 +184,10 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t8406` | 주식선물틱분별체결조회(API용) | `market_session` | tracked | [t8406](./t8406.md) |
 | `t8407` | API용주식멀티현재가조회 | `market_session` | tracked | [t8407](./t8407.md) |
 | `t8410` | API전용주식차트(일주월년) | `paginated` | implemented | [t8410](./t8410.md) |
-| `t8411` | 주식차트(틱/n틱) | `paginated` | tracked | [t8411](./t8411.md) |
+| `t8411` | 주식차트(틱/n틱) | `paginated` | implemented | [t8411](./t8411.md) |
 | `t8412` | 주식 차트(N분봉) 조회 | `paginated` | recommended | [t8412](./t8412.md) |
-| `t8417` | 업종차트(틱/n틱) | `paginated` | tracked | [t8417](./t8417.md) |
-| `t8418` | 업종차트(N분) | `paginated` | tracked | [t8418](./t8418.md) |
+| `t8417` | 업종차트(틱/n틱) | `paginated` | implemented | [t8417](./t8417.md) |
+| `t8418` | 업종차트(N분) | `paginated` | implemented | [t8418](./t8418.md) |
 | `t8419` | 업종차트(일주월) | `paginated` | implemented | [t8419](./t8419.md) |
 | `t8424` | 전체업종 | `market_session` | implemented | [t8424](./t8424.md) |
 | `t8425` | 전체테마 | `market_session` | implemented | [t8425](./t8425.md) |
@@ -202,8 +202,8 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t8436` | 주식종목조회 API용 | `market_session` | implemented | [t8436](./t8436.md) |
 | `t8450` | (통합)주식현재가호가조회2 API용 | `market_session` | tracked | [t8450](./t8450.md) |
 | `t8451` | (통합)주식챠트(일주월년) API용 | `paginated` | implemented | [t8451](./t8451.md) |
-| `t8452` | (통합)주식챠트(N분) API용 | `paginated` | tracked | [t8452](./t8452.md) |
-| `t8453` | (통합)주식챠트(틱/N틱) API용 | `paginated` | tracked | [t8453](./t8453.md) |
+| `t8452` | (통합)주식챠트(N분) API용 | `paginated` | implemented | [t8452](./t8452.md) |
+| `t8453` | (통합)주식챠트(틱/N틱) API용 | `paginated` | implemented | [t8453](./t8453.md) |
 | `t8454` | (통합)주식시간대별체결2 API용 | `paginated` | tracked | [t8454](./t8454.md) |
 | `t8455` | KRX야간파생 마스터조회(API용) | `market_session` | tracked | [t8455](./t8455.md) |
 | `t8460` | KRX야간파생 옵션 전광판 | `market_session` | tracked | [t8460](./t8460.md) |

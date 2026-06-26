@@ -259,4 +259,42 @@ impl Paginated {
             .post_paginated(&ls_core::endpoint_policy::T1404_POLICY, req)
             .await
     }
+
+    /// Fetch a SINGLE page of `t8417` sector tick chart (업종차트 틱/n틱).
+    /// Self-paginated on the body `cts_date`/`cts_time` cursors (plan -004).
+    pub async fn sector_chart_tick(&self, req: &T8417Request) -> LsResult<T8417Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T8417_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t8418` sector N-minute chart (업종차트 N분).
+    pub async fn sector_chart_minute(&self, req: &T8418Request) -> LsResult<T8418Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T8418_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t8411` stock tick chart (주식차트 틱/n틱).
+    pub async fn stock_chart_tick(&self, req: &T8411Request) -> LsResult<T8411Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T8411_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t8452` integrated stock N-minute chart
+    /// ((통합)주식챠트 N분). Self-paginated on the body cursor (plan -004).
+    pub async fn stock_chart_minute_unified(&self, req: &T8452Request) -> LsResult<T8452Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T8452_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t8453` integrated stock tick chart
+    /// ((통합)주식챠트 틱/N틱). Self-paginated on the body cursor (plan -004).
+    pub async fn stock_chart_tick_unified(&self, req: &T8453Request) -> LsResult<T8453Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T8453_POLICY, req)
+            .await
+    }
 }

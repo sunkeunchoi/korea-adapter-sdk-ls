@@ -1018,6 +1018,7 @@ mod tests {
             "t9945", "t3202", "t3401", "t8410", "t8451", "t8419", "t4203",
             "t1901", "t1105", "t1104", "t1305",
             "t1310", "t1404",
+            "t8417", "t8418", "t8411", "t8452", "t8453", "t1302",
             "CSPAT00601", "CSPAT00701", "CSPAT00801", "t0425",
             "o3101", "o3121",
             "K3_",
@@ -1112,9 +1113,13 @@ mod tests {
         // Closed-window flip wave (plan -003): t1310 주식당일전일분틱 (20-tick paper
         // smoke) + t1404 관리/불성실/투자유의 designation board (100-row paper smoke)
         // each certified non-empty UNDER closure — add 2.
+        // Closed-window breadth flip wave (plan -004) batch A: the six chart/price reads
+        // t8417/t8418 (sector tick/N분) + t8411 (stock tick) + t8452/t8453 (integrated
+        // stock N분/tick) + t1302 (분별주가) each certified non-empty (20 rows) UNDER
+        // closure — add 6.
         assert_eq!(
             reference.len(),
-            116,
+            122,
             "index + the implemented reference pages"
         );
 

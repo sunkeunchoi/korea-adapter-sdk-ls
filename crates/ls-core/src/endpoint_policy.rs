@@ -1365,6 +1365,94 @@ pub const T4203_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+// --- plan -004 batch A: chart/price family. Rate limits pinned from each TR's
+//     own normalized baseline (not the mirror exemplar — see
+//     docs/solutions/conventions/endpoint-policy-rate-limits-from-own-baseline.md).
+
+/// t8417 — 업종차트(틱/n틱) (sector tick chart; self-paginated).
+pub const T8417_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8417",
+    path: "/indtp/chart",
+    module: "indtp",
+    group: "[업종] 차트",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8418 — 업종차트(N분) (sector N-minute chart; self-paginated).
+pub const T8418_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8418",
+    path: "/indtp/chart",
+    module: "indtp",
+    group: "[업종] 차트",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8411 — 주식차트(틱/n틱) (stock tick chart; self-paginated).
+pub const T8411_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8411",
+    path: "/stock/chart",
+    module: "stock",
+    group: "[주식] 차트",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8452 — (통합)주식챠트(N분) (integrated stock N-minute chart; self-paginated).
+pub const T8452_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8452",
+    path: "/stock/chart",
+    module: "stock",
+    group: "[주식] 차트",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8453 — (통합)주식챠트(틱/N틱) (integrated stock tick chart; self-paginated).
+pub const T8453_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8453",
+    path: "/stock/chart",
+    module: "stock",
+    group: "[주식] 차트",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1302 — 주식분별주가조회 (minute-by-minute price; non-paginated).
+pub const T1302_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1302",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// t8455 — KRX야간파생 마스터조회(API용) (night-derivatives master; non-paginated
 /// F/O market-data read). `venue_session: krx_extended` (KTD7). Keyed by a
 /// `gubun` class selector.
@@ -2219,6 +2307,12 @@ mod tests {
             T8451_POLICY,
             T8419_POLICY,
             T4203_POLICY,
+            T8417_POLICY,
+            T8418_POLICY,
+            T8411_POLICY,
+            T8452_POLICY,
+            T8453_POLICY,
+            T1302_POLICY,
             T8455_POLICY,
             T8460_POLICY,
             T8463_POLICY,
