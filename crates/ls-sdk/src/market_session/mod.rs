@@ -5674,6 +5674,98 @@ pub struct T1302Response {
     pub outblock1: Vec<T1302OutBlock1>,
 }
 
+// ---------------------------------------------------------------------------
+// t2216 — 선물옵션틱분별체결조회차트 (F/O tick/min trade chart). Non-paginated; a
+// single `t2216OutBlock1[]` trade-row array (de_vec_or_single), no summary block.
+// `bgubun`/`cnt` are numeric request fields (JSON numbers / IGW40011 guard);
+// `focode` is a CURRENT contract sourced from a master at smoke time. Plan -004
+// batch B.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t2216` — F/O tick/min chart query (one contract).
+#[derive(Serialize, Debug, Clone)]
+pub struct T2216InBlock {
+    /// Contract code / 단축코드 (current front-month).
+    pub focode: String,
+    /// Tick/min selector / 차트구분 (T:틱 ...).
+    pub cgubun: String,
+    /// Bar interval / 단위 (JSON number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub bgubun: String,
+    /// Requested row count / 요청건수 (JSON number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub cnt: String,
+}
+
+/// `t2216` request — wraps the input block under the `t2216InBlock` key.
+#[derive(Serialize, Debug, Clone)]
+pub struct T2216Request {
+    #[serde(rename = "t2216InBlock")]
+    pub inblock: T2216InBlock,
+}
+
+impl T2216Request {
+    /// Build a `t2216` F/O tick chart request. `bgubun`=0 (default unit).
+    pub fn new(focode: impl Into<String>, cgubun: impl Into<String>, cnt: impl Into<String>) -> Self {
+        T2216Request {
+            inblock: T2216InBlock {
+                focode: focode.into(),
+                cgubun: cgubun.into(),
+                bgubun: "0".to_string(),
+                cnt: cnt.into(),
+            },
+        }
+    }
+}
+
+/// `t2216OutBlock1` — one F/O trade row (representative subset).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T2216OutBlock1 {
+    /// Trade time / 체결시간.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub chetime: String,
+    /// Price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Open / 시가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    /// High / 고가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    /// Low / 저가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    /// Accumulated volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Open interest / 미결제약정.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub openyak: String,
+}
+
+/// `t2216` response: a single `outblock1` trade-row array (single-or-array tolerant).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T2216Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t2216OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T2216OutBlock1>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -5706,6 +5798,14 @@ impl MarketSession {
     pub async fn minute_prices(&self, req: &T1302Request) -> LsResult<T1302Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T1302_POLICY, req)
+            .await
+    }
+
+    /// Fetch the F/O tick/min trade chart (선물옵션틱분별체결) for one contract via
+    /// `t2216`. Non-paginated single call on the MarketData bucket (plan -004 batch B).
+    pub async fn fo_trade_chart(&self, req: &T2216Request) -> LsResult<T2216Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T2216_POLICY, req)
             .await
     }
 

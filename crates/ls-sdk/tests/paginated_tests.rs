@@ -24,6 +24,8 @@ use ls_sdk::paginated::{
     T1310Request, T1310Response, T1404Request, T1404Response,
     T8417Request, T8417Response, T8418Request, T8418Response, T8411Request, T8411Response,
     T8452Request, T8452Response, T8453Request, T8453Response,
+    T8464Request, T8464Response, T8465Request, T8465Response, T8466Request, T8466Response,
+    T8405Request, T8405Response,
 };
 use ls_core::endpoint_policy::{T1310_POLICY, T1404_POLICY, T1514_POLICY};
 use ls_sdk::LsSdk;
@@ -1610,6 +1612,89 @@ fn t8453_request_and_response_round_trip() {
     assert_eq!(resp.outblock1[0].close, "60700");
     let empty: T8453Response = serde_json::from_value(serde_json::json!({
         "rsp_cd": "00707", "t8453OutBlock": {}, "t8453OutBlock1": []
+    })).expect("empty deserializes");
+    assert!(empty.outblock1.is_empty());
+}
+
+// === plan -004 batch B — F/O chart/period family offline coverage ============
+
+/// t8464 — 선물옵션차트(틱/n틱). ncnt/qrycnt numbers; openyak row field round-trips.
+#[test]
+fn t8464_request_and_response_round_trip() {
+    let v = serde_json::to_value(T8464Request::new("A0669000", "1", "20", "0", "", "99999999", "N"))
+        .expect("serialize t8464");
+    assert!(v["t8464InBlock"]["ncnt"].is_number());
+    assert!(v["t8464InBlock"]["qrycnt"].is_number());
+    assert!(v.get("tr_cont").is_none());
+    let resp: T8464Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8464OutBlock": { "shcode": "A0669000", "diclose": 41945 },
+        "t8464OutBlock1": [{ "date": "20260626", "close": 41945, "openyak": 312345 }]
+    })).expect("t8464 body round-trips");
+    assert_eq!(resp.outblock1[0].close, "41945");
+    assert_eq!(resp.outblock1[0].openyak, "312345", "open-interest from JSON number");
+    let empty: T8464Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8464OutBlock": {}, "t8464OutBlock1": []
+    })).expect("empty deserializes");
+    assert!(empty.outblock1.is_empty());
+}
+
+/// t8465 — 선물/옵션차트(N분).
+#[test]
+fn t8465_request_and_response_round_trip() {
+    let v = serde_json::to_value(T8465Request::new("A0669000", "1", "20", "0", "", "99999999", "N"))
+        .expect("serialize t8465");
+    assert!(v["t8465InBlock"]["qrycnt"].is_number());
+    let resp: T8465Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8465OutBlock": { "shcode": "A0669000", "diclose": 41945 },
+        "t8465OutBlock1": { "date": "20260626", "time": "141900", "close": 41945, "value": 17, "openyak": 1 }
+    })).expect("single candle tolerated as array");
+    assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock1[0].close, "41945");
+    let empty: T8465Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8465OutBlock": {}, "t8465OutBlock1": []
+    })).expect("empty deserializes");
+    assert!(empty.outblock1.is_empty());
+}
+
+/// t8466 — 선물/옵션차트(일주월). gubun-based; qrycnt numeric.
+#[test]
+fn t8466_request_and_response_round_trip() {
+    let v = serde_json::to_value(T8466Request::new("A0669000", "2", "20", "", "99999999"))
+        .expect("serialize t8466");
+    assert!(v["t8466InBlock"]["qrycnt"].is_number());
+    assert_eq!(v["t8466InBlock"]["gubun"], "2");
+    assert!(v["t8466InBlock"]["cts_date"].is_string());
+    let resp: T8466Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8466OutBlock": { "shcode": "A0669000", "diclose": 41945 },
+        "t8466OutBlock1": [{ "date": "20260626", "close": 41945, "value": 100, "openyak": 5 }]
+    })).expect("t8466 body round-trips");
+    assert_eq!(resp.outblock1[0].close, "41945");
+    let empty: T8466Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8466OutBlock": {}, "t8466OutBlock1": []
+    })).expect("empty deserializes");
+    assert!(empty.outblock1.is_empty());
+}
+
+/// t8405 — 주식선물기간별주가. cnt numeric; cts_code body cursor; openyak row field.
+#[test]
+fn t8405_request_and_response_round_trip() {
+    let v = serde_json::to_value(T8405Request::new("A0A67000", "20")).expect("serialize t8405");
+    assert!(v["t8405InBlock"]["cnt"].is_number(), "cnt is a JSON number");
+    assert_eq!(v["t8405InBlock"]["futcheck"], "0");
+    assert!(v["t8405InBlock"]["cts_code"].is_string(), "cursor stays a string");
+    assert!(v.get("tr_cont").is_none());
+    let resp: T8405Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8405OutBlock": { "date": "20260626", "nowfutyn": "Y" },
+        "t8405OutBlock1": [{ "date": "20260626", "close": 41945, "volume": 12345, "openyak": 678 }]
+    })).expect("t8405 body round-trips");
+    assert_eq!(resp.outblock1[0].close, "41945");
+    assert_eq!(resp.outblock1[0].openyak, "678", "open-interest from JSON number");
+    let empty: T8405Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8405OutBlock": {}, "t8405OutBlock1": []
     })).expect("empty deserializes");
     assert!(empty.outblock1.is_empty());
 }

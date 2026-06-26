@@ -91,6 +91,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t1988` | 기초자산리스트조회 | `market_session` | implemented, not yet recommended |
 | `t2111` | 선물/옵션현재가(시세)조회 | `market_session` | implemented, not yet recommended |
 | `t2112` | 선물/옵션현재가호가조회 | `market_session` | implemented, not yet recommended |
+| `t2216` | 선물옵션틱분별체결조회차트 | `market_session` | implemented, not yet recommended |
 | `t2301` | 옵션전광판 | `market_session` | implemented, not yet recommended |
 | `t2522` | 주식선물기초자산조회 | `market_session` | implemented, not yet recommended |
 | `t3202` | 종목별증시일정 | `market_session` | implemented, not yet recommended |
@@ -101,6 +102,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t8401` | 주식선물마스터조회(API용) | `market_session` | implemented, not yet recommended |
 | `t8402` | 주식선물현재가조회(API용) | `market_session` | implemented, not yet recommended |
 | `t8403` | 주식선물호가조회(API용) | `market_session` | implemented, not yet recommended |
+| `t8405` | 주식선물기간별주가(API용) | `paginated` | implemented, not yet recommended |
 | `t8410` | API전용주식차트(일주월년) | `paginated` | implemented, not yet recommended |
 | `t8411` | 주식차트(틱/n틱) | `paginated` | implemented, not yet recommended |
 | `t8412` | 주식 차트(N분봉) 조회 | `paginated` | recommended |
@@ -119,6 +121,9 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t8451` | (통합)주식챠트(일주월년) API용 | `paginated` | implemented, not yet recommended |
 | `t8452` | (통합)주식챠트(N분) API용 | `paginated` | implemented, not yet recommended |
 | `t8453` | (통합)주식챠트(틱/N틱) API용 | `paginated` | implemented, not yet recommended |
+| `t8464` | 선물옵션차트(틱/n틱) | `paginated` | implemented, not yet recommended |
+| `t8465` | 선물/옵션차트(N분) | `paginated` | implemented, not yet recommended |
+| `t8466` | 선물/옵션차트(일주월) | `paginated` | implemented, not yet recommended |
 | `t8467` | 지수선물마스터조회API용 | `market_session` | implemented, not yet recommended |
 | `t9905` | 기초자산리스트조회 | `market_session` | implemented, not yet recommended |
 | `t9907` | 만기월조회 | `market_session` | implemented, not yet recommended |

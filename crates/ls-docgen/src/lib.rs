@@ -1019,6 +1019,7 @@ mod tests {
             "t1901", "t1105", "t1104", "t1305",
             "t1310", "t1404",
             "t8417", "t8418", "t8411", "t8452", "t8453", "t1302",
+            "t8464", "t8465", "t8466", "t2216", "t8405",
             "CSPAT00601", "CSPAT00701", "CSPAT00801", "t0425",
             "o3101", "o3121",
             "K3_",
@@ -1117,9 +1118,13 @@ mod tests {
         // t8417/t8418 (sector tick/N분) + t8411 (stock tick) + t8452/t8453 (integrated
         // stock N분/tick) + t1302 (분별주가) each certified non-empty (20 rows) UNDER
         // closure — add 6.
+        // Plan -004 batch B: five domestic F/O chart/period reads t8464/t8465/t8466
+        // (선물옵션 tick/N분/일주월) + t2216 (F/O tick trade chart) + t8405 (주식선물
+        // 기간별주가) each certified non-empty (20 rows) UNDER closure, contract sourced
+        // from a derivatives master at smoke time — add 5.
         assert_eq!(
             reference.len(),
-            122,
+            127,
             "index + the implemented reference pages"
         );
 

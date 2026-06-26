@@ -147,6 +147,11 @@ TR marked `ready` is a promote-tr candidate.
 | `t8452` | `live-smoke-t8452` | `live_smoke_t8452` | any session (certified UNDER closure); `shcode="010950"` `exchgubun="K"` — (통합)주식챠트 N분, non-empty `t8452OutBlock1` | implemented-only | paper integrated stock N-minute chart, paginated single-page (plan -004) |
 | `t8453` | `live-smoke-t8453` | `live_smoke_t8453` | any session (certified UNDER closure); `shcode="010950"` `exchgubun="K"` — (통합)주식챠트 틱/N틱, non-empty `t8453OutBlock1` | implemented-only | paper integrated stock tick chart, paginated single-page (plan -004) |
 | `t1302` | `live-smoke-t1302` | `live_smoke_t1302` | any session (certified UNDER closure); `shcode="001200"` `gubun="0"` — 주식분별주가, non-empty `t1302OutBlock1` (else PENDING) | implemented-only | paper minute-by-minute price, single-page (plan -004) |
+| `t8464` | `live-smoke-t8464` | `live_smoke_t8464` | any session (certified UNDER closure); contract sourced from `t8467` index-futures master (stale codes → empty) — F/O tick chart, non-empty `t8464OutBlock1` | implemented-only | paper F/O tick chart, paginated single-page (plan -004 batch B) |
+| `t8465` | `live-smoke-t8465` | `live_smoke_t8465` | any session (certified UNDER closure); contract from `t8467` — F/O N-minute chart, non-empty `t8465OutBlock1` | implemented-only | paper F/O N-minute chart, paginated single-page (plan -004 batch B) |
+| `t8466` | `live-smoke-t8466` | `live_smoke_t8466` | any session (certified UNDER closure); contract from `t8467` — F/O day/week/month chart, non-empty `t8466OutBlock1` | implemented-only | paper F/O D/W/M chart, paginated single-page (plan -004 batch B) |
+| `t2216` | `live-smoke-t2216` | `live_smoke_t2216` | any session (certified UNDER closure); contract from `t8467` — F/O tick trade chart, non-empty `t2216OutBlock1` | implemented-only | paper F/O tick trade chart, single-page (plan -004 batch B) |
+| `t8405` | `live-smoke-t8405` | `live_smoke_t8405` | any session (certified UNDER closure); contract from `t8401` stock-futures master — 주식선물기간별주가, non-empty `t8405OutBlock1` | implemented-only | paper stock-futures period price, paginated single-page (plan -004 batch B) |
 
 Notes:
 - `live-smoke` (default) issues the OAuth token *then* a `t1102` quote in one run,

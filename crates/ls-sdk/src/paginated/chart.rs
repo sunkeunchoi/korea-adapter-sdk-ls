@@ -1849,3 +1849,456 @@ pub struct T8453Response {
     #[serde(rename = "t8453OutBlock1", default, deserialize_with = "ls_core::de_vec_or_single")]
     pub outblock1: Vec<T8453OutBlock1>,
 }
+
+// ===========================================================================
+// plan -004 batch B — domestic F/O charts (KRX주간 derivatives; paper-compatible).
+// Same chart shape as the stock family (summary out-block + de_vec_or_single
+// candle array) plus an `openyak` (미결제약정/open-interest) row field. The
+// contract `shcode` is a CURRENT front-month code sourced from a derivatives
+// master at smoke time (stale codes return an empty board). Numeric request
+// counts serialize as JSON numbers (IGW40011 guard). Wire keys from raw
+// res_example (KTD3).
+// ===========================================================================
+
+/// Input block for `t8464` — 선물옵션차트(틱/n틱).
+#[derive(Serialize, Debug, Clone)]
+pub struct T8464InBlock {
+    /// Contract code / 단축코드 (current front-month).
+    pub shcode: String,
+    /// Tick count / 주기 (JSON number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub ncnt: String,
+    /// Requested row count / 요청건수 (JSON number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub qrycnt: String,
+    /// 조회영업일수.
+    pub nday: String,
+    /// 시작일자.
+    pub sdate: String,
+    /// 시작시간.
+    pub stime: String,
+    /// 종료일자.
+    pub edate: String,
+    /// 종료시간.
+    pub etime: String,
+    /// 연속일자 (body cursor).
+    pub cts_date: String,
+    /// 연속시간 (body cursor).
+    pub cts_time: String,
+    /// 압축여부.
+    pub comp_yn: String,
+}
+
+/// `t8464` request (self-paginated; body cursor, header cursors skipped).
+#[derive(Serialize, Debug, Clone)]
+pub struct T8464Request {
+    #[serde(rename = "t8464InBlock")]
+    pub inblock: T8464InBlock,
+    #[serde(skip)]
+    pub tr_cont: String,
+    #[serde(skip)]
+    pub tr_cont_key: String,
+}
+ls_core::impl_has_pagination!(T8464Request);
+impl T8464Request {
+    /// Build a first-page `t8464` F/O tick chart request.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        shcode: impl Into<String>,
+        ncnt: impl Into<String>,
+        qrycnt: impl Into<String>,
+        nday: impl Into<String>,
+        sdate: impl Into<String>,
+        edate: impl Into<String>,
+        comp_yn: impl Into<String>,
+    ) -> Self {
+        T8464Request {
+            inblock: T8464InBlock {
+                shcode: shcode.into(),
+                ncnt: ncnt.into(),
+                qrycnt: qrycnt.into(),
+                nday: nday.into(),
+                sdate: sdate.into(),
+                stime: String::new(),
+                edate: edate.into(),
+                etime: String::new(),
+                cts_date: String::new(),
+                cts_time: String::new(),
+                comp_yn: comp_yn.into(),
+            },
+            tr_cont: String::new(),
+            tr_cont_key: String::new(),
+        }
+    }
+}
+
+/// `t8464OutBlock` — F/O chart summary (OHLC aggregates + echoed cursor).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8464OutBlock {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jiclose: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diclose: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cts_date: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cts_time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub rec_count: String,
+}
+
+/// `t8464OutBlock1` — one F/O candle row (carries `openyak` open-interest).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8464OutBlock1 {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub close: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jdiff_vol: String,
+    /// Open interest / 미결제약정.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub openyak: String,
+}
+
+/// `t8464` response (single page).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8464Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t8464OutBlock", default)]
+    pub outblock: T8464OutBlock,
+    #[serde(rename = "t8464OutBlock1", default, deserialize_with = "ls_core::de_vec_or_single")]
+    pub outblock1: Vec<T8464OutBlock1>,
+}
+
+/// Input block for `t8465` — 선물/옵션차트(N분). Same shape as `t8464`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8465InBlock {
+    pub shcode: String,
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub ncnt: String,
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub qrycnt: String,
+    pub nday: String,
+    pub sdate: String,
+    pub stime: String,
+    pub edate: String,
+    pub etime: String,
+    pub cts_date: String,
+    pub cts_time: String,
+    pub comp_yn: String,
+}
+
+/// `t8465` request (self-paginated).
+#[derive(Serialize, Debug, Clone)]
+pub struct T8465Request {
+    #[serde(rename = "t8465InBlock")]
+    pub inblock: T8465InBlock,
+    #[serde(skip)]
+    pub tr_cont: String,
+    #[serde(skip)]
+    pub tr_cont_key: String,
+}
+ls_core::impl_has_pagination!(T8465Request);
+impl T8465Request {
+    /// Build a first-page `t8465` F/O N-minute chart request.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        shcode: impl Into<String>,
+        ncnt: impl Into<String>,
+        qrycnt: impl Into<String>,
+        nday: impl Into<String>,
+        sdate: impl Into<String>,
+        edate: impl Into<String>,
+        comp_yn: impl Into<String>,
+    ) -> Self {
+        T8465Request {
+            inblock: T8465InBlock {
+                shcode: shcode.into(),
+                ncnt: ncnt.into(),
+                qrycnt: qrycnt.into(),
+                nday: nday.into(),
+                sdate: sdate.into(),
+                stime: String::new(),
+                edate: edate.into(),
+                etime: String::new(),
+                cts_date: String::new(),
+                cts_time: String::new(),
+                comp_yn: comp_yn.into(),
+            },
+            tr_cont: String::new(),
+            tr_cont_key: String::new(),
+        }
+    }
+}
+
+/// `t8465OutBlock` — F/O chart summary.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8465OutBlock {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jiclose: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diclose: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cts_date: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cts_time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub rec_count: String,
+}
+
+/// `t8465OutBlock1` — one F/O candle row (carries `value` + `openyak`).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8465OutBlock1 {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub time: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub close: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jdiff_vol: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub value: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub openyak: String,
+}
+
+/// `t8465` response (single page).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8465Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t8465OutBlock", default)]
+    pub outblock: T8465OutBlock,
+    #[serde(rename = "t8465OutBlock1", default, deserialize_with = "ls_core::de_vec_or_single")]
+    pub outblock1: Vec<T8465OutBlock1>,
+}
+
+/// Input block for `t8466` — 선물/옵션차트(일주월). `gubun` selects the period;
+/// no `ncnt`/time fields; single `cts_date` cursor.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8466InBlock {
+    pub shcode: String,
+    /// 주기구분 (2:일 3:주 4:월).
+    pub gubun: String,
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub qrycnt: String,
+    pub sdate: String,
+    pub edate: String,
+    pub cts_date: String,
+    pub comp_yn: String,
+}
+
+/// `t8466` request (self-paginated on `cts_date`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T8466Request {
+    #[serde(rename = "t8466InBlock")]
+    pub inblock: T8466InBlock,
+    #[serde(skip)]
+    pub tr_cont: String,
+    #[serde(skip)]
+    pub tr_cont_key: String,
+}
+ls_core::impl_has_pagination!(T8466Request);
+impl T8466Request {
+    /// Build a first-page `t8466` F/O D/W/M chart request.
+    pub fn new(
+        shcode: impl Into<String>,
+        gubun: impl Into<String>,
+        qrycnt: impl Into<String>,
+        sdate: impl Into<String>,
+        edate: impl Into<String>,
+    ) -> Self {
+        T8466Request {
+            inblock: T8466InBlock {
+                shcode: shcode.into(),
+                gubun: gubun.into(),
+                qrycnt: qrycnt.into(),
+                sdate: sdate.into(),
+                edate: edate.into(),
+                cts_date: String::new(),
+                comp_yn: "N".to_string(),
+            },
+            tr_cont: String::new(),
+            tr_cont_key: String::new(),
+        }
+    }
+}
+
+/// `t8466OutBlock` — F/O D/W/M chart summary.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8466OutBlock {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jiclose: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diclose: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cts_date: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub rec_count: String,
+}
+
+/// `t8466OutBlock1` — one F/O D/W/M candle row.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8466OutBlock1 {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub close: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jdiff_vol: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub value: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub openyak: String,
+}
+
+/// `t8466` response (single page).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8466Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t8466OutBlock", default)]
+    pub outblock: T8466OutBlock,
+    #[serde(rename = "t8466OutBlock1", default, deserialize_with = "ls_core::de_vec_or_single")]
+    pub outblock1: Vec<T8466OutBlock1>,
+}
+
+/// Input block for `t8405` — 주식선물기간별주가 (stock-futures period price).
+/// Paginated on the `cts_code` body cursor; `cnt` numeric.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8405InBlock {
+    /// Stock-futures code / 단축코드 (current contract).
+    pub shcode: String,
+    /// 미래선물구분 (0:전체).
+    pub futcheck: String,
+    /// 일자 (YYYYMMDD; empty = latest).
+    pub date: String,
+    /// 연속조회코드 (body cursor).
+    pub cts_code: String,
+    /// 연속조회일자.
+    pub lastdate: String,
+    /// 요청건수 (JSON number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub cnt: String,
+}
+
+/// `t8405` request (self-paginated on `cts_code`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T8405Request {
+    #[serde(rename = "t8405InBlock")]
+    pub inblock: T8405InBlock,
+    #[serde(skip)]
+    pub tr_cont: String,
+    #[serde(skip)]
+    pub tr_cont_key: String,
+}
+ls_core::impl_has_pagination!(T8405Request);
+impl T8405Request {
+    /// Build a first-page `t8405` stock-futures period-price request.
+    /// `futcheck`="0", date/cursors empty (latest page).
+    pub fn new(shcode: impl Into<String>, cnt: impl Into<String>) -> Self {
+        T8405Request {
+            inblock: T8405InBlock {
+                shcode: shcode.into(),
+                futcheck: "0".to_string(),
+                date: String::new(),
+                cts_code: String::new(),
+                lastdate: String::new(),
+                cnt: cnt.into(),
+            },
+            tr_cont: String::new(),
+            tr_cont_key: String::new(),
+        }
+    }
+}
+
+/// `t8405OutBlock` — period-price summary (echoed cursor + futures flag).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8405OutBlock {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cts_code: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub nowfutyn: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub lastdate: String,
+}
+
+/// `t8405OutBlock1` — one period candle row (carries `openyak` open-interest).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8405OutBlock1 {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub close: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub value: String,
+    /// Open interest / 미결제약정.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub openyak: String,
+}
+
+/// `t8405` response (single page): summary `outblock` + `outblock1` period array.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8405Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t8405OutBlock", default)]
+    pub outblock: T8405OutBlock,
+    #[serde(rename = "t8405OutBlock1", default, deserialize_with = "ls_core::de_vec_or_single")]
+    pub outblock1: Vec<T8405OutBlock1>,
+}

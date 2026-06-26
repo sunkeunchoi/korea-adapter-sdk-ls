@@ -297,4 +297,34 @@ impl Paginated {
             .post_paginated(&ls_core::endpoint_policy::T8453_POLICY, req)
             .await
     }
+
+    /// Fetch a SINGLE page of `t8464` F/O tick chart (선물옵션차트 틱/n틱).
+    /// Self-paginated on the body cursor (plan -004 batch B).
+    pub async fn fo_chart_tick(&self, req: &T8464Request) -> LsResult<T8464Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T8464_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t8465` F/O N-minute chart (선물/옵션차트 N분).
+    pub async fn fo_chart_minute(&self, req: &T8465Request) -> LsResult<T8465Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T8465_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t8466` F/O day/week/month chart (선물/옵션차트 일주월).
+    pub async fn fo_chart_period(&self, req: &T8466Request) -> LsResult<T8466Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T8466_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t8405` stock-futures period price (주식선물기간별주가).
+    /// Self-paginated on the `cts_code` body cursor (plan -004 batch B).
+    pub async fn stock_futures_period(&self, req: &T8405Request) -> LsResult<T8405Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T8405_POLICY, req)
+            .await
+    }
 }

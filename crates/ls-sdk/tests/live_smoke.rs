@@ -25,7 +25,7 @@ use ls_sdk::market_session::{
     T1101Request, T1102Request, T1485Request, T1511Request, T1516Request, T1531Request,
     T1537Request, T1601Request, T1615Request, T1640Request, T1662Request, T1664Request,
     T1104Request, T1105Request, T1825Request, T1826Request, T1859Request, T1901Request,
-    T1302Request,
+    T1302Request, T2216Request,
     T1958Request, T1964Request, T2301Request,
     T2522Request, T8401Request, T8424Request, T8425Request, T8426Request, T8433Request,
     T8435Request, T8467Request, T9943Request, T9944Request,
@@ -47,6 +47,7 @@ use ls_sdk::paginated::{
     T1305Request, T8410Request, T8451Request, T8419Request, T4203Request, T3401Request,
     T1310Request, T1404Request,
     T8417Request, T8418Request, T8411Request, T8452Request, T8453Request,
+    T8464Request, T8465Request, T8466Request, T8405Request,
 };
 use ls_sdk::realtime::WsLane;
 use ls_sdk::LsSdk;
@@ -4238,6 +4239,150 @@ async fn live_smoke_t1302() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t1302 market-data failure (not evidence)");
             panic!("live-smoke-t1302 failed: {e}");
+        }
+    }
+}
+
+// --- plan -004 batch B — F/O charts. Each sources a CURRENT front-month contract
+//     from a derivatives master (t8467 index-futures / t8401 stock-futures), since
+//     stale contract codes return an empty board under closure.
+
+/// Fetch a current index-futures contract code via `t8467` (master) for the F/O
+/// chart smokes. Panics with a credential-free SMOKE-FAIL on an empty master.
+async fn current_index_future(sdk: &LsSdk, target: &str) -> String {
+    let masters = sdk
+        .market_session()
+        .index_futures_master(&ls_sdk::market_session::T8467Request::new("Q"))
+        .await
+        .expect("t8467 index-futures master (contract source) failed");
+    if masters.outblock.is_empty() {
+        eprintln!("SMOKE-FAIL target={target} t8467 contract source empty (rsp_cd={})", masters.rsp_cd);
+        panic!("{target}: no contract to key the read");
+    }
+    masters.outblock[0].shcode.clone()
+}
+
+/// `make live-smoke-t8464`: one `t8464` F/O tick chart for a current contract.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8464`"]
+async fn live_smoke_t8464() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let shcode = current_index_future(&sdk, "live-smoke-t8464").await;
+    let req = T8464Request::new(&shcode, "1", "20", "0", "", "99999999", "N");
+    match sdk.paginated().fo_chart_tick(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-t8464: empty chart (00707) — PENDING, not Implemented");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "candles")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t8464", &format!("env=paper shcode={shcode}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8464 market-data failure (not evidence)");
+            panic!("live-smoke-t8464 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t8465`: one `t8465` F/O N-minute chart for a current contract.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8465`"]
+async fn live_smoke_t8465() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let shcode = current_index_future(&sdk, "live-smoke-t8465").await;
+    let req = T8465Request::new(&shcode, "1", "20", "0", "", "99999999", "N");
+    match sdk.paginated().fo_chart_minute(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-t8465: empty chart (00707) — PENDING, not Implemented");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "candles")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t8465", &format!("env=paper shcode={shcode}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8465 market-data failure (not evidence)");
+            panic!("live-smoke-t8465 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t8466`: one `t8466` F/O day/week/month chart for a current contract.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8466`"]
+async fn live_smoke_t8466() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let shcode = current_index_future(&sdk, "live-smoke-t8466").await;
+    let req = T8466Request::new(&shcode, "2", "20", "", "99999999");
+    match sdk.paginated().fo_chart_period(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-t8466: empty chart (00707) — PENDING, not Implemented");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "candles")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t8466", &format!("env=paper shcode={shcode}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8466 market-data failure (not evidence)");
+            panic!("live-smoke-t8466 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t2216`: one `t2216` F/O tick trade chart for a current contract.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t2216`"]
+async fn live_smoke_t2216() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let focode = current_index_future(&sdk, "live-smoke-t2216").await;
+    let req = T2216Request::new(&focode, "T", "20");
+    match sdk.market_session().fo_trade_chart(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-t2216: empty chart (00707) — PENDING, not Implemented");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "trades")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t2216", &format!("env=paper focode={focode}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t2216 market-data failure (not evidence)");
+            panic!("live-smoke-t2216 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t8405`: one `t8405` stock-futures period price for a current
+/// stock-futures contract (sourced from `t8401`).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8405`"]
+async fn live_smoke_t8405() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let masters = sdk
+        .market_session()
+        .stock_futures_master(&ls_sdk::market_session::T8401Request::new())
+        .await
+        .expect("t8401 stock-futures master (contract source) failed");
+    if masters.outblock.is_empty() {
+        eprintln!("SMOKE-FAIL target=live-smoke-t8405 t8401 contract source empty (rsp_cd={})", masters.rsp_cd);
+        panic!("live-smoke-t8405: no contract to key the read");
+    }
+    let shcode = masters.outblock[0].shcode.clone();
+    let req = T8405Request::new(&shcode, "20");
+    match sdk.paginated().stock_futures_period(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-t8405: empty board (00707) — PENDING, not Implemented");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t8405", &format!("env=paper shcode={shcode}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8405 market-data failure (not evidence)");
+            panic!("live-smoke-t8405 failed: {e}");
         }
     }
 }

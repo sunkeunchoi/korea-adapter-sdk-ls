@@ -8,7 +8,7 @@
 
 use ls_core::{Inner, LsError};
 use ls_sdk::market_session::{
-    T1302Request, T1302Response,
+    T1302Request, T1302Response, T2216Request, T2216Response,
     T1101OutBlock, T1101Request, T1101Response, T1102OutBlock, T1102Request, T1102Response,
     T1531Request, T1531Response, T1537Request, T1537Response, T1601Request, T1601Response,
     T1615Request, T1615Response, T1640Request, T1640Response, T1662Request, T1662Response,
@@ -4429,4 +4429,34 @@ fn t1302_request_and_response_round_trip() {
         "rsp_cd": "00707", "t1302OutBlock": { "cts_time": "" }, "t1302OutBlock1": []
     })).expect("empty 00707 deserializes");
     assert!(empty.outblock1.is_empty(), "empty board is the pending case");
+}
+
+// === plan -004 batch B — t2216 F/O tick chart offline coverage ===============
+
+/// t2216 — 선물옵션틱분별체결조회차트. bgubun/cnt numbers; single trade-row array
+/// round-trips with a real value; empty 00707 recognized.
+#[test]
+fn t2216_request_and_response_round_trip() {
+    let v = serde_json::to_value(T2216Request::new("A0669000", "T", "20")).expect("serialize t2216");
+    let ib = &v["t2216InBlock"];
+    assert!(ib["bgubun"].is_number(), "bgubun is a JSON number");
+    assert!(ib["cnt"].is_number(), "cnt is a JSON number");
+    assert_eq!(ib["focode"], "A0669000", "focode stays a string");
+
+    let resp: T2216Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t2216OutBlock1": [{ "chetime": "152000", "price": 41945, "volume": 12, "openyak": 678 }]
+    })).expect("t2216 body round-trips");
+    assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock1[0].price, "41945", "price from JSON number");
+
+    let single: T2216Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "t2216OutBlock1": { "chetime": "152000", "price": 41945 }
+    })).expect("single row tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+
+    let empty: T2216Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t2216OutBlock1": []
+    })).expect("empty 00707 deserializes");
+    assert!(empty.outblock1.is_empty());
 }

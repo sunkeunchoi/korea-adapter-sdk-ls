@@ -1453,6 +1453,79 @@ pub const T1302_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+// --- plan -004 batch B: domestic F/O chart/period family. Rate limits pinned
+//     from each TR's own normalized baseline.
+
+/// t8464 — 선물옵션차트(틱/n틱) (F/O tick chart; self-paginated).
+pub const T8464_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8464",
+    path: "/futureoption/chart",
+    module: "futureoption",
+    group: "[선물/옵션] 차트",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8465 — 선물/옵션차트(N분) (F/O N-minute chart; self-paginated).
+pub const T8465_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8465",
+    path: "/futureoption/chart",
+    module: "futureoption",
+    group: "[선물/옵션] 차트",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8466 — 선물/옵션차트(일주월) (F/O day/week/month chart; self-paginated).
+pub const T8466_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8466",
+    path: "/futureoption/chart",
+    module: "futureoption",
+    group: "[선물/옵션] 차트",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8405 — 주식선물기간별주가(API용) (stock-futures period price; self-paginated).
+pub const T8405_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8405",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t2216 — 선물옵션틱분별체결조회차트 (F/O tick/min trade chart; non-paginated).
+pub const T2216_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t2216",
+    path: "/futureoption/chart",
+    module: "futureoption",
+    group: "[선물/옵션] 차트",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// t8455 — KRX야간파생 마스터조회(API용) (night-derivatives master; non-paginated
 /// F/O market-data read). `venue_session: krx_extended` (KTD7). Keyed by a
 /// `gubun` class selector.
@@ -2313,6 +2386,11 @@ mod tests {
             T8452_POLICY,
             T8453_POLICY,
             T1302_POLICY,
+            T8464_POLICY,
+            T8465_POLICY,
+            T8466_POLICY,
+            T8405_POLICY,
+            T2216_POLICY,
             T8455_POLICY,
             T8460_POLICY,
             T8463_POLICY,

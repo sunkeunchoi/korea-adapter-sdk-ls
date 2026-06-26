@@ -163,7 +163,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t2210` | 선물옵션시간대별체결조회(단일출력용) | `market_session` | tracked | [t2210](./t2210.md) |
 | `t2212` | 선물옵션시간대별체결조회 | `paginated` | tracked | [t2212](./t2212.md) |
 | `t2214` | 기간별주가 | `paginated` | tracked | [t2214](./t2214.md) |
-| `t2216` | 선물옵션틱분별체결조회차트 | `market_session` | tracked | [t2216](./t2216.md) |
+| `t2216` | 선물옵션틱분별체결조회차트 | `market_session` | implemented | [t2216](./t2216.md) |
 | `t2301` | 옵션전광판 | `market_session` | implemented | [t2301](./t2301.md) |
 | `t2407` | 선물옵션호가잔량비율챠트 | `paginated` | tracked | [t2407](./t2407.md) |
 | `t2424` | 미결제약정추이 | `market_session` | tracked | [t2424](./t2424.md) |
@@ -180,7 +180,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t8402` | 주식선물현재가조회(API용) | `market_session` | implemented | [t8402](./t8402.md) |
 | `t8403` | 주식선물호가조회(API용) | `market_session` | implemented | [t8403](./t8403.md) |
 | `t8404` | 주식선물시간대별체결조회(API용) | `paginated` | tracked | [t8404](./t8404.md) |
-| `t8405` | 주식선물기간별주가(API용) | `paginated` | tracked | [t8405](./t8405.md) |
+| `t8405` | 주식선물기간별주가(API용) | `paginated` | implemented | [t8405](./t8405.md) |
 | `t8406` | 주식선물틱분별체결조회(API용) | `market_session` | tracked | [t8406](./t8406.md) |
 | `t8407` | API용주식멀티현재가조회 | `market_session` | tracked | [t8407](./t8407.md) |
 | `t8410` | API전용주식차트(일주월년) | `paginated` | implemented | [t8410](./t8410.md) |
@@ -208,9 +208,9 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t8455` | KRX야간파생 마스터조회(API용) | `market_session` | tracked | [t8455](./t8455.md) |
 | `t8460` | KRX야간파생 옵션 전광판 | `market_session` | tracked | [t8460](./t8460.md) |
 | `t8463` | KRX야간파생 투자자시간대별(API용) | `market_session` | tracked | [t8463](./t8463.md) |
-| `t8464` | 선물옵션차트(틱/n틱) | `paginated` | tracked | [t8464](./t8464.md) |
-| `t8465` | 선물/옵션차트(N분) | `paginated` | tracked | [t8465](./t8465.md) |
-| `t8466` | 선물/옵션차트(일주월) | `paginated` | tracked | [t8466](./t8466.md) |
+| `t8464` | 선물옵션차트(틱/n틱) | `paginated` | implemented | [t8464](./t8464.md) |
+| `t8465` | 선물/옵션차트(N분) | `paginated` | implemented | [t8465](./t8465.md) |
+| `t8466` | 선물/옵션차트(일주월) | `paginated` | implemented | [t8466](./t8466.md) |
 | `t8467` | 지수선물마스터조회API용 | `market_session` | implemented | [t8467](./t8467.md) |
 | `t9905` | 기초자산리스트조회 | `market_session` | implemented | [t9905](./t9905.md) |
 | `t9907` | 만기월조회 | `market_session` | implemented | [t9907](./t9907.md) |
