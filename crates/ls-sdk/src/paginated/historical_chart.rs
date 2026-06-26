@@ -5,8 +5,8 @@
 //! request carries no genuinely-numeric field — every in-block field serializes as
 //! a JSON string (no `string_as_number` / IGW40011 fix). The summary block
 //! `t1310OutBlock` holds the next-page `cts_time`; the tick/min rows arrive as a
-//! top-level sibling array `t1310OutBlock1` (shape read from the raw `res_example`,
-//! not the flattened normalized baseline).
+//! top-level sibling array `t1310OutBlock1` (shape confirmed against the raw
+//! `res_example`).
 
 use serde::{Deserialize, Serialize};
 

@@ -70,7 +70,7 @@ pub struct T1404OutBlock {
     pub cts_shcode: String,
 }
 
-/// `t1404OutBlock1` — one designation row (representative subset; numeric-bearing
+/// `t1404OutBlock1` — one designation row (all 13 wire fields; numeric-bearing
 /// fields via [`ls_core::string_or_number`] to tolerate JSON string OR number).
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 #[serde(default)]
