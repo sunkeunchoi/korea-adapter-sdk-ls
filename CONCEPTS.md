@@ -49,7 +49,12 @@ A recorded, credential-free result of a Paper Live Smoke that backs a Recommende
 The repository-level sidecar that records, per TR, which authored facets are still provisional and what must be re-verified before promotion. Rows retire as a TR is implemented and each facet is confirmed against a live call; a pending or held TR keeps its rows so nothing is silently treated as confirmed.
 
 ### Pending
-A TR whose Paper Live Smoke ran but did not open the Implemented gate — callable yet shape-unconfirmed (empty result), or blocked by an unresolved input or an environmental gateway rejection. A pending TR ships without flipping to Implemented and keeps its provisional ledger rows.
+A TR whose Paper Live Smoke ran but did not open the Implemented gate — callable yet shape-unconfirmed (empty result), or blocked by an unresolved input or an environmental gateway rejection. A pending TR ships without flipping to Implemented and keeps its provisional ledger rows. Distinct from [[Paper-incompatible]]: a Pending TR is expected to flip on a recovering re-run, where a Paper-incompatible TR never flips on paper.
+
+### Paper-incompatible
+A TR the paper gateway will never serve, so it is recorded as a permanent non-flip (the `paper_incompatible` facet) rather than a re-runnable [[Pending]]. *Avoid:* paper-unavailable.
+
+Three terminals reach this status, distinguished by the gateway signal: a hard *service-rejection* (the gateway rejects the read outright in any window), an *account-incapable* rejection (the operation needs a paper account the current one is not provisioned for — per-account, not per-service, so it recovers once such an account exists), and an in-window *feed-unprovisioned* empty (a clean success with no data even inside the correct session window — the disambiguating test against an off-window empty, which is a session-clock timing miss and merely [[Pending]]). The `paper_incompatible` facet is a documentation/routing flag meaning "won't flip on paper"; it does **not** imply the runtime paper-incompatible classifier fires — that classifier is bound to the service-rejection code only, and stays silent for the feed-unprovisioned terminal.
 
 ## Order safety
 
