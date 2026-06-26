@@ -68,9 +68,9 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t1105` | 주식피봇/디마크조회 | `market_session` | implemented | [t1105](./t1105.md) |
 | `t1305` | 기간별주가 | `paginated` | implemented | [t1305](./t1305.md) |
 | `t1308` | 주식시간대별체결조회챠트 | `market_session` | tracked | [t1308](./t1308.md) |
-| `t1310` | 주식당일전일분틱조회 | `paginated` | tracked | [t1310](./t1310.md) |
+| `t1310` | 주식당일전일분틱조회 | `paginated` | implemented | [t1310](./t1310.md) |
 | `t1403` | 신규상장종목조회 | `paginated` | implemented | [t1403](./t1403.md) |
-| `t1404` | 관리/불성실/투자유의조회 | `paginated` | tracked | [t1404](./t1404.md) |
+| `t1404` | 관리/불성실/투자유의조회 | `paginated` | implemented | [t1404](./t1404.md) |
 | `t1441` | 등락율상위 | `paginated` | implemented | [t1441](./t1441.md) |
 | `t1452` | 거래량상위 | `paginated` | implemented | [t1452](./t1452.md) |
 | `t1463` | 거래대금상위 | `paginated` | implemented | [t1463](./t1463.md) |

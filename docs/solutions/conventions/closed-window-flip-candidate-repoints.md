@@ -49,11 +49,13 @@ wave. The real blocker and unblock path per TR:
 | `t1964` | Already built (prior wave); left unflipped on a documented empty-board disposition (ELW전광판 returns empty on the position-less paper board). | An empty-board filter-default fix that yields a non-empty board. |
 | `t1860` | A realtime-control subscription (`서버저장조건 실시간검색`), not a plain read — HELD as out of scope for read-only implement-tr. | The realtime-control effort (subscription lifecycle, not a REST flip). |
 
-Closure changes none of these. The `t1310`/`t1404` reachability premise is itself
-unproven (the gateway may gate even historical/board reads on an open session) —
-but that is gated by the non-empty-assert-before-record rule
-([[market-hours-read-empty-result-disposition]]), which dispositions an empty
-closed-window smoke to PENDING cleanly rather than flipping it falsely.
+Closure changes none of these. The `t1310`/`t1404` reachability premise — once
+unproven — was **confirmed this wave**: both certified non-empty UNDER closure
+(t1310 returned 20 ticks, t1404 returned a 100-row designation board), so both
+flipped to Implemented. The non-empty-assert-before-record rule
+([[market-hours-read-empty-result-disposition]]) still backstops the gate: had
+either returned an empty `00707`, it would have dispositioned to PENDING cleanly
+rather than flipping falsely.
 
 ## Why this matters
 
