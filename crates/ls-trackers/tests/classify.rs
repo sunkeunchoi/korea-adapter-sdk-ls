@@ -91,7 +91,7 @@ fn diff_of_identical_artifacts_is_empty() {
 }
 
 /// AE2: a removed field on an implemented TR (t8412) classifies `breaking`; the
-/// same removal on a tracked-only TR (CSPAT00601) classifies lower
+/// same removal on a tracked-only TR (t1964) classifies lower
 /// (`maintenance`); a new optional field on an implemented TR is `maintenance`.
 #[test]
 fn classify_is_support_aware() {
@@ -102,8 +102,8 @@ fn classify_is_support_aware() {
     assert_eq!(breaking.len(), 1);
     assert_eq!(breaking[0].severity, Severity::Breaking);
 
-    // The same removal on the tracked-but-unimplemented order TR → lower.
-    let tracked_only = classify(&[removed("CSPAT00601", "Out.SomeField")], &trs);
+    // The same removal on a tracked-but-unimplemented TR (t1964) → lower.
+    let tracked_only = classify(&[removed("t1964", "Out.SomeField")], &trs);
     assert_eq!(tracked_only.len(), 1);
     assert_eq!(tracked_only[0].severity, Severity::Maintenance);
     assert!(

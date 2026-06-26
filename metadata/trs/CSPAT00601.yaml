@@ -19,11 +19,12 @@ dependencies:
   # the request; these are the fields that make two submissions "the same order".
   strong_order_fields: [IsuNo, BnsTpCode, OrdQty, OrdPrc]
 support:
-  # Tracked-not-implemented: the order class is recorded in metadata so upstream
-  # changes can be reasoned about, but no order runtime ships this slice
-  # (ADR 0008). See docs/design/order-safety-design.md.
+  # Implemented: submit leg certified on a clean guarded paper order-chain smoke
+  # (rsp_cd 00040 매수주문 완료; `make live-smoke-order-chain`, plan -005). Stops at
+  # Implemented — Recommended endorses live order placement (ADR 0008), a separate
+  # pass. See docs/design/order-safety-design.md.
   tracked: true
-  implemented: false
+  implemented: true
   recommended: false
 maintenance:
   source_spec_hash: f6a1b2c3d4e5

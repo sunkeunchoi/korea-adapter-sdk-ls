@@ -19,9 +19,9 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | recommended | [CSPAQ12200](./CSPAQ12200.md) |
 | `CSPAQ12300` | BEP단가조회 | `account` | implemented | [CSPAQ12300](./CSPAQ12300.md) |
 | `CSPAQ22200` | 현물계좌예수금 주문가능금액 총평가2 | `account` | implemented | [CSPAQ22200](./CSPAQ22200.md) |
-| `CSPAT00601` | 현물 정규주문 (cash equity order submission) | `orders` | tracked | [CSPAT00601](./CSPAT00601.md) |
-| `CSPAT00701` | 현물정정주문 (cash equity order modify) | `orders` | tracked | [CSPAT00701](./CSPAT00701.md) |
-| `CSPAT00801` | 현물취소주문 (cash equity order cancel) | `orders` | tracked | [CSPAT00801](./CSPAT00801.md) |
+| `CSPAT00601` | 현물 정규주문 (cash equity order submission) | `orders` | implemented | [CSPAT00601](./CSPAT00601.md) |
+| `CSPAT00701` | 현물정정주문 (cash equity order modify) | `orders` | implemented | [CSPAT00701](./CSPAT00701.md) |
+| `CSPAT00801` | 현물취소주문 (cash equity order cancel) | `orders` | implemented | [CSPAT00801](./CSPAT00801.md) |
 | `FC9` | 선물 체결 실시간 시세 | `realtime` | implemented | [FC9](./FC9.md) |
 | `FH9` | 선물 호가 실시간 시세 | `realtime` | implemented | [FH9](./FH9.md) |
 | `GSC` | 해외주식 체결 실시간 시세 | `realtime` | implemented | [GSC](./GSC.md) |
@@ -61,7 +61,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `o3125` | 해외선물옵션 현재가(종목정보) 조회 | `market_session` | implemented | [o3125](./o3125.md) |
 | `o3126` | 해외선물옵션 현재가호가 조회 | `market_session` | implemented | [o3126](./o3126.md) |
 | `revoke` | 접근토큰 폐기 (OAuth2 token revoke) | `standalone` | implemented | [revoke](./revoke.md) |
-| `t0425` | 주식체결/미체결 (stock filled/unfilled order inquiry) | `paginated` | tracked | [t0425](./t0425.md) |
+| `t0425` | 주식체결/미체결 (stock filled/unfilled order inquiry) | `paginated` | implemented | [t0425](./t0425.md) |
 | `t1101` | 주식 현재가호가 조회 | `market_session` | recommended | [t1101](./t1101.md) |
 | `t1102` | 주식 현재가(시세) 조회 | `market_session` | recommended | [t1102](./t1102.md) |
 | `t1403` | 신규상장종목조회 | `paginated` | implemented | [t1403](./t1403.md) |

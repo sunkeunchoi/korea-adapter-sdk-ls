@@ -23,8 +23,11 @@ dependencies:
   self_continuation_fields: [cts_ordno]
   strong_order_fields: []
 support:
+  # Implemented: order-reconciliation read exercised by the guarded paper
+  # order-chain smoke (returned valid 완료/정정확인 rows; `make live-smoke-order-chain`,
+  # plan -005). gate 1 companion to the CSPAT00601 submit.
   tracked: true
-  implemented: false
+  implemented: true
   recommended: false
 maintenance:
   source_spec_hash: e6eff49b1783

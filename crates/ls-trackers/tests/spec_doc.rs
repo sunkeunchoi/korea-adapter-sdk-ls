@@ -2,7 +2,7 @@
 //! real authored metadata — the Acceptance Examples AE1–AE5 plus the
 //! clean-self-diff bar, all network-free.
 //!
-//! Support states come from `<repo>/metadata` (t1102 implemented, CSPAT00601
+//! Support states come from `<repo>/metadata` (t1102 implemented, t1964
 //! tracked-only), so these assert the end-to-end advisory contract, not a
 //! synthetic support map. Example inputs for the headline cases load from
 //! `tests/fixtures/{tr}_example_{baseline,candidate}.json`.
