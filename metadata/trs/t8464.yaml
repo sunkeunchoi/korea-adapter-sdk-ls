@@ -1,0 +1,24 @@
+tr_code: t8464
+name: 선물옵션차트(틱/n틱)
+owner_class: paginated
+facets:
+  protocol: rest
+  instrument_domain: futures_options
+  venue_session: krx_regular
+  date_sensitive: true
+  self_paginated: true
+  account_state: false
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: market_data
+  caller_supplied_identifiers: [shcode]
+dependencies:
+  self_continuation_fields: [cts_date, cts_time]
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: false
+  recommended: false
+maintenance:
+  source_spec_hash: ea4f6050c574
+  last_reviewed: 2026-06-26

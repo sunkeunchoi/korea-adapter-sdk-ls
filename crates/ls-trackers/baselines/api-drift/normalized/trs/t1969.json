@@ -1,0 +1,1039 @@
+{
+  "tr_code": "t1969",
+  "tr_name": "ELW지표검색",
+  "protocol": "rest",
+  "is_websocket": false,
+  "endpoint_path": "/stock/elw",
+  "api_group_id": "3d58c125-8b45-46b4-baf2-6f98d0373131",
+  "source_group_name": "[주식] ELW",
+  "request_blocks": [
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 1,
+      "field_name": "authorization",
+      "korean_name": "접근토큰",
+      "type": "String",
+      "length": 1000,
+      "required": true,
+      "description_hash": "62956eed2a6e506a"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 2,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 3,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 4,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 5,
+      "field_name": "mac_address",
+      "korean_name": "MAC 주소",
+      "type": "String",
+      "length": 12,
+      "required": true,
+      "description_hash": "1d2213655779faf2"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 0,
+      "field_name": "chkitem",
+      "korean_name": "기초자산chk구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "8d20f745f2121a87"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 1,
+      "field_name": "cbitem",
+      "korean_name": "기초자산코드",
+      "type": "String",
+      "length": 12,
+      "required": true,
+      "description_hash": "0dcd328312612a59"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 2,
+      "field_name": "chkissuer",
+      "korean_name": "발행사chk구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "9da29d02d43deec3"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 3,
+      "field_name": "cbissuer",
+      "korean_name": "발행사",
+      "type": "String",
+      "length": 12,
+      "required": true,
+      "description_hash": "b22c4db16de81117"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 4,
+      "field_name": "chkcallput",
+      "korean_name": "권리chk구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "d059a276ad8f395d"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 5,
+      "field_name": "cbcallput",
+      "korean_name": "권리(call:01.put:02)",
+      "type": "String",
+      "length": 2,
+      "required": true,
+      "description_hash": "ee828d25d0f826bd"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 6,
+      "field_name": "chkexec",
+      "korean_name": "행사가chk구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "bee659607e0ab647"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 7,
+      "field_name": "cbexec",
+      "korean_name": "행사가(>=:1.<=:2)",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "40d3ec58a7df54fc"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 8,
+      "field_name": "chktype",
+      "korean_name": "행사방식chk구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "f56c8aa3afb3c82f"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 9,
+      "field_name": "cbtype",
+      "korean_name": "행사방식",
+      "type": "String",
+      "length": 2,
+      "required": true,
+      "description_hash": "f07950b2a94a4a94"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 10,
+      "field_name": "chksettle",
+      "korean_name": "결제방법chk구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "5f1d84ec40678307"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 11,
+      "field_name": "cbsettle",
+      "korean_name": "결제방법",
+      "type": "String",
+      "length": 2,
+      "required": true,
+      "description_hash": "13f5be8ae9172356"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 12,
+      "field_name": "chklast",
+      "korean_name": "만기chk구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "0b394b0b35466743"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 13,
+      "field_name": "cblast",
+      "korean_name": "만기월별",
+      "type": "String",
+      "length": 6,
+      "required": true,
+      "description_hash": "6128e2345f17b385"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 14,
+      "field_name": "chkelwexec",
+      "korean_name": "행사가격chk구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1aeb13ea09457527"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 15,
+      "field_name": "elwexecs",
+      "korean_name": "행사가이상",
+      "type": "Number",
+      "required": true,
+      "description_hash": "7dc4dc5cf907be0a"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 16,
+      "field_name": "elwexece",
+      "korean_name": "행사가이하",
+      "type": "Number",
+      "required": true,
+      "description_hash": "880d3181713836ce"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 17,
+      "field_name": "chkvolume",
+      "korean_name": "거래량chk구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "8ce94fbf974070eb"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 18,
+      "field_name": "volumes",
+      "korean_name": "거래량이상",
+      "type": "Number",
+      "length": 12,
+      "required": true,
+      "description_hash": "de56b6492a395032"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 19,
+      "field_name": "volumee",
+      "korean_name": "거래량이하",
+      "type": "Number",
+      "length": 12,
+      "required": true,
+      "description_hash": "abf836f068272b56"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 20,
+      "field_name": "chkrate",
+      "korean_name": "등락율chk구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "7aef48aea9c7aad7"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 21,
+      "field_name": "rates",
+      "korean_name": "등락율이상",
+      "type": "Number",
+      "required": true,
+      "description_hash": "be04f54acae1da03"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 22,
+      "field_name": "ratee",
+      "korean_name": "등락율이하",
+      "type": "Number",
+      "required": true,
+      "description_hash": "cd6e4b89eb26fb17"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 23,
+      "field_name": "chkpremium",
+      "korean_name": "프리미엄chk구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "cd210d97b1285af9"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 24,
+      "field_name": "premiums",
+      "korean_name": "프리미엄이상",
+      "type": "Number",
+      "required": true,
+      "description_hash": "8d6345711cb28a77"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 25,
+      "field_name": "premiume",
+      "korean_name": "프리미엄이하",
+      "type": "Number",
+      "required": true,
+      "description_hash": "faa0701efda47f23"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 26,
+      "field_name": "chkparity",
+      "korean_name": "패리티chk구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "557a00920d7c4b2f"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 27,
+      "field_name": "paritys",
+      "korean_name": "패리티이상",
+      "type": "Number",
+      "required": true,
+      "description_hash": "c00cc16120f05aa4"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 28,
+      "field_name": "paritye",
+      "korean_name": "패리티이하",
+      "type": "Number",
+      "required": true,
+      "description_hash": "68fa2c8cbb87594c"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 29,
+      "field_name": "chkberate",
+      "korean_name": "손익분기chk구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "449f48a4849b74e5"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 30,
+      "field_name": "berates",
+      "korean_name": "손익분기이상",
+      "type": "Number",
+      "required": true,
+      "description_hash": "0eadba76007adfcf"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 31,
+      "field_name": "beratee",
+      "korean_name": "손익분기이하",
+      "type": "Number",
+      "required": true,
+      "description_hash": "b1b54f35579e6b83"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 32,
+      "field_name": "chkcapt",
+      "korean_name": "자본지지chk구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1f91a51b04bac377"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 33,
+      "field_name": "capts",
+      "korean_name": "자본지지이상",
+      "type": "Number",
+      "required": true,
+      "description_hash": "9046cfb1df8e2195"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 34,
+      "field_name": "capte",
+      "korean_name": "자본지지이하",
+      "type": "Number",
+      "required": true,
+      "description_hash": "2b88ab5d543569ab"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 35,
+      "field_name": "chkegearing",
+      "korean_name": "e.기어링chk구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "3351c2a0d0b25f87"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 36,
+      "field_name": "egearings",
+      "korean_name": "e.기어링이상",
+      "type": "Number",
+      "required": true,
+      "description_hash": "ced132203632c191"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 37,
+      "field_name": "egearinge",
+      "korean_name": "e.기어링이하",
+      "type": "Number",
+      "required": true,
+      "description_hash": "9a1637269a5fde2d"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 38,
+      "field_name": "chkgearing",
+      "korean_name": "기어링chk구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "66bd5e7f70472a2b"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 39,
+      "field_name": "gearings",
+      "korean_name": "기어링이상",
+      "type": "Number",
+      "required": true,
+      "description_hash": "18d44c4fc873ea07"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 40,
+      "field_name": "gearinge",
+      "korean_name": "기어링이하",
+      "type": "Number",
+      "required": true,
+      "description_hash": "3b102af7e48de47f"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 41,
+      "field_name": "chkdelta",
+      "korean_name": "델타chk구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "5ca76186f1e9fe37"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 42,
+      "field_name": "deltas",
+      "korean_name": "델타이상",
+      "type": "Number",
+      "required": true,
+      "description_hash": "e6514a6f11ae0171"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 43,
+      "field_name": "deltae",
+      "korean_name": "델타이하",
+      "type": "Number",
+      "required": true,
+      "description_hash": "00f67e50a43ac675"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 44,
+      "field_name": "chktheta",
+      "korean_name": "쎄타chk구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "c442e31f60b146c7"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 45,
+      "field_name": "thetas",
+      "korean_name": "쎄타이상",
+      "type": "Number",
+      "required": true,
+      "description_hash": "0728de27bbf22c31"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 46,
+      "field_name": "thetae",
+      "korean_name": "쎄타이하",
+      "type": "Number",
+      "required": true,
+      "description_hash": "60cfdca27ebfec9f"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 47,
+      "field_name": "chkduedate",
+      "korean_name": "최종거래일chk구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "9581bb60ce4b9433"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 48,
+      "field_name": "duedates",
+      "korean_name": "최종거래일이상",
+      "type": "String",
+      "length": 8,
+      "required": true,
+      "description_hash": "3ab2c04923589b08"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 49,
+      "field_name": "duedatee",
+      "korean_name": "최종거래일이하",
+      "type": "String",
+      "length": 8,
+      "required": true,
+      "description_hash": "985420695ba18eb4"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 50,
+      "field_name": "onetickgubun",
+      "korean_name": "LP갭1틱",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 51,
+      "field_name": "lp_liquidity",
+      "korean_name": "LP유동성공급",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 52,
+      "field_name": "chklp_code",
+      "korean_name": "LPchk구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 53,
+      "field_name": "lp_code",
+      "korean_name": "LP회원사코드",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 54,
+      "field_name": "chkkoba",
+      "korean_name": "조기종료chk구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t1969InBlock",
+      "field_index": 55,
+      "field_name": "cbkoba",
+      "korean_name": "조기종료(0:전체1:KOBA2:KOBA제외)",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "acecc8f49cca70e1"
+    }
+  ],
+  "response_blocks": [
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 1,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 2,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 3,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 0,
+      "field_name": "cnt",
+      "korean_name": "종목갯수",
+      "type": "Number",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 1,
+      "field_name": "t1969OutBlock1",
+      "korean_name": "t1969OutBlock1\n",
+      "type": "Object Array",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 2,
+      "field_name": "hname",
+      "korean_name": "종목명",
+      "type": "String",
+      "length": 40,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 3,
+      "field_name": "shcode",
+      "korean_name": "종목코드",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 4,
+      "field_name": "issuernmk",
+      "korean_name": "발행사",
+      "type": "String",
+      "length": 40,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 5,
+      "field_name": "itemcode",
+      "korean_name": "기초자산코드",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 6,
+      "field_name": "cpgubun",
+      "korean_name": "콜/풋구분",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 7,
+      "field_name": "price",
+      "korean_name": "현재가",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 8,
+      "field_name": "sign",
+      "korean_name": "전일대비구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 9,
+      "field_name": "change",
+      "korean_name": "전일대비",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 10,
+      "field_name": "diff",
+      "korean_name": "등락율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 11,
+      "field_name": "volume",
+      "korean_name": "거래량",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 12,
+      "field_name": "jnilvolume",
+      "korean_name": "전일거래량",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 13,
+      "field_name": "elwexec",
+      "korean_name": "행사가",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 14,
+      "field_name": "item",
+      "korean_name": "기초자산명",
+      "type": "String",
+      "length": 20,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 15,
+      "field_name": "bprice",
+      "korean_name": "기초자산가",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 16,
+      "field_name": "bsign",
+      "korean_name": "기초전일대비구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 17,
+      "field_name": "bchange",
+      "korean_name": "기초전일대비",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 18,
+      "field_name": "bdiff",
+      "korean_name": "기초등락율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 19,
+      "field_name": "premium",
+      "korean_name": "프리미엄",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 20,
+      "field_name": "parity",
+      "korean_name": "패리티",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 21,
+      "field_name": "berate",
+      "korean_name": "손익분기",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 22,
+      "field_name": "capt",
+      "korean_name": "자본지지",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 23,
+      "field_name": "egearing",
+      "korean_name": "e.기어링",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 24,
+      "field_name": "gearing",
+      "korean_name": "기어링",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 25,
+      "field_name": "lastdate",
+      "korean_name": "최종거래일",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 26,
+      "field_name": "delta",
+      "korean_name": "델타",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 27,
+      "field_name": "theta",
+      "korean_name": "쎄타",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 28,
+      "field_name": "lpname",
+      "korean_name": "LP회원사",
+      "type": "String",
+      "length": 40,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 29,
+      "field_name": "lphold",
+      "korean_name": "LP보유율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 30,
+      "field_name": "bjandatecnt",
+      "korean_name": "잔존일수",
+      "type": "Number",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 31,
+      "field_name": "convrate",
+      "korean_name": "전환비율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 32,
+      "field_name": "tickvalue",
+      "korean_name": "1틱환산",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1969OutBlock",
+      "field_index": 33,
+      "field_name": "kasis",
+      "korean_name": "괴리율",
+      "type": "Number",
+      "required": true
+    }
+  ],
+  "rate_limit_per_sec": 2,
+  "corp_rate_limit_per_sec": 3,
+  "rate_source_group": "3d58c125-8b45-46b4-baf2-6f98d0373131"
+}

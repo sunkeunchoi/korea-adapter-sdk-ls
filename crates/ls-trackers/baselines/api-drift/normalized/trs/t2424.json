@@ -1,0 +1,343 @@
+{
+  "tr_code": "t2424",
+  "tr_name": "미결제약정추이",
+  "protocol": "rest",
+  "is_websocket": false,
+  "endpoint_path": "/futureoption/market-data",
+  "api_group_id": "9f467798-6ce6-4d31-ab93-5a0e2860f89f",
+  "source_group_name": "[선물/옵션] 시세",
+  "request_blocks": [
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 1,
+      "field_name": "authorization",
+      "korean_name": "접근토큰",
+      "type": "String",
+      "length": 1000,
+      "required": true,
+      "description_hash": "62956eed2a6e506a"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 2,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 3,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 4,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 5,
+      "field_name": "mac_address",
+      "korean_name": "MAC 주소",
+      "type": "String",
+      "length": 12,
+      "required": true,
+      "description_hash": "1d2213655779faf2"
+    },
+    {
+      "direction": "request",
+      "block_name": "t2424InBlock",
+      "field_index": 0,
+      "field_name": "focode",
+      "korean_name": "종목코드",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t2424InBlock",
+      "field_index": 1,
+      "field_name": "bdgubun",
+      "korean_name": "분일구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "8e34ad9e48c11f4f"
+    },
+    {
+      "direction": "request",
+      "block_name": "t2424InBlock",
+      "field_index": 2,
+      "field_name": "nmin",
+      "korean_name": "N분",
+      "type": "Object",
+      "length": 3,
+      "required": true,
+      "description_hash": "9744a97382652ca3"
+    },
+    {
+      "direction": "request",
+      "block_name": "t2424InBlock",
+      "field_index": 3,
+      "field_name": "tcgubun",
+      "korean_name": "당일연결구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "236615b5489cf4ba"
+    },
+    {
+      "direction": "request",
+      "block_name": "t2424InBlock",
+      "field_index": 4,
+      "field_name": "cnt",
+      "korean_name": "조회건수",
+      "type": "Object",
+      "length": 4,
+      "required": true
+    }
+  ],
+  "response_blocks": [
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 1,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 2,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 3,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "response",
+      "block_name": "t2424OutBlock",
+      "field_index": 0,
+      "field_name": "price",
+      "korean_name": "현재가",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t2424OutBlock",
+      "field_index": 1,
+      "field_name": "sign",
+      "korean_name": "전일대비구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "d7dc71f7e4e46881"
+    },
+    {
+      "direction": "response",
+      "block_name": "t2424OutBlock",
+      "field_index": 2,
+      "field_name": "change",
+      "korean_name": "전일대비",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t2424OutBlock",
+      "field_index": 3,
+      "field_name": "diff",
+      "korean_name": "등락율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t2424OutBlock",
+      "field_index": 4,
+      "field_name": "cvolume",
+      "korean_name": "체결수량",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t2424OutBlock",
+      "field_index": 5,
+      "field_name": "volume",
+      "korean_name": "누적거래량",
+      "type": "Number",
+      "length": 15,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t2424OutBlock",
+      "field_index": 6,
+      "field_name": "openyak",
+      "korean_name": "미결제수량",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t2424OutBlock1",
+      "field_index": 0,
+      "field_name": "dt",
+      "korean_name": "일자시간",
+      "type": "String",
+      "length": 14,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t2424OutBlock1",
+      "field_index": 1,
+      "field_name": "open",
+      "korean_name": "시가",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t2424OutBlock1",
+      "field_index": 2,
+      "field_name": "high",
+      "korean_name": "고가",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t2424OutBlock1",
+      "field_index": 3,
+      "field_name": "low",
+      "korean_name": "저가",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t2424OutBlock1",
+      "field_index": 4,
+      "field_name": "close",
+      "korean_name": "종가",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t2424OutBlock1",
+      "field_index": 5,
+      "field_name": "openopenyak",
+      "korean_name": "미결제시량",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t2424OutBlock1",
+      "field_index": 6,
+      "field_name": "highopenyak",
+      "korean_name": "미결제고량",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t2424OutBlock1",
+      "field_index": 7,
+      "field_name": "lowopenyak",
+      "korean_name": "미결제저량",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t2424OutBlock1",
+      "field_index": 8,
+      "field_name": "closeopenyak",
+      "korean_name": "미결제종량",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t2424OutBlock1",
+      "field_index": 9,
+      "field_name": "openupdn",
+      "korean_name": "미결증감",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    }
+  ],
+  "rate_limit_per_sec": 1,
+  "corp_rate_limit_per_sec": 3,
+  "rate_source_group": "9f467798-6ce6-4d31-ab93-5a0e2860f89f"
+}
