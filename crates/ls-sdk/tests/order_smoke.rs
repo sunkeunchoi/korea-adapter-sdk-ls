@@ -629,19 +629,20 @@ fn parse_qty(s: &str) -> u64 {
     s.trim().parse().unwrap_or(0)
 }
 
-/// `true` if a `t0425` row status is terminal (canceled or rejected). Such a row is
-/// NOT live and does not count against flatness — mirrors the cancel/rejection
-/// markers `reconcile::classify_status` keys on (취소 / 거부 / 거절).
-fn status_is_terminal(status: &str) -> bool {
-    status.contains("취소") || status.contains("거부") || status.contains("거절")
-}
-
 /// Classify an account-wide `t0425` row set into a flatness verdict (KTD2/KTD3).
 ///
-/// A FILL (`cheqty > 0`) outranks a resting remainder: a fill is unrecoverable, so
-/// even a partial fill (`cheqty > 0` AND `ordrem > 0`) routes to `Fill`. A
-/// non-terminal row with a cancelable remainder (`ordrem > 0`, no fill) is `Resting`.
-/// Terminal rows (취소 / 거부) are not live. Zero rows → `Flat`.
+/// Keys on QUANTITIES, never the status TEXT (KTD2: "the flat check keys on
+/// `ordrem`"). A FILL (`cheqty > 0`) outranks a resting remainder: a fill is
+/// unrecoverable, so even a partial fill (`cheqty > 0` AND `ordrem > 0`) routes to
+/// `Fill`. A cancelable remainder (`ordrem > 0`, no fill) is `Resting`. A row with
+/// neither (`cheqty == 0` AND `ordrem == 0`) contributes nothing. Zero rows → `Flat`.
+///
+/// Why NOT a status-text "terminal" filter: a genuinely canceled order RELEASES its
+/// remainder (`ordrem == 0`), so it is already flat by quantity. Crucially, a
+/// cancel-REJECTED (`취소거부`) or modify-rejected (`정정거부`) order is STILL RESTING —
+/// its status text contains 취소/거부 but the order was not removed, so a text filter
+/// would wrongly skip it and conclude flat while a paper order rests. The production
+/// `reconcile::classify_status` likewise treats 거부 as still-live, never terminal.
 ///
 /// NOTE this counts EVERY live row, not just the smoke's own order — that is the
 /// whole point of the account-wide scan vs the per-intent `reconcile_rows`: a
@@ -650,9 +651,6 @@ fn flat_verdict(rows: &[T0425OutBlock1]) -> FlatVerdict {
     let mut fills = Vec::new();
     let mut resting = Vec::new();
     for r in rows {
-        if status_is_terminal(&r.status) {
-            continue;
-        }
         let cheqty = parse_qty(&r.cheqty);
         let ordrem = parse_qty(&r.ordrem);
         if cheqty > 0 {
@@ -660,8 +658,8 @@ fn flat_verdict(rows: &[T0425OutBlock1]) -> FlatVerdict {
         } else if ordrem > 0 {
             resting.push(r.ordno.trim().to_string());
         }
-        // ordrem == 0 && cheqty == 0 on a non-terminal row: nothing to cancel and
-        // nothing filled — not a live order against flatness.
+        // cheqty == 0 && ordrem == 0: nothing filled, nothing resting — a genuinely
+        // canceled / fully-terminal order contributes nothing to flatness.
     }
     if !fills.is_empty() {
         FlatVerdict::Fill(fills)
@@ -840,17 +838,36 @@ fn flat_row(ordno: &str, status: &str, cheqty: &str, ordrem: &str) -> T0425OutBl
 }
 
 #[test]
-fn flat_verdict_empty_and_terminal_rows_are_flat() {
+fn flat_verdict_genuinely_canceled_rows_are_flat() {
     // Zero rows → flat.
     assert_eq!(flat_verdict(&[]), FlatVerdict::Flat);
-    // A canceled order (the chain's own teardown) and a rejected order are terminal,
-    // not live → flat.
+    // A genuinely canceled order (the chain's own teardown) releases its remainder
+    // (ordrem==0, no fill), and a rejected SUBMIT never rested — both contribute
+    // nothing to flatness.
     let rows = [
         flat_row("84005", "취소", "0", "0"),
-        flat_row("84006", "취소거부", "0", "1"), // rejected cancel → still terminal marker 거부
         flat_row("84007", "거부", "0", "0"),
     ];
     assert_eq!(flat_verdict(&rows), FlatVerdict::Flat);
+}
+
+/// REGRESSION GUARD (review-flagged P0): a cancel-REJECTED (`취소거부`) or modify-
+/// rejected (`정정거부`) order is STILL RESTING — its status text contains 취소/거부
+/// but the order was NOT removed. flat_verdict must surface it via `ordrem > 0`, never
+/// skip it as "terminal" (which would conclude flat while a real paper order rests —
+/// the exact false-negative the account-flat assertion exists to prevent).
+#[test]
+fn flat_verdict_rejected_cancel_or_modify_with_remainder_is_resting_not_flat() {
+    assert_eq!(
+        flat_verdict(&[flat_row("84005", "취소거부", "0", "2")]),
+        FlatVerdict::Resting(vec!["84005".into()]),
+        "a cancel-rejected order still rests — must NOT read as flat"
+    );
+    assert_eq!(
+        flat_verdict(&[flat_row("84006", "정정거부", "0", "3")]),
+        FlatVerdict::Resting(vec!["84006".into()]),
+        "a modify-rejected order still rests — must NOT read as flat"
+    );
 }
 
 #[test]
@@ -1014,6 +1031,12 @@ fn dispatch_log_suppressor_refuses_when_a_subscriber_is_already_installed() {
     // Once ANY global default subscriber exists (set by this call or another test in
     // the binary), a second install MUST refuse — tracing allows one global default
     // per process, so a silent install-failure would be fail-OPEN on a known leak.
+    //
+    // This test permanently claims the process-global default for the order_smoke test
+    // binary. That is harmless because (a) no other offline test relies on tracing and
+    // (b) the live `order_chained_smoke` is run ALONE via `make live-smoke-order-chain`
+    // (`cargo test -- --ignored --exact order_chained_smoke`), so the offline tests do
+    // not co-run with it and its own install_dispatch_log_suppressor() succeeds first.
     let _ = install_dispatch_log_suppressor();
     assert!(
         install_dispatch_log_suppressor().is_err(),
@@ -1302,12 +1325,12 @@ async fn assert_account_flat(sdk: &LsSdk) {
             );
             // Best-effort cleanup: retry-cancel each still-resting order while
             // dispatch is still enabled (the kill-switch would block these), THEN
-            // re-scan. Cancel qty is the remaining `ordrem` of the resting row.
-            for r in rows.iter().filter(|r| {
-                !status_is_terminal(&r.status)
-                    && parse_qty(&r.cheqty) == 0
-                    && parse_qty(&r.ordrem) > 0
-            }) {
+            // re-scan. A resting row is `cheqty == 0 && ordrem > 0` (a partial fill is
+            // a Fill, not retry-cancelable). Cancel qty is the remaining `ordrem`.
+            for r in rows
+                .iter()
+                .filter(|r| parse_qty(&r.cheqty) == 0 && parse_qty(&r.ordrem) > 0)
+            {
                 let cancel =
                     CSPAT00801Request::new(r.ordno.trim(), r.expcode.trim(), r.ordrem.trim());
                 match sdk.orders().cancel(&cancel).await {
@@ -1367,8 +1390,14 @@ async fn assert_account_flat(sdk: &LsSdk) {
 /// `t0425` — then assert the account is account-wide FLAT (U3). Cancel is the PRIMARY
 /// teardown; the flat assertion + retry-cancel is the autonomous fallback when the
 /// cancel link fails or a resting order remains; paper reset is the last resort.
-/// Records Pending (never fails the build) when the paper account cannot place/modify/
-/// cancel in-window. `#[ignore]` — runs only via `make live-smoke-order-chain`.
+///
+/// Pending vs hard-fail (the autonomy trade, R3/AE3): when NOTHING is placed (out of
+/// window, not order-capable / `01900` / `01491`, degenerate band) the run records
+/// Pending and passes — no order is left resting. But ONCE an order is placed, a
+/// still-resting order after retry-cancel, an unexpected fill, or a failed/ambiguous
+/// flat scan HARD-FAILS the build (there is no operator to clean up) — autonomy trades
+/// the human pre-placement checkpoint for loud post-run detection.
+/// `#[ignore]` — runs only via `make live-smoke-order-chain`.
 ///
 /// Autonomy invariants (all fail-closed):
 /// - U1: refuses unless a CI/no-TTY marker is ABSENT and a fresh per-wave human nonce
@@ -1425,7 +1454,8 @@ async fn order_chained_smoke() {
             }
         },
         Err(e) => {
-            OrderEvidence::pending("band", &format!("t1102 band fetch failed: {e}")).record();
+            OrderEvidence::pending("band", &format!("t1102 band fetch failed: {}", scrub_secrets(&e.to_string())))
+                .record();
             return;
         }
     };
@@ -1468,7 +1498,7 @@ async fn order_chained_smoke() {
             return;
         }
         Err(e) => {
-            sev.rsp_msg = format!("submit failed: {e}");
+            sev.rsp_msg = format!("submit failed: {}", scrub_secrets(&e.to_string()));
             sev.record();
             OrderEvidence::pending("chain", "submit leg did not place; chain not run").record();
             return;
@@ -1503,7 +1533,7 @@ async fn order_chained_smoke() {
         }
         Err(e) => {
             // Gate 1 already flipped on the submit leg; gate 2 stays Pending.
-            mev.rsp_msg = format!("modify failed: {e}");
+            mev.rsp_msg = format!("modify failed: {}", scrub_secrets(&e.to_string()));
             mev.record();
             OrderEvidence::pending("chain", "modify link failed; gate 2 not flipped (gate 1 stands)")
                 .record();

@@ -57,9 +57,13 @@ live-smoke-order:
 ##   - a FRESH per-wave human nonce within TTL — mint it each wave:
 ##       export LS_ORDER_SMOKE_NONCE=$(date +%s)
 ##     (a static/reused nonce is rejected; the nonce is the human-present signal that
-##      passive CI detection alone cannot provide — KTD1.)
-## Records Pending (still "passes") if the paper account cannot place/modify/cancel
-## in-window — gate 1 never waits on gate 2.
+##      passive CI detection alone cannot provide — KTD1. Do NOT put the nonce in
+##      .env — this recipe sources .env and a stale value there would clobber it.)
+## Pending vs hard-fail: if NOTHING is placed (out-of-window / not order-capable /
+## degenerate band) it records Pending and "passes". But once an order is PLACED, a
+## still-resting order, an unexpected fill, or a failed flat scan HARD-FAILS the build
+## (there is no operator to clean up — autonomy trades the pre-placement checkpoint for
+## loud post-run detection). gate 1 never waits on gate 2.
 ##   export LS_ORDER_SMOKE_NONCE=$(date +%s); make live-smoke-order-chain
 live-smoke-order-chain:
 	@set -a; [ -f .env ] && . ./.env; set +a; \
