@@ -1,6 +1,7 @@
 ---
 title: "Implementing/tracking a TR is a multi-site registration checklist — miss one and the gate stays green but the TR is half-wired"
 date: 2026-06-25
+last_updated: 2026-06-26
 category: conventions
 module: crates/ls-core, crates/ls-trackers, crates/ls-docgen, metadata, Makefile, .agents/skills
 problem_type: convention
@@ -11,6 +12,7 @@ applies_when:
   - "Flipping a Tracked TR to Implemented (implement-tr) — policy + crosscheck + smoke registration"
   - "A new {TR}_POLICY const compiles and tests pass, but promote-tr later cannot discover the TR"
   - "Adding a live-smoke target that appears to run but silently no-ops"
+  - "Flipping a TR that a support-aware test hard-codes as its tracked-only exemplar"
 tags:
   - ls-core
   - ls-trackers
@@ -22,6 +24,7 @@ tags:
   - count-assertion
   - track-tr
   - implement-tr
+  - support-aware
 ---
 
 # Registering a TR touches many sites — the gate does not catch the ones it does not assert
@@ -75,6 +78,13 @@ spurious diff.
 - **docgen flip counts** (only when flipping to Implemented):
   `crates/ls-docgen/src/lib.rs` — add the code to `banner_trs` AND bump
   `reference.len()`. Regenerate with `make docs`.
+  - **A tracked→implemented flip moves ONLY the docgen counts.** The
+    maintained-shape count sites from the tracking tax above
+    (`maintained_tr_count`, the four `cli.rs` `shapes.len()` / `maintained_shapes`
+    sites, the `TRACKED_TRS` array) do **not** move on a flip — the TR was already
+    tracked, so the maintained count is unchanged (e.g. it stays `126`). Do not go
+    hunting for `cli.rs` / `api_drift.rs` count bumps on a flip; touching them is a
+    bug. Only `banner_trs` (+1 per flipped TR) and `reference.len()` change.
 
 ### The two sites NO test asserts — the silent ones
 
@@ -89,6 +99,35 @@ These are the easy misses, because the tree is green without them:
    that is not declared `.PHONY` is silently skipped by `make` if a same-named file
    ever exists in the tree. Every prior smoke target is listed there; consistency
    is the only thing keeping it honest.
+
+### The exemplar trap — flipping a TR a support-aware test hard-codes
+
+A third class of site has nothing to do with registering the *new* TR — it is the
+tests that reference your TR **by name as a fixture**. Several support-aware tests
+hard-code one specific real TR as their "tracked-only exemplar" (a TR that is
+`tracked: true, implemented: false`) to prove support-aware behavior against real
+authored metadata. When the TR you flip happens to be that exemplar, those tests
+fail on the flip — not because your flip is wrong, but because the exemplar is no
+longer tracked-only:
+
+- `crates/ls-trackers/tests/classify.rs` :: `classify_is_support_aware` — a removed
+  field on a tracked-only TR must classify `Maintenance`; once implemented it
+  escalates to `Breaking`, so the `assert_eq!(…, Severity::Maintenance)` fails.
+- `crates/ls-trackers/tests/api_drift.rs` :: `removal_via_code_set_is_support_aware`
+  — same Maintenance→Breaking escalation on a real removal.
+- `crates/ls-docgen/src/lib.rs` :: the reference-docs test that asserts a
+  tracked-only TR is **excluded** from Reference — once implemented the TR renders
+  a Reference page, so the `!reference.contains_key(...)` assertion fails.
+
+The fix is **not** to weaken the assertions — it is to **repoint the exemplar** to a
+TR that is still tracked-only (the `CSPAT00601`→`t1964` swap in plan -005), and
+update the file-level doc comments that name the old exemplar. Pick a *durably*
+tracked-only TR (one with a blocking facet — `paper_incompatible`, a night/realtime
+gate — is safest; a plain tracked read may itself flip in a later wave and
+re-trigger this). `cargo test` catches these loudly, so they are not silent like
+`smoke-map.md`/`.PHONY` — but they surprise, because they fail in a crate you did
+not edit. Grep `crates/ls-trackers` and `crates/ls-docgen` for the TR code you are
+flipping before assuming the flip is mechanical.
 
 ## Why This Matters
 
