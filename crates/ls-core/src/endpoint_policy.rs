@@ -1526,6 +1526,206 @@ pub const T2216_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+
+// --- plan -004 batch C: static reference / designation / ranking boards.
+//     Rate limits pinned from each TR's own normalized baseline.
+
+/// t1444 — market_cap_top ([주식] 상위종목).
+pub const T1444_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1444",
+    path: "/stock/high-item",
+    module: "stock",
+    group: "[주식] 상위종목",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1422 — price_limit ([주식] 시세).
+pub const T1422_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1422",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1427 — price_limit_imminent ([주식] 시세).
+pub const T1427_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1427",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1442 — new_high_low ([주식] 시세).
+pub const T1442_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1442",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1405 — trade_suspension ([주식] 시세).
+pub const T1405_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1405",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1960 — elw_change_rank ([주식] ELW).
+pub const T1960_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1960",
+    path: "/stock/elw",
+    module: "stock",
+    group: "[주식] ELW",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(5),
+};
+
+/// t1961 — elw_volume_rank ([주식] ELW).
+pub const T1961_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1961",
+    path: "/stock/elw",
+    module: "stock",
+    group: "[주식] ELW",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(5),
+};
+
+/// t1966 — elw_value_rank ([주식] ELW).
+pub const T1966_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1966",
+    path: "/stock/elw",
+    module: "stock",
+    group: "[주식] ELW",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(5),
+};
+
+/// t1921 — credit_trend ([주식] 기타).
+pub const T1921_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1921",
+    path: "/stock/etc",
+    module: "stock",
+    group: "[주식] 기타",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1532 — stock_themes ([주식] 섹터).
+pub const T1532_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1532",
+    path: "/stock/sector",
+    module: "stock",
+    group: "[주식] 섹터",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1533 — special_themes ([주식] 섹터).
+pub const T1533_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1533",
+    path: "/stock/sector",
+    module: "stock",
+    group: "[주식] 섹터",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1926 — credit_info ([주식] 기타).
+pub const T1926_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1926",
+    path: "/stock/etc",
+    module: "stock",
+    group: "[주식] 기타",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1764 — member_firms ([주식] 거래원).
+pub const T1764_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1764",
+    path: "/stock/exchange",
+    module: "stock",
+    group: "[주식] 거래원",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1903 — etf_daily_trend ([주식] ETF).
+pub const T1903_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1903",
+    path: "/stock/etf",
+    module: "stock",
+    group: "[주식] ETF",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// t8455 — KRX야간파생 마스터조회(API용) (night-derivatives master; non-paginated
 /// F/O market-data read). `venue_session: krx_extended` (KTD7). Keyed by a
 /// `gubun` class selector.
@@ -2391,6 +2591,20 @@ mod tests {
             T8466_POLICY,
             T8405_POLICY,
             T2216_POLICY,
+            T1444_POLICY,
+            T1422_POLICY,
+            T1427_POLICY,
+            T1442_POLICY,
+            T1405_POLICY,
+            T1960_POLICY,
+            T1961_POLICY,
+            T1966_POLICY,
+            T1921_POLICY,
+            T1532_POLICY,
+            T1533_POLICY,
+            T1926_POLICY,
+            T1764_POLICY,
+            T1903_POLICY,
             T8455_POLICY,
             T8460_POLICY,
             T8463_POLICY,

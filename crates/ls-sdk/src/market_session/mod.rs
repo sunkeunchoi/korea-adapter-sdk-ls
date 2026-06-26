@@ -5766,6 +5766,328 @@ pub struct T2216Response {
     pub outblock1: Vec<T2216OutBlock1>,
 }
 
+// === plan -004 batch C — market_session reference reads ====================
+
+/// Input block for `t1532`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1532InBlock {
+    pub shcode: String,
+}
+
+/// `t1532` request.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1532Request {
+    #[serde(rename = "t1532InBlock")]
+    pub inblock: T1532InBlock,
+}
+impl T1532Request {
+    /// Build a `t1532` request.
+    pub fn new(shcode: impl Into<String>) -> Self {
+        T1532Request {
+            inblock: T1532InBlock {
+                shcode: shcode.into(),
+            },
+        }
+    }
+}
+
+/// `t1532OutBlock` — one result row (repeated).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1532OutBlock {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tmname: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tmcode: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub avgdiff: String,
+}
+
+/// `t1532` response (single-or-array out-block).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1532Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1532OutBlock", default, deserialize_with = "ls_core::de_vec_or_single")]
+    pub outblock: Vec<T1532OutBlock>,
+}
+
+/// Input block for `t1533`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1533InBlock {
+    pub gubun: String,
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub chgdate: String,
+}
+
+/// `t1533` request.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1533Request {
+    #[serde(rename = "t1533InBlock")]
+    pub inblock: T1533InBlock,
+}
+impl T1533Request {
+    /// Build a `t1533` request.
+    pub fn new(gubun: impl Into<String>) -> Self {
+        T1533Request {
+            inblock: T1533InBlock {
+                gubun: gubun.into(),
+                chgdate: "0".to_string(),
+            },
+        }
+    }
+}
+
+/// `t1533OutBlock` — summary block.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1533OutBlock {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bdate: String,
+}
+
+/// `t1533OutBlock1` — one result row.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1533OutBlock1 {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tmname: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tmcode: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub avgdiff: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub totcnt: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub upcnt: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dncnt: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub chgdiff: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub uprate: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff_vol: String,
+}
+
+/// `t1533` response.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1533Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1533OutBlock", default)]
+    pub outblock: T1533OutBlock,
+    #[serde(rename = "t1533OutBlock1", default, deserialize_with = "ls_core::de_vec_or_single")]
+    pub outblock1: Vec<T1533OutBlock1>,
+}
+
+/// Input block for `t1926`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1926InBlock {
+    pub shcode: String,
+}
+
+/// `t1926` request.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1926Request {
+    #[serde(rename = "t1926InBlock")]
+    pub inblock: T1926InBlock,
+}
+impl T1926Request {
+    /// Build a `t1926` request.
+    pub fn new(shcode: impl Into<String>) -> Self {
+        T1926Request {
+            inblock: T1926InBlock {
+                shcode: shcode.into(),
+            },
+        }
+    }
+}
+
+/// `t1926OutBlock` — single summary object.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1926OutBlock {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub mmdate: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub close: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub value: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dsprice: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dsvolume: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dgrate: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub djprice: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub djvolume: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub djrate: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ysprice: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ysvolume: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ygrate: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub yjprice: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub yjvolume: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub yjrate: String,
+}
+
+/// `t1926` response (single object out-block).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1926Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1926OutBlock", default)]
+    pub outblock: T1926OutBlock,
+}
+
+/// Input block for `t1764`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1764InBlock {
+    pub shcode: String,
+    pub gubun1: String,
+}
+
+/// `t1764` request.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1764Request {
+    #[serde(rename = "t1764InBlock")]
+    pub inblock: T1764InBlock,
+}
+impl T1764Request {
+    /// Build a `t1764` request.
+    pub fn new(shcode: impl Into<String>) -> Self {
+        T1764Request {
+            inblock: T1764InBlock {
+                shcode: shcode.into(),
+                gubun1: "0".to_string(),
+            },
+        }
+    }
+}
+
+/// `t1764OutBlock` — one result row (repeated).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1764OutBlock {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tradno: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tradname: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub rank: String,
+}
+
+/// `t1764` response (single-or-array out-block).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1764Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1764OutBlock", default, deserialize_with = "ls_core::de_vec_or_single")]
+    pub outblock: Vec<T1764OutBlock>,
+}
+
+/// Input block for `t1903`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1903InBlock {
+    pub shcode: String,
+    pub date: String,
+}
+
+/// `t1903` request.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1903Request {
+    #[serde(rename = "t1903InBlock")]
+    pub inblock: T1903InBlock,
+}
+impl T1903Request {
+    /// Build a `t1903` request.
+    pub fn new(shcode: impl Into<String>) -> Self {
+        T1903Request {
+            inblock: T1903InBlock {
+                shcode: shcode.into(),
+                date: "".to_string(),
+            },
+        }
+    }
+}
+
+/// `t1903OutBlock` — summary block.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1903OutBlock {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub upname: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+}
+
+/// `t1903OutBlock1` — one result row.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1903OutBlock1 {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jisu: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jichange: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jirate: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub nav: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub navchange: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub navdiff: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub grate: String,
+    #[serde(rename = "crate")]
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub crate_: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+}
+
+/// `t1903` response.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1903Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1903OutBlock", default)]
+    pub outblock: T1903OutBlock,
+    #[serde(rename = "t1903OutBlock1", default, deserialize_with = "ls_core::de_vec_or_single")]
+    pub outblock1: Vec<T1903OutBlock1>,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -5806,6 +6128,41 @@ impl MarketSession {
     pub async fn fo_trade_chart(&self, req: &T2216Request) -> LsResult<T2216Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T2216_POLICY, req)
+            .await
+    }
+
+    /// `t1532` stock themes ([주식] 섹터). Plan -004 batch C.
+    pub async fn stock_themes(&self, req: &T1532Request) -> LsResult<T1532Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1532_POLICY, req)
+            .await
+    }
+
+    /// `t1533` special themes ([주식] 섹터). Plan -004 batch C.
+    pub async fn special_themes(&self, req: &T1533Request) -> LsResult<T1533Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1533_POLICY, req)
+            .await
+    }
+
+    /// `t1926` credit info ([주식] 기타). Plan -004 batch C.
+    pub async fn credit_info(&self, req: &T1926Request) -> LsResult<T1926Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1926_POLICY, req)
+            .await
+    }
+
+    /// `t1764` member firms ([주식] 거래원). Plan -004 batch C.
+    pub async fn member_firms(&self, req: &T1764Request) -> LsResult<T1764Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1764_POLICY, req)
+            .await
+    }
+
+    /// `t1903` etf daily trend ([주식] ETF). Plan -004 batch C.
+    pub async fn etf_daily_trend(&self, req: &T1903Request) -> LsResult<T1903Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1903_POLICY, req)
             .await
     }
 

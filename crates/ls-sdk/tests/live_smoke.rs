@@ -26,6 +26,7 @@ use ls_sdk::market_session::{
     T1537Request, T1601Request, T1615Request, T1640Request, T1662Request, T1664Request,
     T1104Request, T1105Request, T1825Request, T1826Request, T1859Request, T1901Request,
     T1302Request, T2216Request,
+    T1532Request, T1533Request, T1926Request, T1764Request, T1903Request,
     T1958Request, T1964Request, T2301Request,
     T2522Request, T8401Request, T8424Request, T8425Request, T8426Request, T8433Request,
     T8435Request, T8467Request, T9943Request, T9944Request,
@@ -48,6 +49,7 @@ use ls_sdk::paginated::{
     T1310Request, T1404Request,
     T8417Request, T8418Request, T8411Request, T8452Request, T8453Request,
     T8464Request, T8465Request, T8466Request, T8405Request,
+    T1444Request, T1422Request, T1427Request, T1442Request, T1405Request, T1960Request, T1961Request, T1966Request, T1921Request,
 };
 use ls_sdk::realtime::WsLane;
 use ls_sdk::LsSdk;
@@ -4383,6 +4385,314 @@ async fn live_smoke_t8405() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t8405 market-data failure (not evidence)");
             panic!("live-smoke-t8405 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1444`: one `t1444` market cap top read (plan -004 batch C).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1444`"]
+async fn live_smoke_t1444() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = T1444Request::new("001");
+    match sdk.paginated().market_cap_top(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-t1444: empty (00707) — PENDING, not Implemented");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1444", "env=paper", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1444 market-data failure (not evidence)");
+            panic!("live-smoke-t1444 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1422`: one `t1422` price limit read (plan -004 batch C).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1422`"]
+async fn live_smoke_t1422() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = T1422Request::new();
+    match sdk.paginated().price_limit(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-t1422: empty (00707) — PENDING, not Implemented");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1422", "env=paper", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1422 market-data failure (not evidence)");
+            panic!("live-smoke-t1422 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1427`: one `t1427` price limit imminent read (plan -004 batch C).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1427`"]
+async fn live_smoke_t1427() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = T1427Request::new();
+    match sdk.paginated().price_limit_imminent(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-t1427: empty (00707) — PENDING, not Implemented");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1427", "env=paper", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1427 market-data failure (not evidence)");
+            panic!("live-smoke-t1427 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1442`: one `t1442` new high low read (plan -004 batch C).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1442`"]
+async fn live_smoke_t1442() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = T1442Request::new();
+    match sdk.paginated().new_high_low(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-t1442: empty (00707) — PENDING, not Implemented");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1442", "env=paper", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1442 market-data failure (not evidence)");
+            panic!("live-smoke-t1442 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1405`: one `t1405` trade suspension read (plan -004 batch C).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1405`"]
+async fn live_smoke_t1405() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = T1405Request::new("0", "1");
+    match sdk.paginated().trade_suspension(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-t1405: empty (00707) — PENDING, not Implemented");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1405", "env=paper", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1405 market-data failure (not evidence)");
+            panic!("live-smoke-t1405 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1960`: one `t1960` elw change rank read (plan -004 batch C).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1960`"]
+async fn live_smoke_t1960() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = T1960Request::new();
+    match sdk.paginated().elw_change_rank(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-t1960: empty (00707) — PENDING, not Implemented");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1960", "env=paper", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1960 market-data failure (not evidence)");
+            panic!("live-smoke-t1960 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1961`: one `t1961` elw volume rank read (plan -004 batch C).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1961`"]
+async fn live_smoke_t1961() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = T1961Request::new();
+    match sdk.paginated().elw_volume_rank(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-t1961: empty (00707) — PENDING, not Implemented");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1961", "env=paper", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1961 market-data failure (not evidence)");
+            panic!("live-smoke-t1961 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1966`: one `t1966` elw value rank read (plan -004 batch C).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1966`"]
+async fn live_smoke_t1966() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = T1966Request::new();
+    match sdk.paginated().elw_value_rank(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-t1966: empty (00707) — PENDING, not Implemented");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1966", "env=paper", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1966 market-data failure (not evidence)");
+            panic!("live-smoke-t1966 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1921`: one `t1921` credit trend read (plan -004 batch C).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1921`"]
+async fn live_smoke_t1921() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = T1921Request::new("005930");
+    match sdk.paginated().credit_trend(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-t1921: empty (00707) — PENDING, not Implemented");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1921", "env=paper", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1921 market-data failure (not evidence)");
+            panic!("live-smoke-t1921 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1532`: one `t1532` stock themes read (plan -004 batch C).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1532`"]
+async fn live_smoke_t1532() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = T1532Request::new("078020");
+    match sdk.market_session().stock_themes(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock.is_empty(), "live-smoke-t1532: empty (00707) — PENDING, not Implemented");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "themes")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1532", "env=paper", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1532 market-data failure (not evidence)");
+            panic!("live-smoke-t1532 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1533`: one `t1533` special themes read (plan -004 batch C).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1533`"]
+async fn live_smoke_t1533() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = T1533Request::new("1");
+    match sdk.market_session().special_themes(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-t1533: empty (00707) — PENDING, not Implemented");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "themes")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1533", "env=paper", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1533 market-data failure (not evidence)");
+            panic!("live-smoke-t1533 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1926`: one `t1926` credit info read (plan -004 batch C).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1926`"]
+async fn live_smoke_t1926() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = T1926Request::new("005930");
+    match sdk.market_session().credit_info(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock.mmdate.is_empty(), "live-smoke-t1926: empty (00707) — PENDING, not Implemented");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), 1)), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1926", "env=paper", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1926 market-data failure (not evidence)");
+            panic!("live-smoke-t1926 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1764`: one `t1764` member firms read (plan -004 batch C).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1764`"]
+async fn live_smoke_t1764() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = T1764Request::new("001200");
+    match sdk.market_session().member_firms(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock.is_empty(), "live-smoke-t1764: empty (00707) — PENDING, not Implemented");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "firms")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1764", "env=paper", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1764 market-data failure (not evidence)");
+            panic!("live-smoke-t1764 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1903`: one `t1903` etf daily trend read (plan -004 batch C).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1903`"]
+async fn live_smoke_t1903() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = T1903Request::new("448330");
+    match sdk.market_session().etf_daily_trend(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-t1903: empty (00707) — PENDING, not Implemented");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1903", "env=paper", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1903 market-data failure (not evidence)");
+            panic!("live-smoke-t1903 failed: {e}");
         }
     }
 }

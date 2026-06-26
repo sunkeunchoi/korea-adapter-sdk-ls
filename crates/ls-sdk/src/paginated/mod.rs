@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use ls_core::{Inner, LsResult};
 
+mod breadth_board;
 mod chart;
 mod designation_board;
 mod historical_chart;
@@ -23,6 +24,7 @@ mod invest_opinion;
 mod rank_screen;
 mod sector_index;
 
+pub use breadth_board::*;
 pub use chart::*;
 pub use designation_board::*;
 pub use historical_chart::*;
@@ -325,6 +327,69 @@ impl Paginated {
     pub async fn stock_futures_period(&self, req: &T8405Request) -> LsResult<T8405Response> {
         self.inner
             .post_paginated(&ls_core::endpoint_policy::T8405_POLICY, req)
+            .await
+    }
+
+    /// `t1444` market cap top ([주식] 상위종목). Plan -004 batch C.
+    pub async fn market_cap_top(&self, req: &T1444Request) -> LsResult<T1444Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1444_POLICY, req)
+            .await
+    }
+
+    /// `t1422` price limit ([주식] 시세). Plan -004 batch C.
+    pub async fn price_limit(&self, req: &T1422Request) -> LsResult<T1422Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1422_POLICY, req)
+            .await
+    }
+
+    /// `t1427` price limit imminent ([주식] 시세). Plan -004 batch C.
+    pub async fn price_limit_imminent(&self, req: &T1427Request) -> LsResult<T1427Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1427_POLICY, req)
+            .await
+    }
+
+    /// `t1442` new high low ([주식] 시세). Plan -004 batch C.
+    pub async fn new_high_low(&self, req: &T1442Request) -> LsResult<T1442Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1442_POLICY, req)
+            .await
+    }
+
+    /// `t1405` trade suspension ([주식] 시세). Plan -004 batch C.
+    pub async fn trade_suspension(&self, req: &T1405Request) -> LsResult<T1405Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1405_POLICY, req)
+            .await
+    }
+
+    /// `t1960` elw change rank ([주식] ELW). Plan -004 batch C.
+    pub async fn elw_change_rank(&self, req: &T1960Request) -> LsResult<T1960Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1960_POLICY, req)
+            .await
+    }
+
+    /// `t1961` elw volume rank ([주식] ELW). Plan -004 batch C.
+    pub async fn elw_volume_rank(&self, req: &T1961Request) -> LsResult<T1961Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1961_POLICY, req)
+            .await
+    }
+
+    /// `t1966` elw value rank ([주식] ELW). Plan -004 batch C.
+    pub async fn elw_value_rank(&self, req: &T1966Request) -> LsResult<T1966Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1966_POLICY, req)
+            .await
+    }
+
+    /// `t1921` credit trend ([주식] 기타). Plan -004 batch C.
+    pub async fn credit_trend(&self, req: &T1921Request) -> LsResult<T1921Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1921_POLICY, req)
             .await
     }
 }

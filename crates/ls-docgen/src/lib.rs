@@ -1020,6 +1020,7 @@ mod tests {
             "t1310", "t1404",
             "t8417", "t8418", "t8411", "t8452", "t8453", "t1302",
             "t8464", "t8465", "t8466", "t2216", "t8405",
+            "t1444", "t1422", "t1427", "t1442", "t1405", "t1960", "t1961", "t1966", "t1921", "t1532", "t1533", "t1926", "t1764", "t1903",
             "CSPAT00601", "CSPAT00701", "CSPAT00801", "t0425",
             "o3101", "o3121",
             "K3_",
@@ -1122,9 +1123,13 @@ mod tests {
         // (선물옵션 tick/N분/일주월) + t2216 (F/O tick trade chart) + t8405 (주식선물
         // 기간별주가) each certified non-empty (20 rows) UNDER closure, contract sourced
         // from a derivatives master at smoke time — add 5.
+        // Plan -004 batch C: 14 static reference/designation/ranking reads (시가총액상위
+        // t1444, 상·하한 t1422/t1427, 신고저가 t1442, 매매정지 t1405, ELW rankings
+        // t1960/t1961/t1966, 신용 t1921/t1926, 테마 t1532/t1533, 회원사 t1764, ETF일별
+        // t1903) each certified non-empty UNDER closure — add 14.
         assert_eq!(
             reference.len(),
-            127,
+            141,
             "index + the implemented reference pages"
         );
 
