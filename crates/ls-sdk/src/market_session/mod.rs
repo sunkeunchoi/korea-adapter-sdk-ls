@@ -224,6 +224,161 @@ pub struct T1901Response {
     pub outblock: T1901OutBlock,
 }
 
+// ---------------------------------------------------------------------------
+// t1105 — 주식피봇/디마크조회 (pivot / demark levels). market_session, single
+// OutBlock; path /stock/market-data. shcode + exchgubun request.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1105` — short code + exchange distinction.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1105InBlock {
+    pub shcode: String,
+    pub exchgubun: String,
+}
+
+/// `t1105` request — `{"t1105InBlock":{"shcode":...,"exchgubun":...}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1105Request {
+    #[serde(rename = "t1105InBlock")]
+    pub inblock: T1105InBlock,
+}
+
+impl T1105Request {
+    /// Build a `t1105` pivot/demark request for one symbol on one exchange.
+    pub fn new(shcode: impl Into<String>, exchgubun: impl Into<String>) -> Self {
+        T1105Request {
+            inblock: T1105InBlock {
+                shcode: shcode.into(),
+                exchgubun: exchgubun.into(),
+            },
+        }
+    }
+}
+
+/// `t1105OutBlock` — pivot + demark levels (single object). Numeric-bearing fields
+/// via [`ls_core::string_or_number`]; `#[serde(default)]` tolerates a sparse block.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1105OutBlock {
+    /// Short code / 단축코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Pivot / 피봇.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub pbot: String,
+    /// Pivot 1st resistance / 1차 매도.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offer1: String,
+    /// Pivot 1st support / 1차 매수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub supp1: String,
+    /// Pivot 2nd resistance / 2차 매도.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offer2: String,
+    /// Pivot 2nd support / 2차 매수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub supp2: String,
+    /// Demark standard price / 디마크 기준가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub stdprc: String,
+    /// Demark resistance / 디마크 매도.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerd: String,
+    /// Demark support / 디마크 매수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub suppd: String,
+}
+
+/// `t1105` response envelope — the pivot/demark block under `t1105OutBlock`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1105Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1105OutBlock", default)]
+    pub outblock: T1105OutBlock,
+}
+
+// ---------------------------------------------------------------------------
+// t1104 — 주식현재가시세메모 (current-price memo). market_session; a summary
+// OutBlock plus a memo-row array OutBlock1; path /stock/market-data.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1104` — short code (`code`), row count (`nrec`), exchange.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1104InBlock {
+    pub code: String,
+    pub nrec: String,
+    pub exchgubun: String,
+}
+
+/// `t1104` request — `{"t1104InBlock":{"code":...,"nrec":...,"exchgubun":...}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1104Request {
+    #[serde(rename = "t1104InBlock")]
+    pub inblock: T1104InBlock,
+}
+
+impl T1104Request {
+    /// Build a `t1104` price-memo request for one symbol on one exchange.
+    pub fn new(
+        code: impl Into<String>,
+        nrec: impl Into<String>,
+        exchgubun: impl Into<String>,
+    ) -> Self {
+        T1104Request {
+            inblock: T1104InBlock {
+                code: code.into(),
+                nrec: nrec.into(),
+                exchgubun: exchgubun.into(),
+            },
+        }
+    }
+}
+
+/// `t1104OutBlock` — the summary block (record count).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1104OutBlock {
+    /// Record count / 레코드 수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub nrec: String,
+}
+
+/// `t1104OutBlock1` — one memo row (index / kind / value).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1104OutBlock1 {
+    /// Index / 인덱스.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub indx: String,
+    /// Kind / 구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gubn: String,
+    /// Value / 값.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub vals: String,
+}
+
+/// `t1104` response envelope — summary `t1104OutBlock` + memo-row array
+/// `t1104OutBlock1` (tolerated single-or-array via [`ls_core::de_vec_or_single`]).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1104Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1104OutBlock", default)]
+    pub outblock: T1104OutBlock,
+    #[serde(
+        rename = "t1104OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1104OutBlock1>,
+}
+
 /// Input block for `t1101` — the symbol to look up.
 ///
 /// `shcode` is the 6-digit short code (단축코드). Unlike `t1102`, the `t1101`
@@ -5436,6 +5591,20 @@ impl MarketSession {
     pub async fn etf_quote(&self, req: &T1901Request) -> LsResult<T1901Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T1901_POLICY, req)
+            .await
+    }
+
+    /// Fetch pivot / demark levels for one symbol via `t1105` (non-paginated).
+    pub async fn pivot_demark(&self, req: &T1105Request) -> LsResult<T1105Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1105_POLICY, req)
+            .await
+    }
+
+    /// Fetch the current-price memo rows for one symbol via `t1104` (non-paginated).
+    pub async fn price_memo(&self, req: &T1104Request) -> LsResult<T1104Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1104_POLICY, req)
             .await
     }
 

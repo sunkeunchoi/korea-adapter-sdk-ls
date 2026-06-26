@@ -14,6 +14,7 @@ use ls_sdk::market_session::{
     T1664Request, T1664Response, T1825OutBlock1, T1825Request, T1825Response, T1826OutBlock,
     T1826Request, T1826Response, T1859OutBlock1, T1859Request, T1859Response, T1958Request,
     T1958Response, T1964OutBlock1, T1964Request, T1964Response, T1485Request, T1485Response,
+    T1104Request, T1104Response, T1105Request, T1105Response,
     T1511Request, T1511Response, T1516Request, T1516Response, T1901Request, T1901Response,
     T8424Request, T8424Response,
     T2301Request, T2301Response, T2522OutBlock1, T2522Request, T2522Response, T8401OutBlock,
@@ -1759,6 +1760,80 @@ fn t1901_empty_result_deserializes_to_defaults() {
     assert_eq!(empty.rsp_cd, "00707");
     assert!(empty.outblock.hname.is_empty(), "no out-block → default hname");
     assert!(empty.outblock.price.is_empty(), "no out-block → default price");
+}
+
+// ---- t1105 피봇/디마크 + t1104 현재가시세메모 (plan -002 Track 2) ----
+
+#[test]
+fn t1105_request_serializes_to_inblock() {
+    let value =
+        serde_json::to_value(T1105Request::new("005930", "K")).expect("serialize t1105 request");
+    assert_eq!(value["t1105InBlock"]["shcode"], "005930");
+    assert_eq!(value["t1105InBlock"]["exchgubun"], "K");
+    assert!(value.get("tr_cont").is_none(), "non-paginated: no tr_cont");
+}
+
+#[test]
+fn t1105_pbot_number_or_string_yields_same_value() {
+    let as_number: T1105Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "t1105OutBlock": { "shcode": "005930", "pbot": 357666 }
+    }))
+    .expect("number pbot must deserialize");
+    let as_string: T1105Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000", "t1105OutBlock": { "shcode": "005930", "pbot": "357666" }
+    }))
+    .expect("string pbot must deserialize");
+    assert_eq!(as_number.outblock.pbot, "357666");
+    assert_eq!(as_number.outblock.pbot, as_string.outblock.pbot);
+}
+
+#[test]
+fn t1105_empty_result_deserializes_to_defaults() {
+    let empty: T1105Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "rsp_msg": "조회할 자료가 없습니다."
+    }))
+    .expect("empty t1105 envelope must deserialize");
+    assert_eq!(empty.rsp_cd, "00707");
+    assert!(empty.outblock.pbot.is_empty());
+}
+
+#[test]
+fn t1104_request_serializes_to_inblock() {
+    let value = serde_json::to_value(T1104Request::new("005930", "1", "K"))
+        .expect("serialize t1104 request");
+    assert_eq!(value["t1104InBlock"]["code"], "005930");
+    assert_eq!(value["t1104InBlock"]["nrec"], "1");
+    assert_eq!(value["t1104InBlock"]["exchgubun"], "K");
+}
+
+#[test]
+fn t1104_outblock1_array_and_numeric_tolerance_deserialize() {
+    // The memo-row array round-trips; `indx` tolerates number or string.
+    let resp: T1104Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1104OutBlock": { "nrec": "1" },
+        "t1104OutBlock1": [ { "indx": 1, "gubn": "1", "vals": "135155" } ]
+    }))
+    .expect("t1104 array response must deserialize");
+    assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock1[0].indx, "1");
+    // A single-object OutBlock1 is tolerated as a one-element vec.
+    let single: T1104Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1104OutBlock1": { "indx": "0", "gubn": "1", "vals": "x" }
+    }))
+    .expect("single-object t1104OutBlock1 must deserialize");
+    assert_eq!(single.outblock1.len(), 1);
+}
+
+#[test]
+fn t1104_empty_result_deserializes_to_defaults() {
+    let empty: T1104Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "rsp_msg": "자료없음"
+    }))
+    .expect("empty t1104 envelope must deserialize");
+    assert_eq!(empty.rsp_cd, "00707");
+    assert!(empty.outblock1.is_empty());
 }
 
 /// Covers R4, R7. `t1485` serializes to `{"t1485InBlock":{"upcode":"001","gubun":"1"}}`.
