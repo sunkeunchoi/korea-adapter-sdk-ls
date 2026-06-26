@@ -100,6 +100,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t8424` | 전체업종 | `market_session` | implemented, not yet recommended |
 | `t8425` | 전체테마 | `market_session` | implemented, not yet recommended |
 | `t8426` | 상품선물마스터조회(API용) | `market_session` | implemented, not yet recommended |
+| `t8430` | 주식종목조회 | `market_session` | implemented, not yet recommended |
 | `t8431` | ELW종목조회 | `market_session` | implemented, not yet recommended |
 | `t8433` | 지수옵션마스터조회API용 | `market_session` | implemented, not yet recommended |
 | `t8434` | 선물/옵션멀티현재가조회 | `market_session` | implemented, not yet recommended |

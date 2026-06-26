@@ -307,6 +307,21 @@ pub const T8431_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+/// t8430 — 주식종목조회 (full KOSPI/KOSDAQ stock-issue list; non-paginated). The
+/// issue-universe read; `gubun` selects market. owner_class market_session.
+pub const T8430_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8430",
+    path: "/stock/etc",
+    module: "stock",
+    group: "[주식] 기타",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(5),
+};
+
 /// `t9942` — ELW마스터조회API용 (ELW master list; Wave 1). Non-paginated
 /// `market_session` ELW read.
 pub const T9942_POLICY: EndpointPolicy = EndpointPolicy {
@@ -2057,6 +2072,7 @@ mod tests {
             T9905_POLICY,
             T9907_POLICY,
             T8431_POLICY,
+            T8430_POLICY,
             T9942_POLICY,
             T1958_POLICY,
             T1964_POLICY,

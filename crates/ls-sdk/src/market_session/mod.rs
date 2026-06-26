@@ -1096,6 +1096,94 @@ pub struct T8431Response {
     pub outblock: Vec<T8431OutBlock>,
 }
 
+/// Input block for `t8430` — 주식종목조회 (full stock-issue list). `gubun` selects
+/// the market: "0" all, "1" KOSPI, "2" KOSDAQ. The full-list read sends "0".
+/// `gubun` is a code string ("0"/"1"/"2"), not numeric — no `string_as_number`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8430InBlock {
+    /// Market filter / 구분 ("0":전체 "1":코스피 "2":코스닥).
+    pub gubun: String,
+}
+
+/// `t8430` request — serializes to `{"t8430InBlock":{"gubun":"0"}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8430Request {
+    #[serde(rename = "t8430InBlock")]
+    pub inblock: T8430InBlock,
+}
+impl T8430Request {
+    /// Build a `t8430` stock-issue-list request for a market filter
+    /// ("0":전체 "1":코스피 "2":코스닥).
+    pub fn new(gubun: impl Into<String>) -> Self {
+        T8430Request {
+            inblock: T8430InBlock {
+                gubun: gubun.into(),
+            },
+        }
+    }
+    /// Build a `t8430` request for every market ("0":전체).
+    pub fn all() -> Self {
+        Self::new("0")
+    }
+}
+impl Default for T8430Request {
+    fn default() -> Self {
+        Self::all()
+    }
+}
+
+/// `t8430OutBlock` — one stock-issue row. Numeric-bearing fields via
+/// [`ls_core::string_or_number`] (the gateway mixes string and number forms).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8430OutBlock {
+    /// Korean name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Short code / 단축코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Extended code / 확장코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub expcode: String,
+    /// ETF flag / ETF구분 ("1":ETF).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub etfgubun: String,
+    /// Upper-limit price / 상한가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub uplmtprice: String,
+    /// Lower-limit price / 하한가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dnlmtprice: String,
+    /// Previous-day close / 전일가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jnilclose: String,
+    /// Order-quantity unit / 주문수량단위.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub memedan: String,
+    /// Reference price / 기준가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub recprice: String,
+    /// Market flag / 구분 ("1":코스피 "2":코스닥).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gubun: String,
+}
+
+/// `t8430` response — the stock-issue array under `t8430OutBlock`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8430Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t8430OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T8430OutBlock>,
+}
+
 /// Input block for `t9942` — ELW마스터조회API용 (ELW master list). No caller input.
 #[derive(Serialize, Debug, Clone)]
 pub struct T9942InBlock {
@@ -5451,6 +5539,14 @@ impl MarketSession {
     pub async fn sectors(&self, req: &T8424Request) -> LsResult<T8424Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T8424_POLICY, req)
+            .await
+    }
+
+    /// List every stock issue (주식종목조회) via `t8430`. Non-paginated; returns the
+    /// full KOSPI/KOSDAQ issue array (`shcode`/`hname`/price bounds per issue).
+    pub async fn stock_issues(&self, req: &T8430Request) -> LsResult<T8430Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8430_POLICY, req)
             .await
     }
 

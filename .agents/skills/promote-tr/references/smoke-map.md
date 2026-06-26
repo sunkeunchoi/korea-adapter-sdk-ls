@@ -77,6 +77,7 @@ TR marked `ready` is a promote-tr candidate.
 | `t9905` | `live-smoke-t9905` | `live_smoke_t9905` | open session; no caller input | implemented-only | paper full underlying-asset list (Wave 1; `shcode` keys `t1964`) |
 | `t9907` | `live-smoke-t9907` | `live_smoke_t9907` | open session; no caller input | implemented-only | paper ELW expiry-month list (Wave 1) |
 | `t8431` | `live-smoke-t8431` | `live_smoke_t8431` | open session; no caller input | implemented-only | paper ELW symbol list (Wave 1 spine producer; `shcode` keys `t1958`) |
+| `t8430` | `live-smoke-t8430` | `live_smoke_t8430` | no caller input (`gubun="0"` all markets); session-independent master list | implemented-only | paper stock-issue list (tracked-and-raw wave) |
 | `t9942` | `live-smoke-t9942` | `live_smoke_t9942` | open session; no caller input | implemented-only | paper ELW master list (Wave 1) |
 | `t1958` | `live-smoke-t1958` | `live_smoke_t1958` | open session; chained — self-sources two `shcode`s from `t8431` (else SMOKE-FAIL) | implemented-only | paper ELW symbol comparison (Wave 1 comparison member) |
 | `t1964` | `live-smoke-t1964` | `live_smoke_t1964` | open session; chained — self-sources an `item` underlying from `t9905`, walks first 10 (else SMOKE-FAIL) | implemented-only | paper ELW board (Wave 1 board member) |
