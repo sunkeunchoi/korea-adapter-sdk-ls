@@ -34,3 +34,6 @@ serde_json.workspace = true
 # Used only by the credential-safe raw-HTTP failure-classifier probe in
 # tests/live_smoke.rs (`raw_http_probe`); bypasses the SDK's typed deserialize.
 reqwest.workspace = true
+# Used only by the autonomous order smoke (tests/order_smoke.rs) to install the
+# fail-closed dispatch-log suppressor that drops the unscrubbed ls_core debug log.
+tracing-subscriber.workspace = true

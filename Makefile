@@ -44,14 +44,23 @@ live-smoke-order:
 	echo "$$out"; \
 	echo "$$out" | grep -q "1 passed" || { echo "FAIL: order smoke did not run (0 tests) or did not pass"; exit 1; }
 
-## Guarded CHAINED paper-order evidence run (submit -> modify -> cancel). The
-## FIRST leg is gate 1's evidence (CSPAT00601 + t0425); the modify/cancel legs are
-## gate 2's (CSPAT00701 + CSPAT00801). Cancel is the PRIMARY teardown; paper-reset
-## is the fallback when the cancel link fails or a resting order fills unexpectedly.
-## Same EXPLICIT opt-in as live-smoke-order (LS_ORDER_SMOKE=1 beyond the paper
-## guard). Records Pending (still "passes") if the paper account cannot place/
-## modify/cancel in-window — gate 1 never waits on gate 2.
-##   make live-smoke-order-chain        # symbol defaults to 005930, MbrNo to NXT
+## AUTONOMOUS chained paper-order run (submit -> modify -> cancel -> flat-assert).
+## The agent invokes this directly during a human-present wave — NO operator handoff.
+## The FIRST leg is gate 1's evidence (CSPAT00601 + t0425); the modify/cancel legs are
+## gate 2's (CSPAT00701 + CSPAT00801). After teardown it asserts the account is
+## account-wide FLAT (U3): a resting remainder is retry-canceled then hard-failed, a
+## fill hard-fails immediately.
+##
+## FAIL-CLOSED autonomy preconditions (the smoke refuses unless ALL hold):
+##   - LS_TRADING_ENV=paper + LS_ORDER_SMOKE=1 (the standing double opt-in), AND
+##   - NO CI/no-TTY marker (run in an attended PTY), AND
+##   - a FRESH per-wave human nonce within TTL — mint it each wave:
+##       export LS_ORDER_SMOKE_NONCE=$(date +%s)
+##     (a static/reused nonce is rejected; the nonce is the human-present signal that
+##      passive CI detection alone cannot provide — KTD1.)
+## Records Pending (still "passes") if the paper account cannot place/modify/cancel
+## in-window — gate 1 never waits on gate 2.
+##   export LS_ORDER_SMOKE_NONCE=$(date +%s); make live-smoke-order-chain
 live-smoke-order-chain:
 	@set -a; [ -f .env ] && . ./.env; set +a; \
 	export LS_ORDER_SMOKE=1 LS_ORDER_SMOKE_TR=CSPAT00601; \
