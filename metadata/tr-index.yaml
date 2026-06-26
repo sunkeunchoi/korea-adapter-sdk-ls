@@ -41,6 +41,18 @@ trs:
     protocol: rest
     instrument_domain: stock
     venue_session: krx_regular
+  t1104:
+    file: trs/t1104.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1105:
+    file: trs/t1105.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
   t8412:
     file: trs/t8412.yaml
     owner_class: paginated
@@ -265,6 +277,18 @@ trs:
     venue_session: krx_regular
   t1305:
     file: trs/t1305.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1308:
+    file: trs/t1308.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1310:
+    file: trs/t1310.yaml
     owner_class: paginated
     protocol: rest
     instrument_domain: stock
@@ -548,6 +572,12 @@ trs:
     venue_session: krx_regular
   t8410:
     file: trs/t8410.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t8411:
+    file: trs/t8411.yaml
     owner_class: paginated
     protocol: rest
     instrument_domain: stock
