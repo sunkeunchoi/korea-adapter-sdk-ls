@@ -1,0 +1,39 @@
+{
+  "rsp_cd": "00000",
+  "t1404OutBlock1": [
+    {
+      "date": "20230102",
+      "reason": "5102",
+      "tprice": 16200,
+      "change": 260,
+      "shcode": "000547",
+      "sign": "5",
+      "tdiff": "001.85",
+      "diff": "-01.55",
+      "tchange": 300,
+      "edate": "",
+      "volume": 216,
+      "price": 16500,
+      "hname": "흥국화재2우B"
+    },
+    {
+      "date": "20220530",
+      "reason": "6024",
+      "tprice": 3780,
+      "change": 70,
+      "shcode": "950170",
+      "sign": "2",
+      "tdiff": "003.70",
+      "diff": "001.82",
+      "tchange": 140,
+      "edate": "",
+      "volume": 5492,
+      "price": 3920,
+      "hname": "JTC"
+    }
+  ],
+  "t1404OutBlock": {
+    "cts_shcode": ""
+  },
+  "rsp_msg": "정상적으로 조회가 완료되었습니다."
+}

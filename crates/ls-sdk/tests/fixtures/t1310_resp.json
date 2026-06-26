@@ -1,0 +1,43 @@
+{
+  "rsp_cd": "00000",
+  "t1310OutBlock": {
+    "cts_time": "100700"
+  },
+  "rsp_msg": "정상적으로 조회가 완료되었습니다.",
+  "t1310OutBlock1": [
+    {
+      "change": 25,
+      "mdchecnt": 256,
+      "sign": "2",
+      "rechecnt": -18,
+      "diff": "000.68",
+      "mschecnt": 238,
+      "chetime": "102700",
+      "mdvolume": 119531,
+      "revolume": 76076,
+      "cvolume": 5,
+      "volume": 321201,
+      "chdegree": "00163.65",
+      "price": 3685,
+      "msvolume": 195607,
+      "exchname": "KRX"
+    },
+    {
+      "change": 25,
+      "mdchecnt": 237,
+      "sign": "2",
+      "rechecnt": -20,
+      "diff": "000.68",
+      "mschecnt": 217,
+      "chetime": "100800",
+      "mdvolume": 115072,
+      "revolume": 64440,
+      "cvolume": 69,
+      "volume": 300647,
+      "chdegree": "00156.00",
+      "price": 3685,
+      "msvolume": 179512,
+      "exchname": "KRX"
+    }
+  ]
+}

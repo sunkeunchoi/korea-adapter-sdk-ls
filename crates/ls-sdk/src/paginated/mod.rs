@@ -17,11 +17,15 @@ use std::sync::Arc;
 use ls_core::{Inner, LsResult};
 
 mod chart;
+mod designation_board;
+mod historical_chart;
 mod invest_opinion;
 mod rank_screen;
 mod sector_index;
 
 pub use chart::*;
+pub use designation_board::*;
+pub use historical_chart::*;
 pub use invest_opinion::*;
 pub use rank_screen::*;
 pub use sector_index::*;
@@ -236,6 +240,23 @@ impl Paginated {
     pub async fn investment_opinions(&self, req: &T3401Request) -> LsResult<T3401Response> {
         self.inner
             .post_paginated(&ls_core::endpoint_policy::T3401_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t1310` today/prev tick-or-min chart (주식당일전일분틱).
+    /// Self-paginated on the body `cts_time` cursor; single-page scope (plan -003).
+    pub async fn daily_tick_chart(&self, req: &T1310Request) -> LsResult<T1310Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1310_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t1404` administrative-designation board
+    /// (관리/불성실/투자유의). Self-paginated on the body `cts_shcode` cursor;
+    /// single-page scope (plan -003).
+    pub async fn designation_board(&self, req: &T1404Request) -> LsResult<T1404Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1404_POLICY, req)
             .await
     }
 }
