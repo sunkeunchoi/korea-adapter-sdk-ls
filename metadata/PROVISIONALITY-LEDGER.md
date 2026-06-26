@@ -673,13 +673,15 @@ reclassified.**
 | g3106 | in US regular session | empty out-block (`00707`) — overseas order book, no paper feed |
 | g3190 | in US regular session | `rsp_cd=00000` empty result array (`00707`) — overseas master list, no paper feed |
 
-**`00707` feed-unprovisioned, NOT `01900` service-rejection (the §12 distinction,
-inverted).** Unlike the CCENQ night pair (§12), which returns a hard gateway `01900`,
-these nine return a *clean* `rsp_cd` with an **empty body** even when smoked inside the
-correct session window. The request shape is accepted (no `01900`, no `IGW40011`); the
-paper environment simply carries no data for these feeds. An in-window re-run does not
-recover them — the plan's `pending:off-window` premise (a timing miss) was falsified by
-these in-window-empty smokes, so they land at the paper-unavailable terminal instead.
+**Empty/no-data, NOT `01900` service-rejection (the §12 distinction, inverted).**
+Unlike the CCENQ night pair (§12), which returns a hard gateway `01900`, these nine
+return a paper-unavailable empty result even when smoked inside the correct session
+window: eight return a *clean* `rsp_cd=00000` with an **empty body** (`00707`), and
+g3103 returns `rsp_cd=00009 해당 자료가 없습니다` — both are no-data terminals, neither is
+`01900`. The request shape is accepted (no `01900`, no `IGW40011`); the paper
+environment simply carries no data for these feeds. An in-window re-run does not recover
+them — the plan's `pending:off-window` premise (a timing miss) was falsified by these
+in-window-empty smokes, so they land at the paper-unavailable terminal instead.
 
 **Facet vs. runtime classifier — a deliberate divergence.**
 `facets.paper_incompatible: true` is set on all nine as the machine-readable
@@ -687,8 +689,11 @@ these in-window-empty smokes, so they land at the paper-unavailable terminal ins
 waves skip them. **This does NOT imply the runtime `ls_core::is_paper_incompatible()`
 fires** — that check is `01900`-specific and these return `00707`. The facet here means
 "no paper data feed (feed-unprovisioned)", distinct from §12's "gateway 01900". The
-`venue_session` rows (§11.1 night trio; §11.1 overseas `unspecified`) are **retained**,
-unconfirmed.
+pre-existing `venue_session` rows are **retained**, unconfirmed: §11.1 covers the night
+trio (`krx_extended`) and the Wave-0 overseas reads g3101/g3104/g3106 (`unspecified`).
+g3102/g3103/g3190 were batch-tracked later (no §11.1 row); their `venue_session:
+unspecified` facets were set at tracking time and are recorded here in §14 for the first
+time.
 
 **No flip, no docgen change.** `support.implemented` stays `false` for all nine;
 `reference.len()` and `banner_trs` are unchanged (zero flips this wave). The four
