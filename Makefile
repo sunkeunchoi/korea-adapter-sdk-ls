@@ -15,7 +15,7 @@
 # Export command-line / make variables (e.g. LS_LIVE_SMOKE_*) to recipe shells.
 export
 
-.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-ws-negative live-smoke-k3 live-smoke-ws-p1 live-smoke-ws-p2 live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1481 live-smoke-t1482 live-smoke-t1866 live-smoke-t1859 live-smoke-t1826 live-smoke-t1825 live-smoke-t9905 live-smoke-t9907 live-smoke-t8431 live-smoke-t8430 live-smoke-t9942 live-smoke-t1958 live-smoke-t1964 live-smoke-t1601 live-smoke-t1615 live-smoke-t1640 live-smoke-t1662 live-smoke-t1664 live-smoke-t3341 live-smoke-t8424 live-smoke-t1511 live-smoke-t1485 live-smoke-t1516 live-smoke-t1514 live-smoke-cspaq12300 live-smoke-cspaq22200 live-smoke-cfobq10500 live-smoke-ccenq90200 live-smoke-cfoaq10100 live-smoke-ccenq10100 live-smoke-t2301 live-smoke-t2522 live-smoke-t8401 live-smoke-t8426 live-smoke-t8433 live-smoke-t8435 live-smoke-t8467 live-smoke-t9943 live-smoke-t9944 live-smoke-t2111 live-smoke-t2112 live-smoke-t2106 live-smoke-t8402 live-smoke-t8403 live-smoke-t8434 live-smoke-t1988 live-smoke-t3320 live-smoke-t8455 live-smoke-t8460 live-smoke-t8463 live-smoke-g3101 live-smoke-g3104 live-smoke-g3106 live-smoke-g3102 live-smoke-g3103 live-smoke-g3190 live-smoke-o3101 live-smoke-o3121 live-smoke-o3105 live-smoke-o3106 live-smoke-o3125 live-smoke-o3126 live-smoke-t9945 live-smoke-t3202 live-smoke-t3401 live-smoke-t8410 live-smoke-t8451 live-smoke-t8419 live-smoke-t4203 live-smoke-order live-smoke-order-chain raw-probe
+.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-ws-negative live-smoke-k3 live-smoke-ws-p1 live-smoke-ws-p2 live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1481 live-smoke-t1482 live-smoke-t1866 live-smoke-t1859 live-smoke-t1826 live-smoke-t1825 live-smoke-t9905 live-smoke-t9907 live-smoke-t8431 live-smoke-t8430 live-smoke-t9942 live-smoke-t1958 live-smoke-t1964 live-smoke-t1601 live-smoke-t1615 live-smoke-t1640 live-smoke-t1662 live-smoke-t1664 live-smoke-t3341 live-smoke-t8424 live-smoke-t1511 live-smoke-t1485 live-smoke-t1516 live-smoke-t1514 live-smoke-cspaq12300 live-smoke-cspaq22200 live-smoke-cfobq10500 live-smoke-ccenq90200 live-smoke-cfoaq10100 live-smoke-ccenq10100 live-smoke-t2301 live-smoke-t2522 live-smoke-t8401 live-smoke-t8426 live-smoke-t8433 live-smoke-t8435 live-smoke-t8467 live-smoke-t9943 live-smoke-t9944 live-smoke-t2111 live-smoke-t2112 live-smoke-t2106 live-smoke-t8402 live-smoke-t8403 live-smoke-t8434 live-smoke-t1988 live-smoke-t3320 live-smoke-t8455 live-smoke-t8460 live-smoke-t8463 live-smoke-g3101 live-smoke-g3104 live-smoke-g3106 live-smoke-g3102 live-smoke-g3103 live-smoke-g3190 live-smoke-o3101 live-smoke-o3121 live-smoke-o3105 live-smoke-o3106 live-smoke-o3125 live-smoke-o3126 live-smoke-t9945 live-smoke-t3202 live-smoke-t3401 live-smoke-t8410 live-smoke-t8451 live-smoke-t8419 live-smoke-t4203 live-smoke-t1901 live-smoke-t1105 live-smoke-t1104 live-smoke-t1305 live-smoke-order live-smoke-order-chain raw-probe
 
 # $(1) = exact test name in crates/ls-sdk/tests/live_smoke.rs
 define run_smoke
@@ -44,14 +44,27 @@ live-smoke-order:
 	echo "$$out"; \
 	echo "$$out" | grep -q "1 passed" || { echo "FAIL: order smoke did not run (0 tests) or did not pass"; exit 1; }
 
-## Guarded CHAINED paper-order evidence run (submit -> modify -> cancel). The
-## FIRST leg is gate 1's evidence (CSPAT00601 + t0425); the modify/cancel legs are
-## gate 2's (CSPAT00701 + CSPAT00801). Cancel is the PRIMARY teardown; paper-reset
-## is the fallback when the cancel link fails or a resting order fills unexpectedly.
-## Same EXPLICIT opt-in as live-smoke-order (LS_ORDER_SMOKE=1 beyond the paper
-## guard). Records Pending (still "passes") if the paper account cannot place/
-## modify/cancel in-window — gate 1 never waits on gate 2.
-##   make live-smoke-order-chain        # symbol defaults to 005930, MbrNo to NXT
+## AUTONOMOUS chained paper-order run (submit -> modify -> cancel -> flat-assert).
+## The agent invokes this directly during a human-present wave — NO operator handoff.
+## The FIRST leg is gate 1's evidence (CSPAT00601 + t0425); the modify/cancel legs are
+## gate 2's (CSPAT00701 + CSPAT00801). After teardown it asserts the account is
+## account-wide FLAT (U3): a resting remainder is retry-canceled then hard-failed, a
+## fill hard-fails immediately.
+##
+## FAIL-CLOSED autonomy preconditions (the smoke refuses unless ALL hold):
+##   - LS_TRADING_ENV=paper + LS_ORDER_SMOKE=1 (the standing double opt-in), AND
+##   - NO CI/no-TTY marker (run in an attended PTY), AND
+##   - a FRESH per-wave human nonce within TTL — mint it each wave:
+##       export LS_ORDER_SMOKE_NONCE=$(date +%s)
+##     (a static/reused nonce is rejected; the nonce is the human-present signal that
+##      passive CI detection alone cannot provide — KTD1. Do NOT put the nonce in
+##      .env — this recipe sources .env and a stale value there would clobber it.)
+## Pending vs hard-fail: if NOTHING is placed (out-of-window / not order-capable /
+## degenerate band) it records Pending and "passes". But once an order is PLACED, a
+## still-resting order, an unexpected fill, or a failed flat scan HARD-FAILS the build
+## (there is no operator to clean up — autonomy trades the pre-placement checkpoint for
+## loud post-run detection). gate 1 never waits on gate 2.
+##   export LS_ORDER_SMOKE_NONCE=$(date +%s); make live-smoke-order-chain
 live-smoke-order-chain:
 	@set -a; [ -f .env ] && . ./.env; set +a; \
 	export LS_ORDER_SMOKE=1 LS_ORDER_SMOKE_TR=CSPAT00601; \
@@ -214,6 +227,19 @@ live-smoke-t8431:
 	$(call run_smoke,live_smoke_t8431)
 live-smoke-t8430:
 	$(call run_smoke,live_smoke_t8430)
+## ETF quote smoke: read-only t1901 ETF현재가 (shcode defaults to 069500 KODEX 200);
+## KRX-session-dependent. Override with LS_LIVE_SMOKE_T1901_SHCODE.
+live-smoke-t1901:
+	$(call run_smoke,live_smoke_t1901)
+## Pivot/demark smoke: read-only t1105 (shcode defaults 005930, exchgubun K).
+live-smoke-t1105:
+	$(call run_smoke,live_smoke_t1105)
+## Price-memo smoke: read-only t1104 (code defaults 005930, nrec 1, exchgubun K).
+live-smoke-t1104:
+	$(call run_smoke,live_smoke_t1104)
+## Period-price smoke: read-only t1305 기간별주가 (shcode 005930, daily, today, cnt 10).
+live-smoke-t1305:
+	$(call run_smoke,live_smoke_t1305)
 live-smoke-t9942:
 	$(call run_smoke,live_smoke_t9942)
 

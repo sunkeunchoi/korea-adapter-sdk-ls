@@ -86,6 +86,28 @@ spurious diff.
     hunting for `cli.rs` / `api_drift.rs` count bumps on a flip; touching them is a
     bug. Only `banner_trs` (+1 per flipped TR) and `reference.len()` change.
 
+### Ordering trick — fire the typed smoke BEFORE the registrations
+
+The crosscheck lists and offline tests live in **test files**; they do not block the
+`live_smoke` test binary from compiling. So when the live smoke can only run during a
+narrow window (an open KRX session), get the *window-gated* evidence first and do the
+desk work after the bell:
+
+1. Author only what the typed smoke needs to compile: the request/response structs, the
+   `{TR}_POLICY` const, the SDK facade method, and the `live_smoke_<tr>` harness.
+2. Build + fire `make live-smoke-<tr>` (or the test directly) **in-window** to capture a
+   clean typed `rsp_cd=00000` + non-empty payload — that response is the Implemented-gate
+   evidence (a raw-probe is only a reachability classifier; the *typed* smoke proves the
+   struct deserializes the real shape).
+3. THEN, window-independent: flip the metadata, register the policy in both crosscheck
+   lists, add the offline deserialize tests, bump the docgen counts, add the smoke-map
+   row + Makefile target, and run the gate.
+
+The smoke is the only step the window gates; everything else can land after close. Make
+the smoke assert **non-empty** (not just `Ok`), or an off-session `00707` records empty
+flip evidence and the gate is weaker than it looks — see
+[stale-smoke-symbol-masks-provisioned-feed.md](stale-smoke-symbol-masks-provisioned-feed.md).
+
 ### The two sites NO test asserts — the silent ones
 
 These are the easy misses, because the tree is green without them:

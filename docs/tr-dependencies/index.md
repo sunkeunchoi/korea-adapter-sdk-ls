@@ -64,7 +64,13 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t0425` | 주식체결/미체결 (stock filled/unfilled order inquiry) | `paginated` | implemented | [t0425](./t0425.md) |
 | `t1101` | 주식 현재가호가 조회 | `market_session` | recommended | [t1101](./t1101.md) |
 | `t1102` | 주식 현재가(시세) 조회 | `market_session` | recommended | [t1102](./t1102.md) |
+| `t1104` | 주식현재가시세메모 | `market_session` | implemented | [t1104](./t1104.md) |
+| `t1105` | 주식피봇/디마크조회 | `market_session` | implemented | [t1105](./t1105.md) |
+| `t1305` | 기간별주가 | `paginated` | implemented | [t1305](./t1305.md) |
+| `t1308` | 주식시간대별체결조회챠트 | `market_session` | tracked | [t1308](./t1308.md) |
+| `t1310` | 주식당일전일분틱조회 | `paginated` | tracked | [t1310](./t1310.md) |
 | `t1403` | 신규상장종목조회 | `paginated` | implemented | [t1403](./t1403.md) |
+| `t1404` | 관리/불성실/투자유의조회 | `paginated` | tracked | [t1404](./t1404.md) |
 | `t1441` | 등락율상위 | `paginated` | implemented | [t1441](./t1441.md) |
 | `t1452` | 거래량상위 | `paginated` | implemented | [t1452](./t1452.md) |
 | `t1463` | 거래대금상위 | `paginated` | implemented | [t1463](./t1463.md) |
@@ -91,6 +97,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t1859` | 서버저장조건 조건검색 | `market_session` | implemented | [t1859](./t1859.md) |
 | `t1860` | 서버저장조건 실시간검색 | `standalone` | tracked | [t1860](./t1860.md) |
 | `t1866` | 서버저장조건 리스트조회 | `paginated` | implemented | [t1866](./t1866.md) |
+| `t1901` | ETF현재가(시세)조회 | `market_session` | implemented | [t1901](./t1901.md) |
 | `t1958` | ELW종목비교 | `market_session` | implemented | [t1958](./t1958.md) |
 | `t1964` | ELW전광판 | `standalone` | tracked | [t1964](./t1964.md) |
 | `t1988` | 기초자산리스트조회 | `market_session` | implemented | [t1988](./t1988.md) |
@@ -109,6 +116,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t8402` | 주식선물현재가조회(API용) | `market_session` | implemented | [t8402](./t8402.md) |
 | `t8403` | 주식선물호가조회(API용) | `market_session` | implemented | [t8403](./t8403.md) |
 | `t8410` | API전용주식차트(일주월년) | `paginated` | implemented | [t8410](./t8410.md) |
+| `t8411` | 주식차트(틱/n틱) | `paginated` | tracked | [t8411](./t8411.md) |
 | `t8412` | 주식 차트(N분봉) 조회 | `paginated` | recommended | [t8412](./t8412.md) |
 | `t8419` | 업종차트(일주월) | `paginated` | implemented | [t8419](./t8419.md) |
 | `t8424` | 전체업종 | `market_session` | implemented | [t8424](./t8424.md) |

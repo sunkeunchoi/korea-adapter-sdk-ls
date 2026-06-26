@@ -56,6 +56,9 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t0425` | 주식체결/미체결 (stock filled/unfilled order inquiry) | `paginated` | implemented, not yet recommended |
 | `t1101` | 주식 현재가호가 조회 | `market_session` | recommended |
 | `t1102` | 주식 현재가(시세) 조회 | `market_session` | recommended |
+| `t1104` | 주식현재가시세메모 | `market_session` | implemented, not yet recommended |
+| `t1105` | 주식피봇/디마크조회 | `market_session` | implemented, not yet recommended |
+| `t1305` | 기간별주가 | `paginated` | implemented, not yet recommended |
 | `t1403` | 신규상장종목조회 | `paginated` | implemented, not yet recommended |
 | `t1441` | 등락율상위 | `paginated` | implemented, not yet recommended |
 | `t1452` | 거래량상위 | `paginated` | implemented, not yet recommended |
@@ -80,6 +83,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t1826` | 종목Q클릭검색리스트조회(씽큐스마트) | `market_session` | implemented, not yet recommended |
 | `t1859` | 서버저장조건 조건검색 | `market_session` | implemented, not yet recommended |
 | `t1866` | 서버저장조건 리스트조회 | `paginated` | implemented, not yet recommended |
+| `t1901` | ETF현재가(시세)조회 | `market_session` | implemented, not yet recommended |
 | `t1958` | ELW종목비교 | `market_session` | implemented, not yet recommended |
 | `t1988` | 기초자산리스트조회 | `market_session` | implemented, not yet recommended |
 | `t2111` | 선물/옵션현재가(시세)조회 | `market_session` | implemented, not yet recommended |

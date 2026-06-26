@@ -156,6 +156,33 @@ clean. **Cancel is the PRIMARY teardown** once a cancel TR exists; paper reset i
 A failure after the submit leg leaves only the modify/cancel pair Pending — the
 submit gate never waits on the modify/cancel gate (independent flip gates).
 
+**The chained smoke is AUTONOMOUS (agent-invoked, no operator handoff).** The agent
+runs `make live-smoke-order-chain` directly during a human-present wave. Autonomy does
+NOT relax any guard — it ADDS a fail-closed contract on top of the double opt-in
+(`order_chained_smoke` in `order_smoke.rs`):
+
+- **Autonomy precondition (U1/KTD1):** refuses unless a CI/no-TTY marker is ABSENT
+  *and* a fresh per-wave human nonce (`LS_ORDER_SMOKE_NONCE=$(date +%s)`, within a
+  short TTL) is present. A static/reused nonce is rejected — the active fresh nonce is
+  the human-present signal that passive CI detection alone cannot give. Refusal places
+  nothing and emits no order evidence. (Because no-TTY refuses, run it in an attended
+  PTY: the autonomy removes the handoff *protocol*, not the human.)
+- **Resolved-paper assertion (U2):** after credential load, the *resolved*
+  environment — not the `LS_TRADING_ENV` env var — must be paper, else refuse.
+- **Post-run flat assertion (U3/KTD2/KTD3):** after teardown, an ACCOUNT-WIDE `t0425`
+  scan must positively confirm zero live rows. A resting remainder (`ordrem > 0`) is
+  retry-canceled then hard-failed naming the order; a fill (`cheqty > 0`) hard-fails
+  immediately (cancel cannot undo it — paper reset is the sole remediation); a
+  failed/truncated scan is treated as NOT flat. The kill-switch
+  (`set_orders_enabled(false)`) is engaged as a "no new orders" guard on a wedged
+  terminal run — it halts dispatch, it is NOT a teardown.
+- **Output safety (U4/KTD4):** installs a fail-closed dispatch-log suppressor (drops
+  the unscrubbed `ls_core` whole-body/`rsp_msg` debug events; refuses if a foreign
+  global tracing subscriber prevents guaranteed suppression) and routes all output —
+  including `LsError` text and loud-failure messages — through the widened
+  `scrub_secrets` (account number + `-NN` suffix + bearer tokens/appkeys); order
+  numbers are named verbatim so failures stay actionable.
+
 The harness MUST fail closed: explicit TR selection with no default, operator
 params validated before SDK construction, a degenerate `t1102` band
 (halted / limit-locked / newly-listed → `up <= dn` or zero) recording

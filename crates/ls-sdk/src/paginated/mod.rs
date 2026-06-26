@@ -196,6 +196,14 @@ impl Paginated {
             .await
     }
 
+    /// Fetch a SINGLE page of `t1305` period stock price (기간별주가). Self-paginated
+    /// on the body `date` cursor; single-page scope (plan -002 Track 2).
+    pub async fn stock_price_period(&self, req: &T1305Request) -> LsResult<T1305Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1305_POLICY, req)
+            .await
+    }
+
     /// Fetch a SINGLE page of `t8451` integrated stock chart (일주월년).
     /// Self-paginated on the body `cts_date` cursor; single-page scope (plan -004).
     pub async fn stock_chart_period_unified(

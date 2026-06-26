@@ -132,6 +132,253 @@ pub struct T1102Response {
     pub outblock: T1102OutBlock,
 }
 
+// ---------------------------------------------------------------------------
+// t1901 — ETF현재가(시세)조회 (ETF current-price snapshot). market_session read,
+// single OutBlock object; path /stock/etf. Mirrors t1102's single-object shape.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1901` — the ETF short code (단축코드). `shcode`-only.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1901InBlock {
+    /// Short code / 단축코드 (e.g. `"069500"` KODEX 200).
+    pub shcode: String,
+}
+
+/// `t1901` request — serializes to `{"t1901InBlock":{"shcode":...}}`. Not paginated.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1901Request {
+    #[serde(rename = "t1901InBlock")]
+    pub inblock: T1901InBlock,
+}
+
+impl T1901Request {
+    /// Build a `t1901` ETF quote request for one short code.
+    pub fn new(shcode: impl Into<String>) -> Self {
+        T1901Request {
+            inblock: T1901InBlock {
+                shcode: shcode.into(),
+            },
+        }
+    }
+}
+
+/// `t1901OutBlock` — the ETF snapshot quote (a representative, spec-grounded subset
+/// of the LS `t1901OutBlock`). Numeric-bearing fields use [`ls_core::string_or_number`]
+/// (the gateway sends numbers or strings); `#[serde(default)]` lets a sparse out-block
+/// deserialize, and unknown fields are ignored.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1901OutBlock {
+    /// Korean name / 한글 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Sign / 전일대비 구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change vs. previous close / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Rate of change (%) / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Accumulated volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Reference (base) price / 기준가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub recprice: String,
+    /// Open / 시가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    /// High / 고가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    /// Low / 저가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    /// Upper limit price / 상한가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub uplmtprice: String,
+    /// Lower limit price / 하한가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dnlmtprice: String,
+    /// Short code / 단축코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Trading value / 누적거래대금.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub value: String,
+}
+
+/// `t1901` response envelope — the ETF snapshot under the `t1901OutBlock` key.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1901Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1901OutBlock", default)]
+    pub outblock: T1901OutBlock,
+}
+
+// ---------------------------------------------------------------------------
+// t1105 — 주식피봇/디마크조회 (pivot / demark levels). market_session, single
+// OutBlock; path /stock/market-data. shcode + exchgubun request.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1105` — short code + exchange distinction.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1105InBlock {
+    pub shcode: String,
+    pub exchgubun: String,
+}
+
+/// `t1105` request — `{"t1105InBlock":{"shcode":...,"exchgubun":...}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1105Request {
+    #[serde(rename = "t1105InBlock")]
+    pub inblock: T1105InBlock,
+}
+
+impl T1105Request {
+    /// Build a `t1105` pivot/demark request for one symbol on one exchange.
+    pub fn new(shcode: impl Into<String>, exchgubun: impl Into<String>) -> Self {
+        T1105Request {
+            inblock: T1105InBlock {
+                shcode: shcode.into(),
+                exchgubun: exchgubun.into(),
+            },
+        }
+    }
+}
+
+/// `t1105OutBlock` — pivot + demark levels (single object). Numeric-bearing fields
+/// via [`ls_core::string_or_number`]; `#[serde(default)]` tolerates a sparse block.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1105OutBlock {
+    /// Short code / 단축코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Pivot / 피봇.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub pbot: String,
+    /// Pivot 1st resistance / 1차 매도.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offer1: String,
+    /// Pivot 1st support / 1차 매수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub supp1: String,
+    /// Pivot 2nd resistance / 2차 매도.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offer2: String,
+    /// Pivot 2nd support / 2차 매수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub supp2: String,
+    /// Demark standard price / 디마크 기준가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub stdprc: String,
+    /// Demark resistance / 디마크 매도.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerd: String,
+    /// Demark support / 디마크 매수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub suppd: String,
+}
+
+/// `t1105` response envelope — the pivot/demark block under `t1105OutBlock`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1105Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1105OutBlock", default)]
+    pub outblock: T1105OutBlock,
+}
+
+// ---------------------------------------------------------------------------
+// t1104 — 주식현재가시세메모 (current-price memo). market_session; a summary
+// OutBlock plus a memo-row array OutBlock1; path /stock/market-data.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1104` — short code (`code`), row count (`nrec`), exchange.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1104InBlock {
+    pub code: String,
+    pub nrec: String,
+    pub exchgubun: String,
+}
+
+/// `t1104` request — `{"t1104InBlock":{"code":...,"nrec":...,"exchgubun":...}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1104Request {
+    #[serde(rename = "t1104InBlock")]
+    pub inblock: T1104InBlock,
+}
+
+impl T1104Request {
+    /// Build a `t1104` price-memo request for one symbol on one exchange.
+    pub fn new(
+        code: impl Into<String>,
+        nrec: impl Into<String>,
+        exchgubun: impl Into<String>,
+    ) -> Self {
+        T1104Request {
+            inblock: T1104InBlock {
+                code: code.into(),
+                nrec: nrec.into(),
+                exchgubun: exchgubun.into(),
+            },
+        }
+    }
+}
+
+/// `t1104OutBlock` — the summary block (record count).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1104OutBlock {
+    /// Record count / 레코드 수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub nrec: String,
+}
+
+/// `t1104OutBlock1` — one memo row (index / kind / value).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1104OutBlock1 {
+    /// Index / 인덱스.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub indx: String,
+    /// Kind / 구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gubn: String,
+    /// Value / 값.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub vals: String,
+}
+
+/// `t1104` response envelope — summary `t1104OutBlock` + memo-row array
+/// `t1104OutBlock1` (tolerated single-or-array via [`ls_core::de_vec_or_single`]).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1104Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1104OutBlock", default)]
+    pub outblock: T1104OutBlock,
+    #[serde(
+        rename = "t1104OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1104OutBlock1>,
+}
+
 /// Input block for `t1101` — the symbol to look up.
 ///
 /// `shcode` is the 6-digit short code (단축코드). Unlike `t1102`, the `t1101`
@@ -5335,6 +5582,29 @@ impl MarketSession {
     pub async fn quote(&self, req: &T1102Request) -> LsResult<T1102Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T1102_POLICY, req)
+            .await
+    }
+
+    /// Fetch the ETF current-price (시세) snapshot for one short code via `t1901`.
+    /// Non-paginated; dispatches through [`ls_core::Inner::post`] on the MarketData
+    /// bucket.
+    pub async fn etf_quote(&self, req: &T1901Request) -> LsResult<T1901Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1901_POLICY, req)
+            .await
+    }
+
+    /// Fetch pivot / demark levels for one symbol via `t1105` (non-paginated).
+    pub async fn pivot_demark(&self, req: &T1105Request) -> LsResult<T1105Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1105_POLICY, req)
+            .await
+    }
+
+    /// Fetch the current-price memo rows for one symbol via `t1104` (non-paginated).
+    pub async fn price_memo(&self, req: &T1104Request) -> LsResult<T1104Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1104_POLICY, req)
             .await
     }
 
