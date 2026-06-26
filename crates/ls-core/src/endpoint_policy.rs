@@ -159,6 +159,20 @@ pub const T1901_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+/// t1305 — 기간별주가 (period/historical OHLC; self-paginated on `date`).
+pub const T1305_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1305",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// t1105 — 주식피봇/디마크조회 (pivot/demark levels; non-paginated).
 pub const T1105_POLICY: EndpointPolicy = EndpointPolicy {
     tr_code: "t1105",
@@ -2132,6 +2146,7 @@ mod tests {
             T1901_POLICY,
             T1105_POLICY,
             T1104_POLICY,
+            T1305_POLICY,
             CSPAQ12200_POLICY,
             CSPAQ12300_POLICY,
             CSPAQ22200_POLICY,

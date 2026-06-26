@@ -43,7 +43,7 @@ use ls_sdk::paginated::{
     T1403Request, T1441Request, T1452Request, T1463Request, T1466Request, T1481Request,
     T1482Request, T1489Request, T1492Request, T1514Request, T1866Request, T3341Request,
     T8412Request,
-    T8410Request, T8451Request, T8419Request, T4203Request, T3401Request,
+    T1305Request, T8410Request, T8451Request, T8419Request, T4203Request, T3401Request,
 };
 use ls_sdk::realtime::WsLane;
 use ls_sdk::LsSdk;
@@ -1137,6 +1137,34 @@ async fn live_smoke_t1901() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t1901 market-data failure (not evidence)");
             panic!("live-smoke-t1901 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1305`: paper guard → token → one `t1305` period-price read for
+/// `shcode="005930"` `dwmcode="1"` (daily) `date="<today>"` `cnt="10"`. A non-empty
+/// candle array proves the typed paginated read round-trips. Session-independent.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1305`"]
+async fn live_smoke_t1305() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let shcode = std::env::var("LS_LIVE_SMOKE_T1305_SHCODE").unwrap_or_else(|_| "005930".into());
+    let date = Utc::now().format("%Y%m%d").to_string();
+    match sdk.paginated().stock_price_period(&T1305Request::new(&shcode, "1", &date, "10")).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock1.is_empty(),
+                "live-smoke-t1305: empty candles (00707) — PENDING, not Implemented"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "candles")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1305", &format!("env=paper shcode={shcode} dwmcode=1 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1305 market-data failure (not evidence)");
+            panic!("live-smoke-t1305 failed: {e}");
         }
     }
 }

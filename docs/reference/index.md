@@ -58,6 +58,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t1102` | 주식 현재가(시세) 조회 | `market_session` | recommended |
 | `t1104` | 주식현재가시세메모 | `market_session` | implemented, not yet recommended |
 | `t1105` | 주식피봇/디마크조회 | `market_session` | implemented, not yet recommended |
+| `t1305` | 기간별주가 | `paginated` | implemented, not yet recommended |
 | `t1403` | 신규상장종목조회 | `paginated` | implemented, not yet recommended |
 | `t1441` | 등락율상위 | `paginated` | implemented, not yet recommended |
 | `t1452` | 거래량상위 | `paginated` | implemented, not yet recommended |

@@ -18,6 +18,7 @@ use ls_sdk::paginated::{
     T1482Request, T1482Response, T1489Request, T1489Response, T1492Request, T1492Response,
     T1514Request, T1514Response, T1866Request, T1866Response, T3341Request, T3341Response,
     T8412OutBlock1, T8412Request, T8412Response,
+    T1305Request, T1305Response,
     T8410Request, T8410Response, T8451Request, T8451Response, T8419Request, T8419Response,
     T4203Request, T4203Response, T3401Request, T3401Response,
 };
@@ -978,6 +979,44 @@ const T3401_FIXTURE: &str = include_str!("fixtures/t3401_resp.json");
 // --- t8410 — API전용주식차트(일주월년) ----------------------------------------
 
 /// Covers R8/KTD4. `qrycnt` serializes as a JSON **number** (string → IGW40011);
+/// t1305 기간별주가 (plan -002 Track 2): numeric request fields dwmcode/idx/cnt
+/// serialize as JSON numbers (IGW40011 guard); date/shcode/exchgubun stay strings;
+/// header cursors skipped.
+#[test]
+fn t1305_request_serializes_numeric_fields_as_numbers() {
+    let value = serde_json::to_value(T1305Request::new("005930", "1", "20260626", "10"))
+        .expect("serialize t1305 request");
+    let inblock = &value["t1305InBlock"];
+    assert!(inblock["dwmcode"].is_number(), "dwmcode is a JSON number");
+    assert!(inblock["idx"].is_number(), "idx is a JSON number");
+    assert!(inblock["cnt"].is_number(), "cnt is a JSON number");
+    assert!(inblock["date"].is_string(), "date cursor stays a string");
+    assert_eq!(inblock["shcode"], "005930");
+    assert_eq!(inblock["exchgubun"], "K");
+    assert!(value.get("tr_cont").is_none(), "header cursor skipped from body");
+}
+
+/// t1305 candle array tolerates single-or-array + empty (pending) forms; numeric
+/// candle fields tolerate number or string.
+#[test]
+fn t1305_response_round_trips_single_or_array_and_empty() {
+    let single: T1305Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1305OutBlock": { "cnt": 1, "ex_shcode": "005930" },
+        "t1305OutBlock1": { "date": "20260626", "close": 135155, "open": "134000" }
+    }))
+    .expect("single candle tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].close, "135155", "close from JSON number");
+    assert_eq!(single.outblock1[0].open, "134000", "open from JSON string");
+
+    let empty: T1305Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t1305OutBlock1": []
+    }))
+    .expect("empty result deserializes");
+    assert!(empty.outblock1.is_empty(), "empty first page is the pending case");
+}
+
 /// `cts_date`/`shcode` stay strings; header cursors skipped.
 #[test]
 fn t8410_request_serializes_qrycnt_as_number() {
