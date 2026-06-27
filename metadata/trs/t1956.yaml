@@ -17,7 +17,16 @@ dependencies:
   strong_order_fields: []
 support:
   tracked: true
-  implemented: false
+  # Closure-flip (plan -001 closed-window more-flips): non-empty paper smoke UNDER
+  # KRX closure — t8431-sourced FRESH ELW shcode (codes expire), rsp_cd=00000,
+  # populated single t1956OutBlock snapshot (outblock.hname NAME witness populated)
+  # + t1956OutBlock1 basket array (de_vec_or_single). All-String request (no numeric
+  # request slot). NOTE: metadata self_paginated:false is the routing source of truth
+  # over the old SDK's tr_cont scaffolding — non-paginated market_session read. This
+  # is an order-book-family ELW read whose snapshot persisted under closure (last
+  # snapshot, as t8450/t1906 certified in this wave). Carries a deferred open-window
+  # freshness re-check obligation (R9).
+  implemented: true
   recommended: false
 maintenance:
   source_spec_hash: 1d48bde1e0ab

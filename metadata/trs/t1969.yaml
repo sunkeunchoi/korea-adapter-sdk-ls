@@ -17,7 +17,12 @@ dependencies:
   strong_order_fields: []
 support:
   tracked: true
-  implemented: false
+  # Closure-flip (plan -001 closed-window more-flips): non-empty paper smoke UNDER
+  # KRX closure (all-ELWs default screen, rsp_cd success, summary cnt + 2883 screened
+  # rows, non-empty first-row shcode/hname). The numeric range request fields
+  # (elwexec[se]/volume[se]/... ) serialize as JSON numbers (string form → IGW40011).
+  # Carries a deferred open-window freshness re-check obligation (R9).
+  implemented: true
   recommended: false
 maintenance:
   source_spec_hash: 139a2e575d51

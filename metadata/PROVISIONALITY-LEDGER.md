@@ -702,3 +702,63 @@ prior wave (front-month symbol refresh) and are untouched. `t2106` (domestic F/O
 price-memo, empty memo) and `t1964` (ELW board, input-unresolved) keep their existing
 PENDING dispositions — both are domestic, not part of this night/overseas
 reclassification. Recommended tier untouched.
+
+---
+
+## 15. Closed-window more-flips wave — tracked-only pool triage (2026-06-27)
+
+Plan `docs/plans/2026-06-27-001-feat-closed-window-more-flips-plan.md`, U1. The 73
+tracked-only TRs are classified into exactly one bucket each. KRX is closed (Saturday),
+so only static/persistent reads are reachable; the static bucket is the input to the
+U2/U3 flip batches. Every non-candidate carries its reason here so no TR is silently
+dropped (R1, R2, R7).
+
+**Static-flippable candidates (22) — smoked under closure in U2/U3.** A candidacy
+heuristic (master/reference, designation, ranking, ELW/F-O persistent quote, historical
+chart), confirmed per-TR by the flip gate (R4/R5: deserializes + a non-default modeled
+field). A static-classified read that smokes empty is recorded as heuristic
+over-inclusion, not flipped.
+
+- `market_session` (17, batch A): `t1308` `t1449` `t1621` `t1638` `t1906` `t1950`
+  `t1956` `t1959` `t1969` `t1971` `t1972` `t1974` `t2106` `t2545` `t8406` `t8407`
+  `t8450`. (`t2106` is finish-the-flip — request/response/facade/smoke already wired,
+  prior wave left it PENDING on an empty memo; re-smoked under closure here.)
+- `paginated` (5, batch B): `t1410` `t1411` `t1488` `t1636` `t1809`.
+
+**`paper_incompatible: true` (11) — excluded before candidacy (R2).** They never flip on
+paper under any session (recorded in §12/§14): `CCENQ10100` `CCENQ90200` `g3101`
+`g3102` `g3103` `g3104` `g3106` `g3190` `t8455` `t8460` `t8463`.
+
+**Hard-blocked (5) — left untouched, need an input or a non-read path closure does not
+provide (R3).** `t1860` (realtime-control subscription, not a read), `t1852`/`t1856`
+(require `sFileData` input), `t3102` (requires `sNewsno` input), `t1964` (empty ELW
+board, input-unresolved).
+
+**Session-dependent (35) — deferred unsmoked to a future open-window wave (R1/R6).**
+Live quote/orderbook, time-and-sales, intraday session flow, and other reads closure
+guarantees return empty `00707`; deferred, not smoked-then-dispositioned this wave:
+`t1109` `t1301` `t1471` `t1475` `t1486` `t1602` `t1603` `t1617` `t1631` `t1632` `t1633`
+`t1637` `t1665` `t1702` `t1716` `t1717` `t1752` `t1771` `t1902` `t1904` `t1927` `t1941`
+`t1951` `t1954` `t1973` `t2210` `t2212` `t2214` `t2407` `t2424` `t2541` `t8404` `t8427`
+`t8428` `t8454`.
+
+22 + 11 + 5 + 35 = 73 — every tracked-only TR carries exactly one disposition.
+
+**Wave outcome (U2/U3 close-out).** Of the 22 static-flippable candidates, **21
+flipped to Implemented** under closure on non-empty paper smokes (`reference.len()`
+141 → 162) — a far-from-dry pool, so the U4 raw top-up was dropped per the plan's
+follow-up guidance (the wave stands on the pool audit alone). The static-classified
+heuristic over-included exactly **one**: `t2106` (선물/옵션현재가시세메모, F/O
+price-memo) stayed PENDING — its memo array smoked empty (`rsp_cd=00000`, empty
+`t2106OutBlock1`) even with a live contract sourced via t8467, an independent
+session-dependent signal (memo entries populate during the session), consistent
+with its prior §14 PENDING. Two candidates first looked blocked but flipped after
+faithful re-classification: `t2545` (IGW40011 was a bad `bgubun="1"` value, not a
+wire-type defect — `bgubun="0"` returns non-empty) and `t8406` (the static
+raw-capture `focode` was an expired contract; a live front-month contract sourced
+via t8467 returned non-empty last-session rows). The numeric-request gotcha (KTD3)
+applied to t1621/t8407/t1969/t2545/t8406 and the paginated cursors
+t1411/t1488/t1636 — all serialized via `ls_core::string_as_number`. Every flip
+landed `recommended: false` with a deferred open-window freshness re-check note (R9)
+for the later Recommended pass. All 21 flips were closure-flips; a session-stale
+persistent body passes the R4 gate identically to a live one (R5).

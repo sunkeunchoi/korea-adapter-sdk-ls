@@ -1,0 +1,31 @@
+{
+  "rsp_cd": "00000",
+  "t1636OutBlock1": [
+    {
+      "rank": 1,
+      "hname": "삼성전자",
+      "price": 66100,
+      "sign": "2",
+      "change": 1200,
+      "diff": "1.85",
+      "volume": 12345678,
+      "svalue": 9876543,
+      "shcode": "005930"
+    },
+    {
+      "rank": 2,
+      "hname": "SK하이닉스",
+      "price": 122000,
+      "sign": "5",
+      "change": -800,
+      "diff": "-0.65",
+      "volume": 2345678,
+      "svalue": -1234567,
+      "shcode": "000660"
+    }
+  ],
+  "rsp_msg": "정상적으로 조회가 완료되었습니다.",
+  "t1636OutBlock": {
+    "cts_idx": 40
+  }
+}

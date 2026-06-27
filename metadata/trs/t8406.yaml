@@ -17,7 +17,15 @@ dependencies:
   strong_order_fields: []
 support:
   tracked: true
-  implemented: false
+  # Closure-flip (plan -001 closed-window more-flips): non-empty paper smoke UNDER
+  # KRX closure. The smoke self-sources a live front-month contract from the t8467
+  # index-futures master (the raw-capture focode is stale/expired), then reads it
+  # with cgubun=1, bgubun=0, cnt=10 → rsp_cd=00000, 10 conclusion rows (modeled
+  # chetime/price). bgubun/cnt serialize as JSON NUMBERS (string_as_number) — the
+  # string form returns IGW40011 (KTD3). Unlike the F/O order-book, the by-tick
+  # conclusion board carries last-session rows under closure. Carries a deferred
+  # open-window freshness re-check obligation (R9).
+  implemented: true
   recommended: false
 maintenance:
   source_spec_hash: 167d0c50a681

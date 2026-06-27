@@ -1,0 +1,29 @@
+{
+  "rsp_cd": "00000",
+  "t1488OutBlock1": [
+    {
+      "volume": 12345,
+      "shcode": "005930",
+      "change": 1200,
+      "sign": "2",
+      "diff": "1.85",
+      "jkrate": "20",
+      "price": 66100,
+      "hname": "삼성전자"
+    },
+    {
+      "volume": 0,
+      "shcode": "000660",
+      "change": -800,
+      "sign": "5",
+      "diff": "-0.65",
+      "jkrate": "30",
+      "price": 122000,
+      "hname": "SK하이닉스"
+    }
+  ],
+  "rsp_msg": "정상적으로 조회가 완료되었습니다.",
+  "t1488OutBlock": {
+    "idx": 40
+  }
+}

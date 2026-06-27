@@ -17,7 +17,15 @@ dependencies:
   strong_order_fields: []
 support:
   tracked: true
-  implemented: false
+  # Closure-flip (plan -001 closed-window more-flips): non-empty paper smoke UNDER
+  # KRX closure — t8431-sourced FRESH ELW shcode (codes expire), rsp_cd=00000,
+  # populated same-base-asset sibling list (t1974OutBlock1 non-empty,
+  # outblock1[0].hname populated + cnt summary present). All-String request (no
+  # numeric request slot). NOTE: metadata self_paginated:false is the routing
+  # source of truth over the old SDK's tr_cont scaffolding — non-paginated
+  # market_session read. Carries a deferred open-window freshness re-check
+  # obligation (R9).
+  implemented: true
   recommended: false
 maintenance:
   source_spec_hash: 42f77c70813f

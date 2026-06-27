@@ -1,0 +1,35 @@
+{
+  "rsp_cd": "00000",
+  "t1809OutBlock": {
+    "cts": "20240101120000"
+  },
+  "t1809OutBlock1": [
+    {
+      "date": "20240101",
+      "time": "120000",
+      "signal_id": "0001",
+      "signal_desc": "급등주포착",
+      "gubun": "1",
+      "jmcode": "005930",
+      "price": 66100,
+      "sign": "2",
+      "chgrate": 1.85,
+      "volume": 12345678,
+      "datetime": "2024010112000000"
+    },
+    {
+      "date": "20240101",
+      "time": "120500",
+      "signal_id": "0002",
+      "signal_desc": "거래량급증",
+      "gubun": "1",
+      "jmcode": "000660",
+      "price": 122000,
+      "sign": "5",
+      "chgrate": -0.65,
+      "volume": 2345678,
+      "datetime": "2024010112050000"
+    }
+  ],
+  "rsp_msg": "정상적으로 조회가 완료되었습니다."
+}

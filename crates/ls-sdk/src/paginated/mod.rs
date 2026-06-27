@@ -21,6 +21,8 @@ mod chart;
 mod designation_board;
 mod historical_chart;
 mod invest_opinion;
+mod item_search;
+mod low_liquidity;
 mod rank_screen;
 mod sector_index;
 
@@ -29,6 +31,8 @@ pub use chart::*;
 pub use designation_board::*;
 pub use historical_chart::*;
 pub use invest_opinion::*;
+pub use item_search::*;
+pub use low_liquidity::*;
 pub use rank_screen::*;
 pub use sector_index::*;
 
@@ -390,6 +394,61 @@ impl Paginated {
     pub async fn credit_trend(&self, req: &T1921Request) -> LsResult<T1921Response> {
         self.inner
             .post_paginated(&ls_core::endpoint_policy::T1921_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t1410` ultra-low-liquidity board (초저유동성조회).
+    /// Self-paginated on the body `cts_shcode` cursor (first page `""`); single-page
+    /// scope (plan -001, closed-window more-flips).
+    pub async fn low_liquidity_board(&self, req: &T1410Request) -> LsResult<T1410Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1410_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t1411` stocks-by-margin-rate (증거금율별종목조회).
+    /// Self-paginated on the body `idx` cursor (first page `"0"`, serialized as a
+    /// JSON number per `string_as_number`); single-page scope (plan -001,
+    /// closed-window more-flips).
+    pub async fn stocks_by_margin_rate(&self, req: &T1411Request) -> LsResult<T1411Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1411_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t1488` expected-execution top-change-rate
+    /// (예상체결가등락율상위조회). Self-paginated on the body `idx` cursor (first
+    /// page `"0"`, serialized as a JSON number per `string_as_number`, alongside
+    /// the numeric `yesprice`/`yeeprice`/`yevolume` filters); single-page scope
+    /// (plan -001, closed-window more-flips).
+    pub async fn expected_exec_top_change_rate(
+        &self,
+        req: &T1488Request,
+    ) -> LsResult<T1488Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1488_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t1636` per-stock program-trading trend
+    /// (종목별프로그램매매동향). Self-paginated on the body `cts_idx` cursor (first
+    /// page `"0"`, serialized as a JSON number per `string_as_number`);
+    /// single-page scope (plan -001, closed-window more-flips).
+    pub async fn program_trade_trend_by_stock(
+        &self,
+        req: &T1636Request,
+    ) -> LsResult<T1636Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1636_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t1809` signal search (신호조회). Self-paginated on
+    /// the body `cts` string cursor (first page `"1"`); single-page scope
+    /// (plan -001, closed-window more-flips).
+    pub async fn signal_search(&self, req: &T1809Request) -> LsResult<T1809Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1809_POLICY, req)
             .await
     }
 }

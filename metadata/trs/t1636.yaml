@@ -17,8 +17,10 @@ dependencies:
   strong_order_fields: []
 support:
   tracked: true
-  implemented: false
+  implemented: true
+  # Implemented (paper smoke), not yet Recommended: no Focused Evidence, no
+  # recommendation block (deferred per R9 — promote-tr's separate pass).
   recommended: false
 maintenance:
   source_spec_hash: 303e53b063c9
-  last_reviewed: 2026-06-26
+  last_reviewed: 2026-06-28

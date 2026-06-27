@@ -1016,8 +1016,8 @@ mod tests {
             "t2111", "t2112", "t8402", "t8403", "t8434",
             "t1988", "t3320",
             "t9945", "t3202", "t3401", "t8410", "t8451", "t8419", "t4203",
-            "t1901", "t1105", "t1104", "t1305",
-            "t1310", "t1404",
+            "t1901", "t1906", "t8450", "t1638", "t1308", "t1449", "t1621", "t2545", "t8406", "t8407", "t1959", "t1950", "t1971", "t1972", "t1974", "t1956", "t1969", "t1105", "t1104", "t1305",
+            "t1310", "t1404", "t1410", "t1411", "t1488", "t1636", "t1809",
             "t8417", "t8418", "t8411", "t8452", "t8453", "t1302",
             "t8464", "t8465", "t8466", "t2216", "t8405",
             "t1444", "t1422", "t1427", "t1442", "t1405", "t1960", "t1961", "t1966", "t1921", "t1532", "t1533", "t1926", "t1764", "t1903",
@@ -1127,9 +1127,55 @@ mod tests {
         // t1444, 상·하한 t1422/t1427, 신고저가 t1442, 매매정지 t1405, ELW rankings
         // t1960/t1961/t1966, 신용 t1921/t1926, 테마 t1532/t1533, 회원사 t1764, ETF일별
         // t1903) each certified non-empty UNDER closure — add 14.
+        // Plan -001 closed-window more-flips: ETF LP order-book t1906 certified
+        // non-empty UNDER closure (shcode=152100) — add 1.
+        // Plan -001 closed-window more-flips: integrated current-price/order-book
+        // t8450 certified non-empty UNDER closure (shcode=005930, exchgubun=N) — add 1.
+        // Plan -001 closed-window more-flips: per-stock remaining-quantity/pre-disclosure
+        // t1638 certified non-empty UNDER closure (gubun1=1, shcode="" full list, 780 rows) — add 1.
+        // Plan -001 closed-window more-flips: time-bucketed trade-chart t1308 certified
+        // non-empty UNDER closure (shcode=005930, full session, bun_term=1, 381 rows) — add 1.
+        // Plan -001 closed-window more-flips: price-band trade-weight t1449 certified
+        // non-empty UNDER closure (shcode=005930, dategb=1, 141 price-band rows) — add 1.
+        // Plan -001 closed-window more-flips: by-time investor-trading t1621 certified
+        // non-empty UNDER closure (upcode=001, nmin=0, cnt=20, 20 by-time rows;
+        // nmin/cnt serialize as JSON numbers or IGW40011, KTD3) — add 1.
+        // Plan -001 closed-window more-flips: multi-symbol current-price t8407 certified
+        // non-empty UNDER closure (nrec=3, shcode 3 concatenated codes, 3 per-symbol
+        // rows; nrec serializes as a JSON number or IGW40011, KTD3) — add 1.
+        // Plan -001 closed-window more-flips: LP-target ELW issue-list t1959 certified
+        // non-empty UNDER closure (shcode="" full LP-target list, 420 per-issue rows) —
+        // add 1.
+        // Plan -001 closed-window more-flips: ELW screener t1969 certified non-empty
+        // UNDER closure (all-ELWs default screen, summary cnt + 2883 screened rows) —
+        // add 1.
+        // Plan -001 closed-window more-flips: ELW current-price/quote t1950 certified
+        // non-empty UNDER closure (t8431-sourced fresh shcode, populated single-instrument
+        // quote + 1 basket row) — add 1.
+        // Plan -001 closed-window more-flips: ELW current-price + quote-board t1971
+        // certified non-empty UNDER closure (t8431-sourced fresh shcode, populated
+        // single-instrument quote-board, top bid/offer present) — add 1.
+        // Plan -001 closed-window more-flips: ELW current-price + trading-member board
+        // t1972 certified non-empty UNDER closure (t8431-sourced fresh shcode, populated
+        // single-instrument member board, modeled member-volume field present) — add 1.
+        // Plan -001 closed-window more-flips: ELWs-sharing-a-base-asset t1974 certified
+        // non-empty UNDER closure (t8431-sourced fresh shcode, populated same-base sibling
+        // list t1974OutBlock1 + cnt summary, modeled hname present) — add 1.
+        // Plan -001 closed-window more-flips: ELW current-price/payout snapshot t1956
+        // certified non-empty UNDER closure (t8431-sourced fresh shcode, rsp_cd=00000,
+        // populated single t1956OutBlock hname NAME witness + basket array t1956OutBlock1)
+        // — add 1.
+        // Plan -001 closed-window more-flips: F/O by-time investor-trading t2545 certified
+        // non-empty UNDER closure (eitem=01, sgubun=0, upcode=001, nmin=0, cnt=10, bgubun=0,
+        // rsp_cd=00000, 10 by-time rows, modeled date/indmsvol; nmin/cnt serialize as JSON
+        // numbers and bgubun="0" or IGW40011/IGW50008, KTD3) — add 1.
+        // Plan -001 closed-window more-flips: F/O by-tick conclusion t8406 certified non-empty
+        // UNDER closure (t8467-sourced live front-month focode, cgubun=1, bgubun=0, cnt=10,
+        // rsp_cd=00000, 10 conclusion rows, modeled chetime/price; bgubun/cnt serialize as
+        // JSON numbers or IGW40011, KTD3) — add 1.
         assert_eq!(
             reference.len(),
-            141,
+            162,
             "index + the implemented reference pages"
         );
 

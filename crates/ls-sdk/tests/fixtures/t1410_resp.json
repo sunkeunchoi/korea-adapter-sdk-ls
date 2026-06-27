@@ -1,0 +1,27 @@
+{
+  "rsp_cd": "00000",
+  "t1410OutBlock": {
+    "cts_shcode": ""
+  },
+  "t1410OutBlock1": [
+    {
+      "volume": 22,
+      "price": 5620,
+      "change": 50,
+      "shcode": "000545",
+      "sign": "5",
+      "diff": "-00.88",
+      "hname": "흥국화재우"
+    },
+    {
+      "volume": 140,
+      "price": 2175,
+      "change": 0,
+      "shcode": "168490",
+      "sign": "3",
+      "diff": "000.00",
+      "hname": "한국패러랠"
+    }
+  ],
+  "rsp_msg": "정상적으로 조회가 완료되었습니다."
+}

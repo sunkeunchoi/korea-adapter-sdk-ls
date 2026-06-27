@@ -17,8 +17,11 @@ dependencies:
   strong_order_fields: []
 support:
   tracked: true
-  implemented: false
+  implemented: true
+  # Implemented at paginated scope via `make live-smoke-t1809` (paper, non-empty
+  # t1809OutBlock1 under closure). Recommended deferred to a later promote-tr pass
+  # (R9: no Focused Evidence / recommendation block authored here).
   recommended: false
 maintenance:
   source_spec_hash: 92bda671a82d
-  last_reviewed: 2026-06-26
+  last_reviewed: 2026-06-28
