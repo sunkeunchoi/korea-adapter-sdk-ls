@@ -225,6 +225,2194 @@ pub struct T1901Response {
 }
 
 // ---------------------------------------------------------------------------
+// t8450 — (통합)주식현재가호가조회2 (integrated current-price + order-book level-2
+// snapshot). market_session read, single OutBlock object; path /stock/market-data.
+// shcode + exchgubun request. Mirrors t1105's two-field InBlock shape.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t8450` — short code (단축코드) + exchange distinction (거래소구분코드).
+#[derive(Serialize, Debug, Clone)]
+pub struct T8450InBlock {
+    /// Short code / 단축코드 (e.g. `"005930"` Samsung Electronics).
+    pub shcode: String,
+    /// Exchange distinction / 거래소구분코드 (e.g. `"N"` integrated, `"K"` KRX).
+    pub exchgubun: String,
+}
+
+/// `t8450` request — serializes to `{"t8450InBlock":{"shcode":...,"exchgubun":...}}`.
+/// Not paginated (`facets.self_paginated: false`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T8450Request {
+    #[serde(rename = "t8450InBlock")]
+    pub inblock: T8450InBlock,
+}
+
+impl T8450Request {
+    /// Build a `t8450` current-price/order-book request for one short code + exchange.
+    pub fn new(shcode: impl Into<String>, exchgubun: impl Into<String>) -> Self {
+        T8450Request {
+            inblock: T8450InBlock {
+                shcode: shcode.into(),
+                exchgubun: exchgubun.into(),
+            },
+        }
+    }
+}
+
+/// `t8450OutBlock` — the integrated current-price + order-book snapshot (a
+/// representative, spec-grounded subset of the LS `t8450OutBlock`): the current-price
+/// header, level-1 + level-2 offer/bid price+quantity, the order-book totals, the day's
+/// OHLC, and the limit prices. Every numeric-bearing field uses
+/// [`ls_core::string_or_number`] (the gateway sends numbers or strings);
+/// `#[serde(default)]` lets a sparse out-block deserialize, and unknown fields are
+/// ignored.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8450OutBlock {
+    /// Korean name / 한글명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change vs. previous close / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Rate of change (%) / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Accumulated volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Previous close / 전일종가(기준가).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jnilclose: String,
+    /// Offer (ask) price, level 1 / 매도호가1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerho1: String,
+    /// Bid price, level 1 / 매수호가1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidho1: String,
+    /// Offer quantity, level 1 / 매도호가수량1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerrem1: String,
+    /// Bid quantity, level 1 / 매수호가수량1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidrem1: String,
+    /// Offer (ask) price, level 2 / 매도호가2.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerho2: String,
+    /// Bid price, level 2 / 매수호가2.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidho2: String,
+    /// Total offer quantity / 매도호가수량합.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offer: String,
+    /// Total bid quantity / 매수호가수량합.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bid: String,
+    /// Open / 시가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    /// High / 고가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    /// Low / 저가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    /// Upper limit price / 상한가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub uplmtprice: String,
+    /// Lower limit price / 하한가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dnlmtprice: String,
+    /// Short code / 단축코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+}
+
+/// `t8450` response envelope — the integrated current-price/order-book snapshot under
+/// the `t8450OutBlock` key. All `#[serde(default)]` so a terse/empty envelope
+/// deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8450Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t8450OutBlock", default)]
+    pub outblock: T8450OutBlock,
+}
+
+// ---------------------------------------------------------------------------
+// t1638 — 종목별잔량/사전공시 (per-stock remaining-quantity / pre-disclosure ranking).
+// market_session read; a repeated `t1638OutBlock` ranking array (tolerated
+// single-or-array via `ls_core::de_vec_or_single`); path /stock/etc.
+// 4-field request (gubun1/shcode/gubun2/exchgubun); shcode may be empty (full list).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1638` — division (`gubun1`), short code (`shcode`, may be
+/// empty for the full list), sort (`gubun2`), exchange distinction (`exchgubun`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1638InBlock {
+    /// Division / 구분 (e.g. `"1"`).
+    pub gubun1: String,
+    /// Short code / 종목코드 — empty string returns the full list.
+    pub shcode: String,
+    /// Sort / 정렬 (e.g. `"1"`).
+    pub gubun2: String,
+    /// Exchange distinction / 거래소구분코드 (e.g. `""` integrated).
+    pub exchgubun: String,
+}
+
+/// `t1638` request — serializes to
+/// `{"t1638InBlock":{"gubun1":...,"shcode":...,"gubun2":...,"exchgubun":...}}`.
+/// Not paginated (`facets.self_paginated: false`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1638Request {
+    #[serde(rename = "t1638InBlock")]
+    pub inblock: T1638InBlock,
+}
+
+impl T1638Request {
+    /// Build a `t1638` per-stock remaining-quantity / pre-disclosure ranking
+    /// request. `shcode` may be empty (`""`) to return the full list.
+    pub fn new(
+        gubun1: impl Into<String>,
+        shcode: impl Into<String>,
+        gubun2: impl Into<String>,
+        exchgubun: impl Into<String>,
+    ) -> Self {
+        T1638Request {
+            inblock: T1638InBlock {
+                gubun1: gubun1.into(),
+                shcode: shcode.into(),
+                gubun2: gubun2.into(),
+                exchgubun: exchgubun.into(),
+            },
+        }
+    }
+}
+
+/// `t1638OutBlock` — one ranking row (a representative, spec-grounded subset of the
+/// LS `t1638OutBlock`): rank, Korean name, current price, change, remaining buy/sell
+/// quantity, the pre-disclosure quantities, and the short code. Every numeric-bearing
+/// field uses [`ls_core::string_or_number`] (the gateway sends numbers or strings);
+/// `#[serde(default)]` lets a sparse row deserialize, and unknown fields are ignored.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1638OutBlock {
+    /// Rank / 순위.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub rank: String,
+    /// Korean name / 한글명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change vs. previous close / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Rate of change (%) / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Net buy remaining quantity / 순매수잔량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub obuyvol: String,
+    /// Buy remaining quantity / 매수잔량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub buyrem: String,
+    /// Buy pre-disclosure quantity / 매수공시수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub psgvolume: String,
+    /// Sell remaining quantity / 매도잔량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sellrem: String,
+    /// Sell pre-disclosure quantity / 매도공시수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub pdgvolume: String,
+    /// Short code / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+}
+
+/// `t1638` response envelope — the ranking rows under the `t1638OutBlock` key,
+/// tolerated single-or-array via [`ls_core::de_vec_or_single`]. All
+/// `#[serde(default)]` so a terse/empty envelope deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1638Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t1638OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T1638OutBlock>,
+}
+
+// ---------------------------------------------------------------------------
+// t1308 — 주식시간대별체결조회챠트 (time-bucketed trade chart). market_session
+// read; a single `t1308OutBlock` (the exchange short code) plus a repeated
+// `t1308OutBlock1` time-bucket array (tolerated single-or-array via
+// `ls_core::de_vec_or_single`); path /stock/market-data. 5-field request
+// (shcode/starttime/endtime/bun_term/exchgubun) — all serialize as STRINGS.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1308` — short code (`shcode`), start/end time
+/// (`starttime`/`endtime`, may be empty for the full session), bucket interval
+/// (`bun_term`, e.g. `"1"` minute), and exchange distinction (`exchgubun`, may
+/// be empty for integrated). All fields are caller-supplied Strings.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1308InBlock {
+    /// Short code / 단축코드.
+    pub shcode: String,
+    /// Start time / 시작시간 (HHMM; empty for the full session).
+    pub starttime: String,
+    /// End time / 종료시간 (HHMM; empty for the full session).
+    pub endtime: String,
+    /// Bucket interval (minutes) / 분간격 (e.g. `"1"`).
+    pub bun_term: String,
+    /// Exchange distinction / 거래소구분코드 (empty for integrated).
+    pub exchgubun: String,
+}
+
+/// `t1308` request — serializes to
+/// `{"t1308InBlock":{"shcode":...,"starttime":...,"endtime":...,"bun_term":...,"exchgubun":...}}`.
+/// Not paginated (`facets.self_paginated: false`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1308Request {
+    #[serde(rename = "t1308InBlock")]
+    pub inblock: T1308InBlock,
+}
+
+impl T1308Request {
+    /// Build a `t1308` time-bucketed trade-chart request. `starttime`/`endtime`
+    /// may be empty (`""`) for the full session; `exchgubun` may be empty for the
+    /// integrated venue.
+    pub fn new(
+        shcode: impl Into<String>,
+        starttime: impl Into<String>,
+        endtime: impl Into<String>,
+        bun_term: impl Into<String>,
+        exchgubun: impl Into<String>,
+    ) -> Self {
+        T1308Request {
+            inblock: T1308InBlock {
+                shcode: shcode.into(),
+                starttime: starttime.into(),
+                endtime: endtime.into(),
+                bun_term: bun_term.into(),
+                exchgubun: exchgubun.into(),
+            },
+        }
+    }
+}
+
+/// `t1308OutBlock` — the summary block (the exchange-distinguished short code).
+/// `#[serde(default)]` so a sparse/absent block deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1308OutBlock {
+    /// Exchange-distinguished short code / 거래소별단축코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ex_shcode: String,
+}
+
+/// `t1308OutBlock1` — one time-bucket trade row (a representative, spec-grounded
+/// subset): bucket time, current price, sign/change/rate, the bucket trade volume,
+/// the bid/ask trade volumes, and the bucket OHLC. Every numeric-bearing field
+/// uses [`ls_core::string_or_number`] (the gateway sends numbers or strings);
+/// `#[serde(default)]` lets a sparse row deserialize, and unknown fields are ignored.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1308OutBlock1 {
+    /// Bucket time / 시간 (HHMMSS).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub chetime: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Sign vs. previous close / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change vs. previous close / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Rate of change (%) / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Bucket trade volume / 체결수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cvolume: String,
+    /// Cumulative trade volume / 거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Sell trade volume / 매도체결수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub mdvolume: String,
+    /// Buy trade volume / 매수체결수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub msvolume: String,
+    /// Open / 시가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    /// High / 고가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    /// Low / 저가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+}
+
+/// `t1308` response envelope — the summary block under the `t1308OutBlock` key,
+/// plus the time-bucket rows under the `t1308OutBlock1` key (tolerated
+/// single-or-array via [`ls_core::de_vec_or_single`]). All `#[serde(default)]`
+/// so a terse/empty envelope deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1308Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1308OutBlock", default)]
+    pub outblock: T1308OutBlock,
+    #[serde(
+        rename = "t1308OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1308OutBlock1>,
+}
+
+// ---------------------------------------------------------------------------
+// t1449 — 가격대별매매비중조회 (price-band trade-weight). market_session read;
+// a single `t1449OutBlock` summary (current price + cumulative volume split) plus
+// a repeated `t1449OutBlock1` price-band array (tolerated single-or-array via
+// `ls_core::de_vec_or_single`); path /stock/market-data. 2-field request
+// (shcode/dategb) — both serialize as STRINGS. `dategb` MUST be non-empty
+// (e.g. "1") or the board comes back empty.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1449` — short code (`shcode`) and day-distinction
+/// (`dategb`, e.g. `"1"`). Both caller-supplied Strings; `dategb` must be
+/// non-empty (an empty `dategb` returns an empty board).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1449InBlock {
+    /// Short code / 단축코드.
+    pub shcode: String,
+    /// Day distinction / 일자구분 (e.g. `"1"`; must be non-empty).
+    pub dategb: String,
+}
+
+/// `t1449` request — serializes to
+/// `{"t1449InBlock":{"shcode":...,"dategb":...}}`. Not paginated
+/// (`facets.self_paginated: false`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1449Request {
+    #[serde(rename = "t1449InBlock")]
+    pub inblock: T1449InBlock,
+}
+
+impl T1449Request {
+    /// Build a `t1449` price-band trade-weight request. `dategb` should be a
+    /// non-empty day-distinction (e.g. `"1"`).
+    pub fn new(shcode: impl Into<String>, dategb: impl Into<String>) -> Self {
+        T1449Request {
+            inblock: T1449InBlock {
+                shcode: shcode.into(),
+                dategb: dategb.into(),
+            },
+        }
+    }
+}
+
+/// `t1449OutBlock` — the summary block: current price, sign/change/rate, the
+/// cumulative volume and its buy/sell split. Every numeric-bearing field uses
+/// [`ls_core::string_or_number`]; `#[serde(default)]` so a sparse/absent block
+/// deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1449OutBlock {
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Sign vs. previous close / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change vs. previous close / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Rate of change (%) / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Cumulative volume / 거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Buy trade volume / 매수체결량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub msvolume: String,
+    /// Sell trade volume / 매도체결량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub mdvolume: String,
+}
+
+/// `t1449OutBlock1` — one price-band trade-weight row (a representative,
+/// spec-grounded subset): the band price, sign/change/tick-rate, the band trade
+/// quantity, the buy/sell trade volumes, the band weight, and the buy ratio.
+/// Every numeric-bearing field uses [`ls_core::string_or_number`];
+/// `#[serde(default)]` lets a sparse row deserialize, and unknown fields are ignored.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1449OutBlock1 {
+    /// Band trade price / 체결가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Sign vs. previous close / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change vs. previous close / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Tick rate of change (%) / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tickdiff: String,
+    /// Band trade quantity / 체결수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cvolume: String,
+    /// Band weight (%) / 비중.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Sell trade volume / 매도체결량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub mdvolume: String,
+    /// Buy trade volume / 매수체결량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub msvolume: String,
+    /// Buy ratio (%) / 매수비율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub msdiff: String,
+}
+
+/// `t1449` response envelope — the summary block under the `t1449OutBlock` key,
+/// plus the price-band rows under the `t1449OutBlock1` key (tolerated
+/// single-or-array via [`ls_core::de_vec_or_single`]). All `#[serde(default)]`
+/// so a terse/empty envelope deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1449Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1449OutBlock", default)]
+    pub outblock: T1449OutBlock,
+    #[serde(
+        rename = "t1449OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1449OutBlock1>,
+}
+
+// ---------------------------------------------------------------------------
+// t1621 — 업종별분별투자자매매동향(챠트용) (by-time, by-sector investor trading).
+// market_session read; a single `t1621OutBlock` header (investor-class codes +
+// the base-index name/code) plus a repeated `t1621OutBlock1` by-time array
+// (tolerated single-or-array via `ls_core::de_vec_or_single`); path
+// /stock/investor. 5-field request — `upcode`/`bgubun`/`exchgubun` are plain
+// Strings; `nmin` and `cnt` are numeric REQUEST slots that MUST serialize as JSON
+// NUMBERS via `ls_core::string_as_number` (KTD3 — the string form returns
+// IGW40011).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1621` — sector code (`upcode`), the N-minute bucket
+/// (`nmin`), the requested row count (`cnt`), the previous-day flag (`bgubun`)
+/// and the exchange code (`exchgubun`).
+///
+/// `nmin` and `cnt` are held as `String` but serialize as JSON NUMBERS via
+/// [`ls_core::string_as_number`] (KTD3 — the string form returns `IGW40011`).
+/// `upcode`/`bgubun`/`exchgubun` serialize as ordinary Strings.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1621InBlock {
+    /// Sector code / 업종코드 (e.g. `"001"` KOSPI).
+    pub upcode: String,
+    /// N-minute bucket / N분 (numeric request slot, KTD3).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub nmin: String,
+    /// Requested row count / 조회건수 (numeric request slot, KTD3).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub cnt: String,
+    /// Previous-day flag / 전일분 (e.g. `"0"`).
+    pub bgubun: String,
+    /// Exchange code / 거래소구분코드 (e.g. `""`).
+    pub exchgubun: String,
+}
+
+/// `t1621` request — serializes to
+/// `{"t1621InBlock":{"upcode":...,"nmin":0,"cnt":20,"bgubun":...,"exchgubun":...}}`
+/// (`nmin`/`cnt` as JSON numbers). Not paginated (`facets.self_paginated: false`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1621Request {
+    #[serde(rename = "t1621InBlock")]
+    pub inblock: T1621InBlock,
+}
+
+impl T1621Request {
+    /// Build a `t1621` by-time investor-trading request. `nmin`/`cnt` are passed
+    /// as Strings but wire-serialize as JSON numbers (KTD3).
+    pub fn new(
+        upcode: impl Into<String>,
+        nmin: impl Into<String>,
+        cnt: impl Into<String>,
+        bgubun: impl Into<String>,
+        exchgubun: impl Into<String>,
+    ) -> Self {
+        T1621Request {
+            inblock: T1621InBlock {
+                upcode: upcode.into(),
+                nmin: nmin.into(),
+                cnt: cnt.into(),
+                bgubun: bgubun.into(),
+                exchgubun: exchgubun.into(),
+            },
+        }
+    }
+}
+
+/// `t1621OutBlock` — the header block: the base-index code/name and the
+/// per-exchange sector code (a representative, spec-grounded subset of the
+/// investor-class header). Every modeled field via [`ls_core::string_or_number`];
+/// `#[serde(default)]` so a sparse/absent header deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1621OutBlock {
+    /// Base-index code / 기준지수코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jisucd: String,
+    /// Base-index name / 기준지수명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jisunm: String,
+    /// Per-exchange sector code / 거래소별업종코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ex_upcode: String,
+}
+
+/// `t1621OutBlock1` — one by-time investor-trading row (a representative,
+/// spec-grounded subset): the date/time keys, the individual / foreign /
+/// institution net-buy volume and amount, and the base-index value. Every
+/// numeric-bearing field via [`ls_core::string_or_number`]; `#[serde(default)]`
+/// lets a sparse row deserialize and unknown fields are ignored.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1621OutBlock1 {
+    /// Date / 일자.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    /// Time / 시간.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub time: String,
+    /// Individual net-buy volume / 개인순매수거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub indmsvol: String,
+    /// Individual net-buy amount / 개인순매수거래대금.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub indmsamt: String,
+    /// Foreign net-buy volume / 외국인순매수거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub formsvol: String,
+    /// Foreign net-buy amount / 외국인순매수거래대금.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub formsamt: String,
+    /// Institution net-buy volume / 기관계순매수거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sysmsvol: String,
+    /// Institution net-buy amount / 기관계순매수거래대금.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sysmsamt: String,
+    /// Base index value / 기준지수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub upclose: String,
+}
+
+/// `t1621` response envelope — the header under the `t1621OutBlock` key, plus the
+/// by-time rows under the `t1621OutBlock1` key (tolerated single-or-array via
+/// [`ls_core::de_vec_or_single`]). All `#[serde(default)]` so a terse/empty
+/// envelope deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1621Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1621OutBlock", default)]
+    pub outblock: T1621OutBlock,
+    #[serde(
+        rename = "t1621OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1621OutBlock1>,
+}
+
+// ---------------------------------------------------------------------------
+// t2545 — 상품선물투자자매매동향(챠트용) (F/O by-time, by-sector investor trading).
+// market_session read; a single `t2545OutBlock` header (the product id / market
+// flag + the base-index name/code) plus a repeated `t2545OutBlock1` by-time array
+// (tolerated single-or-array via `ls_core::de_vec_or_single`); path
+// /futureoption/investor. 6-field request — `eitem`/`sgubun`/`upcode`/`bgubun`
+// are plain Strings; `nmin` and `cnt` are numeric REQUEST slots that MUST
+// serialize as JSON NUMBERS via `ls_core::string_as_number` (KTD3 — the string
+// form returns IGW40011). Pre-verified smoke uses `bgubun="0"` (`bgubun="1"`
+// returns IGW40011/IGW50008).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t2545` — the product id (`eitem`), market flag (`sgubun`),
+/// sector code (`upcode`), the N-minute bucket (`nmin`), the requested row count
+/// (`cnt`) and the previous-day flag (`bgubun`).
+///
+/// `nmin` and `cnt` are held as `String` but serialize as JSON NUMBERS via
+/// [`ls_core::string_as_number`] (KTD3 — the string form returns `IGW40011`).
+/// `eitem`/`sgubun`/`upcode`/`bgubun` serialize as ordinary Strings.
+#[derive(Serialize, Debug, Clone)]
+pub struct T2545InBlock {
+    /// Product id / 상품ID (e.g. `"01"`).
+    pub eitem: String,
+    /// Market flag / 시장구분 (e.g. `"0"`).
+    pub sgubun: String,
+    /// Sector code / 업종코드 (e.g. `"001"`).
+    pub upcode: String,
+    /// N-minute bucket / N분 (numeric request slot, KTD3).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub nmin: String,
+    /// Requested row count / 조회건수 (numeric request slot, KTD3).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub cnt: String,
+    /// Previous-day flag / 전일분 (use `"0"` — `"1"` returns IGW40011/IGW50008).
+    pub bgubun: String,
+}
+
+/// `t2545` request — serializes to
+/// `{"t2545InBlock":{"eitem":...,"sgubun":...,"upcode":...,"nmin":0,"cnt":10,"bgubun":...}}`
+/// (`nmin`/`cnt` as JSON numbers). Not paginated (`facets.self_paginated: false`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T2545Request {
+    #[serde(rename = "t2545InBlock")]
+    pub inblock: T2545InBlock,
+}
+
+impl T2545Request {
+    /// Build a `t2545` F/O by-time investor-trading request. `nmin`/`cnt` are
+    /// passed as Strings but wire-serialize as JSON numbers (KTD3).
+    pub fn new(
+        eitem: impl Into<String>,
+        sgubun: impl Into<String>,
+        upcode: impl Into<String>,
+        nmin: impl Into<String>,
+        cnt: impl Into<String>,
+        bgubun: impl Into<String>,
+    ) -> Self {
+        T2545Request {
+            inblock: T2545InBlock {
+                eitem: eitem.into(),
+                sgubun: sgubun.into(),
+                upcode: upcode.into(),
+                nmin: nmin.into(),
+                cnt: cnt.into(),
+                bgubun: bgubun.into(),
+            },
+        }
+    }
+}
+
+/// `t2545OutBlock` — the header block: the product id / market flag and the
+/// base-index code/name (a representative, spec-grounded subset of the
+/// investor-class header). Every modeled field via [`ls_core::string_or_number`];
+/// `#[serde(default)]` so a sparse/absent header deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T2545OutBlock {
+    /// Product id / 상품ID.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub eitem: String,
+    /// Market flag / 시장구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sgubun: String,
+    /// Base-index code / 기준지수코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jisucd: String,
+    /// Base-index name / 기준지수명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jisunm: String,
+}
+
+/// `t2545OutBlock1` — one by-time investor-trading row (a representative,
+/// spec-grounded subset): the date/time keys, the individual / foreign /
+/// institution net-buy volume and amount, and the base-index value. Every
+/// numeric-bearing field via [`ls_core::string_or_number`]; `#[serde(default)]`
+/// lets a sparse row deserialize and unknown fields are ignored.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T2545OutBlock1 {
+    /// Date / 일자.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    /// Time / 시간.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub time: String,
+    /// Date+time / 일자시간.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub datetime: String,
+    /// Individual net-buy volume / 개인순매수거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub indmsvol: String,
+    /// Individual net-buy amount / 개인순매수거래대금.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub indmsamt: String,
+    /// Foreign net-buy volume / 외국인순매수거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub formsvol: String,
+    /// Foreign net-buy amount / 외국인순매수거래대금.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub formsamt: String,
+    /// Institution net-buy volume / 기관계순매수거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sysmsvol: String,
+    /// Institution net-buy amount / 기관계순매수거래대금.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sysmsamt: String,
+    /// Base index value / 기준지수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub upclose: String,
+}
+
+/// `t2545` response envelope — the header under the `t2545OutBlock` key, plus the
+/// by-time rows under the `t2545OutBlock1` key (tolerated single-or-array via
+/// [`ls_core::de_vec_or_single`]). All `#[serde(default)]` so a terse/empty
+/// envelope deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T2545Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t2545OutBlock", default)]
+    pub outblock: T2545OutBlock,
+    #[serde(
+        rename = "t2545OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T2545OutBlock1>,
+}
+
+// ---------------------------------------------------------------------------
+// t8406 — 주식선물틱분별체결조회(API용) (F/O by-tick/by-minute conclusion board).
+// market_session read; a repeated `t8406OutBlock1` conclusion array (tolerated
+// single-or-array via `ls_core::de_vec_or_single`); path
+// /futureoption/market-data. 4-field request — `focode` (F/O short code) and
+// `cgubun` (chart flag) are plain Strings; `bgubun` (minute flag) and `cnt`
+// (row count) are numeric REQUEST slots that MUST serialize as JSON NUMBERS via
+// `ls_core::string_as_number` (KTD3 — the string form returns IGW40011). The
+// example `focode="101TC000"`/`"111T6000"` is a stale contract; a live smoke
+// self-sources a front-month contract from the t8467 index-futures master.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t8406` — the F/O short code (`focode`), the chart flag
+/// (`cgubun`), the minute-bucket flag (`bgubun`) and the requested row count
+/// (`cnt`).
+///
+/// `bgubun` and `cnt` are held as `String` but serialize as JSON NUMBERS via
+/// [`ls_core::string_as_number`] (KTD3 — the string form returns `IGW40011`).
+/// `focode`/`cgubun` serialize as ordinary Strings.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8406InBlock {
+    /// F/O short code / 단축코드 (e.g. a front-month index-futures contract).
+    pub focode: String,
+    /// Chart flag / 챠트구분 (e.g. `"1"`).
+    pub cgubun: String,
+    /// Minute-bucket flag / 분구분 (numeric request slot, KTD3).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub bgubun: String,
+    /// Requested row count / 조회건수 (numeric request slot, KTD3).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub cnt: String,
+}
+
+/// `t8406` request — serializes to
+/// `{"t8406InBlock":{"focode":...,"cgubun":...,"bgubun":0,"cnt":10}}`
+/// (`bgubun`/`cnt` as JSON numbers). Not paginated (`facets.self_paginated: false`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T8406Request {
+    #[serde(rename = "t8406InBlock")]
+    pub inblock: T8406InBlock,
+}
+
+impl T8406Request {
+    /// Build a `t8406` F/O by-tick/minute conclusion request. `bgubun`/`cnt` are
+    /// passed as Strings but wire-serialize as JSON numbers (KTD3).
+    pub fn new(
+        focode: impl Into<String>,
+        cgubun: impl Into<String>,
+        bgubun: impl Into<String>,
+        cnt: impl Into<String>,
+    ) -> Self {
+        T8406Request {
+            inblock: T8406InBlock {
+                focode: focode.into(),
+                cgubun: cgubun.into(),
+                bgubun: bgubun.into(),
+                cnt: cnt.into(),
+            },
+        }
+    }
+}
+
+/// `t8406OutBlock1` — one conclusion row (a representative, spec-grounded
+/// subset): the conclusion time, current price, prior-day sign/change, the OHLC
+/// quartet, traded volume/value, open-interest, and the conclusion quantity.
+/// Every numeric-bearing field via [`ls_core::string_or_number`];
+/// `#[serde(default)]` lets a sparse row deserialize and unknown fields are
+/// ignored.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8406OutBlock1 {
+    /// Conclusion time / 시간.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub chetime: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Prior-day sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Prior-day change / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Open / 시가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    /// High / 고가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    /// Low / 저가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    /// Traded volume / 거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Traded value / 거래대금.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub value: String,
+    /// Open interest / 미결수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub openyak: String,
+    /// Conclusion quantity / 체결수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cvolume: String,
+}
+
+/// `t8406` response envelope — the conclusion rows under the `t8406OutBlock1`
+/// key (tolerated single-or-array via [`ls_core::de_vec_or_single`]). All
+/// `#[serde(default)]` so a terse/empty envelope deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8406Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t8406OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T8406OutBlock1>,
+}
+
+// ---------------------------------------------------------------------------
+// t8407 — API용주식멀티현재가조회 (복수종목 현재가, multi-symbol current price).
+// market_session read; one repeated `t8407OutBlock1` row per requested symbol
+// (tolerated single-or-array via `ls_core::de_vec_or_single`); path
+// /stock/market-data. 2-field request — `shcode` is a CONCATENATION of N
+// six-digit short codes with no separators; `nrec` is the count of those codes
+// and MUST serialize as a JSON NUMBER via `ls_core::string_as_number` (KTD3 — the
+// string form returns IGW40011).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t8407` — the requested record count (`nrec`) and the
+/// concatenated short codes (`shcode`).
+///
+/// `shcode` is a single String holding N six-digit codes back-to-back with no
+/// separators (e.g. `"005930000660001200"` for three symbols). `nrec` is held as
+/// a `String` but serializes as a JSON NUMBER via [`ls_core::string_as_number`]
+/// (KTD3 — the string form returns `IGW40011`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T8407InBlock {
+    /// Record count / 건수 (numeric request slot, KTD3) — the number of
+    /// six-digit codes packed into `shcode`.
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub nrec: String,
+    /// Concatenated short codes / 종목코드 — N six-digit codes back-to-back, no
+    /// separators (e.g. `"005930000660001200"`).
+    pub shcode: String,
+}
+
+/// `t8407` request — serializes to
+/// `{"t8407InBlock":{"nrec":3,"shcode":"005930000660001200"}}` (`nrec` as a JSON
+/// number). Not paginated (`facets.self_paginated: false`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T8407Request {
+    #[serde(rename = "t8407InBlock")]
+    pub inblock: T8407InBlock,
+}
+
+impl T8407Request {
+    /// Build a `t8407` multi-symbol current-price request. `nrec` is passed as a
+    /// String but wire-serializes as a JSON number (KTD3); `shcode` is the N
+    /// six-digit codes concatenated with no separators.
+    pub fn new(nrec: impl Into<String>, shcode: impl Into<String>) -> Self {
+        T8407Request {
+            inblock: T8407InBlock {
+                nrec: nrec.into(),
+                shcode: shcode.into(),
+            },
+        }
+    }
+}
+
+/// `t8407OutBlock1` — one current-price row per requested symbol (a
+/// representative, spec-grounded subset): the short code / name keys, the current
+/// price, the prior-day change sign / amount / rate, the cumulative volume, and
+/// the day's open/high/low. Every numeric-bearing field via
+/// [`ls_core::string_or_number`]; `#[serde(default)]` lets a sparse row
+/// deserialize and unknown fields are ignored.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8407OutBlock1 {
+    /// Short code / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Issue name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Prior-day change sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Prior-day change amount / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Prior-day change rate / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Cumulative volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Open / 시가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    /// High / 고가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    /// Low / 저가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+}
+
+/// `t8407` response envelope — the per-symbol rows under the `t8407OutBlock1` key
+/// (tolerated single-or-array via [`ls_core::de_vec_or_single`]). All
+/// `#[serde(default)]` so a terse/empty envelope deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8407Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t8407OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T8407OutBlock1>,
+}
+
+// ---------------------------------------------------------------------------
+// t1959 — LP대상종목정보조회 (LP target-issue info). market_session ELW read; one
+// repeated `t1959OutBlock1` row per LP-target issue (tolerated single-or-array via
+// `ls_core::de_vec_or_single`); path /stock/elw, group [주식] ELW. 1-field request
+// — `shcode` (a six-digit short code); an EMPTY `shcode` returns the full LP-target
+// list (this is a list/ranking read, not a single-instrument read). All-String
+// request — no numeric request slot, so no `string_as_number` (cf. t8407's nrec).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1959` — the LP-target short code (`shcode`).
+///
+/// An empty `shcode` (`""`) returns the FULL LP-target issue list; a six-digit
+/// code narrows to one issue. `shcode` is an ordinary request String (no numeric
+/// serialize — this read carries no numeric request slot).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1959InBlock {
+    /// Short code / 종목코드 — empty (`""`) returns the full LP-target list.
+    pub shcode: String,
+}
+
+/// `t1959` request — serializes to `{"t1959InBlock":{"shcode":""}}`. Not paginated
+/// (`facets.self_paginated: false`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1959Request {
+    #[serde(rename = "t1959InBlock")]
+    pub inblock: T1959InBlock,
+}
+
+impl T1959Request {
+    /// Build a `t1959` LP-target-issue request for one `shcode`. Pass `""` to fetch
+    /// the full LP-target list. See [`T1959Request::new`] for the empty-default
+    /// convenience constructor.
+    pub fn for_shcode(shcode: impl Into<String>) -> Self {
+        T1959Request {
+            inblock: T1959InBlock {
+                shcode: shcode.into(),
+            },
+        }
+    }
+
+    /// Build a `t1959` request defaulting `shcode` to `""` (the full LP-target
+    /// list). The list/ranking entry point.
+    pub fn new() -> Self {
+        T1959Request::for_shcode("")
+    }
+}
+
+impl Default for T1959Request {
+    fn default() -> Self {
+        T1959Request::new()
+    }
+}
+
+/// `t1959OutBlock1` — one LP-target issue row (a representative, spec-grounded
+/// subset): the short code / name keys, the current price, the prior-day change
+/// sign / amount / rate, the cumulative volume / value, and the LP order-availability
+/// flag. Every numeric-bearing field via [`ls_core::string_or_number`] (`rate` is a
+/// spec `Number`); `#[serde(default)]` lets a sparse row deserialize and unknown
+/// fields are ignored.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1959OutBlock1 {
+    /// Short code / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Issue name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Prior-day change sign / 부호.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Prior-day change amount / 대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Prior-day change rate / 등락율 (spec `Number`).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub rate: String,
+    /// Cumulative volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Cumulative value / 누적거래대금.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub value: String,
+    /// LP order-availability / LP주문가능여부.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub lp_gb: String,
+}
+
+/// `t1959` response envelope — the LP-target issue rows under the `t1959OutBlock1`
+/// key (tolerated single-or-array via [`ls_core::de_vec_or_single`]). All
+/// `#[serde(default)]` so a terse/empty envelope deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1959Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t1959OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1959OutBlock1>,
+}
+
+// ---------------------------------------------------------------------------
+// t1950 — ELW현재가(시세)조회 (ELW current-price/quote). market_session ELW read;
+// a single-instrument quote: the main `t1950OutBlock` is ONE object (the quote +
+// ELW analytics), with a secondary `t1950OutBlock1` basket-asset array (tolerated
+// single-or-array via `ls_core::de_vec_or_single`). path /stock/elw, group [주식]
+// ELW. 1-field request — `shcode` (a six-digit ELW issue code; these EXPIRE, so a
+// live caller sources a fresh one, e.g. from t8431). All-String request — no
+// numeric request slot, so no `string_as_number`.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1950` — the ELW short code (`shcode`).
+///
+/// `shcode` is a six-digit ELW issue code; ELW codes EXPIRE, so a live caller
+/// should source a fresh one at runtime (e.g. the first `shcode` of `t8431`).
+/// Ordinary request String (no numeric serialize — no numeric request slot).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1950InBlock {
+    /// ELW short code / ELW단축코드 — a six-digit, expiring issue code.
+    pub shcode: String,
+}
+
+/// `t1950` request — serializes to `{"t1950InBlock":{"shcode":"52XXXX"}}`. Not
+/// paginated (`facets.self_paginated: false`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1950Request {
+    #[serde(rename = "t1950InBlock")]
+    pub inblock: T1950InBlock,
+}
+
+impl T1950Request {
+    /// Build a `t1950` ELW current-price request for one `shcode` (a fresh,
+    /// non-expired ELW issue code).
+    pub fn for_shcode(shcode: impl Into<String>) -> Self {
+        T1950Request {
+            inblock: T1950InBlock {
+                shcode: shcode.into(),
+            },
+        }
+    }
+
+    /// Build a `t1950` request for one `shcode`. Alias of [`T1950Request::for_shcode`]
+    /// — there is no list/default form (a quote read needs a real issue code).
+    pub fn new(shcode: impl Into<String>) -> Self {
+        T1950Request::for_shcode(shcode)
+    }
+}
+
+/// `t1950OutBlock` — the ELW quote (a representative, spec-grounded subset): the
+/// issue name, the current price + prior-day sign / change / rate, the cumulative
+/// volume / value, and the underlying-asset code + price. Every numeric-bearing
+/// field via [`ls_core::string_or_number`]; `#[serde(default)]` lets a sparse
+/// quote deserialize and unknown fields are ignored.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1950OutBlock {
+    /// Issue name / 한글명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Prior-day change sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Prior-day change amount / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Prior-day change rate / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Cumulative volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Cumulative value / 누적거래대금.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub value: String,
+    /// Underlying-asset code / 기초자산코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bcode: String,
+    /// Underlying-asset current price / 기초자산현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bprice: String,
+}
+
+/// `t1950OutBlock1` — one basket-asset row (representative subset): the asset code,
+/// its ratio, and its current price. Tolerated single-or-array on the response.
+/// Every numeric-bearing field via [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1950OutBlock1 {
+    /// Basket-asset code / 기초자산코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bskcode: String,
+    /// Basket-asset ratio / 기초자산비율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bskbno: String,
+    /// Basket-asset current price / 기초자산현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bskprice: String,
+}
+
+/// `t1950` response envelope — the single-instrument quote under `t1950OutBlock`
+/// (one object) plus the basket-asset rows under `t1950OutBlock1` (tolerated
+/// single-or-array via [`ls_core::de_vec_or_single`]). All `#[serde(default)]` so
+/// a terse/empty envelope deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1950Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1950OutBlock", default)]
+    pub outblock: T1950OutBlock,
+    #[serde(
+        rename = "t1950OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1950OutBlock1>,
+}
+
+// ---------------------------------------------------------------------------
+// t1969 — ELW지표검색 (ELW screener / indicator search). market_session ELW read;
+// path /stock/elw, group [주식] ELW. A MANY-field screen request (`t1969InBlock`):
+// chk*/cb*/duedate*/lp_code/cbkoba are filter Strings; the numeric range fields
+// (elwexec[se]/volume[se]/rate[se]/premium[se]/parity[se]/berate[se]/capt[se]/
+// egearing[se]/gearing[se]/delta[se]/theta[se]) are spec `Number`s and MUST
+// serialize as JSON NUMBERS via `ls_core::string_as_number` (cf. t1621's nmin/cnt
+// — the string form returns IGW40011). The response NESTS: a `t1969OutBlock`
+// summary (the row count `cnt`) plus a repeated `t1969OutBlock1` array (the
+// screened ELW issues, tolerated single-or-array via `ls_core::de_vec_or_single`)
+// — same shape as t1621. `::new()` builds the "all ELWs" screen (every chk*/cb*
+// at its widest, numeric ranges 0/0, dates 000000..999999) so a no-input smoke
+// returns the full board.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1969` — the ELW screener filters. The `chk*` toggles and
+/// `cb*`/`duedate*`/`lp_code`/`cbkoba` codes serialize as ordinary Strings; the
+/// numeric range bounds (`elwexecs`/`elwexece`/`volumes`/... ) are held as
+/// `String` but wire-serialize as JSON NUMBERS via [`ls_core::string_as_number`]
+/// (the string form returns `IGW40011`). See [`T1969Request::new`] for the
+/// all-ELWs default screen.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1969InBlock {
+    /// Underlying-asset filter toggle / 기초자산chk구분.
+    pub chkitem: String,
+    /// Underlying-asset code / 기초자산코드.
+    pub cbitem: String,
+    /// Issuer filter toggle / 발행사chk구분.
+    pub chkissuer: String,
+    /// Issuer / 발행사.
+    pub cbissuer: String,
+    /// Call/put filter toggle / 권리chk구분.
+    pub chkcallput: String,
+    /// Call/put (call:01, put:02) / 권리.
+    pub cbcallput: String,
+    /// Strike filter toggle / 행사가chk구분.
+    pub chkexec: String,
+    /// Strike comparator (>=:1, <=:2) / 행사가.
+    pub cbexec: String,
+    /// Exercise-style filter toggle / 행사방식chk구분.
+    pub chktype: String,
+    /// Exercise style / 행사방식.
+    pub cbtype: String,
+    /// Settlement filter toggle / 결제방법chk구분.
+    pub chksettle: String,
+    /// Settlement method / 결제방법.
+    pub cbsettle: String,
+    /// Maturity filter toggle / 만기chk구분.
+    pub chklast: String,
+    /// Maturity month / 만기월별.
+    pub cblast: String,
+    /// Strike-range filter toggle / 행사가격chk구분.
+    pub chkelwexec: String,
+    /// Strike lower bound / 행사가이상 (numeric request slot).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub elwexecs: String,
+    /// Strike upper bound / 행사가이하 (numeric request slot).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub elwexece: String,
+    /// Volume filter toggle / 거래량chk구분.
+    pub chkvolume: String,
+    /// Volume lower bound / 거래량이상 (numeric request slot).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub volumes: String,
+    /// Volume upper bound / 거래량이하 (numeric request slot).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub volumee: String,
+    /// Change-rate filter toggle / 등락율chk구분.
+    pub chkrate: String,
+    /// Change-rate lower bound / 등락율이상 (numeric request slot).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub rates: String,
+    /// Change-rate upper bound / 등락율이하 (numeric request slot).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub ratee: String,
+    /// Premium filter toggle / 프리미엄chk구분.
+    pub chkpremium: String,
+    /// Premium lower bound / 프리미엄이상 (numeric request slot).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub premiums: String,
+    /// Premium upper bound / 프리미엄이하 (numeric request slot).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub premiume: String,
+    /// Parity filter toggle / 패리티chk구분.
+    pub chkparity: String,
+    /// Parity lower bound / 패리티이상 (numeric request slot).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub paritys: String,
+    /// Parity upper bound / 패리티이하 (numeric request slot).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub paritye: String,
+    /// Break-even filter toggle / 손익분기chk구분.
+    pub chkberate: String,
+    /// Break-even lower bound / 손익분기이상 (numeric request slot).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub berates: String,
+    /// Break-even upper bound / 손익분기이하 (numeric request slot).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub beratee: String,
+    /// Capital-support filter toggle / 자본지지chk구분.
+    pub chkcapt: String,
+    /// Capital-support lower bound / 자본지지이상 (numeric request slot).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub capts: String,
+    /// Capital-support upper bound / 자본지지이하 (numeric request slot).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub capte: String,
+    /// Effective-gearing filter toggle / e.기어링chk구분.
+    pub chkegearing: String,
+    /// Effective-gearing lower bound / e.기어링이상 (numeric request slot).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub egearings: String,
+    /// Effective-gearing upper bound / e.기어링이하 (numeric request slot).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub egearinge: String,
+    /// Gearing filter toggle / 기어링chk구분.
+    pub chkgearing: String,
+    /// Gearing lower bound / 기어링이상 (numeric request slot).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub gearings: String,
+    /// Gearing upper bound / 기어링이하 (numeric request slot).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub gearinge: String,
+    /// Delta filter toggle / 델타chk구분.
+    pub chkdelta: String,
+    /// Delta lower bound / 델타이상 (numeric request slot).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub deltas: String,
+    /// Delta upper bound / 델타이하 (numeric request slot).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub deltae: String,
+    /// Theta filter toggle / 쎄타chk구분.
+    pub chktheta: String,
+    /// Theta lower bound / 쎄타이상 (numeric request slot).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub thetas: String,
+    /// Theta upper bound / 쎄타이하 (numeric request slot).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub thetae: String,
+    /// Last-trade-date filter toggle / 최종거래일chk구분.
+    pub chkduedate: String,
+    /// Last-trade-date lower bound / 최종거래일이상 (date string, e.g. `"000000"`).
+    pub duedates: String,
+    /// Last-trade-date upper bound / 최종거래일이하 (date string, e.g. `"999999"`).
+    pub duedatee: String,
+    /// LP one-tick-gap flag / LP갭1틱.
+    pub onetickgubun: String,
+    /// LP liquidity-supply flag / LP유동성공급.
+    pub lp_liquidity: String,
+    /// LP filter toggle / LPchk구분.
+    pub chklp_code: String,
+    /// LP member-firm code / LP회원사코드.
+    pub lp_code: String,
+    /// Early-termination filter toggle / 조기종료chk구분.
+    pub chkkoba: String,
+    /// Early-termination (0:all, 1:KOBA, 2:non-KOBA) / 조기종료.
+    pub cbkoba: String,
+}
+
+/// `t1969` request — serializes to `{"t1969InBlock":{...}}` with the numeric range
+/// bounds as JSON numbers. Not paginated (`facets.self_paginated: false`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1969Request {
+    #[serde(rename = "t1969InBlock")]
+    pub inblock: T1969InBlock,
+}
+
+impl T1969Request {
+    /// Build a `t1969` ELW screener request from a fully-specified filter block.
+    /// For the unfiltered "all ELWs" board use [`T1969Request::new`].
+    pub fn from_inblock(inblock: T1969InBlock) -> Self {
+        T1969Request { inblock }
+    }
+
+    /// Build the "all ELWs" screen — every `chk*` toggle off (`"0"`), every code
+    /// filter at its widest, the numeric ranges at `0`/`0`, and the date window
+    /// `000000`..`999999`. No caller input; the smoke entry point.
+    pub fn new() -> Self {
+        T1969Request {
+            inblock: T1969InBlock {
+                chkitem: "0".into(),
+                cbitem: "000000000000".into(),
+                chkissuer: "0".into(),
+                cbissuer: "000000000000".into(),
+                chkcallput: "0".into(),
+                cbcallput: "00".into(),
+                chkexec: "0".into(),
+                cbexec: "1".into(),
+                chktype: "0".into(),
+                cbtype: "00".into(),
+                chksettle: "0".into(),
+                cbsettle: "00".into(),
+                chklast: "0".into(),
+                cblast: "000000".into(),
+                chkelwexec: "0".into(),
+                elwexecs: "0".into(),
+                elwexece: "0".into(),
+                chkvolume: "0".into(),
+                volumes: "0".into(),
+                volumee: "0".into(),
+                chkrate: "0".into(),
+                rates: "0".into(),
+                ratee: "0".into(),
+                chkpremium: "0".into(),
+                premiums: "0".into(),
+                premiume: "0".into(),
+                chkparity: "0".into(),
+                paritys: "0".into(),
+                paritye: "0".into(),
+                chkberate: "0".into(),
+                berates: "0".into(),
+                beratee: "0".into(),
+                chkcapt: "0".into(),
+                capts: "0".into(),
+                capte: "0".into(),
+                chkegearing: "0".into(),
+                egearings: "0".into(),
+                egearinge: "0".into(),
+                chkgearing: "0".into(),
+                gearings: "0".into(),
+                gearinge: "0".into(),
+                chkdelta: "0".into(),
+                deltas: "0".into(),
+                deltae: "0".into(),
+                chktheta: "0".into(),
+                thetas: "0".into(),
+                thetae: "0".into(),
+                chkduedate: "0".into(),
+                duedates: "000000".into(),
+                duedatee: "999999".into(),
+                onetickgubun: "0".into(),
+                lp_liquidity: "0".into(),
+                chklp_code: "0".into(),
+                lp_code: "".into(),
+                chkkoba: "0".into(),
+                cbkoba: "".into(),
+            },
+        }
+    }
+}
+
+impl Default for T1969Request {
+    fn default() -> Self {
+        T1969Request::new()
+    }
+}
+
+/// `t1969OutBlock` — the screener summary header: the matched-issue count (`cnt`).
+/// Modeled via [`ls_core::string_or_number`]; `#[serde(default)]` so a sparse/absent
+/// header deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1969OutBlock {
+    /// Matched-issue count / 종목갯수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cnt: String,
+}
+
+/// `t1969OutBlock1` — one screened ELW issue row (a representative, spec-grounded
+/// subset): the issue/underlying keys, the current price + prior-day change, the
+/// volume, the strike, and a few indicator columns. Every numeric-bearing field via
+/// [`ls_core::string_or_number`]; `#[serde(default)]` lets a sparse row deserialize
+/// and unknown fields are ignored.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1969OutBlock1 {
+    /// Issue name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Short code / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Issuer / 발행사.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub issuernmk: String,
+    /// Underlying-asset code / 기초자산코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub itemcode: String,
+    /// Call/put / 콜/풋구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cpgubun: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Prior-day change sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Prior-day change / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Change rate / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Volume / 거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Strike / 행사가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub elwexec: String,
+    /// Underlying-asset name / 기초자산명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub item: String,
+    /// Last-trade date / 최종거래일.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub lastdate: String,
+    /// LP member-firm / LP회원사.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub lpname: String,
+}
+
+/// `t1969` response envelope — the summary header under the `t1969OutBlock` key,
+/// plus the screened ELW rows under the `t1969OutBlock1` key (tolerated
+/// single-or-array via [`ls_core::de_vec_or_single`]). All `#[serde(default)]` so a
+/// terse/empty envelope deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1969Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1969OutBlock", default)]
+    pub outblock: T1969OutBlock,
+    #[serde(
+        rename = "t1969OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1969OutBlock1>,
+}
+
+// ---------------------------------------------------------------------------
+// t1971 — ELW현재가호가조회 (ELW current-price + 10-level quote board). A
+// market_session ELW read: ONE `t1971OutBlock` object carrying the quote (issue
+// name, current price + prior-day sign/change/rate, cumulative volume), the top
+// bid/offer level (호가1) + its resting quantity, the day's open/high/low, plus
+// the ELW knock-out analytics (권리형태/KO베리어/접근도/발생여부). path /stock/elw,
+// group [주식] ELW. 1-field request — `shcode` (a six-digit ELW issue code; these
+// EXPIRE, so a live caller sources a fresh one, e.g. from t8431). All-String
+// request — no numeric request slot, so no `string_as_number`.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1971` — the ELW short code (`shcode`).
+///
+/// `shcode` is a six-digit ELW issue code; ELW codes EXPIRE, so a live caller
+/// should source a fresh one at runtime (e.g. the first `shcode` of `t8431`).
+/// Ordinary request String (no numeric serialize — no numeric request slot).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1971InBlock {
+    /// ELW short code / 단축코드 — a six-digit, expiring issue code.
+    pub shcode: String,
+}
+
+/// `t1971` request — serializes to `{"t1971InBlock":{"shcode":"52XXXX"}}`. Not
+/// paginated (`facets.self_paginated: false`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1971Request {
+    #[serde(rename = "t1971InBlock")]
+    pub inblock: T1971InBlock,
+}
+
+impl T1971Request {
+    /// Build a `t1971` ELW quote-board request for one `shcode` (a fresh,
+    /// non-expired ELW issue code).
+    pub fn for_shcode(shcode: impl Into<String>) -> Self {
+        T1971Request {
+            inblock: T1971InBlock {
+                shcode: shcode.into(),
+            },
+        }
+    }
+
+    /// Build a `t1971` request for one `shcode`. Alias of [`T1971Request::for_shcode`]
+    /// — there is no list/default form (a quote-board read needs a real issue code).
+    pub fn new(shcode: impl Into<String>) -> Self {
+        T1971Request::for_shcode(shcode)
+    }
+}
+
+/// `t1971OutBlock` — the ELW current-price + quote-board (a representative,
+/// spec-grounded subset): the issue name, the current price + prior-day
+/// sign/change/rate, the cumulative volume, the top bid/offer level (호가1) and
+/// its resting quantity, the day's open/high/low, and the ELW knock-out analytics
+/// (권리형태/KO베리어/접근도/발생여부). Every numeric-bearing field via
+/// [`ls_core::string_or_number`]; `#[serde(default)]` lets a sparse quote
+/// deserialize and unknown fields are ignored.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1971OutBlock {
+    /// Issue name / 한글명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Prior-day change sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Prior-day change amount / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Prior-day change rate / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Cumulative volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Top offer (ask) price / 매도호가1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerho1: String,
+    /// Top bid price / 매수호가1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidho1: String,
+    /// Top offer resting quantity / 매도호가수량1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerrem1: String,
+    /// Top bid resting quantity / 매수호가수량1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidrem1: String,
+    /// Day open / 시가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    /// Day high / 고가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    /// Day low / 저가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    /// ELW right type / ELW권리형태 (1:표준 2:디지털 3:조기종료).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub invidx: String,
+    /// Knock-out barrier / KO베리어.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub koba_stdprc: String,
+    /// Knock-out approach ratio / KO접근도.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub koba_acc_rt: String,
+    /// Knock-out occurred flag / KO발생여부 (Y/N).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub koba_yn: String,
+}
+
+/// `t1971` response envelope — the single-instrument quote-board under
+/// `t1971OutBlock` (ONE object; no secondary array block per the normalized
+/// baseline). All `#[serde(default)]` so a terse/empty envelope deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1971Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1971OutBlock", default)]
+    pub outblock: T1971OutBlock,
+}
+
+// ---------------------------------------------------------------------------
+// t1972 — ELW현재가(거래원)조회 (ELW current-price + trading-member (거래원) board).
+// A market_session ELW read: ONE `t1972OutBlock` object carrying the issue name +
+// codes (한글명/표준코드/단축코드) and the per-member-firm sell/buy board — the
+// top trading-member firm codes (매도/매수증권사코드1) with their cumulative
+// volumes (총매도/총매수수량1), increments (매도/매수증감1) and ratios (매도/매수비율1),
+// plus the foreign-member aggregates (외국계 매도/매수 합계 수량·비율). path
+// /stock/elw, group [주식] ELW. 1-field request — `shcode` (a six-digit ELW issue
+// code; these EXPIRE, so a live caller sources a fresh one, e.g. from t8431).
+// All-String request — no numeric request slot, so no `string_as_number`.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1972` — the ELW short code (`shcode`).
+///
+/// `shcode` is a six-digit ELW issue code; ELW codes EXPIRE, so a live caller
+/// should source a fresh one at runtime (e.g. the first `shcode` of `t8431`).
+/// Ordinary request String (no numeric serialize — no numeric request slot).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1972InBlock {
+    /// ELW short code / 단축코드 — a six-digit, expiring issue code.
+    pub shcode: String,
+}
+
+/// `t1972` request — serializes to `{"t1972InBlock":{"shcode":"52XXXX"}}`. Not
+/// paginated (`facets.self_paginated: false`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1972Request {
+    #[serde(rename = "t1972InBlock")]
+    pub inblock: T1972InBlock,
+}
+
+impl T1972Request {
+    /// Build a `t1972` ELW trading-member board request for one `shcode` (a fresh,
+    /// non-expired ELW issue code).
+    pub fn for_shcode(shcode: impl Into<String>) -> Self {
+        T1972Request {
+            inblock: T1972InBlock {
+                shcode: shcode.into(),
+            },
+        }
+    }
+
+    /// Build a `t1972` request for one `shcode`. Alias of [`T1972Request::for_shcode`]
+    /// — there is no list/default form (a member-board read needs a real issue code).
+    pub fn new(shcode: impl Into<String>) -> Self {
+        T1972Request::for_shcode(shcode)
+    }
+}
+
+/// `t1972OutBlock` — the ELW current-price + trading-member (거래원) board (a
+/// representative, spec-grounded subset): the issue name + codes, the top
+/// trading-member firm codes (매도/매수증권사코드1), their cumulative sell/buy
+/// volumes (총매도/총매수수량1), increments (매도/매수증감1) and ratios
+/// (매도/매수비율1), and the foreign-member aggregates (외국계 매도/매수 합계 수량·비율).
+/// Every numeric-bearing field via [`ls_core::string_or_number`] (the gateway sends
+/// the ratios as strings and the volumes/increments as JSON numbers);
+/// `#[serde(default)]` lets a sparse board deserialize and unknown fields are
+/// ignored. Single object — no array secondary block per the normalized baseline.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1972OutBlock {
+    /// Issue name / 한글명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Standard code / 표준코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub expcode: String,
+    /// Short code / 단축코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Top sell trading-member firm code / 매도증권사코드1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerno1: String,
+    /// Top buy trading-member firm code / 매수증권사코드1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidno1: String,
+    /// Top sell-member cumulative volume / 총매도수량1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dvol1: String,
+    /// Top buy-member cumulative volume / 총매수수량1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub svol1: String,
+    /// Top sell-member increment / 매도증감1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dcha1: String,
+    /// Top buy-member increment / 매수증감1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub scha1: String,
+    /// Top sell-member ratio / 매도비율1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ddiff1: String,
+    /// Top buy-member ratio / 매수비율1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sdiff1: String,
+    /// Foreign-member total sell volume / 외국계매도합계수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub fwdvl: String,
+    /// Foreign-member total buy volume / 외국계매수합계수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub fwsvl: String,
+    /// Foreign-member total sell ratio / 외국계매도합계비율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub fwddiff: String,
+    /// Foreign-member total buy ratio / 외국계매수합계비율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub fwsdiff: String,
+}
+
+/// `t1972` response envelope — the single trading-member board under
+/// `t1972OutBlock` (ONE object; no secondary array block per the normalized
+/// baseline). All `#[serde(default)]` so a terse/empty envelope deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1972Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1972OutBlock", default)]
+    pub outblock: T1972OutBlock,
+}
+
+// ---------------------------------------------------------------------------
+// t1974 — ELW기초자산동일종목 (ELWs sharing a base asset / 동일 기초자산 ELW 목록).
+// A market_session ELW read (metadata owner_class market_session,
+// self_paginated:false — NOT paginated, despite the old SDK's tr_cont scaffolding;
+// metadata is the routing source of truth). Given one ELW `shcode`, it returns the
+// SET of ELW issues sharing that issue's underlying base asset: a `t1974OutBlock`
+// summary (the row count `cnt`) plus the `t1974OutBlock1` array — one row per sibling
+// ELW carrying its short code (단축코드), name (종목명), call/put flag (콜/풋구분),
+// current price (현재가), prev-day-change sign/amount (전일대비구분/전일대비), percent
+// change (등락율) and volume (거래량). path /stock/elw, group [주식] ELW. 1-field
+// request — `shcode` (a six-digit ELW issue code; these EXPIRE, so a live caller
+// sources a fresh one, e.g. the first `shcode` of t8431). All-String request — no
+// numeric request slot, so no `string_as_number`.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1974` — the ELW short code (`shcode`).
+///
+/// `shcode` is a six-digit ELW issue code; ELW codes EXPIRE, so a live caller should
+/// source a fresh one at runtime (e.g. the first `shcode` of `t8431`). Ordinary
+/// request String (no numeric serialize — no numeric request slot).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1974InBlock {
+    /// ELW short code / 단축코드 — a six-digit, expiring issue code.
+    pub shcode: String,
+}
+
+/// `t1974` request — serializes to `{"t1974InBlock":{"shcode":"52XXXX"}}`. Not
+/// paginated (`facets.self_paginated: false`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1974Request {
+    #[serde(rename = "t1974InBlock")]
+    pub inblock: T1974InBlock,
+}
+
+impl T1974Request {
+    /// Build a `t1974` same-base-asset ELW request for one `shcode` (a fresh,
+    /// non-expired ELW issue code).
+    pub fn for_shcode(shcode: impl Into<String>) -> Self {
+        T1974Request {
+            inblock: T1974InBlock {
+                shcode: shcode.into(),
+            },
+        }
+    }
+
+    /// Build a `t1974` request for one `shcode`. Alias of [`T1974Request::for_shcode`]
+    /// — there is no list/default form (a same-base read needs a real issue code).
+    pub fn new(shcode: impl Into<String>) -> Self {
+        T1974Request::for_shcode(shcode)
+    }
+}
+
+/// `t1974OutBlock` — the summary header: the count of sibling ELW issues (`cnt`,
+/// 종목갯수). Numeric-bearing via [`ls_core::string_or_number`]; `#[serde(default)]`
+/// so a sparse/empty header deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1974OutBlock {
+    /// Sibling-issue count / 종목갯수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cnt: String,
+}
+
+/// `t1974OutBlock1` — one sibling ELW issue (a representative, spec-grounded subset):
+/// short code (단축코드), name (종목명), call/put flag (콜/풋구분), current price
+/// (현재가), prev-day-change sign/amount (전일대비구분/전일대비), percent change (등락율)
+/// and volume (거래량). Every numeric-bearing field via [`ls_core::string_or_number`]
+/// (the gateway sends `price`/`change` as JSON numbers and `volume`/`diff` as
+/// strings); `#[serde(default)]` lets a sparse row deserialize and unknown fields are
+/// ignored.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1974OutBlock1 {
+    /// Short code / 단축코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Issue name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Call/put flag / 콜·풋구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cpgubun: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Prev-day-change sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Prev-day change / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Percent change / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Volume / 거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+}
+
+/// `t1974` response — the `t1974OutBlock` summary header plus the `t1974OutBlock1`
+/// sibling-issue array. The array tolerates a lone object or a list via
+/// [`ls_core::de_vec_or_single`]; every block defaults so an empty `00707` envelope
+/// deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1974Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1974OutBlock", default)]
+    pub outblock: T1974OutBlock,
+    #[serde(rename = "t1974OutBlock1", default, deserialize_with = "ls_core::de_vec_or_single")]
+    pub outblock1: Vec<T1974OutBlock1>,
+}
+
+// ---------------------------------------------------------------------------
+// t1956 — ELW현재가(확정지급액)조회 (ELW current-price / contracted-payout snapshot).
+// A market_session ELW read (metadata owner_class market_session,
+// self_paginated:false — NOT paginated, despite the old SDK's tr_cont scaffolding;
+// metadata is the routing source of truth). Given one ELW `shcode`, it returns the
+// single `t1956OutBlock` snapshot — the issue name (한글명), current price (현재가),
+// percent change (등락율), accumulated volume (누적거래량), the ELW analytics
+// (행사가/내재변동성/델타) and the contracted payout (확정지급액) — plus a
+// `t1956OutBlock1` basket array (one row per underlying basket constituent). path
+// /stock/elw, group [주식] ELW. 1-field request — `shcode` (a six-digit ELW issue
+// code; these EXPIRE, so a live caller sources a fresh one, e.g. the first `shcode`
+// of t8431). All-String request — no numeric request slot, so no `string_as_number`.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1956` — the ELW short code (`shcode`).
+///
+/// `shcode` is a six-digit ELW issue code; ELW codes EXPIRE, so a live caller should
+/// source a fresh one at runtime (e.g. the first `shcode` of `t8431`). Ordinary
+/// request String (no numeric serialize — no numeric request slot).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1956InBlock {
+    /// ELW short code / 단축코드 — a six-digit, expiring issue code.
+    pub shcode: String,
+}
+
+/// `t1956` request — serializes to `{"t1956InBlock":{"shcode":"52XXXX"}}`. Not
+/// paginated (`facets.self_paginated: false`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1956Request {
+    #[serde(rename = "t1956InBlock")]
+    pub inblock: T1956InBlock,
+}
+
+impl T1956Request {
+    /// Build a `t1956` ELW current-price request for one `shcode` (a fresh,
+    /// non-expired ELW issue code).
+    pub fn for_shcode(shcode: impl Into<String>) -> Self {
+        T1956Request {
+            inblock: T1956InBlock {
+                shcode: shcode.into(),
+            },
+        }
+    }
+
+    /// Build a `t1956` request for one `shcode`. Alias of [`T1956Request::for_shcode`]
+    /// — there is no list/default form (a snapshot read needs a real issue code).
+    pub fn new(shcode: impl Into<String>) -> Self {
+        T1956Request::for_shcode(shcode)
+    }
+}
+
+/// `t1956OutBlock` — the ELW current-price / contracted-payout snapshot (a
+/// representative, spec-grounded subset): the issue name (한글명, the NAME witness),
+/// current price (현재가), percent change (등락율), accumulated volume (누적거래량),
+/// the strike (행사가), implied volatility (내재변동성), delta (델타), the underlying
+/// base-asset code (기초자산코드) and the contracted payout (확정지급액). Every
+/// numeric-bearing field via [`ls_core::string_or_number`] (the gateway sends some as
+/// JSON numbers, some as strings); `#[serde(default)]` so a sparse/empty snapshot
+/// deserializes and unknown fields are ignored.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1956OutBlock {
+    /// Issue name / 한글명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Percent change / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Accumulated volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Strike / 행사가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub elwexec: String,
+    /// Implied volatility / 내재변동성.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub impv: String,
+    /// Delta / 델타.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub delt: String,
+    /// Underlying base-asset code / 기초자산코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bcode: String,
+    /// Contracted payout / 확정지급액.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub givemoney: String,
+}
+
+/// `t1956OutBlock1` — one underlying basket constituent (a representative subset):
+/// base-asset code (기초자산코드), basket ratio (기초자산비율), current price
+/// (기초자산현재가) and volume (기초자산거래량). Numeric-bearing fields via
+/// [`ls_core::string_or_number`]; `#[serde(default)]` lets a sparse row deserialize.
+/// For a single-constituent basket the gateway may send a lone object, so the array
+/// uses `de_vec_or_single`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1956OutBlock1 {
+    /// Base-asset code / 기초자산코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bskcode: String,
+    /// Basket ratio / 기초자산비율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bskbno: String,
+    /// Base-asset current price / 기초자산현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bskprice: String,
+    /// Base-asset volume / 기초자산거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bskvolume: String,
+}
+
+/// `t1956` response — the single `t1956OutBlock` snapshot plus the `t1956OutBlock1`
+/// basket array (`de_vec_or_single`, since a single-constituent basket may arrive as
+/// a lone object). `#[serde(default)]` on each block so an empty/sparse envelope
+/// deserializes cleanly.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1956Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1956OutBlock", default)]
+    pub outblock: T1956OutBlock,
+    #[serde(rename = "t1956OutBlock1", default, deserialize_with = "ls_core::de_vec_or_single")]
+    pub outblock1: Vec<T1956OutBlock1>,
+}
+
+// ---------------------------------------------------------------------------
+// t1906 — ETFLP호가 (ETF LP order-book snapshot). market_session read, single
+// OutBlock object; path /stock/etf. shcode-only request. Mirrors t1901's
+// single-object shape (same /stock/etf family).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1906` — the ETF short code (단축코드). `shcode`-only.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1906InBlock {
+    /// Short code / 단축코드 (e.g. `"152100"` ARIRANG 200).
+    pub shcode: String,
+}
+
+/// `t1906` request — serializes to `{"t1906InBlock":{"shcode":...}}`. Not paginated.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1906Request {
+    #[serde(rename = "t1906InBlock")]
+    pub inblock: T1906InBlock,
+}
+
+impl T1906Request {
+    /// Build a `t1906` ETF LP order-book request for one short code.
+    pub fn new(shcode: impl Into<String>) -> Self {
+        T1906Request {
+            inblock: T1906InBlock {
+                shcode: shcode.into(),
+            },
+        }
+    }
+}
+
+/// `t1906OutBlock` — the ETF LP order-book snapshot (a representative, spec-grounded
+/// subset of the LS `t1906OutBlock`): the current-price header, level-1 + level-2
+/// offer/bid price+quantity, LP level-1 quantities, the day's OHLC, and the limit
+/// prices. Every numeric-bearing field uses [`ls_core::string_or_number`] (the gateway
+/// sends numbers or strings); `#[serde(default)]` lets a sparse out-block deserialize,
+/// and unknown fields are ignored.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1906OutBlock {
+    /// Korean name / 한글명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change vs. previous close / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Rate of change (%) / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Accumulated volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Previous close / 전일종가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jnilclose: String,
+    /// Offer (ask) price, level 1 / 매도호가1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerho1: String,
+    /// Bid price, level 1 / 매수호가1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidho1: String,
+    /// Offer quantity, level 1 / 매도호가수량1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offerrem1: String,
+    /// Bid quantity, level 1 / 매수호가수량1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidrem1: String,
+    /// LP offer quantity, level 1 / LP매도호가수량1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub lp_offerrem1: String,
+    /// LP bid quantity, level 1 / LP매수호가수량1.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub lp_bidrem1: String,
+    /// Total offer quantity / 매도호가수량합.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offer: String,
+    /// Total bid quantity / 매수호가수량합.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bid: String,
+    /// Open / 시가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    /// High / 고가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    /// Low / 저가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    /// Upper limit price / 상한가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub uplmtprice: String,
+    /// Lower limit price / 하한가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dnlmtprice: String,
+    /// Short code / 단축코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+}
+
+/// `t1906` response envelope — the ETF LP order-book snapshot under the
+/// `t1906OutBlock` key. All `#[serde(default)]` so a terse/empty envelope deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1906Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1906OutBlock", default)]
+    pub outblock: T1906OutBlock,
+}
+
+// ---------------------------------------------------------------------------
 // t1105 — 주식피봇/디마크조회 (pivot / demark levels). market_session, single
 // OutBlock; path /stock/market-data. shcode + exchgubun request.
 // ---------------------------------------------------------------------------
@@ -6172,6 +8360,180 @@ impl MarketSession {
     pub async fn etf_quote(&self, req: &T1901Request) -> LsResult<T1901Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T1901_POLICY, req)
+            .await
+    }
+
+    /// Fetch the integrated current-price + order-book (호가) level-2 snapshot for one
+    /// short code via `t8450`. Non-paginated; dispatches through
+    /// [`ls_core::Inner::post`] on the MarketData bucket.
+    pub async fn current_price_orderbook(&self, req: &T8450Request) -> LsResult<T8450Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8450_POLICY, req)
+            .await
+    }
+
+    /// Fetch the per-stock remaining-quantity / pre-disclosure ranking via `t1638`
+    /// (`shcode` may be empty for the full list). Non-paginated; dispatches through
+    /// [`ls_core::Inner::post`] on the MarketData bucket.
+    pub async fn remaining_quantity_predisclosure(
+        &self,
+        req: &T1638Request,
+    ) -> LsResult<T1638Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1638_POLICY, req)
+            .await
+    }
+
+    /// Fetch the time-bucketed trade chart via `t1308` (`starttime`/`endtime` may
+    /// be empty for the full session). Non-paginated; dispatches through
+    /// [`ls_core::Inner::post`] on the MarketData bucket.
+    pub async fn time_bucket_trade_chart(
+        &self,
+        req: &T1308Request,
+    ) -> LsResult<T1308Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1308_POLICY, req)
+            .await
+    }
+
+    /// Fetch the price-band trade-weight board via `t1449` (`dategb` must be
+    /// non-empty, e.g. `"1"`). Non-paginated; dispatches through
+    /// [`ls_core::Inner::post`] on the MarketData bucket.
+    pub async fn price_band_trade_weight(
+        &self,
+        req: &T1449Request,
+    ) -> LsResult<T1449Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1449_POLICY, req)
+            .await
+    }
+
+    /// Fetch the by-time, by-sector investor-trading board via `t1621`
+    /// (`nmin`/`cnt` wire-serialize as JSON numbers — KTD3). Non-paginated;
+    /// dispatches through [`ls_core::Inner::post`] on the MarketData bucket.
+    pub async fn investor_trading_by_time(
+        &self,
+        req: &T1621Request,
+    ) -> LsResult<T1621Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1621_POLICY, req)
+            .await
+    }
+
+    /// Fetch the F/O by-time, by-sector investor-trading board via `t2545`
+    /// (`nmin`/`cnt` wire-serialize as JSON numbers — KTD3; use `bgubun="0"`).
+    /// Non-paginated; dispatches through [`ls_core::Inner::post`] on the MarketData
+    /// bucket.
+    pub async fn fo_investor_trading_by_time(
+        &self,
+        req: &T2545Request,
+    ) -> LsResult<T2545Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T2545_POLICY, req)
+            .await
+    }
+
+    /// Fetch the F/O by-tick/by-minute conclusion board via `t8406`
+    /// (`bgubun`/`cnt` wire-serialize as JSON numbers — KTD3). Non-paginated;
+    /// dispatches through [`ls_core::Inner::post`] on the MarketData bucket
+    /// (`/futureoption/market-data`).
+    pub async fn fo_tick_conclusion(&self, req: &T8406Request) -> LsResult<T8406Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8406_POLICY, req)
+            .await
+    }
+
+    /// Fetch the multi-symbol current-price board via `t8407` (`nrec` wire-serializes
+    /// as a JSON number — KTD3; `shcode` packs N six-digit codes with no separators).
+    /// Non-paginated; dispatches through [`ls_core::Inner::post`] on the MarketData
+    /// bucket.
+    pub async fn multi_symbol_current_price(
+        &self,
+        req: &T8407Request,
+    ) -> LsResult<T8407Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8407_POLICY, req)
+            .await
+    }
+
+    /// Fetch the LP-target ELW issue list via `t1959` (LP대상종목정보조회). An empty
+    /// `shcode` returns the full LP-target list. Non-paginated; dispatches through
+    /// [`ls_core::Inner::post`] on the MarketData bucket (`/stock/elw`).
+    pub async fn lp_target_issues(&self, req: &T1959Request) -> LsResult<T1959Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1959_POLICY, req)
+            .await
+    }
+
+    /// Fetch the ELW current-price/quote via `t1950` (ELW현재가(시세)조회) for one
+    /// `shcode` (a fresh, non-expired ELW issue code — e.g. the first `shcode` of
+    /// `t8431`). Non-paginated; dispatches through [`ls_core::Inner::post`] on the
+    /// MarketData bucket (`/stock/elw`).
+    pub async fn elw_quote(&self, req: &T1950Request) -> LsResult<T1950Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1950_POLICY, req)
+            .await
+    }
+
+    /// Fetch the ELW current-price + 10-level quote board via `t1971`
+    /// (ELW현재가호가조회) for one `shcode` (a fresh, non-expired ELW issue code —
+    /// e.g. the first `shcode` of `t8431`). Non-paginated; dispatches through
+    /// [`ls_core::Inner::post`] on the MarketData bucket (`/stock/elw`).
+    pub async fn elw_quote_board(&self, req: &T1971Request) -> LsResult<T1971Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1971_POLICY, req)
+            .await
+    }
+
+    /// Fetch the ELW current-price + trading-member (거래원) board via `t1972`
+    /// (ELW현재가(거래원)조회) for one `shcode` (a fresh, non-expired ELW issue code —
+    /// e.g. the first `shcode` of `t8431`). Non-paginated; dispatches through
+    /// [`ls_core::Inner::post`] on the MarketData bucket (`/stock/elw`).
+    pub async fn elw_member_board(&self, req: &T1972Request) -> LsResult<T1972Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1972_POLICY, req)
+            .await
+    }
+
+    /// Fetch the set of ELW issues sharing a base asset via `t1974`
+    /// (ELW기초자산동일종목) for one `shcode` (a fresh, non-expired ELW issue code —
+    /// e.g. the first `shcode` of `t8431`). Returns the `t1974OutBlock1` sibling-issue
+    /// array (plus the `cnt` summary). Non-paginated; dispatches through
+    /// [`ls_core::Inner::post`] on the MarketData bucket (`/stock/elw`).
+    pub async fn elw_same_base_issues(&self, req: &T1974Request) -> LsResult<T1974Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1974_POLICY, req)
+            .await
+    }
+
+    /// Fetch the ELW current-price / contracted-payout snapshot via `t1956`
+    /// (ELW현재가(확정지급액)조회) for one `shcode` (a fresh, non-expired ELW issue code —
+    /// e.g. the first `shcode` of `t8431`). Returns the `t1956OutBlock` snapshot (its
+    /// name `hname`, current price, payout and ELW analytics) plus the
+    /// `t1956OutBlock1` basket array. Non-paginated; dispatches through
+    /// [`ls_core::Inner::post`] on the MarketData bucket (`/stock/elw`).
+    pub async fn elw_current_price(&self, req: &T1956Request) -> LsResult<T1956Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1956_POLICY, req)
+            .await
+    }
+
+    /// Run the ELW screener via `t1969` (ELW지표검색). [`T1969Request::new`] builds
+    /// the unfiltered "all ELWs" board. The numeric range bounds serialize as JSON
+    /// numbers (`IGW40011` otherwise). Non-paginated; dispatches through
+    /// [`ls_core::Inner::post`] on the MarketData bucket (`/stock/elw`).
+    pub async fn elw_screener(&self, req: &T1969Request) -> LsResult<T1969Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1969_POLICY, req)
+            .await
+    }
+
+    /// Fetch the ETF LP order-book (LP호가) snapshot for one short code via `t1906`.
+    /// Non-paginated; dispatches through [`ls_core::Inner::post`] on the MarketData
+    /// bucket.
+    pub async fn etf_lp_order_book(&self, req: &T1906Request) -> LsResult<T1906Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1906_POLICY, req)
             .await
     }
 

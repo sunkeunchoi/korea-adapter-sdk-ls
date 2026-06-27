@@ -17,7 +17,13 @@ dependencies:
   strong_order_fields: []
 support:
   tracked: true
-  implemented: false
+  # Closure-flip (plan -001 closed-window more-flips): non-empty paper smoke UNDER
+  # KRX closure (eitem=01, sgubun=0, upcode=001, nmin=0, cnt=10, bgubun=0,
+  # rsp_cd=00000, 10 by-time rows). nmin/cnt serialize as JSON NUMBERS
+  # (string_as_number) and bgubun MUST be "0" — string nmin/cnt or bgubun="1"
+  # returns IGW40011/IGW50008 (KTD3). Carries a deferred open-window freshness
+  # re-check obligation (R9).
+  implemented: true
   recommended: false
 maintenance:
   source_spec_hash: 42f528a9dcac

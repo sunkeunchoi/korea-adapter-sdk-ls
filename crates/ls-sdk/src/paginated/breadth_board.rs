@@ -1,9 +1,10 @@
 //! Plan -004 batch C — static reference / ranking / status boards
-//! (시가총액상위, 상·하한, 신고/신저가, 매매정지, ELW rankings, 신용거래동향).
+//! (시가총액상위, 상·하한, 신고/신저가, 매매정지, ELW rankings, 신용거래동향),
+//! plus plan -001 종목별프로그램매매동향 (t1636, `cts_idx` cursor).
 //!
-//! Self-paginated single-page reads on a body `idx`/`cts_shcode` cursor (header
-//! `tr_cont`/`tr_cont_key` skipped). Numeric request fields (idx, jc_num, sprice,
-//! eprice, volume, …) serialize as JSON numbers via `ls_core::string_as_number`
+//! Self-paginated single-page reads on a body `idx`/`cts_shcode`/`cts_idx` cursor
+//! (header `tr_cont`/`tr_cont_key` skipped). Numeric request fields (idx, cts_idx,
+//! jc_num, sprice, eprice, volume, …) serialize as JSON numbers via `ls_core::string_as_number`
 //! (IGW40011 guard); response fields via `ls_core::string_or_number`; row arrays
 //! via `ls_core::de_vec_or_single`. Wire keys read from each raw `res_example`.
 
@@ -947,4 +948,133 @@ pub struct T1921Response {
     pub outblock: T1921OutBlock,
     #[serde(rename = "t1921OutBlock1", default, deserialize_with = "ls_core::de_vec_or_single")]
     pub outblock1: Vec<T1921OutBlock1>,
+}
+
+// --- t1636 — 종목별프로그램매매동향 (per-stock program-trading trend; single-page) ---
+
+/// Input block for `t1636` — 종목별프로그램매매동향 (per-stock program-trading
+/// trend).
+///
+/// `cts_idx` is the body continuation cursor (first page `"0"`); it is a
+/// `Number`-typed request field and serializes as a JSON **number** via
+/// `string_as_number` (a string form risks `IGW40011`). It is an ORDINARY
+/// in-block field, NOT `#[serde(skip)]`. The `gubun`/`gubun1`/`gubun2`/`shcode`/
+/// `exchgubun` filters serialize as JSON strings per the spec request shape.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1636InBlock {
+    /// Division / 구분.
+    pub gubun: String,
+    /// Amount/quantity division / 금액수량구분.
+    pub gubun1: String,
+    /// Sort key / 정렬기준.
+    pub gubun2: String,
+    /// Short code / 종목코드.
+    pub shcode: String,
+    /// Body continuation cursor / IDXCTS (first page = `"0"`; serialized as a number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub cts_idx: String,
+    /// Exchange division code / 거래소구분코드.
+    pub exchgubun: String,
+}
+
+/// `t1636` request — wraps the input block under the `t1636InBlock` key.
+///
+/// `cts_idx` rides IN the body (an ordinary in-block field, serialized as a
+/// number). The `tr_cont`/`tr_cont_key` fields are `#[serde(skip)]` and stay
+/// empty for the single-page call; they exist only to satisfy the
+/// `HasPagination` bound on `post_paginated`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1636Request {
+    #[serde(rename = "t1636InBlock")]
+    pub inblock: T1636InBlock,
+    #[serde(skip)]
+    pub tr_cont: String,
+    #[serde(skip)]
+    pub tr_cont_key: String,
+}
+ls_core::impl_has_pagination!(T1636Request);
+impl T1636Request {
+    /// Build a single-page `t1636` per-stock program-trading-trend request.
+    /// `cts_idx` defaults to the first-page convention (`"0"`, serialized as a
+    /// number); `tr_cont`/`tr_cont_key` start empty.
+    pub fn new(
+        gubun: impl Into<String>,
+        gubun1: impl Into<String>,
+        gubun2: impl Into<String>,
+        shcode: impl Into<String>,
+        exchgubun: impl Into<String>,
+    ) -> Self {
+        T1636Request {
+            inblock: T1636InBlock {
+                gubun: gubun.into(),
+                gubun1: gubun1.into(),
+                gubun2: gubun2.into(),
+                shcode: shcode.into(),
+                cts_idx: "0".to_string(),
+                exchgubun: exchgubun.into(),
+            },
+            tr_cont: String::new(),
+            tr_cont_key: String::new(),
+        }
+    }
+}
+
+/// `t1636OutBlock` — the summary block carrying the next-page `cts_idx` cursor.
+/// Via [`ls_core::string_or_number`] to tolerate JSON string OR number.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1636OutBlock {
+    /// Returned continuation cursor / IDXCTS.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cts_idx: String,
+}
+
+/// `t1636OutBlock1` — one per-stock program-trading row (representative subset;
+/// every numeric-bearing field via [`ls_core::string_or_number`]).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1636OutBlock1 {
+    /// Rank / 순위.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub rank: String,
+    /// Korean name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Sign vs. previous close / 대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change vs. previous close / 대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Rate of change / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Accumulated volume / 거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Net buy amount / 순매수금액.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub svalue: String,
+    /// Short code / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+}
+
+/// `t1636` response (single page). `outblock` is the summary (carrying the
+/// next-page `cts_idx`); `outblock1` is the program-trading row array under
+/// `t1636OutBlock1`, tolerated as single-or-array via
+/// [`ls_core::de_vec_or_single`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1636Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1636OutBlock", default)]
+    pub outblock: T1636OutBlock,
+    #[serde(rename = "t1636OutBlock1", default, deserialize_with = "ls_core::de_vec_or_single")]
+    pub outblock1: Vec<T1636OutBlock1>,
 }

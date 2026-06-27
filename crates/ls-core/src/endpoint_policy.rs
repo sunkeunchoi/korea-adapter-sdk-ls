@@ -159,6 +159,245 @@ pub const T1901_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+/// t1906 — ETFLP호가 (ETF LP order-book snapshot; non-paginated).
+pub const T1906_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1906",
+    path: "/stock/etf",
+    module: "stock",
+    group: "[주식] ETF",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(5),
+};
+
+/// t8450 — (통합)주식현재가호가조회2 (integrated current-price + order-book level-2
+/// snapshot; non-paginated).
+pub const T8450_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8450",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1638 — 종목별잔량/사전공시 (per-stock remaining-quantity / pre-disclosure ranking;
+/// non-paginated). path /stock/etc, group [주식] 기타.
+pub const T1638_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1638",
+    path: "/stock/etc",
+    module: "stock",
+    group: "[주식] 기타",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
+/// t1308 — 주식시간대별체결조회챠트 (time-bucketed trade chart; non-paginated).
+/// path /stock/market-data, group [주식] 시세.
+pub const T1308_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1308",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1449 — 가격대별매매비중조회 (price-band trade-weight; non-paginated).
+/// path /stock/market-data, group [주식] 시세.
+pub const T1449_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1449",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1621 — 업종별분별투자자매매동향(챠트용) (by-time investor trading; non-paginated).
+/// path /stock/investor, group [주식] 투자자.
+pub const T1621_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1621",
+    path: "/stock/investor",
+    module: "stock",
+    group: "[주식] 투자자",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t2545 — 상품선물투자자매매동향(챠트용) (F/O by-time investor trading; non-paginated).
+/// path /futureoption/investor, group [선물/옵션] 투자자.
+pub const T2545_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t2545",
+    path: "/futureoption/investor",
+    module: "futureoption",
+    group: "[선물/옵션] 투자자",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8406 — 주식선물틱분별체결조회(API용) (F/O by-tick conclusion board; non-paginated).
+/// path /futureoption/market-data, group [선물/옵션] 시세.
+pub const T8406_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8406",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8407 — API용주식멀티현재가조회 (multi-symbol current price; non-paginated).
+/// path /stock/market-data, group [주식] 시세.
+pub const T8407_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8407",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(5),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1959 — LP대상종목정보조회 (LP-target ELW issue list; non-paginated).
+/// path /stock/elw, group [주식] ELW.
+pub const T1959_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1959",
+    path: "/stock/elw",
+    module: "stock",
+    group: "[주식] ELW",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(5),
+};
+
+/// t1950 — ELW현재가(시세)조회 (ELW current-price/quote; non-paginated).
+/// path /stock/elw, group [주식] ELW.
+pub const T1950_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1950",
+    path: "/stock/elw",
+    module: "stock",
+    group: "[주식] ELW",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(5),
+};
+
+/// t1971 — ELW현재가호가조회 (ELW current-price + 10-level quote board;
+/// non-paginated). path /stock/elw, group [주식] ELW.
+pub const T1971_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1971",
+    path: "/stock/elw",
+    module: "stock",
+    group: "[주식] ELW",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(5),
+};
+
+/// t1972 — ELW현재가(거래원)조회 (ELW current-price + trading-member (거래원) board;
+/// non-paginated). path /stock/elw, group [주식] ELW.
+pub const T1972_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1972",
+    path: "/stock/elw",
+    module: "stock",
+    group: "[주식] ELW",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1974 — ELW기초자산동일종목 (ELWs sharing a base asset; non-paginated —
+/// metadata self_paginated:false). path /stock/elw, group [주식] ELW.
+pub const T1974_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1974",
+    path: "/stock/elw",
+    module: "stock",
+    group: "[주식] ELW",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1956 — ELW현재가(확정지급액)조회 (ELW current-price / contracted-payout snapshot;
+/// non-paginated — metadata self_paginated:false). path /stock/elw, group [주식] ELW.
+pub const T1956_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1956",
+    path: "/stock/elw",
+    module: "stock",
+    group: "[주식] ELW",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(5),
+};
+
+/// t1969 — ELW지표검색 (ELW screener / indicator search; non-paginated).
+/// path /stock/elw, group [주식] ELW.
+pub const T1969_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1969",
+    path: "/stock/elw",
+    module: "stock",
+    group: "[주식] ELW",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// t1305 — 기간별주가 (period/historical OHLC; self-paginated on `date`).
 pub const T1305_POLICY: EndpointPolicy = EndpointPolicy {
     tr_code: "t1305",
@@ -611,6 +850,85 @@ pub const T1404_POLICY: EndpointPolicy = EndpointPolicy {
     path: "/stock/market-data",
     module: "stock",
     group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1410 — 초저유동성조회 (ultra-low-liquidity board; self-paginated on the body
+/// `cts_shcode` cursor). Plan -001, closed-window more-flips.
+pub const T1410_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1410",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
+/// t1411 — 증거금율별종목조회 (stocks by margin rate; single-page body-`idx`
+/// paginated; `idx` serialized as a number). Plan -001, closed-window more-flips.
+pub const T1411_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1411",
+    path: "/stock/etc",
+    module: "stock",
+    group: "[주식] 기타",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1488 — 예상체결가등락율상위조회 (expected-execution price top change rate;
+/// single-page body-`idx` paginated; numeric `idx`/`yesprice`/`yeeprice`/`yevolume`
+/// serialized as JSON numbers). Plan -001, closed-window more-flips.
+pub const T1488_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1488",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1636 — 종목별프로그램매매동향 (per-stock program-trading trend; single-page
+/// body-`cts_idx` paginated; numeric `cts_idx` cursor serialized as a JSON number
+/// via `string_as_number`). Plan -001, closed-window more-flips.
+pub const T1636_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1636",
+    path: "/stock/program",
+    module: "stock",
+    group: "[주식] 프로그램",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1809 — 신호조회 (signal search; self-paginated on the body `cts` string
+/// cursor — an ordinary in-block field at first-page `"1"`, NOT skipped). All
+/// request fields are strings (no `string_as_number`). Plan -001, closed-window
+/// more-flips.
+pub const T1809_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1809",
+    path: "/stock/item-search",
+    module: "stock",
+    group: "[주식] 종목검색",
     protocol: Protocol::Rest,
     category: RateLimitCategory::MarketData,
     is_order: false,
@@ -2540,9 +2858,51 @@ mod tests {
             T1105_POLICY,
             T1104_POLICY,
             T1305_POLICY,
+            // Closed-window more-flips wave (plan -001): ETF LP order-book read.
+            T1906_POLICY,
+            // Closed-window more-flips wave (plan -001): integrated current-price/order-book read.
+            T8450_POLICY,
+            // Closed-window more-flips wave (plan -001): per-stock remaining-quantity/pre-disclosure read.
+            T1638_POLICY,
+            // Closed-window more-flips wave (plan -001): time-bucketed trade-chart read.
+            T1308_POLICY,
+            // Closed-window more-flips wave (plan -001): price-band trade-weight read.
+            T1449_POLICY,
+            // Closed-window more-flips wave (plan -001): by-time investor-trading read.
+            T1621_POLICY,
+            // Closed-window more-flips wave (plan -001): F/O by-time investor-trading read.
+            T2545_POLICY,
+            // Closed-window more-flips wave (plan -001): F/O by-tick conclusion-board read.
+            T8406_POLICY,
+            // Closed-window more-flips wave (plan -001): multi-symbol current-price read.
+            T8407_POLICY,
+            // Closed-window more-flips wave (plan -001): LP-target ELW issue list read.
+            T1959_POLICY,
+            // Closed-window more-flips wave (plan -001): ELW current-price/quote read.
+            T1950_POLICY,
+            // Closed-window more-flips wave (plan -001): ELW current-price + quote-board read.
+            T1971_POLICY,
+            // Closed-window more-flips wave (plan -001): ELW current-price + trading-member board read.
+            T1972_POLICY,
+            // Closed-window more-flips wave (plan -001): ELWs sharing a base asset read.
+            T1974_POLICY,
+            // Closed-window more-flips wave (plan -001): ELW current-price / contracted-payout snapshot read.
+            T1956_POLICY,
+            // Closed-window more-flips wave (plan -001): ELW screener / indicator search.
+            T1969_POLICY,
             // Closed-window flip wave (plan -003): self-paginated stock reads.
             T1310_POLICY,
             T1404_POLICY,
+            // Closed-window more-flips wave (plan -001): self-paginated stock read.
+            T1410_POLICY,
+            // Closed-window more-flips wave (plan -001): self-paginated stock read (margin rates).
+            T1411_POLICY,
+            // Closed-window more-flips wave (plan -001): self-paginated stock read (expected-exec).
+            T1488_POLICY,
+            // Closed-window more-flips wave (plan -001): self-paginated stock read (program-trading).
+            T1636_POLICY,
+            // Closed-window more-flips wave (plan -001): self-paginated stock read (signal search).
+            T1809_POLICY,
             CSPAQ12200_POLICY,
             CSPAQ12300_POLICY,
             CSPAQ22200_POLICY,

@@ -25,6 +25,7 @@ use ls_sdk::market_session::{
     T1101Request, T1102Request, T1485Request, T1511Request, T1516Request, T1531Request,
     T1537Request, T1601Request, T1615Request, T1640Request, T1662Request, T1664Request,
     T1104Request, T1105Request, T1825Request, T1826Request, T1859Request, T1901Request,
+    T1906Request, T8450Request, T1638Request, T1308Request, T1449Request, T1621Request, T2545Request, T8406Request, T8407Request, T1959Request, T1950Request, T1971Request, T1972Request, T1974Request, T1956Request, T1969Request,
     T1302Request, T2216Request,
     T1532Request, T1533Request, T1926Request, T1764Request, T1903Request,
     T1958Request, T1964Request, T2301Request,
@@ -46,7 +47,8 @@ use ls_sdk::paginated::{
     T1482Request, T1489Request, T1492Request, T1514Request, T1866Request, T3341Request,
     T8412Request,
     T1305Request, T8410Request, T8451Request, T8419Request, T4203Request, T3401Request,
-    T1310Request, T1404Request,
+    T1310Request, T1404Request, T1410Request, T1411Request, T1488Request, T1636Request,
+    T1809Request,
     T8417Request, T8418Request, T8411Request, T8452Request, T8453Request,
     T8464Request, T8465Request, T8466Request, T8405Request,
     T1444Request, T1422Request, T1427Request, T1442Request, T1405Request, T1960Request, T1961Request, T1966Request, T1921Request,
@@ -1153,6 +1155,861 @@ async fn live_smoke_t1901() {
     }
 }
 
+/// `make live-smoke-t1906`: paper guard → token → one `t1906` ETF LP order-book
+/// (LP호가) read for `shcode="152100"` (default). A success `rsp_cd` with a
+/// non-empty `hname`/`price` proves the typed read round-trips. ETF LP order-book
+/// is a persistent (static) read reachable under closure; an empty `00707` does NOT
+/// record — it dispositions to PENDING. The recorded line is credential-free
+/// (`rsp_cd` + lengths/price, never `rsp_msg`); a failed run emits a `SMOKE-FAIL`
+/// stderr line, never a `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1906`"]
+async fn live_smoke_t1906() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let shcode = std::env::var("LS_LIVE_SMOKE_T1906_SHCODE").unwrap_or_else(|_| "152100".into());
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().etf_lp_order_book(&T1906Request::new(&shcode)).await {
+        Ok(resp) => {
+            // Non-empty guard: a read can return 00000 with empty fields off-data →
+            // that is PENDING, not Implemented (mirror t1901). Assert a modeled
+            // non-default field before recording.
+            assert!(
+                !resp.outblock.hname.is_empty() && !resp.outblock.price.is_empty(),
+                "live-smoke-t1906: empty ETF LP order-book (00707/off-data) — PENDING, not Implemented"
+            );
+            record(
+                "live-smoke-t1906",
+                &format!("env=paper shcode={shcode} date={date}"),
+                &format!(
+                    "rsp_cd={} hname_len={} price={}",
+                    resp.rsp_cd,
+                    resp.outblock.hname.len(),
+                    resp.outblock.price
+                ),
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1906 market-data failure (not evidence)");
+            panic!("live-smoke-t1906 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t8450`: paper guard → token → one `t8450` integrated
+/// current-price/order-book read for `shcode="005930"` `exchgubun="N"` (defaults). A
+/// success `rsp_cd` with a non-empty `hname`/`price` proves the typed read round-trips.
+/// The current-price/order-book snapshot is reachable under closure; an empty `00707`
+/// does NOT record — it dispositions to PENDING. The recorded line is credential-free
+/// (`rsp_cd` + lengths/price, never `rsp_msg`); a failed run emits a `SMOKE-FAIL`
+/// stderr line, never a `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8450`"]
+async fn live_smoke_t8450() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let shcode = std::env::var("LS_LIVE_SMOKE_T8450_SHCODE").unwrap_or_else(|_| "005930".into());
+    let exchgubun =
+        std::env::var("LS_LIVE_SMOKE_T8450_EXCHGUBUN").unwrap_or_else(|_| "N".into());
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .market_session()
+        .current_price_orderbook(&T8450Request::new(&shcode, &exchgubun))
+        .await
+    {
+        Ok(resp) => {
+            // Non-empty guard: a read can return 00000 with empty fields off-data →
+            // that is PENDING, not Implemented (mirror t1906). Assert a modeled
+            // non-default field before recording.
+            assert!(
+                !resp.outblock.hname.is_empty() && !resp.outblock.price.is_empty(),
+                "live-smoke-t8450: empty current-price/order-book (00707/off-data) — PENDING, not Implemented"
+            );
+            record(
+                "live-smoke-t8450",
+                &format!("env=paper shcode={shcode} exchgubun={exchgubun} date={date}"),
+                &format!(
+                    "rsp_cd={} hname_len={} price={}",
+                    resp.rsp_cd,
+                    resp.outblock.hname.len(),
+                    resp.outblock.price
+                ),
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8450 market-data failure (not evidence)");
+            panic!("live-smoke-t8450 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1638`: paper guard → token → one `t1638` per-stock
+/// remaining-quantity / pre-disclosure ranking read for `gubun1="1"` `shcode=""`
+/// (full list) `gubun2="1"` `exchgubun=""` (defaults). A success `rsp_cd` with a
+/// non-empty ranking row (modeled `hname`/`shcode`) proves the typed array read
+/// round-trips. The ranking is reachable under closure; an empty `00707` does NOT
+/// record — it dispositions to PENDING. The recorded line is credential-free
+/// (`rsp_cd` + row count + lengths, never `rsp_msg`); a failed run emits a
+/// `SMOKE-FAIL` stderr line, never a `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1638`"]
+async fn live_smoke_t1638() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let gubun1 = std::env::var("LS_LIVE_SMOKE_T1638_GUBUN1").unwrap_or_else(|_| "1".into());
+    let shcode = std::env::var("LS_LIVE_SMOKE_T1638_SHCODE").unwrap_or_else(|_| "".into());
+    let gubun2 = std::env::var("LS_LIVE_SMOKE_T1638_GUBUN2").unwrap_or_else(|_| "1".into());
+    let exchgubun =
+        std::env::var("LS_LIVE_SMOKE_T1638_EXCHGUBUN").unwrap_or_else(|_| "".into());
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .market_session()
+        .remaining_quantity_predisclosure(&T1638Request::new(&gubun1, &shcode, &gubun2, &exchgubun))
+        .await
+    {
+        Ok(resp) => {
+            // Non-empty guard: a read can return 00000 with an empty array off-data →
+            // that is PENDING, not Implemented. Assert a non-empty ranking row with a
+            // modeled non-default field before recording.
+            let first = resp.outblock.first();
+            assert!(
+                first.is_some_and(|r| !r.hname.is_empty() && !r.shcode.is_empty()),
+                "live-smoke-t1638: empty ranking (00707/off-data) — PENDING, not Implemented"
+            );
+            let row = first.expect("non-empty guard above");
+            record(
+                "live-smoke-t1638",
+                &format!("env=paper gubun1={gubun1} shcode={shcode} gubun2={gubun2} exchgubun={exchgubun} date={date}"),
+                &format!(
+                    "rsp_cd={} rows={} hname_len={} shcode_len={}",
+                    resp.rsp_cd,
+                    resp.outblock.len(),
+                    row.hname.len(),
+                    row.shcode.len()
+                ),
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1638 market-data failure (not evidence)");
+            panic!("live-smoke-t1638 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1308`: paper guard → token → one `t1308` time-bucketed
+/// trade-chart read for `shcode="005930"` `starttime=""` `endtime=""` `bun_term="1"`
+/// `exchgubun=""` (defaults). A success `rsp_cd` with a non-empty time-bucket row
+/// (modeled `chetime`/`price`) proves the typed array read round-trips. The chart
+/// is reachable under closure; an empty `00707` does NOT record — it dispositions
+/// to PENDING. The recorded line is credential-free (`rsp_cd` + row count + lengths,
+/// never `rsp_msg`); a failed run emits a `SMOKE-FAIL` stderr line, never a
+/// `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1308`"]
+async fn live_smoke_t1308() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let shcode = std::env::var("LS_LIVE_SMOKE_T1308_SHCODE").unwrap_or_else(|_| "005930".into());
+    let starttime = std::env::var("LS_LIVE_SMOKE_T1308_STARTTIME").unwrap_or_else(|_| "".into());
+    let endtime = std::env::var("LS_LIVE_SMOKE_T1308_ENDTIME").unwrap_or_else(|_| "".into());
+    let bun_term = std::env::var("LS_LIVE_SMOKE_T1308_BUN_TERM").unwrap_or_else(|_| "1".into());
+    let exchgubun = std::env::var("LS_LIVE_SMOKE_T1308_EXCHGUBUN").unwrap_or_else(|_| "".into());
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .market_session()
+        .time_bucket_trade_chart(&T1308Request::new(&shcode, &starttime, &endtime, &bun_term, &exchgubun))
+        .await
+    {
+        Ok(resp) => {
+            // Non-empty guard: a read can return 00000 with an empty array off-data →
+            // that is PENDING, not Implemented. Assert a non-empty time-bucket row with
+            // a modeled non-default field before recording.
+            let first = resp.outblock1.first();
+            assert!(
+                first.is_some_and(|r| !r.chetime.is_empty() && !r.price.is_empty()),
+                "live-smoke-t1308: empty chart (00707/off-data) — PENDING, not Implemented"
+            );
+            let row = first.expect("non-empty guard above");
+            record(
+                "live-smoke-t1308",
+                &format!("env=paper shcode={shcode} starttime={starttime} endtime={endtime} bun_term={bun_term} exchgubun={exchgubun} date={date}"),
+                &format!(
+                    "rsp_cd={} rows={} chetime_len={} price_len={}",
+                    resp.rsp_cd,
+                    resp.outblock1.len(),
+                    row.chetime.len(),
+                    row.price.len()
+                ),
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1308 market-data failure (not evidence)");
+            panic!("live-smoke-t1308 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1449`: paper guard → token → one `t1449` price-band
+/// trade-weight read for `shcode="005930"` `dategb="1"` (defaults; `dategb` MUST
+/// be non-empty — an empty `dategb` returns an empty board). A success `rsp_cd`
+/// with a non-empty price-band row (modeled `price`/`cvolume`) proves the typed
+/// array read round-trips. Reachable under closure; an empty `00707` does NOT
+/// record — it dispositions to PENDING. The recorded line is credential-free
+/// (`rsp_cd` + row count + lengths, never `rsp_msg`); a failed run emits a
+/// `SMOKE-FAIL` stderr line, never a `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1449`"]
+async fn live_smoke_t1449() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let shcode = std::env::var("LS_LIVE_SMOKE_T1449_SHCODE").unwrap_or_else(|_| "005930".into());
+    let dategb = std::env::var("LS_LIVE_SMOKE_T1449_DATEGB").unwrap_or_else(|_| "1".into());
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .market_session()
+        .price_band_trade_weight(&T1449Request::new(&shcode, &dategb))
+        .await
+    {
+        Ok(resp) => {
+            // Non-empty guard: a read can return 00000 with an empty array off-data →
+            // that is PENDING, not Implemented. Assert a non-empty price-band row with
+            // a modeled non-default field before recording.
+            let first = resp.outblock1.first();
+            assert!(
+                first.is_some_and(|r| !r.price.is_empty() && !r.cvolume.is_empty()),
+                "live-smoke-t1449: empty board (00707/off-data) — PENDING, not Implemented"
+            );
+            let row = first.expect("non-empty guard above");
+            record(
+                "live-smoke-t1449",
+                &format!("env=paper shcode={shcode} dategb={dategb} date={date}"),
+                &format!(
+                    "rsp_cd={} rows={} price_len={} cvolume_len={}",
+                    resp.rsp_cd,
+                    resp.outblock1.len(),
+                    row.price.len(),
+                    row.cvolume.len()
+                ),
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1449 market-data failure (not evidence)");
+            panic!("live-smoke-t1449 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1621`: paper guard → token → one `t1621` by-time
+/// investor-trading read for `upcode="001"` `nmin=0` `cnt=20` `bgubun="0"`
+/// `exchgubun=""` (defaults). `nmin`/`cnt` wire-serialize as JSON NUMBERS — the
+/// string form returns IGW40011 (KTD3). A success `rsp_cd` with a non-empty
+/// by-time row (modeled `date`/`indmsvol`) proves the typed array read
+/// round-trips. Reachable under closure; an empty `00707` does NOT record — it
+/// dispositions to PENDING. The recorded line is credential-free (`rsp_cd` + row
+/// count + lengths, never `rsp_msg`); a failed run emits a `SMOKE-FAIL` stderr
+/// line, never a `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1621`"]
+async fn live_smoke_t1621() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let upcode = std::env::var("LS_LIVE_SMOKE_T1621_UPCODE").unwrap_or_else(|_| "001".into());
+    let nmin = std::env::var("LS_LIVE_SMOKE_T1621_NMIN").unwrap_or_else(|_| "0".into());
+    let cnt = std::env::var("LS_LIVE_SMOKE_T1621_CNT").unwrap_or_else(|_| "20".into());
+    let bgubun = std::env::var("LS_LIVE_SMOKE_T1621_BGUBUN").unwrap_or_else(|_| "0".into());
+    let exchgubun = std::env::var("LS_LIVE_SMOKE_T1621_EXCHGUBUN").unwrap_or_default();
+    match sdk
+        .market_session()
+        .investor_trading_by_time(&T1621Request::new(&upcode, &nmin, &cnt, &bgubun, &exchgubun))
+        .await
+    {
+        Ok(resp) => {
+            // Non-empty guard: a read can return 00000 with an empty array off-data →
+            // that is PENDING, not Implemented. Assert a non-empty by-time row with a
+            // modeled non-default key before recording.
+            let first = resp.outblock1.first();
+            assert!(
+                first.is_some_and(|r| !r.date.is_empty() && !r.indmsvol.is_empty()),
+                "live-smoke-t1621: empty board (00707/off-data) — PENDING, not Implemented"
+            );
+            let row = first.expect("non-empty guard above");
+            record(
+                "live-smoke-t1621",
+                &format!("env=paper upcode={upcode} nmin={nmin} cnt={cnt} bgubun={bgubun}"),
+                &format!(
+                    "rsp_cd={} rows={} date_len={} indmsvol_len={}",
+                    resp.rsp_cd,
+                    resp.outblock1.len(),
+                    row.date.len(),
+                    row.indmsvol.len()
+                ),
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1621 market-data failure (not evidence)");
+            panic!("live-smoke-t1621 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t2545`: paper guard → token → one `t2545` F/O by-time
+/// investor-trading read for `eitem="01"` `sgubun="0"` `upcode="001"` `nmin=0`
+/// `cnt=10` `bgubun="0"` (defaults). `nmin`/`cnt` wire-serialize as JSON NUMBERS
+/// — the string form returns IGW40011 (KTD3); `bgubun="1"` returns
+/// IGW40011/IGW50008, so the default is `bgubun="0"`. A success `rsp_cd` with a
+/// non-empty by-time row (modeled `date`/`indmsvol`) proves the typed array read
+/// round-trips. Reachable under closure; an empty `00707` does NOT record — it
+/// dispositions to PENDING. The recorded line is credential-free (`rsp_cd` + row
+/// count + lengths, never `rsp_msg`); a failed run emits a `SMOKE-FAIL` stderr
+/// line, never a `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t2545`"]
+async fn live_smoke_t2545() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let eitem = std::env::var("LS_LIVE_SMOKE_T2545_EITEM").unwrap_or_else(|_| "01".into());
+    let sgubun = std::env::var("LS_LIVE_SMOKE_T2545_SGUBUN").unwrap_or_else(|_| "0".into());
+    let upcode = std::env::var("LS_LIVE_SMOKE_T2545_UPCODE").unwrap_or_else(|_| "001".into());
+    let nmin = std::env::var("LS_LIVE_SMOKE_T2545_NMIN").unwrap_or_else(|_| "0".into());
+    let cnt = std::env::var("LS_LIVE_SMOKE_T2545_CNT").unwrap_or_else(|_| "10".into());
+    let bgubun = std::env::var("LS_LIVE_SMOKE_T2545_BGUBUN").unwrap_or_else(|_| "0".into());
+    match sdk
+        .market_session()
+        .fo_investor_trading_by_time(&T2545Request::new(
+            &eitem, &sgubun, &upcode, &nmin, &cnt, &bgubun,
+        ))
+        .await
+    {
+        Ok(resp) => {
+            // Non-empty guard: a read can return 00000 with an empty array off-data →
+            // that is PENDING, not Implemented. Assert a non-empty by-time row with a
+            // modeled non-default key before recording.
+            let first = resp.outblock1.first();
+            assert!(
+                first.is_some_and(|r| !r.date.is_empty() && !r.indmsvol.is_empty()),
+                "live-smoke-t2545: empty board (00707/off-data) — PENDING, not Implemented"
+            );
+            let row = first.expect("non-empty guard above");
+            record(
+                "live-smoke-t2545",
+                &format!("env=paper eitem={eitem} sgubun={sgubun} upcode={upcode} nmin={nmin} cnt={cnt} bgubun={bgubun}"),
+                &format!(
+                    "rsp_cd={} rows={} date_len={} indmsvol_len={}",
+                    resp.rsp_cd,
+                    resp.outblock1.len(),
+                    row.date.len(),
+                    row.indmsvol.len()
+                ),
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t2545 market-data failure (not evidence)");
+            panic!("live-smoke-t2545 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t8407`: paper guard → token → one `t8407` multi-symbol
+/// current-price read for `nrec=3` `shcode="005930000660001200"` (Samsung +
+/// SK Hynix + 001200; defaults). `nrec` wire-serializes as a JSON NUMBER — the
+/// string form returns IGW40011 (KTD3). A success `rsp_cd` with a non-empty
+/// per-symbol row (modeled `shcode`/`price`) proves the typed array read
+/// round-trips. Reachable under closure; an empty `00707` does NOT record — it
+/// dispositions to PENDING. The recorded line is credential-free (`rsp_cd` + row
+/// count + lengths, never `rsp_msg`); a failed run emits a `SMOKE-FAIL` stderr
+/// line, never a `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8407`"]
+async fn live_smoke_t8407() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let nrec = std::env::var("LS_LIVE_SMOKE_T8407_NREC").unwrap_or_else(|_| "3".into());
+    let shcode = std::env::var("LS_LIVE_SMOKE_T8407_SHCODE")
+        .unwrap_or_else(|_| "005930000660001200".into());
+    match sdk
+        .market_session()
+        .multi_symbol_current_price(&T8407Request::new(&nrec, &shcode))
+        .await
+    {
+        Ok(resp) => {
+            // Non-empty guard: a read can return 00000 with an empty array off-data →
+            // that is PENDING, not Implemented. Assert a non-empty per-symbol row with
+            // a modeled non-default key before recording.
+            let first = resp.outblock1.first();
+            assert!(
+                first.is_some_and(|r| !r.shcode.is_empty()),
+                "live-smoke-t8407: empty board (00707/off-data) — PENDING, not Implemented"
+            );
+            let row = first.expect("non-empty guard above");
+            record(
+                "live-smoke-t8407",
+                &format!("env=paper nrec={nrec}"),
+                &format!(
+                    "rsp_cd={} rows={} shcode_len={} price_len={}",
+                    resp.rsp_cd,
+                    resp.outblock1.len(),
+                    row.shcode.len(),
+                    row.price.len()
+                ),
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8407 market-data failure (not evidence)");
+            panic!("live-smoke-t8407 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1959`: paper guard → token → one `t1959` LP-target ELW
+/// issue-list read with an EMPTY `shcode` (the full LP-target list — this is a
+/// list/ranking read). A success `rsp_cd` with a non-empty per-issue row (modeled
+/// `shcode`/`price`) proves the typed array read round-trips. Reachable under
+/// closure; an empty `00707` does NOT record — it dispositions to PENDING. The
+/// recorded line is credential-free (`rsp_cd` + row count + lengths, never
+/// `rsp_msg`); a failed run emits a `SMOKE-FAIL` stderr line, never a `LIVE-SMOKE`
+/// one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1959`"]
+async fn live_smoke_t1959() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    // Empty shcode → the full LP-target list. Override with LS_LIVE_SMOKE_T1959_SHCODE.
+    let shcode = std::env::var("LS_LIVE_SMOKE_T1959_SHCODE").unwrap_or_default();
+    match sdk
+        .market_session()
+        .lp_target_issues(&T1959Request::for_shcode(&shcode))
+        .await
+    {
+        Ok(resp) => {
+            // Non-empty guard: a read can return 00000 with an empty array off-data →
+            // that is PENDING, not Implemented. Assert a non-empty per-issue row with
+            // a modeled non-default key before recording.
+            let first = resp.outblock1.first();
+            assert!(
+                first.is_some_and(|r| !r.shcode.is_empty()),
+                "live-smoke-t1959: empty board (00707/off-data) — PENDING, not Implemented"
+            );
+            let row = first.expect("non-empty guard above");
+            record(
+                "live-smoke-t1959",
+                &format!("env=paper shcode_len={}", shcode.len()),
+                &format!(
+                    "rsp_cd={} rows={} shcode_len={} price_len={}",
+                    resp.rsp_cd,
+                    resp.outblock1.len(),
+                    row.shcode.len(),
+                    row.price.len()
+                ),
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1959 elw failure (not evidence)");
+            panic!("live-smoke-t1959 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1950`: paper guard → token → `t8431` ELW-symbol list → `t1950`
+/// ELW current-price/quote for the first live ELW `shcode`.
+///
+/// CHAINED, self-sourcing (R8): the `shcode` comes from a live `t8431` call, never
+/// fabricated — ELW codes EXPIRE, so a hard-coded one would silently rot. ELW
+/// `shcode`s are public market identifiers (may appear in `inputs`). The gate is
+/// the single-instrument quote (`outblock.hname`) being populated — the quote
+/// resolved. A success `rsp_cd` with an empty quote is the `00707`/off-data case →
+/// PENDING (does NOT record). An empty/short `t8431` surfaces as a credential-safe
+/// `SMOKE-FAIL` (spine-input-unavailable). The recorded line is credential-free
+/// (`rsp_cd` + lengths, never `rsp_msg`); a failed run emits a `SMOKE-FAIL` stderr
+/// line, never a `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1950`"]
+async fn live_smoke_t1950() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    // Self-source a fresh ELW shcode from a live t8431 list (codes expire).
+    let elws = sdk
+        .market_session()
+        .elw_symbols(&T8431Request::new())
+        .await
+        .expect("t8431 elw_symbols (shcode source) failed");
+    if elws.outblock.is_empty() {
+        eprintln!(
+            "SMOKE-FAIL target=live-smoke-t1950 t8431 spine source empty (rsp_cd={})",
+            elws.rsp_cd
+        );
+        panic!("live-smoke-t1950: need an ELW shcode to quote");
+    }
+    let shcode = elws.outblock[0].shcode.clone();
+
+    match sdk
+        .market_session()
+        .elw_quote(&T1950Request::for_shcode(&shcode))
+        .await
+    {
+        Ok(resp) if resp.outblock.hname.is_empty() => {
+            // 00000 with an empty quote (off-data) → PENDING, not Implemented.
+            eprintln!(
+                "SMOKE-FAIL target=live-smoke-t1950 empty quote payload (rsp_cd={})",
+                resp.rsp_cd
+            );
+            panic!("live-smoke-t1950: quote block empty (00707/off-data — PENDING)");
+        }
+        Ok(resp) => {
+            // shcode is a public ELW identifier — OK to record.
+            record(
+                "live-smoke-t1950",
+                &format!("env=paper shcode={shcode}"),
+                &format!(
+                    "rsp_cd={} hname_len={} price_len={} basket_rows={}",
+                    resp.rsp_cd,
+                    resp.outblock.hname.len(),
+                    resp.outblock.price.len(),
+                    resp.outblock1.len()
+                ),
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1950 elw failure (not evidence)");
+            panic!("live-smoke-t1950 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1971`: paper guard → token → `t8431` ELW-symbol list → `t1971`
+/// ELW current-price + quote board for the first live ELW `shcode`.
+///
+/// CHAINED, self-sourcing (R8): the `shcode` comes from a live `t8431` call, never
+/// fabricated — ELW codes EXPIRE, so a hard-coded one would silently rot. ELW
+/// `shcode`s are public market identifiers (may appear in `inputs`). The gate is
+/// the single-instrument quote (`outblock.hname`) being populated — the quote-board
+/// resolved. A success `rsp_cd` with an empty quote is the `00707`/off-data case →
+/// PENDING (does NOT record). An empty/short `t8431` surfaces as a credential-safe
+/// `SMOKE-FAIL` (spine-input-unavailable). The recorded line is credential-free
+/// (`rsp_cd` + lengths, never `rsp_msg`); a failed run emits a `SMOKE-FAIL` stderr
+/// line, never a `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1971`"]
+async fn live_smoke_t1971() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    // Self-source a fresh ELW shcode from a live t8431 list (codes expire).
+    let elws = sdk
+        .market_session()
+        .elw_symbols(&T8431Request::new())
+        .await
+        .expect("t8431 elw_symbols (shcode source) failed");
+    if elws.outblock.is_empty() {
+        eprintln!(
+            "SMOKE-FAIL target=live-smoke-t1971 t8431 spine source empty (rsp_cd={})",
+            elws.rsp_cd
+        );
+        panic!("live-smoke-t1971: need an ELW shcode to quote");
+    }
+    let shcode = elws.outblock[0].shcode.clone();
+
+    match sdk
+        .market_session()
+        .elw_quote_board(&T1971Request::for_shcode(&shcode))
+        .await
+    {
+        Ok(resp) if resp.outblock.hname.is_empty() => {
+            // 00000 with an empty quote (off-data) → PENDING, not Implemented.
+            eprintln!(
+                "SMOKE-FAIL target=live-smoke-t1971 empty quote payload (rsp_cd={})",
+                resp.rsp_cd
+            );
+            panic!("live-smoke-t1971: quote block empty (00707/off-data — PENDING)");
+        }
+        Ok(resp) => {
+            // shcode is a public ELW identifier — OK to record.
+            record(
+                "live-smoke-t1971",
+                &format!("env=paper shcode={shcode}"),
+                &format!(
+                    "rsp_cd={} hname_len={} price_len={} offerho1_len={}",
+                    resp.rsp_cd,
+                    resp.outblock.hname.len(),
+                    resp.outblock.price.len(),
+                    resp.outblock.offerho1.len()
+                ),
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1971 elw failure (not evidence)");
+            panic!("live-smoke-t1971 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1972`: paper guard → token → `t8431` ELW-symbol list → `t1972`
+/// ELW current-price + trading-member (거래원) board for the first live ELW `shcode`.
+///
+/// CHAINED, self-sourcing (R8): the `shcode` comes from a live `t8431` call, never
+/// fabricated — ELW codes EXPIRE, so a hard-coded one would silently rot. ELW
+/// `shcode`s are public market identifiers (may appear in `inputs`). The gate is
+/// the member-board (`outblock.hname`) being populated — the board resolved. A
+/// success `rsp_cd` with an empty board is the `00707`/off-data case → PENDING
+/// (does NOT record). An empty/short `t8431` surfaces as a credential-safe
+/// `SMOKE-FAIL` (spine-input-unavailable). The recorded line is credential-free
+/// (`rsp_cd` + lengths, never `rsp_msg`); a failed run emits a `SMOKE-FAIL` stderr
+/// line, never a `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1972`"]
+async fn live_smoke_t1972() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    // Self-source a fresh ELW shcode from a live t8431 list (codes expire).
+    let elws = sdk
+        .market_session()
+        .elw_symbols(&T8431Request::new())
+        .await
+        .expect("t8431 elw_symbols (shcode source) failed");
+    if elws.outblock.is_empty() {
+        eprintln!(
+            "SMOKE-FAIL target=live-smoke-t1972 t8431 spine source empty (rsp_cd={})",
+            elws.rsp_cd
+        );
+        panic!("live-smoke-t1972: need an ELW shcode to quote");
+    }
+    let shcode = elws.outblock[0].shcode.clone();
+
+    match sdk
+        .market_session()
+        .elw_member_board(&T1972Request::for_shcode(&shcode))
+        .await
+    {
+        Ok(resp) if resp.outblock.hname.is_empty() => {
+            // 00000 with an empty board (off-data) → PENDING, not Implemented.
+            eprintln!(
+                "SMOKE-FAIL target=live-smoke-t1972 empty board payload (rsp_cd={})",
+                resp.rsp_cd
+            );
+            panic!("live-smoke-t1972: board block empty (00707/off-data — PENDING)");
+        }
+        Ok(resp) => {
+            // shcode is a public ELW identifier — OK to record.
+            record(
+                "live-smoke-t1972",
+                &format!("env=paper shcode={shcode}"),
+                &format!(
+                    "rsp_cd={} hname_len={} offerno1_len={} dvol1_len={}",
+                    resp.rsp_cd,
+                    resp.outblock.hname.len(),
+                    resp.outblock.offerno1.len(),
+                    resp.outblock.dvol1.len()
+                ),
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1972 elw failure (not evidence)");
+            panic!("live-smoke-t1972 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1974`: paper guard → token → `t8431` ELW-symbol list → `t1974`
+/// ELWs-sharing-a-base-asset (ELW기초자산동일종목) for the first live ELW `shcode`.
+///
+/// CHAINED, self-sourcing (R8): the `shcode` comes from a live `t8431` call, never
+/// fabricated — ELW codes EXPIRE, so a hard-coded one would silently rot. ELW
+/// `shcode`s are public market identifiers (may appear in `inputs`). The gate is the
+/// sibling-issue array (`outblock1[0].hname`) being populated — the same-base set
+/// resolved (a board/name witness, not a session-only field). A success `rsp_cd` with
+/// an empty array is the `00707`/off-data case → PENDING (does NOT record). An
+/// empty/short `t8431` surfaces as a credential-safe `SMOKE-FAIL`
+/// (spine-input-unavailable). The recorded line is credential-free (`rsp_cd` + counts
+/// + lengths, never `rsp_msg`); a failed run emits a `SMOKE-FAIL` stderr line, never a
+/// `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1974`"]
+async fn live_smoke_t1974() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    // Self-source a fresh ELW shcode from a live t8431 list (codes expire).
+    let elws = sdk
+        .market_session()
+        .elw_symbols(&T8431Request::new())
+        .await
+        .expect("t8431 elw_symbols (shcode source) failed");
+    if elws.outblock.is_empty() {
+        eprintln!(
+            "SMOKE-FAIL target=live-smoke-t1974 t8431 spine source empty (rsp_cd={})",
+            elws.rsp_cd
+        );
+        panic!("live-smoke-t1974: need an ELW shcode to query");
+    }
+    let shcode = elws.outblock[0].shcode.clone();
+
+    match sdk
+        .market_session()
+        .elw_same_base_issues(&T1974Request::for_shcode(&shcode))
+        .await
+    {
+        Ok(resp) if resp.outblock1.is_empty() => {
+            // 00000 with an empty sibling array (off-data) → PENDING, not Implemented.
+            eprintln!(
+                "SMOKE-FAIL target=live-smoke-t1974 empty sibling array (rsp_cd={})",
+                resp.rsp_cd
+            );
+            panic!("live-smoke-t1974: sibling array empty (00707/off-data — PENDING)");
+        }
+        Ok(resp) => {
+            // shcode is a public ELW identifier — OK to record.
+            record(
+                "live-smoke-t1974",
+                &format!("env=paper shcode={shcode}"),
+                &format!(
+                    "rsp_cd={} cnt_len={} rows={} hname_len={}",
+                    resp.rsp_cd,
+                    resp.outblock.cnt.len(),
+                    resp.outblock1.len(),
+                    resp.outblock1[0].hname.len()
+                ),
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1974 elw failure (not evidence)");
+            panic!("live-smoke-t1974 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1956`: paper guard → token → `t8431` ELW-symbol list → `t1956`
+/// ELW current-price / contracted-payout snapshot (ELW현재가(확정지급액)조회) for the
+/// first live ELW `shcode`.
+///
+/// CHAINED, self-sourcing (R8): the `shcode` comes from a live `t8431` call, never
+/// fabricated — ELW codes EXPIRE, so a hard-coded one would silently rot. ELW
+/// `shcode`s are public market identifiers (may appear in `inputs`). The gate is the
+/// snapshot's NAME witness (`outblock.hname`) being populated — the issue resolved (a
+/// board/name witness, NOT a session-only orderbook field). A success `rsp_cd` with
+/// an empty/blank `hname` is the `00707`/off-data case → PENDING (does NOT record).
+/// An empty/short `t8431` surfaces as a credential-safe `SMOKE-FAIL`
+/// (spine-input-unavailable). The recorded line is credential-free (`rsp_cd` +
+/// lengths, never `rsp_msg`); a failed run emits a `SMOKE-FAIL` stderr line, never a
+/// `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1956`"]
+async fn live_smoke_t1956() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    // Self-source a fresh ELW shcode from a live t8431 list (codes expire).
+    let elws = sdk
+        .market_session()
+        .elw_symbols(&T8431Request::new())
+        .await
+        .expect("t8431 elw_symbols (shcode source) failed");
+    if elws.outblock.is_empty() {
+        eprintln!(
+            "SMOKE-FAIL target=live-smoke-t1956 t8431 spine source empty (rsp_cd={})",
+            elws.rsp_cd
+        );
+        panic!("live-smoke-t1956: need an ELW shcode to query");
+    }
+    let shcode = elws.outblock[0].shcode.clone();
+
+    match sdk
+        .market_session()
+        .elw_current_price(&T1956Request::for_shcode(&shcode))
+        .await
+    {
+        Ok(resp) if resp.outblock.hname.trim().is_empty() => {
+            // 00000 with a blank name (off-data) → PENDING, not Implemented.
+            eprintln!(
+                "SMOKE-FAIL target=live-smoke-t1956 empty snapshot name (rsp_cd={})",
+                resp.rsp_cd
+            );
+            panic!("live-smoke-t1956: snapshot name blank (00707/off-data — PENDING)");
+        }
+        Ok(resp) => {
+            // shcode is a public ELW identifier — OK to record.
+            record(
+                "live-smoke-t1956",
+                &format!("env=paper shcode={shcode}"),
+                &format!(
+                    "rsp_cd={} hname_len={} price_len={} basket_rows={}",
+                    resp.rsp_cd,
+                    resp.outblock.hname.len(),
+                    resp.outblock.price.len(),
+                    resp.outblock1.len()
+                ),
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1956 elw failure (not evidence)");
+            panic!("live-smoke-t1956 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1969`: paper guard → token → one `t1969` ELW screener run with
+/// the all-ELWs default screen ([`T1969Request::new`] — every chk* off, numeric
+/// ranges 0/0, dates 000000..999999). A success `rsp_cd` with a non-empty screened
+/// row (modeled `shcode`/`hname`) proves the typed summary+array read round-trips.
+/// Reachable under closure; an empty `00707` does NOT record — it dispositions to
+/// PENDING. The recorded line is credential-free (`rsp_cd` + counts + lengths,
+/// never `rsp_msg`); a failed run emits a `SMOKE-FAIL` stderr line, never a
+/// `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1969`"]
+async fn live_smoke_t1969() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    match sdk
+        .market_session()
+        .elw_screener(&T1969Request::new())
+        .await
+    {
+        Ok(resp) => {
+            // Non-empty guard: a screen can return 00000 with an empty array off-data →
+            // that is PENDING, not Implemented. Assert a non-empty screened row with a
+            // modeled non-default key before recording.
+            let first = resp.outblock1.first();
+            assert!(
+                first.is_some_and(|r| !r.shcode.is_empty()),
+                "live-smoke-t1969: empty board (00707/off-data) — PENDING, not Implemented"
+            );
+            let row = first.expect("non-empty guard above");
+            record(
+                "live-smoke-t1969",
+                "env=paper screen=all-elws",
+                &format!(
+                    "rsp_cd={} cnt_len={} rows={} shcode_len={} hname_len={}",
+                    resp.rsp_cd,
+                    resp.outblock.cnt.len(),
+                    resp.outblock1.len(),
+                    row.shcode.len(),
+                    row.hname.len()
+                ),
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1969 elw failure (not evidence)");
+            panic!("live-smoke-t1969 failed: {e}");
+        }
+    }
+}
+
 /// `make live-smoke-t1305`: paper guard → token → one `t1305` period-price read for
 /// `shcode="005930"` `dwmcode="1"` (daily) `date="<today>"` `cnt="10"`. A non-empty
 /// candle array proves the typed paginated read round-trips. Session-independent.
@@ -1238,6 +2095,195 @@ async fn live_smoke_t1404() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t1404 market-data failure (not evidence)");
             panic!("live-smoke-t1404 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1410`: paper guard → token → one `t1410` ultra-low-liquidity
+/// board read (gubun=0, first-page cts_shcode=""). A NON-EMPTY low-liquidity array
+/// proves the read round-trips; an empty `00707` (the concrete `t1410` empty-board
+/// risk, R7) does NOT record — it dispositions to empty-board PENDING. The recorded
+/// line is credential-free (`rsp_cd` + row count, never `rsp_msg`); a failed run
+/// emits a `SMOKE-FAIL` stderr line, never a `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1410`"]
+async fn live_smoke_t1410() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.paginated().low_liquidity_board(&T1410Request::new()).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock1.is_empty(),
+                "live-smoke-t1410: empty board (00707) — PENDING, not Implemented (R7)"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1410", &format!("env=paper gubun=0 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1410 market-data failure (not evidence)");
+            panic!("live-smoke-t1410 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1411`: paper guard → token → one `t1411` stocks-by-margin-rate
+/// read (gubun=0, jongchk=1, jkrate=1, shcode=005930, first-page idx=0 as a JSON
+/// number). A NON-EMPTY margin-rate array proves the read round-trips; an empty
+/// `00707` (R7) does NOT record — it dispositions to empty-result PENDING. The
+/// recorded line is credential-free (`rsp_cd` + row count, never `rsp_msg`); a
+/// failed run emits a `SMOKE-FAIL` stderr line, never a `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1411`"]
+async fn live_smoke_t1411() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .paginated()
+        .stocks_by_margin_rate(&T1411Request::new("0", "1", "1", "005930"))
+        .await
+    {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock1.is_empty(),
+                "live-smoke-t1411: empty result (00707) — PENDING, not Implemented (R7)"
+            );
+            // Assert a non-default first-row field before recording (proves a real
+            // round-trip, not a serde(default) Ok): the short code must be non-empty.
+            assert!(
+                !resp.outblock1[0].shcode.is_empty(),
+                "live-smoke-t1411: first row must carry a real shcode"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1411", &format!("env=paper gubun=0 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1411 market-data failure (not evidence)");
+            panic!("live-smoke-t1411 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1488`: paper guard → token → one `t1488` expected-execution
+/// top-change-rate read (gubun=0, sign=1, jgubun=1, jongchk=0, volume=0, first-page
+/// idx=0 + yesprice/yeeprice/yevolume=0 all as JSON numbers). A NON-EMPTY change-rate
+/// array proves the read round-trips; an empty `00707` (R7) does NOT record — it
+/// dispositions to empty-result PENDING. The recorded line is credential-free
+/// (`rsp_cd` + row count, never `rsp_msg`); a failed run emits a `SMOKE-FAIL` stderr
+/// line, never a `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1488`"]
+async fn live_smoke_t1488() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .paginated()
+        .expected_exec_top_change_rate(&T1488Request::new("0", "1", "1", "0", "0"))
+        .await
+    {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock1.is_empty(),
+                "live-smoke-t1488: empty result (00707) — PENDING, not Implemented (R7)"
+            );
+            // Assert a non-default first-row field before recording (proves a real
+            // round-trip, not a serde(default) Ok): the short code must be non-empty.
+            assert!(
+                !resp.outblock1[0].shcode.is_empty(),
+                "live-smoke-t1488: first row must carry a real shcode"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1488", &format!("env=paper gubun=0 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1488 market-data failure (not evidence)");
+            panic!("live-smoke-t1488 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1636`: paper guard → token → one `t1636` per-stock
+/// program-trading-trend read (gubun=0, gubun1=0, gubun2=0, shcode=005930,
+/// exchgubun="", first-page cts_idx=0 as a JSON number). A NON-EMPTY
+/// program-trading array proves the read round-trips; an empty `00707` (R7) does
+/// NOT record — it dispositions to empty-result PENDING. The recorded line is
+/// credential-free (`rsp_cd` + row count, never `rsp_msg`); a failed run emits a
+/// `SMOKE-FAIL` stderr line, never a `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1636`"]
+async fn live_smoke_t1636() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .paginated()
+        .program_trade_trend_by_stock(&T1636Request::new("0", "0", "0", "005930", ""))
+        .await
+    {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock1.is_empty(),
+                "live-smoke-t1636: empty result (00707) — PENDING, not Implemented (R7)"
+            );
+            // Assert a non-default first-row field before recording (proves a real
+            // round-trip, not a serde(default) Ok): the short code must be non-empty.
+            assert!(
+                !resp.outblock1[0].shcode.is_empty(),
+                "live-smoke-t1636: first row must carry a real shcode"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1636", &format!("env=paper shcode=005930 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1636 market-data failure (not evidence)");
+            panic!("live-smoke-t1636 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1809`: paper guard → token → one `t1809` signal-search read
+/// (gubun=1, jmGb=1, jmcode=1, first-page cts="1"). A NON-EMPTY signal array
+/// proves the read round-trips; an empty `00707` (R7) does NOT record — it
+/// dispositions to empty-result PENDING. The recorded line is credential-free
+/// (`rsp_cd` + row count, never `rsp_msg`); a failed run emits a `SMOKE-FAIL`
+/// stderr line, never a `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1809`"]
+async fn live_smoke_t1809() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.paginated().signal_search(&T1809Request::new("1", "1", "1")).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock1.is_empty(),
+                "live-smoke-t1809: empty result (00707) — PENDING, not Implemented (R7)"
+            );
+            // Assert a non-default first-row field before recording (proves a real
+            // round-trip, not a serde(default) Ok): the signal id is always present
+            // on a signal row (`jmcode` can be blank for aggregate/header signals).
+            assert!(
+                !resp.outblock1[0].signal_id.is_empty(),
+                "live-smoke-t1809: first row must carry a real signal id"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1809", &format!("env=paper gubun=1 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1809 market-data failure (not evidence)");
+            panic!("live-smoke-t1809 failed: {e}");
         }
     }
 }
@@ -3081,6 +4127,75 @@ async fn live_smoke_t2106() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t2106 market-data failure (not evidence)");
             panic!("live-smoke-t2106 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t8406`: paper guard → token → fetch one index-futures contract
+/// via `t8467` → one `t8406` F/O by-tick conclusion read for that contract
+/// (`cgubun="1"`, `bgubun=0`, `cnt=10`).
+///
+/// The example `focode` in the raw capture is a stale/expired contract (a static
+/// probe returned a clean-empty 60-byte body), so the smoke self-sources a live
+/// front-month contract from the t8467 master. `bgubun`/`cnt` wire-serialize as
+/// JSON NUMBERS — the string form returns IGW40011 (KTD3). A success `rsp_cd`
+/// with a non-empty conclusion row (modeled `chetime`/`price`) proves the typed
+/// array read round-trips. F/O conclusion is session-dependent: an empty `00707`
+/// even with a live contract does NOT record — it dispositions to PENDING. The
+/// recorded line is credential-free (`focode` is public contract reference data,
+/// `rsp_cd` + row count + lengths, never `rsp_msg`); a failed run emits a
+/// `SMOKE-FAIL` stderr line, never a `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8406`"]
+async fn live_smoke_t8406() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let masters = sdk
+        .market_session()
+        .index_futures_master(&T8467Request::new("Q"))
+        .await
+        .expect("t8467 index-futures master (contract source) failed");
+    if masters.outblock.is_empty() {
+        eprintln!(
+            "SMOKE-FAIL target=live-smoke-t8406 t8467 contract source empty (rsp_cd={})",
+            masters.rsp_cd
+        );
+        panic!("live-smoke-t8406: no contract to key the read");
+    }
+    let focode = masters.outblock[0].shcode.clone();
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .market_session()
+        .fo_tick_conclusion(&T8406Request::new(&focode, "1", "0", "10"))
+        .await
+    {
+        Ok(resp) => {
+            // Non-empty guard: F/O conclusion can return 00000 with an empty array
+            // under closure → that is PENDING, not Implemented. Assert a non-empty
+            // conclusion row with a modeled non-default key before recording.
+            let first = resp.outblock1.first();
+            assert!(
+                first.is_some_and(|r| !r.chetime.is_empty() && !r.price.is_empty()),
+                "live-smoke-t8406: empty conclusion board (00707/closure) — PENDING, not Implemented"
+            );
+            let row = first.expect("non-empty guard above");
+            record(
+                "live-smoke-t8406",
+                &format!("env=paper focode={focode} cgubun=1 bgubun=0 cnt=10 date={date}"),
+                &format!(
+                    "rsp_cd={} rows={} chetime_len={} price_len={}",
+                    resp.rsp_cd,
+                    resp.outblock1.len(),
+                    row.chetime.len(),
+                    row.price.len()
+                ),
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8406 market-data failure (not evidence)");
+            panic!("live-smoke-t8406 failed: {e}");
         }
     }
 }

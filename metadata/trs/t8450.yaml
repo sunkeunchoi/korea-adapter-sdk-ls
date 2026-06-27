@@ -17,7 +17,10 @@ dependencies:
   strong_order_fields: []
 support:
   tracked: true
-  implemented: false
+  # Closure-flip (plan -001 closed-window more-flips): non-empty paper smoke UNDER
+  # KRX closure (shcode=005930, exchgubun=N, rsp_cd=00000). Carries a deferred
+  # open-window freshness re-check obligation (R9).
+  implemented: true
   recommended: false
 maintenance:
   source_spec_hash: 35bc974acfc3

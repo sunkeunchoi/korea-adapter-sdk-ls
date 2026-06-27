@@ -17,7 +17,12 @@ dependencies:
   strong_order_fields: []
 support:
   tracked: true
-  implemented: false
+  # Closure-flip (plan -001 closed-window more-flips): non-empty paper smoke UNDER
+  # KRX closure (nrec=3, shcode 3 concatenated six-digit codes, rsp_cd=00000, 3
+  # per-symbol rows). nrec serializes as a JSON NUMBER (string_as_number) or the
+  # gateway returns IGW40011 (KTD3). Carries a deferred open-window freshness
+  # re-check obligation (R9).
+  implemented: true
   recommended: false
 maintenance:
   source_spec_hash: e95f357ddfa6

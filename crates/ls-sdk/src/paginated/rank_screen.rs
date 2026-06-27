@@ -1080,3 +1080,285 @@ pub struct T1482Response {
     )]
     pub outblock1: Vec<T1482OutBlock1>,
 }
+
+// --- t1411 — 증거금율별종목조회 (stocks by margin rate; single-page) -----------
+
+/// Input block for `t1411` — 증거금율별종목조회 (stocks by margin rate).
+///
+/// All caller-supplied filters (`gubun`/`jongchk`/`jkrate`/`shcode`) serialize as
+/// JSON **strings** per the spec request shape; only `idx` — which is BOTH the
+/// body continuation cursor AND a `Number`-typed field — serializes as a JSON
+/// number via `string_as_number` (a string `idx` risks `IGW40011`). `idx` is an
+/// ordinary in-block field at its first-page convention (`"0"`), NOT skipped.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1411InBlock {
+    /// Market division / 시장구분.
+    pub gubun: String,
+    /// Consigned-credit division / 위탁신용구분.
+    pub jongchk: String,
+    /// Margin-rate division / 증거금율구분.
+    pub jkrate: String,
+    /// Short code / 종목코드.
+    pub shcode: String,
+    /// Body continuation cursor / IDX (first page = `"0"`; serialized as a number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub idx: String,
+}
+
+/// `t1411` request — wraps the input block under the `t1411InBlock` key.
+///
+/// `idx` rides IN the body (an ordinary in-block field, serialized as a number).
+/// The `tr_cont`/`tr_cont_key` fields are `#[serde(skip)]` and stay empty for the
+/// single-page call; they exist only to satisfy the `HasPagination` bound on
+/// `post_paginated`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1411Request {
+    #[serde(rename = "t1411InBlock")]
+    pub inblock: T1411InBlock,
+    #[serde(skip)]
+    pub tr_cont: String,
+    #[serde(skip)]
+    pub tr_cont_key: String,
+}
+ls_core::impl_has_pagination!(T1411Request);
+impl T1411Request {
+    /// Build a single-page `t1411` stocks-by-margin-rate request. `idx` defaults to
+    /// the first-page convention (`"0"`); `tr_cont`/`tr_cont_key` start empty.
+    pub fn new(
+        gubun: impl Into<String>,
+        jongchk: impl Into<String>,
+        jkrate: impl Into<String>,
+        shcode: impl Into<String>,
+    ) -> Self {
+        T1411Request {
+            inblock: T1411InBlock {
+                gubun: gubun.into(),
+                jongchk: jongchk.into(),
+                jkrate: jkrate.into(),
+                shcode: shcode.into(),
+                idx: "0".to_string(),
+            },
+            tr_cont: String::new(),
+            tr_cont_key: String::new(),
+        }
+    }
+}
+
+/// `t1411OutBlock` — the margin-rate summary block (consigned/credit margin rates
+/// plus the next-page `idx` cursor). All numeric-bearing fields via
+/// [`ls_core::string_or_number`] to tolerate JSON string OR number.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1411OutBlock {
+    /// Consigned margin rate / 위탁증거금율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jkrate: String,
+    /// Credit margin rate / 신용증거금율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sjkrate: String,
+    /// Returned continuation cursor / IDX.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub idx: String,
+}
+
+/// `t1411OutBlock1` — one margin-rate stock row (representative subset; every
+/// numeric-bearing field via [`ls_core::string_or_number`]).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1411OutBlock1 {
+    /// Korean name / 종목명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Short code / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Consigned margin rate / 위탁증거금율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jkrate: String,
+    /// Credit margin rate / 신용증거금율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sjkrate: String,
+    /// Substitute price / 대용가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub subprice: String,
+    /// Previous close / 전일종가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub recprice: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Sign vs. previous close / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change vs. previous close / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Rate of change / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Accumulated volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+}
+
+/// `t1411` response (single page). `outblock` is the summary (margin rates +
+/// next-page `idx`); `outblock1` is the stock-row array under `t1411OutBlock1`,
+/// tolerated as single-or-array via [`ls_core::de_vec_or_single`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1411Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1411OutBlock", default)]
+    pub outblock: T1411OutBlock,
+    #[serde(
+        rename = "t1411OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1411OutBlock1>,
+}
+
+// --- t1488 — 예상체결가등락율상위조회 (expected-exec top change rate; single-page) ---
+
+/// Input block for `t1488` — 예상체결가등락율상위조회 (top change rate by
+/// expected-execution price).
+///
+/// The four `Number`-typed request fields — `idx` (also the body continuation
+/// cursor), `yesprice`, `yeeprice`, `yevolume` — serialize as JSON **numbers** via
+/// `string_as_number` (a string form risks `IGW40011`). The remaining filters
+/// (`gubun`/`sign`/`jgubun`/`jongchk`/`volume`) serialize as JSON strings per the
+/// spec request shape. `idx` is an ordinary in-block field at its first-page
+/// convention (`"0"`), NOT skipped.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1488InBlock {
+    /// Exchange division / 거래소구분.
+    pub gubun: String,
+    /// Up/down division / 상하락구분.
+    pub sign: String,
+    /// Session division / 장구분.
+    pub jgubun: String,
+    /// Instrument check / 종목체크.
+    pub jongchk: String,
+    /// Body continuation cursor / IDX (first page = `"0"`; serialized as a number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub idx: String,
+    /// Volume filter / 거래량.
+    pub volume: String,
+    /// Expected-execution start price / 예상체결시작가격 (serialized as a number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub yesprice: String,
+    /// Expected-execution end price / 예상체결종료가격 (serialized as a number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub yeeprice: String,
+    /// Expected-execution quantity / 예상체결량 (serialized as a number).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub yevolume: String,
+}
+
+/// `t1488` request — wraps the input block under the `t1488InBlock` key.
+///
+/// `idx` rides IN the body (an ordinary in-block field, serialized as a number).
+/// The `tr_cont`/`tr_cont_key` fields are `#[serde(skip)]` and stay empty for the
+/// single-page call; they exist only to satisfy the `HasPagination` bound on
+/// `post_paginated`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1488Request {
+    #[serde(rename = "t1488InBlock")]
+    pub inblock: T1488InBlock,
+    #[serde(skip)]
+    pub tr_cont: String,
+    #[serde(skip)]
+    pub tr_cont_key: String,
+}
+ls_core::impl_has_pagination!(T1488Request);
+impl T1488Request {
+    /// Build a single-page `t1488` expected-execution top-change-rate request.
+    /// `idx`/`yesprice`/`yeeprice`/`yevolume` default to the first-page convention
+    /// (`"0"`, serialized as numbers); `tr_cont`/`tr_cont_key` start empty.
+    pub fn new(
+        gubun: impl Into<String>,
+        sign: impl Into<String>,
+        jgubun: impl Into<String>,
+        jongchk: impl Into<String>,
+        volume: impl Into<String>,
+    ) -> Self {
+        T1488Request {
+            inblock: T1488InBlock {
+                gubun: gubun.into(),
+                sign: sign.into(),
+                jgubun: jgubun.into(),
+                jongchk: jongchk.into(),
+                idx: "0".to_string(),
+                volume: volume.into(),
+                yesprice: "0".to_string(),
+                yeeprice: "0".to_string(),
+                yevolume: "0".to_string(),
+            },
+            tr_cont: String::new(),
+            tr_cont_key: String::new(),
+        }
+    }
+}
+
+/// `t1488OutBlock` — the summary block carrying the next-page `idx` cursor. Via
+/// [`ls_core::string_or_number`] to tolerate JSON string OR number.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1488OutBlock {
+    /// Returned continuation cursor / IDX.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub idx: String,
+}
+
+/// `t1488OutBlock1` — one expected-execution change-rate row (representative
+/// subset; every numeric-bearing field via [`ls_core::string_or_number`]).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1488OutBlock1 {
+    /// Korean name / 한글명.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+    /// Short code / 종목코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub shcode: String,
+    /// Current price / 현재가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Sign vs. previous close / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change vs. previous close / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Rate of change / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Accumulated volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Margin rate / 증거금율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jkrate: String,
+}
+
+/// `t1488` response (single page). `outblock` is the summary (carrying the
+/// next-page `idx`); `outblock1` is the change-rate row array under
+/// `t1488OutBlock1`, tolerated as single-or-array via
+/// [`ls_core::de_vec_or_single`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1488Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1488OutBlock", default)]
+    pub outblock: T1488OutBlock,
+    #[serde(
+        rename = "t1488OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1488OutBlock1>,
+}

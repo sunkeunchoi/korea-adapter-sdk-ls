@@ -15,7 +15,7 @@
 # Export command-line / make variables (e.g. LS_LIVE_SMOKE_*) to recipe shells.
 export
 
-.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-ws-negative live-smoke-k3 live-smoke-ws-p1 live-smoke-ws-p2 live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1481 live-smoke-t1482 live-smoke-t1866 live-smoke-t1859 live-smoke-t1826 live-smoke-t1825 live-smoke-t9905 live-smoke-t9907 live-smoke-t8431 live-smoke-t8430 live-smoke-t9942 live-smoke-t1958 live-smoke-t1964 live-smoke-t1601 live-smoke-t1615 live-smoke-t1640 live-smoke-t1662 live-smoke-t1664 live-smoke-t3341 live-smoke-t8424 live-smoke-t1511 live-smoke-t1485 live-smoke-t1516 live-smoke-t1514 live-smoke-cspaq12300 live-smoke-cspaq22200 live-smoke-cfobq10500 live-smoke-ccenq90200 live-smoke-cfoaq10100 live-smoke-ccenq10100 live-smoke-t2301 live-smoke-t2522 live-smoke-t8401 live-smoke-t8426 live-smoke-t8433 live-smoke-t8435 live-smoke-t8467 live-smoke-t9943 live-smoke-t9944 live-smoke-t2111 live-smoke-t2112 live-smoke-t2106 live-smoke-t8402 live-smoke-t8403 live-smoke-t8434 live-smoke-t1988 live-smoke-t3320 live-smoke-t8455 live-smoke-t8460 live-smoke-t8463 live-smoke-g3101 live-smoke-g3104 live-smoke-g3106 live-smoke-g3102 live-smoke-g3103 live-smoke-g3190 live-smoke-o3101 live-smoke-o3121 live-smoke-o3105 live-smoke-o3106 live-smoke-o3125 live-smoke-o3126 live-smoke-t9945 live-smoke-t3202 live-smoke-t3401 live-smoke-t8410 live-smoke-t8451 live-smoke-t8419 live-smoke-t4203 live-smoke-t1901 live-smoke-t1105 live-smoke-t1104 live-smoke-t1305 live-smoke-t1310 live-smoke-t1404 live-smoke-t8417 live-smoke-t8418 live-smoke-t8411 live-smoke-t8452 live-smoke-t8453 live-smoke-t1302 live-smoke-t8464 live-smoke-t8465 live-smoke-t8466 live-smoke-t2216 live-smoke-t8405 live-smoke-t1444 live-smoke-t1422 live-smoke-t1427 live-smoke-t1442 live-smoke-t1405 live-smoke-t1960 live-smoke-t1961 live-smoke-t1966 live-smoke-t1921 live-smoke-t1532 live-smoke-t1533 live-smoke-t1926 live-smoke-t1764 live-smoke-t1903 live-smoke-order live-smoke-order-chain raw-probe
+.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-ws-negative live-smoke-k3 live-smoke-ws-p1 live-smoke-ws-p2 live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1481 live-smoke-t1482 live-smoke-t1866 live-smoke-t1859 live-smoke-t1826 live-smoke-t1825 live-smoke-t9905 live-smoke-t9907 live-smoke-t8431 live-smoke-t8430 live-smoke-t9942 live-smoke-t1958 live-smoke-t1964 live-smoke-t1601 live-smoke-t1615 live-smoke-t1640 live-smoke-t1662 live-smoke-t1664 live-smoke-t3341 live-smoke-t8424 live-smoke-t1511 live-smoke-t1485 live-smoke-t1516 live-smoke-t1514 live-smoke-cspaq12300 live-smoke-cspaq22200 live-smoke-cfobq10500 live-smoke-ccenq90200 live-smoke-cfoaq10100 live-smoke-ccenq10100 live-smoke-t2301 live-smoke-t2522 live-smoke-t8401 live-smoke-t8426 live-smoke-t8433 live-smoke-t8435 live-smoke-t8467 live-smoke-t9943 live-smoke-t9944 live-smoke-t2111 live-smoke-t2112 live-smoke-t2106 live-smoke-t8402 live-smoke-t8403 live-smoke-t8434 live-smoke-t1988 live-smoke-t3320 live-smoke-t8455 live-smoke-t8460 live-smoke-t8463 live-smoke-g3101 live-smoke-g3104 live-smoke-g3106 live-smoke-g3102 live-smoke-g3103 live-smoke-g3190 live-smoke-o3101 live-smoke-o3121 live-smoke-o3105 live-smoke-o3106 live-smoke-o3125 live-smoke-o3126 live-smoke-t9945 live-smoke-t3202 live-smoke-t3401 live-smoke-t8410 live-smoke-t8451 live-smoke-t8419 live-smoke-t4203 live-smoke-t1901 live-smoke-t1906 live-smoke-t8450 live-smoke-t1638 live-smoke-t1308 live-smoke-t1449 live-smoke-t1621 live-smoke-t2545 live-smoke-t8406 live-smoke-t8407 live-smoke-t1959 live-smoke-t1950 live-smoke-t1971 live-smoke-t1972 live-smoke-t1974 live-smoke-t1956 live-smoke-t1969 live-smoke-t1105 live-smoke-t1104 live-smoke-t1305 live-smoke-t1310 live-smoke-t1404 live-smoke-t1410 live-smoke-t1411 live-smoke-t1488 live-smoke-t1636 live-smoke-t1809 live-smoke-t8417 live-smoke-t8418 live-smoke-t8411 live-smoke-t8452 live-smoke-t8453 live-smoke-t1302 live-smoke-t8464 live-smoke-t8465 live-smoke-t8466 live-smoke-t2216 live-smoke-t8405 live-smoke-t1444 live-smoke-t1422 live-smoke-t1427 live-smoke-t1442 live-smoke-t1405 live-smoke-t1960 live-smoke-t1961 live-smoke-t1966 live-smoke-t1921 live-smoke-t1532 live-smoke-t1533 live-smoke-t1926 live-smoke-t1764 live-smoke-t1903 live-smoke-order live-smoke-order-chain raw-probe
 
 # $(1) = exact test name in crates/ls-sdk/tests/live_smoke.rs
 define run_smoke
@@ -231,6 +231,88 @@ live-smoke-t8430:
 ## KRX-session-dependent. Override with LS_LIVE_SMOKE_T1901_SHCODE.
 live-smoke-t1901:
 	$(call run_smoke,live_smoke_t1901)
+## ETF LP order-book smoke: read-only t1906 ETFLP호가 (shcode defaults to 152100);
+## persistent read reachable under closure. Override with LS_LIVE_SMOKE_T1906_SHCODE.
+live-smoke-t1906:
+	$(call run_smoke,live_smoke_t1906)
+## Current-price/order-book smoke: read-only t8450 (통합)주식현재가호가조회2
+## (shcode defaults 005930, exchgubun N); reachable under closure. Override with
+## LS_LIVE_SMOKE_T8450_SHCODE / LS_LIVE_SMOKE_T8450_EXCHGUBUN.
+live-smoke-t8450:
+	$(call run_smoke,live_smoke_t8450)
+## Remaining-quantity/pre-disclosure ranking smoke: read-only t1638 종목별잔량/사전공시
+## (gubun1=1, shcode="" full list, gubun2=1, exchgubun=""); reachable under closure.
+## Override with LS_LIVE_SMOKE_T1638_GUBUN1/_SHCODE/_GUBUN2/_EXCHGUBUN.
+live-smoke-t1638:
+	$(call run_smoke,live_smoke_t1638)
+## Time-bucketed trade-chart smoke: read-only t1308 주식시간대별체결조회챠트
+## (shcode 005930, starttime/endtime "" full session, bun_term 1, exchgubun ""); reachable under closure.
+## Override with LS_LIVE_SMOKE_T1308_SHCODE/_STARTTIME/_ENDTIME/_BUN_TERM/_EXCHGUBUN.
+live-smoke-t1308:
+	$(call run_smoke,live_smoke_t1308)
+## Price-band trade-weight smoke: read-only t1449 가격대별매매비중조회
+## (shcode 005930, dategb 1 — dategb MUST be non-empty or the board is empty); reachable under closure.
+## Override with LS_LIVE_SMOKE_T1449_SHCODE/_DATEGB.
+live-smoke-t1449:
+	$(call run_smoke,live_smoke_t1449)
+## By-time investor-trading smoke: read-only t1621 업종별분별투자자매매동향
+## (upcode 001, nmin 0, cnt 20, bgubun 0, exchgubun ""); nmin/cnt serialize as JSON
+## NUMBERS (string form returns IGW40011, KTD3); reachable under closure.
+## Override with LS_LIVE_SMOKE_T1621_UPCODE/_NMIN/_CNT/_BGUBUN/_EXCHGUBUN.
+live-smoke-t1621:
+	$(call run_smoke,live_smoke_t1621)
+## F/O by-time investor-trading smoke: read-only t2545 상품선물투자자매매동향
+## (eitem 01, sgubun 0, upcode 001, nmin 0, cnt 10, bgubun 0); nmin/cnt serialize
+## as JSON NUMBERS and bgubun MUST be "0" (string nmin/cnt or bgubun="1" returns
+## IGW40011/IGW50008, KTD3); reachable under closure.
+## Override with LS_LIVE_SMOKE_T2545_EITEM/_SGUBUN/_UPCODE/_NMIN/_CNT/_BGUBUN.
+live-smoke-t2545:
+	$(call run_smoke,live_smoke_t2545)
+## F/O by-tick conclusion smoke: read-only t8406 주식선물틱분별체결조회 — self-sources a
+## live front-month contract from the t8467 index-futures master, then reads it
+## (cgubun 1, bgubun 0, cnt 10); bgubun/cnt serialize as JSON NUMBERS (string form
+## returns IGW40011, KTD3). F/O conclusion is session-dependent — an empty 00707
+## even with a live contract dispositions to PENDING, not a flip.
+live-smoke-t8406:
+	$(call run_smoke,live_smoke_t8406)
+## Multi-symbol current-price smoke: read-only t8407 API용주식멀티현재가조회
+## (nrec 3, shcode "005930000660001200" = 3 concatenated codes); nrec serializes as
+## a JSON NUMBER (string form returns IGW40011, KTD3); reachable under closure.
+## Override with LS_LIVE_SMOKE_T8407_NREC/_SHCODE.
+live-smoke-t8407:
+	$(call run_smoke,live_smoke_t8407)
+## LP-target ELW issue-list smoke: read-only t1959 LP대상종목정보조회 (shcode
+## defaults to "" = the full LP-target list; reachable under closure).
+## Override with LS_LIVE_SMOKE_T1959_SHCODE.
+live-smoke-t1959:
+	$(call run_smoke,live_smoke_t1959)
+## ELW current-price/quote smoke: read-only t1950 ELW현재가(시세)조회. CHAINS off
+## t8431 for a FRESH ELW shcode (ELW codes expire), then quotes it.
+live-smoke-t1950:
+	$(call run_smoke,live_smoke_t1950)
+## ELW current-price + quote-board smoke: read-only t1971 ELW현재가호가조회. CHAINS
+## off t8431 for a FRESH ELW shcode (ELW codes expire), then quotes its 10-level board.
+live-smoke-t1971:
+	$(call run_smoke,live_smoke_t1971)
+## ELW current-price + trading-member (거래원) board smoke: read-only t1972
+## ELW현재가(거래원)조회. CHAINS off t8431 for a FRESH ELW shcode (ELW codes expire),
+## then reads its member board.
+live-smoke-t1972:
+	$(call run_smoke,live_smoke_t1972)
+## ELWs-sharing-a-base-asset smoke: read-only t1974 ELW기초자산동일종목. CHAINS off
+## t8431 for a FRESH ELW shcode (ELW codes expire), then reads the same-base sibling
+## issue list (cnt summary + per-issue array).
+live-smoke-t1974:
+	$(call run_smoke,live_smoke_t1974)
+## ELW current-price/payout smoke: read-only t1956 ELW현재가(확정지급액)조회. CHAINS off
+## t8431 for a FRESH ELW shcode (ELW codes expire), then reads the single snapshot
+## (hname/price/payout/analytics) + basket array.
+live-smoke-t1956:
+	$(call run_smoke,live_smoke_t1956)
+## ELW screener smoke: read-only t1969 ELW지표검색 — the all-ELWs default screen
+## (T1969Request::new; every chk* off, numeric ranges 0/0). Reachable under closure.
+live-smoke-t1969:
+	$(call run_smoke,live_smoke_t1969)
 ## Pivot/demark smoke: read-only t1105 (shcode defaults 005930, exchgubun K).
 live-smoke-t1105:
 	$(call run_smoke,live_smoke_t1105)
@@ -247,6 +329,29 @@ live-smoke-t1310:
 	$(call run_smoke,live_smoke_t1310)
 live-smoke-t1404:
 	$(call run_smoke,live_smoke_t1404)
+## Closed-window more-flips wave (plan -001). Ultra-low-liquidity board t1410
+## (gubun 0, first-page cts_shcode). Non-empty -> flip; empty 00707 -> PENDING.
+live-smoke-t1410:
+	$(call run_smoke,live_smoke_t1410)
+## Closed-window more-flips wave (plan -001). Stocks-by-margin-rate t1411 (gubun 0,
+## jongchk 1, jkrate 1, shcode 005930, body idx=0 as a number). Non-empty -> flip;
+## empty 00707 -> PENDING.
+live-smoke-t1411:
+	$(call run_smoke,live_smoke_t1411)
+## Closed-window more-flips wave (plan -001). Expected-exec top-change-rate t1488
+## (gubun 0, sign 1, jgubun 1, jongchk 0, volume 0, body idx=0 + yesprice/yeeprice/
+## yevolume=0 as numbers). Non-empty -> flip; empty 00707 -> PENDING.
+live-smoke-t1488:
+	$(call run_smoke,live_smoke_t1488)
+## Closed-window more-flips wave (plan -001). Per-stock program-trading-trend t1636
+## (gubun 0, gubun1 0, gubun2 0, shcode 005930, exchgubun "", body cts_idx=0 as a
+## number). Non-empty -> flip; empty 00707 -> PENDING.
+live-smoke-t1636:
+	$(call run_smoke,live_smoke_t1636)
+## Closed-window more-flips wave (plan -001). Signal search t1809 (gubun 1, jmGb 1,
+## jmcode 1, first-page string cts="1"). Non-empty -> flip; empty 00707 -> PENDING.
+live-smoke-t1809:
+	$(call run_smoke,live_smoke_t1809)
 live-smoke-t9942:
 	$(call run_smoke,live_smoke_t9942)
 

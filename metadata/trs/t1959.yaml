@@ -17,7 +17,11 @@ dependencies:
   strong_order_fields: []
 support:
   tracked: true
-  implemented: false
+  # Closure-flip (plan -001 closed-window more-flips): non-empty paper smoke UNDER
+  # KRX closure (shcode="" full LP-target list, rsp_cd=00000, 420 per-issue rows,
+  # non-empty first-row shcode/price). All-String request (no numeric request slot).
+  # Carries a deferred open-window freshness re-check obligation (R9).
+  implemented: true
   recommended: false
 maintenance:
   source_spec_hash: 482ec9584dab

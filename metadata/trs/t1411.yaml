@@ -17,7 +17,11 @@ dependencies:
   strong_order_fields: []
 support:
   tracked: true
-  implemented: false
+  # Implemented at paginated scope via `make live-smoke-t1411` (paper, non-empty
+  # t1411OutBlock1 under closure; body idx=0 serialized as a JSON number via
+  # string_as_number). Recommended deferred to a later promote-tr pass (R9: no
+  # Focused Evidence / recommendation block authored here).
+  implemented: true
   recommended: false
 maintenance:
   source_spec_hash: 434667ba1817

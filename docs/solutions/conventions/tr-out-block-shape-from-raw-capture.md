@@ -1,6 +1,7 @@
 ---
 title: "Model a TR out-block's wire key and array-ness from the RAW capture, not the normalized api-drift baseline"
 date: 2026-06-23
+last_updated: 2026-06-28
 category: conventions
 module: ls-sdk TR response modeling (crates/ls-sdk)
 problem_type: convention
@@ -132,6 +133,38 @@ baseline.**
 
   For a single-out-block TR, assert the canonical field instead
   (`!resp.outblock.gmprice.is_empty()`, as in `live_smoke_t2301`).
+
+- **Witness the SUBSTANTIVE field, not a calendar/echo/header field — and AND, not
+  OR.** The assertion above is only as strong as the field it names. A `date`/key/
+  header field is populated by the gateway *regardless of trading activity*, so
+  asserting it certifies nothing about the data rows — under closure it green-lights
+  a session-empty body and produces a **false-positive flip** (the cardinal failure
+  of closed-window flip waves). Three rules: (a) assert a value that exists only when
+  real rows came back (volume/price/qty/count), never an echoed label; (b) the guard
+  must MATCH what the `record(...)` line prints and the doc-comment claims — drift
+  between the claimed witness and the checked field is the detectable tell; (c) AND
+  multiple witnesses, never OR (OR lets the weakest, most-always-populated field carry
+  the assertion). After tightening, **re-run the smoke under closure** — if it now
+  fails, the original flip was a false positive → revert to PENDING.
+
+  ```rust
+  // WRONG — `date` is a calendar label echoed even for a session-empty body;
+  // the record line prints indmsvol_len and the doc-comment claims an indmsvol witness,
+  // so the guard had drifted off its own claim (live_smoke_t1621 / t2545).
+  first.is_some_and(|r| !r.date.is_empty())
+  // RIGHT — AND the substantive volume figure the record line / doc-comment name.
+  first.is_some_and(|r| !r.date.is_empty() && !r.indmsvol.is_empty())
+
+  // WRONG — OR passes on either field alone, weaker than sibling smokes (live_smoke_t8406).
+  first.is_some_and(|r| !r.chetime.is_empty() || !r.price.is_empty())
+  // RIGHT — AND, matching sibling conclusion-board smokes.
+  first.is_some_and(|r| !r.chetime.is_empty() && !r.price.is_empty())
+  ```
+
+  (Found by an adversarial ce-code-review pass on the 2026-06-27 closed-window
+  more-flips wave; both signatures — AND-vs-OR and claim/assertion drift — are
+  catchable in review without running anything. Re-running all three under closure
+  confirmed the substantive fields populated, so the flips stood.)
 
 - **Don't `_v2`-name sibling TRs that share a Korean name.** Name by the real
   schema/`gubun` distinction. The shipped pair for 지수선물마스터조회 is

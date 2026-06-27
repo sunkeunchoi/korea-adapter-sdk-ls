@@ -1,0 +1,37 @@
+{
+  "rsp_cd": "00000",
+  "t1411OutBlock1": [
+    {
+      "volume": 298,
+      "sjkrate": 100,
+      "subprice": 440,
+      "recprice": 661,
+      "price": 661,
+      "shcode": "000040",
+      "change": 0,
+      "sign": "3",
+      "diff": "0.00",
+      "jkrate": 100,
+      "hname": "KR모터스"
+    },
+    {
+      "volume": 0,
+      "sjkrate": 100,
+      "subprice": 10000,
+      "recprice": 15160,
+      "price": 15160,
+      "shcode": "002025",
+      "change": 0,
+      "sign": "3",
+      "diff": "0.00",
+      "jkrate": 100,
+      "hname": "코오롱우"
+    }
+  ],
+  "rsp_msg": "정상적으로 조회가 완료되었습니다.",
+  "t1411OutBlock": {
+    "sjkrate": 45,
+    "jkrate": 20,
+    "idx": 40
+  }
+}
