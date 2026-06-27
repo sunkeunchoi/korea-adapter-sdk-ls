@@ -1,0 +1,24 @@
+tr_code: t1533
+name: 특이테마
+owner_class: market_session
+facets:
+  protocol: rest
+  instrument_domain: stock
+  venue_session: krx_regular
+  date_sensitive: true
+  self_paginated: false
+  account_state: false
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: market_data
+  caller_supplied_identifiers: []
+dependencies:
+  self_continuation_fields: []
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: true
+  recommended: false
+maintenance:
+  source_spec_hash: afa922162492
+  last_reviewed: 2026-06-26

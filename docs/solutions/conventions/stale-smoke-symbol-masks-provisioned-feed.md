@@ -1,6 +1,7 @@
 ---
-title: "Refresh an overseas-futures/-option read's smoke symbol to the current front-month before dispositioning an empty paper smoke as feed-unprovisioned"
+title: "Refresh a futures/-option read's smoke symbol to the current front-month before dispositioning an empty paper smoke as feed-unprovisioned"
 date: 2026-06-25
+last_updated: 2026-06-27
 category: conventions
 module: ls-sdk Paper Live Smoke harness, implement-tr recipe
 problem_type: convention
@@ -8,14 +9,17 @@ component: tooling
 severity: medium
 applies_when:
   - "Smoking an overseas-futures or overseas-future-option read (o3105/o3106/o3125/o3126) keyed by a registered contract symbol"
+  - "Smoking a DOMESTIC KRX F/O chart/quote read (t8464/t8465/t8466/t2216/t8405) keyed by an index-futures or stock-futures contract code"
   - "A make live-smoke-<tr> returns a success rsp_cd (00000/00707) with an empty out-block and you are about to record pending:feed-unprovisioned"
-  - "The registered smoke symbol carries an expiry (e.g. CUSN23, HSIM23) that may have rolled since it was registered"
+  - "The registered smoke symbol carries an expiry (e.g. CUSN23, HSIM23, A0166000) that may have rolled since it was registered"
 tags:
   - paper-live-smoke
   - stale-symbol
   - front-month
   - overseas-futures
+  - domestic-futures-options
   - o3101-master
+  - t8467-master
   - disposition
   - implement-tr
 related_components:
@@ -43,6 +47,18 @@ market clock, not the TR — is covered in
 [`market-hours-read-empty-result-disposition.md`](./market-hours-read-empty-result-disposition.md).
 A stale dated symbol is a distinct cause that the session-clock branch does not catch:
 the symbol is wrong even when the session is open.
+
+**The same trap applies to DOMESTIC KRX futures/options** (closed-window breadth flip
+wave, plan -004, 2026-06-27). The F/O chart/quote reads `t8464`/`t8465`/`t8466`
+(선물옵션차트 tick/N분/일주월), `t2216` (틱분별체결차트), and `t8405` (주식선물기간별주가)
+are keyed by an index-futures or stock-futures contract code (`A0166000`-style). On the
+first probe the **example codes from the raw capture were already expired**, so every
+one returned `00000` with a tiny/empty board under closure — easy to misread as
+"derivatives feed not in paper" or "needs an open session." Re-resolving each to a
+**current front-month** code made all five return non-empty (3000–6500 byte boards) and
+flip to Implemented **under closure** — the data was there the whole time. Domestic F/O
+contract codes roll exactly like overseas dated symbols; an underlying ticker
+(equities) does not.
 
 ## Guidance
 
@@ -77,6 +93,26 @@ justifies the feed-unprovisioned disposition.
    read). The smoke's existing `out-block.is_empty()` guard before `record()` keeps an
    empty result from recording false evidence either way.
 
+### Domestic KRX F/O (closed-window): source the contract from a domestic master
+
+For the domestic F/O reads, the same rule holds with domestic masters — and the
+front-month is best sourced **inside the smoke at run time** so it never goes stale:
+
+1. **Index futures/options** (`t8464`/`t8465`/`t8466` shcode, `t2216` focode): resolve
+   from `t8467` (`index_futures_master`, `T8467Request::new("Q")`) → `outblock[0].shcode`.
+   **Stock futures** (`t8405` shcode): resolve from `t8401` (`stock_futures_master`,
+   `T8401Request::new()`) → `outblock[0].shcode`. Both masters return on paper anytime
+   (not session-bound), so the smoke self-heals across contract rolls.
+2. **Harvest a current code for a one-off raw-probe** by running an already-Implemented
+   F/O smoke that prints its contract in the credential-free `LIVE-SMOKE` line:
+   `make live-smoke-t2111` prints the live index-futures `focode`; `make live-smoke-t8402`
+   prints the live stock-futures `focode`. Feed that into `make raw-probe` to confirm
+   non-empty **before** building the struct (the per-TR probe gate), instead of trusting
+   the raw capture's example code.
+3. These reads are otherwise **session-independent** — they return historical/chart data
+   under closure once the contract is current. An empty board after a current-contract
+   probe is then a real PENDING; an empty board on the example code is just a stale code.
+
 ## Why This Matters
 
 A success-`rsp_cd` + empty out-block has at least three causes — closed session, stale
@@ -92,11 +128,15 @@ nothing about whether the symbol was live.
 ## When to Apply
 
 - Any overseas-futures/-option read keyed by a dated contract symbol (`o31xx` family)
-  that smokes empty, **before** writing a feed-unprovisioned or environmental verdict.
-- Most acute when the registered smoke symbol's embedded year is in the past relative
-  to the smoke date — a strong signal the symbol has rolled.
-- Not needed for reads keyed by a non-expiring identifier (equities by ticker, master
-  list reads); those have no front-month to refresh.
+  **or** any domestic KRX F/O chart/quote read keyed by a contract code (`t8464`/`t8465`/
+  `t8466`/`t2216`/`t8405` and siblings) that smokes empty, **before** writing a
+  feed-unprovisioned or environmental verdict.
+- Most acute when the registered smoke symbol/code's embedded expiry is in the past
+  relative to the smoke date — a strong signal it has rolled. The raw capture's example
+  code is a prime suspect: it was pinned whenever the spec was captured and is routinely
+  expired by the time you flip the TR.
+- Not needed for reads keyed by a non-expiring identifier (equities/sector by code,
+  master list reads); those have no front-month to refresh.
 
 ## Examples
 
@@ -112,8 +152,23 @@ make live-smoke-o3101   # rows=85; O3101OutBlock symbol=CUSN26 nm=...(2026.07)
 make live-smoke-o3105   # O3105Request::new("CUSN26  ") -> rsp_cd=00000 quote=1 -> IMPLEMENTED
 ```
 
-The same empty `o3105` smoke means two different things depending on whether its symbol
-is current; only re-resolving against the `o3101` master tells them apart. See also
+```
+# Domestic KRX F/O (closed-window flip wave, plan -004) — example code is expired
+make raw-probe LS_PROBE_TR_CD=t8465 ... '{"t8465InBlock":{"shcode":"A0166000",...}}'
+#   -> http=200 rsp_cd=00000 body_len=54   (empty board — looks unprovisioned)
+
+# Harvest a current index-futures code from an already-Implemented F/O smoke
+make live-smoke-t2111   # LIVE-SMOKE ... focode=A0669000 ...
+
+# Re-probe with the current contract -> non-empty under closure -> build + flip
+make raw-probe LS_PROBE_TR_CD=t8465 ... '{"t8465InBlock":{"shcode":"A0669000",...}}'
+#   -> http=200 rsp_cd=00000 body_len=3491   (real board)
+# The t8465 smoke itself sources the contract from t8467 at run time, so it self-heals.
+```
+
+The same empty `o3105`/`t8465` smoke means two different things depending on whether its
+symbol/code is current; only re-resolving against the master (`o3101` overseas / `t8467`
+/ `t8401` domestic) tells them apart. See also
 [`market-hours-read-empty-result-disposition.md`](./market-hours-read-empty-result-disposition.md)
 (the session-clock false-empty axis this complements),
 [`tr-out-block-shape-from-raw-capture.md`](./tr-out-block-shape-from-raw-capture.md)

@@ -1,0 +1,24 @@
+tr_code: t2407
+name: 선물옵션호가잔량비율챠트
+owner_class: paginated
+facets:
+  protocol: rest
+  instrument_domain: futures_options
+  venue_session: krx_regular
+  date_sensitive: true
+  self_paginated: true
+  account_state: false
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: market_data
+  caller_supplied_identifiers: [focode]
+dependencies:
+  self_continuation_fields: [cts_time]
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: false
+  recommended: false
+maintenance:
+  source_spec_hash: 250f02110b7d
+  last_reviewed: 2026-06-26

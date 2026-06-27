@@ -1,0 +1,24 @@
+tr_code: t1405
+name: 투자경고/매매정지/정리매매조회
+owner_class: paginated
+facets:
+  protocol: rest
+  instrument_domain: stock
+  venue_session: krx_regular
+  date_sensitive: false
+  self_paginated: true
+  account_state: false
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: market_data
+  caller_supplied_identifiers: []
+dependencies:
+  self_continuation_fields: [cts_shcode]
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: true
+  recommended: false
+maintenance:
+  source_spec_hash: 51e5794f324a
+  last_reviewed: 2026-06-26

@@ -1,0 +1,252 @@
+{
+  "tr_code": "t1533",
+  "tr_name": "특이테마",
+  "protocol": "rest",
+  "is_websocket": false,
+  "endpoint_path": "/stock/sector",
+  "api_group_id": "8f027fa6-4177-43e3-9a7a-a76873efd47c",
+  "source_group_name": "[주식] 섹터",
+  "request_blocks": [
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 1,
+      "field_name": "authorization",
+      "korean_name": "접근토큰",
+      "type": "String",
+      "length": 1000,
+      "required": true,
+      "description_hash": "62956eed2a6e506a"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 2,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 3,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 4,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 5,
+      "field_name": "mac_address",
+      "korean_name": "MAC 주소",
+      "type": "String",
+      "length": 12,
+      "required": true,
+      "description_hash": "1d2213655779faf2"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1533InBlock",
+      "field_index": 0,
+      "field_name": "gubun",
+      "korean_name": "구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "4162c018e740223f"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1533InBlock",
+      "field_index": 1,
+      "field_name": "chgdate",
+      "korean_name": "대비일자",
+      "type": "Number",
+      "length": 2,
+      "required": true
+    }
+  ],
+  "response_blocks": [
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 1,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 2,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 3,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "response",
+      "block_name": "t1533OutBlock",
+      "field_index": 0,
+      "field_name": "bdate",
+      "korean_name": "일자",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1533OutBlock",
+      "field_index": 1,
+      "field_name": "t1533OutBlock1",
+      "korean_name": "t1533OutBlock1\n",
+      "type": "Object Array",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1533OutBlock",
+      "field_index": 2,
+      "field_name": "tmname",
+      "korean_name": "테마명",
+      "type": "String",
+      "length": 36,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1533OutBlock",
+      "field_index": 3,
+      "field_name": "totcnt",
+      "korean_name": "전체",
+      "type": "Number",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1533OutBlock",
+      "field_index": 4,
+      "field_name": "upcnt",
+      "korean_name": "상승",
+      "type": "Number",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1533OutBlock",
+      "field_index": 5,
+      "field_name": "dncnt",
+      "korean_name": "하락",
+      "type": "Number",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1533OutBlock",
+      "field_index": 6,
+      "field_name": "uprate",
+      "korean_name": "상승비율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1533OutBlock",
+      "field_index": 7,
+      "field_name": "diff_vol",
+      "korean_name": "거래증가율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1533OutBlock",
+      "field_index": 8,
+      "field_name": "avgdiff",
+      "korean_name": "평균등락율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1533OutBlock",
+      "field_index": 9,
+      "field_name": "chgdiff",
+      "korean_name": "대비등락율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1533OutBlock",
+      "field_index": 10,
+      "field_name": "tmcode",
+      "korean_name": "테마코드",
+      "type": "String",
+      "length": 4,
+      "required": true
+    }
+  ],
+  "rate_limit_per_sec": 1,
+  "corp_rate_limit_per_sec": 3,
+  "rate_source_group": "8f027fa6-4177-43e3-9a7a-a76873efd47c"
+}

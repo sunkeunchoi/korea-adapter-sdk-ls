@@ -1,0 +1,372 @@
+{
+  "tr_code": "t1716",
+  "tr_name": "외인기관종목별동향",
+  "protocol": "rest",
+  "is_websocket": false,
+  "endpoint_path": "/stock/frgr-itt",
+  "api_group_id": "90378c39-f93e-4f95-9670-f76e5c924cc6",
+  "source_group_name": "[주식] 외인/기관",
+  "request_blocks": [
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 1,
+      "field_name": "authorization",
+      "korean_name": "접근토큰",
+      "type": "String",
+      "length": 1000,
+      "required": true,
+      "description_hash": "62956eed2a6e506a"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 2,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 3,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 4,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 5,
+      "field_name": "mac_address",
+      "korean_name": "MAC 주소",
+      "type": "String",
+      "length": 12,
+      "required": true,
+      "description_hash": "1d2213655779faf2"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1716InBlock",
+      "field_index": 0,
+      "field_name": "shcode",
+      "korean_name": "종목코드",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t1716InBlock",
+      "field_index": 1,
+      "field_name": "gubun",
+      "korean_name": "구분(0:일간순매수1:기간누적순매수)",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1e753cdef96f57d4"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1716InBlock",
+      "field_index": 2,
+      "field_name": "fromdt",
+      "korean_name": "시작일자",
+      "type": "String",
+      "length": 8,
+      "required": true,
+      "description_hash": "202147cbb9a6d563"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1716InBlock",
+      "field_index": 3,
+      "field_name": "todt",
+      "korean_name": "종료일자",
+      "type": "String",
+      "length": 8,
+      "required": true,
+      "description_hash": "202147cbb9a6d563"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1716InBlock",
+      "field_index": 4,
+      "field_name": "prapp",
+      "korean_name": "PR감산적용율",
+      "type": "Number",
+      "length": 3,
+      "required": true,
+      "description_hash": "0da8adfc8197bbc2"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1716InBlock",
+      "field_index": 5,
+      "field_name": "prgubun",
+      "korean_name": "PR적용구분(0:적용안함1:적용)",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "dd7086882eb261f2"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1716InBlock",
+      "field_index": 6,
+      "field_name": "orggubun",
+      "korean_name": "기관적용",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "dd7086882eb261f2"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1716InBlock",
+      "field_index": 7,
+      "field_name": "frggubun",
+      "korean_name": "외인적용",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "dd7086882eb261f2"
+    },
+    {
+      "direction": "request",
+      "block_name": "t1716InBlock",
+      "field_index": 8,
+      "field_name": "exchgubun",
+      "korean_name": "거래소구분코드",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "b0c365e7c250393d"
+    }
+  ],
+  "response_blocks": [
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 1,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 2,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 3,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "response",
+      "block_name": "t1716OutBlock",
+      "field_index": 0,
+      "field_name": "date",
+      "korean_name": "일자",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1716OutBlock",
+      "field_index": 1,
+      "field_name": "close",
+      "korean_name": "종가",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1716OutBlock",
+      "field_index": 2,
+      "field_name": "sign",
+      "korean_name": "전일대비구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1716OutBlock",
+      "field_index": 3,
+      "field_name": "change",
+      "korean_name": "전일대비",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1716OutBlock",
+      "field_index": 4,
+      "field_name": "diff",
+      "korean_name": "등락율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1716OutBlock",
+      "field_index": 5,
+      "field_name": "volume",
+      "korean_name": "누적거래량",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1716OutBlock",
+      "field_index": 6,
+      "field_name": "krx_0008",
+      "korean_name": "거래소_개인",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1716OutBlock",
+      "field_index": 7,
+      "field_name": "krx_0018",
+      "korean_name": "거래소_기관",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1716OutBlock",
+      "field_index": 8,
+      "field_name": "krx_0009",
+      "korean_name": "거래소_외국인",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1716OutBlock",
+      "field_index": 9,
+      "field_name": "pgmvol",
+      "korean_name": "프로그램",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1716OutBlock",
+      "field_index": 10,
+      "field_name": "fsc_listing",
+      "korean_name": "금감원_외인보유주식수",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1716OutBlock",
+      "field_index": 11,
+      "field_name": "fsc_sjrate",
+      "korean_name": "금감원_소진율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1716OutBlock",
+      "field_index": 12,
+      "field_name": "fsc_0009",
+      "korean_name": "금감원_외국인",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1716OutBlock",
+      "field_index": 13,
+      "field_name": "gm_volume",
+      "korean_name": "공매도수량",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t1716OutBlock",
+      "field_index": 14,
+      "field_name": "gm_value",
+      "korean_name": "공매도대금",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    }
+  ],
+  "rate_limit_per_sec": 1,
+  "corp_rate_limit_per_sec": 3,
+  "rate_source_group": "90378c39-f93e-4f95-9670-f76e5c924cc6"
+}

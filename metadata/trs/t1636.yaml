@@ -1,0 +1,24 @@
+tr_code: t1636
+name: 종목별프로그램매매동향
+owner_class: paginated
+facets:
+  protocol: rest
+  instrument_domain: stock
+  venue_session: krx_regular
+  date_sensitive: false
+  self_paginated: true
+  account_state: false
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: market_data
+  caller_supplied_identifiers: [shcode]
+dependencies:
+  self_continuation_fields: [cts_idx]
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: false
+  recommended: false
+maintenance:
+  source_spec_hash: 303e53b063c9
+  last_reviewed: 2026-06-26

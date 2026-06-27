@@ -1,0 +1,24 @@
+tr_code: t1427
+name: 상/하한가직전
+owner_class: paginated
+facets:
+  protocol: rest
+  instrument_domain: stock
+  venue_session: krx_regular
+  date_sensitive: false
+  self_paginated: true
+  account_state: false
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: market_data
+  caller_supplied_identifiers: []
+dependencies:
+  self_continuation_fields: [idx]
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: true
+  recommended: false
+maintenance:
+  source_spec_hash: 0a0195bbdea4
+  last_reviewed: 2026-06-26

@@ -1,0 +1,24 @@
+tr_code: t1302
+name: 주식분별주가조회
+owner_class: market_session
+facets:
+  protocol: rest
+  instrument_domain: stock
+  venue_session: krx_regular
+  date_sensitive: true
+  self_paginated: false
+  account_state: false
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: market_data
+  caller_supplied_identifiers: [shcode]
+dependencies:
+  self_continuation_fields: []
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: true
+  recommended: false
+maintenance:
+  source_spec_hash: f9580d14d9b7
+  last_reviewed: 2026-06-26

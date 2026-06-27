@@ -16,6 +16,7 @@ use std::sync::Arc;
 
 use ls_core::{Inner, LsResult};
 
+mod breadth_board;
 mod chart;
 mod designation_board;
 mod historical_chart;
@@ -23,6 +24,7 @@ mod invest_opinion;
 mod rank_screen;
 mod sector_index;
 
+pub use breadth_board::*;
 pub use chart::*;
 pub use designation_board::*;
 pub use historical_chart::*;
@@ -257,6 +259,137 @@ impl Paginated {
     pub async fn designation_board(&self, req: &T1404Request) -> LsResult<T1404Response> {
         self.inner
             .post_paginated(&ls_core::endpoint_policy::T1404_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t8417` sector tick chart (업종차트 틱/n틱).
+    /// Self-paginated on the body `cts_date`/`cts_time` cursors (plan -004).
+    pub async fn sector_chart_tick(&self, req: &T8417Request) -> LsResult<T8417Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T8417_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t8418` sector N-minute chart (업종차트 N분).
+    pub async fn sector_chart_minute(&self, req: &T8418Request) -> LsResult<T8418Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T8418_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t8411` stock tick chart (주식차트 틱/n틱).
+    pub async fn stock_chart_tick(&self, req: &T8411Request) -> LsResult<T8411Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T8411_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t8452` integrated stock N-minute chart
+    /// ((통합)주식챠트 N분). Self-paginated on the body cursor (plan -004).
+    pub async fn stock_chart_minute_unified(&self, req: &T8452Request) -> LsResult<T8452Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T8452_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t8453` integrated stock tick chart
+    /// ((통합)주식챠트 틱/N틱). Self-paginated on the body cursor (plan -004).
+    pub async fn stock_chart_tick_unified(&self, req: &T8453Request) -> LsResult<T8453Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T8453_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t8464` F/O tick chart (선물옵션차트 틱/n틱).
+    /// Self-paginated on the body cursor (plan -004 batch B).
+    pub async fn fo_chart_tick(&self, req: &T8464Request) -> LsResult<T8464Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T8464_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t8465` F/O N-minute chart (선물/옵션차트 N분).
+    pub async fn fo_chart_minute(&self, req: &T8465Request) -> LsResult<T8465Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T8465_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t8466` F/O day/week/month chart (선물/옵션차트 일주월).
+    pub async fn fo_chart_period(&self, req: &T8466Request) -> LsResult<T8466Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T8466_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t8405` stock-futures period price (주식선물기간별주가).
+    /// Self-paginated on the `cts_code` body cursor (plan -004 batch B).
+    pub async fn stock_futures_period(&self, req: &T8405Request) -> LsResult<T8405Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T8405_POLICY, req)
+            .await
+    }
+
+    /// `t1444` market cap top ([주식] 상위종목). Plan -004 batch C.
+    pub async fn market_cap_top(&self, req: &T1444Request) -> LsResult<T1444Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1444_POLICY, req)
+            .await
+    }
+
+    /// `t1422` price limit ([주식] 시세). Plan -004 batch C.
+    pub async fn price_limit(&self, req: &T1422Request) -> LsResult<T1422Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1422_POLICY, req)
+            .await
+    }
+
+    /// `t1427` price limit imminent ([주식] 시세). Plan -004 batch C.
+    pub async fn price_limit_imminent(&self, req: &T1427Request) -> LsResult<T1427Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1427_POLICY, req)
+            .await
+    }
+
+    /// `t1442` new high low ([주식] 시세). Plan -004 batch C.
+    pub async fn new_high_low(&self, req: &T1442Request) -> LsResult<T1442Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1442_POLICY, req)
+            .await
+    }
+
+    /// `t1405` trade suspension ([주식] 시세). Plan -004 batch C.
+    pub async fn trade_suspension(&self, req: &T1405Request) -> LsResult<T1405Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1405_POLICY, req)
+            .await
+    }
+
+    /// `t1960` elw change rank ([주식] ELW). Plan -004 batch C.
+    pub async fn elw_change_rank(&self, req: &T1960Request) -> LsResult<T1960Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1960_POLICY, req)
+            .await
+    }
+
+    /// `t1961` elw volume rank ([주식] ELW). Plan -004 batch C.
+    pub async fn elw_volume_rank(&self, req: &T1961Request) -> LsResult<T1961Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1961_POLICY, req)
+            .await
+    }
+
+    /// `t1966` elw value rank ([주식] ELW). Plan -004 batch C.
+    pub async fn elw_value_rank(&self, req: &T1966Request) -> LsResult<T1966Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1966_POLICY, req)
+            .await
+    }
+
+    /// `t1921` credit trend ([주식] 기타). Plan -004 batch C.
+    pub async fn credit_trend(&self, req: &T1921Request) -> LsResult<T1921Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1921_POLICY, req)
             .await
     }
 }

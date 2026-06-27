@@ -822,3 +822,477 @@ trs:
     protocol: websocket
     instrument_domain: overseas_futures
     venue_session: unspecified
+  t1109:
+    file: trs/t1109.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1301:
+    file: trs/t1301.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1302:
+    file: trs/t1302.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1405:
+    file: trs/t1405.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1410:
+    file: trs/t1410.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1411:
+    file: trs/t1411.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1422:
+    file: trs/t1422.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1427:
+    file: trs/t1427.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1442:
+    file: trs/t1442.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1444:
+    file: trs/t1444.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1449:
+    file: trs/t1449.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1471:
+    file: trs/t1471.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1475:
+    file: trs/t1475.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1486:
+    file: trs/t1486.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1488:
+    file: trs/t1488.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1532:
+    file: trs/t1532.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1533:
+    file: trs/t1533.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1602:
+    file: trs/t1602.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1603:
+    file: trs/t1603.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1617:
+    file: trs/t1617.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1621:
+    file: trs/t1621.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1631:
+    file: trs/t1631.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1632:
+    file: trs/t1632.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1633:
+    file: trs/t1633.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1636:
+    file: trs/t1636.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1637:
+    file: trs/t1637.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1638:
+    file: trs/t1638.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1665:
+    file: trs/t1665.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1702:
+    file: trs/t1702.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1716:
+    file: trs/t1716.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1717:
+    file: trs/t1717.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1752:
+    file: trs/t1752.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1764:
+    file: trs/t1764.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1771:
+    file: trs/t1771.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1809:
+    file: trs/t1809.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1902:
+    file: trs/t1902.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1903:
+    file: trs/t1903.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1904:
+    file: trs/t1904.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1906:
+    file: trs/t1906.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1921:
+    file: trs/t1921.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1926:
+    file: trs/t1926.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1927:
+    file: trs/t1927.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1941:
+    file: trs/t1941.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1950:
+    file: trs/t1950.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1951:
+    file: trs/t1951.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1954:
+    file: trs/t1954.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1956:
+    file: trs/t1956.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1959:
+    file: trs/t1959.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1960:
+    file: trs/t1960.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1961:
+    file: trs/t1961.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1966:
+    file: trs/t1966.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1969:
+    file: trs/t1969.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1971:
+    file: trs/t1971.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1972:
+    file: trs/t1972.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1973:
+    file: trs/t1973.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t1974:
+    file: trs/t1974.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t2210:
+    file: trs/t2210.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t2212:
+    file: trs/t2212.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t2214:
+    file: trs/t2214.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t2216:
+    file: trs/t2216.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t2407:
+    file: trs/t2407.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t2424:
+    file: trs/t2424.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t2541:
+    file: trs/t2541.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t2545:
+    file: trs/t2545.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t8404:
+    file: trs/t8404.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t8405:
+    file: trs/t8405.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t8406:
+    file: trs/t8406.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t8407:
+    file: trs/t8407.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t8417:
+    file: trs/t8417.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: sector_index
+    venue_session: krx_regular
+  t8418:
+    file: trs/t8418.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: sector_index
+    venue_session: krx_regular
+  t8427:
+    file: trs/t8427.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t8428:
+    file: trs/t8428.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t8450:
+    file: trs/t8450.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t8452:
+    file: trs/t8452.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t8453:
+    file: trs/t8453.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t8454:
+    file: trs/t8454.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: stock
+    venue_session: krx_regular
+  t8464:
+    file: trs/t8464.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t8465:
+    file: trs/t8465.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  t8466:
+    file: trs/t8466.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
