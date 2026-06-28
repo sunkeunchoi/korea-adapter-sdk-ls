@@ -1,0 +1,224 @@
+{
+  "tr_code": "OMG",
+  "tr_name": "KOSPI200옵션민감도",
+  "protocol": "websocket",
+  "is_websocket": true,
+  "endpoint_path": "/websocket/futureoption",
+  "api_group_id": "57936c91-b49d-4702-b7f6-3935c6859462",
+  "source_group_name": "[선물/옵션] 실시간 시세",
+  "request_blocks": [
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 0,
+      "field_name": "token",
+      "korean_name": "접근토큰",
+      "type": "String",
+      "length": 1000,
+      "required": true,
+      "description_hash": "ee5c73906207dffe"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 1,
+      "field_name": "tr_type",
+      "korean_name": "거래 Type",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "5d9761ebdce44e7f"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_body",
+      "field_index": 0,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 3,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_body",
+      "field_index": 1,
+      "field_name": "tr_key",
+      "korean_name": "단축코드",
+      "type": "String",
+      "length": 8,
+      "required": false,
+      "description_hash": "f8838dd2d41e179b"
+    }
+  ],
+  "response_blocks": [
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 0,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 3,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 0,
+      "field_name": "chetime",
+      "korean_name": "체결시간",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 1,
+      "field_name": "actprice",
+      "korean_name": "행사가",
+      "type": "String",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 2,
+      "field_name": "k200jisu",
+      "korean_name": "KOSPI200지수",
+      "type": "String",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 3,
+      "field_name": "fut200jisu",
+      "korean_name": "선물가격",
+      "type": "String",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 4,
+      "field_name": "price",
+      "korean_name": "현재가",
+      "type": "String",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 5,
+      "field_name": "capimpv",
+      "korean_name": "대표내재변동성",
+      "type": "String",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 6,
+      "field_name": "impv",
+      "korean_name": "내재변동성",
+      "type": "String",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 7,
+      "field_name": "delt",
+      "korean_name": "델타(블랙숄즈)",
+      "type": "String",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 8,
+      "field_name": "gama",
+      "korean_name": "감마(블랙숄즈)",
+      "type": "String",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 9,
+      "field_name": "ceta",
+      "korean_name": "세타(블랙숄즈)",
+      "type": "String",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 10,
+      "field_name": "vega",
+      "korean_name": "베가(블랙숄즈)",
+      "type": "String",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 11,
+      "field_name": "rhox",
+      "korean_name": "로우(블랙숄즈)",
+      "type": "String",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 12,
+      "field_name": "theoryprice",
+      "korean_name": "이론가(블랙숄즈)",
+      "type": "String",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 13,
+      "field_name": "bimpv",
+      "korean_name": "전일가내재변동성",
+      "type": "String",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 14,
+      "field_name": "offerimpv",
+      "korean_name": "매도가내재변동성",
+      "type": "String",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 15,
+      "field_name": "bidimpv",
+      "korean_name": "매수가내재변동성",
+      "type": "String",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 16,
+      "field_name": "optcode",
+      "korean_name": "옵션코드",
+      "type": "String",
+      "length": 8,
+      "required": true
+    }
+  ],
+  "rate_source_group": "57936c91-b49d-4702-b7f6-3935c6859462"
+}

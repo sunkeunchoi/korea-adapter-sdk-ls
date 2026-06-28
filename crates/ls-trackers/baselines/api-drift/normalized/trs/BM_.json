@@ -1,0 +1,180 @@
+{
+  "tr_code": "BM_",
+  "tr_name": "업종별투자자별매매현황",
+  "protocol": "websocket",
+  "is_websocket": true,
+  "endpoint_path": "/websocket/indtp",
+  "api_group_id": "3c2b0280-6663-41e2-8995-a179de99e074",
+  "source_group_name": "[업종] 실시간 시세",
+  "request_blocks": [
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 0,
+      "field_name": "token",
+      "korean_name": "접근토큰",
+      "type": "String",
+      "length": 1000,
+      "required": true,
+      "description_hash": "ee5c73906207dffe"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 1,
+      "field_name": "tr_type",
+      "korean_name": "거래 Type",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "5d9761ebdce44e7f"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_body",
+      "field_index": 0,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 3,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_body",
+      "field_index": 1,
+      "field_name": "tr_key",
+      "korean_name": "단축코드",
+      "type": "String",
+      "length": 3,
+      "required": false,
+      "description_hash": "d55e1942516bdace"
+    }
+  ],
+  "response_blocks": [
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 0,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 3,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 0,
+      "field_name": "tjjcode",
+      "korean_name": "투자자코드",
+      "type": "String",
+      "length": 4,
+      "required": true,
+      "description_hash": "1ae3021dff057cb1"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 1,
+      "field_name": "tjjtime",
+      "korean_name": "수신시간",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 2,
+      "field_name": "msvolume",
+      "korean_name": "매수거래량",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 3,
+      "field_name": "mdvolume",
+      "korean_name": "매도거래량",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 4,
+      "field_name": "msvol",
+      "korean_name": "거래량순매수",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 5,
+      "field_name": "p_msvol",
+      "korean_name": "거래량순매수직전대비",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 6,
+      "field_name": "msvalue",
+      "korean_name": "매수거래대금",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 7,
+      "field_name": "mdvalue",
+      "korean_name": "매도거래대금",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 8,
+      "field_name": "msval",
+      "korean_name": "거래대금순매수",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 9,
+      "field_name": "p_msval",
+      "korean_name": "거래대금순매수직전대비",
+      "type": "String",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 10,
+      "field_name": "upcode",
+      "korean_name": "업종코드",
+      "type": "String",
+      "length": 3,
+      "required": true
+    }
+  ],
+  "rate_source_group": "3c2b0280-6663-41e2-8995-a179de99e074"
+}

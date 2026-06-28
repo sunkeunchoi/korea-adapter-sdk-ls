@@ -1,0 +1,938 @@
+{
+  "tr_code": "NBT",
+  "tr_name": "(NXT)시간대별투자자매매추이",
+  "protocol": "websocket",
+  "is_websocket": true,
+  "endpoint_path": "/websocket/stock",
+  "api_group_id": "9a2800c3-9bf2-4d67-8d83-905074f06646",
+  "source_group_name": "[주식] 실시간 시세",
+  "request_blocks": [
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 0,
+      "field_name": "token",
+      "korean_name": "접근토큰",
+      "type": "String",
+      "length": 1000,
+      "required": true,
+      "description_hash": "ee5c73906207dffe"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 1,
+      "field_name": "tr_type",
+      "korean_name": "거래 Type",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "5d9761ebdce44e7f"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_body",
+      "field_index": 0,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 3,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_body",
+      "field_index": 1,
+      "field_name": "tr_key",
+      "korean_name": "단축코드",
+      "type": "String",
+      "length": 4,
+      "required": false,
+      "description_hash": "61cdf5fc35f61ef0"
+    }
+  ],
+  "response_blocks": [
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 0,
+      "field_name": "tr_cd",
+      "korean_name": "거래CD",
+      "type": "String",
+      "length": 3,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 0,
+      "field_name": "tjjtime",
+      "korean_name": "수신시간",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 1,
+      "field_name": "tjjcode1",
+      "korean_name": "투자자코드1(개인)",
+      "type": "String",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 2,
+      "field_name": "msvolume1",
+      "korean_name": "매수거래량1",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 3,
+      "field_name": "mdvolume1",
+      "korean_name": "매도거래량1",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 4,
+      "field_name": "msvol1",
+      "korean_name": "거래량순매수1",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 5,
+      "field_name": "msvalue1",
+      "korean_name": "매수거래대금1",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 6,
+      "field_name": "mdvalue1",
+      "korean_name": "매도거래대금1",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 7,
+      "field_name": "msval1",
+      "korean_name": "거래대금순매수1",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 8,
+      "field_name": "tjjcode2",
+      "korean_name": "투자자코드2(외국인)",
+      "type": "String",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 9,
+      "field_name": "msvolume2",
+      "korean_name": "매수거래량2",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 10,
+      "field_name": "mdvolume2",
+      "korean_name": "매도거래량2",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 11,
+      "field_name": "msvol2",
+      "korean_name": "거래량순매수2",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 12,
+      "field_name": "msvalue2",
+      "korean_name": "매수거래대금2",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 13,
+      "field_name": "mdvalue2",
+      "korean_name": "매도거래대금2",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 14,
+      "field_name": "msval2",
+      "korean_name": "거래대금순매수2",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 15,
+      "field_name": "tjjcode3",
+      "korean_name": "투자자코드3(기관계)",
+      "type": "String",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 16,
+      "field_name": "msvolume3",
+      "korean_name": "매수거래량3",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 17,
+      "field_name": "mdvolume3",
+      "korean_name": "매도거래량3",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 18,
+      "field_name": "msvol3",
+      "korean_name": "거래량순매수3",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 19,
+      "field_name": "msvalue3",
+      "korean_name": "매수거래대금3",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 20,
+      "field_name": "mdvalue3",
+      "korean_name": "매도거래대금3",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 21,
+      "field_name": "msval3",
+      "korean_name": "거래대금순매수3",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 22,
+      "field_name": "tjjcode4",
+      "korean_name": "투자자코드4(증권)",
+      "type": "String",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 23,
+      "field_name": "msvolume4",
+      "korean_name": "매수거래량4",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 24,
+      "field_name": "mdvolume4",
+      "korean_name": "매도거래량4",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 25,
+      "field_name": "msvol4",
+      "korean_name": "거래량순매수4",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 26,
+      "field_name": "msvalue4",
+      "korean_name": "매수거래대금4",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 27,
+      "field_name": "mdvalue4",
+      "korean_name": "매도거래대금4",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 28,
+      "field_name": "msval4",
+      "korean_name": "거래대금순매수4",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 29,
+      "field_name": "tjjcode5",
+      "korean_name": "투자자코드5(투신)",
+      "type": "String",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 30,
+      "field_name": "msvolume5",
+      "korean_name": "매수거래량5",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 31,
+      "field_name": "mdvolume5",
+      "korean_name": "매도거래량5",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 32,
+      "field_name": "msvol5",
+      "korean_name": "거래량순매수5",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 33,
+      "field_name": "msvalue5",
+      "korean_name": "매수거래대금5",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 34,
+      "field_name": "mdvalue5",
+      "korean_name": "매도거래대금5",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 35,
+      "field_name": "msval5",
+      "korean_name": "거래대금순매수5",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 36,
+      "field_name": "tjjcode6",
+      "korean_name": "투자자코드6(은행)",
+      "type": "String",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 37,
+      "field_name": "msvolume6",
+      "korean_name": "매수거래량6",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 38,
+      "field_name": "mdvolume6",
+      "korean_name": "매도거래량6",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 39,
+      "field_name": "msvol6",
+      "korean_name": "거래량순매수6",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 40,
+      "field_name": "msvalue6",
+      "korean_name": "매수거래대금6",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 41,
+      "field_name": "mdvalue6",
+      "korean_name": "매도거래대금6",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 42,
+      "field_name": "msval6",
+      "korean_name": "거래대금순매수6",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 43,
+      "field_name": "tjjcode7",
+      "korean_name": "투자자코드7(보험)",
+      "type": "String",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 44,
+      "field_name": "msvolume7",
+      "korean_name": "매수거래량7",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 45,
+      "field_name": "mdvolume7",
+      "korean_name": "매도거래량7",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 46,
+      "field_name": "msvol7",
+      "korean_name": "거래량순매수7",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 47,
+      "field_name": "msvalue7",
+      "korean_name": "매수거래대금7",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 48,
+      "field_name": "mdvalue7",
+      "korean_name": "매도거래대금7",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 49,
+      "field_name": "msval7",
+      "korean_name": "거래대금순매수7",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 50,
+      "field_name": "tjjcode8",
+      "korean_name": "투자자코드8(종금)",
+      "type": "String",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 51,
+      "field_name": "msvolume8",
+      "korean_name": "매수거래량8",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 52,
+      "field_name": "mdvolume8",
+      "korean_name": "매도거래량8",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 53,
+      "field_name": "msvol8",
+      "korean_name": "거래량순매수8",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 54,
+      "field_name": "msvalue8",
+      "korean_name": "매수거래대금8",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 55,
+      "field_name": "mdvalue8",
+      "korean_name": "매도거래대금8",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 56,
+      "field_name": "msval8",
+      "korean_name": "거래대금순매수8",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 57,
+      "field_name": "tjjcode9",
+      "korean_name": "투자자코드9(기금)",
+      "type": "Number",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 58,
+      "field_name": "msvolume9",
+      "korean_name": "매수거래량9",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 59,
+      "field_name": "mdvolume9",
+      "korean_name": "매도거래량9",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 60,
+      "field_name": "msvol9",
+      "korean_name": "거래량순매수9",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 61,
+      "field_name": "msvalue9",
+      "korean_name": "매수거래대금9",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 62,
+      "field_name": "mdvalue9",
+      "korean_name": "매도거래대금9",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 63,
+      "field_name": "msval9",
+      "korean_name": "거래대금순매수9",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 64,
+      "field_name": "tjjcode10",
+      "korean_name": "투자자코드10(선물업자)",
+      "type": "String",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 65,
+      "field_name": "msvolume10",
+      "korean_name": "매수거래량10",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 66,
+      "field_name": "mdvolume10",
+      "korean_name": "매도거래량10",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 67,
+      "field_name": "msvol10",
+      "korean_name": "거래량순매수10",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 68,
+      "field_name": "msvalue10",
+      "korean_name": "매수거래대금10",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 69,
+      "field_name": "mdvalue10",
+      "korean_name": "매도거래대금10",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 70,
+      "field_name": "msval10",
+      "korean_name": "거래대금순매수10",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 71,
+      "field_name": "tjjcode11",
+      "korean_name": "투자자코드11(기타)",
+      "type": "String",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 72,
+      "field_name": "msvolume11",
+      "korean_name": "매수거래량11",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 73,
+      "field_name": "mdvolume11",
+      "korean_name": "매도거래량11",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 74,
+      "field_name": "msvol11",
+      "korean_name": "거래량순매수11",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 75,
+      "field_name": "msvalue11",
+      "korean_name": "매수거래대금11",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 76,
+      "field_name": "mdvalue11",
+      "korean_name": "매도거래대금11",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 77,
+      "field_name": "msval11",
+      "korean_name": "거래대금순매수11",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 78,
+      "field_name": "upcode",
+      "korean_name": "업종코드",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 79,
+      "field_name": "tjjcode0",
+      "korean_name": "투자자코드0(사모펀드)",
+      "type": "String",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 80,
+      "field_name": "msvolume0",
+      "korean_name": "매수거래량0",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 81,
+      "field_name": "mdvolume0",
+      "korean_name": "매도거래량0",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 82,
+      "field_name": "msvol0",
+      "korean_name": "거래량순매수0",
+      "type": "Number",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 83,
+      "field_name": "msvalue0",
+      "korean_name": "매수거래대금0",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 84,
+      "field_name": "mdvalue0",
+      "korean_name": "매도거래대금0",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 85,
+      "field_name": "msval0",
+      "korean_name": "거래대금순매수0",
+      "type": "Number",
+      "length": 6,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_body",
+      "field_index": 86,
+      "field_name": "ex_upcode",
+      "korean_name": "거래소별업종코드",
+      "type": "String",
+      "length": 4,
+      "required": true
+    }
+  ],
+  "rate_source_group": "9a2800c3-9bf2-4d67-8d83-905074f06646"
+}
