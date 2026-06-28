@@ -674,7 +674,7 @@ mod tests {
     /// `t1101`, `t1102`, `t8412`, `CSPAQ12200`, `S3_`, `CSPAT00601`) plus the 41
     /// read-only stock/sector TRs brought into tracked-only maintenance ownership
     /// (incl. the Wave A sector cluster t8424/t1511/t1514/t1516/t1485).
-    const TRACKED_TRS: [&str; 222] = [
+    const TRACKED_TRS: [&str; 224] = [
         "AS0",
         "AS1",
         "AS2",
@@ -853,6 +853,8 @@ mod tests {
         "t3320",
         "t3341",
         "t3401",
+        "t3518",
+        "t3521",
         "t4203",
         "t8401",
         "t8402",
@@ -1025,6 +1027,9 @@ mod tests {
             "t2111", "t2112", "t8402", "t8403", "t8434",
             "t1988", "t3320",
             "t9945", "t3202", "t3401", "t8410", "t8451", "t8419", "t4203",
+            // All-lane closed-window flip wave (plan -003) — domestic REST lane
+            // (overseas-index reads via /stock/investinfo, populated under closure).
+            "t3518", "t3521",
             "t1901", "t1906", "t8450", "t1638", "t1308", "t1449", "t1621", "t2545", "t8406", "t8407", "t1959", "t1950", "t1971", "t1972", "t1974", "t1956", "t1969", "t1105", "t1104", "t1305",
             "t1310", "t1404", "t1410", "t1411", "t1488", "t1636", "t1809",
             "t8417", "t8418", "t8411", "t8452", "t8453", "t1302",
@@ -1204,9 +1209,12 @@ mod tests {
         // must be a trading day (weekend → 01715) — add 1.
         // CIDBQ05300 (해외선물 예탁자산) certified a non-default OvrsFutsDps on the
         // overseas_option lane (…71) — the cash account returned IGW40013 (§16) — add 1.
+        // All-lane closed-window flip wave (plan -003), domestic REST lane: t3518
+        // (해외실시간지수 time-series) + t3521 (해외지수조회 snapshot) certified non-empty
+        // index data via /stock/investinfo under closure — add 2.
         assert_eq!(
             reference.len(),
-            169,
+            171,
             "index + the implemented reference pages"
         );
 

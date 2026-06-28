@@ -624,6 +624,18 @@ trs:
     protocol: rest
     instrument_domain: stock
     venue_session: krx_regular
+  t3518:
+    file: trs/t3518.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: overseas_stock
+    venue_session: unspecified
+  t3521:
+    file: trs/t3521.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: overseas_stock
+    venue_session: unspecified
   t8410:
     file: trs/t8410.yaml
     owner_class: paginated

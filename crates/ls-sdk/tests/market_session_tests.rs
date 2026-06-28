@@ -56,7 +56,7 @@ use ls_sdk::market_session::{
     O3101OutBlock, O3101Request, O3101Response, O3105OutBlock, O3105Request, O3105Response,
     O3106OutBlock, O3106Request, O3106Response, O3121Request, O3121Response, O3125OutBlock,
     O3125Request, O3125Response, O3126OutBlock, O3126Request, O3126Response,
-    T9945Request, T9945Response, T3202Request, T3202Response,
+    T9945Request, T9945Response, T3202Request, T3202Response, T3521Request, T3521Response,
     T0167Request, T0167Response,
 };
 use ls_sdk::LsSdk;
@@ -5686,6 +5686,65 @@ fn t3202_empty_result_set_deserializes_as_pending() {
     }))
     .expect("empty schedule deserializes");
     assert!(empty.outblock.is_empty(), "empty schedule is the pending case");
+}
+
+// --- t3521 — 해외지수조회 (overseas index snapshot) --------------------------
+
+/// `t3521` serializes to `{"t3521InBlock":{"kind":"...","symbol":"..."}}`; no numeric
+/// request fields, non-paginated.
+#[test]
+fn t3521_request_serializes_to_inblock() {
+    let value = serde_json::to_value(T3521Request::new("S", "DJI@DJI")).expect("serialize t3521");
+    assert_eq!(value["t3521InBlock"]["kind"], "S");
+    assert_eq!(value["t3521InBlock"]["symbol"], "DJI@DJI");
+    assert!(value.get("tr_cont").is_none(), "non-paginated: no tr_cont");
+}
+
+/// The snapshot out-block deserializes through REAL dispatch; the substantive
+/// `close` (현재지수) reads its exact value.
+#[tokio::test]
+async fn t3521_deserializes_through_dispatch() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(STOCK_INVESTINFO_PATH))
+        .and(header("tr_cd", "t3521"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    r#"{"rsp_cd":"00000","rsp_msg":"조회완료","t3521OutBlock":{"date":"20230602","symbol":"DJI@DJI","change":"701.19","sign":"2","diff":"2.12","close":"33762.76","hname":"다우 산업"}}"#,
+                )
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let resp = sdk_for(&server)
+        .market_session()
+        .overseas_index_quote(&T3521Request::new("S", "DJI@DJI"))
+        .await
+        .expect("t3521 overseas_index_quote should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock.close, "33762.76", "현재지수 round-trips");
+    assert_eq!(resp.outblock.hname, "다우 산업", "지수명 round-trips");
+}
+
+/// A numeric `close` from a JSON number still decodes (string_or_number tolerance);
+/// an empty snapshot is the pending case.
+#[test]
+fn t3521_numeric_close_and_empty_deserialize() {
+    let numeric: T3521Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t3521OutBlock": { "symbol": "DJI@DJI", "close": 33762.76 }
+    }))
+    .expect("numeric close tolerated");
+    assert_eq!(numeric.outblock.close, "33762.76");
+
+    let empty: T3521Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t3521OutBlock": {}
+    }))
+    .expect("empty snapshot deserializes");
+    assert!(empty.outblock.close.is_empty(), "empty close is the pending case");
 }
 
 // === plan -004 batch A — t1302 분별주가 offline coverage =====================

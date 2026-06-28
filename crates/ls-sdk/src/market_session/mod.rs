@@ -7746,6 +7746,75 @@ pub struct T3202Response {
     pub outblock: Vec<T3202OutBlock>,
 }
 
+/// Input block for `t3521` — 해외지수조회 (one overseas index's current snapshot,
+/// e.g. Dow/NASDAQ). `kind`/`symbol` select the index (e.g. `kind="S"`,
+/// `symbol="DJI@DJI"`). Non-paginated; no numeric request fields.
+#[derive(Serialize, Debug, Clone)]
+pub struct T3521InBlock {
+    /// Symbol kind / 종목종류 (e.g. "S").
+    pub kind: String,
+    /// Index symbol / SYMBOL (e.g. "DJI@DJI").
+    pub symbol: String,
+}
+
+/// `t3521` request — serializes to `{"t3521InBlock":{"kind":"...","symbol":"..."}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T3521Request {
+    #[serde(rename = "t3521InBlock")]
+    pub inblock: T3521InBlock,
+}
+impl T3521Request {
+    /// Build a `t3521` overseas-index snapshot request (`kind`/`symbol`).
+    pub fn new(kind: impl Into<String>, symbol: impl Into<String>) -> Self {
+        T3521Request {
+            inblock: T3521InBlock {
+                kind: kind.into(),
+                symbol: symbol.into(),
+            },
+        }
+    }
+}
+
+/// `t3521OutBlock` — one overseas-index snapshot row. The raw capture documents no
+/// `res_b` properties for this TR, so the field set is modeled from the gateway's
+/// own `res_example` (date/symbol/change/sign/diff/close/hname).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T3521OutBlock {
+    /// Trade date / 일자 (YYYYMMDD).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    /// Index symbol / SYMBOL.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub symbol: String,
+    /// Change / 대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Change sign / 대비속성.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change rate / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Close / 현재지수 (the substantive witness).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub close: String,
+    /// Index name / 지수명 (e.g. 다우 산업).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+}
+
+/// `t3521` response — single snapshot under `t3521OutBlock`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T3521Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t3521OutBlock", default)]
+    pub outblock: T3521OutBlock,
+}
+
 // ---------------------------------------------------------------------------
 // t1302 — 주식분별주가조회 (minute-by-minute price). Non-paginated; a `cts_time`
 // summary out-block + a `t1302OutBlock1[]` minute-row array (de_vec_or_single).
@@ -9204,6 +9273,14 @@ impl MarketSession {
     pub async fn stock_schedule(&self, req: &T3202Request) -> LsResult<T3202Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T3202_POLICY, req)
+            .await
+    }
+
+    /// Read one overseas index's current snapshot (해외지수조회) via `t3521`.
+    /// Non-paginated; keyed by `kind`/`symbol` (e.g. `"S"`/`"DJI@DJI"`).
+    pub async fn overseas_index_quote(&self, req: &T3521Request) -> LsResult<T3521Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T3521_POLICY, req)
             .await
     }
 

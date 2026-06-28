@@ -23,6 +23,7 @@ mod historical_chart;
 mod invest_opinion;
 mod item_search;
 mod low_liquidity;
+mod overseas_index;
 mod rank_screen;
 mod sector_index;
 
@@ -33,6 +34,7 @@ pub use historical_chart::*;
 pub use invest_opinion::*;
 pub use item_search::*;
 pub use low_liquidity::*;
+pub use overseas_index::*;
 pub use rank_screen::*;
 pub use sector_index::*;
 
@@ -246,6 +248,14 @@ impl Paginated {
     pub async fn investment_opinions(&self, req: &T3401Request) -> LsResult<T3401Response> {
         self.inner
             .post_paginated(&ls_core::endpoint_policy::T3401_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t3518` overseas-index time-series (해외실시간지수).
+    /// Self-paginated on the body `cts_date`/`cts_time` cursor; single-page scope.
+    pub async fn overseas_index_series(&self, req: &T3518Request) -> LsResult<T3518Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T3518_POLICY, req)
             .await
     }
 

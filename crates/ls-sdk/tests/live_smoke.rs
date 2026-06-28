@@ -41,7 +41,7 @@ use ls_sdk::market_session::{
     T8455Request, T8460Request, T8463Request,
     G3101Request, G3102Request, G3103Request, G3104Request, G3106Request, G3190Request,
     O3101Request, O3105Request, O3106Request, O3121Request, O3125Request, O3126Request,
-    T9945Request, T3202Request,
+    T9945Request, T3202Request, T3521Request,
     T0167Request,
 };
 use ls_sdk::paginated::{
@@ -54,7 +54,9 @@ use ls_sdk::paginated::{
     T8417Request, T8418Request, T8411Request, T8452Request, T8453Request,
     T8464Request, T8465Request, T8466Request, T8405Request,
     T1444Request, T1422Request, T1427Request, T1442Request, T1405Request, T1960Request, T1961Request, T1966Request, T1921Request,
+    T3518Request,
 };
+use ls_sdk_test_support::{assert_nonempty_witness, scrub_secrets};
 use ls_sdk::realtime::WsLane;
 use ls_sdk::LsSdk;
 use tokio::time::timeout;
@@ -5550,6 +5552,70 @@ async fn live_smoke_t3401() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t3401 market-data failure (not evidence)");
             panic!("live-smoke-t3401 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t3518`: paper guard → suppressor → token → one `t3518`
+/// overseas-index time-series read (`kind="S"`, `symbol="NAS@IXIC"`). Flip gate
+/// (R4): the first index-tick row's `price` (현재지수) must be a substantive
+/// (non-default) value via [`assert_nonempty_witness`]; an empty out-block is the
+/// `00707` PENDING case. The dispatch-log suppressor (U2/KTD5) drops any
+/// account-bearing debug body; the panic path scrubs untrusted error text.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t3518`"]
+async fn live_smoke_t3518() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (fail-closed)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T3518Request::new("S", "NAS@IXIC");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.paginated().overseas_index_series(&req).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock1.is_empty(),
+                "live-smoke-t3518: empty out-block (00707) — PENDING, not Implemented"
+            );
+            assert_nonempty_witness("price", &resp.outblock1[0].price)
+                .expect("live-smoke-t3518: index price must be a substantive witness (R4)");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "index-series")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t3518", &format!("env=paper kind=S symbol=NAS@IXIC date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t3518 market-data failure (not evidence)");
+            panic!("live-smoke-t3518 failed: {}", scrub_secrets(&e.to_string()));
+        }
+    }
+}
+
+/// `make live-smoke-t3521`: paper guard → suppressor → token → one `t3521`
+/// overseas-index snapshot (`kind="S"`, `symbol="DJI@DJI"`). Flip gate (R4): the
+/// snapshot `close` (현재지수) must be a substantive non-default value; an empty
+/// out-block is the `00707` PENDING case.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t3521`"]
+async fn live_smoke_t3521() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (fail-closed)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T3521Request::new("S", "DJI@DJI");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().overseas_index_quote(&req).await {
+        Ok(resp) => {
+            assert_nonempty_witness("close", &resp.outblock.close)
+                .expect("live-smoke-t3521: index close must be a substantive witness (R4 / 00707 PENDING)");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), 1)), "index-snapshot")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t3521", &format!("env=paper kind=S symbol=DJI@DJI date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t3521 market-data failure (not evidence)");
+            panic!("live-smoke-t3521 failed: {}", scrub_secrets(&e.to_string()));
         }
     }
 }

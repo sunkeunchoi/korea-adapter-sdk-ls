@@ -1785,6 +1785,37 @@ pub const T3401_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+/// t3518 — 해외실시간지수 (overseas equity-index time-series via /stock/investinfo;
+/// self-paginated on the body `cts_date`/`cts_time` cursor). All-lane closed-window
+/// flip wave (plan -003).
+pub const T3518_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t3518",
+    path: "/stock/investinfo",
+    module: "stock",
+    group: "[주식] 투자정보",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t3521 — 해외지수조회 (one overseas index's current snapshot via /stock/investinfo;
+/// non-paginated). All-lane closed-window flip wave (plan -003).
+pub const T3521_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t3521",
+    path: "/stock/investinfo",
+    module: "stock",
+    group: "[주식] 투자정보",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// t8410 — API전용주식차트(일주월년) (stock D/W/M/Y chart; self-paginated on the
 /// body `cts_date` cursor) (plan -004).
 pub const T8410_POLICY: EndpointPolicy = EndpointPolicy {
@@ -3110,6 +3141,8 @@ mod tests {
             T9945_POLICY,
             T3202_POLICY,
             T3401_POLICY,
+            T3518_POLICY,
+            T3521_POLICY,
             T8410_POLICY,
             T8451_POLICY,
             T8419_POLICY,
