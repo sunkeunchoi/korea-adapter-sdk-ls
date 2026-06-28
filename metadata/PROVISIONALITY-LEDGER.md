@@ -915,3 +915,85 @@ cash-only account" to "reachable on its own lane, account funded, no open
 positions." CIDBQ03000 (§16 `00707`) and CIDBQ05300 (§16 `IGW40013`) move from the
 §16 deferred/error lists to Implemented. The §16 "no F/O funding" gate conclusion
 is retracted as a wrong-account artifact. Recommended tier untouched for all.
+
+## 18. All-lane closed-window flip wave — REST lane close-out (2026-06-28)
+
+Plan `docs/plans/2026-06-28-003-feat-all-lane-closed-window-flip-wave-plan.md`. A
+breadth sweep over the 143-code raw untracked pool across all four instrument
+domains and both transports. U1 raw-probed every read survivor credential-safe
+(http/rsp_cd/body_len only); the full classification is
+`docs/plans/notes/all-lane-flip-classification.md`. Every one of the 143 codes
+carries exactly one disposition here (R11). KRX closed (weekend); session-independent
+master/reference/chart-persistence reads are what flips.
+
+**Owner scope decision (2026-06-28).** The trackable pool came in ~2× the plan's
+30–50 estimate. The owner chose to **ship the REST lane this session and stage the
+84-channel WebSocket track+flip as a separate follow-up realtime wave** (mirroring
+the prior 31-channel realtime wave's own 2-PR delivery). The WS classification is
+recorded below; no WS metadata/flips were authored this wave.
+
+**FLIPPED → Implemented (13) — non-empty modeled witness certified under closure.**
+Each builds/sends/deserializes a non-empty paper success with a substantive modeled
+field asserted (R4); each new smoke routes record/panic through the shared scrubber
+and installs the dispatch-log suppressor (R11b). `reference.len()` 169 → 182
+(+13: +2 in commit `fe5efa7`, +11 in `d1c89d5`); `recommended:false` on all.
+
+- **Domestic /stock/investinfo (2, lane …01):** `t3518` (해외실시간지수 time-series; 20
+  index-tick rows, non-default `price`), `t3521` (해외지수조회 snapshot; non-default
+  `close`). Overseas-index data served via the domestic endpoint persists under KRX
+  closure. `t3521` out-block modeled from `res_example` (raw has no `res_b` props).
+- **Overseas-futures (10, lane overseas_option …71):** `o3103` `o3104` `o3108` `o3116`
+  `o3117` `o3123` `o3128` `o3136` `o3137` `o3139` (분/일주월/tick/NTick charts +
+  daily-fills). KEY: these serve last-session data on paper under closure **only with
+  a current front-month contract** (`CUSN26`); the raw `req_example`'s stale 2023
+  contract (`ADM23`) returns empty — a contract-staleness confound, not a feed gap
+  (the §15 `t8406` lesson, repeated). `o3104` additionally needs a recent `date`.
+- **KRX night-derivative (1, lane domestic_option …51):** `t8462` (야간파생
+  투자자기간별; 19 investor rows with a recent date range). The investor-by-period
+  aggregation persists across the night window — unlike the night quote/board feed
+  (see drops below).
+
+**PENDING — tracked, callable, but empty/all-default on this account under closure
+(R6/R10).** Carry callable Rust + `{TR}_POLICY` + offline tests + a paper smoke;
+`implemented:false`, excluded from `reference.len`/`banner_trs` (the §16
+PENDING-with-policy convention, e.g. CSPBQ00200). Re-test open-window / on a
+populated watchlist:
+- `o3107` (해외선물 관심종목, single-symbol watchlist) — empty `00000` (98 bytes); no
+  registered symbols on the paper account.
+- `o3127` (해외선물옵션 관심종목 board) — `00000` board rows all `price=0`; account-state
+  watchlist, no registered symbols (the holdings-gate analogue for a board read).
+
+**DROPPED from tracking (R11a — probe matched an already-recorded dry terminal;
+recorded here, no metadata authored).**
+- **Night-derivative quote/chart feed — off-window + weekend empty (§17 t845x
+  precedent):** `t8456` `t8457` `t8458` `t8459` `t8461` — all `00000` empty off the
+  krx_extended night window (stale focode `101W6000`), same session-gated feed §17
+  proved empty for t8455/t8460/t8463.
+- **Overseas-stock charts — no paper feed (§14 overseas-stock precedent):** `g3202`
+  `g3203` (empty `rsp_cd`, 26-byte error envelope), `g3204` (`00000`, 61-byte empty)
+  — overseas-stock carries no paper feed (§14 g31xx sextet).
+- **Venue rejection `01900` (§12 precedent):** `CCENQ30100` (KRX 야간파생 주문/체결내역;
+  raw `01900`), `MMDAQ91200` (파생상품증거금율; known `01900`, §16).
+
+**EXCLUDED — R3 order/mutation (14, never read-only):** `CFOAT00100/00200/00300`
+`CCENT00100/00200/00300` `CIDBT00100/00900/01000` `COSAT00301/00311/00400`
+`COSMT00300` `CFOBQ10800` (옵션매도 주문증거금조회 under /order; also §16 `01900`).
+
+**EXCLUDED — already-dispositioned account reads (§16/§17, R11a, 22):**
+`01900` (8): `CSPAQ00600` `FOCCQ33600` `CFOAQ50600` `CFOEQ82600` `FOCCQ33700`
+`COSAQ00102` `COSOQ02701`, plus `COSOQ00201` (`IGW40014` proven residual).
+empty `00707` across all lanes, retired (12): `CSPAQ13700` `CDPCQ04700` `CFOFQ02400`
+`CFOAQ00600` `CIDBQ01500` `CIDBQ01800` `CIDBQ02400` `CIDEQ00800` `COSAQ01400` `t0150`
+`t0151` `t0434`.
+
+**WebSocket — 84 channels DEFERRED to a follow-up realtime wave (owner decision).**
+All `owner_class: realtime` push channels (stock 52, futureoption 24, sector 1,
+overseas-futures 2, etc 2, investment-info 3). Connection-reachable-only flips
+(KTD6 NOT-OBSERVABLE). Classified in the U1 note; not authored this wave. Tracking
++ flip is the follow-up's scope.
+
+**Count tally (R13).** `maintained_tr_count` 222 → 237 (+15 tracked: 13 flipped +
+o3107 + o3127); manifest + `api_drift.rs` + `cli.rs` (×4) + docgen `TRACKED_TRS`
+(`[&str; 237]`) all consistent; `manifest.refreshed` held at 2026-06-22 (KTD7).
+`reference.len()` 169 → 182 (+13 flips); `banner_trs` +13. WebSocket channels add
+nothing this wave (deferred). The §14/§16/§17 retired terminals are NOT re-probed.
