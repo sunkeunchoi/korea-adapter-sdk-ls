@@ -2435,6 +2435,186 @@ pub const O3106_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(50),
 };
 
+/// o3103 — 해외선물차트 분봉 조회 (overseas-futures minute chart; self-paginated on
+/// the body `cts_date`/`cts_time` cursor). All-lane closed-window flip wave (plan -003).
+pub const O3103_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3103",
+    path: "/overseas-futureoption/chart",
+    module: "overseas-futureoption",
+    group: "[해외선물] 차트",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(10),
+};
+
+/// o3104 — 해외선물 일별체결 조회 (overseas-futures daily executions; non-paginated
+/// market-data read; array out-block). Plan -003.
+pub const O3104_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3104",
+    path: "/overseas-futureoption/market-data",
+    module: "overseas-futureoption",
+    group: "[해외선물] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
+/// o3108 — 해외선물차트(일주월) 조회 (overseas-futures D/W/M chart; self-paginated on
+/// the body `cts_date` cursor). Plan -003.
+pub const O3108_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3108",
+    path: "/overseas-futureoption/chart",
+    module: "overseas-futureoption",
+    group: "[해외선물] 차트",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(10),
+};
+
+/// o3116 — 해외선물 시간대별(Tick)체결 조회 (overseas-futures tick; self-paginated on
+/// the body `cts_seq` cursor). Plan -003.
+pub const O3116_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3116",
+    path: "/overseas-futureoption/market-data",
+    module: "overseas-futureoption",
+    group: "[해외선물] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
+/// o3117 — 해외선물 차트 NTick 체결 조회 (overseas-futures NTick chart; self-paginated
+/// on the body `cts_seq`/`cts_daygb` cursor). Plan -003.
+pub const O3117_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3117",
+    path: "/overseas-futureoption/chart",
+    module: "overseas-futureoption",
+    group: "[해외선물] 차트",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
+/// o3123 — 해외선물옵션 차트 분봉 조회 (overseas-futopt minute chart; self-paginated on
+/// the body `cts_date`/`cts_time` cursor). Plan -003.
+pub const O3123_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3123",
+    path: "/overseas-futureoption/market-data",
+    module: "overseas-futureoption",
+    group: "[해외선물] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
+/// o3127 — 해외선물옵션 관심종목 조회 (overseas-futopt watchlist board; non-paginated
+/// market-data read; array out-block). Plan -003.
+pub const O3127_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3127",
+    path: "/overseas-futureoption/market-data",
+    module: "overseas-futureoption",
+    group: "[해외선물] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(50),
+};
+
+/// o3128 — 해외선물옵션 차트 일주월 조회 (overseas-futopt D/W/M chart; self-paginated on
+/// the body `cts_date` cursor). Plan -003.
+pub const O3128_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3128",
+    path: "/overseas-futureoption/market-data",
+    module: "overseas-futureoption",
+    group: "[해외선물] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
+/// o3136 — 해외선물옵션 시간대별 Tick 체결 조회 (overseas-futopt tick; self-paginated on
+/// the body `cts_seq` cursor). Plan -003.
+pub const O3136_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3136",
+    path: "/overseas-futureoption/market-data",
+    module: "overseas-futureoption",
+    group: "[해외선물] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
+/// o3137 — 해외선물옵션 차트 NTick 체결 조회 (overseas-futopt NTick chart; self-paginated
+/// on the body `cts_seq`/`cts_daygb` cursor). Plan -003.
+pub const O3137_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3137",
+    path: "/overseas-futureoption/market-data",
+    module: "overseas-futureoption",
+    group: "[해외선물] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
+/// o3139 — 해외선물옵션차트용NTick(고정형) (overseas-futopt NTick fixed chart;
+/// self-paginated on the body `cts_seq`/`cts_daygb` cursor). Plan -003.
+pub const O3139_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "o3139",
+    path: "/overseas-futureoption/chart",
+    module: "overseas-futureoption",
+    group: "[해외선물] 차트",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(10),
+};
+
+/// t8462 — KRX야간파생 투자자기간별 (KRX night-derivatives investor-period table;
+/// non-paginated market-data read; array out-block). Plan -003.
+pub const T8462_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8462",
+    path: "/futureoption/investor",
+    module: "futureoption",
+    group: "[선물/옵션] 투자자",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// o3125 — 해외선물옵션 현재가(종목정보) 조회 (overseas-future-option current price /
 /// symbol info; non-paginated market-data read; single out-block).
 pub const O3125_POLICY: EndpointPolicy = EndpointPolicy {
@@ -3143,6 +3323,18 @@ mod tests {
             T3401_POLICY,
             T3518_POLICY,
             T3521_POLICY,
+            O3103_POLICY,
+            O3104_POLICY,
+            O3108_POLICY,
+            O3116_POLICY,
+            O3117_POLICY,
+            O3123_POLICY,
+            O3127_POLICY,
+            O3128_POLICY,
+            O3136_POLICY,
+            O3137_POLICY,
+            O3139_POLICY,
+            T8462_POLICY,
             T8410_POLICY,
             T8451_POLICY,
             T8419_POLICY,

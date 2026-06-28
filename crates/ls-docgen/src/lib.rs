@@ -1043,6 +1043,12 @@ mod tests {
             // All-lane closed-window flip wave (plan -003) — domestic REST lane
             // (overseas-index reads via /stock/investinfo, populated under closure).
             "t3518", "t3521",
+            // All-lane closed-window flip wave (plan -003) — overseas-futures(-option)
+            // chart/market-data reads (front-month CUSN26 persists under closure) +
+            // KRX night-derivatives investor table. o3107/o3127 stayed PENDING
+            // (account-state watchlist boards return empty/zero rows).
+            "o3103", "o3104", "o3108", "o3116", "o3117", "o3123", "o3128", "o3136", "o3137", "o3139",
+            "t8462",
             "t1901", "t1906", "t8450", "t1638", "t1308", "t1449", "t1621", "t2545", "t8406", "t8407", "t1959", "t1950", "t1971", "t1972", "t1974", "t1956", "t1969", "t1105", "t1104", "t1305",
             "t1310", "t1404", "t1410", "t1411", "t1488", "t1636", "t1809",
             "t8417", "t8418", "t8411", "t8452", "t8453", "t1302",
@@ -1225,9 +1231,14 @@ mod tests {
         // All-lane closed-window flip wave (plan -003), domestic REST lane: t3518
         // (해외실시간지수 time-series) + t3521 (해외지수조회 snapshot) certified non-empty
         // index data via /stock/investinfo under closure — add 2.
+        // All-lane closed-window flip wave (plan -003), overseas-futures(-option) +
+        // night-deriv REST lanes: o3103/o3104/o3108/o3116/o3117/o3123/o3128/o3136/
+        // o3137/o3139 (front-month CUSN26 persists under closure) + t8462 (KRX
+        // night-derivatives investor table) certified non-empty — add 11.
+        // (o3107/o3127 stayed PENDING: account-state watchlist boards empty/zero.)
         assert_eq!(
             reference.len(),
-            171,
+            182,
             "index + the implemented reference pages"
         );
 
