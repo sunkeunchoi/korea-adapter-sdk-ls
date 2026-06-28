@@ -101,6 +101,18 @@ trs:
     protocol: rest
     instrument_domain: overseas_futures
     venue_session: unspecified
+  CIDBQ03000:
+    file: trs/CIDBQ03000.yaml
+    owner_class: account
+    protocol: rest
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  CIDBQ05300:
+    file: trs/CIDBQ05300.yaml
+    owner_class: account
+    protocol: rest
+    instrument_domain: overseas_futures
+    venue_session: unspecified
   t0167:
     file: trs/t0167.yaml
     owner_class: market_session

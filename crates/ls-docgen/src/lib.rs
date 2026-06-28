@@ -674,7 +674,7 @@ mod tests {
     /// `t1101`, `t1102`, `t8412`, `CSPAQ12200`, `S3_`, `CSPAT00601`) plus the 41
     /// read-only stock/sector TRs brought into tracked-only maintenance ownership
     /// (incl. the Wave A sector cluster t8424/t1511/t1514/t1516/t1485).
-    const TRACKED_TRS: [&str; 220] = [
+    const TRACKED_TRS: [&str; 222] = [
         "AS0",
         "AS1",
         "AS2",
@@ -687,6 +687,8 @@ mod tests {
         "CFOBQ10500",
         "CFOEQ11100",
         "CIDBQ01400",
+        "CIDBQ03000",
+        "CIDBQ05300",
         "CLNAQ00100",
         "CSPAQ12200",
         "CSPAQ12300",
@@ -1031,6 +1033,9 @@ mod tests {
             "CSPAT00601", "CSPAT00701", "CSPAT00801", "t0425",
             // Closed-window account-lane flip wave (plan -001).
             "t0424", "t0167", "CLNAQ00100",
+            // Paper account credential lanes (plan -002): F/O + overseas-F/O account
+            // reads that flipped once authenticated as their own account's lane.
+            "CFOEQ11100", "CIDBQ01400", "CIDBQ03000", "CIDBQ05300",
             "o3101", "o3121",
             "K3_",
             "H1_", "HA_", "S2_", "US3", "UH1", "US2", "GSC", "GSH", "OVC", "OVH", "OC0", "OH0",
@@ -1188,9 +1193,20 @@ mod tests {
         // t0167 (서버시간조회) certified a non-default server time (utility) — add 1.
         // CLNAQ00100 (예탁담보융자가능종목) certified a non-empty loanable-stock list
         // (20 stocks, non-default IsuNm) UNDER closure (persistent reference) — add 1.
+        // Paper account credential lanes (plan -002): CFOEQ11100 (선물옵션가정산예탁금상세)
+        // certified a non-default deposit (Dps) once authenticated as the F/O account
+        // via the domestic_option lane (…51) — the §16 PENDING was a wrong-account
+        // artifact (all-zero on the cash-only …01 account) — add 1.
+        // CIDBQ01400 (해외선물 주문가능수량) certified a non-default OrdAbleQty on the
+        // overseas_option lane (…71) — likewise a §16 wrong-account artifact — add 1.
+        // U5 track-and-flip: CIDBQ03000 (해외선물 예수금/잔고현황) certified a non-default
+        // EvalAssetAmt on the overseas_option lane (…71) — was 00707 on …01 (§16); TrdDt
+        // must be a trading day (weekend → 01715) — add 1.
+        // CIDBQ05300 (해외선물 예탁자산) certified a non-default OvrsFutsDps on the
+        // overseas_option lane (…71) — the cash account returned IGW40013 (§16) — add 1.
         assert_eq!(
             reference.len(),
-            165,
+            169,
             "index + the implemented reference pages"
         );
 

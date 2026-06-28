@@ -586,6 +586,11 @@ config, never a caller field; verified absent from each serialized in-block).
 | CCENQ90200 | Tracked, **paper_incompatible** | gateway `rsp_cd=01900` (`is_paper_incompatible()` true) — KRX 야간파생 night-derivatives balance is not provided in paper trading. No runtime flip this wave; `venue_session: krx_extended` row (§11.1) **retained** (ships venue-provisional, never confirmed). |
 | CCENQ10100 | Tracked, **paper_incompatible** | gateway `rsp_cd=01900` (`is_paper_incompatible()` true) — KRX 야간파생 night-derivatives orderable-quantity is not provided in paper trading. No runtime flip this wave; `venue_session: krx_extended` retained. |
 
+> **Re-confirmed by §17 (2026-06-28).** Re-probed under the F/O-capable
+> domestic_option lane (account …51), both reads STILL return `01900` — confirming
+> this is a venue rejection, not the wrong-account artifact that affected the §16
+> account reads. `paper_incompatible` retained. See §17.
+
 **`01900`, not off-window empty.** Both night reads return a definitive gateway
 `01900` (paper-incompatible) regardless of the krx_extended window — a hard venue
 rejection, not a `00707`/off-window empty result. By the disposition state machine
@@ -672,6 +677,15 @@ reclassified.**
 | g3104 | in US regular session | empty out-block (`00707`) — overseas stock-info master, no paper feed |
 | g3106 | in US regular session | empty out-block (`00707`) — overseas order book, no paper feed |
 | g3190 | in US regular session | `rsp_cd=00000` empty result array (`00707`) — overseas master list, no paper feed |
+
+> **Re-probed by §17 (2026-06-28) — night trio only.** Under the F/O-capable
+> domestic_option lane (account …51), `t8455`/`t8460`/`t8463` now return `rsp_cd=00000`
+> (the venue **accepts** the request — no longer the `00707` recorded here), but the
+> modeled array is empty **off** the krx_extended window. The §14 "no paper feed"
+> basis is weakened (request accepted, account entitled); the outstanding flip gate is
+> an **in-window …51 re-smoke**. `paper_incompatible` retained conservatively (no
+> positive data yet). The overseas-stock sextet (g31xx) was not re-probed (overseas
+> stock runs on …01; out of this wave's scope). See §17.
 
 **Empty/no-data, NOT `01900` service-rejection (the §12 distinction, inverted).**
 Unlike the CCENQ night pair (§12), which returns a hard gateway `01900`, these nine
@@ -781,6 +795,14 @@ positions-/deposit-dependent read is downgraded to expected-empty (AE2). This is
 the stop condition: the cash/reference reads still certify, so the "best odds" premise
 held; only the positions sub-lanes collapsed.
 
+> **Corrected by §17 (2026-06-28).** The "no F/O funding" conclusion was a
+> **wrong-account artifact** — every §16 account read authenticated as the domestic
+> cash account (…01) because the SDK is one-token=one-account. Under per-account
+> credential lanes the F/O account (…51) IS funded: `CFOEQ11100` `Dps` is non-default.
+> `CFOEQ11100`/`CIDBQ01400` flip to Implemented and `CIDBQ03000`/`CIDBQ05300` (§16
+> `00707`/`IGW40013`) become reachable; t0441 stays PENDING for a different reason
+> (no open positions). See §17.
+
 **FLIPPED → Implemented (3) — non-default substantive field certified under closure:**
 - `t0424` (주식잔고2, account) — cash-summary flip, dispositioned distinctly (holdings
   array empty; cash witness `sunamt` non-default). `reference.len()` 162→163.
@@ -834,3 +856,62 @@ carries a disposition above. A near-dry-but-positive close-out: the cash/referen
 yielded the domestic persistent reads, and the holdings gate proved the positions lanes
 are unreachable without a funded paper account. All flips land `recommended: false`
 (separate ADR-gated pass).
+
+## 17. Paper account credential lanes — wrong-account correction wave (2026-06-28)
+
+Plan `docs/plans/2026-06-28-002-feat-paper-account-credential-lanes-plan.md`. §16's
+"U2 holdings gate" concluded the paper account has **no F/O funding** from
+`CFOEQ11100`'s all-zero deposit — but that smoke (like every §16 account read)
+authenticated as the **domestic cash account (…01)**, because the SDK is one-token =
+one-account and the account number is never on the wire. A 2026-06-28 diagnostic
+proved each LS paper account is bound to its **own appkey**: sourcing a per-account
+lane file switches the resolved account. Re-smoked under the correct lane (U1 var
+rename `LS_PAPER_APIKEY` + real-money interlock; U2 Makefile maps `instrument_domain`
+→ `.env.<lane>`), the §16 "all-default" account reads carry real data. The §16
+"no F/O funding" finding is **a wrong-account artifact, retracted**: the F/O account
+(…51) is funded (CFOEQ11100 `Dps` non-default).
+
+**U3 — three tracked reads re-smoked under their lane.**
+
+| TR | lane (acct) | smoke (credential-free) | End state |
+|---|---|---|---|
+| CFOEQ11100 | domestic_option (…51) | `rsp_cd=00136 deprows=1 dps_nd=true` (선물옵션가정산예탁금상세; `Dps` deposit non-default) | **implemented** — §16 PENDING retracted (was all-zero on …01). `reference.len()` 165→166. |
+| CIDBQ01400 | overseas_option (…71) | `rsp_cd=00136 rows=1 qty_nondefault=true` (해외선물 주문가능수량; `OrdAbleQty` non-default; `IsuCodeVal=ADM23` accepted) | **implemented** — §16 PENDING retracted (was default on …01). 166→167. `caller_supplied_identifiers: [IsuCodeVal]` confirmed accepted. |
+| t0441 | domestic_option (…51) | `rsp_cd=00000 positions=0 tappamt=0` (선물/옵션잔고평가) | **PENDING (corrected)** — now reachable on its own lane; the …51 account is funded (deposit present) but holds **no open F/O positions**, so the valuation is genuinely empty (reachable-but-no-positions, not wrong-account). Flip pending an open F/O position. |
+
+**U4 — night-derivatives re-probed under domestic_option (…51).**
+
+| TR | re-probe | End state |
+|---|---|---|
+| CCENQ10100 | raw `rsp_cd=01900` | **paper_incompatible retained** — `01900` persists even on the F/O-capable …51 account, so it is a **venue rejection, not account-binding** (§12 re-confirmed under the F/O lane). |
+| CCENQ90200 | raw `rsp_cd=01900` | **paper_incompatible retained** — same; §12 re-confirmed under the F/O lane. |
+| t8455 | raw `rsp_cd=00000` (body 1498); typed → empty master array | **paper_incompatible retained, basis corrected** — under …51 the venue **accepts** (`00000`, no longer the §14 `00707`), but the modeled array is empty **off the krx_extended night window**; the §14 "no paper feed" basis is weakened (request accepted, account entitled) but unproven without data. The outstanding flip gate is an **in-window (~18:00–05:00 KST) re-smoke under domestic_option**. |
+| t8460 | raw `rsp_cd=00000` (body 60); typed → empty board | **paper_incompatible retained, basis corrected** — same. |
+| t8463 | raw `rsp_cd=00000` (body 4631); typed → empty time-series | **paper_incompatible retained, basis corrected** — same. |
+
+The CCENQ pair and the t845x trio diverge: CCENQ is a hard `01900` (true venue
+rejection), t845x now returns `00000`-but-empty (session-gated). Neither flips this
+wave; the t845x facet is kept conservatively (no positive data observed) with the
+in-window …51 re-smoke recorded as the remaining gate.
+
+**U5 — bounded track-and-flip of newly-reachable raw account reads (≤8).**
+The June-28 raw candidate pool was re-probed under its lane. F/O (domestic_option)
+came back dry — `01900` (CFOAQ50600, CFOEQ82600, CFOBQ10800, FOCCQ33700) or empty
+`00707` (CFOFQ02400, CFOAQ00600) — **0 qualify**, held. Overseas-F/O
+(overseas_option, …71) yielded **2** with the `00136`+populated-body signature the
+flipped reads share:
+
+| TR | lane (acct) | smoke (credential-free) | End state |
+|---|---|---|---|
+| CIDBQ03000 | overseas_option (…71) | `rsp_cd=00136 rows=5 asset_nd=true` (해외선물 예수금/잔고현황; `EvalAssetAmt` non-default) | **implemented** — was `00707` on …01 (§16); resolves with data on …71. `TrdDt` must be a **trading day** (a weekend returns `01715`); the smoke walks back to the most recent weekday. 167→168. |
+| CIDBQ05300 | overseas_option (…71) | `rsp_cd=00136 rows=5 dps_nd=true` (해외선물 예탁자산; per-currency `OvrsFutsDps` non-default) | **implemented** — was `IGW40013` on …01 (§16); the gateway error was a **wrong-account artifact**, cleared under the correct account. 168→169. |
+
+The remaining overseas candidates smoked empty `00707` (CIDBQ01500, CIDEQ00800,
+CIDBQ01800, CIDBQ02400) — held, not tracked. No overflow beyond the cap.
+
+**§16 corrections (R11).** CFOEQ11100 and CIDBQ01400 move from §16 PENDING to
+Implemented; t0441 stays PENDING but its reason changes from "no F/O funding /
+cash-only account" to "reachable on its own lane, account funded, no open
+positions." CIDBQ03000 (§16 `00707`) and CIDBQ05300 (§16 `IGW40013`) move from the
+§16 deferred/error lists to Implemented. The §16 "no F/O funding" gate conclusion
+is retracted as a wrong-account artifact. Recommended tier untouched for all.

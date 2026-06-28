@@ -1,0 +1,12 @@
+{
+  "rsp_cd": "00136",
+  "CIDBQ03000OutBlock2": [
+    {
+      "CrcyObjCode": "TOT(USD)",
+      "PrexchDps": "2296914.47",
+      "EvalAssetAmt": "2296849.47",
+      "AbrdFutsOrdAbleAmt": "2183072.60"
+    }
+  ],
+  "rsp_msg": "조회가 완료되었습니다."
+}

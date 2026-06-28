@@ -1,9 +1,9 @@
-tr_code: CFOEQ11100
-name: 선물옵션가정산예탁금상세
+tr_code: CIDBQ05300
+name: 해외선물 예탁자산 조회
 owner_class: account
 facets:
   protocol: rest
-  instrument_domain: futures_options
+  instrument_domain: overseas_futures
   venue_session: unspecified
   date_sensitive: false
   self_paginated: false
@@ -20,5 +20,5 @@ support:
   implemented: true
   recommended: false
 maintenance:
-  source_spec_hash: d8e9f0a1b2c3
+  source_spec_hash: b8c9d0e1f2a3
   last_reviewed: 2026-06-28

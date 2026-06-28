@@ -20,17 +20,19 @@ TR marked `ready` is a promote-tr candidate.
 | `CSPAQ12200` | `live-smoke-account` | `live_smoke_account` | provisioned paper account (else SMOKE-FAIL) | ready | paper read-only balance inquiry |
 | `CSPAQ12300` | `live-smoke-cspaq12300` | `live_smoke_cspaq12300` | provisioned paper account (else SMOKE-FAIL) | implemented-only | paper read-only BEP/balance inquiry |
 | `CSPAQ22200` | `live-smoke-cspaq22200` | `live_smoke_cspaq22200` | provisioned paper account (else SMOKE-FAIL) | implemented-only | paper read-only orderable-amount/valuation inquiry |
-| `CFOBQ10500` | `live-smoke-cfobq10500` | `live_smoke_cfobq10500` | provisioned paper account (empty `00707` on a position-less account → PENDING) | implemented-only | paper read-only F/O deposit/margin inquiry |
-| `CCENQ90200` | `live-smoke-ccenq90200` | `live_smoke_ccenq90200` | provisioned paper account; krx_extended night window (off-window empty → PENDING, regular clock N/A) | implemented-only | paper read-only KRX night-derivatives balance inquiry |
-| `CFOAQ10100` | `live-smoke-cfoaq10100` | `live_smoke_cfoaq10100` | provisioned paper account + current `LS_LIVE_SMOKE_FNOISU` (empty `00707` → PENDING) | implemented-only | paper read-only F/O orderable-quantity inquiry (조회, not an order) |
-| `CCENQ10100` | `live-smoke-ccenq10100` | `live_smoke_ccenq10100` | provisioned paper account + current `LS_LIVE_SMOKE_FNOISU`; krx_extended night window | implemented-only | paper read-only KRX night-derivatives orderable-quantity inquiry (조회, not an order) |
+| `CFOBQ10500` | `live-smoke-cfobq10500` | `live_smoke_cfobq10500` | **lane `domestic_option`** (account `…51`); empty `00707` on a position-less account → PENDING | implemented-only | paper read-only F/O deposit/margin inquiry |
+| `CCENQ90200` | `live-smoke-ccenq90200` | `live_smoke_ccenq90200` | **lane `domestic_option`**; krx_extended night window (off-window empty → PENDING, regular clock N/A) | implemented-only | paper read-only KRX night-derivatives balance inquiry |
+| `CFOAQ10100` | `live-smoke-cfoaq10100` | `live_smoke_cfoaq10100` | **lane `domestic_option`** + current `LS_LIVE_SMOKE_FNOISU` (empty `00707` → PENDING) | implemented-only | paper read-only F/O orderable-quantity inquiry (조회, not an order) |
+| `CCENQ10100` | `live-smoke-ccenq10100` | `live_smoke_ccenq10100` | **lane `domestic_option`** + current `LS_LIVE_SMOKE_FNOISU`; krx_extended night window | implemented-only | paper read-only KRX night-derivatives orderable-quantity inquiry (조회, not an order) |
 | `t0424` | `live-smoke-t0424` | `live_smoke_t0424` | provisioned paper account (holdings=0 = cash-only, not a defect; U2 holdings gate) | implemented-only | paper read-only stock balance (cash summary + holdings array) |
 | `t0167` | `live-smoke-t0167` | `live_smoke_t0167` | paper credentials (server-time utility, always populated) | implemented-only | paper read-only server-time inquiry (utility) |
 | `CSPBQ00200` | `live-smoke-cspbq00200` | `live_smoke_cspbq00200` | provisioned paper account (margin order-qty capacity) | implemented-only | paper read-only margin-rate orderable-quantity inquiry |
 | `CLNAQ00100` | `live-smoke-clnaq00100` | `live_smoke_clnaq00100` | paper credentials (loanable-stock reference list, full-list mode) | implemented-only | paper read-only loanable-collateral stock list |
-| `CFOEQ11100` | `live-smoke-cfoeq11100` | `live_smoke_cfoeq11100` | provisioned paper account (F/O deposit; empty `00707` → PENDING) | implemented-only | paper read-only F/O provisional-settlement deposit detail |
-| `t0441` | `live-smoke-t0441` | `live_smoke_t0441` | provisioned paper account (no F/O positions → empty eval → PENDING) | implemented-only | paper read-only F/O balance valuation (moving-average) |
-| `CIDBQ01400` | `live-smoke-cidbq01400` | `live_smoke_cidbq01400` | provisioned paper account + current `LS_LIVE_SMOKE_OVRSISU` (overseas paper often empty → PENDING) | implemented-only | paper read-only overseas-futures orderable-quantity inquiry |
+| `CFOEQ11100` | `live-smoke-cfoeq11100` | `live_smoke_cfoeq11100` | **lane `domestic_option`** (account `…51`); F/O deposit; empty `00707` on an unfunded F/O account → PENDING | implemented-only | paper read-only F/O provisional-settlement deposit detail |
+| `t0441` | `live-smoke-t0441` | `live_smoke_t0441` | **lane `domestic_option`** (account `…51`); no F/O positions → empty eval → PENDING | implemented-only | paper read-only F/O balance valuation (moving-average) |
+| `CIDBQ01400` | `live-smoke-cidbq01400` | `live_smoke_cidbq01400` | **lane `overseas_option`** (account `…71`) + current `LS_LIVE_SMOKE_OVRSISU`; empty → PENDING | implemented-only | paper read-only overseas-futures orderable-quantity inquiry |
+| `CIDBQ03000` | `live-smoke-cidbq03000` | `live_smoke_cidbq03000` | **lane `overseas_option`** (account `…71`); witness non-default `EvalAssetAmt`; empty/all-default → PENDING | implemented-only | paper read-only overseas-futures deposit/balance status |
+| `CIDBQ05300` | `live-smoke-cidbq05300` | `live_smoke_cidbq05300` | **lane `overseas_option`** (account `…71`); witness non-default `OvrsFutsDps`; empty/all-default → PENDING (cash account returned IGW40013) | implemented-only | paper read-only overseas-futures deposited-assets inquiry |
 | `S3_` | `live-smoke-ws` | `live_smoke_ws` | paper WS port reachable | ready | **websocket lifecycle reachability only** (delegates to the generic `ws_lifecycle_smoke(tr_cd, tr_key, lane)` helper) |
 | `K3_` | `live-smoke-k3` | `live_smoke_k3` | paper WS port reachable | implemented-only | **websocket lifecycle reachability only** (KOSDAQ 체결; per KTD6=NOT-OBSERVABLE the claim is connection-reachable-only) |
 | `H1_` | `live-smoke-ws-p1` | `live_smoke_ws_p1` | paper WS port reachable | implemented-only | **websocket lifecycle reachability only** (KOSPI 호가; P1 combined sweep; per KTD6 connection-reachable-only) |
@@ -116,9 +118,9 @@ TR marked `ready` is a promote-tr candidate.
 | `t8434` | `live-smoke-t8434` | `live_smoke_t8434` | anytime F/O; self-sources a contract `focode` from `t8467`, `qrycnt=1` (JSON number) — F/O multi current-price read (empty array off-session → PENDING) | implemented-only | paper F/O multi current-price (U5) |
 | `t1988` | `live-smoke-t1988` | `live_smoke_t1988` | standalone→`market_session` (KTD3); no caller input (all markets, filters off); `from_rate`/`to_rate` JSON numbers (KTD4) — ELW underlying-asset list (empty out-block → PENDING; IGW40011 → PENDING) | implemented-only | paper ELW underlying-asset list (U3) |
 | `t3320` | `live-smoke-t3320` | `live_smoke_t3320` | standalone→`market_session` (KTD3); public ticker `gicode=005930` (삼성전자, bare 6-digit) — FnGuide company summary (empty out-block → PENDING) | implemented-only | paper FnGuide company summary (U3) |
-| `t8455` | `live-smoke-t8455` | `live_smoke_t8455` | `venue_session: krx_extended` night window ~18:00–05:00 KST (NOT the regular clock, KTD7); `gubun=NF` — night-derivatives master (off-window empty → PENDING re-run, not a flip/DROP; `01900` → paper-incompatible) | implemented-only | paper KRX night-derivatives master (U6) |
-| `t8460` | `live-smoke-t8460` | `live_smoke_t8460` | `venue_session: krx_extended` night window ~18:00–05:00 KST (KTD7); `yyyymm`=near month, `gubun=G` — night-option board (off-window empty → PENDING re-run) | implemented-only | paper KRX night-derivatives option board (U6) |
-| `t8463` | `live-smoke-t8463` | `live_smoke_t8463` | `venue_session: krx_extended` night window ~18:00–05:00 KST (KTD7); `tm_rng=N`/`fot_clsf_cd=F`/`bsc_asts_id=101`, `cnt` JSON number (KTD4) — night investor-by-timeslot (off-window empty → PENDING re-run) | implemented-only | paper KRX night-derivatives investor-by-timeslot (U6) |
+| `t8455` | `live-smoke-t8455` | `live_smoke_t8455` | **lane `domestic_option`**; `venue_session: krx_extended` night window ~18:00–05:00 KST (NOT the regular clock, KTD7); `gubun=NF` — night-derivatives master (off-window empty → PENDING re-run, not a flip/DROP; `01900` re-confirmed under F/O lane → paper-incompatible/venue, not account) | implemented-only | paper KRX night-derivatives master (U6) |
+| `t8460` | `live-smoke-t8460` | `live_smoke_t8460` | **lane `domestic_option`**; `venue_session: krx_extended` night window ~18:00–05:00 KST (KTD7); `yyyymm`=near month, `gubun=G` — night-option board (off-window empty → PENDING re-run) | implemented-only | paper KRX night-derivatives option board (U6) |
+| `t8463` | `live-smoke-t8463` | `live_smoke_t8463` | **lane `domestic_option`**; `venue_session: krx_extended` night window ~18:00–05:00 KST (KTD7); `tm_rng=N`/`fot_clsf_cd=F`/`bsc_asts_id=101`, `cnt` JSON number (KTD4) — night investor-by-timeslot (off-window empty → PENDING re-run) | implemented-only | paper KRX night-derivatives investor-by-timeslot (U6) |
 | `g3101` | `live-smoke-g3101` | `live_smoke_g3101` | `instrument_domain: overseas_stock`→`market_session` (KTD3); public ticker `82`/`TSLA` (TSLA on NASDAQ); canonical 현재가 `price` (KTD6) — overseas current-price (empty out-block → PENDING; `01900` → paper-incompatible) | implemented-only | paper overseas current-price (U7) |
 | `g3104` | `live-smoke-g3104` | `live_smoke_g3104` | overseas_stock→`market_session`; `82`/`TSLA`; canonical 한글종목명 `korname` (KTD6) — overseas stock-info master (empty out-block → PENDING) | implemented-only | paper overseas stock-info master (U7) |
 | `g3106` | `live-smoke-g3106` | `live_smoke_g3106` | overseas_stock→`market_session`; `82`/`TSLA`; canonical 현재가 `price` (KTD6) — overseas current-price+order-book (empty out-block → PENDING) | implemented-only | paper overseas order book (U7) |
@@ -204,6 +206,16 @@ Notes:
   smoke (revoke invalidates the session token). Not a recipe-run.
 - All targets call `paper_guard()` first and require `LS_TRADING_ENV=paper`
   explicitly. They hit the real paper gateway with real credentials from `.env`.
+- **Per-account credential lanes** (paper-account-credential-lanes wave): each LS
+  paper account is bound to its own appkey (the account number is never on the
+  wire), so a TR authenticates as whichever account its lane file resolves. The
+  Makefile sets a target-specific `LS_SMOKE_LANE` by `instrument_domain`:
+  `futures_options` → `.env.domestic_option` (account `…51`), `overseas_futures`
+  → `.env.overseas_option` (account `…71`), and `stock`/`overseas_stock`/unmapped
+  → `.env` (the domestic lane, account `…01`). A lane-bearing target FAILS FAST
+  if its `.env.<lane>` file is missing — it never silently falls back to `.env`.
+  F/O and overseas-F/O account-state reads were historically PENDING only because
+  every smoke authenticated as the domestic cash account; the lane fixes that.
 - `t1403` (신규상장종목조회) is **date-range-filtered, not trading-day-gated**.
   Its inputs are listing MONTHS (`styymm`/`enyymm`, `YYYYMM`), so the `01715`
   non-trading-day error cannot apply (no day field) — confirmed live across

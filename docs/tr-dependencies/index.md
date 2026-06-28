@@ -16,8 +16,10 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `CCENQ90200` | KRX야간파생 잔고조회 | `account` | tracked | [CCENQ90200](./CCENQ90200.md) |
 | `CFOAQ10100` | 선물옵션 주문가능수량조회 | `account` | implemented | [CFOAQ10100](./CFOAQ10100.md) |
 | `CFOBQ10500` | 선물옵션 계좌예탁금증거금조회 | `account` | implemented | [CFOBQ10500](./CFOBQ10500.md) |
-| `CFOEQ11100` | 선물옵션가정산예탁금상세 | `account` | tracked | [CFOEQ11100](./CFOEQ11100.md) |
-| `CIDBQ01400` | 해외선물 체결내역개별 조회(주문가능수량) | `account` | tracked | [CIDBQ01400](./CIDBQ01400.md) |
+| `CFOEQ11100` | 선물옵션가정산예탁금상세 | `account` | implemented | [CFOEQ11100](./CFOEQ11100.md) |
+| `CIDBQ01400` | 해외선물 체결내역개별 조회(주문가능수량) | `account` | implemented | [CIDBQ01400](./CIDBQ01400.md) |
+| `CIDBQ03000` | 해외선물 예수금/잔고현황 | `account` | implemented | [CIDBQ03000](./CIDBQ03000.md) |
+| `CIDBQ05300` | 해외선물 예탁자산 조회 | `account` | implemented | [CIDBQ05300](./CIDBQ05300.md) |
 | `CLNAQ00100` | 예탁담보융자가능종목현황조회 | `account` | implemented | [CLNAQ00100](./CLNAQ00100.md) |
 | `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | recommended | [CSPAQ12200](./CSPAQ12200.md) |
 | `CSPAQ12300` | BEP단가조회 | `account` | implemented | [CSPAQ12300](./CSPAQ12300.md) |

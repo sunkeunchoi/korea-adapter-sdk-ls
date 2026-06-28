@@ -48,6 +48,9 @@ A curated per-TR judgment that a read's [[Paper Live Smoke]] can certify a non-e
 ### Holdings gate
 The pattern that determines whether the paper account holds securities/positions before any positions-dependent read is queued for a flip: model the holdings TR first (e.g. `t0424`) and read its position out-block array *length* from the typed smoke — not the raw-probe `body_len`, which a cash-summary block always inflates. An empty array on a non-default cash summary means cash-only; that single determination *cascades*, downgrading the whole positions/F-O cohort to expected-empty so their all-default smoke results are predicted, not surprising.
 
+### Credential lane
+A per-account paper credential set — `(apikey, secret, account_no)` — selected for a request by the TR's `instrument_domain` facet (`stock`/`overseas_stock` → domestic, `futures_options` → domestic-option, `overseas_futures` → overseas-option). It exists because the LS gateway resolves the target account **entirely from the OAuth token**, never from the account number on the wire: dispatch sends only `tr_cd`/continuation/content-type/bearer-token, and LS's account-read request bodies carry no account field. So one appkey reaches exactly one account, and reaching a different account requires a different appkey, not a different number. A read that returns empty `00707` may simply be authenticating as the wrong account (a wrong-lane artifact) rather than carrying no data — distinct from the genuinely-unfunded case behind the [[Holdings gate]]. A lane with no configured credential falls back to the domestic credential.
+
 ### Focused Evidence
 A recorded, credential-free result of a Paper Live Smoke that backs a Recommended TR's claim. A smoke run gates Implementation; it only becomes Focused Evidence when a TR is deliberately promoted to Recommended.
 

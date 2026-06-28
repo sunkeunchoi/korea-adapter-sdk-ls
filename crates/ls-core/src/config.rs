@@ -245,15 +245,21 @@ impl LsConfig {
     /// Load configuration from environment variables.
     ///
     /// Reads `LS_TRADING_ENV` to determine which credential set to load:
-    /// - `"paper"` → reads `LS_PAPER_APPKEY`, `LS_PAPER_SECRET`, `LS_PAPER_ACCOUNT`
+    /// - `"paper"` → reads `LS_PAPER_APIKEY`, `LS_PAPER_SECRET`, `LS_PAPER_ACCOUNT`
     /// - `"real"` → reads `LS_REAL_APPKEY`, `LS_REAL_SECRET`, `LS_REAL_ACCOUNT`
     ///
     /// `LS_TRADING_ENV` accepts only `paper` and `real`; any other value is an
     /// error. If `LS_TRADING_ENV` is unset, defaults to `"paper"`.
     ///
-    /// Each credential falls back to the legacy name if the env-specific one
+    /// The paper appkey resolves through a back-compat chain:
+    /// `LS_PAPER_APIKEY` → `LS_PAPER_APPKEY` (alias) → legacy `LS_APPKEY`. A
+    /// **real-money interlock** (see [`resolve_paper_appkey`]) refuses to start a
+    /// paper run when a paper-prefixed appkey and a real-money-capable name
+    /// (`LS_APPKEY` / `LS_REAL_APPKEY`) are both set, and never resolves a paper
+    /// request to `LS_REAL_APPKEY`.
+    ///
+    /// Secret and account fall back to the legacy name if the env-specific one
     /// is missing:
-    /// - `LS_APPKEY`  (if `LS_PAPER_APPKEY` / `LS_REAL_APPKEY` missing)
     /// - `LS_SECRET`  (if `LS_PAPER_SECRET` / `LS_REAL_SECRET` missing)
     /// - `LS_ACCOUNT` (if `LS_PAPER_ACCOUNT` / `LS_REAL_ACCOUNT` missing)
     ///
@@ -262,19 +268,25 @@ impl LsConfig {
     ///
     /// # Errors
     ///
-    /// Returns [`LsError::Config`] if a required environment variable is missing
-    /// or if `LS_TRADING_ENV` contains an unrecognised value.
+    /// Returns [`LsError::Config`] if a required environment variable is missing,
+    /// if the paper/real interlock trips, or if `LS_TRADING_ENV` contains an
+    /// unrecognised value.
     pub fn from_env() -> LsResult<Self> {
         let env_raw = std::env::var("LS_TRADING_ENV").unwrap_or_else(|_| "paper".into());
         let environment = env_raw.parse::<Environment>()?;
 
-        let (appkey_var, secret_var, account_var) = if environment.is_paper() {
-            ("LS_PAPER_APPKEY", "LS_PAPER_SECRET", "LS_PAPER_ACCOUNT")
+        let appkey = if environment.is_paper() {
+            resolve_paper_appkey()?
         } else {
-            ("LS_REAL_APPKEY", "LS_REAL_SECRET", "LS_REAL_ACCOUNT")
+            env_with_fallback("LS_REAL_APPKEY", "LS_APPKEY")?
         };
 
-        let appkey = env_with_fallback(appkey_var, "LS_APPKEY")?;
+        let (secret_var, account_var) = if environment.is_paper() {
+            ("LS_PAPER_SECRET", "LS_PAPER_ACCOUNT")
+        } else {
+            ("LS_REAL_SECRET", "LS_REAL_ACCOUNT")
+        };
+
         let appsecretkey = env_with_fallback(secret_var, "LS_SECRET")?;
         let account_no = env_with_fallback(account_var, "LS_ACCOUNT")?;
 
@@ -306,6 +318,44 @@ fn env_with_fallback(primary: &str, legacy: &str) -> LsResult<String> {
     std::env::var(primary)
         .or_else(|_| std::env::var(legacy))
         .map_err(|_| LsError::Config(format!("missing env var: {primary} (or {legacy})")))
+}
+
+/// Resolve the paper appkey through `LS_PAPER_APIKEY` → `LS_PAPER_APPKEY`
+/// (alias) → legacy `LS_APPKEY`, with a real-money interlock (R2a).
+///
+/// A paper run must never authenticate with real-money credentials:
+/// - If a paper-prefixed name (`LS_PAPER_APIKEY` / `LS_PAPER_APPKEY`) and a
+///   real-money-capable name (`LS_APPKEY` / `LS_REAL_APPKEY`) are **both** set,
+///   fail fast rather than silently shadowing one with the other.
+/// - The fallback never resolves a paper request to `LS_REAL_APPKEY`; legacy
+///   `LS_APPKEY` is accepted only as a sole back-compat source.
+fn resolve_paper_appkey() -> LsResult<String> {
+    let paper = std::env::var("LS_PAPER_APIKEY")
+        .ok()
+        .or_else(|| std::env::var("LS_PAPER_APPKEY").ok());
+    let real_capable_set =
+        std::env::var("LS_APPKEY").is_ok() || std::env::var("LS_REAL_APPKEY").is_ok();
+
+    match paper {
+        Some(key) => {
+            if real_capable_set {
+                return Err(LsError::Config(
+                    "paper run has both a paper appkey (LS_PAPER_APIKEY / LS_PAPER_APPKEY) \
+                     and a real-money-capable appkey (LS_APPKEY / LS_REAL_APPKEY) set; \
+                     refusing to authenticate ambiguously. Unset the real-money name for \
+                     paper runs."
+                        .into(),
+                ));
+            }
+            Ok(key)
+        }
+        // No paper-prefixed name: accept legacy LS_APPKEY only (never LS_REAL_APPKEY).
+        None => std::env::var("LS_APPKEY").map_err(|_| {
+            LsError::Config(
+                "missing env var: LS_PAPER_APIKEY (or LS_PAPER_APPKEY, or legacy LS_APPKEY)".into(),
+            )
+        }),
+    }
 }
 
 impl std::fmt::Debug for LsConfig {
@@ -396,6 +446,7 @@ mod tests {
     fn save_ls_env() -> Vec<(&'static str, Option<String>)> {
         const VARS: &[&str] = &[
             "LS_TRADING_ENV",
+            "LS_PAPER_APIKEY",
             "LS_PAPER_APPKEY",
             "LS_PAPER_SECRET",
             "LS_PAPER_ACCOUNT",
@@ -425,15 +476,17 @@ mod tests {
 
         clear(&[
             "LS_TRADING_ENV",
+            "LS_PAPER_APIKEY",
             "LS_PAPER_APPKEY",
             "LS_PAPER_SECRET",
             "LS_PAPER_ACCOUNT",
+            "LS_REAL_APPKEY",
             "LS_APPKEY",
             "LS_SECRET",
             "LS_ACCOUNT",
         ]);
         std::env::set_var("LS_TRADING_ENV", "paper");
-        std::env::set_var("LS_PAPER_APPKEY", "paper-key");
+        std::env::set_var("LS_PAPER_APIKEY", "paper-key");
         std::env::set_var("LS_PAPER_SECRET", "paper-secret");
         std::env::set_var("LS_PAPER_ACCOUNT", "paper-account");
 
@@ -447,20 +500,58 @@ mod tests {
     }
 
     #[test]
+    fn from_env_real_resolves_real_unaffected_by_paper_interlock() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = save_ls_env();
+
+        clear(&[
+            "LS_TRADING_ENV",
+            "LS_PAPER_APIKEY",
+            "LS_PAPER_APPKEY",
+            "LS_PAPER_SECRET",
+            "LS_PAPER_ACCOUNT",
+            "LS_REAL_APPKEY",
+            "LS_REAL_SECRET",
+            "LS_REAL_ACCOUNT",
+            "LS_APPKEY",
+            "LS_SECRET",
+            "LS_ACCOUNT",
+        ]);
+        // A real run resolves LS_REAL_* and is NOT subject to the paper interlock:
+        // a real-money appkey alongside a bare LS_APPKEY must still resolve (real wins),
+        // not fail fast — the interlock only guards paper runs (resolve_paper_appkey).
+        std::env::set_var("LS_TRADING_ENV", "real");
+        std::env::set_var("LS_REAL_APPKEY", "real-key");
+        std::env::set_var("LS_APPKEY", "legacy-bare-key");
+        std::env::set_var("LS_REAL_SECRET", "real-secret");
+        std::env::set_var("LS_REAL_ACCOUNT", "real-account");
+
+        let cfg = LsConfig::from_env().expect("real run resolves without the paper interlock");
+        assert_eq!(cfg.environment, Environment::Real);
+        assert_eq!(cfg.appkey, "real-key", "LS_REAL_APPKEY wins for a real run");
+        assert_eq!(cfg.appsecretkey, "real-secret");
+        assert_eq!(cfg.account_no, "real-account");
+
+        restore_ls_env(saved);
+    }
+
+    #[test]
     fn from_env_legacy_fallback_resolves() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let saved = save_ls_env();
 
         clear(&[
             "LS_TRADING_ENV",
+            "LS_PAPER_APIKEY",
             "LS_PAPER_APPKEY",
             "LS_PAPER_SECRET",
             "LS_PAPER_ACCOUNT",
+            "LS_REAL_APPKEY",
             "LS_APPKEY",
             "LS_SECRET",
             "LS_ACCOUNT",
         ]);
-        // No LS_PAPER_APPKEY — legacy LS_APPKEY must be used instead.
+        // No paper-prefixed appkey — legacy LS_APPKEY must be used instead.
         std::env::set_var("LS_TRADING_ENV", "paper");
         std::env::set_var("LS_APPKEY", "legacy-key");
         std::env::set_var("LS_PAPER_SECRET", "paper-secret");
@@ -481,9 +572,11 @@ mod tests {
 
         clear(&[
             "LS_TRADING_ENV",
+            "LS_PAPER_APIKEY",
             "LS_PAPER_APPKEY",
             "LS_PAPER_SECRET",
             "LS_PAPER_ACCOUNT",
+            "LS_REAL_APPKEY",
             "LS_APPKEY",
             "LS_SECRET",
             "LS_ACCOUNT",
@@ -494,7 +587,159 @@ mod tests {
         let err = LsConfig::from_env().expect_err("missing creds should fail");
         match err {
             LsError::Config(msg) => {
-                assert!(msg.contains("LS_PAPER_APPKEY"), "got: {msg}");
+                assert!(msg.contains("LS_PAPER_APIKEY"), "got: {msg}");
+            }
+            other => panic!("expected LsError::Config, got {other:?}"),
+        }
+
+        restore_ls_env(saved);
+    }
+
+    #[test]
+    fn from_env_paper_apikey_alias_resolves() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = save_ls_env();
+
+        clear(&[
+            "LS_TRADING_ENV",
+            "LS_PAPER_APIKEY",
+            "LS_PAPER_APPKEY",
+            "LS_PAPER_SECRET",
+            "LS_PAPER_ACCOUNT",
+            "LS_REAL_APPKEY",
+            "LS_APPKEY",
+            "LS_SECRET",
+            "LS_ACCOUNT",
+        ]);
+        // Only the legacy LS_PAPER_APPKEY alias is set — must resolve via alias.
+        std::env::set_var("LS_TRADING_ENV", "paper");
+        std::env::set_var("LS_PAPER_APPKEY", "alias-key");
+        std::env::set_var("LS_PAPER_SECRET", "paper-secret");
+        std::env::set_var("LS_PAPER_ACCOUNT", "paper-account");
+
+        let cfg = LsConfig::from_env().expect("from_env should resolve via APPKEY alias");
+        assert_eq!(cfg.appkey, "alias-key");
+
+        restore_ls_env(saved);
+    }
+
+    #[test]
+    fn from_env_paper_apikey_wins_over_alias() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = save_ls_env();
+
+        clear(&[
+            "LS_TRADING_ENV",
+            "LS_PAPER_APIKEY",
+            "LS_PAPER_APPKEY",
+            "LS_PAPER_SECRET",
+            "LS_PAPER_ACCOUNT",
+            "LS_REAL_APPKEY",
+            "LS_APPKEY",
+            "LS_SECRET",
+            "LS_ACCOUNT",
+        ]);
+        std::env::set_var("LS_TRADING_ENV", "paper");
+        std::env::set_var("LS_PAPER_APIKEY", "new-key");
+        std::env::set_var("LS_PAPER_APPKEY", "old-alias");
+        std::env::set_var("LS_PAPER_SECRET", "paper-secret");
+        std::env::set_var("LS_PAPER_ACCOUNT", "paper-account");
+
+        let cfg = LsConfig::from_env().expect("from_env should prefer APIKEY over alias");
+        assert_eq!(cfg.appkey, "new-key");
+
+        restore_ls_env(saved);
+    }
+
+    #[test]
+    fn from_env_paper_real_interlock_legacy_appkey_fails_fast() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = save_ls_env();
+
+        clear(&[
+            "LS_TRADING_ENV",
+            "LS_PAPER_APIKEY",
+            "LS_PAPER_APPKEY",
+            "LS_PAPER_SECRET",
+            "LS_PAPER_ACCOUNT",
+            "LS_REAL_APPKEY",
+            "LS_APPKEY",
+            "LS_SECRET",
+            "LS_ACCOUNT",
+        ]);
+        // Paper key AND a bare legacy LS_APPKEY both set → ambiguous, must fail.
+        std::env::set_var("LS_TRADING_ENV", "paper");
+        std::env::set_var("LS_PAPER_APIKEY", "paper-key");
+        std::env::set_var("LS_APPKEY", "could-be-real-key");
+        std::env::set_var("LS_PAPER_SECRET", "paper-secret");
+        std::env::set_var("LS_PAPER_ACCOUNT", "paper-account");
+
+        let err = LsConfig::from_env().expect_err("paper+real appkey must fail fast");
+        match err {
+            LsError::Config(msg) => {
+                assert!(msg.contains("refusing to authenticate ambiguously"), "got: {msg}");
+            }
+            other => panic!("expected LsError::Config, got {other:?}"),
+        }
+
+        restore_ls_env(saved);
+    }
+
+    #[test]
+    fn from_env_paper_real_interlock_ls_real_appkey_fails_fast() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = save_ls_env();
+
+        clear(&[
+            "LS_TRADING_ENV",
+            "LS_PAPER_APIKEY",
+            "LS_PAPER_APPKEY",
+            "LS_PAPER_SECRET",
+            "LS_PAPER_ACCOUNT",
+            "LS_REAL_APPKEY",
+            "LS_APPKEY",
+            "LS_SECRET",
+            "LS_ACCOUNT",
+        ]);
+        // Paper key AND LS_REAL_APPKEY both set → must fail fast.
+        std::env::set_var("LS_TRADING_ENV", "paper");
+        std::env::set_var("LS_PAPER_APIKEY", "paper-key");
+        std::env::set_var("LS_REAL_APPKEY", "real-key");
+        std::env::set_var("LS_PAPER_SECRET", "paper-secret");
+        std::env::set_var("LS_PAPER_ACCOUNT", "paper-account");
+
+        let err = LsConfig::from_env().expect_err("paper+LS_REAL_APPKEY must fail fast");
+        assert!(matches!(err, LsError::Config(_)));
+
+        restore_ls_env(saved);
+    }
+
+    #[test]
+    fn from_env_paper_never_resolves_ls_real_appkey() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = save_ls_env();
+
+        clear(&[
+            "LS_TRADING_ENV",
+            "LS_PAPER_APIKEY",
+            "LS_PAPER_APPKEY",
+            "LS_PAPER_SECRET",
+            "LS_PAPER_ACCOUNT",
+            "LS_REAL_APPKEY",
+            "LS_APPKEY",
+            "LS_SECRET",
+            "LS_ACCOUNT",
+        ]);
+        // Only LS_REAL_APPKEY set for a paper run — must NOT resolve to it.
+        std::env::set_var("LS_TRADING_ENV", "paper");
+        std::env::set_var("LS_REAL_APPKEY", "real-key");
+        std::env::set_var("LS_PAPER_SECRET", "paper-secret");
+        std::env::set_var("LS_PAPER_ACCOUNT", "paper-account");
+
+        let err = LsConfig::from_env().expect_err("paper run must not borrow LS_REAL_APPKEY");
+        match err {
+            LsError::Config(msg) => {
+                assert!(msg.contains("LS_PAPER_APIKEY"), "got: {msg}");
             }
             other => panic!("expected LsError::Config, got {other:?}"),
         }

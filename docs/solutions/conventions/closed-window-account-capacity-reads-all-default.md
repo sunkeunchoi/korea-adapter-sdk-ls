@@ -6,6 +6,7 @@ module: ls-sdk account owner_class, implement-tr recipe, closed-window flip wave
 problem_type: convention
 component: tooling
 severity: medium
+last_updated: 2026-06-28
 applies_when:
   - "Scoping a closed-window flip wave over the account lane (account_state reads: balance, deposit, margin order-qty, open-interest)"
   - "A make live-smoke-<tr> returns rsp_cd=00136 or 00000 with a deserializable 1-row out-block whose modeled numeric fields are ALL zero/empty"
@@ -56,6 +57,20 @@ this all-default signature on a cash-only, position-less paper account:
 | `CFOEQ11100` | 선물옵션 가정산예탁금상세 (F/O deposit detail) | `00136`, 1 row, `Dps`/`OpnmkDps…`/`CsgnMgn` all 0 | PENDING |
 | `t0441` | 선물/옵션 잔고평가 (F/O balance valuation) | `00000`, positions=0, `tappamt`=0 | PENDING |
 | `CIDBQ01400` | 해외선물 주문가능수량 (overseas-futures order-qty) | `00136`, 1 row, `OrdAbleQty` default | PENDING |
+
+> **Correction (2026-06-28, plan -002, ledger §17).** Three of these four
+> all-default results were a **wrong-account artifact**, not unfunded capacity. Every
+> §16 smoke authenticated as the **domestic cash account (…01)** — but `CFOEQ11100`
+> (F/O) and `CIDBQ01400` (overseas-F/O) own their data on *different* accounts. Re-smoked
+> under their own credential lane (`.env.domestic_option` / `.env.overseas_option`),
+> `CFOEQ11100` returns `00136 dps_nd=true` and `CIDBQ01400` returns `00136 qty_nondefault=true`
+> — **both FLIPPED Implemented**, and the §16 "no F/O funding" conclusion was retracted.
+> So the discriminator below is **stored-vs-computed *on the correct account***: rule
+> out wrong-account-binding (try the right lane) before calling an F/O read unfunded.
+> `t0441` stays PENDING but for a different reason — the `…51` account *is* funded, it
+> just holds no open positions to value. `CSPBQ00200` (domestic margin capacity) is a
+> true cash-only-account case (it runs on `…01`, the right account). See
+> [[ls-account-token-bound-credential-lanes]].
 
 Contrast the three that flipped, which read **persistent reference / cash-summary**
 data rather than a computed capacity:
@@ -127,8 +142,11 @@ let cap_nondefault = resp.outblock2.first()
 - **Raw-probe `body_len` is not a substance signal for account reads.** A 1KB+
   body can be all-zero field names. Confirm substance at the typed smoke, not the
   probe.
-- **`00136` ≠ data.** It is a success code meaning "possibly empty data"; treat it
-  like `00707` for the witness gate.
+- **`00136` carries data only when authenticated as the right account.** Treat an
+  all-default `00136` like `00707` for the witness gate — but first rule out a
+  wrong-account-binding by re-smoking under the read's credential lane (`00136` on
+  the *correct* account is a real flip, see
+  [[ls-account-token-bound-credential-lanes]]); only then is it genuinely empty.
 - Two code-level learnings from the same wave's review, captured for cross-reference:
   - Fractional request prices need a **decimal-tolerant** serializer. The i64-only
     `ls_core::string_as_number` quotes a decimal (`"75.50"` → a JSON string) and

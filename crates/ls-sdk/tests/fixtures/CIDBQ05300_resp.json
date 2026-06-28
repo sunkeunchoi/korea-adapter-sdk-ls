@@ -1,0 +1,16 @@
+{
+  "rsp_cd": "00136",
+  "CIDBQ05300OutBlock2": [
+    {
+      "CrcyCode": "KRW",
+      "OvrsFutsDps": "3000000000.00",
+      "AbrdFutsOrdAbleAmt": "3000000000.00"
+    },
+    {
+      "CrcyCode": "USD",
+      "OvrsFutsDps": "0.00",
+      "AbrdFutsOrdAbleAmt": "2183072.60"
+    }
+  ],
+  "rsp_msg": "조회가 완료되었습니다."
+}
