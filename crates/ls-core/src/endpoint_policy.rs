@@ -1227,6 +1227,25 @@ pub const CSPAQ22200_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(10),
 };
 
+/// t0424 — 주식잔고2 (stock balance v2, read-only account-state read).
+///
+/// Dispatches through plain `Inner::post` (non-paginated): the result is
+/// single-page (`facets.self_paginated: false`), so `has_pagination: false`.
+/// The cash summary persists regardless of market hours, so the read is
+/// closure-viable; the per-holding array is empty on a cash-only account.
+pub const T0424_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t0424",
+    path: "/stock/accno",
+    module: "stock",
+    group: "[주식] 계좌",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Account,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(10),
+};
+
 /// CFOBQ10500 — 선물옵션 계좌예탁금증거금조회 (F/O account deposit / margin inquiry,
 /// read-only).
 ///
@@ -2906,6 +2925,8 @@ mod tests {
             CSPAQ12200_POLICY,
             CSPAQ12300_POLICY,
             CSPAQ22200_POLICY,
+            // Closed-window account-lane flip wave (plan -001): non-order account read.
+            T0424_POLICY,
             // t0425 IS a non-order REST read — it belongs here AND in the
             // crosscheck. CSPAT00601 (is_order: true) deliberately does NOT.
             T0425_POLICY,

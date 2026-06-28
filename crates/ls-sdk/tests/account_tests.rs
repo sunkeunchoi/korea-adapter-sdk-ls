@@ -32,6 +32,7 @@ use ls_sdk::account::{
     CCENQ10100Request, CCENQ10100Response, CCENQ90200Request, CCENQ90200Response, CFOAQ10100Request,
     CFOAQ10100Response, CFOBQ10500Request, CFOBQ10500Response, CSPAQ12200Request, CSPAQ12200Response,
     CSPAQ12300Request, CSPAQ12300Response, CSPAQ22200Request, CSPAQ22200Response,
+    T0424Request, T0424Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token, TEST_ACCOUNT_NO};
@@ -58,6 +59,9 @@ const CFOAQ10100_FIXTURE: &str = include_str!("fixtures/CFOAQ10100_resp.json");
 
 /// The spec-derived, SYNTHETIC `CCENQ10100` response fixture.
 const CCENQ10100_FIXTURE: &str = include_str!("fixtures/CCENQ10100_resp.json");
+
+/// The spec-derived, SYNTHETIC `t0424` response fixture (cash summary + one holding).
+const T0424_FIXTURE: &str = include_str!("fixtures/t0424_resp.json");
 
 /// The shared REST path for the `/futureoption/accno` account TRs (`CFOBQ10500`,
 /// `CCENQ90200`, `CFOAQ10100`, `CCENQ10100`) — they mount the same endpoint and
@@ -1143,4 +1147,140 @@ fn ccenq10100_out_block2_single_object_deserializes_to_one_element_vec() {
         serde_json::from_value(json).expect("single-object out-block must deserialize");
     assert_eq!(resp.outblock2.len(), 1, "single object becomes a 1-element Vec");
     assert_eq!(resp.outblock2[0].ordableqty, "2");
+}
+
+// ---------------------------------------------------------------------------
+// t0424 — 주식잔고2 (read-only stock balance: cash summary + per-holding array).
+// The wave's U2 holdings gate: the per-holding array length proves whether the
+// account carries stock positions (KTD3).
+// ---------------------------------------------------------------------------
+
+/// `::new` serializes only the gubun flags under `t0424InBlock` with NO account
+/// number; the continuation echo defaults to empty.
+#[test]
+fn t0424_request_serializes_inblock_only_no_account_leak() {
+    let req = T0424Request::new("", "0", "0", "0");
+    let value = serde_json::to_value(&req).expect("serialize t0424 request");
+
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "request must have exactly one top-level key");
+    assert!(obj.contains_key("t0424InBlock"), "missing t0424InBlock key");
+
+    let inblock = &value["t0424InBlock"];
+    assert_eq!(inblock["chegb"], "0");
+    assert_eq!(inblock["cts_expcode"], "", "continuation echo empty on first page");
+    assert_eq!(
+        inblock.as_object().expect("inblock is an object").len(),
+        5,
+        "InBlock carries only the four gubun flags + continuation (no account number)"
+    );
+
+    let serialized = serde_json::to_string(&req).expect("serialize t0424 request");
+    assert!(
+        !serialized.contains(TEST_ACCOUNT_NO),
+        "the account number must never appear in the request body"
+    );
+}
+
+/// A representative success body deserializes; the substantive cash witness
+/// (`sunamt` = 추정순자산) holds a non-default value and the holdings array
+/// round-trips one position with distinct field values.
+#[tokio::test]
+async fn t0424_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(STOCK_ACCNO_PATH))
+        .and(header("tr_cd", "t0424"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T0424_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let req = T0424Request::new("", "0", "0", "0");
+    let resp = sdk
+        .account()
+        .stock_balance(&req)
+        .await
+        .expect("t0424 stock-balance inquiry should succeed");
+
+    assert_eq!(resp.rsp_cd, "00000");
+    // The substantive cash witness is non-default (KTD5).
+    assert_eq!(resp.outblock.sunamt, "80030265", "sunamt (추정순자산)");
+    assert_eq!(resp.outblock.tappamt, "150283", "tappamt (평가금액)");
+    assert_eq!(resp.outblock.tdtsunik, "30271", "tdtsunik distinct from dtsunik");
+
+    assert_eq!(resp.outblock1.len(), 1, "one held position");
+    let pos = &resp.outblock1[0];
+    assert_eq!(pos.hname, "삼성전자", "issue name");
+    assert_eq!(pos.expcode, "005930", "issue code");
+    assert_eq!(pos.janqty, "2", "balance quantity (holdings witness)");
+    assert_eq!(pos.mdposqt, "1", "sellable quantity distinct from janqty");
+    assert_eq!(pos.price, "75300", "current price");
+}
+
+/// Numeric-bearing fields parse via `string_or_number` from BOTH string and number
+/// JSON (cash-summary `sunamt` + holdings `janqty`).
+#[test]
+fn t0424_numeric_fields_parse_from_string_and_number() {
+    let as_number = serde_json::json!({
+        "rsp_cd": "00000",
+        "t0424OutBlock": { "sunamt": 80030265 },
+        "t0424OutBlock1": [{ "janqty": 2 }]
+    });
+    let resp: T0424Response =
+        serde_json::from_value(as_number).expect("number JSON must deserialize");
+    assert_eq!(resp.outblock.sunamt, "80030265");
+    assert_eq!(resp.outblock1[0].janqty, "2");
+
+    let as_string = serde_json::json!({
+        "rsp_cd": "00000",
+        "t0424OutBlock": { "sunamt": "80030265" },
+        "t0424OutBlock1": [{ "janqty": "2" }]
+    });
+    let resp: T0424Response =
+        serde_json::from_value(as_string).expect("string JSON must deserialize");
+    assert_eq!(resp.outblock.sunamt, "80030265");
+    assert_eq!(resp.outblock1[0].janqty, "2");
+}
+
+/// AE2: an empty holdings array on a populated cash summary is the cash-only case —
+/// it deserializes, the holdings Vec is empty, but the cash witness is non-default.
+#[test]
+fn t0424_empty_holdings_is_cash_only_not_a_defect() {
+    let json = serde_json::json!({
+        "rsp_cd": "00000",
+        "t0424OutBlock": { "sunamt": 80030265, "tappamt": 0 },
+        "t0424OutBlock1": []
+    });
+    let resp: T0424Response =
+        serde_json::from_value(json).expect("cash-only body must deserialize");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert!(
+        resp.outblock1.is_empty(),
+        "empty holdings array = cash-only account (the U2 cash-summary case)"
+    );
+    assert_eq!(
+        resp.outblock.sunamt, "80030265",
+        "the cash witness is still non-default — a cash-summary flip, not a positions flip"
+    );
+}
+
+/// `t0424OutBlock1` arriving as a SINGLE object deserializes via `de_vec_or_single`
+/// into a 1-element Vec.
+#[test]
+fn t0424_out_block1_single_object_deserializes_to_one_element_vec() {
+    let json = serde_json::json!({
+        "rsp_cd": "00000",
+        "t0424OutBlock": { "sunamt": 80030265 },
+        "t0424OutBlock1": { "hname": "삼성전자", "janqty": 5 }
+    });
+    let resp: T0424Response =
+        serde_json::from_value(json).expect("single-object holdings must deserialize");
+    assert_eq!(resp.outblock1.len(), 1, "single object becomes a 1-element Vec");
+    assert_eq!(resp.outblock1[0].janqty, "5");
 }

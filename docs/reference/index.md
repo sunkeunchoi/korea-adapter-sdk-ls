@@ -53,6 +53,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `o3125` | 해외선물옵션 현재가(종목정보) 조회 | `market_session` | implemented, not yet recommended |
 | `o3126` | 해외선물옵션 현재가호가 조회 | `market_session` | implemented, not yet recommended |
 | `revoke` | 접근토큰 폐기 (OAuth2 token revoke) | `standalone` | implemented, not yet recommended |
+| `t0424` | 주식잔고2 | `account` | implemented, not yet recommended |
 | `t0425` | 주식체결/미체결 (stock filled/unfilled order inquiry) | `paginated` | implemented, not yet recommended |
 | `t1101` | 주식 현재가호가 조회 | `market_session` | recommended |
 | `t1102` | 주식 현재가(시세) 조회 | `market_session` | recommended |

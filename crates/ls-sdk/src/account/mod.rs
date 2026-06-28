@@ -1332,6 +1332,151 @@ pub struct CCENQ10100Response {
     pub outblock2: Vec<CCENQ10100OutBlock2>,
 }
 
+// ---------------------------------------------------------------------------
+// t0424 — 주식잔고2 (stock balance v2, read-only account-state read).
+//
+// A cash-summary block (`t0424OutBlock`) plus a per-holding array
+// (`t0424OutBlock1`). The in-block carries only query-shape gubun flags plus a
+// `cts_expcode` continuation echo — NO account number (the account identity is
+// the bearer token plus `ResolvedConfig.account_no`). Single-page dispatch
+// (`facets.self_paginated: false`) through plain `Inner::post`.
+//
+// The holdings array is the wave's U2 holdings gate (KTD3): a populated
+// `t0424OutBlock1` proves the account carries stock positions; an empty array on
+// a non-default cash summary is the cash-only case (a cash-summary flip, NOT a
+// positions-bearing one). The array shape comes from the RAW capture's
+// `res_example` (`t0424OutBlock1` is a JSON array), deserialized tolerantly via
+// [`ls_core::de_vec_or_single`].
+// ---------------------------------------------------------------------------
+
+/// Input block for `t0424` — query-shape gubun flags + a continuation echo.
+///
+/// All five fields are query-shape selectors (price/fill/loan/charge gubun) plus
+/// the `cts_expcode` continuation token. None is an account number.
+#[derive(Serialize, Debug, Clone)]
+pub struct T0424InBlock {
+    /// Price distinction / 단가구분.
+    pub prcgb: String,
+    /// Fill distinction / 체결구분.
+    pub chegb: String,
+    /// Loan distinction / 대출구분.
+    pub dangb: String,
+    /// Charge distinction / 비용구분.
+    pub charge: String,
+    /// Continuation issue code / 연속조회 종목코드 (empty on the first page).
+    pub cts_expcode: String,
+}
+
+/// `t0424` request — wraps the input block under the `t0424InBlock` key.
+#[derive(Serialize, Debug, Clone)]
+pub struct T0424Request {
+    #[serde(rename = "t0424InBlock")]
+    pub inblock: T0424InBlock,
+}
+
+impl T0424Request {
+    /// Build a `t0424` stock-balance inquiry from the four gubun flags. The
+    /// continuation `cts_expcode` defaults to empty (first page); the account
+    /// number is NEVER a parameter (bearer token + config).
+    pub fn new(
+        prcgb: impl Into<String>,
+        chegb: impl Into<String>,
+        dangb: impl Into<String>,
+        charge: impl Into<String>,
+    ) -> Self {
+        T0424Request {
+            inblock: T0424InBlock {
+                prcgb: prcgb.into(),
+                chegb: chegb.into(),
+                dangb: dangb.into(),
+                charge: charge.into(),
+                cts_expcode: String::new(),
+            },
+        }
+    }
+}
+
+/// `t0424OutBlock` — the account cash / valuation summary block.
+///
+/// A representative numeric subset; every numeric-bearing field uses
+/// [`ls_core::string_or_number`] and `#[serde(default)]` tolerates a sparse block.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T0424OutBlock {
+    /// Day P&L / 당일실현손익.
+    #[serde(rename = "dtsunik", deserialize_with = "ls_core::string_or_number")]
+    pub dtsunik: String,
+    /// Loan amount / 대출금액.
+    #[serde(rename = "mamt", deserialize_with = "ls_core::string_or_number")]
+    pub mamt: String,
+    /// Estimated deposit / 추정예수금.
+    #[serde(rename = "sunamt1", deserialize_with = "ls_core::string_or_number")]
+    pub sunamt1: String,
+    /// Total valuation amount / 평가금액.
+    #[serde(rename = "tappamt", deserialize_with = "ls_core::string_or_number")]
+    pub tappamt: String,
+    /// Estimated deposited assets / 추정순자산 (the substantive cash witness, KTD5).
+    #[serde(rename = "sunamt", deserialize_with = "ls_core::string_or_number")]
+    pub sunamt: String,
+    /// Total day P&L / 총당일실현손익.
+    #[serde(rename = "tdtsunik", deserialize_with = "ls_core::string_or_number")]
+    pub tdtsunik: String,
+}
+
+/// `t0424OutBlock1` — one held stock position (repeated array block).
+///
+/// The U2 holdings gate reads the LENGTH of this array (KTD3); a non-empty array
+/// proves the account holds positions. A representative field subset; the
+/// account-name field is intentionally NOT modeled (no PII in the surface).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T0424OutBlock1 {
+    /// Issue name / 종목명.
+    #[serde(rename = "hname")]
+    pub hname: String,
+    /// Issue code / 종목번호.
+    #[serde(rename = "expcode")]
+    pub expcode: String,
+    /// Balance quantity / 잔고수량 (the substantive holdings witness).
+    #[serde(rename = "janqty", deserialize_with = "ls_core::string_or_number")]
+    pub janqty: String,
+    /// Sellable quantity / 매도가능수량.
+    #[serde(rename = "mdposqt", deserialize_with = "ls_core::string_or_number")]
+    pub mdposqt: String,
+    /// Current price / 현재가.
+    #[serde(rename = "price", deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Valuation amount / 평가금액.
+    #[serde(rename = "appamt", deserialize_with = "ls_core::string_or_number")]
+    pub appamt: String,
+    /// Purchase amount / 매입금액.
+    #[serde(rename = "pamt", deserialize_with = "ls_core::string_or_number")]
+    pub pamt: String,
+    /// P&L rate / 수익율.
+    #[serde(rename = "sunikrt", deserialize_with = "ls_core::string_or_number")]
+    pub sunikrt: String,
+}
+
+/// `t0424` response envelope.
+///
+/// `outblock` is the cash/valuation summary; `outblock1` is the per-holding array
+/// (tolerated as a single object OR an array via [`ls_core::de_vec_or_single`]).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T0424Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t0424OutBlock", default)]
+    pub outblock: T0424OutBlock,
+    #[serde(
+        rename = "t0424OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T0424OutBlock1>,
+}
+
 /// Account operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache, rate
@@ -1453,6 +1598,20 @@ impl Account {
     ) -> LsResult<CCENQ10100Response> {
         self.inner
             .post(&ls_core::endpoint_policy::CCENQ10100_POLICY, req)
+            .await
+    }
+
+    /// Inquire the stock balance (positions + cash summary) via `t0424`.
+    ///
+    /// Dispatches through plain [`ls_core::Inner::post`] (Account rate bucket,
+    /// single-page). The account is the config-supplied [`Account::account_no`],
+    /// identified by the bearer token — the caller passes only the gubun flags,
+    /// never an account number. A position-less paper account returns a populated
+    /// cash summary (`outblock`) with an empty holdings array (`outblock1`) — the
+    /// cash-only case (KTD3), not a defect.
+    pub async fn stock_balance(&self, req: &T0424Request) -> LsResult<T0424Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T0424_POLICY, req)
             .await
     }
 }

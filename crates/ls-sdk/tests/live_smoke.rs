@@ -19,7 +19,7 @@ use futures::StreamExt;
 use ls_core::{LsConfig, LsError, LsResult};
 use ls_sdk::account::{
     CCENQ10100Request, CCENQ90200Request, CFOAQ10100Request, CFOBQ10500Request, CSPAQ12200Request,
-    CSPAQ12300Request, CSPAQ22200Request,
+    CSPAQ12300Request, CSPAQ22200Request, T0424Request,
 };
 use ls_sdk::market_session::{
     T1101Request, T1102Request, T1485Request, T1511Request, T1516Request, T1531Request,
@@ -110,6 +110,84 @@ fn paper_sdk() -> LsResult<LsSdk> {
 /// account number — only symbols, dates, environment, business codes, and lengths.
 fn record(target: &str, inputs: &str, result: &str) {
     println!("LIVE-SMOKE target={target} inputs=[{inputs}] result=[{result}]");
+}
+
+/// Install a process-global tracing subscriber that DROPS the `ls_core` dispatch
+/// debug events (KTD7). The dispatch path logs `rsp_msg` and the whole response
+/// body on error paths — broker text that carries account-identifying content the
+/// field-level smoke scrubbing never sees. For an AUTONOMOUS account read (this
+/// wave runs the smokes in-session, not via an operator) these are suppressed
+/// entirely. FAIL-CLOSED: `tracing` allows exactly one global default per process,
+/// so if a foreign subscriber is already installed we cannot guarantee suppression
+/// — we refuse the run rather than fail OPEN on a known leak. Each account smoke
+/// installs this before its first dispatch; `make live-smoke-<tr>` runs exactly one
+/// test per process (`--ignored --exact`), so the global install always succeeds.
+fn install_dispatch_log_suppressor() -> LsResult<()> {
+    use tracing_subscriber::EnvFilter;
+    let filter = EnvFilter::new("error,ls_core=off");
+    let subscriber = tracing_subscriber::fmt().with_env_filter(filter).finish();
+    tracing::subscriber::set_global_default(subscriber).map_err(|_| {
+        LsError::Config(
+            "refusing autonomous account read: a foreign global tracing subscriber is already \
+             installed, so the unscrubbed ls_core dispatch debug log cannot be guaranteed \
+             suppressed (KTD7) — failing closed rather than risking an account-number leak"
+                .into(),
+        )
+    })
+}
+
+/// KTD7: the dispatch-log suppressor's filter DROPS `ls_core` debug events, so an
+/// errored account dispatch (which the `ls_core` path logs at debug with `rsp_msg`
+/// + the raw body) leaks no account number into captured logs. Uses a thread-local
+/// subscriber (`with_default`) so it neither claims nor needs the process-global
+/// default — proving the FILTER, the mechanism the autonomous smokes rely on.
+#[test]
+fn dispatch_log_suppressor_drops_ls_core_account_events() {
+    use std::io::Write;
+    use std::sync::{Arc, Mutex};
+    use tracing_subscriber::fmt::MakeWriter;
+    use tracing_subscriber::EnvFilter;
+
+    #[derive(Clone)]
+    struct CapWriter(Arc<Mutex<Vec<u8>>>);
+    impl Write for CapWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    impl<'a> MakeWriter<'a> for CapWriter {
+        type Writer = CapWriter;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    let buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+    let subscriber = tracing_subscriber::fmt()
+        .with_env_filter(EnvFilter::new("error,ls_core=off"))
+        .with_writer(CapWriter(buf.clone()))
+        .finish();
+
+    tracing::subscriber::with_default(subscriber, || {
+        // Mirror the ls_core dispatch error-path events: an account-bearing rsp_msg
+        // and the raw body, logged at debug on the `ls_core` target.
+        tracing::debug!(target: "ls_core", rsp_msg = "계좌 12345678-01 거부", "dispatch error");
+        tracing::debug!(target: "ls_core", body = "{\"AcntNo\":\"12345678\"}", "raw body");
+    });
+
+    let captured = String::from_utf8(buf.lock().unwrap().clone()).expect("utf8");
+    assert!(
+        captured.is_empty(),
+        "ls_core debug events must be fully suppressed, got: {captured}"
+    );
+    assert!(
+        !captured.contains("12345678"),
+        "no account number may reach captured logs"
+    );
 }
 
 /// Guard logic, exercised without the network (non-ignored, runs in `cargo test`).
@@ -2814,6 +2892,43 @@ async fn live_smoke_ccenq90200() {
                 "SMOKE-FAIL target=live-smoke-ccenq90200 account-state failure (not transport)"
             );
             panic!("live-smoke-ccenq90200 failed (account-state, may be paper-account setup): {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t0424`: paper guard → read-only `t0424` stock balance (the U2
+/// holdings gate).
+///
+/// The account comes from config, never the caller — only the gubun flags are
+/// inputs. The recorded line is credential-free: the numeric `rsp_cd`, the holdings
+/// array LENGTH (the U2 gate — 0 means a cash-only account), and a boolean flag for
+/// whether the cash witness (`sunamt`) is non-default. NO `rsp_msg`, NO account
+/// number, NO balance value. The fail-closed dispatch-log suppressor is installed
+/// before the first dispatch (KTD7). A failed run emits a distinct `SMOKE-FAIL`
+/// stderr line, never a capturable `LIVE-SMOKE` line.
+#[tokio::test]
+#[ignore = "live smoke: needs a provisioned LS paper account; run via `make live-smoke-t0424`"]
+async fn live_smoke_t0424() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (KTD7)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+
+    let req = T0424Request::new("", "0", "0", "0");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.account().stock_balance(&req).await {
+        Ok(resp) => {
+            // Credential-free: rsp_cd + holdings count + a non-default cash flag.
+            let cash_nondefault = !resp.outblock.sunamt.is_empty() && resp.outblock.sunamt != "0";
+            let line = format!(
+                "rsp_cd={} holdings={} cash_nondefault={}",
+                resp.rsp_cd,
+                resp.outblock1.len(),
+                cash_nondefault
+            );
+            record("live-smoke-t0424", &format!("env=paper date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t0424 account-state failure (not transport)");
+            panic!("live-smoke-t0424 failed (account-state, may be paper-account setup): {e}");
         }
     }
 }
