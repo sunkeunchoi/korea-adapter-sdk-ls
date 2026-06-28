@@ -5921,8 +5921,8 @@ async fn live_smoke_t8462() {
     match sdk.market_session().night_derivatives_investor_period(&req).await {
         Ok(resp) => {
             assert!(!resp.outblock1.is_empty(), "live-smoke-t8462: empty out-block (00707) — PENDING");
-            assert_nonempty_witness("date", &resp.outblock1[0].date)
-                .expect("live-smoke-t8462: investor-period row date must be substantive (R4)");
+            assert_nonempty_witness("sv_01", &resp.outblock1[0].sv_01)
+                .expect("live-smoke-t8462: individual net-buy volume (sv_01) must be substantive (R4)");
             let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "krx-night-inv")
                 .expect("an Ok outcome yields a result line");
             record("live-smoke-t8462", "env=paper bsc_asts_id=K2I range=20260601-20260626", &line);
