@@ -77,6 +77,48 @@ trs:
     protocol: rest
     instrument_domain: stock
     venue_session: unspecified
+  CSPBQ00200:
+    file: trs/CSPBQ00200.yaml
+    owner_class: account
+    protocol: rest
+    instrument_domain: stock
+    venue_session: unspecified
+  CLNAQ00100:
+    file: trs/CLNAQ00100.yaml
+    owner_class: account
+    protocol: rest
+    instrument_domain: stock
+    venue_session: unspecified
+  CFOEQ11100:
+    file: trs/CFOEQ11100.yaml
+    owner_class: account
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: unspecified
+  CIDBQ01400:
+    file: trs/CIDBQ01400.yaml
+    owner_class: account
+    protocol: rest
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  t0167:
+    file: trs/t0167.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: misc
+    venue_session: unspecified
+  t0424:
+    file: trs/t0424.yaml
+    owner_class: account
+    protocol: rest
+    instrument_domain: stock
+    venue_session: unspecified
+  t0441:
+    file: trs/t0441.yaml
+    owner_class: account
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: unspecified
   CCENQ90200:
     file: trs/CCENQ90200.yaml
     owner_class: account
