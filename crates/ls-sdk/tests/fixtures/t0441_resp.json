@@ -1,0 +1,19 @@
+{
+  "rsp_cd": "00000",
+  "t0441OutBlock1": [
+    {
+      "expcode": "101T9000",
+      "medosu": "매수",
+      "jqty": 10,
+      "cqty": 10,
+      "appamt": 850000000,
+      "sunikrt": "-66.00"
+    }
+  ],
+  "t0441OutBlock": {
+    "tappamt": 850000000,
+    "tsunik": -5625000,
+    "tdtsunik": 0
+  },
+  "rsp_msg": "조회가 완료되었습니다."
+}

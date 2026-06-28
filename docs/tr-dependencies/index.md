@@ -16,12 +16,16 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `CCENQ90200` | KRX야간파생 잔고조회 | `account` | tracked | [CCENQ90200](./CCENQ90200.md) |
 | `CFOAQ10100` | 선물옵션 주문가능수량조회 | `account` | implemented | [CFOAQ10100](./CFOAQ10100.md) |
 | `CFOBQ10500` | 선물옵션 계좌예탁금증거금조회 | `account` | implemented | [CFOBQ10500](./CFOBQ10500.md) |
+| `CFOEQ11100` | 선물옵션가정산예탁금상세 | `account` | tracked | [CFOEQ11100](./CFOEQ11100.md) |
+| `CIDBQ01400` | 해외선물 체결내역개별 조회(주문가능수량) | `account` | tracked | [CIDBQ01400](./CIDBQ01400.md) |
+| `CLNAQ00100` | 예탁담보융자가능종목현황조회 | `account` | implemented | [CLNAQ00100](./CLNAQ00100.md) |
 | `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | recommended | [CSPAQ12200](./CSPAQ12200.md) |
 | `CSPAQ12300` | BEP단가조회 | `account` | implemented | [CSPAQ12300](./CSPAQ12300.md) |
 | `CSPAQ22200` | 현물계좌예수금 주문가능금액 총평가2 | `account` | implemented | [CSPAQ22200](./CSPAQ22200.md) |
 | `CSPAT00601` | 현물 정규주문 (cash equity order submission) | `orders` | implemented | [CSPAT00601](./CSPAT00601.md) |
 | `CSPAT00701` | 현물정정주문 (cash equity order modify) | `orders` | implemented | [CSPAT00701](./CSPAT00701.md) |
 | `CSPAT00801` | 현물취소주문 (cash equity order cancel) | `orders` | implemented | [CSPAT00801](./CSPAT00801.md) |
+| `CSPBQ00200` | 현물계좌증거금률별주문가능수량조회 | `account` | tracked | [CSPBQ00200](./CSPBQ00200.md) |
 | `FC9` | 선물 체결 실시간 시세 | `realtime` | implemented | [FC9](./FC9.md) |
 | `FH9` | 선물 호가 실시간 시세 | `realtime` | implemented | [FH9](./FH9.md) |
 | `GSC` | 해외주식 체결 실시간 시세 | `realtime` | implemented | [GSC](./GSC.md) |
@@ -61,7 +65,10 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `o3125` | 해외선물옵션 현재가(종목정보) 조회 | `market_session` | implemented | [o3125](./o3125.md) |
 | `o3126` | 해외선물옵션 현재가호가 조회 | `market_session` | implemented | [o3126](./o3126.md) |
 | `revoke` | 접근토큰 폐기 (OAuth2 token revoke) | `standalone` | implemented | [revoke](./revoke.md) |
+| `t0167` | 서버시간조회 | `market_session` | implemented | [t0167](./t0167.md) |
+| `t0424` | 주식잔고2 | `account` | implemented | [t0424](./t0424.md) |
 | `t0425` | 주식체결/미체결 (stock filled/unfilled order inquiry) | `paginated` | implemented | [t0425](./t0425.md) |
+| `t0441` | 선물/옵션잔고평가(이동평균) | `account` | tracked | [t0441](./t0441.md) |
 | `t1101` | 주식 현재가호가 조회 | `market_session` | recommended | [t1101](./t1101.md) |
 | `t1102` | 주식 현재가(시세) 조회 | `market_session` | recommended | [t1102](./t1102.md) |
 | `t1104` | 주식현재가시세메모 | `market_session` | implemented | [t1104](./t1104.md) |

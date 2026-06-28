@@ -57,6 +57,7 @@ use ls_sdk::market_session::{
     O3106OutBlock, O3106Request, O3106Response, O3121Request, O3121Response, O3125OutBlock,
     O3125Request, O3125Response, O3126OutBlock, O3126Request, O3126Response,
     T9945Request, T9945Response, T3202Request, T3202Response,
+    T0167Request, T0167Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
@@ -65,6 +66,9 @@ use wiremock::{Mock, MockServer, ResponseTemplate};
 
 /// The spec-derived `t1102` response fixture (`fixtures/t1102_resp.json`).
 const T1102_FIXTURE: &str = include_str!("fixtures/t1102_resp.json");
+
+/// The spec-derived `t0167` server-time fixture (`fixtures/t0167_resp.json`).
+const T0167_FIXTURE: &str = include_str!("fixtures/t0167_resp.json");
 
 /// The spec-derived `t1101` response fixture (`fixtures/t1101_resp.json`).
 const T1101_FIXTURE: &str = include_str!("fixtures/t1101_resp.json");
@@ -5812,4 +5816,69 @@ fn t1903_request_and_response_round_trip() {
     assert_eq!(resp.outblock1[0].price, "41945", "price from JSON number via string_or_number");
     let empty: T1903Response = serde_json::from_str(r#"{"rsp_cd":"00707","t1903OutBlock":{},"t1903OutBlock1":[]}"#).expect("empty deserializes");
     assert!(empty.outblock1.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// t0167 — 서버시간조회 (server-time utility read). Stateless, closure-viable.
+// ---------------------------------------------------------------------------
+
+/// `::new` serializes to exactly `{"t0167InBlock":{"id":""}}` (no caller input).
+#[test]
+fn t0167_request_serializes_inblock_only() {
+    let req = T0167Request::new();
+    let value = serde_json::to_value(&req).expect("serialize t0167 request");
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "exactly one top-level key");
+    assert!(obj.contains_key("t0167InBlock"), "missing t0167InBlock key");
+    assert_eq!(value["t0167InBlock"]["id"], "", "id slot is empty");
+}
+
+/// The spec-derived fixture deserializes; the substantive `time` witness holds a
+/// non-default value and `dt` is the server date.
+#[tokio::test]
+async fn t0167_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path("/etc/time-search"))
+        .and(header("tr_cd", "t0167"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(T0167_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let resp = sdk
+        .market_session()
+        .server_time(&T0167Request::new())
+        .await
+        .expect("t0167 server-time should succeed");
+
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock.time, "102652926435", "time (substantive witness)");
+    assert_eq!(resp.outblock.dt, "20260628", "server date");
+}
+
+/// `dt`/`time` parse via `string_or_number` from BOTH string and number JSON.
+#[test]
+fn t0167_fields_parse_from_string_and_number() {
+    let as_number = serde_json::json!({
+        "rsp_cd": "00000",
+        "t0167OutBlock": { "dt": 20260628i64, "time": 102652926435i64 }
+    });
+    let resp: T0167Response =
+        serde_json::from_value(as_number).expect("number JSON must deserialize");
+    assert_eq!(resp.outblock.dt, "20260628");
+    assert_eq!(resp.outblock.time, "102652926435");
+
+    let as_string = serde_json::json!({
+        "rsp_cd": "00000",
+        "t0167OutBlock": { "dt": "20260628", "time": "102652926435" }
+    });
+    let resp: T0167Response =
+        serde_json::from_value(as_string).expect("string JSON must deserialize");
+    assert_eq!(resp.outblock.time, "102652926435");
 }

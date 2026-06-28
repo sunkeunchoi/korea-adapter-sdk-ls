@@ -1,0 +1,14 @@
+{
+  "rsp_cd": "00136",
+  "CSPBQ00200OutBlock2": {
+    "RecCnt": 1,
+    "Dps": 80000000,
+    "SeOrdAbleAmt": 265866666,
+    "KdqOrdAbleAmt": 265866000,
+    "MnyOrdAbleAmt": 79760000,
+    "MnyoutAbleAmt": 79759742,
+    "OrdAbleQty": 0,
+    "TrdMgnrt": "0.3000"
+  },
+  "rsp_msg": "조회가 완료되었습니다."
+}

@@ -1,0 +1,11 @@
+{
+  "rsp_cd": "00136",
+  "CFOEQ11100OutBlock2": {
+    "Dps": 262500611,
+    "OpnmkDpsamtTotamt": 256850611,
+    "MnyOrdAbleAmt": 148316801,
+    "CsgnMgn": 114183810,
+    "MnyCsgnMgn": 57091905
+  },
+  "rsp_msg": "조회가 완료되었습니다."
+}

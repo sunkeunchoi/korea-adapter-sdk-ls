@@ -1,0 +1,24 @@
+tr_code: t0167
+name: 서버시간조회
+owner_class: market_session
+facets:
+  protocol: rest
+  instrument_domain: misc
+  venue_session: unspecified
+  date_sensitive: false
+  self_paginated: false
+  account_state: false
+  paper_incompatible: false
+  certification_path: automated
+  rate_bucket: market_data
+  caller_supplied_identifiers: []
+dependencies:
+  self_continuation_fields: []
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: true
+  recommended: false
+maintenance:
+  source_spec_hash: a3b4c5d6e7f8
+  last_reviewed: 2026-06-28

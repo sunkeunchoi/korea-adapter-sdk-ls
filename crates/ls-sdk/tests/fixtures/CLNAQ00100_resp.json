@@ -1,0 +1,26 @@
+{
+  "rsp_cd": "00136",
+  "CLNAQ00100OutBlock2": [
+    {
+      "IsuNo": "A005930",
+      "IsuNm": "삼성전자",
+      "LoanAbleRat": "60.000000000",
+      "RegTpNm": "가능",
+      "MktTpNm": "KOSPI 50",
+      "LmtVal": 500000000
+    },
+    {
+      "IsuNo": "A006110",
+      "IsuNm": "삼아알미늄",
+      "LoanAbleRat": "50.000000000",
+      "RegTpNm": "가능",
+      "MktTpNm": "기타",
+      "LmtVal": 200000000
+    }
+  ],
+  "CLNAQ00100OutBlock3": {
+    "RecCnt": 2,
+    "LrgMnyoutSumAmt": 2000000
+  },
+  "rsp_msg": "조회가 완료되었습니다."
+}

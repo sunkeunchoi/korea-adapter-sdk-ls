@@ -141,6 +141,27 @@ where
     }
 }
 
+/// Serialise a `String` value as a JSON number, tolerating a decimal point.
+///
+/// Like [`string_as_number`] but for request fields whose value can be
+/// fractional — e.g. an overseas-derivative order price (`OvrsDrvtOrdPrc`) such
+/// as `"75.50"`. An integer is emitted exactly as `i64`; a decimal is emitted as
+/// `f64`; anything non-numeric falls back to a JSON string. The gateway rejects a
+/// quoted numeric value (`IGW40011`), so a decimal price MUST NOT serialize as a
+/// string — `string_as_number` (i64-only) would quote it.
+pub fn string_as_decimal<S>(value: &str, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: serde::Serializer,
+{
+    if let Ok(n) = value.parse::<i64>() {
+        serializer.serialize_i64(n)
+    } else if let Ok(f) = value.parse::<f64>() {
+        serializer.serialize_f64(f)
+    } else {
+        serializer.serialize_str(value)
+    }
+}
+
 /// Deserialise a JSON value that LS may encode as a single object `{...}`, an
 /// array `[{...}]`, `null`, or an empty string `""` into a `Vec<T>`.
 ///

@@ -1,0 +1,24 @@
+{
+  "rsp_cd": "00000",
+  "t0424OutBlock": {
+    "dtsunik": 30270,
+    "mamt": 120013,
+    "sunamt1": 80000000,
+    "tappamt": 150283,
+    "sunamt": 80030265,
+    "tdtsunik": 30271
+  },
+  "t0424OutBlock1": [
+    {
+      "hname": "삼성전자",
+      "expcode": "005930",
+      "janqty": 2,
+      "mdposqt": 1,
+      "price": 75300,
+      "appamt": 150283,
+      "pamt": 60000,
+      "sunikrt": "25.22"
+    }
+  ],
+  "rsp_msg": "조회가 완료되었습니다."
+}
