@@ -1,0 +1,24 @@
+tr_code: o3136
+name: 해외선물옵션 시간대별 Tick 체결 조회
+owner_class: paginated
+facets:
+  protocol: rest
+  instrument_domain: overseas_futures
+  venue_session: unspecified
+  date_sensitive: false
+  self_paginated: true
+  account_state: false
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: market_data
+  caller_supplied_identifiers: [mktgb, shcode]
+dependencies:
+  self_continuation_fields: [cts_seq]
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: true
+  recommended: false
+maintenance:
+  source_spec_hash: aabbccddeeff
+  last_reviewed: 2026-06-28

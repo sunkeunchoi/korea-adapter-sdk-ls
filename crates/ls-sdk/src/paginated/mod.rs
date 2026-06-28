@@ -23,6 +23,8 @@ mod historical_chart;
 mod invest_opinion;
 mod item_search;
 mod low_liquidity;
+mod overseas_futures_chart;
+mod overseas_index;
 mod rank_screen;
 mod sector_index;
 
@@ -33,6 +35,8 @@ pub use historical_chart::*;
 pub use invest_opinion::*;
 pub use item_search::*;
 pub use low_liquidity::*;
+pub use overseas_futures_chart::*;
+pub use overseas_index::*;
 pub use rank_screen::*;
 pub use sector_index::*;
 
@@ -246,6 +250,102 @@ impl Paginated {
     pub async fn investment_opinions(&self, req: &T3401Request) -> LsResult<T3401Response> {
         self.inner
             .post_paginated(&ls_core::endpoint_policy::T3401_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t3518` overseas-index time-series (해외실시간지수).
+    /// Self-paginated on the body `cts_date`/`cts_time` cursor; single-page scope.
+    pub async fn overseas_index_series(&self, req: &T3518Request) -> LsResult<T3518Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T3518_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `o3103` overseas-futures minute chart (해외선물 분봉).
+    /// Self-paginated on the body `cts_date`/`cts_time` cursor; single-page scope.
+    pub async fn overseas_futures_minute_chart(
+        &self,
+        req: &O3103Request,
+    ) -> LsResult<O3103Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::O3103_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `o3108` overseas-futures D/W/M chart (해외선물 일주월).
+    /// Self-paginated on the body `cts_date` cursor; single-page scope.
+    pub async fn overseas_futures_period_chart(
+        &self,
+        req: &O3108Request,
+    ) -> LsResult<O3108Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::O3108_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `o3116` overseas-futures tick (해외선물 시간대별 Tick).
+    /// Self-paginated on the body `cts_seq` cursor; single-page scope.
+    pub async fn overseas_futures_tick(&self, req: &O3116Request) -> LsResult<O3116Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::O3116_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `o3117` overseas-futures NTick chart (해외선물 NTick).
+    /// Self-paginated on the body `cts_seq`/`cts_daygb` cursor; single-page scope.
+    pub async fn overseas_futures_ntick(&self, req: &O3117Request) -> LsResult<O3117Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::O3117_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `o3123` overseas-futopt minute chart (해외선물옵션 분봉).
+    /// Self-paginated on the body `cts_date`/`cts_time` cursor; single-page scope.
+    pub async fn overseas_futopt_minute_chart(
+        &self,
+        req: &O3123Request,
+    ) -> LsResult<O3123Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::O3123_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `o3128` overseas-futopt D/W/M chart (해외선물옵션 일주월).
+    /// Self-paginated on the body `cts_date` cursor; single-page scope.
+    pub async fn overseas_futopt_period_chart(
+        &self,
+        req: &O3128Request,
+    ) -> LsResult<O3128Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::O3128_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `o3136` overseas-futopt tick (해외선물옵션 시간대별 Tick).
+    /// Self-paginated on the body `cts_seq` cursor; single-page scope.
+    pub async fn overseas_futopt_tick(&self, req: &O3136Request) -> LsResult<O3136Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::O3136_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `o3137` overseas-futopt NTick chart (해외선물옵션 NTick).
+    /// Self-paginated on the body `cts_seq`/`cts_daygb` cursor; single-page scope.
+    pub async fn overseas_futopt_ntick(&self, req: &O3137Request) -> LsResult<O3137Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::O3137_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `o3139` overseas-futopt NTick fixed chart
+    /// (해외선물옵션차트용 NTick 고정형). Self-paginated on the body `cts_seq`/`cts_daygb`
+    /// cursor; single-page scope.
+    pub async fn overseas_futopt_ntick_fixed(
+        &self,
+        req: &O3139Request,
+    ) -> LsResult<O3139Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::O3139_POLICY, req)
             .await
     }
 

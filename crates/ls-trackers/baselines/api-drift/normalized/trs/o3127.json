@@ -1,0 +1,359 @@
+{
+  "tr_code": "o3127",
+  "tr_name": "해외선물옵션 관심종목 조회",
+  "protocol": "rest",
+  "is_websocket": false,
+  "endpoint_path": "/overseas-futureoption/market-data",
+  "api_group_id": "d61d4f85-9845-41ef-b915-4efa8fd0aad1",
+  "source_group_name": "[해외선물] 시세",
+  "request_blocks": [
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 1,
+      "field_name": "authorization",
+      "korean_name": "접근토큰",
+      "type": "String",
+      "length": 1000,
+      "required": true,
+      "description_hash": "62956eed2a6e506a"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 2,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 3,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 4,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 5,
+      "field_name": "mac_address",
+      "korean_name": "MAC 주소",
+      "type": "String",
+      "length": 12,
+      "required": true,
+      "description_hash": "1d2213655779faf2"
+    },
+    {
+      "direction": "request",
+      "block_name": "o3127InBlock",
+      "field_index": 0,
+      "field_name": "nrec",
+      "korean_name": "건수",
+      "type": "Number",
+      "length": 4,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "o3127InBlock1\n(Occurs)",
+      "field_index": 0,
+      "field_name": "mktgb",
+      "korean_name": "기본입력",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "483388f58ea68a59"
+    },
+    {
+      "direction": "request",
+      "block_name": "o3127InBlock1\n(Occurs)",
+      "field_index": 1,
+      "field_name": "symbol",
+      "korean_name": "종목심볼",
+      "type": "String",
+      "length": 16,
+      "required": true,
+      "description_hash": "7df9f88b6ce502bf"
+    }
+  ],
+  "response_blocks": [
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 1,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 2,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 3,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "response",
+      "block_name": "o3127OutBlock\n(Occurs)",
+      "field_index": 0,
+      "field_name": "symbol",
+      "korean_name": "종목코드",
+      "type": "String",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "o3127OutBlock\n(Occurs)",
+      "field_index": 1,
+      "field_name": "symbolname",
+      "korean_name": "종목명",
+      "type": "String",
+      "length": 50,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "o3127OutBlock\n(Occurs)",
+      "field_index": 2,
+      "field_name": "price",
+      "korean_name": "현재가",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "o3127OutBlock\n(Occurs)",
+      "field_index": 3,
+      "field_name": "sign",
+      "korean_name": "전일대비구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "o3127OutBlock\n(Occurs)",
+      "field_index": 4,
+      "field_name": "change",
+      "korean_name": "전일대비",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "o3127OutBlock\n(Occurs)",
+      "field_index": 5,
+      "field_name": "diff",
+      "korean_name": "등락율",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "o3127OutBlock\n(Occurs)",
+      "field_index": 6,
+      "field_name": "volume",
+      "korean_name": "누적거래량",
+      "type": "Number",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "o3127OutBlock\n(Occurs)",
+      "field_index": 7,
+      "field_name": "jnilclose",
+      "korean_name": "전일종가",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "o3127OutBlock\n(Occurs)",
+      "field_index": 8,
+      "field_name": "open",
+      "korean_name": "시가",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "o3127OutBlock\n(Occurs)",
+      "field_index": 9,
+      "field_name": "high",
+      "korean_name": "고가",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "o3127OutBlock\n(Occurs)",
+      "field_index": 10,
+      "field_name": "low",
+      "korean_name": "저가",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "o3127OutBlock\n(Occurs)",
+      "field_index": 11,
+      "field_name": "offerho1",
+      "korean_name": "매도호가1",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "o3127OutBlock\n(Occurs)",
+      "field_index": 12,
+      "field_name": "bidho1",
+      "korean_name": "매수호가1",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "o3127OutBlock\n(Occurs)",
+      "field_index": 13,
+      "field_name": "offercnt1",
+      "korean_name": "매도호가건수1",
+      "type": "Number",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "o3127OutBlock\n(Occurs)",
+      "field_index": 14,
+      "field_name": "bidcnt1",
+      "korean_name": "매수호가건수1",
+      "type": "Number",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "o3127OutBlock\n(Occurs)",
+      "field_index": 15,
+      "field_name": "offerrem1",
+      "korean_name": "매도호가수량1",
+      "type": "Number",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "o3127OutBlock\n(Occurs)",
+      "field_index": 16,
+      "field_name": "bidrem1",
+      "korean_name": "매수호가수량1",
+      "type": "Number",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "o3127OutBlock\n(Occurs)",
+      "field_index": 17,
+      "field_name": "offercnt",
+      "korean_name": "매도호가건수합",
+      "type": "Number",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "o3127OutBlock\n(Occurs)",
+      "field_index": 18,
+      "field_name": "bidcnt",
+      "korean_name": "매수호가건수합",
+      "type": "Number",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "o3127OutBlock\n(Occurs)",
+      "field_index": 19,
+      "field_name": "offer",
+      "korean_name": "매도호가수량합",
+      "type": "Number",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "o3127OutBlock\n(Occurs)",
+      "field_index": 20,
+      "field_name": "bid",
+      "korean_name": "매수호가수량합",
+      "type": "Number",
+      "length": 10,
+      "required": true
+    }
+  ],
+  "rate_limit_per_sec": 1,
+  "corp_rate_limit_per_sec": 50,
+  "rate_source_group": "d61d4f85-9845-41ef-b915-4efa8fd0aad1"
+}

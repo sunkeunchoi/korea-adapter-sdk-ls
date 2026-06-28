@@ -7746,6 +7746,349 @@ pub struct T3202Response {
     pub outblock: Vec<T3202OutBlock>,
 }
 
+/// Input block for `t3521` — 해외지수조회 (one overseas index's current snapshot,
+/// e.g. Dow/NASDAQ). `kind`/`symbol` select the index (e.g. `kind="S"`,
+/// `symbol="DJI@DJI"`). Non-paginated; no numeric request fields.
+#[derive(Serialize, Debug, Clone)]
+pub struct T3521InBlock {
+    /// Symbol kind / 종목종류 (e.g. "S").
+    pub kind: String,
+    /// Index symbol / SYMBOL (e.g. "DJI@DJI").
+    pub symbol: String,
+}
+
+/// `t3521` request — serializes to `{"t3521InBlock":{"kind":"...","symbol":"..."}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T3521Request {
+    #[serde(rename = "t3521InBlock")]
+    pub inblock: T3521InBlock,
+}
+impl T3521Request {
+    /// Build a `t3521` overseas-index snapshot request (`kind`/`symbol`).
+    pub fn new(kind: impl Into<String>, symbol: impl Into<String>) -> Self {
+        T3521Request {
+            inblock: T3521InBlock {
+                kind: kind.into(),
+                symbol: symbol.into(),
+            },
+        }
+    }
+}
+
+/// `t3521OutBlock` — one overseas-index snapshot row. The raw capture documents no
+/// `res_b` properties for this TR, so the field set is modeled from the gateway's
+/// own `res_example` (date/symbol/change/sign/diff/close/hname).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T3521OutBlock {
+    /// Trade date / 일자 (YYYYMMDD).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    /// Index symbol / SYMBOL.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub symbol: String,
+    /// Change / 대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Change sign / 대비속성.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change rate / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Close / 현재지수 (the substantive witness).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub close: String,
+    /// Index name / 지수명 (e.g. 다우 산업).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub hname: String,
+}
+
+/// `t3521` response — single snapshot under `t3521OutBlock`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T3521Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t3521OutBlock", default)]
+    pub outblock: T3521OutBlock,
+}
+
+// ---------------------------------------------------------------------------
+// o3104 — 해외선물 일별체결 조회 (overseas-futures daily executions). Non-paginated
+// market-data read keyed by `shcode` + a `date`; an `o3104OutBlock1[]` array of
+// daily rows (de_vec_or_single). All-lane closed-window flip wave (plan -003);
+// a CURRENT front-month contract (CUSN26) persists rows under closure.
+// ---------------------------------------------------------------------------
+
+/// Input block for `o3104` — overseas-futures daily executions. `gubun` mode,
+/// `shcode` contract, `date` selects the day. No numeric request fields.
+#[derive(Serialize, Debug, Clone)]
+pub struct O3104InBlock {
+    /// Division / 구분.
+    pub gubun: String,
+    /// Symbol / 단축코드.
+    pub shcode: String,
+    /// Date / 일자.
+    pub date: String,
+}
+
+/// `o3104` request — serializes to `{"o3104InBlock":{...}}`. Non-paginated.
+#[derive(Serialize, Debug, Clone)]
+pub struct O3104Request {
+    #[serde(rename = "o3104InBlock")]
+    pub inblock: O3104InBlock,
+}
+impl O3104Request {
+    /// Build an `o3104` daily-executions request (`shcode`, `date`); `gubun`
+    /// defaults to `"0"`.
+    pub fn new(shcode: impl Into<String>, date: impl Into<String>) -> Self {
+        O3104Request {
+            inblock: O3104InBlock {
+                gubun: "0".to_string(),
+                shcode: shcode.into(),
+                date: date.into(),
+            },
+        }
+    }
+}
+
+/// `o3104OutBlock1` — one daily-execution row.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct O3104OutBlock1 {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub chedate: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    /// Price / 체결가 (the substantive witness).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cgubun: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+}
+
+/// `o3104` response — daily rows under `o3104OutBlock1` (single-or-array).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct O3104Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "o3104OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<O3104OutBlock1>,
+}
+
+// ---------------------------------------------------------------------------
+// o3127 — 해외선물옵션 관심종목 조회 (overseas-futopt watchlist board). Non-paginated
+// market-data read keyed by `nrec` (genuinely-numeric record count); an
+// `o3127OutBlock[]` board array (de_vec_or_single). Plan -003.
+// ---------------------------------------------------------------------------
+
+/// Input block for `o3127` — overseas-futopt watchlist board. `nrec` is the
+/// genuinely-numeric record count (JSON number; IGW40011 guard).
+#[derive(Serialize, Debug, Clone)]
+pub struct O3127InBlock {
+    /// Record count / 건수 (genuinely numeric).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub nrec: String,
+}
+
+/// `o3127` request — serializes to `{"o3127InBlock":{...}}`. Non-paginated.
+#[derive(Serialize, Debug, Clone)]
+pub struct O3127Request {
+    #[serde(rename = "o3127InBlock")]
+    pub inblock: O3127InBlock,
+}
+impl O3127Request {
+    /// Build an `o3127` watchlist-board request for `nrec` rows.
+    pub fn new(nrec: impl Into<String>) -> Self {
+        O3127Request {
+            inblock: O3127InBlock { nrec: nrec.into() },
+        }
+    }
+}
+
+/// `o3127OutBlock` — one watchlist-board row.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct O3127OutBlock {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub symbol: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub symbolname: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    /// Price / 현재가 (the substantive witness).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+}
+
+/// `o3127` response — board rows under `o3127OutBlock` (single-or-array).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct O3127Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "o3127OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<O3127OutBlock>,
+}
+
+// ---------------------------------------------------------------------------
+// t8462 — KRX야간파생 투자자기간별 (KRX night-derivatives investor period table).
+// Non-paginated market-data read keyed by basis-asset + a from/to date range; a
+// `t8462OutBlock1[]` row array (de_vec_or_single). Plan -003; a recent date range
+// returns populated rows under closure.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t8462` — KRX night-derivatives investor-period table.
+/// `tm_rng` (time-range, e.g. "N" night), `fot_clsf_cd` (F/O class), `bsc_asts_id`
+/// (basis asset, e.g. "K2I"), `gubun2`/`gubun3` mode flags, `from_date`/`to_date`
+/// bound the range. No numeric request fields.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8462InBlock {
+    /// Time range / 시간범위 (e.g. "N").
+    pub tm_rng: String,
+    /// Future/option class / 선물옵션구분.
+    pub fot_clsf_cd: String,
+    /// Basis-asset id / 기초자산.
+    pub bsc_asts_id: String,
+    /// Division 2 / 구분2.
+    pub gubun2: String,
+    /// Division 3 / 구분3.
+    pub gubun3: String,
+    /// Start date / 시작일자.
+    pub from_date: String,
+    /// End date / 종료일자.
+    pub to_date: String,
+}
+
+/// `t8462` request — serializes to `{"t8462InBlock":{...}}`. Non-paginated.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8462Request {
+    #[serde(rename = "t8462InBlock")]
+    pub inblock: T8462InBlock,
+}
+impl T8462Request {
+    /// Build a `t8462` investor-period request for one basis asset over a
+    /// `from_date`..`to_date` range; spec defaults (`tm_rng="N"`, `fot_clsf_cd="F"`,
+    /// `gubun2="1"`, `gubun3="1"`).
+    pub fn new(
+        bsc_asts_id: impl Into<String>,
+        from_date: impl Into<String>,
+        to_date: impl Into<String>,
+    ) -> Self {
+        T8462Request {
+            inblock: T8462InBlock {
+                tm_rng: "N".to_string(),
+                fot_clsf_cd: "F".to_string(),
+                bsc_asts_id: bsc_asts_id.into(),
+                gubun2: "1".to_string(),
+                gubun3: "1".to_string(),
+                from_date: from_date.into(),
+                to_date: to_date.into(),
+            },
+        }
+    }
+}
+
+/// `t8462OutBlock` — query echo header.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8462OutBlock {
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tm_rng: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub fot_clsf_cd: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bsc_asts_id: String,
+}
+
+/// `t8462OutBlock1` — one investor-period row (date + per-investor net volume/amount
+/// columns `sv_xx`/`sa_xx`). `sv_01` (개인) is the substantive witness.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8462OutBlock1 {
+    /// Date / 일자.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    /// Net volume — foreigner / 외국인 순매수수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sv_08: String,
+    /// Net volume — institution total / 기관계 순매수수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sv_17: String,
+    /// Net volume — total / 전체 순매수수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sv_18: String,
+    /// Net volume — individual / 개인 순매수수량 (the substantive witness).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sv_01: String,
+    /// Net amount — foreigner / 외국인 순매수금액.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sa_08: String,
+    /// Net amount — institution total / 기관계 순매수금액.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sa_17: String,
+    /// Net amount — total / 전체 순매수금액.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sa_18: String,
+    /// Net amount — individual / 개인 순매수금액.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sa_01: String,
+}
+
+/// `t8462` response — echo header + investor rows under `t8462OutBlock1`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8462Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t8462OutBlock", default)]
+    pub outblock: T8462OutBlock,
+    #[serde(
+        rename = "t8462OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T8462OutBlock1>,
+}
+
 // ---------------------------------------------------------------------------
 // t1302 — 주식분별주가조회 (minute-by-minute price). Non-paginated; a `cts_time`
 // summary out-block + a `t1302OutBlock1[]` minute-row array (de_vec_or_single).
@@ -9204,6 +9547,42 @@ impl MarketSession {
     pub async fn stock_schedule(&self, req: &T3202Request) -> LsResult<T3202Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T3202_POLICY, req)
+            .await
+    }
+
+    /// Read one overseas index's current snapshot (해외지수조회) via `t3521`.
+    /// Non-paginated; keyed by `kind`/`symbol` (e.g. `"S"`/`"DJI@DJI"`).
+    pub async fn overseas_index_quote(&self, req: &T3521Request) -> LsResult<T3521Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T3521_POLICY, req)
+            .await
+    }
+
+    /// Read overseas-futures daily executions (해외선물 일별체결) via `o3104`.
+    /// Non-paginated; keyed by `shcode`/`date`. A daily-row array.
+    pub async fn overseas_futures_daily(&self, req: &O3104Request) -> LsResult<O3104Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::O3104_POLICY, req)
+            .await
+    }
+
+    /// Read the overseas-futopt watchlist board (해외선물옵션 관심종목) via `o3127`.
+    /// Non-paginated; keyed by `nrec`. A board-row array.
+    pub async fn overseas_futopt_watchlist(&self, req: &O3127Request) -> LsResult<O3127Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::O3127_POLICY, req)
+            .await
+    }
+
+    /// Read the KRX night-derivatives investor-period table (KRX야간파생 투자자기간별)
+    /// via `t8462`. Non-paginated; keyed by basis asset + a `from_date`..`to_date`
+    /// range. An investor-row array.
+    pub async fn night_derivatives_investor_period(
+        &self,
+        req: &T8462Request,
+    ) -> LsResult<T8462Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8462_POLICY, req)
             .await
     }
 

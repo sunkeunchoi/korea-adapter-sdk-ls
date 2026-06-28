@@ -52,11 +52,21 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `US2` | 통합 우선호가 실시간 시세 | `realtime` | implemented, not yet recommended |
 | `US3` | 통합 체결 실시간 시세 | `realtime` | implemented, not yet recommended |
 | `o3101` | 해외선물마스터조회 | `market_session` | implemented, not yet recommended |
+| `o3103` | 해외선물차트 분봉 조회 | `paginated` | implemented, not yet recommended |
+| `o3104` | 해외선물 일별체결 조회 | `market_session` | implemented, not yet recommended |
 | `o3105` | 해외선물 현재가(종목정보) 조회 | `market_session` | implemented, not yet recommended |
 | `o3106` | 해외선물 현재가호가 조회 | `market_session` | implemented, not yet recommended |
+| `o3108` | 해외선물차트(일주월) 조회 | `paginated` | implemented, not yet recommended |
+| `o3116` | 해외선물 시간대별(Tick)체결 조회 | `paginated` | implemented, not yet recommended |
+| `o3117` | 해외선물 차트 NTick 체결 조회 | `paginated` | implemented, not yet recommended |
 | `o3121` | 해외선물옵션 마스터 조회 | `market_session` | implemented, not yet recommended |
+| `o3123` | 해외선물옵션 차트 분봉 조회 | `paginated` | implemented, not yet recommended |
 | `o3125` | 해외선물옵션 현재가(종목정보) 조회 | `market_session` | implemented, not yet recommended |
 | `o3126` | 해외선물옵션 현재가호가 조회 | `market_session` | implemented, not yet recommended |
+| `o3128` | 해외선물옵션 차트 일주월 조회 | `paginated` | implemented, not yet recommended |
+| `o3136` | 해외선물옵션 시간대별 Tick 체결 조회 | `paginated` | implemented, not yet recommended |
+| `o3137` | 해외선물옵션 차트 NTick 체결 조회 | `paginated` | implemented, not yet recommended |
+| `o3139` | 해외선물옵션차트용NTick(고정형)-API용 | `paginated` | implemented, not yet recommended |
 | `revoke` | 접근토큰 폐기 (OAuth2 token revoke) | `standalone` | implemented, not yet recommended |
 | `t0167` | 서버시간조회 | `market_session` | implemented, not yet recommended |
 | `t0424` | 주식잔고2 | `account` | implemented, not yet recommended |
@@ -137,6 +147,8 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t3320` | FNG_요약 | `market_session` | implemented, not yet recommended |
 | `t3341` | 재무순위종합 | `paginated` | implemented, not yet recommended |
 | `t3401` | 투자의견 | `paginated` | implemented, not yet recommended |
+| `t3518` | 해외실시간지수 | `paginated` | implemented, not yet recommended |
+| `t3521` | 해외지수조회(API용) | `market_session` | implemented, not yet recommended |
 | `t4203` | 업종차트(종합) | `paginated` | implemented, not yet recommended |
 | `t8401` | 주식선물마스터조회(API용) | `market_session` | implemented, not yet recommended |
 | `t8402` | 주식선물현재가조회(API용) | `market_session` | implemented, not yet recommended |
@@ -163,6 +175,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t8451` | (통합)주식챠트(일주월년) API용 | `paginated` | implemented, not yet recommended |
 | `t8452` | (통합)주식챠트(N분) API용 | `paginated` | implemented, not yet recommended |
 | `t8453` | (통합)주식챠트(틱/N틱) API용 | `paginated` | implemented, not yet recommended |
+| `t8462` | KRX야간파생 투자자기간별(API용) | `market_session` | implemented, not yet recommended |
 | `t8464` | 선물옵션차트(틱/n틱) | `paginated` | implemented, not yet recommended |
 | `t8465` | 선물/옵션차트(N분) | `paginated` | implemented, not yet recommended |
 | `t8466` | 선물/옵션차트(일주월) | `paginated` | implemented, not yet recommended |

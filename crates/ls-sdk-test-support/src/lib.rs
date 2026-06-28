@@ -6,9 +6,11 @@
 
 pub mod mock_http;
 pub mod mock_ws;
+pub mod secrets;
 
 pub use mock_http::{
     mock_config, mount_revoke, mount_revoke_non_ok, mount_token, mount_token_expect,
     DEFAULT_TOKEN_TTL_SECS, TEST_ACCOUNT_NO, TEST_APPKEY, TEST_APPSECRETKEY, TEST_TOKEN,
 };
 pub use mock_ws::{MockWsServer, MOCK_REJECTION_RSP_CD};
+pub use secrets::{assert_nonempty_witness, run_is_sensitive, scrub_secrets};

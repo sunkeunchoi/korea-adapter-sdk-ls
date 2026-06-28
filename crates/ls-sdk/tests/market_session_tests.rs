@@ -56,7 +56,8 @@ use ls_sdk::market_session::{
     O3101OutBlock, O3101Request, O3101Response, O3105OutBlock, O3105Request, O3105Response,
     O3106OutBlock, O3106Request, O3106Response, O3121Request, O3121Response, O3125OutBlock,
     O3125Request, O3125Response, O3126OutBlock, O3126Request, O3126Response,
-    T9945Request, T9945Response, T3202Request, T3202Response,
+    O3104Request, O3104Response, O3127Request, O3127Response, T8462Request, T8462Response,
+    T9945Request, T9945Response, T3202Request, T3202Response, T3521Request, T3521Response,
     T0167Request, T0167Response,
 };
 use ls_sdk::LsSdk;
@@ -5686,6 +5687,193 @@ fn t3202_empty_result_set_deserializes_as_pending() {
     }))
     .expect("empty schedule deserializes");
     assert!(empty.outblock.is_empty(), "empty schedule is the pending case");
+}
+
+// === plan -003 all-lane wave — o3104 / o3127 / t8462 (market_session) =========
+
+// --- o3104 — 해외선물 일별체결 (daily executions) ------------------------------
+
+#[test]
+fn o3104_request_serializes_to_inblock() {
+    let value =
+        serde_json::to_value(O3104Request::new("CUSN26", "20260626")).expect("serialize o3104");
+    assert_eq!(value["o3104InBlock"]["shcode"], "CUSN26");
+    assert_eq!(value["o3104InBlock"]["date"], "20260626");
+    assert!(value.get("tr_cont").is_none(), "non-paginated: no tr_cont");
+}
+
+#[tokio::test]
+async fn o3104_deserializes_through_dispatch() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path("/overseas-futureoption/market-data"))
+        .and(header("tr_cd", "o3104"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"{"rsp_cd":"00000","o3104OutBlock1":[{"volume":57123,"chedate":"20230501","high":"0.66820","low":"0.66215","price":"0.66435","change":"0.00150","sign":"2","diff":"0.23","cgubun":"","open":"0.66300"}],"rsp_msg":"조회완료"}"#,
+        ).insert_header("content-type", "application/json"))
+        .mount(&server)
+        .await;
+    let resp = sdk_for(&server)
+        .market_session()
+        .overseas_futures_daily(&O3104Request::new("CUSN26", "20260626"))
+        .await
+        .expect("o3104 should succeed");
+    assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock1[0].price, "0.66435", "체결가 round-trips");
+}
+
+#[test]
+fn o3104_single_or_array_and_empty_deserialize() {
+    let single: O3104Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "o3104OutBlock1": { "price": "0.66435", "volume": 57123 }
+    }))
+    .expect("single row tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].price, "0.66435");
+
+    let empty: O3104Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "o3104OutBlock1": []
+    }))
+    .expect("empty deserializes");
+    assert!(empty.outblock1.is_empty(), "empty is the pending case");
+}
+
+// --- o3127 — 해외선물옵션 관심종목 (watchlist board) --------------------------
+
+#[test]
+fn o3127_request_serializes_nrec_as_number() {
+    let value = serde_json::to_value(O3127Request::new("20")).expect("serialize o3127");
+    assert!(value["o3127InBlock"]["nrec"].is_number(), "nrec is a JSON number (IGW40011 guard)");
+}
+
+#[test]
+fn o3127_single_or_array_and_empty_deserialize() {
+    let single: O3127Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "o3127OutBlock": { "symbol": "CUSN26", "price": "0.66435", "volume": 100 }
+    }))
+    .expect("single board row tolerated as array");
+    assert_eq!(single.outblock.len(), 1);
+    assert_eq!(single.outblock[0].price, "0.66435");
+
+    let empty: O3127Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "o3127OutBlock": []
+    }))
+    .expect("empty deserializes");
+    assert!(empty.outblock.is_empty(), "empty board is the pending case");
+}
+
+// --- t8462 — KRX야간파생 투자자기간별 (investor-period table) -----------------
+
+#[test]
+fn t8462_request_serializes_to_inblock() {
+    let value = serde_json::to_value(T8462Request::new("K2I", "20260601", "20260626"))
+        .expect("serialize t8462");
+    let ib = &value["t8462InBlock"];
+    assert_eq!(ib["bsc_asts_id"], "K2I");
+    assert_eq!(ib["from_date"], "20260601");
+    assert_eq!(ib["tm_rng"], "N", "night time-range default");
+}
+
+#[tokio::test]
+async fn t8462_deserializes_through_dispatch() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path("/futureoption/investor"))
+        .and(header("tr_cd", "t8462"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"{"t8462OutBlock":{"tm_rng":"N","fot_clsf_cd":"F","bsc_asts_id":"K2I"},"t8462OutBlock1":[{"date":"20250610","sv_08":-299,"sv_17":335,"sv_18":-69,"sv_01":-69,"sa_08":"-287","sa_17":"321","sa_18":"-66","sa_01":"-66"}],"rsp_cd":"00000","rsp_msg":"정상적으로 조회가 완료되었습니다."}"#,
+        ).insert_header("content-type", "application/json"))
+        .mount(&server)
+        .await;
+    let resp = sdk_for(&server)
+        .market_session()
+        .night_derivatives_investor_period(&T8462Request::new("K2I", "20250609", "20250610"))
+        .await
+        .expect("t8462 should succeed");
+    assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock1[0].sv_01, "-69", "개인 순매수수량 round-trips (numeric→string)");
+    assert_eq!(resp.outblock.bsc_asts_id, "K2I");
+}
+
+#[test]
+fn t8462_single_or_array_and_empty_deserialize() {
+    let single: T8462Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8462OutBlock": { "bsc_asts_id": "K2I" },
+        "t8462OutBlock1": { "date": "20250610", "sv_01": -69 }
+    }))
+    .expect("single row tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].sv_01, "-69");
+
+    let empty: T8462Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8462OutBlock": {}, "t8462OutBlock1": []
+    }))
+    .expect("empty deserializes");
+    assert!(empty.outblock1.is_empty(), "empty is the pending case");
+}
+
+// --- t3521 — 해외지수조회 (overseas index snapshot) --------------------------
+
+/// `t3521` serializes to `{"t3521InBlock":{"kind":"...","symbol":"..."}}`; no numeric
+/// request fields, non-paginated.
+#[test]
+fn t3521_request_serializes_to_inblock() {
+    let value = serde_json::to_value(T3521Request::new("S", "DJI@DJI")).expect("serialize t3521");
+    assert_eq!(value["t3521InBlock"]["kind"], "S");
+    assert_eq!(value["t3521InBlock"]["symbol"], "DJI@DJI");
+    assert!(value.get("tr_cont").is_none(), "non-paginated: no tr_cont");
+}
+
+/// The snapshot out-block deserializes through REAL dispatch; the substantive
+/// `close` (현재지수) reads its exact value.
+#[tokio::test]
+async fn t3521_deserializes_through_dispatch() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(STOCK_INVESTINFO_PATH))
+        .and(header("tr_cd", "t3521"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    r#"{"rsp_cd":"00000","rsp_msg":"조회완료","t3521OutBlock":{"date":"20230602","symbol":"DJI@DJI","change":"701.19","sign":"2","diff":"2.12","close":"33762.76","hname":"다우 산업"}}"#,
+                )
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let resp = sdk_for(&server)
+        .market_session()
+        .overseas_index_quote(&T3521Request::new("S", "DJI@DJI"))
+        .await
+        .expect("t3521 overseas_index_quote should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert_eq!(resp.outblock.close, "33762.76", "현재지수 round-trips");
+    assert_eq!(resp.outblock.hname, "다우 산업", "지수명 round-trips");
+}
+
+/// A numeric `close` from a JSON number still decodes (string_or_number tolerance);
+/// an empty snapshot is the pending case.
+#[test]
+fn t3521_numeric_close_and_empty_deserialize() {
+    let numeric: T3521Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t3521OutBlock": { "symbol": "DJI@DJI", "close": 33762.76 }
+    }))
+    .expect("numeric close tolerated");
+    assert_eq!(numeric.outblock.close, "33762.76");
+
+    let empty: T3521Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t3521OutBlock": {}
+    }))
+    .expect("empty snapshot deserializes");
+    assert!(empty.outblock.close.is_empty(), "empty close is the pending case");
 }
 
 // === plan -004 batch A — t1302 분별주가 offline coverage =====================

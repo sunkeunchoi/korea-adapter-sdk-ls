@@ -221,6 +221,12 @@ trs:
     protocol: rest
     instrument_domain: futures_options
     venue_session: krx_extended
+  t8462:
+    file: trs/t8462.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_extended
   t8463:
     file: trs/t8463.yaml
     owner_class: market_session
@@ -296,6 +302,78 @@ trs:
   o3126:
     file: trs/o3126.yaml
     owner_class: market_session
+    protocol: rest
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  o3103:
+    file: trs/o3103.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  o3104:
+    file: trs/o3104.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  o3107:
+    file: trs/o3107.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  o3108:
+    file: trs/o3108.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  o3116:
+    file: trs/o3116.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  o3117:
+    file: trs/o3117.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  o3123:
+    file: trs/o3123.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  o3127:
+    file: trs/o3127.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  o3128:
+    file: trs/o3128.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  o3136:
+    file: trs/o3136.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  o3137:
+    file: trs/o3137.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  o3139:
+    file: trs/o3139.yaml
+    owner_class: paginated
     protocol: rest
     instrument_domain: overseas_futures
     venue_session: unspecified
@@ -624,6 +702,18 @@ trs:
     protocol: rest
     instrument_domain: stock
     venue_session: krx_regular
+  t3518:
+    file: trs/t3518.yaml
+    owner_class: paginated
+    protocol: rest
+    instrument_domain: overseas_stock
+    venue_session: unspecified
+  t3521:
+    file: trs/t3521.yaml
+    owner_class: market_session
+    protocol: rest
+    instrument_domain: overseas_stock
+    venue_session: unspecified
   t8410:
     file: trs/t8410.yaml
     owner_class: paginated

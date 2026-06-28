@@ -61,11 +61,23 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `g3106` | 해외주식 API 현재가호가 조회 | `market_session` | tracked | [g3106](./g3106.md) |
 | `g3190` | 해외주식 API 마스터 조회 | `market_session` | tracked | [g3190](./g3190.md) |
 | `o3101` | 해외선물마스터조회 | `market_session` | implemented | [o3101](./o3101.md) |
+| `o3103` | 해외선물차트 분봉 조회 | `paginated` | implemented | [o3103](./o3103.md) |
+| `o3104` | 해외선물 일별체결 조회 | `market_session` | implemented | [o3104](./o3104.md) |
 | `o3105` | 해외선물 현재가(종목정보) 조회 | `market_session` | implemented | [o3105](./o3105.md) |
 | `o3106` | 해외선물 현재가호가 조회 | `market_session` | implemented | [o3106](./o3106.md) |
+| `o3107` | 해외선물 관심종목 조회 | `market_session` | tracked | [o3107](./o3107.md) |
+| `o3108` | 해외선물차트(일주월) 조회 | `paginated` | implemented | [o3108](./o3108.md) |
+| `o3116` | 해외선물 시간대별(Tick)체결 조회 | `paginated` | implemented | [o3116](./o3116.md) |
+| `o3117` | 해외선물 차트 NTick 체결 조회 | `paginated` | implemented | [o3117](./o3117.md) |
 | `o3121` | 해외선물옵션 마스터 조회 | `market_session` | implemented | [o3121](./o3121.md) |
+| `o3123` | 해외선물옵션 차트 분봉 조회 | `paginated` | implemented | [o3123](./o3123.md) |
 | `o3125` | 해외선물옵션 현재가(종목정보) 조회 | `market_session` | implemented | [o3125](./o3125.md) |
 | `o3126` | 해외선물옵션 현재가호가 조회 | `market_session` | implemented | [o3126](./o3126.md) |
+| `o3127` | 해외선물옵션 관심종목 조회 | `market_session` | tracked | [o3127](./o3127.md) |
+| `o3128` | 해외선물옵션 차트 일주월 조회 | `paginated` | implemented | [o3128](./o3128.md) |
+| `o3136` | 해외선물옵션 시간대별 Tick 체결 조회 | `paginated` | implemented | [o3136](./o3136.md) |
+| `o3137` | 해외선물옵션 차트 NTick 체결 조회 | `paginated` | implemented | [o3137](./o3137.md) |
+| `o3139` | 해외선물옵션차트용NTick(고정형)-API용 | `paginated` | implemented | [o3139](./o3139.md) |
 | `revoke` | 접근토큰 폐기 (OAuth2 token revoke) | `standalone` | implemented | [revoke](./revoke.md) |
 | `t0167` | 서버시간조회 | `market_session` | implemented | [t0167](./t0167.md) |
 | `t0424` | 주식잔고2 | `account` | implemented | [t0424](./t0424.md) |
@@ -184,6 +196,8 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t3320` | FNG_요약 | `market_session` | implemented | [t3320](./t3320.md) |
 | `t3341` | 재무순위종합 | `paginated` | implemented | [t3341](./t3341.md) |
 | `t3401` | 투자의견 | `paginated` | implemented | [t3401](./t3401.md) |
+| `t3518` | 해외실시간지수 | `paginated` | implemented | [t3518](./t3518.md) |
+| `t3521` | 해외지수조회(API용) | `market_session` | implemented | [t3521](./t3521.md) |
 | `t4203` | 업종차트(종합) | `paginated` | implemented | [t4203](./t4203.md) |
 | `t8401` | 주식선물마스터조회(API용) | `market_session` | implemented | [t8401](./t8401.md) |
 | `t8402` | 주식선물현재가조회(API용) | `market_session` | implemented | [t8402](./t8402.md) |
@@ -216,6 +230,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t8454` | (통합)주식시간대별체결2 API용 | `paginated` | tracked | [t8454](./t8454.md) |
 | `t8455` | KRX야간파생 마스터조회(API용) | `market_session` | tracked | [t8455](./t8455.md) |
 | `t8460` | KRX야간파생 옵션 전광판 | `market_session` | tracked | [t8460](./t8460.md) |
+| `t8462` | KRX야간파생 투자자기간별(API용) | `market_session` | implemented | [t8462](./t8462.md) |
 | `t8463` | KRX야간파생 투자자시간대별(API용) | `market_session` | tracked | [t8463](./t8463.md) |
 | `t8464` | 선물옵션차트(틱/n틱) | `paginated` | implemented | [t8464](./t8464.md) |
 | `t8465` | 선물/옵션차트(N분) | `paginated` | implemented | [t8465](./t8465.md) |

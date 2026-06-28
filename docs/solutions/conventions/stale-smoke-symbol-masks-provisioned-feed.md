@@ -1,7 +1,7 @@
 ---
 title: "Refresh a futures/-option read's smoke symbol to the current front-month before dispositioning an empty paper smoke as feed-unprovisioned"
 date: 2026-06-25
-last_updated: 2026-06-27
+last_updated: 2026-06-28
 category: conventions
 module: ls-sdk Paper Live Smoke harness, implement-tr recipe
 problem_type: convention
@@ -9,9 +9,11 @@ component: tooling
 severity: medium
 applies_when:
   - "Smoking an overseas-futures or overseas-future-option read (o3105/o3106/o3125/o3126) keyed by a registered contract symbol"
+  - "Smoking an overseas-futures chart / market-data read (o3103/o3104/o3108/o3116/o3117/o3123/o3127/o3128/o3136/o3137/o3139) keyed by a contract symbol or driven by a date"
   - "Smoking a DOMESTIC KRX F/O chart/quote read (t8464/t8465/t8466/t2216/t8405) keyed by an index-futures or stock-futures contract code"
+  - "Raw-probing a NEW raw TR with the OpenAPI capture's req_example symbol (a routinely-expired contract like ADM23) and reading the empty result as 'no paper feed'"
   - "A make live-smoke-<tr> returns a success rsp_cd (00000/00707) with an empty out-block and you are about to record pending:feed-unprovisioned"
-  - "The registered smoke symbol carries an expiry (e.g. CUSN23, HSIM23, A0166000) that may have rolled since it was registered"
+  - "The registered smoke symbol carries an expiry (e.g. CUSN23, HSIM23, A0166000, ADM23) that may have rolled since it was registered"
 tags:
   - paper-live-smoke
   - stale-symbol
@@ -47,6 +49,23 @@ market clock, not the TR — is covered in
 [`market-hours-read-empty-result-disposition.md`](./market-hours-read-empty-result-disposition.md).
 A stale dated symbol is a distinct cause that the session-clock branch does not catch:
 the symbol is wrong even when the session is open.
+
+**The trap also strikes at the raw-probe pre-screen, before any struct exists** (all-lane
+closed-window flip wave, plan -003, 2026-06-28). When classifying ~24 raw REST survivors,
+the overseas-futures chart/market-data family (`o3103`/`o3104`/`o3108`/`o3116`/`o3117`/
+`o3123`/`o3127`/`o3128`/`o3136`/`o3137`/`o3139`) raw-probed **empty** (60–99 byte
+header-only bodies) using the OpenAPI capture's `req_example` symbol `ADM23` — a
+**2023-expiry** contract — and was on track to be dropped as "overseas feed not in paper."
+Re-probing the identical paths with the **current front-month `CUSN26`** (sourced the same
+way, from the `o3101` master) returned 2400–5200 byte populated boards, and **10 of the 11
+flipped to Implemented under KRX closure** — the chart/tick data persists last-session and
+was served the whole time. The lesson is the same as below, but the danger moves *upstream*:
+at the raw-probe pre-screen the empty result silently removes the TR from the **tracking**
+target, so the stale symbol can cost a whole lane of coverage before a single struct is
+written. Raw-probe the current front-month, not the capture's example contract, before
+classifying any o31xx/F-O read as dry. (One genuine empty survived a current symbol:
+`o3107`/`o3127` watchlist boards smoke empty because no symbols are registered on the paper
+account — an account-state empty, not a stale-symbol empty; those PEND correctly.)
 
 **The same trap applies to DOMESTIC KRX futures/options** (closed-window breadth flip
 wave, plan -004, 2026-06-27). The F/O chart/quote reads `t8464`/`t8465`/`t8466`

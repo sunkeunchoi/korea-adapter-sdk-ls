@@ -41,7 +41,8 @@ use ls_sdk::market_session::{
     T8455Request, T8460Request, T8463Request,
     G3101Request, G3102Request, G3103Request, G3104Request, G3106Request, G3190Request,
     O3101Request, O3105Request, O3106Request, O3121Request, O3125Request, O3126Request,
-    T9945Request, T3202Request,
+    O3104Request, O3127Request, T8462Request,
+    T9945Request, T3202Request, T3521Request,
     T0167Request,
 };
 use ls_sdk::paginated::{
@@ -54,7 +55,11 @@ use ls_sdk::paginated::{
     T8417Request, T8418Request, T8411Request, T8452Request, T8453Request,
     T8464Request, T8465Request, T8466Request, T8405Request,
     T1444Request, T1422Request, T1427Request, T1442Request, T1405Request, T1960Request, T1961Request, T1966Request, T1921Request,
+    T3518Request,
+    O3103Request, O3108Request, O3116Request, O3117Request, O3123Request, O3128Request,
+    O3136Request, O3137Request, O3139Request,
 };
+use ls_sdk_test_support::{assert_nonempty_witness, scrub_secrets};
 use ls_sdk::realtime::WsLane;
 use ls_sdk::LsSdk;
 use tokio::time::timeout;
@@ -5550,6 +5555,381 @@ async fn live_smoke_t3401() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t3401 market-data failure (not evidence)");
             panic!("live-smoke-t3401 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t3518`: paper guard → suppressor → token → one `t3518`
+/// overseas-index time-series read (`kind="S"`, `symbol="NAS@IXIC"`). Flip gate
+/// (R4): the first index-tick row's `price` (현재지수) must be a substantive
+/// (non-default) value via [`assert_nonempty_witness`]; an empty out-block is the
+/// `00707` PENDING case. The dispatch-log suppressor (U2/KTD5) drops any
+/// account-bearing debug body; the panic path scrubs untrusted error text.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t3518`"]
+async fn live_smoke_t3518() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (fail-closed)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T3518Request::new("S", "NAS@IXIC");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.paginated().overseas_index_series(&req).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock1.is_empty(),
+                "live-smoke-t3518: empty out-block (00707) — PENDING, not Implemented"
+            );
+            assert_nonempty_witness("price", &resp.outblock1[0].price)
+                .expect("live-smoke-t3518: index price must be a substantive witness (R4)");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "index-series")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t3518", &format!("env=paper kind=S symbol=NAS@IXIC date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t3518 market-data failure (not evidence)");
+            panic!("live-smoke-t3518 failed: {}", scrub_secrets(&e.to_string()));
+        }
+    }
+}
+
+/// `make live-smoke-t3521`: paper guard → suppressor → token → one `t3521`
+/// overseas-index snapshot (`kind="S"`, `symbol="DJI@DJI"`). Flip gate (R4): the
+/// snapshot `close` (현재지수) must be a substantive non-default value; an empty
+/// out-block is the `00707` PENDING case.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t3521`"]
+async fn live_smoke_t3521() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (fail-closed)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    let req = T3521Request::new("S", "DJI@DJI");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().overseas_index_quote(&req).await {
+        Ok(resp) => {
+            assert_nonempty_witness("close", &resp.outblock.close)
+                .expect("live-smoke-t3521: index close must be a substantive witness (R4 / 00707 PENDING)");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), 1)), "index-snapshot")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t3521", &format!("env=paper kind=S symbol=DJI@DJI date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t3521 market-data failure (not evidence)");
+            panic!("live-smoke-t3521 failed: {}", scrub_secrets(&e.to_string()));
+        }
+    }
+}
+
+// === plan -003 all-lane wave — overseas-futures(-option) + night-deriv smokes ==
+// Lane: LS_SMOKE_LANE=overseas_option for the o31xx (…71 account); CUSN26 is a
+// CURRENT front-month contract that persists last-session data under KRX closure.
+// t8462 runs on LS_SMOKE_LANE=domestic_option (…51) over a recent date range. Each:
+// suppressor first (U2/KTD5) → paper guard → token → call → non-empty witness (R4;
+// an empty out-block / 00707 is the PENDING case) → record (env/symbol/date only) →
+// scrubbed panic path.
+
+/// `make live-smoke-o3103`: overseas-futures 분봉 chart (`shcode=CUSN26`).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-o3103`"]
+async fn live_smoke_o3103() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (fail-closed)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = O3103Request::new("CUSN26");
+    match sdk.paginated().overseas_futures_minute_chart(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-o3103: empty out-block (00707) — PENDING");
+            assert_nonempty_witness("close", &resp.outblock1[0].close)
+                .expect("live-smoke-o3103: candle close must be substantive (R4)");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "ovs-fut-min")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-o3103", "env=paper symbol=CUSN26", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-o3103 market-data failure (not evidence)");
+            panic!("live-smoke-o3103 failed: {}", scrub_secrets(&e.to_string()));
+        }
+    }
+}
+
+/// `make live-smoke-o3104`: overseas-futures daily executions (`shcode=CUSN26`,
+/// `date`=recent weekday).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-o3104`"]
+async fn live_smoke_o3104() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (fail-closed)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = O3104Request::new("CUSN26", "20260626");
+    match sdk.market_session().overseas_futures_daily(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-o3104: empty out-block (00707) — PENDING");
+            assert_nonempty_witness("price", &resp.outblock1[0].price)
+                .expect("live-smoke-o3104: 체결가 must be substantive (R4)");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "ovs-fut-daily")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-o3104", "env=paper symbol=CUSN26 date=20260626", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-o3104 market-data failure (not evidence)");
+            panic!("live-smoke-o3104 failed: {}", scrub_secrets(&e.to_string()));
+        }
+    }
+}
+
+/// `make live-smoke-o3108`: overseas-futures D/W/M chart (`shcode=CUSN26`,
+/// `gubun=0`, `sdate=20260101`, `edate`=recent weekday).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-o3108`"]
+async fn live_smoke_o3108() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (fail-closed)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = O3108Request::new("CUSN26", "0", "20260101", "20260626");
+    match sdk.paginated().overseas_futures_period_chart(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-o3108: empty out-block (00707) — PENDING");
+            assert_nonempty_witness("close", &resp.outblock1[0].close)
+                .expect("live-smoke-o3108: candle close must be substantive (R4)");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "ovs-fut-dwm")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-o3108", "env=paper symbol=CUSN26 range=20260101-20260626", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-o3108 market-data failure (not evidence)");
+            panic!("live-smoke-o3108 failed: {}", scrub_secrets(&e.to_string()));
+        }
+    }
+}
+
+/// `make live-smoke-o3116`: overseas-futures tick (`gubun=0`, `shcode=CUSN26`).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-o3116`"]
+async fn live_smoke_o3116() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (fail-closed)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = O3116Request::new("0", "CUSN26");
+    match sdk.paginated().overseas_futures_tick(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-o3116: empty out-block (00707) — PENDING");
+            assert_nonempty_witness("price", &resp.outblock1[0].price)
+                .expect("live-smoke-o3116: 체결가 must be substantive (R4)");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "ovs-fut-tick")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-o3116", "env=paper symbol=CUSN26", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-o3116 market-data failure (not evidence)");
+            panic!("live-smoke-o3116 failed: {}", scrub_secrets(&e.to_string()));
+        }
+    }
+}
+
+/// `make live-smoke-o3117`: overseas-futures NTick chart (`shcode=CUSN26`).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-o3117`"]
+async fn live_smoke_o3117() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (fail-closed)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = O3117Request::new("CUSN26");
+    match sdk.paginated().overseas_futures_ntick(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-o3117: empty out-block (00707) — PENDING");
+            assert_nonempty_witness("close", &resp.outblock1[0].close)
+                .expect("live-smoke-o3117: candle close must be substantive (R4)");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "ovs-fut-ntick")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-o3117", "env=paper symbol=CUSN26", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-o3117 market-data failure (not evidence)");
+            panic!("live-smoke-o3117 failed: {}", scrub_secrets(&e.to_string()));
+        }
+    }
+}
+
+/// `make live-smoke-o3123`: overseas-futopt 분봉 chart (`mktgb=F`, `shcode=CUSN26`).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-o3123`"]
+async fn live_smoke_o3123() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (fail-closed)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = O3123Request::new("F", "CUSN26");
+    match sdk.paginated().overseas_futopt_minute_chart(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-o3123: empty out-block (00707) — PENDING");
+            assert_nonempty_witness("close", &resp.outblock1[0].close)
+                .expect("live-smoke-o3123: candle close must be substantive (R4)");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "ovs-futopt-min")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-o3123", "env=paper mktgb=F symbol=CUSN26", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-o3123 market-data failure (not evidence)");
+            panic!("live-smoke-o3123 failed: {}", scrub_secrets(&e.to_string()));
+        }
+    }
+}
+
+/// `make live-smoke-o3127`: overseas-futopt watchlist board (`nrec=20`).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-o3127`"]
+async fn live_smoke_o3127() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (fail-closed)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = O3127Request::new("20");
+    match sdk.market_session().overseas_futopt_watchlist(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock.is_empty(), "live-smoke-o3127: empty out-block (00707) — PENDING");
+            assert_nonempty_witness("price", &resp.outblock[0].price)
+                .expect("live-smoke-o3127: 현재가 must be substantive (R4)");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "ovs-futopt-board")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-o3127", "env=paper nrec=20", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-o3127 market-data failure (not evidence)");
+            panic!("live-smoke-o3127 failed: {}", scrub_secrets(&e.to_string()));
+        }
+    }
+}
+
+/// `make live-smoke-o3128`: overseas-futopt D/W/M chart (`mktgb=F`, `shcode=CUSN26`).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-o3128`"]
+async fn live_smoke_o3128() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (fail-closed)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = O3128Request::new("F", "CUSN26", "1", "20250525", "20260626");
+    match sdk.paginated().overseas_futopt_period_chart(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-o3128: empty out-block (00707) — PENDING");
+            assert_nonempty_witness("close", &resp.outblock1[0].close)
+                .expect("live-smoke-o3128: candle close must be substantive (R4)");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "ovs-futopt-dwm")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-o3128", "env=paper mktgb=F symbol=CUSN26 range=20250525-20260626", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-o3128 market-data failure (not evidence)");
+            panic!("live-smoke-o3128 failed: {}", scrub_secrets(&e.to_string()));
+        }
+    }
+}
+
+/// `make live-smoke-o3136`: overseas-futopt tick (`gubun=0`, `mktgb=F`, `shcode=CUSN26`).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-o3136`"]
+async fn live_smoke_o3136() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (fail-closed)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = O3136Request::new("0", "F", "CUSN26");
+    match sdk.paginated().overseas_futopt_tick(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-o3136: empty out-block (00707) — PENDING");
+            assert_nonempty_witness("price", &resp.outblock1[0].price)
+                .expect("live-smoke-o3136: 체결가 must be substantive (R4)");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "ovs-futopt-tick")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-o3136", "env=paper mktgb=F symbol=CUSN26", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-o3136 market-data failure (not evidence)");
+            panic!("live-smoke-o3136 failed: {}", scrub_secrets(&e.to_string()));
+        }
+    }
+}
+
+/// `make live-smoke-o3137`: overseas-futopt NTick chart (`mktgb=F`, `shcode=CUSN26`).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-o3137`"]
+async fn live_smoke_o3137() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (fail-closed)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = O3137Request::new("F", "CUSN26");
+    match sdk.paginated().overseas_futopt_ntick(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-o3137: empty out-block (00707) — PENDING");
+            assert_nonempty_witness("close", &resp.outblock1[0].close)
+                .expect("live-smoke-o3137: candle close must be substantive (R4)");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "ovs-futopt-ntick")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-o3137", "env=paper mktgb=F symbol=CUSN26", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-o3137 market-data failure (not evidence)");
+            panic!("live-smoke-o3137 failed: {}", scrub_secrets(&e.to_string()));
+        }
+    }
+}
+
+/// `make live-smoke-o3139`: overseas-futopt NTick fixed chart (`mktgb=F`, `shcode=CUSN26`).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-o3139`"]
+async fn live_smoke_o3139() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (fail-closed)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = O3139Request::new("F", "CUSN26");
+    match sdk.paginated().overseas_futopt_ntick_fixed(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-o3139: empty out-block (00707) — PENDING");
+            assert_nonempty_witness("close", &resp.outblock1[0].close)
+                .expect("live-smoke-o3139: candle close must be substantive (R4)");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "ovs-futopt-ntickf")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-o3139", "env=paper mktgb=F symbol=CUSN26", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-o3139 market-data failure (not evidence)");
+            panic!("live-smoke-o3139 failed: {}", scrub_secrets(&e.to_string()));
+        }
+    }
+}
+
+/// `make live-smoke-t8462`: KRX night-derivatives investor-period table
+/// (`bsc_asts_id=K2I`, recent date range). LS_SMOKE_LANE=domestic_option (…51).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8462`"]
+async fn live_smoke_t8462() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (fail-closed)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let req = T8462Request::new("K2I", "20260601", "20260626");
+    match sdk.market_session().night_derivatives_investor_period(&req).await {
+        Ok(resp) => {
+            assert!(!resp.outblock1.is_empty(), "live-smoke-t8462: empty out-block (00707) — PENDING");
+            assert_nonempty_witness("sv_01", &resp.outblock1[0].sv_01)
+                .expect("live-smoke-t8462: individual net-buy volume (sv_01) must be substantive (R4)");
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "krx-night-inv")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t8462", "env=paper bsc_asts_id=K2I range=20260601-20260626", &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8462 market-data failure (not evidence)");
+            panic!("live-smoke-t8462 failed: {}", scrub_secrets(&e.to_string()));
         }
     }
 }
