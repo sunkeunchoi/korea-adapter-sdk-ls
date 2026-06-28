@@ -6,6 +6,7 @@ module: ls-sdk Paper Live Smoke harness, ls-core paper classifiers, implement-tr
 problem_type: convention
 component: tooling
 severity: medium
+last_updated: 2026-06-28
 applies_when:
   - "A make live-smoke-<tr> returns a paper-unavailable signal and you must decide whether it can ever flip on paper"
   - "Distinguishing an off-window-empty (recoverable on re-run) from an in-window-empty (feed-unprovisioned, never recovers on paper)"
@@ -51,9 +52,14 @@ by the session clock alone:
 nominal session window.** An off-window-empty recovers on an in-window re-run
 (disposition `pending:off-window`); an **in-window-empty** does not — it means the
 paper environment carries no data for that feed at all (`feed-unprovisioned`,
-paper-unavailable). Before recording feed-unprovisioned, also rule out a stale
-smoke symbol (see [[stale-smoke-symbol-masks-provisioned-feed]]) — an expired
-contract symbol returns success+empty and masks a feed that is actually provisioned.
+paper-unavailable). Before recording feed-unprovisioned, rule out two other
+"looks empty but isn't a feed gap" causes: a stale smoke symbol (see
+[[stale-smoke-symbol-masks-provisioned-feed]]) — an expired contract symbol
+returns success+empty and masks a provisioned feed — and, for an `account_state`
+read, **wrong-account-binding**: the account is token-bound, so an empty `00707`
+may mean the smoke authenticated as the wrong account, not a feed gap. Re-probe
+under the read's credential lane before the terminal (see
+[[ls-account-token-bound-credential-lanes]]).
 
 **The facet/runtime divergence (the load-bearing nuance).**
 `facets.paper_incompatible` is a **pure metadata doc/routing flag** — it is read only
@@ -104,6 +110,18 @@ the paper gateway provisions no data for these feeds. Disposition: set
 `false`, record the per-TR evidence in PROVISIONALITY-LEDGER §14. Zero flips, so docgen
 counts (`reference.len()` / `banner_trs`) are unchanged.
 
+**Night trio re-probed under the F/O lane (2026-06-28, ledger §17) — basis
+refined, terminal held.** The §14 night masters were smoked on the domestic
+account; re-probed under `.env.domestic_option` (the F/O-capable `…51` account),
+`t8455`/`t8460`/`t8463` now return `rsp_cd=00000` (the venue *accepts* the request —
+no longer the §14 `00707`), but the typed out-block is empty **off** the
+`krx_extended` window. The wrong-account cause is ruled out (the account is
+entitled), so the remaining question is purely in-window data: `paper_incompatible`
+is **retained conservatively** (no positive data observed yet) with an in-window
+`…51` re-smoke recorded as the outstanding flip gate. Contrast the CCENQ pair, which
+still returns a hard `01900` under the same `…51` account — a true venue rejection,
+not a wrong-account or off-window artifact.
+
 **CCENQ night pair — 01900 service-rejection (ledger §12).** `CCENQ90200` /
 `CCENQ10100` return a hard gateway `01900` regardless of the night window.
 `ls_core::is_paper_incompatible()` fires. Same facet (`paper_incompatible: true`), but
@@ -122,6 +140,9 @@ the same TR flips once an order-capable paper account is in `.env`. See
   branch this convention extends to the paper-unavailable terminal.
 - [[stale-smoke-symbol-masks-provisioned-feed]] — rule out a rolled contract symbol
   before recording feed-unprovisioned.
+- [[ls-account-token-bound-credential-lanes]] — rule out wrong-account-binding (an
+  account read is token-bound) before recording the `00707` terminal for an
+  `account_state` read.
 - [[ls-paper-01491-account-not-order-capable]] — the 01491 (per-account) vs. 01900
   (per-service) distinction.
 - `metadata/PROVISIONALITY-LEDGER.md` §12 (01900 terminal) and §14 (00707
