@@ -762,3 +762,75 @@ t1411/t1488/t1636 — all serialized via `ls_core::string_as_number`. Every flip
 landed `recommended: false` with a deferred open-window freshness re-check note (R9)
 for the later Recommended pass. All 21 flips were closure-flips; a session-stale
 persistent body passes the R4 gate identically to a live one (R5).
+
+## 16. Closed-window account-lane flip wave — account raw pool retired (2026-06-28)
+
+Plan `docs/plans/2026-06-28-001-feat-closed-window-account-lane-flip-plan.md`. The
+market-data static pool was drained by wave #62, so this wave prospects the **account
+lane** — the residual untracked `account_state` reads — under KRX closure (Sunday).
+Every one of the ~30 account-read candidates was raw-probed credential-safe (R3) and
+carries exactly one disposition here (R11), so a future wave does not re-prospect the
+same dry codes. KRX closed; account-state persistence is what makes the subset
+reachable.
+
+**U2 holdings gate (R4/KTD3).** `t0424`'s typed smoke returned `holdings=0` with a
+non-default cash summary (`sunamt`) — the paper account is **cash-only, no securities
+positions**, and (corroborated by `cfofq02400` 00707 OI + `CFOEQ11100` all-zero
+deposit) **no F/O funding**. So the cash/reference reads certify, but every
+positions-/deposit-dependent read is downgraded to expected-empty (AE2). This is NOT
+the stop condition: the cash/reference reads still certify, so the "best odds" premise
+held; only the positions sub-lanes collapsed.
+
+**FLIPPED → Implemented (3) — non-default substantive field certified under closure:**
+- `t0424` (주식잔고2, account) — cash-summary flip, dispositioned distinctly (holdings
+  array empty; cash witness `sunamt` non-default). `reference.len()` 162→163.
+- `t0167` (서버시간조회, market_session/utility) — server time non-default. 163→164.
+- `CLNAQ00100` (예탁담보융자가능종목, account, `/stock/etc`) — 20 loanable stocks,
+  non-default `IsuNm` (the `IGW40013` raw-probe failure was a value issue: an
+  `A`-prefixed `IsuNo` is rejected; empty `IsuNo` / full-list mode returns the list).
+  164→165.
+
+**PENDING (4) — callable + deserializes, but all substantive fields default on THIS
+cash-only/position-less/overseas-ineligible paper account (R6).** Each carries callable
+Rust + offline tests + a paper smoke + a registered `{TR}_POLICY`; re-test open-window
+or on a funded/eligible account:
+- `CSPBQ00200` (증거금률별주문가능수량, account) — `00136` 1 row, but all
+  capacity/deposit fields (`Dps`/`SeOrdAbleAmt`/`PrsmptDpsD1`) zero across `OrdPrc`
+  0/75000/10000 and ISIN Samsung + `KR7000020008`; the margin-capacity computation is
+  session/data-dependent under closure.
+- `CFOEQ11100` (선물옵션가정산예탁금상세, account) — `00136` 1 row, but `Dps`/`OpnmkDps…`/
+  `CsgnMgn` all zero (no F/O funding; confirms the U2 cash-only gate).
+- `t0441` (선물/옵션잔고평가, account) — `00000`, positions=0, `tappamt`=0 (AE2
+  expected-empty, exactly as the U2 gate predicted).
+- `CIDBQ01400` (해외선물 주문가능수량, account) — `00136` 1 row, but `OrdAbleQty` default
+  (overseas paper historically empty/ineligible).
+
+**Empty under closure → deferred PENDING (no flip, raw-probe only).** History-dependent
+or no-position reads that smoke empty are the expected case (R6, defer without ceremony):
+`cspaq13700` `cdpcq04700` (00707 history), `cfofq02400` `cfoaq00600` (00707 F/O
+history/OI), `cidbq01500` `cidbq01800` `cidbq02400` `cidbq03000` `cideq00800`
+`cosaq01400` (00707 overseas), `t0150` `t0151` `t0434` (00000 bare-envelope, no data
+block).
+
+**`paper_incompatible` (01900) — excluded, never flip on paper (R2).** `cspaq00600`
+(신용한도) `foccq33600` `cfoaq50600` `cfobq10800` `cfoeq82600` `foccq33700` `cosaq00102`
+`cosoq02701`.
+
+**Gateway error / proven residual (R7).** `cidbq05300` (overseas-futures 예탁자산) —
+`IGW40013` persists across body variants → environmental, defer. `cosoq00201`
+(해외주식 종합잔고) — `IGW40014` is a **documented proven residual** (server-derived
+`002US` literal in a numeric field, `docs/design/ls-gateway-response-semantics.md`) →
+defer, not an SDK defect.
+
+**Excluded at triage (not account reads / out of scope, R1).** Order TRs (`cfoat*`
+`cidbt*` `cosat*` `cosmt*` `ccent*`); overseas market-data (`g3202`–`g3204`
+`o3103`/`o3104`/`o3107`/`o3108` `t3518`/`t3521`); KRX night-derivatives market-data
+(`t8456`–`t8462`); `ccenq30100` (night history); `mmdaq91200` (known `01900`).
+
+**Wave outcome.** 3 of 7 certifying-candidates flipped (`reference.len()` 162→165); the
+4 PENDING are the cash-only/position-less/overseas-ineligible paper account's expected
+shape, not defects. The account raw pool is **retired** — every account-read candidate
+carries a disposition above. A near-dry-but-positive close-out: the cash/reference lane
+yielded the domestic persistent reads, and the holdings gate proved the positions lanes
+are unreachable without a funded paper account. All flips land `recommended: false`
+(separate ADR-gated pass).
