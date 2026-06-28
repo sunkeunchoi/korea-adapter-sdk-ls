@@ -1,0 +1,24 @@
+tr_code: o3139
+name: 해외선물옵션차트용NTick(고정형)-API용
+owner_class: paginated
+facets:
+  protocol: rest
+  instrument_domain: overseas_futures
+  venue_session: unspecified
+  date_sensitive: false
+  self_paginated: true
+  account_state: false
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: market_data
+  caller_supplied_identifiers: [mktgb, shcode]
+dependencies:
+  self_continuation_fields: [cts_seq, cts_daygb]
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: false
+  recommended: false
+maintenance:
+  source_spec_hash: acbdcedfeaf1
+  last_reviewed: 2026-06-28

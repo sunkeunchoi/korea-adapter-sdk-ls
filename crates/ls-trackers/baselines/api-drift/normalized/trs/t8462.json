@@ -1,0 +1,468 @@
+{
+  "tr_code": "t8462",
+  "tr_name": "KRX야간파생 투자자기간별(API용)",
+  "protocol": "rest",
+  "is_websocket": false,
+  "endpoint_path": "/futureoption/investor",
+  "api_group_id": "47005ce6-8500-4a3d-ad6c-f96ec3251669",
+  "source_group_name": "[선물/옵션] 투자자",
+  "request_blocks": [
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 1,
+      "field_name": "authorization",
+      "korean_name": "접근토큰",
+      "type": "String",
+      "length": 1000,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 2,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 3,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 4,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 5,
+      "field_name": "mac_address",
+      "korean_name": "MAC 주소",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t8462InBlock",
+      "field_index": 0,
+      "field_name": "tm_rng",
+      "korean_name": "시간대(D/N/U)",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t8462InBlock",
+      "field_index": 1,
+      "field_name": "fot_clsf_cd",
+      "korean_name": "선물옵션구분",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "89c640e41fdd1fd9"
+    },
+    {
+      "direction": "request",
+      "block_name": "t8462InBlock",
+      "field_index": 2,
+      "field_name": "bsc_asts_id",
+      "korean_name": "기초자산코드",
+      "type": "String",
+      "length": 3,
+      "required": true,
+      "description_hash": "764f8703db4146bd"
+    },
+    {
+      "direction": "request",
+      "block_name": "t8462InBlock",
+      "field_index": 3,
+      "field_name": "gubun2",
+      "korean_name": "수치구분(1:수치2:누적)",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t8462InBlock",
+      "field_index": 4,
+      "field_name": "gubun3",
+      "korean_name": "단위구분(1:일2:주3:월)",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t8462InBlock",
+      "field_index": 5,
+      "field_name": "from_date",
+      "korean_name": "시작날짜",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "t8462InBlock",
+      "field_index": 6,
+      "field_name": "to_date",
+      "korean_name": "종료날짜",
+      "type": "String",
+      "length": 8,
+      "required": true
+    }
+  ],
+  "response_blocks": [
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 1,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 2,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 3,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock",
+      "field_index": 0,
+      "field_name": "tm_rng",
+      "korean_name": "시간대(D/N/U)",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock",
+      "field_index": 1,
+      "field_name": "fot_clsf_cd",
+      "korean_name": "선물옵션구분",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock",
+      "field_index": 2,
+      "field_name": "bsc_asts_id",
+      "korean_name": "기초자산코드",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 0,
+      "field_name": "date",
+      "korean_name": "일자",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 1,
+      "field_name": "sv_08",
+      "korean_name": "개인수량",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 2,
+      "field_name": "sv_17",
+      "korean_name": "외국인수량",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 3,
+      "field_name": "sv_18",
+      "korean_name": "기관계수량",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 4,
+      "field_name": "sv_01",
+      "korean_name": "증권수량",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 5,
+      "field_name": "sv_03",
+      "korean_name": "투신수량",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 6,
+      "field_name": "sv_04",
+      "korean_name": "은행수량",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 7,
+      "field_name": "sv_02",
+      "korean_name": "보험수량",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 8,
+      "field_name": "sv_05",
+      "korean_name": "종금수량",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 9,
+      "field_name": "sv_06",
+      "korean_name": "기금수량",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 10,
+      "field_name": "sv_07",
+      "korean_name": "기타수량",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 11,
+      "field_name": "sv_15",
+      "korean_name": "선물수량",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 12,
+      "field_name": "sv_00",
+      "korean_name": "사모펀드수량",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 13,
+      "field_name": "sa_08",
+      "korean_name": "개인금액",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 14,
+      "field_name": "sa_17",
+      "korean_name": "외국인금액",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 15,
+      "field_name": "sa_18",
+      "korean_name": "기관계금액",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 16,
+      "field_name": "sa_01",
+      "korean_name": "증권금액",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 17,
+      "field_name": "sa_03",
+      "korean_name": "투신금액",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 18,
+      "field_name": "sa_04",
+      "korean_name": "은행금액",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 19,
+      "field_name": "sa_02",
+      "korean_name": "보험금액",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 20,
+      "field_name": "sa_05",
+      "korean_name": "종금금액",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 21,
+      "field_name": "sa_06",
+      "korean_name": "기금금액",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 22,
+      "field_name": "sa_07",
+      "korean_name": "기타금액",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 23,
+      "field_name": "sa_15",
+      "korean_name": "선물금액",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "t8462OutBlock1",
+      "field_index": 24,
+      "field_name": "sa_00",
+      "korean_name": "사모펀드금액",
+      "type": "Number",
+      "length": 12,
+      "required": true
+    }
+  ],
+  "rate_limit_per_sec": 1,
+  "corp_rate_limit_per_sec": 3,
+  "rate_source_group": "47005ce6-8500-4a3d-ad6c-f96ec3251669"
+}

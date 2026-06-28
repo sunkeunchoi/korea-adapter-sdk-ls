@@ -1,0 +1,24 @@
+tr_code: t8462
+name: KRX야간파생 투자자기간별(API용)
+owner_class: market_session
+facets:
+  protocol: rest
+  instrument_domain: futures_options
+  venue_session: krx_extended
+  date_sensitive: false
+  self_paginated: false
+  account_state: false
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: market_data
+  caller_supplied_identifiers: [bsc_asts_id]
+dependencies:
+  self_continuation_fields: []
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: false
+  recommended: false
+maintenance:
+  source_spec_hash: adbecfdaebf2
+  last_reviewed: 2026-06-28
