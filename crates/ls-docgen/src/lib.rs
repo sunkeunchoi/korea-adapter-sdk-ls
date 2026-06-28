@@ -1030,7 +1030,7 @@ mod tests {
             "t1444", "t1422", "t1427", "t1442", "t1405", "t1960", "t1961", "t1966", "t1921", "t1532", "t1533", "t1926", "t1764", "t1903",
             "CSPAT00601", "CSPAT00701", "CSPAT00801", "t0425",
             // Closed-window account-lane flip wave (plan -001).
-            "t0424",
+            "t0424", "t0167", "CLNAQ00100",
             "o3101", "o3121",
             "K3_",
             "H1_", "HA_", "S2_", "US3", "UH1", "US2", "GSC", "GSH", "OVC", "OVH", "OC0", "OH0",
@@ -1185,9 +1185,12 @@ mod tests {
         // Closed-window account-lane flip wave (plan -001): t0424 (주식잔고2) certified
         // a non-default cash summary UNDER closure (holdings=0 cash-only account, the
         // U2 holdings gate; cash witness sunamt non-default) — add 1.
+        // t0167 (서버시간조회) certified a non-default server time (utility) — add 1.
+        // CLNAQ00100 (예탁담보융자가능종목) certified a non-empty loanable-stock list
+        // (20 stocks, non-default IsuNm) UNDER closure (persistent reference) — add 1.
         assert_eq!(
             reference.len(),
-            163,
+            165,
             "index + the implemented reference pages"
         );
 

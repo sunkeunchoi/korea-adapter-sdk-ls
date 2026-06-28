@@ -8276,6 +8276,66 @@ pub struct T1903Response {
     pub outblock1: Vec<T1903OutBlock1>,
 }
 
+// ---------------------------------------------------------------------------
+// t0167 — 서버시간조회 (server-time inquiry, a stateless utility read).
+//
+// A closure-viable utility: the gateway always returns its own clock regardless
+// of market hours. The in-block carries a single empty `id` slot; the out-block
+// is the date + the millisecond-resolution server time.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t0167` — a single (empty) `id` slot, no caller input.
+#[derive(Serialize, Debug, Clone)]
+pub struct T0167InBlock {
+    /// Reserved id slot / 미사용 (empty).
+    pub id: String,
+}
+
+/// `t0167` request — serializes to `{"t0167InBlock":{"id":""}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T0167Request {
+    #[serde(rename = "t0167InBlock")]
+    pub inblock: T0167InBlock,
+}
+
+impl Default for T0167Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl T0167Request {
+    /// Build a `t0167` server-time request (no caller input).
+    pub fn new() -> Self {
+        T0167Request {
+            inblock: T0167InBlock { id: String::new() },
+        }
+    }
+}
+
+/// `t0167OutBlock` — the server date + time.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T0167OutBlock {
+    /// Server date / 일자 (YYYYMMDD).
+    #[serde(rename = "dt", deserialize_with = "ls_core::string_or_number")]
+    pub dt: String,
+    /// Server time / 시간 (HHMMSS + millis; the substantive witness).
+    #[serde(rename = "time", deserialize_with = "ls_core::string_or_number")]
+    pub time: String,
+}
+
+/// `t0167` response envelope.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T0167Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t0167OutBlock", default)]
+    pub outblock: T0167OutBlock,
+}
+
 /// Market-session operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache and rate
@@ -9144,6 +9204,14 @@ impl MarketSession {
     pub async fn stock_schedule(&self, req: &T3202Request) -> LsResult<T3202Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T3202_POLICY, req)
+            .await
+    }
+
+    /// Read the gateway server time (서버시간조회) via `t0167`. A stateless utility,
+    /// closure-viable (the clock is always populated). Non-paginated.
+    pub async fn server_time(&self, req: &T0167Request) -> LsResult<T0167Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T0167_POLICY, req)
             .await
     }
 }

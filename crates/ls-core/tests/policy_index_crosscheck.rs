@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use ls_core::endpoint_policy::{
     CCENQ10100_POLICY, CCENQ90200_POLICY, CFOAQ10100_POLICY, CFOBQ10500_POLICY, CSPAQ12200_POLICY,
     CSPAQ12300_POLICY, CSPAQ22200_POLICY, CSPAT00601_POLICY, CSPAT00701_POLICY, CSPAT00801_POLICY,
-    T0424_POLICY,
+    T0424_POLICY, T0167_POLICY, CSPBQ00200_POLICY, CLNAQ00100_POLICY, CFOEQ11100_POLICY, T0441_POLICY, CIDBQ01400_POLICY,
     T0425_POLICY, K3_POLICY, REVOKE_POLICY,
     FC9_POLICY, FH9_POLICY, GSC_POLICY, GSH_POLICY, H1_POLICY, HA_POLICY, OC0_POLICY, OH0_POLICY,
     OVC_POLICY, OVH_POLICY, S2_POLICY, UH1_POLICY, US2_POLICY, US3_POLICY,
@@ -150,6 +150,13 @@ fn slice_policies_mirror_metadata_index() {
         CSPAQ22200_POLICY,
         // Closed-window account-lane flip wave (plan -001): non-order account reads.
         T0424_POLICY,
+        CSPBQ00200_POLICY,
+        CLNAQ00100_POLICY,
+        CFOEQ11100_POLICY,
+        T0441_POLICY,
+        CIDBQ01400_POLICY,
+        // Closed-window account-lane flip wave (plan -001): server-time utility.
+        T0167_POLICY,
         // Order policies (is_order: true). Registered HERE only — they must NOT
         // appear in `slice_rest_policies_are_non_order_rest` (R12).
         CSPAT00601_POLICY,

@@ -18,7 +18,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `CFOBQ10500` | 선물옵션 계좌예탁금증거금조회 | `account` | implemented | [CFOBQ10500](./CFOBQ10500.md) |
 | `CFOEQ11100` | 선물옵션가정산예탁금상세 | `account` | tracked | [CFOEQ11100](./CFOEQ11100.md) |
 | `CIDBQ01400` | 해외선물 체결내역개별 조회(주문가능수량) | `account` | tracked | [CIDBQ01400](./CIDBQ01400.md) |
-| `CLNAQ00100` | 예탁담보융자가능종목현황조회 | `account` | tracked | [CLNAQ00100](./CLNAQ00100.md) |
+| `CLNAQ00100` | 예탁담보융자가능종목현황조회 | `account` | implemented | [CLNAQ00100](./CLNAQ00100.md) |
 | `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | recommended | [CSPAQ12200](./CSPAQ12200.md) |
 | `CSPAQ12300` | BEP단가조회 | `account` | implemented | [CSPAQ12300](./CSPAQ12300.md) |
 | `CSPAQ22200` | 현물계좌예수금 주문가능금액 총평가2 | `account` | implemented | [CSPAQ22200](./CSPAQ22200.md) |
@@ -65,7 +65,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `o3125` | 해외선물옵션 현재가(종목정보) 조회 | `market_session` | implemented | [o3125](./o3125.md) |
 | `o3126` | 해외선물옵션 현재가호가 조회 | `market_session` | implemented | [o3126](./o3126.md) |
 | `revoke` | 접근토큰 폐기 (OAuth2 token revoke) | `standalone` | implemented | [revoke](./revoke.md) |
-| `t0167` | 서버시간조회 | `market_session` | tracked | [t0167](./t0167.md) |
+| `t0167` | 서버시간조회 | `market_session` | implemented | [t0167](./t0167.md) |
 | `t0424` | 주식잔고2 | `account` | implemented | [t0424](./t0424.md) |
 | `t0425` | 주식체결/미체결 (stock filled/unfilled order inquiry) | `paginated` | implemented | [t0425](./t0425.md) |
 | `t0441` | 선물/옵션잔고평가(이동평균) | `account` | tracked | [t0441](./t0441.md) |

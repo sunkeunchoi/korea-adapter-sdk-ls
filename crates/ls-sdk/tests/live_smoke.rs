@@ -19,7 +19,8 @@ use futures::StreamExt;
 use ls_core::{LsConfig, LsError, LsResult};
 use ls_sdk::account::{
     CCENQ10100Request, CCENQ90200Request, CFOAQ10100Request, CFOBQ10500Request, CSPAQ12200Request,
-    CSPAQ12300Request, CSPAQ22200Request, T0424Request,
+    CSPAQ12300Request, CSPAQ22200Request, CSPBQ00200Request, CLNAQ00100Request, CFOEQ11100Request,
+    T0424Request, T0441Request, CIDBQ01400Request,
 };
 use ls_sdk::market_session::{
     T1101Request, T1102Request, T1485Request, T1511Request, T1516Request, T1531Request,
@@ -41,6 +42,7 @@ use ls_sdk::market_session::{
     G3101Request, G3102Request, G3103Request, G3104Request, G3106Request, G3190Request,
     O3101Request, O3105Request, O3106Request, O3121Request, O3125Request, O3126Request,
     T9945Request, T3202Request,
+    T0167Request,
 };
 use ls_sdk::paginated::{
     T1403Request, T1441Request, T1452Request, T1463Request, T1466Request, T1481Request,
@@ -2929,6 +2931,224 @@ async fn live_smoke_t0424() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t0424 account-state failure (not transport)");
             panic!("live-smoke-t0424 failed (account-state, may be paper-account setup): {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t0167`: paper guard → read-only `t0167` server-time utility.
+///
+/// A stateless utility, closure-viable (the gateway clock is always populated).
+/// Not account-scoped, so no dispatch-log suppressor is needed. The recorded line
+/// is credential-free: `rsp_cd` + a boolean for whether the `time` witness is
+/// non-empty. A failed run emits a distinct `SMOKE-FAIL` stderr line.
+#[tokio::test]
+#[ignore = "live smoke: needs LS paper credentials; run via `make live-smoke-t0167`"]
+async fn live_smoke_t0167() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().server_time(&T0167Request::new()).await {
+        Ok(resp) => {
+            let line = format!(
+                "rsp_cd={} time_nondefault={}",
+                resp.rsp_cd,
+                !resp.outblock.time.is_empty()
+            );
+            record("live-smoke-t0167", &format!("env=paper date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t0167 server-time failure (not evidence)");
+            panic!("live-smoke-t0167 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-cspbq00200`: paper guard → read-only `CSPBQ00200` order-capacity
+/// inquiry. The instrument is `LS_LIVE_SMOKE_ISU` (a stable ISIN, default Samsung
+/// `KR7005930003`); `OrdPrc="0"` requests broad capacity. The recorded line is
+/// credential-free: `rsp_cd`, the capacity row count, and a flag for whether the
+/// `SeOrdAbleAmt` capacity witness is non-default. The dispatch-log suppressor is
+/// installed first (KTD7). A failed run emits a distinct `SMOKE-FAIL` stderr line.
+#[tokio::test]
+#[ignore = "live smoke: needs a provisioned LS paper account; run via `make live-smoke-cspbq00200`"]
+async fn live_smoke_cspbq00200() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (KTD7)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+
+    let isu = std::env::var("LS_LIVE_SMOKE_ISU").unwrap_or_else(|_| "KR7005930003".to_string());
+    // A capacity inquiry needs a valid order price to compute orderable amounts; a
+    // static plausible price is closure-compatible (margin capacity does not need a
+    // LIVE quote, just a valid price). Default ≈ a recent Samsung price.
+    let ordprc = std::env::var("LS_LIVE_SMOKE_ORDPRC").unwrap_or_else(|_| "75000".to_string());
+    let req = CSPBQ00200Request::new("1", &isu, &ordprc, "41");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.account().order_capacity(&req).await {
+        Ok(resp) => {
+            let nondef = |s: &str| !s.is_empty() && s != "0";
+            let (dps_nd, prdps_nd, se_nd) = resp
+                .outblock2
+                .first()
+                .map(|c| (nondef(&c.dps), nondef(&c.prsmptdpsd1), nondef(&c.seordableamt)))
+                .unwrap_or((false, false, false));
+            let line = format!(
+                "rsp_cd={} caprows={} dps_nd={dps_nd} prsmptdps_nd={prdps_nd} se_nd={se_nd}",
+                resp.rsp_cd,
+                resp.outblock2.len(),
+            );
+            record("live-smoke-cspbq00200", &format!("env=paper date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!(
+                "SMOKE-FAIL target=live-smoke-cspbq00200 account-state failure (not transport)"
+            );
+            panic!("live-smoke-cspbq00200 failed (account-state, may be paper-account setup): {e}");
+        }
+    }
+}
+
+/// `make live-smoke-clnaq00100`: paper guard → read-only `CLNAQ00100` loanable-stock
+/// list (full-list mode). Persistent reference data — the loanable universe is
+/// populated regardless of market hours. The recorded line is credential-free:
+/// `rsp_cd`, the stock-list LENGTH, and a flag for whether the first entry carries a
+/// non-empty issue name. The dispatch-log suppressor is installed first (KTD7). A
+/// failed run emits a distinct `SMOKE-FAIL` stderr line.
+#[tokio::test]
+#[ignore = "live smoke: needs LS paper credentials; run via `make live-smoke-clnaq00100`"]
+async fn live_smoke_clnaq00100() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (KTD7)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.account().loanable_stocks(&CLNAQ00100Request::full_list()).await {
+        Ok(resp) => {
+            let name_nondefault = resp
+                .outblock2
+                .first()
+                .map(|s| !s.isunm.is_empty())
+                .unwrap_or(false);
+            let line = format!(
+                "rsp_cd={} stocks={} name_nondefault={}",
+                resp.rsp_cd,
+                resp.outblock2.len(),
+                name_nondefault
+            );
+            record("live-smoke-clnaq00100", &format!("env=paper date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-clnaq00100 reference-read failure (not transport)");
+            panic!("live-smoke-clnaq00100 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-cfoeq11100`: paper guard → read-only `CFOEQ11100` F/O
+/// provisional-settlement deposit detail. `BnsDt` defaults to today (the deposit is
+/// account state, not date-gated). The recorded line is credential-free: `rsp_cd`,
+/// the deposit row count, and a flag for whether the `Dps` deposit witness is
+/// non-default. The dispatch-log suppressor is installed first (KTD7). A failed run
+/// emits a distinct `SMOKE-FAIL` stderr line.
+#[tokio::test]
+#[ignore = "live smoke: needs a provisioned LS paper account; run via `make live-smoke-cfoeq11100`"]
+async fn live_smoke_cfoeq11100() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (KTD7)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+
+    let date = Utc::now().format("%Y-%m-%d");
+    let bnsdt = std::env::var("LS_LIVE_SMOKE_BNSDT")
+        .unwrap_or_else(|_| Utc::now().format("%Y%m%d").to_string());
+    match sdk.account().fo_deposit_detail(&CFOEQ11100Request::new(&bnsdt)).await {
+        Ok(resp) => {
+            let nd = |s: &str| !s.is_empty() && s != "0";
+            let (dps_nd, opnmk_nd, csgn_nd) = resp
+                .outblock2
+                .first()
+                .map(|d| (nd(&d.dps), nd(&d.opnmkdpsamttotamt), nd(&d.csgnmgn)))
+                .unwrap_or((false, false, false));
+            let line = format!(
+                "rsp_cd={} deprows={} dps_nd={dps_nd} opnmk_nd={opnmk_nd} csgn_nd={csgn_nd}",
+                resp.rsp_cd,
+                resp.outblock2.len(),
+            );
+            record("live-smoke-cfoeq11100", &format!("env=paper date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!(
+                "SMOKE-FAIL target=live-smoke-cfoeq11100 account-state failure (not transport)"
+            );
+            panic!("live-smoke-cfoeq11100 failed (account-state, may be paper-account setup): {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t0441`: paper guard → read-only `t0441` F/O balance valuation.
+///
+/// On a position-less paper account the position array is empty and the valuation
+/// summary is zero (the AE2 expected-empty case under the U2 holdings gate). The
+/// recorded line is credential-free: `rsp_cd`, the position count, and a flag for
+/// whether the `tappamt` summary witness is non-default. The dispatch-log suppressor
+/// is installed first (KTD7). A failed run emits a distinct `SMOKE-FAIL` stderr line.
+#[tokio::test]
+#[ignore = "live smoke: needs a provisioned LS paper account; run via `make live-smoke-t0441`"]
+async fn live_smoke_t0441() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (KTD7)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.account().fo_balance_eval(&T0441Request::new()).await {
+        Ok(resp) => {
+            let tappamt_nondefault =
+                !resp.outblock.tappamt.is_empty() && resp.outblock.tappamt != "0";
+            let line = format!(
+                "rsp_cd={} positions={} tappamt_nondefault={}",
+                resp.rsp_cd,
+                resp.outblock1.len(),
+                tappamt_nondefault
+            );
+            record("live-smoke-t0441", &format!("env=paper date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t0441 account-state failure (not transport)");
+            panic!("live-smoke-t0441 failed (account-state, may be paper-account setup): {e}");
+        }
+    }
+}
+
+/// `make live-smoke-cidbq01400`: paper guard → read-only `CIDBQ01400` overseas-
+/// futures orderable-quantity inquiry. The contract is `LS_LIVE_SMOKE_OVRSISU`
+/// (default the spec example `ADM23`); overseas paper feeds are historically empty,
+/// so an empty/zero quantity is the expected PENDING case. The recorded line is
+/// credential-free: `rsp_cd`, the row count, and a flag for whether `OrdAbleQty` is
+/// non-default. The dispatch-log suppressor is installed first (KTD7). A failed run
+/// emits a distinct `SMOKE-FAIL` stderr line.
+#[tokio::test]
+#[ignore = "live smoke: needs a provisioned LS paper account + overseas eligibility; run via `make live-smoke-cidbq01400`"]
+async fn live_smoke_cidbq01400() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (KTD7)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+
+    let isu = std::env::var("LS_LIVE_SMOKE_OVRSISU").unwrap_or_else(|_| "ADM23".to_string());
+    let req = CIDBQ01400Request::new("1", &isu, "2", "1", "1");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.account().overseas_fo_order_qty(&req).await {
+        Ok(resp) => {
+            let qty_nondefault = resp
+                .outblock2
+                .first()
+                .map(|q| !q.ordableqty.is_empty() && q.ordableqty != "0")
+                .unwrap_or(false);
+            let line = format!(
+                "rsp_cd={} rows={} qty_nondefault={}",
+                resp.rsp_cd,
+                resp.outblock2.len(),
+                qty_nondefault
+            );
+            record("live-smoke-cidbq01400", &format!("env=paper date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!(
+                "SMOKE-FAIL target=live-smoke-cidbq01400 account-state failure (not transport)"
+            );
+            panic!("live-smoke-cidbq01400 failed (account-state, may be paper-account setup): {e}");
         }
     }
 }

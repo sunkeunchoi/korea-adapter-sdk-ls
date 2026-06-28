@@ -99,6 +99,35 @@ live-smoke-cspaq22200:
 live-smoke-t0424:
 	$(call run_smoke,live_smoke_t0424)
 
+## Server-time smoke: read-only t0167 utility (always populated, closure-viable).
+live-smoke-t0167:
+	$(call run_smoke,live_smoke_t0167)
+
+## Order-capacity smoke: read-only CSPBQ00200 (capacity by margin rate; numeric
+## RecCnt/OrdPrc serialize as JSON numbers or IGW40011).
+live-smoke-cspbq00200:
+	$(call run_smoke,live_smoke_cspbq00200)
+
+## Loanable-stock smoke: read-only CLNAQ00100 reference list (full-list mode;
+## persistent universe, closure-viable).
+live-smoke-clnaq00100:
+	$(call run_smoke,live_smoke_clnaq00100)
+
+## F/O deposit-detail smoke: read-only CFOEQ11100 (예수금/증거금; empty 00707 on a
+## position-less paper account → PENDING).
+live-smoke-cfoeq11100:
+	$(call run_smoke,live_smoke_cfoeq11100)
+
+## F/O balance-valuation smoke: read-only t0441 (positions + summary; empty on a
+## position-less paper account → PENDING).
+live-smoke-t0441:
+	$(call run_smoke,live_smoke_t0441)
+
+## Overseas-futures order-qty smoke: read-only CIDBQ01400 (overseas paper feeds
+## historically empty → PENDING).
+live-smoke-cidbq01400:
+	$(call run_smoke,live_smoke_cidbq01400)
+
 ## F/O account deposit smoke: read-only CFOBQ10500 deposit/margin inquiry (may
 ## return an empty 00707 on a position-less paper account → PENDING).
 live-smoke-cfobq10500:

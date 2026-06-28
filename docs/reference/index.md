@@ -14,6 +14,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `C01` | 선물옵션 주문체결 실시간 | `realtime` | implemented, not yet recommended |
 | `CFOAQ10100` | 선물옵션 주문가능수량조회 | `account` | implemented, not yet recommended |
 | `CFOBQ10500` | 선물옵션 계좌예탁금증거금조회 | `account` | implemented, not yet recommended |
+| `CLNAQ00100` | 예탁담보융자가능종목현황조회 | `account` | implemented, not yet recommended |
 | `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | recommended |
 | `CSPAQ12300` | BEP단가조회 | `account` | implemented, not yet recommended |
 | `CSPAQ22200` | 현물계좌예수금 주문가능금액 총평가2 | `account` | implemented, not yet recommended |
@@ -53,6 +54,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `o3125` | 해외선물옵션 현재가(종목정보) 조회 | `market_session` | implemented, not yet recommended |
 | `o3126` | 해외선물옵션 현재가호가 조회 | `market_session` | implemented, not yet recommended |
 | `revoke` | 접근토큰 폐기 (OAuth2 token revoke) | `standalone` | implemented, not yet recommended |
+| `t0167` | 서버시간조회 | `market_session` | implemented, not yet recommended |
 | `t0424` | 주식잔고2 | `account` | implemented, not yet recommended |
 | `t0425` | 주식체결/미체결 (stock filled/unfilled order inquiry) | `paginated` | implemented, not yet recommended |
 | `t1101` | 주식 현재가호가 조회 | `market_session` | recommended |

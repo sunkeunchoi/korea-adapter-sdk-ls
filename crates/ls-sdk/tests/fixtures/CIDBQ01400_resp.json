@@ -1,0 +1,8 @@
+{
+  "rsp_cd": "00136",
+  "CIDBQ01400OutBlock2": {
+    "RecCnt": 1,
+    "OrdAbleQty": 992
+  },
+  "rsp_msg": "조회가 완료되었습니다."
+}

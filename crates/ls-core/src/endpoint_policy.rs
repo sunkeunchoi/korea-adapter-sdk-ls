@@ -1246,6 +1246,113 @@ pub const T0424_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(10),
 };
 
+/// CSPBQ00200 — 현물계좌증거금률별주문가능수량조회 (orderable-quantity / capacity by
+/// margin rate, read-only account-state read).
+///
+/// Dispatches through plain `Inner::post` (non-paginated): the result is
+/// single-page (`facets.self_paginated: false`), so `has_pagination: false`.
+pub const CSPBQ00200_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CSPBQ00200",
+    path: "/stock/accno",
+    module: "stock",
+    group: "[주식] 계좌",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Account,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(10),
+};
+
+/// CLNAQ00100 — 예탁담보융자가능종목현황조회 (loanable-collateral stock list,
+/// read-only). Account-aware reference data on `/stock/etc`.
+///
+/// Dispatches through plain `Inner::post` (non-paginated): the result is
+/// single-page (`facets.self_paginated: false`), so `has_pagination: false`.
+pub const CLNAQ00100_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CLNAQ00100",
+    path: "/stock/etc",
+    module: "stock",
+    group: "[주식] 기타",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Account,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(30),
+};
+
+/// CFOEQ11100 — 선물옵션가정산예탁금상세 (F/O provisional-settlement deposit detail,
+/// read-only account-state read).
+///
+/// Dispatches through plain `Inner::post` (non-paginated): the result is
+/// single-page (`facets.self_paginated: false`), so `has_pagination: false`.
+pub const CFOEQ11100_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CFOEQ11100",
+    path: "/futureoption/accno",
+    module: "futureoption",
+    group: "[선물/옵션] 계좌",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Account,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(5),
+};
+
+/// CIDBQ01400 — 해외선물 체결내역개별 조회(주문가능수량) (overseas-futures orderable-
+/// quantity inquiry, read-only account-state read).
+///
+/// Dispatches through plain `Inner::post` (non-paginated): the result is
+/// single-page (`facets.self_paginated: false`), so `has_pagination: false`.
+pub const CIDBQ01400_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CIDBQ01400",
+    path: "/overseas-futureoption/accno",
+    module: "overseas-futureoption",
+    group: "[해외선물] 계좌",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Account,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(10),
+};
+
+/// t0441 — 선물/옵션잔고평가(이동평균) (F/O balance valuation, read-only account-state
+/// read).
+///
+/// Dispatches through plain `Inner::post` (non-paginated): the result is
+/// single-page (`facets.self_paginated: false`), so `has_pagination: false`.
+pub const T0441_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t0441",
+    path: "/futureoption/accno",
+    module: "futureoption",
+    group: "[선물/옵션] 계좌",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Account,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(10),
+};
+
+/// t0167 — 서버시간조회 (server-time utility read, read-only, stateless).
+///
+/// Dispatches through plain `Inner::post` (non-paginated). Not account-scoped —
+/// `market_data` bucket, `/etc/time-search`.
+pub const T0167_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t0167",
+    path: "/etc/time-search",
+    module: "etc",
+    group: "[기타] 시간조회",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(50),
+};
+
 /// CFOBQ10500 — 선물옵션 계좌예탁금증거금조회 (F/O account deposit / margin inquiry,
 /// read-only).
 ///
@@ -2927,6 +3034,13 @@ mod tests {
             CSPAQ22200_POLICY,
             // Closed-window account-lane flip wave (plan -001): non-order account read.
             T0424_POLICY,
+            CSPBQ00200_POLICY,
+            CLNAQ00100_POLICY,
+            CFOEQ11100_POLICY,
+            T0441_POLICY,
+            CIDBQ01400_POLICY,
+            // Closed-window account-lane flip wave (plan -001): server-time utility read.
+            T0167_POLICY,
             // t0425 IS a non-order REST read — it belongs here AND in the
             // crosscheck. CSPAT00601 (is_order: true) deliberately does NOT.
             T0425_POLICY,

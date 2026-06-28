@@ -1477,6 +1477,511 @@ pub struct T0424Response {
     pub outblock1: Vec<T0424OutBlock1>,
 }
 
+// ---------------------------------------------------------------------------
+// CSPBQ00200 — 현물계좌증거금률별주문가능수량조회 (orderable-quantity / capacity by
+// margin rate, read-only account-state read).
+//
+// Returns the account's order-capacity amounts (예수금 / 거래소·코스닥 주문가능금액)
+// for a given issue and side. The request carries numeric slots (`RecCnt`,
+// `OrdPrc`) that MUST serialize as JSON numbers (KTD4) or the gateway returns
+// IGW40011. The account-identity echo block (`CSPBQ00200OutBlock1`, which carries
+// `AcntNo`/`InptPwd`) is intentionally NOT modeled — only the capacity block.
+// ---------------------------------------------------------------------------
+
+/// Input block for `CSPBQ00200` — issue + side + price; `RecCnt`/`OrdPrc` are
+/// numeric slots (KTD4).
+#[derive(Serialize, Debug, Clone)]
+pub struct CSPBQ00200InBlock1 {
+    /// Record count / 레코드갯수 (numeric slot).
+    #[serde(rename = "RecCnt", serialize_with = "ls_core::string_as_number")]
+    pub reccnt: String,
+    /// Buy/sell distinction / 매매구분.
+    #[serde(rename = "BnsTpCode")]
+    pub bnstpcode: String,
+    /// Issue number / 종목번호 (ISIN, e.g. `KR7005930003`).
+    #[serde(rename = "IsuNo")]
+    pub isuno: String,
+    /// Order price / 주문가격 (numeric slot; `0` = broad capacity).
+    #[serde(rename = "OrdPrc", serialize_with = "ls_core::string_as_number")]
+    pub ordprc: String,
+    /// Registered media code / 등록매체.
+    #[serde(rename = "RegCommdaCode")]
+    pub regcommdacode: String,
+}
+
+/// `CSPBQ00200` request — wraps the input block under `CSPBQ00200InBlock1`.
+#[derive(Serialize, Debug, Clone)]
+pub struct CSPBQ00200Request {
+    #[serde(rename = "CSPBQ00200InBlock1")]
+    pub inblock: CSPBQ00200InBlock1,
+}
+
+impl CSPBQ00200Request {
+    /// Build a `CSPBQ00200` capacity inquiry for one issue + side at a price
+    /// (`"0"` for broad capacity). `RecCnt` is fixed at `"1"`. The account number
+    /// is NEVER a parameter (bearer token + config).
+    pub fn new(
+        bnstpcode: impl Into<String>,
+        isuno: impl Into<String>,
+        ordprc: impl Into<String>,
+        regcommdacode: impl Into<String>,
+    ) -> Self {
+        CSPBQ00200Request {
+            inblock: CSPBQ00200InBlock1 {
+                reccnt: "1".into(),
+                bnstpcode: bnstpcode.into(),
+                isuno: isuno.into(),
+                ordprc: ordprc.into(),
+                regcommdacode: regcommdacode.into(),
+            },
+        }
+    }
+}
+
+/// `CSPBQ00200OutBlock2` — the order-capacity block (cash + per-market amounts).
+///
+/// A representative numeric subset; the account-name field (`AcntNm`) is
+/// intentionally NOT modeled (no PII in the surface).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct CSPBQ00200OutBlock2 {
+    /// Record count / 레코드갯수.
+    #[serde(rename = "RecCnt", deserialize_with = "ls_core::string_or_number")]
+    pub reccnt: String,
+    /// Deposit / 예수금.
+    #[serde(rename = "Dps", deserialize_with = "ls_core::string_or_number")]
+    pub dps: String,
+    /// Estimated D+1 deposit / 추정예수금 D1 (pure cash, order-price-independent —
+    /// the substantive cash witness on a cash-only account).
+    #[serde(rename = "PrsmptDpsD1", deserialize_with = "ls_core::string_or_number")]
+    pub prsmptdpsd1: String,
+    /// Estimated D+2 deposit / 추정예수금 D2.
+    #[serde(rename = "PrsmptDpsD2", deserialize_with = "ls_core::string_or_number")]
+    pub prsmptdpsd2: String,
+    /// KRX orderable amount / 거래소주문가능금액 (the substantive capacity witness).
+    #[serde(rename = "SeOrdAbleAmt", deserialize_with = "ls_core::string_or_number")]
+    pub seordableamt: String,
+    /// KOSDAQ orderable amount / 코스닥주문가능금액.
+    #[serde(rename = "KdqOrdAbleAmt", deserialize_with = "ls_core::string_or_number")]
+    pub kdqordableamt: String,
+    /// Cash orderable amount / 현금주문가능금액.
+    #[serde(rename = "MnyOrdAbleAmt", deserialize_with = "ls_core::string_or_number")]
+    pub mnyordableamt: String,
+    /// Cash withdrawable amount / 출금가능금액.
+    #[serde(rename = "MnyoutAbleAmt", deserialize_with = "ls_core::string_or_number")]
+    pub mnyoutableamt: String,
+    /// Orderable quantity / 주문가능수량 (0 when no price is supplied).
+    #[serde(rename = "OrdAbleQty", deserialize_with = "ls_core::string_or_number")]
+    pub ordableqty: String,
+    /// Consignment margin rate / 위탁증거금률.
+    #[serde(rename = "TrdMgnrt", deserialize_with = "ls_core::string_or_number")]
+    pub trdmgnrt: String,
+}
+
+/// `CSPBQ00200` response envelope (only the capacity block is modeled).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct CSPBQ00200Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "CSPBQ00200OutBlock2",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock2: Vec<CSPBQ00200OutBlock2>,
+}
+
+// ---------------------------------------------------------------------------
+// CLNAQ00100 — 예탁담보융자가능종목현황조회 (loanable-collateral stock list,
+// read-only). Account-aware reference data: a list of stocks eligible for
+// deposit-collateral loans, with per-account limit fields. Persistent reference
+// data (the loanable universe holds regardless of market hours), so it is
+// closure-viable. `RecCnt` is a numeric request slot (KTD4). On `/stock/etc`.
+// ---------------------------------------------------------------------------
+
+/// Input block for `CLNAQ00100` — full-list query shape; `RecCnt` is numeric (KTD4).
+#[derive(Serialize, Debug, Clone)]
+pub struct CLNAQ00100InBlock1 {
+    /// Record count / 레코드갯수 (numeric slot).
+    #[serde(rename = "RecCnt", serialize_with = "ls_core::string_as_number")]
+    pub reccnt: String,
+    /// Query distinction / 조회구분 (`"0"` = full list).
+    #[serde(rename = "QryTp")]
+    pub qrytp: String,
+    /// Issue number / 종목번호 (empty for the full list).
+    #[serde(rename = "IsuNo")]
+    pub isuno: String,
+    /// Security-type code / 유가증권구분.
+    #[serde(rename = "SecTpCode")]
+    pub sectpcode: String,
+    /// Loan-interest-grade code / 융자이자등급.
+    #[serde(rename = "LoanIntrstGrdCode")]
+    pub loanintrstgrdcode: String,
+    /// Loan type / 융자구분.
+    #[serde(rename = "LoanTp")]
+    pub loantp: String,
+}
+
+/// `CLNAQ00100` request — wraps the input block under `CLNAQ00100InBlock1`.
+#[derive(Serialize, Debug, Clone)]
+pub struct CLNAQ00100Request {
+    #[serde(rename = "CLNAQ00100InBlock1")]
+    pub inblock: CLNAQ00100InBlock1,
+}
+
+impl Default for CLNAQ00100Request {
+    fn default() -> Self {
+        Self::full_list()
+    }
+}
+
+impl CLNAQ00100Request {
+    /// Build a full-list `CLNAQ00100` query (the whole loanable-collateral universe;
+    /// `QryTp="0"`, empty `IsuNo`). Broad/default filters for the rest.
+    pub fn full_list() -> Self {
+        CLNAQ00100Request {
+            inblock: CLNAQ00100InBlock1 {
+                reccnt: "1".into(),
+                qrytp: "0".into(),
+                isuno: String::new(),
+                sectpcode: "0".into(),
+                loanintrstgrdcode: "00".into(),
+                loantp: "1".into(),
+            },
+        }
+    }
+}
+
+/// `CLNAQ00100OutBlock2` — one loanable-collateral stock (repeated array block).
+///
+/// A representative subset (the registration-person id is intentionally NOT
+/// modeled). `IsuNm` + `LoanAbleRat` are the substantive list witnesses.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct CLNAQ00100OutBlock2 {
+    /// Issue number / 종목번호.
+    #[serde(rename = "IsuNo")]
+    pub isuno: String,
+    /// Issue name / 종목명 (the substantive list witness).
+    #[serde(rename = "IsuNm")]
+    pub isunm: String,
+    /// Loanable rate / 융자가능비율.
+    #[serde(rename = "LoanAbleRat", deserialize_with = "ls_core::string_or_number")]
+    pub loanablerat: String,
+    /// Registration-type name / 등록구분명 (가능/불가능).
+    #[serde(rename = "RegTpNm")]
+    pub regtpnm: String,
+    /// Market-type name / 시장구분명.
+    #[serde(rename = "MktTpNm")]
+    pub mkttpnm: String,
+    /// Limit value / 한도금액.
+    #[serde(rename = "LmtVal", deserialize_with = "ls_core::string_or_number")]
+    pub lmtval: String,
+}
+
+/// `CLNAQ00100OutBlock3` — the list summary block.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct CLNAQ00100OutBlock3 {
+    /// Record count / 레코드갯수.
+    #[serde(rename = "RecCnt", deserialize_with = "ls_core::string_or_number")]
+    pub reccnt: String,
+    /// Large-withdrawal sum amount / 대량출금합계금액.
+    #[serde(
+        rename = "LrgMnyoutSumAmt",
+        deserialize_with = "ls_core::string_or_number"
+    )]
+    pub lrgmnyoutsumamt: String,
+}
+
+/// `CLNAQ00100` response envelope (the loanable-stock array + summary).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct CLNAQ00100Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "CLNAQ00100OutBlock2",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock2: Vec<CLNAQ00100OutBlock2>,
+    #[serde(rename = "CLNAQ00100OutBlock3", default)]
+    pub outblock3: CLNAQ00100OutBlock3,
+}
+
+// ---------------------------------------------------------------------------
+// CFOEQ11100 — 선물옵션가정산예탁금상세 (F/O provisional-settlement deposit detail,
+// read-only account-state read). The F/O account's deposit / margin figures;
+// `RecCnt` is a numeric request slot (KTD4). The account-name field (`AcntNm`)
+// is intentionally NOT modeled.
+// ---------------------------------------------------------------------------
+
+/// Input block for `CFOEQ11100` — settlement business date; `RecCnt` numeric (KTD4).
+#[derive(Serialize, Debug, Clone)]
+pub struct CFOEQ11100InBlock1 {
+    /// Record count / 레코드갯수 (numeric slot).
+    #[serde(rename = "RecCnt", serialize_with = "ls_core::string_as_number")]
+    pub reccnt: String,
+    /// Business date / 매매일자 (YYYYMMDD).
+    #[serde(rename = "BnsDt")]
+    pub bnsdt: String,
+}
+
+/// `CFOEQ11100` request — wraps the input block under `CFOEQ11100InBlock1`.
+#[derive(Serialize, Debug, Clone)]
+pub struct CFOEQ11100Request {
+    #[serde(rename = "CFOEQ11100InBlock1")]
+    pub inblock: CFOEQ11100InBlock1,
+}
+
+impl CFOEQ11100Request {
+    /// Build a `CFOEQ11100` deposit-detail inquiry for a business date. `RecCnt` is
+    /// fixed at `"1"`; the account number is NEVER a parameter (bearer token).
+    pub fn new(bnsdt: impl Into<String>) -> Self {
+        CFOEQ11100Request {
+            inblock: CFOEQ11100InBlock1 {
+                reccnt: "1".into(),
+                bnsdt: bnsdt.into(),
+            },
+        }
+    }
+}
+
+/// `CFOEQ11100OutBlock2` — the F/O deposit / margin detail block.
+///
+/// A representative numeric subset; the account-name field (`AcntNm`) is NOT
+/// modeled (no PII). `Dps` (예수금) is the substantive deposit witness.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct CFOEQ11100OutBlock2 {
+    /// Deposit / 예수금 (the substantive deposit witness).
+    #[serde(rename = "Dps", deserialize_with = "ls_core::string_or_number")]
+    pub dps: String,
+    /// Market-open deposit total / 개장예탁금총액.
+    #[serde(
+        rename = "OpnmkDpsamtTotamt",
+        deserialize_with = "ls_core::string_or_number"
+    )]
+    pub opnmkdpsamttotamt: String,
+    /// Cash orderable amount / 현금주문가능금액.
+    #[serde(rename = "MnyOrdAbleAmt", deserialize_with = "ls_core::string_or_number")]
+    pub mnyordableamt: String,
+    /// Consignment margin / 위탁증거금.
+    #[serde(rename = "CsgnMgn", deserialize_with = "ls_core::string_or_number")]
+    pub csgnmgn: String,
+    /// Cash consignment margin / 현금위탁증거금.
+    #[serde(rename = "MnyCsgnMgn", deserialize_with = "ls_core::string_or_number")]
+    pub mnycsgnmgn: String,
+}
+
+/// `CFOEQ11100` response envelope (only the deposit-detail block is modeled).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct CFOEQ11100Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "CFOEQ11100OutBlock2",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock2: Vec<CFOEQ11100OutBlock2>,
+}
+
+// ---------------------------------------------------------------------------
+// t0441 — 선물/옵션잔고평가(이동평균) (F/O balance valuation, read-only account-state
+// read). A per-position array (`t0441OutBlock1`) plus a valuation summary
+// (`t0441OutBlock`). The in-block carries only continuation echoes — no numeric
+// slots, no account number. On a position-less paper account both blocks are
+// empty/zero (the AE2 expected-empty case under the U2 holdings gate).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t0441` — continuation echoes only (empty on the first page).
+#[derive(Serialize, Debug, Clone)]
+pub struct T0441InBlock {
+    /// Continuation issue code / 연속조회 종목코드.
+    pub cts_expcode: String,
+    /// Continuation buy/sell code / 연속조회 매매구분.
+    pub cts_medocd: String,
+}
+
+/// `t0441` request — serializes to `{"t0441InBlock":{...}}`.
+#[derive(Serialize, Debug, Clone)]
+pub struct T0441Request {
+    #[serde(rename = "t0441InBlock")]
+    pub inblock: T0441InBlock,
+}
+
+impl Default for T0441Request {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl T0441Request {
+    /// Build a first-page `t0441` balance-valuation request (empty continuation).
+    pub fn new() -> Self {
+        T0441Request {
+            inblock: T0441InBlock {
+                cts_expcode: String::new(),
+                cts_medocd: String::new(),
+            },
+        }
+    }
+}
+
+/// `t0441OutBlock1` — one held F/O position (repeated array block).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T0441OutBlock1 {
+    /// Issue code / 종목코드.
+    #[serde(rename = "expcode")]
+    pub expcode: String,
+    /// Buy/sell name / 매매구분명.
+    #[serde(rename = "medosu")]
+    pub medosu: String,
+    /// Balance quantity / 잔고수량 (the substantive position witness).
+    #[serde(rename = "jqty", deserialize_with = "ls_core::string_or_number")]
+    pub jqty: String,
+    /// Current quantity / 청산가능수량.
+    #[serde(rename = "cqty", deserialize_with = "ls_core::string_or_number")]
+    pub cqty: String,
+    /// Valuation amount / 평가금액.
+    #[serde(rename = "appamt", deserialize_with = "ls_core::string_or_number")]
+    pub appamt: String,
+    /// P&L rate / 수익율.
+    #[serde(rename = "sunikrt", deserialize_with = "ls_core::string_or_number")]
+    pub sunikrt: String,
+}
+
+/// `t0441OutBlock` — the valuation summary block.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T0441OutBlock {
+    /// Total valuation amount / 총평가금액 (the substantive summary witness).
+    #[serde(rename = "tappamt", deserialize_with = "ls_core::string_or_number")]
+    pub tappamt: String,
+    /// Total P&L / 총손익.
+    #[serde(rename = "tsunik", deserialize_with = "ls_core::string_or_number")]
+    pub tsunik: String,
+    /// Total day P&L / 총당일손익.
+    #[serde(rename = "tdtsunik", deserialize_with = "ls_core::string_or_number")]
+    pub tdtsunik: String,
+}
+
+/// `t0441` response envelope (per-position array + valuation summary).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T0441Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t0441OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T0441OutBlock1>,
+    #[serde(rename = "t0441OutBlock", default)]
+    pub outblock: T0441OutBlock,
+}
+
+// ---------------------------------------------------------------------------
+// CIDBQ01400 — 해외선물 체결내역개별 조회(주문가능수량) (overseas-futures orderable-
+// quantity inquiry, read-only account-state read). The orderable quantity for an
+// overseas-futures contract + side at a price; `RecCnt`/`OvrsDrvtOrdPrc` are
+// numeric request slots (KTD4). The account-identity echo block
+// (`CIDBQ01400OutBlock1`, which carries `AcntNo`) is intentionally NOT modeled.
+// ---------------------------------------------------------------------------
+
+/// Input block for `CIDBQ01400` — contract + side + price; numeric slots (KTD4).
+#[derive(Serialize, Debug, Clone)]
+pub struct CIDBQ01400InBlock1 {
+    /// Record count / 레코드갯수 (numeric slot).
+    #[serde(rename = "RecCnt", serialize_with = "ls_core::string_as_number")]
+    pub reccnt: String,
+    /// Query distinction / 조회구분.
+    #[serde(rename = "QryTpCode")]
+    pub qrytpcode: String,
+    /// Issue code value / 종목코드 (an overseas-futures contract, e.g. `ADM23`).
+    #[serde(rename = "IsuCodeVal")]
+    pub isucodeval: String,
+    /// Buy/sell distinction / 매매구분.
+    #[serde(rename = "BnsTpCode")]
+    pub bnstpcode: String,
+    /// Overseas-derivative order price / 해외파생주문가격 (numeric slot).
+    #[serde(
+        rename = "OvrsDrvtOrdPrc",
+        serialize_with = "ls_core::string_as_number"
+    )]
+    pub ovrsdrvtordprc: String,
+    /// Abroad-futures order-pattern code / 해외선물주문유형.
+    #[serde(rename = "AbrdFutsOrdPtnCode")]
+    pub abrdfutsordptncode: String,
+}
+
+/// `CIDBQ01400` request — wraps the input block under `CIDBQ01400InBlock1`.
+#[derive(Serialize, Debug, Clone)]
+pub struct CIDBQ01400Request {
+    #[serde(rename = "CIDBQ01400InBlock1")]
+    pub inblock: CIDBQ01400InBlock1,
+}
+
+impl CIDBQ01400Request {
+    /// Build a `CIDBQ01400` orderable-quantity inquiry for an overseas-futures
+    /// contract + side at a price. `RecCnt` is fixed at `"1"`; no account number.
+    pub fn new(
+        qrytpcode: impl Into<String>,
+        isucodeval: impl Into<String>,
+        bnstpcode: impl Into<String>,
+        ovrsdrvtordprc: impl Into<String>,
+        abrdfutsordptncode: impl Into<String>,
+    ) -> Self {
+        CIDBQ01400Request {
+            inblock: CIDBQ01400InBlock1 {
+                reccnt: "1".into(),
+                qrytpcode: qrytpcode.into(),
+                isucodeval: isucodeval.into(),
+                bnstpcode: bnstpcode.into(),
+                ovrsdrvtordprc: ovrsdrvtordprc.into(),
+                abrdfutsordptncode: abrdfutsordptncode.into(),
+            },
+        }
+    }
+}
+
+/// `CIDBQ01400OutBlock2` — the orderable-quantity block.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct CIDBQ01400OutBlock2 {
+    /// Record count / 레코드갯수.
+    #[serde(rename = "RecCnt", deserialize_with = "ls_core::string_or_number")]
+    pub reccnt: String,
+    /// Orderable quantity / 주문가능수량 (the substantive witness).
+    #[serde(rename = "OrdAbleQty", deserialize_with = "ls_core::string_or_number")]
+    pub ordableqty: String,
+}
+
+/// `CIDBQ01400` response envelope (only the orderable-quantity block is modeled).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct CIDBQ01400Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "CIDBQ01400OutBlock2",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock2: Vec<CIDBQ01400OutBlock2>,
+}
+
 /// Account operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache, rate
@@ -1612,6 +2117,87 @@ impl Account {
     pub async fn stock_balance(&self, req: &T0424Request) -> LsResult<T0424Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T0424_POLICY, req)
+            .await
+    }
+
+    /// Inquire the order-capacity by margin rate (증거금률별주문가능수량) via
+    /// `CSPBQ00200`.
+    ///
+    /// Dispatches through plain [`ls_core::Inner::post`] (Account rate bucket,
+    /// single-page). The account is the config-supplied [`Account::account_no`],
+    /// identified by the bearer token — the caller passes the issue + side + price,
+    /// never an account number. With `OrdPrc = "0"` the orderable quantity is 0 but
+    /// the capacity amounts (예수금 / 주문가능금액) are populated from account cash.
+    pub async fn order_capacity(
+        &self,
+        req: &CSPBQ00200Request,
+    ) -> LsResult<CSPBQ00200Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::CSPBQ00200_POLICY, req)
+            .await
+    }
+
+    /// Inquire the loanable-collateral stock list (예탁담보융자가능종목) via
+    /// `CLNAQ00100`.
+    ///
+    /// Dispatches through plain [`ls_core::Inner::post`] (Account rate bucket,
+    /// single-page) on `/stock/etc`. Persistent reference data — the loanable
+    /// universe is populated regardless of market hours. The account context (per-
+    /// account limit fields) comes from the bearer token, never a caller identifier.
+    pub async fn loanable_stocks(
+        &self,
+        req: &CLNAQ00100Request,
+    ) -> LsResult<CLNAQ00100Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::CLNAQ00100_POLICY, req)
+            .await
+    }
+
+    /// Inquire the F/O provisional-settlement deposit detail (가정산예탁금상세) via
+    /// `CFOEQ11100`.
+    ///
+    /// Dispatches through plain [`ls_core::Inner::post`] (Account rate bucket,
+    /// single-page) on `/futureoption/accno`. The account is the config-supplied
+    /// [`Account::account_no`], identified by the bearer token — the caller passes
+    /// only the settlement business date. A position-less paper account may return an
+    /// empty `00707` (the PENDING case), not a defect.
+    pub async fn fo_deposit_detail(
+        &self,
+        req: &CFOEQ11100Request,
+    ) -> LsResult<CFOEQ11100Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::CFOEQ11100_POLICY, req)
+            .await
+    }
+
+    /// Inquire the F/O balance valuation (잔고평가, moving-average) via `t0441`.
+    ///
+    /// Dispatches through plain [`ls_core::Inner::post`] (Account rate bucket,
+    /// single-page) on `/futureoption/accno`. The account is the config-supplied
+    /// [`Account::account_no`], identified by the bearer token. A position-less paper
+    /// account returns an empty position array + zero valuation summary (the PENDING
+    /// case), not a defect.
+    pub async fn fo_balance_eval(&self, req: &T0441Request) -> LsResult<T0441Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T0441_POLICY, req)
+            .await
+    }
+
+    /// Inquire the overseas-futures orderable quantity (해외선물 주문가능수량) via
+    /// `CIDBQ01400`.
+    ///
+    /// Dispatches through plain [`ls_core::Inner::post`] (Account rate bucket,
+    /// single-page) on `/overseas-futureoption/accno`. The account is the config-
+    /// supplied [`Account::account_no`], identified by the bearer token — the caller
+    /// passes the contract + side + price. An overseas paper account without
+    /// overseas-futures eligibility may return an empty/zero quantity (the PENDING
+    /// case), not a defect.
+    pub async fn overseas_fo_order_qty(
+        &self,
+        req: &CIDBQ01400Request,
+    ) -> LsResult<CIDBQ01400Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::CIDBQ01400_POLICY, req)
             .await
     }
 }
