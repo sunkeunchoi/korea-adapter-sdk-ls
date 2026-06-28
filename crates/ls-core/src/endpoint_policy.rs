@@ -2662,6 +2662,536 @@ pub const S3_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: None,
 };
 
+// === Closure-flip WS batch (plan -004): 31 connection-reachable-only WebSocket
+// market-data policies. Registered in policy_index_crosscheck ONLY (KTD1). ===
+
+/// `NS3` — (NXT)체결 ([주식] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const NS3_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "NS3",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `NH1` — (NXT)호가잔량 ([주식] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const NH1_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "NH1",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `NS2` — (NXT)우선호가 ([주식] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const NS2_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "NS2",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `NK1` — (NXT)거래원 ([주식] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const NK1_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "NK1",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `NBT` — (NXT)시간대별투자자매매추이 ([주식] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const NBT_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "NBT",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `KS_` — KOSDAQ우선호가 ([주식] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const KS_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "KS_",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `OK_` — KOSDAQ거래원 ([주식] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const OK_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "OK_",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `KH_` — KOSDAQ프로그램매매종목별 ([주식] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const KH_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "KH_",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `KM_` — KOSDAQ프로그램매매전체집계 ([주식] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const KM_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "KM_",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `PH_` — KOSPI프로그램매매종목별 ([주식] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const PH_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "PH_",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `K1_` — KOSPI거래원 ([주식] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const K1_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "K1_",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `IJ_` — 지수 ([주식] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const IJ_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "IJ_",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `YS3` — KOSPI예상체결 ([주식] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const YS3_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "YS3",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `YK3` — KOSDAQ예상체결 ([주식] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const YK3_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "YK3",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `VI_` — VI발동해제 ([주식] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const VI_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "VI_",
+    path: "/websocket",
+    module: "stock",
+    group: "[주식] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `JC0` — 주식선물체결 ([선물/옵션] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const JC0_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "JC0",
+    path: "/websocket",
+    module: "futureoption",
+    group: "[선물/옵션] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `JH0` — 주식선물호가 ([선물/옵션] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const JH0_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "JH0",
+    path: "/websocket",
+    module: "futureoption",
+    group: "[선물/옵션] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `JD0` — 주식선물실시간상하한가 ([선물/옵션] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const JD0_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "JD0",
+    path: "/websocket",
+    module: "futureoption",
+    group: "[선물/옵션] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `FD0` — KOSPI200선물실시간상하한가 ([선물/옵션] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const FD0_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "FD0",
+    path: "/websocket",
+    module: "futureoption",
+    group: "[선물/옵션] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `OD0` — KOSPI200옵션실시간상하한가 ([선물/옵션] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const OD0_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "OD0",
+    path: "/websocket",
+    module: "futureoption",
+    group: "[선물/옵션] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `OMG` — KOSPI200옵션민감도 ([선물/옵션] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const OMG_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "OMG",
+    path: "/websocket",
+    module: "futureoption",
+    group: "[선물/옵션] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `YF9` — 지수선물예상체결 ([선물/옵션] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const YF9_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "YF9",
+    path: "/websocket",
+    module: "futureoption",
+    group: "[선물/옵션] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `YOC` — 지수옵션예상체결 ([선물/옵션] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const YOC_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "YOC",
+    path: "/websocket",
+    module: "futureoption",
+    group: "[선물/옵션] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `BM_` — 업종별투자자별매매현황 ([업종] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const BM_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "BM_",
+    path: "/websocket",
+    module: "indtp",
+    group: "[업종] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `WOC` — 해외옵션 체결 ([해외선물] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const WOC_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "WOC",
+    path: "/websocket",
+    module: "overseas-futureoption",
+    group: "[해외선물] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `WOH` — 해외옵션 호가 ([해외선물] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const WOH_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "WOH",
+    path: "/websocket",
+    module: "overseas-futureoption",
+    group: "[해외선물] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `JIF` — 장운영정보 ([기타] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const JIF_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "JIF",
+    path: "/websocket",
+    module: "etc",
+    group: "[기타] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `NWS` — 실시간뉴스제목패킷 ([기타] 실시간 시세, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const NWS_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "NWS",
+    path: "/websocket",
+    module: "etc",
+    group: "[기타] 실시간 시세",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `BMT` — 시간대별투자자매매추이 ([실시간 시세 투자정보] 투자정보, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const BMT_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "BMT",
+    path: "/websocket",
+    module: "investinfo",
+    group: "[실시간 시세 투자정보] 투자정보",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `CUR` — 현물정보USD실시간 ([실시간 시세 투자정보] 투자정보, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const CUR_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CUR",
+    path: "/websocket",
+    module: "investinfo",
+    group: "[실시간 시세 투자정보] 투자정보",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
+/// `MK2` — US지수 ([실시간 시세 투자정보] 투자정보, WebSocket).
+///
+/// Connection-reachable-only WS market-data feed (KTD1, plan -004). No REST rate
+/// limits. Registered in the policy_index crosscheck array ONLY.
+pub const MK2_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "MK2",
+    path: "/websocket",
+    module: "investinfo",
+    group: "[실시간 시세 투자정보] 투자정보",
+    protocol: Protocol::WebSocket,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: None,
+    corp_rate_limit_per_sec: None,
+};
+
 /// K3_ — KOSDAQ체결 실시간 시세 (real-time KOSDAQ trade feed, WebSocket).
 ///
 /// WebSocket TR: no REST dispatch; the policy const mirrors the metadata index

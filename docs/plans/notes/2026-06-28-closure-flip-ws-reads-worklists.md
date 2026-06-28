@@ -61,14 +61,12 @@ realtime_invest(investment-info) 3 = **31**.
 
 ### Deferred remainder — 53 channels (identical follow-up waves)
 
-- **43 offline-trackable, not selected this batch** (stock 29 + futureoption 14):
-  `B7_ DH1 DHA DK3 DS3 DVI H2_ HB_ I5_ ESN h3_ k1_ s2_ s3_ NH1?`* SHC SHD SHI SHO
-  Ys3 UYS UK1 UBT UBM UVI NBM AFR YJ_` (stock) and
-  `CD0 FX9 OX0 YC3 YJC C02 DH0 DD0 DC0 DBM DBT O02 H02 DX0?`* (futureoption).
-  (\*Authoritative per-channel list is the 84-pool minus the 31 selected minus the
-  10 EMPTY; reproduce from the raw capture at follow-up time.)
-- **10 EMPTY-`res_example` (HELD until live-probed):**
-  `DX0 DYC NPH NYS PM_ S4_ UPH UPM h2_ s4_`.
+- **43 offline-trackable, not selected this batch:**
+  `AFR B7_ C02 CD0 DBM DBT DC0 DD0 DH0 DH1 DHA DK3 DS3 DVI ESN FX9 H02 H2_ HB_ I5_
+  JX0 NBM NPM NVI O02 OX0 SHC SHD SHI SHO UBM UBT UK1 UVI UYS YC3 YJC YJ_ Ys3 h3_
+  k1_ s2_ s3_`.
+- **10 EMPTY-`res_example` (HELD — `track-realtime-tr` §0, need a live probe to pin
+  a deserializable baseline):** `DX0 DYC NPH NYS PM_ S4_ UPH UPM h2_ s4_`.
 
 ## Lane 2 — Tracked-only reads enumeration (resolves OQ3: no flip-floor)
 
@@ -107,8 +105,34 @@ before classifying environmental.
 The live paper-gateway smokes/probes need `.env` credentials + `LS_TRADING_ENV=paper`
 under KRX closure:
 
-- **U4 (WS flip):** run `make live-smoke-ws-p3` (the combined sweep added in this
-  branch). A clean connect→subscribe→unsubscribe per channel flips it to
-  Implemented (connection-reachable-only). See the handoff in the PR body.
-- **U5/U6/U7 (reads sweep):** run `make raw-probe ...` per read above; flip
-  data-carriers (U6), reclassify the rest (U7).
+### U4 — WS flip (operator post-smoke checklist)
+
+This branch already staged the entire offline half of U4 (mirroring the
+`implement-realtime-tr` recipe), so the operator's job is just the smoke + flip:
+
+1. Run `make live-smoke-ws-p3` under closure with paper `.env`. It sweeps all 31
+   on a fresh `WsManager` each, emits a per-TR `LIVE-SMOKE` line, fails red iff any
+   channel's connect→subscribe→unsubscribe (port `29443`) failed.
+2. For each channel with a clean lifecycle, flip `metadata/trs/<tr>.yaml` +
+   `tr-index.yaml`: `support.implemented: true` (keep `recommended: false`, **no**
+   `recommendation` block), and note "connection-reachable-only". A channel whose
+   lifecycle can't open → leave Tracked-only (PENDING), don't flip.
+3. Bump the Implemented-rung count-sites **by the number actually flipped**:
+   `reference.len()` (currently 182) and `banner_trs` in `crates/ls-docgen/src/lib.rs`.
+   (`maintained_tr_count`/`TRACKED_TRS` already bumped at the Tracked rung — leave them.)
+4. Flip the smoke-map Promotion column for each flipped TR from
+   `tracked (pending …)` to `implemented-only`.
+5. `make docs` then the full gate (`cargo test`, `cargo test -p ls-core`,
+   `make docs-check`). Already-staged + gate-green: structs (`crates/ls-sdk/src/realtime/frame.rs`
+   `<Code>Row` ×31 + offline decode tests), `{TR}_POLICY` ×31
+   (`crates/ls-core/src/endpoint_policy.rs`) registered crosscheck-only, the sweep
+   smoke `live_smoke_ws_p3` + `make live-smoke-ws-p3`, smoke-map rows.
+
+### U5/U6/U7 — reads sweep (operator, fully probe-gated)
+
+Run `make raw-probe LS_PROBE_TR_CD=<tr> LS_PROBE_PATH=<path> LS_PROBE_BODY=<json>`
+per read above; flip data-carriers via `implement-tr` (U6 — these are already
+Tracked, so no track step; assert a named non-sentinel, non-account-identifying
+witness per KTD2; numeric request slots `string_as_number` per KTD5), reclassify
+the rest (U7 — PENDING for `00707` session/funding-dependent, `paper_incompatible`
+for `01900`/proven-dead; re-confirm prior flags). This is Lane 2 / PR B (KTD7).

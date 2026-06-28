@@ -3662,6 +3662,103 @@ async fn live_smoke_ws_p2() {
     );
 }
 
+/// `make live-smoke-ws-p3`: COMBINED lifecycle smoke for the 31 NEW market-data
+/// realtime TRs of the closure-flip WS batch (plan -004). The operator runs ONE
+/// command to gate the whole Lane-1 flip.
+///
+/// Iterates all 31 `(tr_cd, tr_key, WsLane::MarketData)` tuples, each on a FRESH
+/// manager via [`ws_lifecycle_try`]. RESILIENT: a per-TR subscribe/lifecycle
+/// failure is CAUGHT and recorded as that TR's `record(...)` line, so one bad TR
+/// cannot hide the other 30. After the sweep, panics only if ANY TR failed (so
+/// the make target reports red) — but every TR's line is emitted first.
+///
+/// `tr_key`s are public, spec-grounded values taken from each channel's raw
+/// `res_example` header (NXT/KRX stock codes overridable via `LS_LIVE_SMOKE_SHCODE`;
+/// index/sector feeds key by upcode `001`; F-O by fut/opt code; overseas-futures by
+/// symbol). Per KTD6 (`NOT-OBSERVABLE`), a clean lifecycle here proves **connection
+/// reachability only**, not per-TR reachability — flip each TR's metadata with that
+/// weaker claim. NO raw-frame logging.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-ws-p3`"]
+async fn live_smoke_ws_p3() {
+    let stock_key = resolve_symbol();
+    // (tr_cd, tr_key) — public spec-grounded keys; stock key overridable via env.
+    let trs: [(&str, &str); 31] = [
+        ("NS3", stock_key.as_str()),
+        ("NH1", stock_key.as_str()),
+        ("NS2", stock_key.as_str()),
+        ("NK1", stock_key.as_str()),
+        ("NBT", "001"),
+        ("KS_", stock_key.as_str()),
+        ("OK_", stock_key.as_str()),
+        ("KH_", stock_key.as_str()),
+        ("KM_", "1"),
+        ("PH_", stock_key.as_str()),
+        ("K1_", stock_key.as_str()),
+        ("IJ_", "001"),
+        ("YS3", stock_key.as_str()),
+        ("YK3", stock_key.as_str()),
+        ("VI_", stock_key.as_str()),
+        ("JC0", "111T7000"),
+        ("JH0", "111T7000"),
+        ("JD0", "111T7000"),
+        ("FD0", "101T9000"),
+        ("OD0", "201T7347"),
+        ("OMG", "201T7347"),
+        ("YF9", "A0166000"),
+        ("YOC", "201T7345"),
+        ("BM_", "001"),
+        ("WOC", "2ESU23_4400"),
+        ("WOH", "2ESU23_4400"),
+        ("JIF", "0"),
+        ("NWS", "NWS001"),
+        ("BMT", "001"),
+        ("CUR", "USD"),
+        ("MK2", "N"),
+    ];
+
+    let mut failures = 0usize;
+    for (tr_cd, tr_key) in trs {
+        // Each TR on a fresh manager; a failure is recorded, never propagated.
+        let result = ws_lifecycle_try(tr_cd, tr_key, WsLane::MarketData).await;
+        let row_note = match result {
+            Ok(note) => note,
+            Err(err) => {
+                failures += 1;
+                format!("LIFECYCLE-FAIL: {err}")
+            }
+        };
+        // target= names the REAL runnable make target (the combined sweep); the
+        // per-TR identity is carried by tr_cd= in inputs.
+        record(
+            "live-smoke-ws-p3",
+            &format!("tr_cd={tr_cd} tr_key={tr_key} ws_port=29443 tr_type=3"),
+            &row_note,
+        );
+    }
+
+    assert_eq!(
+        failures, 0,
+        "{failures} of 31 P3 market-data TRs failed their lifecycle (see per-TR lines above)"
+    );
+}
+
+/// Offline (U2 / R12): the P3 sweep's Err branch records only a STRUCTURAL note —
+/// no response body, `rsp_msg`, account number, or token. `ws_lifecycle_try`'s
+/// error strings are transport/port-level only; this asserts the formatted
+/// `LIFECYCLE-FAIL` note a failed P3 leg would emit carries no payload.
+#[test]
+fn ws_p3_failure_note_carries_no_payload() {
+    let err = "resolved WS URL is not the paper port 29443".to_string();
+    let note = format!("LIFECYCLE-FAIL: {err}");
+    assert!(note.starts_with("LIFECYCLE-FAIL:"));
+    // No JSON body / rsp_msg / account-shaped digit run leaks through.
+    assert!(!note.contains("rsp_msg"));
+    assert!(!note.contains("body"));
+    assert!(!note.contains("token"));
+    assert!(!note.contains("AcntNo"));
+}
+
 /// `make live-smoke-ws-negative`: LIVE half of the KTD6 negative control.
 ///
 /// Subscribes a deliberately-INVALID `tr_cd` and reports whether the paper
