@@ -41,6 +41,11 @@ use ls_core::endpoint_policy::{
     O3101_POLICY, O3105_POLICY, O3106_POLICY, O3121_POLICY, O3125_POLICY, O3126_POLICY,
     T8412_POLICY, T8424_POLICY, T8425_POLICY, T8430_POLICY, T8431_POLICY, T8436_POLICY,
     T9905_POLICY, T9907_POLICY, T9942_POLICY, TOKEN_POLICY,
+    // Closure-flip WS batch (plan -004): 31 connection-reachable-only WS channels.
+    NS3_POLICY, NH1_POLICY, NS2_POLICY, NK1_POLICY, NBT_POLICY, KS_POLICY, OK_POLICY, KH_POLICY,
+    KM_POLICY, PH_POLICY, K1_POLICY, IJ_POLICY, YS3_POLICY, YK3_POLICY, VI_POLICY, JC0_POLICY,
+    JH0_POLICY, JD0_POLICY, FD0_POLICY, OD0_POLICY, OMG_POLICY, YF9_POLICY, YOC_POLICY, BM_POLICY,
+    WOC_POLICY, WOH_POLICY, JIF_POLICY, NWS_POLICY, BMT_POLICY, CUR_POLICY, MK2_POLICY,
 };
 use ls_core::{EndpointPolicy, Protocol, RateLimitCategory};
 use ls_metadata::{validate_dir, Protocol as MetaProtocol, RateBucket};
@@ -287,6 +292,38 @@ fn slice_policies_mirror_metadata_index() {
         TC2_POLICY,
         TC3_POLICY,
         S3_POLICY,
+        // Closure-flip WS batch (plan -004): 31 connection-reachable-only WS channels.
+        NS3_POLICY,
+        NH1_POLICY,
+        NS2_POLICY,
+        NK1_POLICY,
+        NBT_POLICY,
+        KS_POLICY,
+        OK_POLICY,
+        KH_POLICY,
+        KM_POLICY,
+        PH_POLICY,
+        K1_POLICY,
+        IJ_POLICY,
+        YS3_POLICY,
+        YK3_POLICY,
+        VI_POLICY,
+        JC0_POLICY,
+        JH0_POLICY,
+        JD0_POLICY,
+        FD0_POLICY,
+        OD0_POLICY,
+        OMG_POLICY,
+        YF9_POLICY,
+        YOC_POLICY,
+        BM_POLICY,
+        WOC_POLICY,
+        WOH_POLICY,
+        JIF_POLICY,
+        NWS_POLICY,
+        BMT_POLICY,
+        CUR_POLICY,
+        MK2_POLICY,
     ];
 
     for policy in policies {

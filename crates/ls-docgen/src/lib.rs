@@ -674,7 +674,7 @@ mod tests {
     /// `t1101`, `t1102`, `t8412`, `CSPAQ12200`, `S3_`, `CSPAT00601`) plus the 41
     /// read-only stock/sector TRs brought into tracked-only maintenance ownership
     /// (incl. the Wave A sector cluster t8424/t1511/t1514/t1516/t1485).
-    const TRACKED_TRS: [&str; 237] = [
+    const TRACKED_TRS: [&str; 268] = [
         "AS0",
         "AS1",
         "AS2",
@@ -912,6 +912,38 @@ mod tests {
         "t9944",
         "t9945",
         "token",
+        // Closure flip WS batch (plan -004): 31 tracked-only realtime channels.
+        "BMT",
+        "BM_",
+        "CUR",
+        "FD0",
+        "IJ_",
+        "JC0",
+        "JD0",
+        "JH0",
+        "JIF",
+        "K1_",
+        "KH_",
+        "KM_",
+        "KS_",
+        "MK2",
+        "NBT",
+        "NH1",
+        "NK1",
+        "NS2",
+        "NS3",
+        "NWS",
+        "OD0",
+        "OK_",
+        "OMG",
+        "PH_",
+        "VI_",
+        "WOC",
+        "WOH",
+        "YF9",
+        "YK3",
+        "YOC",
+        "YS3",
     ];
 
     #[test]

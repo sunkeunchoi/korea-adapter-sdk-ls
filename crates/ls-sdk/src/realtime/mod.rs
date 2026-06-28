@@ -44,6 +44,10 @@ pub use frame::{
     GSCTrade, GSHTrade, H01Event, H1Trade, HATrade, K3Trade, O01Event, OC0Trade, OH0Trade, OVCTrade,
     OVHTrade, S2Trade, S3Trade, SC0Event, SC1Event, SC2Event, SC3Event, SC4Event, TC1Event,
     TC2Event, TC3Event, UH1Trade, US2Trade, US3Trade, WsLane,
+    // Closure-flip WS batch (plan -004): 31 connection-reachable-only realtime rows.
+    BmRow, BmtRow, CurRow, Fd0Row, IjRow, Jc0Row, Jd0Row, Jh0Row, JifRow, K1Row, KhRow, KmRow,
+    KsRow, Mk2Row, NbtRow, Nh1Row, Nk1Row, Ns2Row, Ns3Row, NwsRow, Od0Row, OkRow, OmgRow, PhRow,
+    ViRow, WocRow, WohRow, Yf9Row, Yk3Row, YocRow, Ys3Row,
 };
 pub use stream::WsStream;
 

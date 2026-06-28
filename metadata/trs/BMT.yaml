@@ -1,0 +1,24 @@
+tr_code: BMT
+name: 시간대별투자자매매추이
+owner_class: realtime
+facets:
+  protocol: websocket
+  instrument_domain: realtime_invest
+  venue_session: krx_regular
+  date_sensitive: false
+  self_paginated: false
+  account_state: false
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: market_data
+  caller_supplied_identifiers: [upcode]
+dependencies:
+  self_continuation_fields: []
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: false
+  recommended: false
+maintenance:
+  source_spec_hash: a1ba4b239817
+  last_reviewed: 2026-06-28
