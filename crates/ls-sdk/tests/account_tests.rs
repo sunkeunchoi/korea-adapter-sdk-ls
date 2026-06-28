@@ -1566,6 +1566,20 @@ fn cfoeq11100_empty_00707_deserializes_as_empty() {
     assert!(resp.outblock2.is_empty(), "00707 yields an empty Vec");
 }
 
+/// `CFOEQ11100OutBlock2` arriving as a SINGLE object deserializes via
+/// `de_vec_or_single` into a 1-element Vec (the gateway always sends a bare object).
+#[test]
+fn cfoeq11100_out_block2_single_object_deserializes_to_one_element_vec() {
+    let json = serde_json::json!({
+        "rsp_cd": "00136",
+        "CFOEQ11100OutBlock2": { "Dps": 262500611, "MnyOrdAbleAmt": 148316801 }
+    });
+    let resp: CFOEQ11100Response =
+        serde_json::from_value(json).expect("single-object out-block must deserialize");
+    assert_eq!(resp.outblock2.len(), 1, "single object becomes a 1-element Vec");
+    assert_eq!(resp.outblock2[0].dps, "262500611");
+}
+
 // ---------------------------------------------------------------------------
 // t0441 — 선물/옵션잔고평가(이동평균) (F/O balance valuation: position array + summary).
 // No numeric request slots; on a position-less account both blocks are empty/zero.
@@ -1655,11 +1669,18 @@ fn t0441_out_block1_single_object_deserializes_to_one_element_vec() {
 /// and NO account number.
 #[test]
 fn cidbq01400_request_serializes_numeric_slots_no_account_leak() {
-    let req = CIDBQ01400Request::new("1", "ADM23", "2", "1", "1");
+    // A DECIMAL overseas-futures price must serialize as a JSON number, not a quoted
+    // string — the i64-only string_as_number would quote it (→ IGW40011), so this
+    // field uses string_as_decimal.
+    let req = CIDBQ01400Request::new("1", "ADM23", "2", "75.50", "1");
     let value = serde_json::to_value(&req).expect("serialize CIDBQ01400 request");
     let inblock = &value["CIDBQ01400InBlock1"];
     assert!(inblock["RecCnt"].is_number(), "RecCnt must be a JSON number (KTD4)");
-    assert!(inblock["OvrsDrvtOrdPrc"].is_number(), "OvrsDrvtOrdPrc must be a JSON number (KTD4)");
+    assert!(
+        inblock["OvrsDrvtOrdPrc"].is_number(),
+        "OvrsDrvtOrdPrc must be a JSON number even when fractional (KTD4)"
+    );
+    assert_eq!(inblock["OvrsDrvtOrdPrc"], 75.5, "decimal price round-trips as a number");
     assert_eq!(inblock["IsuCodeVal"], "ADM23");
     let serialized = serde_json::to_string(&req).expect("serialize CIDBQ01400 request");
     assert!(!serialized.contains(TEST_ACCOUNT_NO), "no account number in the body");
@@ -1723,4 +1744,18 @@ fn cidbq01400_empty_00707_deserializes_as_empty() {
         serde_json::from_value(json).expect("empty out-block must deserialize");
     assert_eq!(resp.rsp_cd, "00707");
     assert!(resp.outblock2.is_empty(), "00707 yields an empty Vec");
+}
+
+/// `CIDBQ01400OutBlock2` arriving as a SINGLE object deserializes via
+/// `de_vec_or_single` into a 1-element Vec.
+#[test]
+fn cidbq01400_out_block2_single_object_deserializes_to_one_element_vec() {
+    let json = serde_json::json!({
+        "rsp_cd": "00136",
+        "CIDBQ01400OutBlock2": { "OrdAbleQty": 992 }
+    });
+    let resp: CIDBQ01400Response =
+        serde_json::from_value(json).expect("single-object out-block must deserialize");
+    assert_eq!(resp.outblock2.len(), 1, "single object becomes a 1-element Vec");
+    assert_eq!(resp.outblock2[0].ordableqty, "992");
 }

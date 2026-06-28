@@ -114,6 +114,13 @@ fn record(target: &str, inputs: &str, result: &str) {
     println!("LIVE-SMOKE target={target} inputs=[{inputs}] result=[{result}]");
 }
 
+/// A `string_or_number`-decoded field holds a substantive (non-default) value: a
+/// non-empty string that is not the zero default. The R5/KTD5 witness predicate the
+/// account smokes report.
+fn is_non_default_str(s: &str) -> bool {
+    !s.is_empty() && s != "0"
+}
+
 /// Install a process-global tracing subscriber that DROPS the `ls_core` dispatch
 /// debug events (KTD7). The dispatch path logs `rsp_msg` and the whole response
 /// body on error paths — broker text that carries account-identifying content the
@@ -2928,9 +2935,13 @@ async fn live_smoke_t0424() {
             );
             record("live-smoke-t0424", &format!("env=paper date={date}"), &line);
         }
-        Err(e) => {
+        Err(_) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t0424 account-state failure (not transport)");
-            panic!("live-smoke-t0424 failed (account-state, may be paper-account setup): {e}");
+            // Do NOT interpolate the LsError: ApiError Displays its rsp_msg, which
+            // carries account-identifying text the KTD7 suppressor drops from tracing
+            // but cannot scrub from a panic payload. The SMOKE-FAIL line above already
+            // classifies the failure credential-free.
+            panic!("live-smoke-t0424 failed (account-state, may be paper-account setup) — see the SMOKE-FAIL line above");
         }
     }
 }
@@ -2956,9 +2967,10 @@ async fn live_smoke_t0167() {
             );
             record("live-smoke-t0167", &format!("env=paper date={date}"), &line);
         }
-        Err(e) => {
+        Err(_) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t0167 server-time failure (not evidence)");
-            panic!("live-smoke-t0167 failed: {e}");
+            // No `{e}`: keep the panic payload free of any gateway message text.
+            panic!("live-smoke-t0167 failed — see the SMOKE-FAIL line above");
         }
     }
 }
@@ -2984,11 +2996,16 @@ async fn live_smoke_cspbq00200() {
     let date = Utc::now().format("%Y-%m-%d");
     match sdk.account().order_capacity(&req).await {
         Ok(resp) => {
-            let nondef = |s: &str| !s.is_empty() && s != "0";
             let (dps_nd, prdps_nd, se_nd) = resp
                 .outblock2
                 .first()
-                .map(|c| (nondef(&c.dps), nondef(&c.prsmptdpsd1), nondef(&c.seordableamt)))
+                .map(|c| {
+                    (
+                        is_non_default_str(&c.dps),
+                        is_non_default_str(&c.prsmptdpsd1),
+                        is_non_default_str(&c.seordableamt),
+                    )
+                })
                 .unwrap_or((false, false, false));
             let line = format!(
                 "rsp_cd={} caprows={} dps_nd={dps_nd} prsmptdps_nd={prdps_nd} se_nd={se_nd}",
@@ -2997,11 +3014,12 @@ async fn live_smoke_cspbq00200() {
             );
             record("live-smoke-cspbq00200", &format!("env=paper date={date}"), &line);
         }
-        Err(e) => {
+        Err(_) => {
             eprintln!(
                 "SMOKE-FAIL target=live-smoke-cspbq00200 account-state failure (not transport)"
             );
-            panic!("live-smoke-cspbq00200 failed (account-state, may be paper-account setup): {e}");
+            // No `{e}`: a leaked ApiError rsp_msg would re-introduce account text (KTD7).
+            panic!("live-smoke-cspbq00200 failed (account-state, may be paper-account setup) — see the SMOKE-FAIL line above");
         }
     }
 }
@@ -3034,9 +3052,10 @@ async fn live_smoke_clnaq00100() {
             );
             record("live-smoke-clnaq00100", &format!("env=paper date={date}"), &line);
         }
-        Err(e) => {
+        Err(_) => {
             eprintln!("SMOKE-FAIL target=live-smoke-clnaq00100 reference-read failure (not transport)");
-            panic!("live-smoke-clnaq00100 failed: {e}");
+            // No `{e}`: a leaked ApiError rsp_msg would re-introduce account text (KTD7).
+            panic!("live-smoke-clnaq00100 failed — see the SMOKE-FAIL line above");
         }
     }
 }
@@ -3058,11 +3077,16 @@ async fn live_smoke_cfoeq11100() {
         .unwrap_or_else(|_| Utc::now().format("%Y%m%d").to_string());
     match sdk.account().fo_deposit_detail(&CFOEQ11100Request::new(&bnsdt)).await {
         Ok(resp) => {
-            let nd = |s: &str| !s.is_empty() && s != "0";
             let (dps_nd, opnmk_nd, csgn_nd) = resp
                 .outblock2
                 .first()
-                .map(|d| (nd(&d.dps), nd(&d.opnmkdpsamttotamt), nd(&d.csgnmgn)))
+                .map(|d| {
+                    (
+                        is_non_default_str(&d.dps),
+                        is_non_default_str(&d.opnmkdpsamttotamt),
+                        is_non_default_str(&d.csgnmgn),
+                    )
+                })
                 .unwrap_or((false, false, false));
             let line = format!(
                 "rsp_cd={} deprows={} dps_nd={dps_nd} opnmk_nd={opnmk_nd} csgn_nd={csgn_nd}",
@@ -3071,11 +3095,12 @@ async fn live_smoke_cfoeq11100() {
             );
             record("live-smoke-cfoeq11100", &format!("env=paper date={date}"), &line);
         }
-        Err(e) => {
+        Err(_) => {
             eprintln!(
                 "SMOKE-FAIL target=live-smoke-cfoeq11100 account-state failure (not transport)"
             );
-            panic!("live-smoke-cfoeq11100 failed (account-state, may be paper-account setup): {e}");
+            // No `{e}`: a leaked ApiError rsp_msg would re-introduce account text (KTD7).
+            panic!("live-smoke-cfoeq11100 failed (account-state, may be paper-account setup) — see the SMOKE-FAIL line above");
         }
     }
 }
@@ -3106,9 +3131,10 @@ async fn live_smoke_t0441() {
             );
             record("live-smoke-t0441", &format!("env=paper date={date}"), &line);
         }
-        Err(e) => {
+        Err(_) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t0441 account-state failure (not transport)");
-            panic!("live-smoke-t0441 failed (account-state, may be paper-account setup): {e}");
+            // No `{e}`: a leaked ApiError rsp_msg would re-introduce account text (KTD7).
+            panic!("live-smoke-t0441 failed (account-state, may be paper-account setup) — see the SMOKE-FAIL line above");
         }
     }
 }
@@ -3144,11 +3170,12 @@ async fn live_smoke_cidbq01400() {
             );
             record("live-smoke-cidbq01400", &format!("env=paper date={date}"), &line);
         }
-        Err(e) => {
+        Err(_) => {
             eprintln!(
                 "SMOKE-FAIL target=live-smoke-cidbq01400 account-state failure (not transport)"
             );
-            panic!("live-smoke-cidbq01400 failed (account-state, may be paper-account setup): {e}");
+            // No `{e}`: a leaked ApiError rsp_msg would re-introduce account text (KTD7).
+            panic!("live-smoke-cidbq01400 failed (account-state, may be paper-account setup) — see the SMOKE-FAIL line above");
         }
     }
 }

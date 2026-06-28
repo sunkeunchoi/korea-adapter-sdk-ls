@@ -1449,7 +1449,7 @@ pub struct T0424OutBlock1 {
     /// Valuation amount / 평가금액.
     #[serde(rename = "appamt", deserialize_with = "ls_core::string_or_number")]
     pub appamt: String,
-    /// Purchase amount / 매입금액.
+    /// Average unit price / 평균단가.
     #[serde(rename = "pamt", deserialize_with = "ls_core::string_or_number")]
     pub pamt: String,
     /// P&L rate / 수익율.
@@ -1914,10 +1914,12 @@ pub struct CIDBQ01400InBlock1 {
     /// Buy/sell distinction / 매매구분.
     #[serde(rename = "BnsTpCode")]
     pub bnstpcode: String,
-    /// Overseas-derivative order price / 해외파생주문가격 (numeric slot).
+    /// Overseas-derivative order price / 해외파생주문가격 (numeric slot; an overseas-
+    /// futures price can be fractional, so it serializes via `string_as_decimal`,
+    /// not the i64-only `string_as_number` which would quote a decimal → IGW40011).
     #[serde(
         rename = "OvrsDrvtOrdPrc",
-        serialize_with = "ls_core::string_as_number"
+        serialize_with = "ls_core::string_as_decimal"
     )]
     pub ovrsdrvtordprc: String,
     /// Abroad-futures order-pattern code / 해외선물주문유형.
