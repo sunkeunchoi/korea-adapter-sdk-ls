@@ -15,15 +15,50 @@
 # Export command-line / make variables (e.g. LS_LIVE_SMOKE_*) to recipe shells.
 export
 
-.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-ws-negative live-smoke-k3 live-smoke-ws-p1 live-smoke-ws-p2 live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1481 live-smoke-t1482 live-smoke-t1866 live-smoke-t1859 live-smoke-t1826 live-smoke-t1825 live-smoke-t9905 live-smoke-t9907 live-smoke-t8431 live-smoke-t8430 live-smoke-t9942 live-smoke-t1958 live-smoke-t1964 live-smoke-t1601 live-smoke-t1615 live-smoke-t1640 live-smoke-t1662 live-smoke-t1664 live-smoke-t3341 live-smoke-t8424 live-smoke-t1511 live-smoke-t1485 live-smoke-t1516 live-smoke-t1514 live-smoke-cspaq12300 live-smoke-cspaq22200 live-smoke-cfobq10500 live-smoke-ccenq90200 live-smoke-cfoaq10100 live-smoke-ccenq10100 live-smoke-t2301 live-smoke-t2522 live-smoke-t8401 live-smoke-t8426 live-smoke-t8433 live-smoke-t8435 live-smoke-t8467 live-smoke-t9943 live-smoke-t9944 live-smoke-t2111 live-smoke-t2112 live-smoke-t2106 live-smoke-t8402 live-smoke-t8403 live-smoke-t8434 live-smoke-t1988 live-smoke-t3320 live-smoke-t8455 live-smoke-t8460 live-smoke-t8463 live-smoke-g3101 live-smoke-g3104 live-smoke-g3106 live-smoke-g3102 live-smoke-g3103 live-smoke-g3190 live-smoke-o3101 live-smoke-o3121 live-smoke-o3105 live-smoke-o3106 live-smoke-o3125 live-smoke-o3126 live-smoke-t9945 live-smoke-t3202 live-smoke-t3401 live-smoke-t8410 live-smoke-t8451 live-smoke-t8419 live-smoke-t4203 live-smoke-t1901 live-smoke-t1906 live-smoke-t8450 live-smoke-t1638 live-smoke-t1308 live-smoke-t1449 live-smoke-t1621 live-smoke-t2545 live-smoke-t8406 live-smoke-t8407 live-smoke-t1959 live-smoke-t1950 live-smoke-t1971 live-smoke-t1972 live-smoke-t1974 live-smoke-t1956 live-smoke-t1969 live-smoke-t1105 live-smoke-t1104 live-smoke-t1305 live-smoke-t1310 live-smoke-t1404 live-smoke-t1410 live-smoke-t1411 live-smoke-t1488 live-smoke-t1636 live-smoke-t1809 live-smoke-t8417 live-smoke-t8418 live-smoke-t8411 live-smoke-t8452 live-smoke-t8453 live-smoke-t1302 live-smoke-t8464 live-smoke-t8465 live-smoke-t8466 live-smoke-t2216 live-smoke-t8405 live-smoke-t1444 live-smoke-t1422 live-smoke-t1427 live-smoke-t1442 live-smoke-t1405 live-smoke-t1960 live-smoke-t1961 live-smoke-t1966 live-smoke-t1921 live-smoke-t1532 live-smoke-t1533 live-smoke-t1926 live-smoke-t1764 live-smoke-t1903 live-smoke-t0424 live-smoke-t0167 live-smoke-cspbq00200 live-smoke-clnaq00100 live-smoke-cfoeq11100 live-smoke-t0441 live-smoke-cidbq01400 live-smoke-order live-smoke-order-chain raw-probe
+.PHONY: live-smoke live-smoke-book live-smoke-chart live-smoke-account live-smoke-ws live-smoke-ws-negative live-smoke-k3 live-smoke-ws-p1 live-smoke-ws-p2 live-smoke-t8425 live-smoke-t8436 live-smoke-t1531 live-smoke-t1537 live-smoke-t1452 live-smoke-t1403 live-smoke-t1441 live-smoke-t1463 live-smoke-t1466 live-smoke-t1489 live-smoke-t1492 live-smoke-t1481 live-smoke-t1482 live-smoke-t1866 live-smoke-t1859 live-smoke-t1826 live-smoke-t1825 live-smoke-t9905 live-smoke-t9907 live-smoke-t8431 live-smoke-t8430 live-smoke-t9942 live-smoke-t1958 live-smoke-t1964 live-smoke-t1601 live-smoke-t1615 live-smoke-t1640 live-smoke-t1662 live-smoke-t1664 live-smoke-t3341 live-smoke-t8424 live-smoke-t1511 live-smoke-t1485 live-smoke-t1516 live-smoke-t1514 live-smoke-cspaq12300 live-smoke-cspaq22200 live-smoke-cfobq10500 live-smoke-ccenq90200 live-smoke-cfoaq10100 live-smoke-ccenq10100 live-smoke-t2301 live-smoke-t2522 live-smoke-t8401 live-smoke-t8426 live-smoke-t8433 live-smoke-t8435 live-smoke-t8467 live-smoke-t9943 live-smoke-t9944 live-smoke-t2111 live-smoke-t2112 live-smoke-t2106 live-smoke-t8402 live-smoke-t8403 live-smoke-t8434 live-smoke-t1988 live-smoke-t3320 live-smoke-t8455 live-smoke-t8460 live-smoke-t8463 live-smoke-g3101 live-smoke-g3104 live-smoke-g3106 live-smoke-g3102 live-smoke-g3103 live-smoke-g3190 live-smoke-o3101 live-smoke-o3121 live-smoke-o3105 live-smoke-o3106 live-smoke-o3125 live-smoke-o3126 live-smoke-t9945 live-smoke-t3202 live-smoke-t3401 live-smoke-t8410 live-smoke-t8451 live-smoke-t8419 live-smoke-t4203 live-smoke-t1901 live-smoke-t1906 live-smoke-t8450 live-smoke-t1638 live-smoke-t1308 live-smoke-t1449 live-smoke-t1621 live-smoke-t2545 live-smoke-t8406 live-smoke-t8407 live-smoke-t1959 live-smoke-t1950 live-smoke-t1971 live-smoke-t1972 live-smoke-t1974 live-smoke-t1956 live-smoke-t1969 live-smoke-t1105 live-smoke-t1104 live-smoke-t1305 live-smoke-t1310 live-smoke-t1404 live-smoke-t1410 live-smoke-t1411 live-smoke-t1488 live-smoke-t1636 live-smoke-t1809 live-smoke-t8417 live-smoke-t8418 live-smoke-t8411 live-smoke-t8452 live-smoke-t8453 live-smoke-t1302 live-smoke-t8464 live-smoke-t8465 live-smoke-t8466 live-smoke-t2216 live-smoke-t8405 live-smoke-t1444 live-smoke-t1422 live-smoke-t1427 live-smoke-t1442 live-smoke-t1405 live-smoke-t1960 live-smoke-t1961 live-smoke-t1966 live-smoke-t1921 live-smoke-t1532 live-smoke-t1533 live-smoke-t1926 live-smoke-t1764 live-smoke-t1903 live-smoke-t0424 live-smoke-t0167 live-smoke-cspbq00200 live-smoke-clnaq00100 live-smoke-cfoeq11100 live-smoke-t0441 live-smoke-cidbq01400 live-smoke-cidbq03000 live-smoke-cidbq05300 live-smoke-order live-smoke-order-chain raw-probe
+
+# Per-account credential lanes (paper-account-credential-lanes wave):
+# Each LS paper account is bound to its own appkey; the account is whichever the
+# token resolves to, so multi-account access is one credential FILE per account.
+# A smoke sources its TR's lane by instrument_domain:
+#   futures_options  -> .env.domestic_option   (account ...51)
+#   overseas_futures -> .env.overseas_option    (account ...71)
+#   stock / overseas_stock / unmapped -> .env   (the domestic lane, account ...01)
+# A non-domestic target sets LS_SMOKE_LANE as a TARGET-SPECIFIC variable (the
+# grouped lines below). run_smoke then sources `.env.<lane>` and FAILS FAST if
+# that file is missing — it must NOT silently fall back to .env, which would
+# re-introduce the wrong-account bug this wave fixes. Sourcing stays in the
+# recipe shell (never make `include`; see makefile-include-env-quotes solution).
+# Default (empty LS_SMOKE_LANE) sources .env exactly as before (R3). Pass
+# LS_SMOKE_LANE=<lane> on the command line to point `raw-probe` at a lane too.
 
 # $(1) = exact test name in crates/ls-sdk/tests/live_smoke.rs
 define run_smoke
-	@set -a; [ -f .env ] && . ./.env; set +a; \
+	@if [ -n "$(LS_SMOKE_LANE)" ]; then \
+		lane_file=".env.$(LS_SMOKE_LANE)"; \
+		[ -f "$$lane_file" ] || { echo "FAIL: $(1): lane file $$lane_file missing (LS_SMOKE_LANE=$(LS_SMOKE_LANE)); refusing to fall back to .env (wrong-account hazard)"; exit 1; }; \
+		set -a; . "./$$lane_file"; set +a; \
+	else \
+		set -a; [ -f .env ] && . ./.env; set +a; \
+	fi; \
 	out=$$(cargo test -p ls-sdk --test live_smoke -- --ignored --exact --nocapture $(1) 2>&1); \
 	echo "$$out"; \
 	echo "$$out" | grep -q "1 passed" || { echo "FAIL: $(1) did not run (0 tests) or did not pass"; exit 1; }
 endef
+
+# --- Lane assignments (target-specific LS_SMOKE_LANE; R5 mapping) ---------------
+# futures_options reads authenticate as the domestic-option account (...51).
+live-smoke-cfoeq11100 live-smoke-t0441 live-smoke-cfobq10500 live-smoke-cfoaq10100 \
+live-smoke-ccenq90200 live-smoke-ccenq10100 live-smoke-t2301 live-smoke-t2522 \
+live-smoke-t8401 live-smoke-t8426 live-smoke-t8433 live-smoke-t8435 live-smoke-t8467 \
+live-smoke-t9943 live-smoke-t9944 live-smoke-t2111 live-smoke-t2112 live-smoke-t2106 \
+live-smoke-t8402 live-smoke-t8403 live-smoke-t8434 live-smoke-t8455 live-smoke-t8460 \
+live-smoke-t8463 live-smoke-t2545 live-smoke-t8406: LS_SMOKE_LANE = domestic_option
+
+# overseas_futures reads authenticate as the overseas-option account (...71).
+live-smoke-cidbq01400 live-smoke-cidbq03000 live-smoke-cidbq05300 \
+live-smoke-o3101 live-smoke-o3121 live-smoke-o3105 \
+live-smoke-o3106 live-smoke-o3125 live-smoke-o3126: LS_SMOKE_LANE = overseas_option
 
 ## Default smoke: paper guard -> OAuth token -> one t1102 quote (no date needed).
 live-smoke:
@@ -127,6 +162,16 @@ live-smoke-t0441:
 ## historically empty → PENDING).
 live-smoke-cidbq01400:
 	$(call run_smoke,live_smoke_cidbq01400)
+
+## Overseas-futures deposit/balance smoke: read-only CIDBQ03000 (lane overseas_option,
+## account …71; empty/all-default on the wrong account → PENDING).
+live-smoke-cidbq03000:
+	$(call run_smoke,live_smoke_cidbq03000)
+
+## Overseas-futures deposited-assets smoke: read-only CIDBQ05300 (lane overseas_option,
+## account …71; the cash account returned IGW40013 — wrong-account artifact).
+live-smoke-cidbq05300:
+	$(call run_smoke,live_smoke_cidbq05300)
 
 ## F/O account deposit smoke: read-only CFOBQ10500 deposit/margin inquiry (may
 ## return an empty 00707 on a position-less paper account → PENDING).
@@ -656,8 +701,11 @@ live-smoke-t1903:
 ## Failure classifier (implement-tr R6): one credential-safe raw-HTTP POST that
 ## bypasses the SDK's typed deserialize. Requires LS_PROBE_TR_CD, LS_PROBE_PATH,
 ## and LS_PROBE_BODY. Prints a RAW-PROBE line (never a LIVE-SMOKE evidence line).
+## Pass LS_SMOKE_LANE=domestic_option|overseas_option to probe under a credential
+## lane (U4/U5 re-probe F/O and overseas-F/O candidates under their account).
 ##   make raw-probe LS_PROBE_TR_CD=t8425 LS_PROBE_PATH=/stock/sector \
 ##     LS_PROBE_BODY='{"t8425InBlock":{"dummy":""}}'
+##   make raw-probe LS_SMOKE_LANE=domestic_option LS_PROBE_TR_CD=CFOEQ11100 ...
 raw-probe:
 	$(call run_smoke,raw_http_probe)
 

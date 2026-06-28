@@ -1318,6 +1318,42 @@ pub const CIDBQ01400_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(10),
 };
 
+/// CIDBQ03000 — 해외선물 예수금/잔고현황 (overseas-futures deposit/balance status,
+/// read-only account-state read).
+///
+/// Dispatches through plain `Inner::post` (non-paginated): the result is
+/// single-page (`facets.self_paginated: false`), so `has_pagination: false`.
+pub const CIDBQ03000_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CIDBQ03000",
+    path: "/overseas-futureoption/accno",
+    module: "overseas-futureoption",
+    group: "[해외선물] 계좌",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Account,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(10),
+};
+
+/// CIDBQ05300 — 해외선물 예탁자산 조회 (overseas-futures deposited-assets inquiry,
+/// read-only account-state read).
+///
+/// Dispatches through plain `Inner::post` (non-paginated): the result is
+/// single-page (`facets.self_paginated: false`), so `has_pagination: false`.
+pub const CIDBQ05300_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CIDBQ05300",
+    path: "/overseas-futureoption/accno",
+    module: "overseas-futureoption",
+    group: "[해외선물] 계좌",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Account,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(10),
+};
+
 /// t0441 — 선물/옵션잔고평가(이동평균) (F/O balance valuation, read-only account-state
 /// read).
 ///
@@ -3039,6 +3075,9 @@ mod tests {
             CFOEQ11100_POLICY,
             T0441_POLICY,
             CIDBQ01400_POLICY,
+            // Paper account credential lanes (plan -002): overseas-F/O account reads.
+            CIDBQ03000_POLICY,
+            CIDBQ05300_POLICY,
             // Closed-window account-lane flip wave (plan -001): server-time utility read.
             T0167_POLICY,
             // t0425 IS a non-order REST read — it belongs here AND in the

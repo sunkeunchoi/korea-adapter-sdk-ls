@@ -20,7 +20,7 @@ use ls_core::{LsConfig, LsError, LsResult};
 use ls_sdk::account::{
     CCENQ10100Request, CCENQ90200Request, CFOAQ10100Request, CFOBQ10500Request, CSPAQ12200Request,
     CSPAQ12300Request, CSPAQ22200Request, CSPBQ00200Request, CLNAQ00100Request, CFOEQ11100Request,
-    T0424Request, T0441Request, CIDBQ01400Request,
+    T0424Request, T0441Request, CIDBQ01400Request, CIDBQ03000Request, CIDBQ05300Request,
 };
 use ls_sdk::market_session::{
     T1101Request, T1102Request, T1485Request, T1511Request, T1516Request, T1531Request,
@@ -3176,6 +3176,108 @@ async fn live_smoke_cidbq01400() {
             );
             // No `{e}`: a leaked ApiError rsp_msg would re-introduce account text (KTD7).
             panic!("live-smoke-cidbq01400 failed (account-state, may be paper-account setup) — see the SMOKE-FAIL line above");
+        }
+    }
+}
+
+/// `make live-smoke-cidbq03000`: paper guard → read-only `CIDBQ03000` overseas-
+/// futures deposit/balance status. Runs under the `overseas_option` lane (account
+/// `…71`); on the wrong account it returns empty/all-default. The witness is a
+/// non-default `EvalAssetAmt` (평가자산금액); an empty or all-default result is the
+/// PENDING case and emits a `SMOKE-FAIL` (never a capturable evidence line). The
+/// recorded line is credential-free: `rsp_cd`, the row count, and the witness flag.
+///
+/// `TrdDt` selects the settlement snapshot and MUST be a trading day — a weekend or
+/// holiday returns `01715` (non-trading day). The smoke walks back to the most recent
+/// weekday (KST); override with `LS_LIVE_SMOKE_CIDBQ03000_TRDDT=YYYYMMDD` (e.g. on a
+/// holiday). A `01715` surfaces via the Err path as a SMOKE-FAIL (re-run on a trading
+/// day), not a flip.
+#[tokio::test]
+#[ignore = "live smoke: needs the overseas-futures account lane; run via `make live-smoke-cidbq03000`"]
+async fn live_smoke_cidbq03000() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (KTD7)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+
+    let date = Utc::now().format("%Y-%m-%d");
+    let trddt = std::env::var("LS_LIVE_SMOKE_CIDBQ03000_TRDDT").unwrap_or_else(|_| {
+        let kst = FixedOffset::east_opt(9 * 3600).expect("KST offset is valid");
+        let mut d = Utc::now().with_timezone(&kst).date_naive();
+        while matches!(d.weekday(), Weekday::Sat | Weekday::Sun) {
+            d = d.pred_opt().expect("previous day exists");
+        }
+        d.format("%Y%m%d").to_string()
+    });
+    match sdk.account().overseas_fo_balance(&CIDBQ03000Request::new("1", &trddt)).await {
+        Ok(resp) => {
+            let asset_nd = resp
+                .outblock2
+                .iter()
+                .any(|r| is_non_default_str(&r.evalassetamt));
+            if resp.outblock2.is_empty() || !asset_nd {
+                eprintln!(
+                    "SMOKE-FAIL target=live-smoke-cidbq03000 empty/all-default (rsp_cd={}); PENDING not evidence",
+                    resp.rsp_cd
+                );
+                panic!("live-smoke-cidbq03000: empty/all-default balance — PENDING, not Implemented");
+            }
+            let line = format!(
+                "rsp_cd={} rows={} asset_nd={asset_nd}",
+                resp.rsp_cd,
+                resp.outblock2.len(),
+            );
+            record("live-smoke-cidbq03000", &format!("env=paper date={date}"), &line);
+        }
+        Err(_) => {
+            eprintln!(
+                "SMOKE-FAIL target=live-smoke-cidbq03000 account-state failure (not transport)"
+            );
+            panic!("live-smoke-cidbq03000 failed (account-state, may be paper-account setup) — see the SMOKE-FAIL line above");
+        }
+    }
+}
+
+/// `make live-smoke-cidbq05300`: paper guard → read-only `CIDBQ05300` overseas-
+/// futures deposited-assets inquiry. Runs under the `overseas_option` lane (account
+/// `…71`); the cash account returned `IGW40013` here (a wrong-account artifact). The
+/// witness is a non-default `OvrsFutsDps` (해외선물예수금) on any currency row; an empty
+/// or all-default result is the PENDING case and emits a `SMOKE-FAIL`. The recorded
+/// line is credential-free: `rsp_cd`, the row count, and the witness flag.
+#[tokio::test]
+#[ignore = "live smoke: needs the overseas-futures account lane; run via `make live-smoke-cidbq05300`"]
+async fn live_smoke_cidbq05300() {
+    install_dispatch_log_suppressor().expect("dispatch-log suppressor must install (KTD7)");
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .account()
+        .overseas_fo_deposited_assets(&CIDBQ05300Request::new("1", "ALL"))
+        .await
+    {
+        Ok(resp) => {
+            let dps_nd = resp
+                .outblock2
+                .iter()
+                .any(|r| is_non_default_str(&r.ovrsfutsdps));
+            if resp.outblock2.is_empty() || !dps_nd {
+                eprintln!(
+                    "SMOKE-FAIL target=live-smoke-cidbq05300 empty/all-default (rsp_cd={}); PENDING not evidence",
+                    resp.rsp_cd
+                );
+                panic!("live-smoke-cidbq05300: empty/all-default deposited assets — PENDING, not Implemented");
+            }
+            let line = format!(
+                "rsp_cd={} rows={} dps_nd={dps_nd}",
+                resp.rsp_cd,
+                resp.outblock2.len(),
+            );
+            record("live-smoke-cidbq05300", &format!("env=paper date={date}"), &line);
+        }
+        Err(_) => {
+            eprintln!(
+                "SMOKE-FAIL target=live-smoke-cidbq05300 account-state failure (not transport)"
+            );
+            panic!("live-smoke-cidbq05300 failed (account-state, may be paper-account setup) — see the SMOKE-FAIL line above");
         }
     }
 }

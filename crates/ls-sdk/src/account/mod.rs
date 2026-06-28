@@ -1984,6 +1984,172 @@ pub struct CIDBQ01400Response {
     pub outblock2: Vec<CIDBQ01400OutBlock2>,
 }
 
+// ---------------------------------------------------------------------------
+// CIDBQ03000 — 해외선물 예수금/잔고현황 (overseas-futures deposit / balance status,
+// read-only account-state read). The per-currency balance block carries the
+// deposit/valuation/orderable amounts. `RecCnt` is a numeric request slot (KTD4).
+// The account-identity echo block (`CIDBQ03000OutBlock1`, which carries `AcntNo`/
+// `AcntPwd`) is intentionally NOT modeled. Reachable only when authenticated as the
+// overseas-futures account (overseas_option lane) — empty/wrong-account otherwise.
+// ---------------------------------------------------------------------------
+
+/// Input block for `CIDBQ03000` — account type + trade date; numeric slot (KTD4).
+#[derive(Serialize, Debug, Clone)]
+pub struct CIDBQ03000InBlock1 {
+    /// Record count / 레코드갯수 (numeric slot).
+    #[serde(rename = "RecCnt", serialize_with = "ls_core::string_as_number")]
+    pub reccnt: String,
+    /// Account-type code / 계좌구분 (`1`:위탁계좌, `2`:중개계좌).
+    #[serde(rename = "AcntTpCode")]
+    pub acnttpcode: String,
+    /// Trade date / 거래일자 (`YYYYMMDD`).
+    #[serde(rename = "TrdDt")]
+    pub trddt: String,
+}
+
+/// `CIDBQ03000` request — wraps the input block under `CIDBQ03000InBlock1`.
+#[derive(Serialize, Debug, Clone)]
+pub struct CIDBQ03000Request {
+    #[serde(rename = "CIDBQ03000InBlock1")]
+    pub inblock: CIDBQ03000InBlock1,
+}
+
+impl CIDBQ03000Request {
+    /// Build a `CIDBQ03000` deposit/balance inquiry for an account type + trade date.
+    /// `RecCnt` is fixed at `"1"`; no account number (token-bound).
+    pub fn new(acnttpcode: impl Into<String>, trddt: impl Into<String>) -> Self {
+        CIDBQ03000Request {
+            inblock: CIDBQ03000InBlock1 {
+                reccnt: "1".into(),
+                acnttpcode: acnttpcode.into(),
+                trddt: trddt.into(),
+            },
+        }
+    }
+}
+
+/// `CIDBQ03000OutBlock2` — the per-currency deposit/balance block (money fields
+/// are decimal strings, tolerant via `string_or_number`).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct CIDBQ03000OutBlock2 {
+    /// Currency-object code / 통화대상코드 (e.g. `TOT(USD)`).
+    #[serde(rename = "CrcyObjCode")]
+    pub crcyobjcode: String,
+    /// Pre-exchange deposit / 환전전예수금.
+    #[serde(rename = "PrexchDps", deserialize_with = "ls_core::string_or_number")]
+    pub prexchdps: String,
+    /// Evaluated asset amount / 평가자산금액 (the substantive witness).
+    #[serde(rename = "EvalAssetAmt", deserialize_with = "ls_core::string_or_number")]
+    pub evalassetamt: String,
+    /// Abroad-futures orderable amount / 해외선물주문가능금액.
+    #[serde(
+        rename = "AbrdFutsOrdAbleAmt",
+        deserialize_with = "ls_core::string_or_number"
+    )]
+    pub abrdfutsordableamt: String,
+}
+
+/// `CIDBQ03000` response envelope (only the per-currency balance block is modeled).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct CIDBQ03000Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "CIDBQ03000OutBlock2",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock2: Vec<CIDBQ03000OutBlock2>,
+}
+
+// ---------------------------------------------------------------------------
+// CIDBQ05300 — 해외선물 예탁자산 조회 (overseas-futures deposited-assets inquiry,
+// read-only account-state read). The per-currency deposited-asset block carries
+// the deposit/orderable amounts by currency. `RecCnt` is a numeric request slot
+// (KTD4). The account-identity echo block (`CIDBQ05300OutBlock1`, `AcntNo`/`AcntPwd`)
+// and the summary block (`CIDBQ05300OutBlock3`) are NOT modeled. Reachable only when
+// authenticated as the overseas-futures account (overseas_option lane); the cash
+// account returned `IGW40013` here (wrong-account artifact, §16).
+// ---------------------------------------------------------------------------
+
+/// Input block for `CIDBQ05300` — account type + currency; numeric slot (KTD4).
+#[derive(Serialize, Debug, Clone)]
+pub struct CIDBQ05300InBlock1 {
+    /// Record count / 레코드갯수 (numeric slot).
+    #[serde(rename = "RecCnt", serialize_with = "ls_core::string_as_number")]
+    pub reccnt: String,
+    /// Overseas account-type code / 해외계좌구분 (`1`:위탁).
+    #[serde(rename = "OvrsAcntTpCode")]
+    pub ovrsacnttpcode: String,
+    /// FCM account number / 법인 FCM계좌번호 (corp-only; empty for individual accounts).
+    #[serde(rename = "FcmAcntNo")]
+    pub fcmacntno: String,
+    /// Currency code / 통화코드 (`ALL`:전체, `USD`, `KRW`, …).
+    #[serde(rename = "CrcyCode")]
+    pub crcycode: String,
+}
+
+/// `CIDBQ05300` request — wraps the input block under `CIDBQ05300InBlock1`.
+#[derive(Serialize, Debug, Clone)]
+pub struct CIDBQ05300Request {
+    #[serde(rename = "CIDBQ05300InBlock1")]
+    pub inblock: CIDBQ05300InBlock1,
+}
+
+impl CIDBQ05300Request {
+    /// Build a `CIDBQ05300` deposited-assets inquiry for an account type + currency.
+    /// `RecCnt` is fixed at `"1"`, `FcmAcntNo` empty (individual account); no account
+    /// number (token-bound).
+    pub fn new(ovrsacnttpcode: impl Into<String>, crcycode: impl Into<String>) -> Self {
+        CIDBQ05300Request {
+            inblock: CIDBQ05300InBlock1 {
+                reccnt: "1".into(),
+                ovrsacnttpcode: ovrsacnttpcode.into(),
+                fcmacntno: String::new(),
+                crcycode: crcycode.into(),
+            },
+        }
+    }
+}
+
+/// `CIDBQ05300OutBlock2` — the per-currency deposited-asset block (money fields
+/// are decimal strings, tolerant via `string_or_number`).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct CIDBQ05300OutBlock2 {
+    /// Currency code / 통화코드 (e.g. `USD`, `KRW`).
+    #[serde(rename = "CrcyCode")]
+    pub crcycode: String,
+    /// Overseas-futures deposit / 해외선물예수금 (the substantive witness).
+    #[serde(rename = "OvrsFutsDps", deserialize_with = "ls_core::string_or_number")]
+    pub ovrsfutsdps: String,
+    /// Abroad-futures orderable amount / 해외선물주문가능금액.
+    #[serde(
+        rename = "AbrdFutsOrdAbleAmt",
+        deserialize_with = "ls_core::string_or_number"
+    )]
+    pub abrdfutsordableamt: String,
+}
+
+/// `CIDBQ05300` response envelope (only the per-currency deposited-asset block is
+/// modeled; the account echo + summary blocks are not).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct CIDBQ05300Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "CIDBQ05300OutBlock2",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock2: Vec<CIDBQ05300OutBlock2>,
+}
+
 /// Account operations, backed by the shared runtime core.
 ///
 /// Cheap to clone — shares `Arc<Inner>` (and therefore the token cache, rate
@@ -2200,6 +2366,41 @@ impl Account {
     ) -> LsResult<CIDBQ01400Response> {
         self.inner
             .post(&ls_core::endpoint_policy::CIDBQ01400_POLICY, req)
+            .await
+    }
+
+    /// Inquire the overseas-futures deposit / balance status (해외선물 예수금/잔고현황)
+    /// via `CIDBQ03000`.
+    ///
+    /// Dispatches through plain [`ls_core::Inner::post`] (Account rate bucket,
+    /// single-page) on `/overseas-futureoption/accno`. The account is the config-
+    /// supplied [`Account::account_no`], identified by the bearer token — the caller
+    /// passes only the account-type flag and a trade date, never an account number.
+    /// Reachable only when the token authenticates as the overseas-futures account;
+    /// otherwise an empty/zero balance (the PENDING case), not a defect.
+    pub async fn overseas_fo_balance(
+        &self,
+        req: &CIDBQ03000Request,
+    ) -> LsResult<CIDBQ03000Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::CIDBQ03000_POLICY, req)
+            .await
+    }
+
+    /// Inquire the overseas-futures deposited assets (해외선물 예탁자산) via `CIDBQ05300`.
+    ///
+    /// Dispatches through plain [`ls_core::Inner::post`] (Account rate bucket,
+    /// single-page) on `/overseas-futureoption/accno`. The account is the config-
+    /// supplied [`Account::account_no`], identified by the bearer token — the caller
+    /// passes only the account-type and currency flags, never an account number.
+    /// Reachable only when the token authenticates as the overseas-futures account
+    /// (the cash account returned `IGW40013` here, a wrong-account artifact).
+    pub async fn overseas_fo_deposited_assets(
+        &self,
+        req: &CIDBQ05300Request,
+    ) -> LsResult<CIDBQ05300Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::CIDBQ05300_POLICY, req)
             .await
     }
 }

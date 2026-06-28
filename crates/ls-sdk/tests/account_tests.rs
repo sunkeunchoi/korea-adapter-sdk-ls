@@ -35,6 +35,7 @@ use ls_sdk::account::{
     CSPBQ00200Request, CSPBQ00200Response, T0424Request, T0424Response,
     CLNAQ00100Request, CLNAQ00100Response, CFOEQ11100Request, CFOEQ11100Response,
     T0441Request, T0441Response, CIDBQ01400Request, CIDBQ01400Response,
+    CIDBQ03000Request, CIDBQ03000Response, CIDBQ05300Request, CIDBQ05300Response,
 };
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token, TEST_ACCOUNT_NO};
@@ -79,6 +80,12 @@ const T0441_FIXTURE: &str = include_str!("fixtures/t0441_resp.json");
 
 /// The spec-derived, SYNTHETIC `CIDBQ01400` response fixture (overseas order-qty).
 const CIDBQ01400_FIXTURE: &str = include_str!("fixtures/CIDBQ01400_resp.json");
+
+/// The spec-derived, SYNTHETIC `CIDBQ03000` response fixture (overseas deposit/balance).
+const CIDBQ03000_FIXTURE: &str = include_str!("fixtures/CIDBQ03000_resp.json");
+
+/// The spec-derived, SYNTHETIC `CIDBQ05300` response fixture (overseas deposited assets).
+const CIDBQ05300_FIXTURE: &str = include_str!("fixtures/CIDBQ05300_resp.json");
 
 /// The shared REST path for the `/futureoption/accno` account TRs (`CFOBQ10500`,
 /// `CCENQ90200`, `CFOAQ10100`, `CCENQ10100`) — they mount the same endpoint and
@@ -1758,4 +1765,197 @@ fn cidbq01400_out_block2_single_object_deserializes_to_one_element_vec() {
         serde_json::from_value(json).expect("single-object out-block must deserialize");
     assert_eq!(resp.outblock2.len(), 1, "single object becomes a 1-element Vec");
     assert_eq!(resp.outblock2[0].ordableqty, "992");
+}
+
+// ---------------------------------------------------------------------------
+// CIDBQ03000 — 해외선물 예수금/잔고현황 (overseas-futures deposit/balance status).
+// RecCnt is a numeric request slot; the AcntNo echo block is NOT modeled.
+// ---------------------------------------------------------------------------
+
+/// `::new` serializes the in-block with `RecCnt` as a JSON NUMBER (KTD4) and NO
+/// account number.
+#[test]
+fn cidbq03000_request_serializes_numeric_slot_no_account_leak() {
+    let req = CIDBQ03000Request::new("1", "20260628");
+    let value = serde_json::to_value(&req).expect("serialize CIDBQ03000 request");
+    let inblock = &value["CIDBQ03000InBlock1"];
+    assert!(inblock["RecCnt"].is_number(), "RecCnt must be a JSON number (KTD4)");
+    assert_eq!(inblock["AcntTpCode"], "1");
+    assert_eq!(inblock["TrdDt"], "20260628");
+    let serialized = serde_json::to_string(&req).expect("serialize CIDBQ03000 request");
+    assert!(!serialized.contains(TEST_ACCOUNT_NO), "no account number in the body");
+}
+
+/// A representative success body deserializes; the substantive witness
+/// (`EvalAssetAmt`) holds a non-default value.
+#[tokio::test]
+async fn cidbq03000_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path("/overseas-futureoption/accno"))
+        .and(header("tr_cd", "CIDBQ03000"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(CIDBQ03000_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let req = CIDBQ03000Request::new("1", "20260628");
+    let resp = sdk
+        .account()
+        .overseas_fo_balance(&req)
+        .await
+        .expect("CIDBQ03000 deposit/balance inquiry should succeed");
+
+    assert_eq!(resp.rsp_cd, "00136");
+    assert_eq!(resp.outblock2.len(), 1, "one per-currency balance row");
+    assert_eq!(
+        resp.outblock2[0].evalassetamt, "2296849.47",
+        "EvalAssetAmt (substantive witness)"
+    );
+}
+
+/// Money fields parse via `string_or_number` from BOTH string and number JSON.
+#[test]
+fn cidbq03000_money_fields_parse_from_string_and_number() {
+    let as_number = serde_json::json!({
+        "rsp_cd": "00136",
+        "CIDBQ03000OutBlock2": { "EvalAssetAmt": 2296849i64 }
+    });
+    let resp: CIDBQ03000Response =
+        serde_json::from_value(as_number).expect("number JSON must deserialize");
+    assert_eq!(resp.outblock2[0].evalassetamt, "2296849");
+
+    let as_string = serde_json::json!({
+        "rsp_cd": "00136",
+        "CIDBQ03000OutBlock2": { "EvalAssetAmt": "2296849.47" }
+    });
+    let resp: CIDBQ03000Response =
+        serde_json::from_value(as_string).expect("string JSON must deserialize");
+    assert_eq!(resp.outblock2[0].evalassetamt, "2296849.47");
+}
+
+/// An empty result (`rsp_cd 00707`, empty out-block) deserializes as the empty case.
+#[test]
+fn cidbq03000_empty_00707_deserializes_as_empty() {
+    let json = serde_json::json!({ "rsp_cd": "00707", "CIDBQ03000OutBlock2": [] });
+    let resp: CIDBQ03000Response =
+        serde_json::from_value(json).expect("empty out-block must deserialize");
+    assert_eq!(resp.rsp_cd, "00707");
+    assert!(resp.outblock2.is_empty(), "00707 yields an empty Vec");
+}
+
+/// `CIDBQ03000OutBlock2` arriving as a SINGLE object deserializes via
+/// `de_vec_or_single` into a 1-element Vec.
+#[test]
+fn cidbq03000_out_block2_single_object_deserializes_to_one_element_vec() {
+    let json = serde_json::json!({
+        "rsp_cd": "00136",
+        "CIDBQ03000OutBlock2": { "EvalAssetAmt": "100.00" }
+    });
+    let resp: CIDBQ03000Response =
+        serde_json::from_value(json).expect("single-object out-block must deserialize");
+    assert_eq!(resp.outblock2.len(), 1, "single object becomes a 1-element Vec");
+    assert_eq!(resp.outblock2[0].evalassetamt, "100.00");
+}
+
+// ---------------------------------------------------------------------------
+// CIDBQ05300 — 해외선물 예탁자산 조회 (overseas-futures deposited-assets inquiry).
+// RecCnt is a numeric request slot; the AcntNo echo + summary blocks are NOT modeled.
+// ---------------------------------------------------------------------------
+
+/// `::new` serializes the in-block with `RecCnt` as a JSON NUMBER (KTD4), an empty
+/// `FcmAcntNo`, and NO account number.
+#[test]
+fn cidbq05300_request_serializes_numeric_slot_no_account_leak() {
+    let req = CIDBQ05300Request::new("1", "ALL");
+    let value = serde_json::to_value(&req).expect("serialize CIDBQ05300 request");
+    let inblock = &value["CIDBQ05300InBlock1"];
+    assert!(inblock["RecCnt"].is_number(), "RecCnt must be a JSON number (KTD4)");
+    assert_eq!(inblock["OvrsAcntTpCode"], "1");
+    assert_eq!(inblock["CrcyCode"], "ALL");
+    assert_eq!(inblock["FcmAcntNo"], "", "FcmAcntNo empty for an individual account");
+    let serialized = serde_json::to_string(&req).expect("serialize CIDBQ05300 request");
+    assert!(!serialized.contains(TEST_ACCOUNT_NO), "no account number in the body");
+}
+
+/// A representative success body deserializes; the per-currency witness
+/// (`OvrsFutsDps`) holds a non-default value on the funded currency row.
+#[tokio::test]
+async fn cidbq05300_deserializes_spec_fixture() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path("/overseas-futureoption/accno"))
+        .and(header("tr_cd", "CIDBQ05300"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(CIDBQ05300_FIXTURE)
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let req = CIDBQ05300Request::new("1", "ALL");
+    let resp = sdk
+        .account()
+        .overseas_fo_deposited_assets(&req)
+        .await
+        .expect("CIDBQ05300 deposited-assets inquiry should succeed");
+
+    assert_eq!(resp.rsp_cd, "00136");
+    assert_eq!(resp.outblock2.len(), 2, "two per-currency rows (KRW + USD)");
+    assert_eq!(
+        resp.outblock2[0].ovrsfutsdps, "3000000000.00",
+        "OvrsFutsDps (substantive witness, funded KRW row)"
+    );
+}
+
+/// Money fields parse via `string_or_number` from BOTH string and number JSON.
+#[test]
+fn cidbq05300_money_fields_parse_from_string_and_number() {
+    let as_number = serde_json::json!({
+        "rsp_cd": "00136",
+        "CIDBQ05300OutBlock2": { "OvrsFutsDps": 3000000000i64 }
+    });
+    let resp: CIDBQ05300Response =
+        serde_json::from_value(as_number).expect("number JSON must deserialize");
+    assert_eq!(resp.outblock2[0].ovrsfutsdps, "3000000000");
+
+    let as_string = serde_json::json!({
+        "rsp_cd": "00136",
+        "CIDBQ05300OutBlock2": { "OvrsFutsDps": "3000000000.00" }
+    });
+    let resp: CIDBQ05300Response =
+        serde_json::from_value(as_string).expect("string JSON must deserialize");
+    assert_eq!(resp.outblock2[0].ovrsfutsdps, "3000000000.00");
+}
+
+/// An empty result (`rsp_cd 00707`, empty out-block) deserializes as the empty case.
+#[test]
+fn cidbq05300_empty_00707_deserializes_as_empty() {
+    let json = serde_json::json!({ "rsp_cd": "00707", "CIDBQ05300OutBlock2": [] });
+    let resp: CIDBQ05300Response =
+        serde_json::from_value(json).expect("empty out-block must deserialize");
+    assert_eq!(resp.rsp_cd, "00707");
+    assert!(resp.outblock2.is_empty(), "00707 yields an empty Vec");
+}
+
+/// `CIDBQ05300OutBlock2` arriving as a SINGLE object deserializes via
+/// `de_vec_or_single` into a 1-element Vec.
+#[test]
+fn cidbq05300_out_block2_single_object_deserializes_to_one_element_vec() {
+    let json = serde_json::json!({
+        "rsp_cd": "00136",
+        "CIDBQ05300OutBlock2": { "OvrsFutsDps": "100.00" }
+    });
+    let resp: CIDBQ05300Response =
+        serde_json::from_value(json).expect("single-object out-block must deserialize");
+    assert_eq!(resp.outblock2.len(), 1, "single object becomes a 1-element Vec");
+    assert_eq!(resp.outblock2[0].ovrsfutsdps, "100.00");
 }
