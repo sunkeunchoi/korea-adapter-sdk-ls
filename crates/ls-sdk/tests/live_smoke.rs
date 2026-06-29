@@ -26,7 +26,7 @@ use ls_sdk::market_session::{
     T1101Request, T1102Request, T1485Request, T1511Request, T1516Request, T1531Request,
     T1537Request, T1601Request, T1615Request, T1640Request, T1662Request, T1664Request,
     T1104Request, T1105Request, T1825Request, T1826Request, T1859Request, T1901Request,
-    T1906Request, T8450Request, T1638Request, T1308Request, T1449Request, T1621Request, T2545Request, T8406Request, T8407Request, T1959Request, T1950Request, T1971Request, T1972Request, T1974Request, T1956Request, T1969Request,
+    T1906Request, T8450Request, T1638Request, T1308Request, T1449Request, T1621Request, T2545Request, T8406Request, T8407Request, T1631Request, T1632Request, T1633Request, T1959Request, T1950Request, T1971Request, T1972Request, T1974Request, T1956Request, T1969Request,
     T1302Request, T2216Request,
     T1532Request, T1533Request, T1926Request, T1764Request, T1903Request,
     T1958Request, T1964Request, T2301Request,
@@ -1656,6 +1656,139 @@ async fn live_smoke_t8407() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t8407 market-data failure (not evidence)");
             panic!("live-smoke-t8407 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1631`: paper guard → token → one `t1631` program-trade综합
+/// read for today's date (market-wide; no instrument/account secrets). A success
+/// `rsp_cd` with a non-empty `t1631OutBlock1` totals row (modeled `bidvolume`)
+/// proves the typed read round-trips. An empty `00707`/all-default row does NOT
+/// record — it dispositions to PENDING. The recorded line is credential-free
+/// (`rsp_cd` + lengths/counts, never `rsp_msg`); a failed run emits a `SMOKE-FAIL`
+/// stderr line, never a `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1631`"]
+async fn live_smoke_t1631() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = std::env::var("LS_LIVE_SMOKE_DATE").unwrap_or_else(|_| "20260629".to_string());
+    let gubun = std::env::var("LS_LIVE_SMOKE_T1631_GUBUN").unwrap_or_else(|_| "0".to_string());
+    match sdk
+        .market_session()
+        .program_trade_summary(&T1631Request::new(&gubun, "0", &date, &date, "1"))
+        .await
+    {
+        Ok(resp) => {
+            // Non-empty witness: a totals row with a non-empty bidvolume. An empty
+            // board (00707/off-data) → PENDING, not Implemented.
+            let totals = resp.outblock1.first();
+            assert!(
+                totals.is_some_and(|r| !r.bidvolume.is_empty()),
+                "live-smoke-t1631: empty totals (00707/off-data) — PENDING, not Implemented"
+            );
+            let row = totals.expect("non-empty guard above");
+            record(
+                "live-smoke-t1631",
+                &format!("env=paper gubun={gubun} date={date}"),
+                &format!(
+                    "rsp_cd={} remainder_rows={} totals_rows={} bidvolume_len={}",
+                    resp.rsp_cd,
+                    resp.outblock.len(),
+                    resp.outblock1.len(),
+                    row.bidvolume.len()
+                ),
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1631 program-trade failure (not evidence)");
+            panic!("live-smoke-t1631 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1632`: paper guard → token → one `t1632` program-trade
+/// intraday-trend read for today (market-wide). A success `rsp_cd` with a non-empty
+/// `t1632OutBlock1` row (modeled `k200jisu`) proves the typed time-series read
+/// round-trips. An empty `00707` does NOT record — PENDING. Credential-free line.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1632`"]
+async fn live_smoke_t1632() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = std::env::var("LS_LIVE_SMOKE_DATE").unwrap_or_else(|_| "20260629".to_string());
+    match sdk
+        .market_session()
+        .program_trade_trend_intraday(&T1632Request::new("0", "1", "0", "0", &date, "", "1"))
+        .await
+    {
+        Ok(resp) => {
+            let first = resp.outblock1.first();
+            assert!(
+                first.is_some_and(|r| !r.k200jisu.is_empty()),
+                "live-smoke-t1632: empty time-series (00707/off-data) — PENDING, not Implemented"
+            );
+            let row = first.expect("non-empty guard above");
+            record(
+                "live-smoke-t1632",
+                &format!("env=paper date={date}"),
+                &format!(
+                    "rsp_cd={} rows={} k200jisu_len={}",
+                    resp.rsp_cd,
+                    resp.outblock1.len(),
+                    row.k200jisu.len()
+                ),
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1632 program-trade failure (not evidence)");
+            panic!("live-smoke-t1632 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1633`: paper guard → token → one `t1633` program-trade
+/// daily-trend read over a recent date range (market-wide). A success `rsp_cd` with
+/// a non-empty `t1633OutBlock1` row (modeled `jisu`) proves the typed daily-series
+/// read round-trips. An empty `00707` does NOT record — PENDING. Credential-free.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1633`"]
+async fn live_smoke_t1633() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = std::env::var("LS_LIVE_SMOKE_DATE").unwrap_or_else(|_| "20260629".to_string());
+    let fdate = std::env::var("LS_LIVE_SMOKE_T1633_FDATE").unwrap_or_else(|_| "20260601".to_string());
+    match sdk
+        .market_session()
+        .program_trade_trend_daily(&T1633Request::new(
+            "0", "1", "0", "1", &fdate, &date, "0", &date, "1",
+        ))
+        .await
+    {
+        Ok(resp) => {
+            let first = resp.outblock1.first();
+            assert!(
+                first.is_some_and(|r| !r.jisu.is_empty()),
+                "live-smoke-t1633: empty daily-series (00707/off-data) — PENDING, not Implemented"
+            );
+            let row = first.expect("non-empty guard above");
+            record(
+                "live-smoke-t1633",
+                &format!("env=paper fdate={fdate} tdate={date}"),
+                &format!(
+                    "rsp_cd={} rows={} jisu_len={}",
+                    resp.rsp_cd,
+                    resp.outblock1.len(),
+                    row.jisu.len()
+                ),
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1633 program-trade failure (not evidence)");
+            panic!("live-smoke-t1633 failed: {e}");
         }
     }
 }

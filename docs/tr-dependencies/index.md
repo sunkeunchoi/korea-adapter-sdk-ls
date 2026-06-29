@@ -161,8 +161,8 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t1617` | 투자자매매종합2 | `paginated` | tracked | [t1617](./t1617.md) |
 | `t1621` | 업종별분별투자자매매동향(챠트용) | `market_session` | implemented | [t1621](./t1621.md) |
 | `t1631` | 프로그램매매종합조회 | `market_session` | tracked | [t1631](./t1631.md) |
-| `t1632` | 시간대별프로그램매매추이 | `market_session` | tracked | [t1632](./t1632.md) |
-| `t1633` | 기간별프로그램매매추이 | `market_session` | tracked | [t1633](./t1633.md) |
+| `t1632` | 시간대별프로그램매매추이 | `market_session` | implemented | [t1632](./t1632.md) |
+| `t1633` | 기간별프로그램매매추이 | `market_session` | implemented | [t1633](./t1633.md) |
 | `t1636` | 종목별프로그램매매동향 | `paginated` | implemented | [t1636](./t1636.md) |
 | `t1637` | 종목별프로그램매매추이 | `paginated` | tracked | [t1637](./t1637.md) |
 | `t1638` | 종목별잔량/사전공시 | `market_session` | implemented | [t1638](./t1638.md) |

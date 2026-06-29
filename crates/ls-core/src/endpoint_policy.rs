@@ -308,6 +308,51 @@ pub const T1959_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(5),
 };
 
+/// t1631 — 프로그램매매종합조회 (program-trade综合; non-paginated).
+/// path /stock/program, group [주식] 프로그램.
+pub const T1631_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1631",
+    path: "/stock/program",
+    module: "stock",
+    group: "[주식] 프로그램",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1632 — 프로그램매매추이(시간) (program-trade intraday trend; non-paginated).
+/// path /stock/program, group [주식] 프로그램.
+pub const T1632_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1632",
+    path: "/stock/program",
+    module: "stock",
+    group: "[주식] 프로그램",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1633 — 프로그램매매추이(일별) (program-trade daily trend; non-paginated).
+/// path /stock/program, group [주식] 프로그램.
+pub const T1633_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1633",
+    path: "/stock/program",
+    module: "stock",
+    group: "[주식] 프로그램",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// t1950 — ELW현재가(시세)조회 (ELW current-price/quote; non-paginated).
 /// path /stock/elw, group [주식] ELW.
 pub const T1950_POLICY: EndpointPolicy = EndpointPolicy {
@@ -3779,6 +3824,10 @@ mod tests {
             T8406_POLICY,
             // Closed-window more-flips wave (plan -001): multi-symbol current-price read.
             T8407_POLICY,
+            // Open-window domestic program-trade reads: 综合 / intraday-trend / daily-trend.
+            T1631_POLICY,
+            T1632_POLICY,
+            T1633_POLICY,
             // Closed-window more-flips wave (plan -001): LP-target ELW issue list read.
             T1959_POLICY,
             // Closed-window more-flips wave (plan -001): ELW current-price/quote read.

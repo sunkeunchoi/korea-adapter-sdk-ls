@@ -1103,6 +1103,9 @@ mod tests {
             "NS3", "NH1", "NS2", "NK1", "NBT", "KS_", "OK_", "KH_", "KM_", "PH_", "K1_", "IJ_",
             "YS3", "YK3", "VI_", "JC0", "JH0", "JD0", "FD0", "OD0", "OMG", "YF9", "YOC", "BM_",
             "WOC", "WOH", "JIF", "NWS", "BMT", "CUR", "MK2",
+            // Open-window domestic program-trade reads: intraday-trend t1632 +
+            // daily-trend t1633 certified non-empty (t1631 PENDING — gateway IGW40014).
+            "t1632", "t1633",
         ];
         for tr in banner_trs {
             let page = reference
@@ -1273,9 +1276,12 @@ mod tests {
         // o3137/o3139 (front-month CUSN26 persists under closure) + t8462 (KRX
         // night-derivatives investor table) certified non-empty — add 11.
         // (o3107/o3127 stayed PENDING: account-state watchlist boards empty/zero.)
+        // Open-window domestic program-trade reads: intraday-trend t1632 +
+        // daily-trend t1633 certified non-empty (20-row series each) — add 2.
+        // (t1631 stayed PENDING: gateway-side IGW40014 on its own response payload.)
         assert_eq!(
             reference.len(),
-            213,
+            215,
             "index + the implemented reference pages"
         );
 

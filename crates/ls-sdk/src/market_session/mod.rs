@@ -1355,6 +1355,424 @@ pub struct T1959Response {
 }
 
 // ---------------------------------------------------------------------------
+// t1631 — 프로그램매매종합조회 (program-trade综合). market_session domestic-stock
+// program-trade read; path /stock/program, group [주식] 프로그램. 5-field request —
+// gubun (구분), dgubun (일자구분), sdate/edate (시작/종료일자), exchgubun (거래소구분).
+// All-String request — no numeric request slot, so no `string_as_number`. The
+// response carries TWO single-object out-blocks: `t1631OutBlock` (the program-trade
+// open-order remainders / order quantities) and `t1631OutBlock1` (the offer/bid
+// volume + value totals). Both modeled as tolerant single-or-array Vecs via
+// `ls_core::de_vec_or_single` (mirror t1950's main+array shape) to be robust to a
+// future repeated shape.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1631` — the program-trade综合 filters. All ordinary request
+/// Strings (no numeric request slot): `gubun` (구분), `dgubun` (일자구분), the
+/// `sdate`/`edate` date range (YYYYMMDD), and `exchgubun` (거래소구분코드 — `"1"` =
+/// KRX). See [`T1631Request::new`] for a sensible market-wide default.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1631InBlock {
+    /// Division / 구분.
+    pub gubun: String,
+    /// Date division / 일자구분.
+    pub dgubun: String,
+    /// Start date / 시작일자 (YYYYMMDD).
+    pub sdate: String,
+    /// End date / 종료일자 (YYYYMMDD).
+    pub edate: String,
+    /// Exchange division / 거래소구분코드 (`"1"` = KRX).
+    pub exchgubun: String,
+}
+
+/// `t1631` request — serializes to `{"t1631InBlock":{...}}`. Not paginated
+/// (`facets.self_paginated: false`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1631Request {
+    #[serde(rename = "t1631InBlock")]
+    pub inblock: T1631InBlock,
+}
+
+impl T1631Request {
+    /// Build a `t1631` program-trade综合 request from the caller-supplied filters.
+    pub fn new(
+        gubun: impl Into<String>,
+        dgubun: impl Into<String>,
+        sdate: impl Into<String>,
+        edate: impl Into<String>,
+        exchgubun: impl Into<String>,
+    ) -> Self {
+        T1631Request {
+            inblock: T1631InBlock {
+                gubun: gubun.into(),
+                dgubun: dgubun.into(),
+                sdate: sdate.into(),
+                edate: edate.into(),
+                exchgubun: exchgubun.into(),
+            },
+        }
+    }
+}
+
+/// `t1631OutBlock` — the program-trade open-order remainders / order quantities
+/// (a representative, spec-grounded subset). Every field a spec `Number`; via
+/// [`ls_core::string_or_number`]; `#[serde(default)]` lets a sparse block
+/// deserialize and unknown fields are ignored.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1631OutBlock {
+    /// Sell-arbitrage open-order remainder / 매도차익미체결잔량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cdhrem: String,
+    /// Sell-non-arbitrage open-order remainder / 매도비차익미체결잔량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bdhrem: String,
+    /// Sell-arbitrage order quantity / 매도차익주문수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tcdrem: String,
+    /// Sell-non-arbitrage order quantity / 매도비차익주문수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tbdrem: String,
+    /// Buy-arbitrage open-order remainder / 매수차익미체결잔량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cshrem: String,
+    /// Buy-non-arbitrage open-order remainder / 매수비차익미체결잔량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bshrem: String,
+    /// Buy-arbitrage order quantity / 매수차익주문수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tcsrem: String,
+    /// Buy-non-arbitrage order quantity / 매수비차익주문수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tbsrem: String,
+}
+
+/// `t1631OutBlock1` — the program-trade offer/bid volume + value totals (a
+/// representative subset). Every field a spec `Number` via
+/// [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1631OutBlock1 {
+    /// Offer (sell) volume / 매도수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offervolume: String,
+    /// Offer (sell) value / 매도금액.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub offervalue: String,
+    /// Bid (buy) volume / 매수수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidvolume: String,
+    /// Bid (buy) value / 매수금액.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bidvalue: String,
+    /// Net-buy volume / 순매수수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Net-buy value / 순매수금액.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub value: String,
+}
+
+/// `t1631` response envelope — the two program-trade out-blocks (`t1631OutBlock`
+/// remainders/quantities + `t1631OutBlock1` volume/value totals), each tolerated
+/// single-or-array via [`ls_core::de_vec_or_single`]. All `#[serde(default)]` so a
+/// terse/empty envelope deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1631Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t1631OutBlock",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock: Vec<T1631OutBlock>,
+    #[serde(
+        rename = "t1631OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1631OutBlock1>,
+}
+
+// ---------------------------------------------------------------------------
+// t1632 — 프로그램매매추이(시간) (program-trade trend, intraday/time-series).
+// market_session domestic-stock program-trade read; path /stock/program, group
+// [주식] 프로그램. 7-field request — gubun, gubun1 (금액수량구분), gubun2 (직전대비
+// 증감), gubun3 (전일구분), date (일자), time (시간), exchgubun. All-String request —
+// no numeric request slot. Response: a single `t1632OutBlock` cursor (date/time/idx
+// CTS) + a repeated `t1632OutBlock1` time-series ARRAY (one row per timestamp:
+// KP200 index, change, the program-trade buy/sell/net totals) tolerated
+// single-or-array via `ls_core::de_vec_or_single`.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1632` — the program-trade intraday-trend filters. All ordinary
+/// request Strings: `gubun` (구분), `gubun1` (금액수량구분), `gubun2` (직전대비증감),
+/// `gubun3` (전일구분), `date` (일자 YYYYMMDD), `time` (시간 HHMMSS — `""` for the
+/// latest), `exchgubun` (`"1"` = KRX). See [`T1632Request::new`].
+#[derive(Serialize, Debug, Clone)]
+pub struct T1632InBlock {
+    /// Division / 구분.
+    pub gubun: String,
+    /// Amount/quantity division / 금액수량구분.
+    pub gubun1: String,
+    /// Vs-prior change division / 직전대비증감.
+    pub gubun2: String,
+    /// Prior-day division / 전일구분.
+    pub gubun3: String,
+    /// Date / 일자 (YYYYMMDD).
+    pub date: String,
+    /// Time / 시간 (HHMMSS — `""` for the latest).
+    pub time: String,
+    /// Exchange division / 거래소구분코드 (`"1"` = KRX).
+    pub exchgubun: String,
+}
+
+/// `t1632` request — serializes to `{"t1632InBlock":{...}}`. Not paginated.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1632Request {
+    #[serde(rename = "t1632InBlock")]
+    pub inblock: T1632InBlock,
+}
+
+impl T1632Request {
+    /// Build a `t1632` program-trade intraday-trend request from the caller filters.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        gubun: impl Into<String>,
+        gubun1: impl Into<String>,
+        gubun2: impl Into<String>,
+        gubun3: impl Into<String>,
+        date: impl Into<String>,
+        time: impl Into<String>,
+        exchgubun: impl Into<String>,
+    ) -> Self {
+        T1632Request {
+            inblock: T1632InBlock {
+                gubun: gubun.into(),
+                gubun1: gubun1.into(),
+                gubun2: gubun2.into(),
+                gubun3: gubun3.into(),
+                date: date.into(),
+                time: time.into(),
+                exchgubun: exchgubun.into(),
+            },
+        }
+    }
+}
+
+/// `t1632OutBlock` — the continuation cursor (date/time CTS + idx). `ex_gubun` is a
+/// String; `idx` a spec `Number`. `#[serde(default)]` lets a terse block deserialize.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1632OutBlock {
+    /// Date CTS / 날짜CTS.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    /// Time CTS / 시간CTS.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub time: String,
+    /// IDX / IDX.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub idx: String,
+    /// Per-exchange division / 거래소별구분코드.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub ex_gubun: String,
+}
+
+/// `t1632OutBlock1` — one program-trade intraday-trend row (representative subset):
+/// the timestamp, the KP200 index + change, and the all/arbitrage/non-arbitrage
+/// buy/sell/net totals. Every numeric-bearing field via
+/// [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1632OutBlock1 {
+    /// Time / 시간.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub time: String,
+    /// KP200 index / KP200.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub k200jisu: String,
+    /// Change sign / 대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change / 대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Whole-market net buy / 전체순매수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tot3: String,
+    /// Whole-market buy / 전체매수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tot1: String,
+    /// Whole-market sell / 전체매도.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tot2: String,
+    /// Arbitrage net buy / 차익순매수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cha3: String,
+}
+
+/// `t1632` response envelope — the single cursor `t1632OutBlock` + the repeated
+/// `t1632OutBlock1` time-series rows (tolerated single-or-array via
+/// [`ls_core::de_vec_or_single`]). All `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1632Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1632OutBlock", default)]
+    pub outblock: T1632OutBlock,
+    #[serde(
+        rename = "t1632OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1632OutBlock1>,
+}
+
+// ---------------------------------------------------------------------------
+// t1633 — 프로그램매매추이(일별) (program-trade trend, daily series). market_session
+// domestic-stock program-trade read; path /stock/program, group [주식] 프로그램.
+// 9-field request — gubun (시장구분), gubun1 (금액수량구분), gubun2 (수치누적구분),
+// gubun3 (일주월구분), fdate/tdate (from/to일자), gubun4 (직전대비증감구분), date
+// (날짜), exchgubun. All-String request — no numeric request slot. Response: a single
+// `t1633OutBlock` cursor (date/idx) + a repeated `t1633OutBlock1` daily-series ARRAY
+// (one row per date: KP200 index, change, the program-trade buy/sell/net totals +
+// volume) tolerated single-or-array via `ls_core::de_vec_or_single`.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1633` — the program-trade daily-trend filters. All ordinary
+/// request Strings: `gubun` (시장구분), `gubun1` (금액수량구분), `gubun2`
+/// (수치누적구분), `gubun3` (일주월구분), `fdate`/`tdate` (from/to일자 YYYYMMDD),
+/// `gubun4` (직전대비증감구분), `date` (날짜), `exchgubun` (`"1"` = KRX). See
+/// [`T1633Request::new`].
+#[derive(Serialize, Debug, Clone)]
+pub struct T1633InBlock {
+    /// Market division / 시장구분.
+    pub gubun: String,
+    /// Amount/quantity division / 금액수량구분.
+    pub gubun1: String,
+    /// Value/accumulation division / 수치누적구분.
+    pub gubun2: String,
+    /// Day/week/month division / 일주월구분.
+    pub gubun3: String,
+    /// From date / from일자 (YYYYMMDD).
+    pub fdate: String,
+    /// To date / to일자 (YYYYMMDD).
+    pub tdate: String,
+    /// Vs-prior change division / 직전대비증감구분.
+    pub gubun4: String,
+    /// Date / 날짜 (YYYYMMDD).
+    pub date: String,
+    /// Exchange division / 거래소구분코드 (`"1"` = KRX).
+    pub exchgubun: String,
+}
+
+/// `t1633` request — serializes to `{"t1633InBlock":{...}}`. Not paginated.
+#[derive(Serialize, Debug, Clone)]
+pub struct T1633Request {
+    #[serde(rename = "t1633InBlock")]
+    pub inblock: T1633InBlock,
+}
+
+impl T1633Request {
+    /// Build a `t1633` program-trade daily-trend request from the caller filters.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        gubun: impl Into<String>,
+        gubun1: impl Into<String>,
+        gubun2: impl Into<String>,
+        gubun3: impl Into<String>,
+        fdate: impl Into<String>,
+        tdate: impl Into<String>,
+        gubun4: impl Into<String>,
+        date: impl Into<String>,
+        exchgubun: impl Into<String>,
+    ) -> Self {
+        T1633Request {
+            inblock: T1633InBlock {
+                gubun: gubun.into(),
+                gubun1: gubun1.into(),
+                gubun2: gubun2.into(),
+                gubun3: gubun3.into(),
+                fdate: fdate.into(),
+                tdate: tdate.into(),
+                gubun4: gubun4.into(),
+                date: date.into(),
+                exchgubun: exchgubun.into(),
+            },
+        }
+    }
+}
+
+/// `t1633OutBlock` — the continuation cursor (date/idx). `idx` a spec `Number`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1633OutBlock {
+    /// Date / 날짜.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    /// IDX / IDX.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub idx: String,
+}
+
+/// `t1633OutBlock1` — one program-trade daily-trend row (representative subset):
+/// the date, the KP200 index + change, the all/arbitrage/non-arbitrage net totals,
+/// and the trade volume. Every numeric-bearing field via
+/// [`ls_core::string_or_number`].
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1633OutBlock1 {
+    /// Date / 일자.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    /// KP200 index / KP200.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jisu: String,
+    /// Change sign / 대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change / 대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Whole-market net buy / 전체순매수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub tot3: String,
+    /// Arbitrage net buy / 차익순매수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cha3: String,
+    /// Non-arbitrage net buy / 비차익순매수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bcha3: String,
+    /// Trade volume / 거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+}
+
+/// `t1633` response envelope — the single cursor `t1633OutBlock` + the repeated
+/// `t1633OutBlock1` daily-series rows (tolerated single-or-array via
+/// [`ls_core::de_vec_or_single`]). All `#[serde(default)]`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1633Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1633OutBlock", default)]
+    pub outblock: T1633OutBlock,
+    #[serde(
+        rename = "t1633OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1633OutBlock1>,
+}
+
+// ---------------------------------------------------------------------------
 // t1950 — ELW현재가(시세)조회 (ELW current-price/quote). market_session ELW read;
 // a single-instrument quote: the main `t1950OutBlock` is ONE object (the quote +
 // ELW analytics), with a secondary `t1950OutBlock1` basket-asset array (tolerated
@@ -8865,6 +9283,42 @@ impl MarketSession {
     pub async fn lp_target_issues(&self, req: &T1959Request) -> LsResult<T1959Response> {
         self.inner
             .post(&ls_core::endpoint_policy::T1959_POLICY, req)
+            .await
+    }
+
+    /// Fetch the program-trade综합 via `t1631` (프로그램매매종합조회) — the
+    /// program-trade open-order remainders / order quantities (`t1631OutBlock`) plus
+    /// the offer/bid volume + value totals (`t1631OutBlock1`). Non-paginated;
+    /// dispatches through [`ls_core::Inner::post`] on the MarketData bucket
+    /// (`/stock/program`).
+    pub async fn program_trade_summary(&self, req: &T1631Request) -> LsResult<T1631Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1631_POLICY, req)
+            .await
+    }
+
+    /// Fetch the program-trade intraday trend via `t1632` (프로그램매매추이(시간)) —
+    /// a per-timestamp time series (`t1632OutBlock1`) of the KP200 index + the
+    /// all/arbitrage/non-arbitrage buy/sell/net totals, with the cursor in
+    /// `t1632OutBlock`. Non-paginated; dispatches through [`ls_core::Inner::post`] on
+    /// the MarketData bucket (`/stock/program`).
+    pub async fn program_trade_trend_intraday(
+        &self,
+        req: &T1632Request,
+    ) -> LsResult<T1632Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1632_POLICY, req)
+            .await
+    }
+
+    /// Fetch the program-trade daily trend via `t1633` (프로그램매매추이(일별)) — a
+    /// per-date series (`t1633OutBlock1`) of the KP200 index + the program-trade
+    /// net totals + volume, with the cursor in `t1633OutBlock`. Non-paginated;
+    /// dispatches through [`ls_core::Inner::post`] on the MarketData bucket
+    /// (`/stock/program`).
+    pub async fn program_trade_trend_daily(&self, req: &T1633Request) -> LsResult<T1633Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1633_POLICY, req)
             .await
     }
 
