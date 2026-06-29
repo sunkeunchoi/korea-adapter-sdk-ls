@@ -2894,6 +2894,98 @@ pub const O3127_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(50),
 };
 
+/// t8427 — 선물옵션 N분주가 (F/O minute/day chart; non-paginated). Open-window flip
+/// wave (plan -001). path /futureoption/market-data, group [선물/옵션] 시세.
+pub const T8427_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8427",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t2210 — 선물옵션 특이거래량 (F/O unusual-volume conclusion counts; non-paginated).
+/// Open-window flip wave (plan -001). path /futureoption/market-data, group [선물/옵션] 시세.
+pub const T2210_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t2210",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t2424 — 선물옵션 N분봉 (F/O N-minute bars; non-paginated). Open-window flip wave
+/// (plan -001). path /futureoption/market-data, group [선물/옵션] 시세.
+pub const T2424_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t2424",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t2541 — 선물옵션 투자자별 매매추이 (F/O investor-by-time; self-paginated on the body
+/// `cts_time`/`cts_idx` cursor). Open-window flip wave (plan -001).
+/// path /futureoption/investor, group [선물/옵션] 투자자.
+pub const T2541_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t2541",
+    path: "/futureoption/investor",
+    module: "futureoption",
+    group: "[선물/옵션] 투자자",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t2214 — 선물옵션 기간별주가 (F/O daily OHLCV; self-paginated on the body `cts_code`
+/// cursor). Open-window flip wave (plan -001).
+/// path /futureoption/market-data, group [선물/옵션] 시세.
+pub const T2214_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t2214",
+    path: "/futureoption/market-data",
+    module: "futureoption",
+    group: "[선물/옵션] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8428 — 투자자별 예탁금추이 (deposit-balance trend by investor; non-paginated).
+/// Open-window flip wave (plan -001). path /stock/investinfo, group [주식] 투자정보.
+pub const T8428_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8428",
+    path: "/stock/investinfo",
+    module: "stock",
+    group: "[주식] 투자정보",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// o3128 — 해외선물옵션 차트 일주월 조회 (overseas-futopt D/W/M chart; self-paginated on
 /// the body `cts_date` cursor). Plan -003.
 pub const O3128_POLICY: EndpointPolicy = EndpointPolicy {
@@ -4250,6 +4342,12 @@ mod tests {
             O3136_POLICY,
             O3137_POLICY,
             O3139_POLICY,
+            T8427_POLICY,
+            T2210_POLICY,
+            T2424_POLICY,
+            T2541_POLICY,
+            T2214_POLICY,
+            T8428_POLICY,
             T8462_POLICY,
             T8410_POLICY,
             T8451_POLICY,
