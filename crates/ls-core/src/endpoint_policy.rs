@@ -353,6 +353,81 @@ pub const T1633_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+/// t1702 — 외국인/기관별 매매추이 (foreign/institution by-issue trend; non-paginated).
+/// path /stock/frgr-itt, group [주식] 외인/기관.
+pub const T1702_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1702",
+    path: "/stock/frgr-itt",
+    module: "stock",
+    group: "[주식] 외인/기관",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1717 — 외국인/기관 순매수추이 (foreign/institution net-buy trend; non-paginated).
+/// path /stock/frgr-itt, group [주식] 외인/기관.
+pub const T1717_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1717",
+    path: "/stock/frgr-itt",
+    module: "stock",
+    group: "[주식] 외인/기관",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1665 — 투자자별 매매추이(업종) (investor-by-sector trend chart; non-paginated).
+/// path /stock/chart, group [주식] 차트.
+pub const T1665_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1665",
+    path: "/stock/chart",
+    module: "stock",
+    group: "[주식] 차트",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1471 — 시간대별호가잔량추이 (intraday best-quote-remainder trend; non-paginated).
+/// path /stock/market-data, group [주식] 시세.
+pub const T1471_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1471",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1475 — VP대비등락률상하위 (VP-relative rise/fall ranking; non-paginated).
+/// path /stock/market-data, group [주식] 시세. corp rate is 2/s (per baseline).
+pub const T1475_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1475",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(2),
+};
+
 /// t1950 — ELW현재가(시세)조회 (ELW current-price/quote; non-paginated).
 /// path /stock/elw, group [주식] ELW.
 pub const T1950_POLICY: EndpointPolicy = EndpointPolicy {
@@ -3828,6 +3903,13 @@ mod tests {
             T1631_POLICY,
             T1632_POLICY,
             T1633_POLICY,
+            // Open-window domestic reads: foreign/institution trends, sector-investor
+            // chart, intraday quote-remainder trend, VP-relative ranking.
+            T1702_POLICY,
+            T1717_POLICY,
+            T1665_POLICY,
+            T1471_POLICY,
+            T1475_POLICY,
             // Closed-window more-flips wave (plan -001): LP-target ELW issue list read.
             T1959_POLICY,
             // Closed-window more-flips wave (plan -001): ELW current-price/quote read.

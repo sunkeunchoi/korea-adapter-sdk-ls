@@ -138,8 +138,8 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t1452` | 거래량상위 | `paginated` | implemented | [t1452](./t1452.md) |
 | `t1463` | 거래대금상위 | `paginated` | implemented | [t1463](./t1463.md) |
 | `t1466` | 전일동시간대비거래급증 | `paginated` | implemented | [t1466](./t1466.md) |
-| `t1471` | 시간대별호가잔량추이 | `market_session` | tracked | [t1471](./t1471.md) |
-| `t1475` | 체결강도추이 | `market_session` | tracked | [t1475](./t1475.md) |
+| `t1471` | 시간대별호가잔량추이 | `market_session` | implemented | [t1471](./t1471.md) |
+| `t1475` | 체결강도추이 | `market_session` | implemented | [t1475](./t1475.md) |
 | `t1481` | 시간외등락율상위 | `paginated` | implemented | [t1481](./t1481.md) |
 | `t1482` | 시간외거래량상위 | `paginated` | implemented | [t1482](./t1482.md) |
 | `t1485` | 예상지수 | `market_session` | implemented | [t1485](./t1485.md) |
@@ -169,10 +169,10 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t1640` | 프로그램매매종합조회(미니) | `market_session` | implemented | [t1640](./t1640.md) |
 | `t1662` | 시간대별프로그램매매추이(차트) | `market_session` | implemented | [t1662](./t1662.md) |
 | `t1664` | 투자자매매종합(챠트) | `market_session` | implemented | [t1664](./t1664.md) |
-| `t1665` | 기간별투자자매매추이(차트) | `market_session` | tracked | [t1665](./t1665.md) |
-| `t1702` | 외인기관종목별동향 | `market_session` | tracked | [t1702](./t1702.md) |
+| `t1665` | 기간별투자자매매추이(차트) | `market_session` | implemented | [t1665](./t1665.md) |
+| `t1702` | 외인기관종목별동향 | `market_session` | implemented | [t1702](./t1702.md) |
 | `t1716` | 외인기관종목별동향 | `market_session` | tracked | [t1716](./t1716.md) |
-| `t1717` | 외인기관종목별동향 | `market_session` | tracked | [t1717](./t1717.md) |
+| `t1717` | 외인기관종목별동향 | `market_session` | implemented | [t1717](./t1717.md) |
 | `t1752` | 종목별상위회원사 | `paginated` | tracked | [t1752](./t1752.md) |
 | `t1764` | 회원사리스트 | `market_session` | implemented | [t1764](./t1764.md) |
 | `t1771` | 종목별회원사추이 | `paginated` | tracked | [t1771](./t1771.md) |

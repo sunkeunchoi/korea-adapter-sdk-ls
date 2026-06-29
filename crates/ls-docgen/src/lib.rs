@@ -1106,6 +1106,11 @@ mod tests {
             // Open-window domestic program-trade reads: intraday-trend t1632 +
             // daily-trend t1633 certified non-empty (t1631 PENDING — gateway IGW40014).
             "t1632", "t1633",
+            // Open-window domestic reads: foreign/institution by-issue trend t1702 +
+            // net-buy trend t1717, investor-by-sector chart t1665, intraday
+            // quote-remainder trend t1471, VP-relative ranking t1475 — all certified
+            // non-empty on in-window paper smokes (KRX open 2026-06-29).
+            "t1702", "t1717", "t1665", "t1471", "t1475",
         ];
         for tr in banner_trs {
             let page = reference
@@ -1279,9 +1284,13 @@ mod tests {
         // Open-window domestic program-trade reads: intraday-trend t1632 +
         // daily-trend t1633 certified non-empty (20-row series each) — add 2.
         // (t1631 stayed PENDING: gateway-side IGW40014 on its own response payload.)
+        // Open-window domestic reads: foreign/institution by-issue trend t1702 +
+        // net-buy trend t1717, investor-by-sector chart t1665, intraday
+        // quote-remainder trend t1471, VP-relative ranking t1475 — all certified
+        // non-empty on in-window paper smokes (KRX open 2026-06-29) — add 5.
         assert_eq!(
             reference.len(),
-            215,
+            220,
             "index + the implemented reference pages"
         );
 

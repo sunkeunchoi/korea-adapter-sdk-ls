@@ -30,6 +30,11 @@ use ls_sdk::market_session::{
     T1631Request, T1631Response,
     T1632Request, T1632Response,
     T1633Request, T1633Response,
+    T1702Request, T1702Response,
+    T1717Request, T1717Response,
+    T1665Request, T1665Response,
+    T1471Request, T1471Response,
+    T1475Request, T1475Response,
     T1959Request, T1959Response,
     T1950Request, T1950Response,
     T1971Request, T1971Response,
@@ -2695,6 +2700,404 @@ fn t1633_empty_result_deserializes_to_empty() {
     .expect("an empty t1633 envelope must deserialize");
     assert_eq!(empty.rsp_cd, "00707");
     assert!(empty.outblock.date.is_empty(), "no cursor → default object");
+    assert!(empty.outblock1.is_empty(), "no rows → empty Vec");
+}
+
+// ---- t1702 외국인/기관별 매매추이 (open-window domestic; market_session foreign/institution date array) ----
+
+/// `t1702` serializes its seven caller filters under the renamed `t1702InBlock` key
+/// with no leaked fields; non-paginated.
+#[test]
+fn t1702_new_serializes_filters_under_inblock_no_leak() {
+    let value = serde_json::to_value(T1702Request::new(
+        "005930", "20260601", "20260629", "1", "0", "0", "1",
+    ))
+    .expect("serialize t1702 request");
+    assert_eq!(value["t1702InBlock"]["shcode"], "005930");
+    assert_eq!(value["t1702InBlock"]["fromdt"], "20260601");
+    assert_eq!(value["t1702InBlock"]["todt"], "20260629");
+    assert_eq!(value["t1702InBlock"]["volvalgb"], "1");
+    assert_eq!(value["t1702InBlock"]["msmdgb"], "0");
+    assert_eq!(value["t1702InBlock"]["gubun"], "0");
+    assert_eq!(value["t1702InBlock"]["exchgubun"], "1");
+    assert!(value.get("tr_cont").is_none(), "non-paginated: no tr_cont");
+    assert!(
+        value["t1702InBlock"].get("nrec").is_none(),
+        "no leaked caller fields"
+    );
+}
+
+/// A representative success body deserializes AND a modeled non-key row field
+/// (`close`) holds a real, non-default value. Numeric-bearing fields tolerate a JSON
+/// number or string; the date out-block is a repeated array.
+#[test]
+fn t1702_success_body_deserializes_with_nondefault_field() {
+    let as_string: T1702Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1702OutBlock1": [
+            { "date": "20260627", "close": "00072500", "sign": "2", "change": "00000300",
+              "volume": "000012345678", "tjj0008": "000000123456", "tjj0016": "000000654321" },
+            { "date": "20260629", "close": "00073000", "sign": "2", "change": "00000500",
+              "volume": "000011345678", "tjj0008": "000000133456", "tjj0016": "000000644321" }
+        ],
+        "rsp_msg": "정상처리"
+    }))
+    .expect("string body must deserialize");
+    let as_number: T1702Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1702OutBlock1": [ { "close": 73000, "volume": 11345678i64 } ]
+    }))
+    .expect("number body must deserialize");
+    assert_eq!(as_string.outblock.len(), 2, "date array round-trips");
+    assert_eq!(
+        as_string.outblock[0].close, "00072500",
+        "modeled non-key row field is non-default"
+    );
+    assert_eq!(as_number.outblock[0].close, "73000");
+    assert_eq!(as_number.outblock[0].volume, "11345678");
+}
+
+/// A single (non-array) `t1702OutBlock1` object is tolerated via `de_vec_or_single`.
+#[test]
+fn t1702_single_object_out_block_is_tolerated() {
+    let resp: T1702Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1702OutBlock1": { "date": "20260629", "close": "00073000" }
+    }))
+    .expect("single-object out-block must deserialize");
+    assert_eq!(resp.outblock.len(), 1, "single object → one-element Vec");
+    assert_eq!(resp.outblock[0].close, "00073000");
+}
+
+/// An empty result (`00707`) deserializes cleanly — empty rows.
+#[test]
+fn t1702_empty_result_deserializes_to_empty() {
+    let empty: T1702Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "rsp_msg": "조회할 자료가 없습니다."
+    }))
+    .expect("an empty t1702 envelope must deserialize");
+    assert_eq!(empty.rsp_cd, "00707");
+    assert!(empty.outblock.is_empty(), "no rows → empty Vec");
+}
+
+// ---- t1717 외국인/기관 순매수추이 (open-window domestic; market_session net-buy date array) ----
+
+/// `t1717` serializes its five caller filters under the renamed `t1717InBlock` key
+/// with no leaked fields; non-paginated.
+#[test]
+fn t1717_new_serializes_filters_under_inblock_no_leak() {
+    let value = serde_json::to_value(T1717Request::new("005930", "1", "20260601", "20260629", "1"))
+        .expect("serialize t1717 request");
+    assert_eq!(value["t1717InBlock"]["shcode"], "005930");
+    assert_eq!(value["t1717InBlock"]["gubun"], "1");
+    assert_eq!(value["t1717InBlock"]["fromdt"], "20260601");
+    assert_eq!(value["t1717InBlock"]["todt"], "20260629");
+    assert_eq!(value["t1717InBlock"]["exchgubun"], "1");
+    assert!(value.get("tr_cont").is_none(), "non-paginated: no tr_cont");
+    assert!(
+        value["t1717InBlock"].get("nrec").is_none(),
+        "no leaked caller fields"
+    );
+}
+
+/// A representative success body deserializes AND a modeled non-key row field
+/// (`close`) holds a real, non-default value. Numeric-bearing fields tolerate a JSON
+/// number or string; the date out-block is a repeated array.
+#[test]
+fn t1717_success_body_deserializes_with_nondefault_field() {
+    let as_string: T1717Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1717OutBlock": [
+            { "date": "20260627", "close": "00072500", "sign": "2", "change": "00000300",
+              "volume": "000012345678", "tjj0008_vol": "000000123456", "tjj0016_vol": "000000654321" },
+            { "date": "20260629", "close": "00073000", "sign": "2", "change": "00000500",
+              "volume": "000011345678", "tjj0008_vol": "000000133456", "tjj0016_vol": "000000644321" }
+        ],
+        "rsp_msg": "정상처리"
+    }))
+    .expect("string body must deserialize");
+    let as_number: T1717Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1717OutBlock": [ { "close": 73000, "volume": 11345678i64 } ]
+    }))
+    .expect("number body must deserialize");
+    assert_eq!(as_string.outblock.len(), 2, "date array round-trips");
+    assert_eq!(
+        as_string.outblock[0].close, "00072500",
+        "modeled non-key row field is non-default"
+    );
+    assert_eq!(as_number.outblock[0].close, "73000");
+    assert_eq!(as_number.outblock[0].volume, "11345678");
+}
+
+/// A single (non-array) `t1717OutBlock` object is tolerated via `de_vec_or_single`.
+#[test]
+fn t1717_single_object_out_block_is_tolerated() {
+    let resp: T1717Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1717OutBlock": { "date": "20260629", "close": "00073000" }
+    }))
+    .expect("single-object out-block must deserialize");
+    assert_eq!(resp.outblock.len(), 1, "single object → one-element Vec");
+    assert_eq!(resp.outblock[0].close, "00073000");
+}
+
+/// An empty result (`00707`) deserializes cleanly — empty rows.
+#[test]
+fn t1717_empty_result_deserializes_to_empty() {
+    let empty: T1717Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "rsp_msg": "조회할 자료가 없습니다."
+    }))
+    .expect("an empty t1717 envelope must deserialize");
+    assert_eq!(empty.rsp_cd, "00707");
+    assert!(empty.outblock.is_empty(), "no rows → empty Vec");
+}
+
+// ---- t1665 투자자별 매매추이(업종) (open-window domestic; market_session header + date array) ----
+
+/// `t1665` serializes its seven caller filters under the renamed `t1665InBlock` key
+/// with no leaked fields; non-paginated.
+#[test]
+fn t1665_new_serializes_filters_under_inblock_no_leak() {
+    let value = serde_json::to_value(T1665Request::new(
+        "1", "001", "1", "1", "20260601", "20260629", "1",
+    ))
+    .expect("serialize t1665 request");
+    assert_eq!(value["t1665InBlock"]["market"], "1");
+    assert_eq!(value["t1665InBlock"]["upcode"], "001");
+    assert_eq!(value["t1665InBlock"]["gubun2"], "1");
+    assert_eq!(value["t1665InBlock"]["gubun3"], "1");
+    assert_eq!(value["t1665InBlock"]["from_date"], "20260601");
+    assert_eq!(value["t1665InBlock"]["to_date"], "20260629");
+    assert_eq!(value["t1665InBlock"]["exchgubun"], "1");
+    assert!(value.get("tr_cont").is_none(), "non-paginated: no tr_cont");
+    assert!(
+        value["t1665InBlock"].get("nrec").is_none(),
+        "no leaked caller fields"
+    );
+}
+
+/// A representative success body deserializes AND a modeled non-key row field
+/// (`jisu`) holds a real, non-default value. Numeric-bearing fields tolerate a JSON
+/// number or string; the date out-block is a repeated array, with a single header.
+#[test]
+fn t1665_success_body_deserializes_with_nondefault_field() {
+    let as_string: T1665Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1665OutBlock": { "mcode": "001", "mname": "KOSPI", "ex_upcode": "0001" },
+        "t1665OutBlock1": [
+            { "date": "20260627", "sv_08": "000000123456", "sv_17": "-00000654321",
+              "sv_18": "000000222222", "jisu": "00002950.10" },
+            { "date": "20260629", "sv_08": "000000133456", "sv_17": "-00000644321",
+              "sv_18": "000000232222", "jisu": "00002975.45" }
+        ],
+        "rsp_msg": "정상처리"
+    }))
+    .expect("string body must deserialize");
+    let as_number: T1665Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1665OutBlock1": [ { "jisu": 2975.45, "sv_08": 133456i64 } ]
+    }))
+    .expect("number body (jisu as a JSON Number) must deserialize");
+    assert_eq!(as_string.outblock.mname, "KOSPI", "header round-trips");
+    assert_eq!(as_string.outblock1.len(), 2, "date array round-trips");
+    assert_eq!(
+        as_string.outblock1[0].jisu, "00002950.10",
+        "modeled non-key row field is non-default"
+    );
+    assert_eq!(as_number.outblock1[0].jisu, "2975.45");
+    assert_eq!(as_number.outblock1[0].sv_08, "133456");
+}
+
+/// A single (non-array) `t1665OutBlock1` object is tolerated via `de_vec_or_single`.
+#[test]
+fn t1665_single_object_out_block_is_tolerated() {
+    let resp: T1665Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1665OutBlock1": { "date": "20260629", "jisu": "00002975.45" }
+    }))
+    .expect("single-object out-block must deserialize");
+    assert_eq!(resp.outblock1.len(), 1, "single object → one-element Vec");
+    assert_eq!(resp.outblock1[0].jisu, "00002975.45");
+}
+
+/// An empty result (`00707`) deserializes cleanly — default header, empty rows.
+#[test]
+fn t1665_empty_result_deserializes_to_empty() {
+    let empty: T1665Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "rsp_msg": "조회할 자료가 없습니다."
+    }))
+    .expect("an empty t1665 envelope must deserialize");
+    assert_eq!(empty.rsp_cd, "00707");
+    assert!(empty.outblock.mname.is_empty(), "no header → default object");
+    assert!(empty.outblock1.is_empty(), "no rows → empty Vec");
+}
+
+// ---- t1471 시간대별호가잔량추이 (open-window domestic; market_session scalar header + order-book array) ----
+
+/// `t1471` serializes its five caller filters under the renamed `t1471InBlock` key
+/// with no leaked fields; non-paginated.
+#[test]
+fn t1471_new_serializes_filters_under_inblock_no_leak() {
+    let value = serde_json::to_value(T1471Request::new("005930", "0", "", "20", "1"))
+        .expect("serialize t1471 request");
+    assert_eq!(value["t1471InBlock"]["shcode"], "005930");
+    assert_eq!(value["t1471InBlock"]["gubun"], "0");
+    assert_eq!(value["t1471InBlock"]["time"], "");
+    assert_eq!(value["t1471InBlock"]["cnt"], "20", "cnt is a request String here");
+    assert_eq!(value["t1471InBlock"]["exchgubun"], "1");
+    assert!(value.get("tr_cont").is_none(), "non-paginated: no tr_cont");
+    assert!(
+        value["t1471InBlock"].get("nrec").is_none(),
+        "no leaked caller fields"
+    );
+}
+
+/// A representative success body deserializes AND modeled non-key fields (the scalar
+/// `price` + the order-book row `offerho1`) hold real, non-default values.
+/// Numeric-bearing fields tolerate a JSON number or string.
+#[test]
+fn t1471_success_body_deserializes_with_nondefault_field() {
+    let as_string: T1471Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1471OutBlock": { "time": "153000", "price": "00073000", "sign": "2",
+                           "change": "00000500", "volume": "000012345678" },
+        "t1471OutBlock1": [
+            { "time": "153000", "offerrem1": "00001234", "offerho1": "00073100",
+              "bidho1": "00073000", "bidrem1": "00005678", "totofferrem": "00012345",
+              "totbidrem": "00023456", "close": "00073000" },
+            { "time": "152959", "offerrem1": "00001230", "offerho1": "00073100",
+              "bidho1": "00073000", "bidrem1": "00005670", "totofferrem": "00012340",
+              "totbidrem": "00023450", "close": "00073000" }
+        ],
+        "rsp_msg": "정상처리"
+    }))
+    .expect("string body must deserialize");
+    let as_number: T1471Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1471OutBlock": { "price": 73000 },
+        "t1471OutBlock1": [ { "offerho1": 73100, "bidho1": 73000i64 } ]
+    }))
+    .expect("number body must deserialize");
+    assert_eq!(
+        as_string.outblock.price, "00073000",
+        "scalar header price is non-default"
+    );
+    assert_eq!(as_string.outblock1.len(), 2, "order-book array round-trips");
+    assert_eq!(
+        as_string.outblock1[0].offerho1, "00073100",
+        "modeled non-key row field is non-default"
+    );
+    assert_eq!(as_number.outblock.price, "73000");
+    assert_eq!(as_number.outblock1[0].offerho1, "73100");
+}
+
+/// A single (non-array) `t1471OutBlock1` object is tolerated via `de_vec_or_single`.
+#[test]
+fn t1471_single_object_out_block_is_tolerated() {
+    let resp: T1471Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1471OutBlock": { "price": "00073000" },
+        "t1471OutBlock1": { "time": "153000", "offerho1": "00073100" }
+    }))
+    .expect("single-object out-block must deserialize");
+    assert_eq!(resp.outblock1.len(), 1, "single object → one-element Vec");
+    assert_eq!(resp.outblock1[0].offerho1, "00073100");
+}
+
+/// An empty result (`00707`) deserializes cleanly — default header, empty rows.
+#[test]
+fn t1471_empty_result_deserializes_to_empty() {
+    let empty: T1471Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "rsp_msg": "조회할 자료가 없습니다."
+    }))
+    .expect("an empty t1471 envelope must deserialize");
+    assert_eq!(empty.rsp_cd, "00707");
+    assert!(empty.outblock.price.is_empty(), "no header → default object");
+    assert!(empty.outblock1.is_empty(), "no rows → empty Vec");
+}
+
+// ---- t1475 VP대비등락률상하위 (open-window domestic; market_session numeric request slots + ranked array) ----
+
+/// `t1475` serializes its seven caller filters under the renamed `t1475InBlock` key
+/// with the numeric slots (`datacnt`/`date`/`time`/`rankcnt`) as JSON NUMBERS (else
+/// the gateway returns `IGW40011`); Strings stay strings; no leaked fields.
+#[test]
+fn t1475_new_serializes_numeric_slots_as_numbers_no_leak() {
+    let value = serde_json::to_value(T1475Request::new("005930", "1", "20", "0", "0", "0", "0"))
+        .expect("serialize t1475 request");
+    assert_eq!(value["t1475InBlock"]["shcode"], "005930");
+    assert_eq!(value["t1475InBlock"]["vptype"], "1");
+    assert_eq!(value["t1475InBlock"]["gubun"], "0");
+    // numeric request slots serialize as JSON numbers, not strings.
+    assert_eq!(value["t1475InBlock"]["datacnt"], 20);
+    assert!(value["t1475InBlock"]["datacnt"].is_number(), "datacnt is a JSON number");
+    assert_eq!(value["t1475InBlock"]["date"], 0);
+    assert!(value["t1475InBlock"]["date"].is_number(), "date is a JSON number");
+    assert_eq!(value["t1475InBlock"]["time"], 0);
+    assert_eq!(value["t1475InBlock"]["rankcnt"], 0);
+    assert!(value.get("tr_cont").is_none(), "non-paginated: no tr_cont");
+    assert!(
+        value["t1475InBlock"].get("nrec").is_none(),
+        "no leaked caller fields"
+    );
+}
+
+/// A representative success body deserializes AND a modeled non-key row field
+/// (`price`) holds a real, non-default value. Numeric-bearing fields tolerate a JSON
+/// number or string; the ranked out-block is a repeated array, with an echo header.
+#[test]
+fn t1475_success_body_deserializes_with_nondefault_field() {
+    let as_string: T1475Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1475OutBlock": { "date": "20260629", "time": "153000", "rankcnt": "20" },
+        "t1475OutBlock1": [
+            { "datetime": "20260629", "price": "00073000", "sign": "2", "change": "00000500",
+              "volume": "000012345678", "todayvp": "00000123", "ma5vp": "00000120" },
+            { "datetime": "20260629", "price": "00045500", "sign": "5", "change": "-0000300",
+              "volume": "000009345678", "todayvp": "00000099", "ma5vp": "00000101" }
+        ],
+        "rsp_msg": "정상처리"
+    }))
+    .expect("string body must deserialize");
+    let as_number: T1475Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1475OutBlock": { "date": 20260629i64 },
+        "t1475OutBlock1": [ { "price": 73000, "volume": 12345678i64 } ]
+    }))
+    .expect("number body must deserialize");
+    assert_eq!(as_string.outblock.date, "20260629", "echo header round-trips");
+    assert_eq!(as_string.outblock1.len(), 2, "ranked array round-trips");
+    assert_eq!(
+        as_string.outblock1[0].price, "00073000",
+        "modeled non-key row field is non-default"
+    );
+    assert_eq!(as_number.outblock.date, "20260629");
+    assert_eq!(as_number.outblock1[0].price, "73000");
+    assert_eq!(as_number.outblock1[0].volume, "12345678");
+}
+
+/// A single (non-array) `t1475OutBlock1` object is tolerated via `de_vec_or_single`.
+#[test]
+fn t1475_single_object_out_block_is_tolerated() {
+    let resp: T1475Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1475OutBlock1": { "datetime": "20260629", "price": "00073000" }
+    }))
+    .expect("single-object out-block must deserialize");
+    assert_eq!(resp.outblock1.len(), 1, "single object → one-element Vec");
+    assert_eq!(resp.outblock1[0].price, "00073000");
+}
+
+/// An empty result (`00707`) deserializes cleanly — default header, empty rows.
+#[test]
+fn t1475_empty_result_deserializes_to_empty() {
+    let empty: T1475Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "rsp_msg": "조회할 자료가 없습니다."
+    }))
+    .expect("an empty t1475 envelope must deserialize");
+    assert_eq!(empty.rsp_cd, "00707");
+    assert!(empty.outblock.date.is_empty(), "no header → default object");
     assert!(empty.outblock1.is_empty(), "no rows → empty Vec");
 }
 
