@@ -44,7 +44,7 @@ use ls_sdk::market_session::{
     O3104Request, O3127Request, T8462Request,
     T8427Request, T2210Request, T2424Request, T8428Request,
     T9945Request, T3202Request, T3521Request,
-    T0167Request,
+    T0167Request, T3102Request,
 };
 use ls_sdk::paginated::{
     T1403Request, T1441Request, T1452Request, T1463Request, T1466Request, T1481Request,
@@ -64,7 +64,7 @@ use ls_sdk::paginated::{
     T2541Request, T2214Request,
 };
 use ls_sdk_test_support::{assert_nonempty_witness, scrub_secrets};
-use ls_sdk::realtime::WsLane;
+use ls_sdk::realtime::{NwsRow, WsLane};
 use ls_sdk::LsSdk;
 use tokio::time::timeout;
 
@@ -4418,6 +4418,100 @@ async fn live_smoke_k3() {
         &format!("symbol={symbol} ws_port=29443 tr_type=3"),
         &row_note,
     );
+}
+
+/// `make live-smoke-nws-t3102`: chained `NWS`→`t3102` smoke — the `t3102` unblock
+/// path (뉴스본문).
+///
+/// Subscribes to the realtime `NWS` (실시간뉴스제목패킷) title feed on a FRESH,
+/// isolated `WsManager`, timeboxes a single news frame, and — if one arrives with a
+/// non-empty `realkey` — threads that 24-char key into the `t3102` REST read as
+/// `sNewsno`. The flip witness is a non-empty `t3102OutBlock2` title (the only
+/// modeled block). The WS leg is connection-reachable-only (fire-and-forget
+/// subscribe, KTD6), so it never justifies the flip on its own — only the REST
+/// out-block does.
+///
+/// Off-hours the paper `NWS` feed may emit nothing; a no-frame run is the HELD case
+/// (no off-hours news), surfaced as a credential-safe `SMOKE-FAIL`, never a
+/// capturable `LIVE-SMOKE` line. Records only `rsp_cd` + a title LENGTH — never the
+/// `realkey`, the title text, or the body. `LS_NWS_SMOKE_SECS` overrides the wait
+/// window (default 30s); `LS_NWS_TR_KEY` overrides the subscribe key (default: all
+/// news).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials + a live NWS frame; run via `make live-smoke-nws-t3102`"]
+async fn live_smoke_nws_t3102() {
+    paper_guard().expect("paper guard must pass for a paper run");
+    let config = LsConfig::from_env().expect("config from env");
+    assert!(
+        config.environment.is_paper(),
+        "resolved environment must be Paper"
+    );
+
+    let ws_url = ls_core::config::Environment::resolve_ws_url(&config);
+    assert!(
+        ws_url.contains("29443"),
+        "expected the paper WS port 29443, got {ws_url}"
+    );
+
+    // Fresh SDK → fresh, isolated WsManager (KTD2 — no shared-manager poisoning).
+    let sdk = LsSdk::new(config).expect("sdk construction");
+    let ws = sdk.realtime();
+
+    // News title feed: tr_key is permissive (empty = all news; override via
+    // LS_NWS_TR_KEY). NWS is not symbol-scoped, so the default catches any frame.
+    let tr_key = std::env::var("LS_NWS_TR_KEY").unwrap_or_default();
+    let (handle, mut stream) = ws
+        .subscribe_typed::<NwsRow>("NWS", &tr_key, WsLane::MarketData)
+        .await
+        .unwrap_or_else(|e| {
+            panic!("subscribe_typed NWS failed (connect/subscribe lifecycle): {e}")
+        });
+
+    // Timebox a single news frame; absence is the HELD case (no off-hours emission).
+    let secs: u64 = std::env::var("LS_NWS_SMOKE_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(30);
+    let frame = timeout(Duration::from_secs(secs), stream.next()).await;
+
+    // Always unsubscribe cleanly before the flip decision.
+    handle
+        .unsubscribe()
+        .await
+        .expect("unsubscribe must complete cleanly");
+
+    let realkey = match frame {
+        Ok(Some(Ok(row))) if !row.realkey.is_empty() => row.realkey,
+        _ => {
+            eprintln!(
+                "SMOKE-FAIL target=live-smoke-nws-t3102 no NWS news frame within {secs}s; \
+                 HELD (no off-hours emission, not evidence)"
+            );
+            panic!("live-smoke-nws-t3102: no live NWS frame — HELD, not Implemented");
+        }
+    };
+
+    // Chain: feed the captured realkey into t3102 as sNewsno. Never log the key.
+    let req = T3102Request::new(realkey);
+    match sdk.market_session().news_body(&req).await {
+        Ok(resp) if resp.outblock2.title.is_empty() => {
+            eprintln!(
+                "SMOKE-FAIL target=live-smoke-nws-t3102 t3102 empty title block (rsp_cd={}); \
+                 HELD (key not queryable, not evidence)",
+                resp.rsp_cd
+            );
+            panic!("live-smoke-nws-t3102: t3102 returned an empty title block — HELD, not Implemented");
+        }
+        Ok(resp) => record(
+            "live-smoke-nws-t3102",
+            "env=paper feed=NWS chain=realkey->sNewsno",
+            &format!("rsp_cd={} title_len={}", resp.rsp_cd, resp.outblock2.title.len()),
+        ),
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-nws-t3102 t3102 REST failure (not evidence)");
+            panic!("live-smoke-nws-t3102 t3102 call failed: {e}");
+        }
+    }
 }
 
 /// Non-panicking sibling of [`ws_lifecycle_smoke`] for the combined P1 wave run.
