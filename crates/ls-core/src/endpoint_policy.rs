@@ -1212,6 +1212,85 @@ pub const T1637_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+/// t1602 — 시간대별투자자매매추이 (time-band investor flow by sector; self-paginated
+/// on the body `cts_time` cursor; `cts_idx`/`cnt` serialized as JSON numbers).
+/// Open-window domestic reads (plan -001).
+pub const T1602_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1602",
+    path: "/stock/investor",
+    module: "stock",
+    group: "[주식] 투자자",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1603 — 투자자별매매종목 (investor detail by issue; self-paginated on the body
+/// `cts_time` cursor; `cts_idx`/`cnt` serialized as JSON numbers). Open-window
+/// domestic reads (plan -001).
+pub const T1603_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1603",
+    path: "/stock/investor",
+    module: "stock",
+    group: "[주식] 투자자",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1617 — 투자자별일별매매추이 (investor time/daily flow; self-paginated on the body
+/// `cts_date`/`cts_time` cursors; all request slots String). Open-window domestic
+/// reads (plan -001).
+pub const T1617_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1617",
+    path: "/stock/investor",
+    module: "stock",
+    group: "[주식] 투자자",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1752 — 거래원별종목별동향 (broker-by-issue; self-paginated on the body `cts_idx`
+/// cursor serialized as a JSON number). Open-window domestic reads (plan -001).
+pub const T1752_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1752",
+    path: "/stock/exchange",
+    module: "stock",
+    group: "[주식] 거래원",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1771 — 거래원별시간대별추이 (broker time-series by issue; self-paginated on the
+/// body `cts_idx` cursor; `cts_idx`/`cnt` serialized as JSON numbers; row array
+/// under `t1771OutBlock2`). Open-window domestic reads (plan -001).
+pub const T1771_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1771",
+    path: "/stock/exchange",
+    module: "stock",
+    group: "[주식] 거래원",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// t1452 — 거래량상위 (top trading volume; single-page body-`idx` paginated).
 pub const T1452_POLICY: EndpointPolicy = EndpointPolicy {
     tr_code: "t1452",
@@ -4106,6 +4185,13 @@ mod tests {
             T1486_POLICY,
             T8454_POLICY,
             T1637_POLICY,
+            // Open-window domestic reads (plan -001): self-paginated investor-flow
+            // + exchange-broker reads.
+            T1602_POLICY,
+            T1603_POLICY,
+            T1617_POLICY,
+            T1752_POLICY,
+            T1771_POLICY,
             CSPAQ12200_POLICY,
             CSPAQ12300_POLICY,
             CSPAQ22200_POLICY,

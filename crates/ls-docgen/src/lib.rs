@@ -1122,6 +1122,12 @@ mod tests {
             // smokes (KRX open 2026-06-29). t1109 (시간외체결량) PENDS: empty 00707
             // in the regular continuous session (after-hours data does not populate).
             "t1301", "t1486", "t8454", "t1637",
+            // Open-window domestic paginated reads (plan -001): investor-flow reads
+            // t1602 (time-band by sector) + t1603 (detail by issue) + t1617
+            // (time/daily) and exchange-broker reads t1752 (broker-by-issue) +
+            // t1771 (broker time-series) — all certified non-empty on in-window
+            // paper smokes (KRX open 2026-06-29).
+            "t1602", "t1603", "t1617", "t1752", "t1771",
         ];
         for tr in banner_trs {
             let page = reference
@@ -1308,9 +1314,12 @@ mod tests {
         // — all certified non-empty (20/20/20/21-row series) on in-window paper smokes
         // (KRX open 2026-06-29) — add 4. (t1109 stayed PENDING: empty 00707 in the
         // regular continuous session.)
+        // Open-window domestic paginated reads (plan -001): investor-flow t1602/t1603/
+        // t1617 + exchange-broker t1752/t1771 — all certified non-empty (20/20/20/15/1-row
+        // series) on in-window paper smokes (KRX open 2026-06-29) — add 5.
         assert_eq!(
             reference.len(),
-            229,
+            234,
             "index + the implemented reference pages"
         );
 

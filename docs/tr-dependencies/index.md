@@ -155,10 +155,10 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t1533` | 특이테마 | `market_session` | implemented | [t1533](./t1533.md) |
 | `t1537` | 테마종목별시세조회 | `market_session` | implemented | [t1537](./t1537.md) |
 | `t1601` | 투자자별종합 | `market_session` | implemented | [t1601](./t1601.md) |
-| `t1602` | 시간대별투자자매매추이 | `paginated` | tracked | [t1602](./t1602.md) |
-| `t1603` | 시간대별투자자매매추이상세 | `paginated` | tracked | [t1603](./t1603.md) |
+| `t1602` | 시간대별투자자매매추이 | `paginated` | implemented | [t1602](./t1602.md) |
+| `t1603` | 시간대별투자자매매추이상세 | `paginated` | implemented | [t1603](./t1603.md) |
 | `t1615` | 투자자매매종합1 | `market_session` | implemented | [t1615](./t1615.md) |
-| `t1617` | 투자자매매종합2 | `paginated` | tracked | [t1617](./t1617.md) |
+| `t1617` | 투자자매매종합2 | `paginated` | implemented | [t1617](./t1617.md) |
 | `t1621` | 업종별분별투자자매매동향(챠트용) | `market_session` | implemented | [t1621](./t1621.md) |
 | `t1631` | 프로그램매매종합조회 | `market_session` | tracked | [t1631](./t1631.md) |
 | `t1632` | 시간대별프로그램매매추이 | `market_session` | implemented | [t1632](./t1632.md) |
@@ -173,9 +173,9 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t1702` | 외인기관종목별동향 | `market_session` | implemented | [t1702](./t1702.md) |
 | `t1716` | 외인기관종목별동향 | `market_session` | implemented | [t1716](./t1716.md) |
 | `t1717` | 외인기관종목별동향 | `market_session` | implemented | [t1717](./t1717.md) |
-| `t1752` | 종목별상위회원사 | `paginated` | tracked | [t1752](./t1752.md) |
+| `t1752` | 종목별상위회원사 | `paginated` | implemented | [t1752](./t1752.md) |
 | `t1764` | 회원사리스트 | `market_session` | implemented | [t1764](./t1764.md) |
-| `t1771` | 종목별회원사추이 | `paginated` | tracked | [t1771](./t1771.md) |
+| `t1771` | 종목별회원사추이 | `paginated` | implemented | [t1771](./t1771.md) |
 | `t1809` | 신호조회 | `paginated` | implemented | [t1809](./t1809.md) |
 | `t1825` | 종목Q클릭검색(씽큐스마트) | `market_session` | implemented | [t1825](./t1825.md) |
 | `t1826` | 종목Q클릭검색리스트조회(씽큐스마트) | `market_session` | implemented | [t1826](./t1826.md) |
