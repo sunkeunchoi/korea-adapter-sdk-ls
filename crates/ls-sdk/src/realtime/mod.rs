@@ -48,6 +48,11 @@ pub use frame::{
     BmRow, BmtRow, CurRow, Fd0Row, IjRow, Jc0Row, Jd0Row, Jh0Row, JifRow, K1Row, KhRow, KmRow,
     KsRow, Mk2Row, NbtRow, Nh1Row, Nk1Row, Ns2Row, Ns3Row, NwsRow, Od0Row, OkRow, OmgRow, PhRow,
     ViRow, WocRow, WohRow, Yf9Row, Yk3Row, YocRow, Ys3Row,
+    // Open-window WS track-flip wave (plan 2026-06-29-001): 39 connection-reachable-only rows.
+    AfrRow, B7Row, C02Row, Cd0Row, DbmRow, DbtRow, Dc0Row, Dd0Row, Dh0Row, Dh1Row, DhaRow, Dk3Row,
+    Ds3Row, DviRow, EsnRow, Fx9Row, H02Row, H2Row, H3Row, HbRow, I5Row, Jx0Row, NbmRow, NpmRow,
+    NviRow, O02Row, Ox0Row, ShcRow, ShdRow, ShiRow, ShoRow, UbmRow, UbtRow, Uk1Row, UviRow, UysRow,
+    Yc3Row, YjRow, YjcRow,
 };
 pub use stream::WsStream;
 
