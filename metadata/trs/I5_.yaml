@@ -1,0 +1,24 @@
+tr_code: I5_
+name: 코스피ETF종목실시간NAV
+owner_class: realtime
+facets:
+  protocol: websocket
+  instrument_domain: stock
+  venue_session: krx_regular
+  date_sensitive: false
+  self_paginated: false
+  account_state: false
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: market_data
+  caller_supplied_identifiers: [shcode]
+dependencies:
+  self_continuation_fields: []
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: false
+  recommended: false
+maintenance:
+  source_spec_hash: 2e4c9470d0f8
+  last_reviewed: 2026-06-29

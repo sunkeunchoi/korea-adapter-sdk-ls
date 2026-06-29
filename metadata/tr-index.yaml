@@ -1446,6 +1446,240 @@ trs:
     protocol: websocket
     instrument_domain: stock
     venue_session: krx_regular
+  AFR:
+    file: trs/AFR.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  B7_:
+    file: trs/B7_.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  C02:
+    file: trs/C02.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: futures_options
+    venue_session: krx_extended
+  CD0:
+    file: trs/CD0.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  DBM:
+    file: trs/DBM.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: futures_options
+    venue_session: krx_extended
+  DBT:
+    file: trs/DBT.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: futures_options
+    venue_session: krx_extended
+  DC0:
+    file: trs/DC0.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: futures_options
+    venue_session: krx_extended
+  DD0:
+    file: trs/DD0.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: futures_options
+    venue_session: krx_extended
+  DH0:
+    file: trs/DH0.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: futures_options
+    venue_session: krx_extended
+  DH1:
+    file: trs/DH1.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  DHA:
+    file: trs/DHA.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  DK3:
+    file: trs/DK3.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  DS3:
+    file: trs/DS3.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  DVI:
+    file: trs/DVI.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  ESN:
+    file: trs/ESN.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  FX9:
+    file: trs/FX9.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  H02:
+    file: trs/H02.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: futures_options
+    venue_session: krx_extended
+  H2_:
+    file: trs/H2_.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  HB_:
+    file: trs/HB_.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  I5_:
+    file: trs/I5_.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  JX0:
+    file: trs/JX0.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  NBM:
+    file: trs/NBM.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  NPM:
+    file: trs/NPM.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  NVI:
+    file: trs/NVI.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  O02:
+    file: trs/O02.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: futures_options
+    venue_session: krx_extended
+  OX0:
+    file: trs/OX0.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  SHC:
+    file: trs/SHC.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  SHD:
+    file: trs/SHD.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  SHI:
+    file: trs/SHI.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  SHO:
+    file: trs/SHO.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  UBM:
+    file: trs/UBM.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: sector_index
+    venue_session: krx_regular
+  UBT:
+    file: trs/UBT.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  UK1:
+    file: trs/UK1.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  UVI:
+    file: trs/UVI.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  UYS:
+    file: trs/UYS.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
+  YC3:
+    file: trs/YC3.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  YJC:
+    file: trs/YJC.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  YJ_:
+    file: trs/YJ_.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: sector_index
+    venue_session: krx_regular
+  h3_:
+    file: trs/h3_.yaml
+    owner_class: realtime
+    protocol: websocket
+    instrument_domain: stock
+    venue_session: krx_regular
   NH1:
     file: trs/NH1.yaml
     owner_class: realtime

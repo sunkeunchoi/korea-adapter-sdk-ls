@@ -1,0 +1,24 @@
+tr_code: C02
+name: KRX야간파생 선물체결
+owner_class: realtime
+facets:
+  protocol: websocket
+  instrument_domain: futures_options
+  venue_session: krx_extended
+  date_sensitive: false
+  self_paginated: false
+  account_state: false
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: market_data
+  caller_supplied_identifiers: [futcode]
+dependencies:
+  self_continuation_fields: []
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: false
+  recommended: false
+maintenance:
+  source_spec_hash: 88f5afd49a87
+  last_reviewed: 2026-06-29

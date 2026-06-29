@@ -1,0 +1,24 @@
+tr_code: YC3
+name: 상품선물예상체결
+owner_class: realtime
+facets:
+  protocol: websocket
+  instrument_domain: futures_options
+  venue_session: krx_regular
+  date_sensitive: false
+  self_paginated: false
+  account_state: false
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: market_data
+  caller_supplied_identifiers: [futcode]
+dependencies:
+  self_continuation_fields: []
+  strong_order_fields: []
+support:
+  tracked: true
+  implemented: false
+  recommended: false
+maintenance:
+  source_spec_hash: c2aab5a669d9
+  last_reviewed: 2026-06-29
