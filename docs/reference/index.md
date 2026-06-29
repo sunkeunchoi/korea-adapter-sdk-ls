@@ -106,6 +106,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t1102` | 주식 현재가(시세) 조회 | `market_session` | recommended |
 | `t1104` | 주식현재가시세메모 | `market_session` | implemented, not yet recommended |
 | `t1105` | 주식피봇/디마크조회 | `market_session` | implemented, not yet recommended |
+| `t1301` | 주식시간대별체결조회 | `paginated` | implemented, not yet recommended |
 | `t1302` | 주식분별주가조회 | `market_session` | implemented, not yet recommended |
 | `t1305` | 기간별주가 | `paginated` | implemented, not yet recommended |
 | `t1308` | 주식시간대별체결조회챠트 | `market_session` | implemented, not yet recommended |
@@ -129,6 +130,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t1481` | 시간외등락율상위 | `paginated` | implemented, not yet recommended |
 | `t1482` | 시간외거래량상위 | `paginated` | implemented, not yet recommended |
 | `t1485` | 예상지수 | `market_session` | implemented, not yet recommended |
+| `t1486` | 시간별예상체결가 | `paginated` | implemented, not yet recommended |
 | `t1488` | 예상체결가등락율상위조회 | `paginated` | implemented, not yet recommended |
 | `t1489` | 예상체결량상위조회 | `paginated` | implemented, not yet recommended |
 | `t1492` | 단일가예상등락율상위 | `paginated` | implemented, not yet recommended |
@@ -145,6 +147,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t1632` | 시간대별프로그램매매추이 | `market_session` | implemented, not yet recommended |
 | `t1633` | 기간별프로그램매매추이 | `market_session` | implemented, not yet recommended |
 | `t1636` | 종목별프로그램매매동향 | `paginated` | implemented, not yet recommended |
+| `t1637` | 종목별프로그램매매추이 | `paginated` | implemented, not yet recommended |
 | `t1638` | 종목별잔량/사전공시 | `market_session` | implemented, not yet recommended |
 | `t1640` | 프로그램매매종합조회(미니) | `market_session` | implemented, not yet recommended |
 | `t1662` | 시간대별프로그램매매추이(차트) | `market_session` | implemented, not yet recommended |
@@ -218,6 +221,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t8451` | (통합)주식챠트(일주월년) API용 | `paginated` | implemented, not yet recommended |
 | `t8452` | (통합)주식챠트(N분) API용 | `paginated` | implemented, not yet recommended |
 | `t8453` | (통합)주식챠트(틱/N틱) API용 | `paginated` | implemented, not yet recommended |
+| `t8454` | (통합)주식시간대별체결2 API용 | `paginated` | implemented, not yet recommended |
 | `t8462` | KRX야간파생 투자자기간별(API용) | `market_session` | implemented, not yet recommended |
 | `t8464` | 선물옵션차트(틱/n틱) | `paginated` | implemented, not yet recommended |
 | `t8465` | 선물/옵션차트(N분) | `paginated` | implemented, not yet recommended |

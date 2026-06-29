@@ -1132,6 +1132,86 @@ pub const T1809_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+/// t1109 — 시간외체결량 (after-hours tick conclusion; self-paginated on the body
+/// `dan_chetime`/`idx` cursor, `idx` serialized as a JSON number). Open-window
+/// domestic reads (plan -001).
+pub const T1109_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1109",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
+/// t1301 — 시간대별체결조회 (time-band tick conclusion; self-paginated on the body
+/// `cts_time` cursor; `cvolume` filter serialized as a JSON number). Open-window
+/// domestic reads (plan -001).
+pub const T1301_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1301",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1486 — 예상체결가등락율 (expected-conclusion; self-paginated on the body
+/// `cts_time` cursor; `cnt` count serialized as a JSON number). Open-window
+/// domestic reads (plan -001).
+pub const T1486_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1486",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8454 — 시간대별체결조회 (exchange-qualified time-band tick conclusion;
+/// self-paginated on the body `cts_time` cursor; `cvolume` filter serialized as a
+/// JSON number). Open-window domestic reads (plan -001).
+pub const T8454_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8454",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
+/// t1637 — 프로그램매매추이(종목별) (per-stock program-trade flow; self-paginated on
+/// the body `cts_idx` cursor serialized as a JSON number). Open-window domestic
+/// reads (plan -001).
+pub const T1637_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1637",
+    path: "/stock/program",
+    module: "stock",
+    group: "[주식] 프로그램",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// t1452 — 거래량상위 (top trading volume; single-page body-`idx` paginated).
 pub const T1452_POLICY: EndpointPolicy = EndpointPolicy {
     tr_code: "t1452",
@@ -4019,6 +4099,13 @@ mod tests {
             T1636_POLICY,
             // Closed-window more-flips wave (plan -001): self-paginated stock read (signal search).
             T1809_POLICY,
+            // Open-window domestic reads (plan -001): self-paginated stock tick/conclusion
+            // + program-flow reads.
+            T1109_POLICY,
+            T1301_POLICY,
+            T1486_POLICY,
+            T8454_POLICY,
+            T1637_POLICY,
             CSPAQ12200_POLICY,
             CSPAQ12300_POLICY,
             CSPAQ22200_POLICY,

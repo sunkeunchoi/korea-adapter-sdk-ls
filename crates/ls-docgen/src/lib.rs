@@ -1116,6 +1116,12 @@ mod tests {
             // t1927, stock-loan/대차 daily trend t1941 — all certified non-empty on
             // in-window paper smokes (KRX open 2026-06-29).
             "t1716", "t1902", "t1904", "t1927", "t1941",
+            // Open-window domestic paginated reads (plan -001): time-band tick
+            // conclusion t1301 + t8454, expected-conclusion t1486, per-stock
+            // program-trade flow t1637 — all certified non-empty on in-window paper
+            // smokes (KRX open 2026-06-29). t1109 (시간외체결량) PENDS: empty 00707
+            // in the regular continuous session (after-hours data does not populate).
+            "t1301", "t1486", "t8454", "t1637",
         ];
         for tr in banner_trs {
             let page = reference
@@ -1297,9 +1303,14 @@ mod tests {
         // intraday-trend t1902 + constituents t1904, short-sale daily trend t1927,
         // stock-loan/대차 daily trend t1941 — all certified non-empty on in-window
         // paper smokes (KRX open 2026-06-29) — add 5.
+        // Open-window domestic paginated reads (plan -001): time-band tick conclusion
+        // t1301 + t8454, expected-conclusion t1486, per-stock program-trade flow t1637
+        // — all certified non-empty (20/20/20/21-row series) on in-window paper smokes
+        // (KRX open 2026-06-29) — add 4. (t1109 stayed PENDING: empty 00707 in the
+        // regular continuous session.)
         assert_eq!(
             reference.len(),
-            225,
+            229,
             "index + the implemented reference pages"
         );
 

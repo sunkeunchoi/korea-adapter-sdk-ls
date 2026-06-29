@@ -52,6 +52,7 @@ use ls_sdk::paginated::{
     T1305Request, T8410Request, T8451Request, T8419Request, T4203Request, T3401Request,
     T1310Request, T1404Request, T1410Request, T1411Request, T1488Request, T1636Request,
     T1809Request,
+    T1109Request, T1301Request, T1486Request, T8454Request, T1637Request,
     T8417Request, T8418Request, T8411Request, T8452Request, T8453Request,
     T8464Request, T8465Request, T8466Request, T8405Request,
     T1444Request, T1422Request, T1427Request, T1442Request, T1405Request, T1960Request, T1961Request, T1966Request, T1921Request,
@@ -2942,6 +2943,187 @@ async fn live_smoke_t1809() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t1809 market-data failure (not evidence)");
             panic!("live-smoke-t1809 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1109`: paper guard → token → one `t1109` after-hours tick
+/// conclusion read (shcode=005930, first-page dan_chetime="", idx=0 as a JSON
+/// number). A NON-EMPTY tick array proves the read round-trips; an empty `00707`
+/// (R7) does NOT record — it dispositions to empty-result PENDING. The recorded
+/// line is credential-free (`rsp_cd` + row count, never `rsp_msg`); a failed run
+/// emits a `SMOKE-FAIL` stderr line, never a `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1109`"]
+async fn live_smoke_t1109() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.paginated().after_hours_ticks(&T1109Request::new("005930")).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock1.is_empty(),
+                "live-smoke-t1109: empty result (00707) — PENDING, not Implemented (R7)"
+            );
+            // NAMED market-data witness (price), not a status/count field.
+            assert!(
+                !resp.outblock1[0].dan_price.is_empty(),
+                "live-smoke-t1109: first row must carry a real dan_price"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "ticks")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1109", &format!("env=paper shcode=005930 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1109 market-data failure (not evidence)");
+            panic!("live-smoke-t1109 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1301`: paper guard → token → one `t1301` time-band tick
+/// conclusion read (shcode=005930, cvolume=0 as a JSON number, starttime=0900
+/// endtime=1530, first-page cts_time=""). A NON-EMPTY tick array proves the read
+/// round-trips; an empty `00707` (R7) does NOT record. Credential-free line; a
+/// failed run emits a `SMOKE-FAIL` stderr line, never a `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1301`"]
+async fn live_smoke_t1301() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .paginated()
+        .time_band_ticks(&T1301Request::new("005930", "0900", "1530"))
+        .await
+    {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock1.is_empty(),
+                "live-smoke-t1301: empty result (00707) — PENDING, not Implemented (R7)"
+            );
+            assert!(
+                !resp.outblock1[0].price.is_empty(),
+                "live-smoke-t1301: first row must carry a real price"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "ticks")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1301", &format!("env=paper shcode=005930 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1301 market-data failure (not evidence)");
+            panic!("live-smoke-t1301 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1486`: paper guard → token → one `t1486` expected-conclusion
+/// read (shcode=005930, first-page cts_time="", cnt=20 as a JSON number,
+/// exchgubun=1). A NON-EMPTY expected array proves the read round-trips; an empty
+/// `00707` (R7) does NOT record. NOTE 예상체결 mainly populates during auction
+/// phases — a continuous-session empty dispositions to PENDING. Credential-free
+/// line; a failed run emits a `SMOKE-FAIL` stderr line, never a `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1486`"]
+async fn live_smoke_t1486() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.paginated().expected_ticks(&T1486Request::new("005930", "1")).await {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock1.is_empty(),
+                "live-smoke-t1486: empty result (00707/auction-only) — PENDING, not Implemented (R7)"
+            );
+            assert!(
+                !resp.outblock1[0].price.is_empty(),
+                "live-smoke-t1486: first row must carry a real price"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1486", &format!("env=paper shcode=005930 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1486 market-data failure (not evidence)");
+            panic!("live-smoke-t1486 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t8454`: paper guard → token → one `t8454` exchange-qualified
+/// time-band tick conclusion read (shcode=005930, cvolume=0 as a JSON number,
+/// starttime=0900 endtime=1530, first-page cts_time="", exchgubun=1). A NON-EMPTY
+/// tick array proves the read round-trips; an empty `00707` (R7) does NOT record.
+/// Credential-free line; a failed run emits a `SMOKE-FAIL` stderr line.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8454`"]
+async fn live_smoke_t8454() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .paginated()
+        .time_band_ticks_ex(&T8454Request::new("005930", "0900", "1530", "1"))
+        .await
+    {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock1.is_empty(),
+                "live-smoke-t8454: empty result (00707) — PENDING, not Implemented (R7)"
+            );
+            assert!(
+                !resp.outblock1[0].price.is_empty(),
+                "live-smoke-t8454: first row must carry a real price"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "ticks")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t8454", &format!("env=paper shcode=005930 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8454 market-data failure (not evidence)");
+            panic!("live-smoke-t8454 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1637`: paper guard → token → one `t1637` per-stock
+/// program-trade flow read (gubun1=0, gubun2=0, shcode=005930, date=today,
+/// exchgubun=1, first-page cts_idx=0 as a JSON number). A NON-EMPTY program-flow
+/// array proves the read round-trips; an empty `00707` (R7) does NOT record.
+/// Credential-free line; a failed run emits a `SMOKE-FAIL` stderr line.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1637`"]
+async fn live_smoke_t1637() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let yyyymmdd = Utc::now().format("%Y%m%d").to_string();
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk
+        .paginated()
+        .program_trade_flow(&T1637Request::new("0", "0", "005930", &yyyymmdd, "1"))
+        .await
+    {
+        Ok(resp) => {
+            assert!(
+                !resp.outblock1.is_empty(),
+                "live-smoke-t1637: empty result (00707) — PENDING, not Implemented (R7)"
+            );
+            assert!(
+                !resp.outblock1[0].price.is_empty(),
+                "live-smoke-t1637: first row must carry a real price"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t1637", &format!("env=paper shcode=005930 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1637 market-data failure (not evidence)");
+            panic!("live-smoke-t1637 failed: {e}");
         }
     }
 }
