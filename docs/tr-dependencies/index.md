@@ -171,7 +171,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t1664` | 투자자매매종합(챠트) | `market_session` | implemented | [t1664](./t1664.md) |
 | `t1665` | 기간별투자자매매추이(차트) | `market_session` | implemented | [t1665](./t1665.md) |
 | `t1702` | 외인기관종목별동향 | `market_session` | implemented | [t1702](./t1702.md) |
-| `t1716` | 외인기관종목별동향 | `market_session` | tracked | [t1716](./t1716.md) |
+| `t1716` | 외인기관종목별동향 | `market_session` | implemented | [t1716](./t1716.md) |
 | `t1717` | 외인기관종목별동향 | `market_session` | implemented | [t1717](./t1717.md) |
 | `t1752` | 종목별상위회원사 | `paginated` | tracked | [t1752](./t1752.md) |
 | `t1764` | 회원사리스트 | `market_session` | implemented | [t1764](./t1764.md) |
@@ -185,14 +185,14 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t1860` | 서버저장조건 실시간검색 | `standalone` | tracked | [t1860](./t1860.md) |
 | `t1866` | 서버저장조건 리스트조회 | `paginated` | implemented | [t1866](./t1866.md) |
 | `t1901` | ETF현재가(시세)조회 | `market_session` | implemented | [t1901](./t1901.md) |
-| `t1902` | ETF시간별추이 | `market_session` | tracked | [t1902](./t1902.md) |
+| `t1902` | ETF시간별추이 | `market_session` | implemented | [t1902](./t1902.md) |
 | `t1903` | ETF일별추이 | `market_session` | implemented | [t1903](./t1903.md) |
-| `t1904` | ETF구성종목조회 | `market_session` | tracked | [t1904](./t1904.md) |
+| `t1904` | ETF구성종목조회 | `market_session` | implemented | [t1904](./t1904.md) |
 | `t1906` | ETFLP호가 | `market_session` | implemented | [t1906](./t1906.md) |
 | `t1921` | 신용거래동향 | `paginated` | implemented | [t1921](./t1921.md) |
 | `t1926` | 종목별신용정보 | `market_session` | implemented | [t1926](./t1926.md) |
-| `t1927` | 공매도일별추이 | `market_session` | tracked | [t1927](./t1927.md) |
-| `t1941` | 종목별대차거래일간추이 | `market_session` | tracked | [t1941](./t1941.md) |
+| `t1927` | 공매도일별추이 | `market_session` | implemented | [t1927](./t1927.md) |
+| `t1941` | 종목별대차거래일간추이 | `market_session` | implemented | [t1941](./t1941.md) |
 | `t1950` | ELW현재가(시세)조회 | `market_session` | implemented | [t1950](./t1950.md) |
 | `t1951` | ELW시간대별체결조회 | `paginated` | tracked | [t1951](./t1951.md) |
 | `t1954` | ELW일별주가 | `market_session` | tracked | [t1954](./t1954.md) |

@@ -1111,6 +1111,11 @@ mod tests {
             // quote-remainder trend t1471, VP-relative ranking t1475 — all certified
             // non-empty on in-window paper smokes (KRX open 2026-06-29).
             "t1702", "t1717", "t1665", "t1471", "t1475",
+            // Open-window domestic reads: foreign/institution by-issue trend t1716,
+            // ETF intraday-trend t1902 + constituents t1904, short-sale daily trend
+            // t1927, stock-loan/대차 daily trend t1941 — all certified non-empty on
+            // in-window paper smokes (KRX open 2026-06-29).
+            "t1716", "t1902", "t1904", "t1927", "t1941",
         ];
         for tr in banner_trs {
             let page = reference
@@ -1288,9 +1293,13 @@ mod tests {
         // net-buy trend t1717, investor-by-sector chart t1665, intraday
         // quote-remainder trend t1471, VP-relative ranking t1475 — all certified
         // non-empty on in-window paper smokes (KRX open 2026-06-29) — add 5.
+        // Open-window domestic reads: foreign/institution by-issue trend t1716, ETF
+        // intraday-trend t1902 + constituents t1904, short-sale daily trend t1927,
+        // stock-loan/대차 daily trend t1941 — all certified non-empty on in-window
+        // paper smokes (KRX open 2026-06-29) — add 5.
         assert_eq!(
             reference.len(),
-            220,
+            225,
             "index + the implemented reference pages"
         );
 

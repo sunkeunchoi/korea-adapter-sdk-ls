@@ -151,6 +151,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t1664` | 투자자매매종합(챠트) | `market_session` | implemented, not yet recommended |
 | `t1665` | 기간별투자자매매추이(차트) | `market_session` | implemented, not yet recommended |
 | `t1702` | 외인기관종목별동향 | `market_session` | implemented, not yet recommended |
+| `t1716` | 외인기관종목별동향 | `market_session` | implemented, not yet recommended |
 | `t1717` | 외인기관종목별동향 | `market_session` | implemented, not yet recommended |
 | `t1764` | 회원사리스트 | `market_session` | implemented, not yet recommended |
 | `t1809` | 신호조회 | `paginated` | implemented, not yet recommended |
@@ -159,10 +160,14 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t1859` | 서버저장조건 조건검색 | `market_session` | implemented, not yet recommended |
 | `t1866` | 서버저장조건 리스트조회 | `paginated` | implemented, not yet recommended |
 | `t1901` | ETF현재가(시세)조회 | `market_session` | implemented, not yet recommended |
+| `t1902` | ETF시간별추이 | `market_session` | implemented, not yet recommended |
 | `t1903` | ETF일별추이 | `market_session` | implemented, not yet recommended |
+| `t1904` | ETF구성종목조회 | `market_session` | implemented, not yet recommended |
 | `t1906` | ETFLP호가 | `market_session` | implemented, not yet recommended |
 | `t1921` | 신용거래동향 | `paginated` | implemented, not yet recommended |
 | `t1926` | 종목별신용정보 | `market_session` | implemented, not yet recommended |
+| `t1927` | 공매도일별추이 | `market_session` | implemented, not yet recommended |
+| `t1941` | 종목별대차거래일간추이 | `market_session` | implemented, not yet recommended |
 | `t1950` | ELW현재가(시세)조회 | `market_session` | implemented, not yet recommended |
 | `t1956` | ELW현재가(확정지급액)조회 | `market_session` | implemented, not yet recommended |
 | `t1958` | ELW종목비교 | `market_session` | implemented, not yet recommended |
