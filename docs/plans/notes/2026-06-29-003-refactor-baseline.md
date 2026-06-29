@@ -70,6 +70,54 @@ Family files land at 611–1,776 lines. Three (`investor_flow` 1,776 / `charts` 
 `masters` 1,661) sit just above the ~1,500 ceiling by genuine single-concept cohesion
 (DoD permits this); the rest are well under.
 
+## U6 (Wave 4) serde-attr consolidation — VERDICT: SKIP all three types
+
+Decided on measured evidence from the KTD5 pre-check prototype (not optimism). The
+DoD explicitly permits skipping Wave 4 with recorded rationale.
+
+**Attribute inventory (workspace):** `serialize_with = "ls_core::string_as_number"`
+×214 (request numeric, serialize-only); `deserialize_with = "ls_core::string_or_number"`
+×2,724 (response, deserialize-only); `serialize_with = "ls_core::string_as_decimal"`
+×**1** (one F-O futures-price field, `account/capacity.rs`). There are **zero**
+`Option<>`-numeric fields using these helpers (the optional case uses a separate
+`option_string_or_number`, out of this scope).
+
+**Prototype run (R1-safety + reduction measured):** built `with =` modules in
+`ls-core` (`wire_str` = {serialize: serialize_str, deserialize: string_or_number};
+`wire_num`/`wire_dec` = {serialize: string_as_*, deserialize: string_or_number}),
+converted `paginated/chart.rs` (331 `string_or_number` + 28 `string_as_number`
+fields) to `#[serde(with = "ls_core::wire_*")]`, and ran the offline suite.
+
+- **Behavior:** `paginated_tests` 158/158 passed — `with =` is R1-safe (field type
+  stays `String`; response default-serialize ≡ `serialize_str`; request structs are
+  `Serialize`-only so the bundled deserialize is never emitted). The IGW40011
+  direction + tolerant-decode tests passed.
+- **Reduction:** attribute-string characters 20,183 → 13,135 (**−35%**) but **line
+  count 2,304 → 2,304 (0%)** — the consolidation removes *string characters*, never
+  the ~2,400 cited attr *lines* (still exactly one `#[serde(...)]` per field). No
+  R1-safe mechanism reduces the line count (a newtype would, but retypes
+  `pub field: String` → violates R1 per KTD5; a container default can't set per-field
+  coercion).
+
+**Why skip despite passing + a 35% string cut:**
+1. It addresses none of the framed cost — the attr-*line* count is irreducible under
+   R1; only the per-string length shrinks (cosmetic).
+2. It **hides the load-bearing IGW40011 wire direction.** `serialize_with` (request →
+   JSON number) vs `deserialize_with` (response → tolerant) names the direction at
+   every field; a `with =` module collapses both into one opaque name, reducing
+   visibility of the codebase's most important wire invariant (AGENTS.md gotcha #1).
+   That is a net **R6/maintainability regression**, not a gain.
+3. `string_as_number → wire_num` carries a real R1 edge-risk: any `Request` struct
+   that also derives `Deserialize` would silently gain number-tolerant deserialize
+   (default String parse → `string_or_number`). chart.rs requests are `Serialize`-only
+   so the prototype didn't exercise this, but a workspace-wide rollout would.
+4. `string_as_decimal` has a single field — nothing to consolidate.
+
+**Per-type verdict:** `string_or_number` SKIP, `string_as_number` SKIP,
+`string_as_decimal` SKIP. The prototype (`wire_*` modules + chart.rs conversion) was
+reverted; no behavior or public-API change ships from Wave 4. The explicit
+single-direction helpers remain the intended minimal, direction-revealing form.
+
 ## Gate sequence (every chunk)
 
 ```
