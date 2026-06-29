@@ -7,7 +7,7 @@ KOSDAQ프로그램매매전체집계
 ## Support
 
 - Tracked: yes
-- Implemented: no
+- Implemented: yes
 - Recommended: no
 
 ## Ownership

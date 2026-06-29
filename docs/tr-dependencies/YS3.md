@@ -7,7 +7,7 @@ KOSPI예상체결
 ## Support
 
 - Tracked: yes
-- Implemented: no
+- Implemented: yes
 - Recommended: no
 
 ## Ownership

@@ -7,7 +7,7 @@ KOSPI프로그램매매종목별
 ## Support
 
 - Tracked: yes
-- Implemented: no
+- Implemented: yes
 - Recommended: no
 
 ## Ownership

@@ -1098,6 +1098,11 @@ mod tests {
             "FC9", "FH9",
             "SC0", "SC1", "SC2", "SC3", "SC4", "C01", "O01", "H01", "AS0", "AS1", "AS2", "AS3",
             "AS4", "TC1", "TC2", "TC3",
+            // Closure flip WS batch (plan -004): 31 connection-reachable-only realtime
+            // channels flipped on a clean paper lifecycle sweep (make live-smoke-ws-p3).
+            "NS3", "NH1", "NS2", "NK1", "NBT", "KS_", "OK_", "KH_", "KM_", "PH_", "K1_", "IJ_",
+            "YS3", "YK3", "VI_", "JC0", "JH0", "JD0", "FD0", "OD0", "OMG", "YF9", "YOC", "BM_",
+            "WOC", "WOH", "JIF", "NWS", "BMT", "CUR", "MK2",
         ];
         for tr in banner_trs {
             let page = reference
@@ -1270,7 +1275,7 @@ mod tests {
         // (o3107/o3127 stayed PENDING: account-state watchlist boards empty/zero.)
         assert_eq!(
             reference.len(),
-            182,
+            213,
             "index + the implemented reference pages"
         );
 

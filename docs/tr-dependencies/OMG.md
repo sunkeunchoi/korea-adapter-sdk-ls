@@ -7,7 +7,7 @@ KOSPI200옵션민감도
 ## Support
 
 - Tracked: yes
-- Implemented: no
+- Implemented: yes
 - Recommended: no
 
 ## Ownership

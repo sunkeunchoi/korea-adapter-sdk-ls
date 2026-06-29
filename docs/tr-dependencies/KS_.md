@@ -7,7 +7,7 @@ KOSDAQ우선호가
 ## Support
 
 - Tracked: yes
-- Implemented: no
+- Implemented: yes
 - Recommended: no
 
 ## Ownership
