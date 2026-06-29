@@ -625,7 +625,7 @@ correcting `owner_class` from `standalone` to `market_session` at flip time
 |---|---|---|
 | t1988 | **implemented** | `rsp_cd=00000 assets=71` (기초자산리스트조회 ELW underlying-asset list; `mkt_gb="0"` all markets, all filters off). The prior `IGW40011` (§8) was the `from_rate`/`to_rate` **wire-type defect** (KTD4): the two Number-typed request fields were quoted strings; serializing them as JSON numbers via `string_as_number` cleared it. Canonical out-block field 코스피종목건수 (`ksp_cnt`); detail rows under `t1988OutBlock1` (Object-Array, `de_vec_or_single`). |
 | t3320 | **implemented** | `rsp_cd=00000 summary=1` (FNG_요약 FnGuide company summary; `gicode="005930"` bare 6-digit 삼성전자, accepted live — the `A005930` FnGuide form returned a sparse body, the bare 6-digit form returns the populated summary, found via a raw-probe A/B per KTD9). Single objects under `t3320OutBlock` (summary) + `t3320OutBlock1` (ratios); canonical 한글기업명 (`company`) + 현재가 (`price`) pinned to distinct values (KTD6). |
-| t3102 | **HELD — input-unresolved** | 뉴스본문 (news body) requires a news number `sNewsno`. The ONLY catalog producer of a news number is `NWS` (실시간뉴스제목패킷), a realtime **WebSocket** feed held to the separate realtime effort (out of scope). No REST producer of `sNewsno` exists and no implemented TR yields one, so the caller input cannot be discovered in this REST-only wave. SDK structs + offline tests authored (title block round-trips) but no smoke target, no flip. |
+| t3102 | **HELD — feeder identified (`NWS`), awaiting a live news event** | 뉴스본문 (news body) requires a news number `sNewsno`. Its feeder is now identified and Implemented: `NWS` (실시간뉴스제목패킷, realtime WebSocket) emits a 24-char `realkey` that is structurally the `sNewsno` input. A chained WS→REST smoke (`live_smoke_nws_t3102`) is staged: subscribe `NWS`, capture a `realkey`, thread it into `t3102`. No REST producer of `sNewsno` exists, so the flip remains gated on a **live** news frame — and the off-hours paper base rate may be ~zero. SDK structs + offline tests authored (title block round-trips); flip awaits a carrying chained smoke. |
 
 **t1988 — IGW40011 resolved, not environmental.** The §8 disposition recorded
 t1988 PENDING on persistent `IGW40011` and called for "gateway-form resolution".
@@ -642,13 +642,16 @@ bare 6-digit ticker returns the populated summary. The smoke + tests use the bar
 form; its `caller_supplied_identifiers` (§2, `[gicode]`) and `venue_session` (§1,
 `krx_regular`) rows are **retired** on the non-empty success.
 
-**t3102 — HELD, not PENDING (recorded reason).** PENDING is for callable-but-empty
-or environmental; t3102 is neither — it is structurally un-callable in a REST-only
-wave because its sole required input has no REST source. Its `venue_session` (§1)
-and `caller_supplied_identifiers` (§2, `[sNewsno]`) rows are **retained**,
-unconfirmed; `owner_class` stays the `standalone` placeholder (not reclassified
-absent a live confirmation). A future realtime wave that models the `NWS` channel
-can source a news number and implement it.
+**t3102 — HELD, feeder now identified (2026-06-29 update).** The original REST-only
+wave recorded t3102 HELD because its sole required input (`sNewsno`) had no REST
+source. That blocker is now partly resolved: `NWS` is Implemented and its `realkey`
+is the news-number feeder, so the chain `NWS.realkey → t3102.sNewsno` is the unblock
+path (documented at `crates/ls-sdk/src/market_session/mod.rs:7704–11538`). A chained
+WS→REST smoke (`live_smoke_nws_t3102`) is staged. The flip stays HELD until that
+smoke carries — it depends on a live news frame on the paper feed, whose off-hours
+base rate may be ~zero. Its `venue_session` (§1) and `caller_supplied_identifiers`
+(§2, `[sNewsno]`) rows are **retained**, unconfirmed; `owner_class` stays the
+`standalone` placeholder (not reclassified absent a live confirmation).
 
 **Field-`type` facets (§4)** stay inventory-wide retired; nothing to retire here.
 Recommended tier untouched (no Focused Evidence, no `recommendation` block, no
