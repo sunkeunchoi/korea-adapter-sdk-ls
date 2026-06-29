@@ -1128,6 +1128,16 @@ mod tests {
             // t1771 (broker time-series) — all certified non-empty on in-window
             // paper smokes (KRX open 2026-06-29).
             "t1602", "t1603", "t1617", "t1752", "t1771",
+            // Open-window F-O + domestic reads (plan -001): F/O investor-by-time
+            // t2541, F/O daily OHLCV t2214, F/O N-minute bars t2424, F/O unusual-
+            // volume conclusion counts t2210 (front-month code self-sourced from
+            // t8467), deposit-balance trend t8428, and KRX night-derivatives
+            // investor-timeslot t8463 (day session, paper_incompatible retracted) —
+            // all certified non-empty on in-window paper smokes (KRX open
+            // 2026-06-29). t8455/g3190 stayed PENDING (night-master/overseas-stock
+            // carry no day-session/paper feed, flags kept); t8427 PENDS (empty
+            // chart); o3127 PENDS (zero price/empty symbolname).
+            "t2541", "t2214", "t2424", "t2210", "t8428", "t8463",
         ];
         for tr in banner_trs {
             let page = reference
@@ -1317,9 +1327,12 @@ mod tests {
         // Open-window domestic paginated reads (plan -001): investor-flow t1602/t1603/
         // t1617 + exchange-broker t1752/t1771 — all certified non-empty (20/20/20/15/1-row
         // series) on in-window paper smokes (KRX open 2026-06-29) — add 5.
+        // Open-window F-O + domestic reads (plan -001): t2541/t2214/t2424/t2210/t8428/
+        // t8463 — all certified non-empty on in-window paper smokes (KRX open
+        // 2026-06-29) — add 6.
         assert_eq!(
             reference.len(),
-            234,
+            240,
             "index + the implemented reference pages"
         );
 

@@ -190,9 +190,13 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t1988` | 기초자산리스트조회 | `market_session` | implemented, not yet recommended |
 | `t2111` | 선물/옵션현재가(시세)조회 | `market_session` | implemented, not yet recommended |
 | `t2112` | 선물/옵션현재가호가조회 | `market_session` | implemented, not yet recommended |
+| `t2210` | 선물옵션시간대별체결조회(단일출력용) | `market_session` | implemented, not yet recommended |
+| `t2214` | 기간별주가 | `paginated` | implemented, not yet recommended |
 | `t2216` | 선물옵션틱분별체결조회차트 | `market_session` | implemented, not yet recommended |
 | `t2301` | 옵션전광판 | `market_session` | implemented, not yet recommended |
+| `t2424` | 미결제약정추이 | `market_session` | implemented, not yet recommended |
 | `t2522` | 주식선물기초자산조회 | `market_session` | implemented, not yet recommended |
+| `t2541` | 상품선물투자자매매동향(실시간) | `paginated` | implemented, not yet recommended |
 | `t2545` | 상품선물투자자매매동향(챠트용) | `market_session` | implemented, not yet recommended |
 | `t3202` | 종목별증시일정 | `market_session` | implemented, not yet recommended |
 | `t3320` | FNG_요약 | `market_session` | implemented, not yet recommended |
@@ -216,6 +220,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t8424` | 전체업종 | `market_session` | implemented, not yet recommended |
 | `t8425` | 전체테마 | `market_session` | implemented, not yet recommended |
 | `t8426` | 상품선물마스터조회(API용) | `market_session` | implemented, not yet recommended |
+| `t8428` | 증시주변자금추이 | `market_session` | implemented, not yet recommended |
 | `t8430` | 주식종목조회 | `market_session` | implemented, not yet recommended |
 | `t8431` | ELW종목조회 | `market_session` | implemented, not yet recommended |
 | `t8433` | 지수옵션마스터조회API용 | `market_session` | implemented, not yet recommended |
@@ -228,6 +233,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t8453` | (통합)주식챠트(틱/N틱) API용 | `paginated` | implemented, not yet recommended |
 | `t8454` | (통합)주식시간대별체결2 API용 | `paginated` | implemented, not yet recommended |
 | `t8462` | KRX야간파생 투자자기간별(API용) | `market_session` | implemented, not yet recommended |
+| `t8463` | KRX야간파생 투자자시간대별(API용) | `market_session` | implemented, not yet recommended |
 | `t8464` | 선물옵션차트(틱/n틱) | `paginated` | implemented, not yet recommended |
 | `t8465` | 선물/옵션차트(N분) | `paginated` | implemented, not yet recommended |
 | `t8466` | 선물/옵션차트(일주월) | `paginated` | implemented, not yet recommended |

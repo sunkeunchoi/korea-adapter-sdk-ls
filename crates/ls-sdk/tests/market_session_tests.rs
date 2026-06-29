@@ -70,6 +70,8 @@ use ls_sdk::market_session::{
     O3106OutBlock, O3106Request, O3106Response, O3121Request, O3121Response, O3125OutBlock,
     O3125Request, O3125Response, O3126OutBlock, O3126Request, O3126Response,
     O3104Request, O3104Response, O3127Request, O3127Response, T8462Request, T8462Response,
+    T8427Request, T8427Response, T2210Request, T2210Response, T2424Request, T2424Response,
+    T8428Request, T8428Response,
     T9945Request, T9945Response, T3202Request, T3202Response, T3521Request, T3521Response,
     T0167Request, T0167Response,
 };
@@ -6793,9 +6795,13 @@ fn o3104_single_or_array_and_empty_deserialize() {
 // --- o3127 — 해외선물옵션 관심종목 (watchlist board) --------------------------
 
 #[test]
-fn o3127_request_serializes_nrec_as_number() {
-    let value = serde_json::to_value(O3127Request::new("20")).expect("serialize o3127");
+fn o3127_request_serializes_nrec_as_number_and_carries_inblock1_symbol() {
+    let value = serde_json::to_value(O3127Request::new("0", "CUSN26")).expect("serialize o3127");
     assert!(value["o3127InBlock"]["nrec"].is_number(), "nrec is a JSON number (IGW40011 guard)");
+    let entries = value["o3127InBlock1"].as_array().expect("repeated InBlock1 is an array");
+    assert_eq!(entries.len(), 1, "one watched symbol");
+    assert_eq!(entries[0]["mktgb"], "0");
+    assert_eq!(entries[0]["symbol"], "CUSN26", "the watched symbol is carried (a quote-bearing request)");
 }
 
 #[test]
@@ -7119,4 +7125,167 @@ fn t0167_fields_parse_from_string_and_number() {
     let resp: T0167Response =
         serde_json::from_value(as_string).expect("string JSON must deserialize");
     assert_eq!(resp.outblock.time, "102652926435");
+}
+
+// --- F-O open-window flip wave (plan -001): t8427/t2210/t2424/t8428 --------
+
+const INVESTINFO_PATH: &str = "/stock/investinfo";
+
+/// `t8427` request: `actprice` serializes as a JSON number (IGW40011 guard); the
+/// rest stay strings; no out-block leaks.
+#[test]
+fn t8427_request_serializes_actprice_as_number() {
+    let value = serde_json::to_value(T8427Request::new("A0669000", "2026", "09", "20260629"))
+        .expect("serialize t8427");
+    let ib = &value["t8427InBlock"];
+    assert!(ib["actprice"].is_number(), "actprice is a JSON number");
+    assert_eq!(ib["fo_gbn"], "F");
+    assert_eq!(ib["focode"], "A0669000");
+    assert_eq!(ib["dt_gbn"], "1", "daily default");
+    assert!(value.get("t8427OutBlock1").is_none(), "no out-block leaks");
+}
+
+/// `t8427` response: OHLCV rows round-trip through dispatch with a real `close`;
+/// number/string wire forms both parse; empty is the pending case.
+#[tokio::test]
+async fn t8427_deserializes_through_dispatch_and_empty() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(FO_MARKET_DATA_PATH))
+        .and(header("tr_cd", "t8427"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"{"rsp_cd":"00000","t8427OutBlock1":[{"date":"20260629","time":"100000","open":"345.1","high":"346","low":"344","close":345.55,"volume":12345,"openyak":"678"}]}"#,
+        ).insert_header("content-type", "application/json"))
+        .mount(&server)
+        .await;
+    let resp = sdk_for(&server)
+        .market_session()
+        .fo_minute_day_chart(&T8427Request::new("A0669000", "2026", "09", "20260629"))
+        .await
+        .expect("t8427 should succeed");
+    assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock1[0].close, "345.55", "close via string_or_number (number wire)");
+
+    let empty: T8427Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8427OutBlock1": []
+    }))
+    .expect("empty deserializes");
+    assert!(empty.outblock1.is_empty(), "empty chart is the pending case");
+}
+
+/// `t2210` request: `cvolume` serializes as a JSON number; window times stay strings.
+#[test]
+fn t2210_request_serializes_cvolume_as_number() {
+    let value = serde_json::to_value(T2210Request::new("A0669000", "0900", "1530")).expect("serialize t2210");
+    let ib = &value["t2210InBlock"];
+    assert!(ib["cvolume"].is_number(), "cvolume is a JSON number");
+    assert_eq!(ib["stime"], "0900");
+    assert_eq!(ib["etime"], "1530");
+}
+
+/// `t2210` response: the buy/sell conclusion counts round-trip; a number-form
+/// `msvolume` parses via string_or_number.
+#[test]
+fn t2210_conclusion_counts_round_trip() {
+    let resp: T2210Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t2210OutBlock": { "mdvolume": "120", "mdchecnt": "3", "msvolume": 95, "mschecnt": "2" }
+    }))
+    .expect("conclusion counts deserialize");
+    assert_eq!(resp.outblock.msvolume, "95", "buy volume witness via string_or_number");
+    assert_eq!(resp.outblock.mdvolume, "120");
+
+    let empty: T2210Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t2210OutBlock": {}
+    }))
+    .expect("empty deserializes");
+    assert!(empty.outblock.msvolume.is_empty(), "empty counts is the pending case");
+}
+
+/// `t2424` request: `nmin`/`cnt` serialize as JSON numbers; `focode` stays a string.
+#[test]
+fn t2424_request_serializes_nmin_and_cnt_as_numbers() {
+    let value = serde_json::to_value(T2424Request::new("A0669000")).expect("serialize t2424");
+    let ib = &value["t2424InBlock"];
+    assert!(ib["nmin"].is_number(), "nmin is a JSON number");
+    assert!(ib["cnt"].is_number(), "cnt is a JSON number");
+    assert_eq!(ib["focode"], "A0669000");
+}
+
+/// `t2424` response: the header `price` + bar array round-trip; empty is pending.
+#[tokio::test]
+async fn t2424_deserializes_through_dispatch_and_empty() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(FO_MARKET_DATA_PATH))
+        .and(header("tr_cd", "t2424"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"{"rsp_cd":"00000","t2424OutBlock":{"price":345.55,"volume":12345,"openyak":"678"},"t2424OutBlock1":[{"dt":"20260629100000","open":"345.1","high":"346","low":"344","close":"345.55"}]}"#,
+        ).insert_header("content-type", "application/json"))
+        .mount(&server)
+        .await;
+    let resp = sdk_for(&server)
+        .market_session()
+        .fo_minute_bars(&T2424Request::new("A0669000"))
+        .await
+        .expect("t2424 should succeed");
+    assert_eq!(resp.outblock.price, "345.55", "price witness via string_or_number");
+    assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock1[0].close, "345.55");
+
+    let empty: T2424Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t2424OutBlock": {}, "t2424OutBlock1": []
+    }))
+    .expect("empty deserializes");
+    assert!(empty.outblock1.is_empty(), "empty bars is the pending case");
+}
+
+/// `t8428` request: `cnt` serializes as a JSON number; the date range stays strings.
+#[test]
+fn t8428_request_serializes_cnt_as_number() {
+    let value = serde_json::to_value(T8428Request::new("20260601", "20260629", "001")).expect("serialize t8428");
+    let ib = &value["t8428InBlock"];
+    assert!(ib["cnt"].is_number(), "cnt is a JSON number");
+    assert_eq!(ib["fdate"], "20260601");
+    assert_eq!(ib["upcode"], "001");
+    assert_eq!(ib["gubun"], "1");
+}
+
+/// `t8428` response: deposit-trend rows round-trip with a real `jisu`/`custmoney`;
+/// single-or-array tolerated; empty is pending.
+#[tokio::test]
+async fn t8428_deserializes_through_dispatch_and_empty() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(INVESTINFO_PATH))
+        .and(header("tr_cd", "t8428"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(
+            r#"{"rsp_cd":"00000","t8428OutBlock":{"date":"20260629","idx":1},"t8428OutBlock1":[{"date":"20260627","jisu":"2610.62","sign":"2","change":"-3.1","volume":263165,"custmoney":"550000","yecha":"100"}]}"#,
+        ).insert_header("content-type", "application/json"))
+        .mount(&server)
+        .await;
+    let resp = sdk_for(&server)
+        .market_session()
+        .deposit_balance_trend(&T8428Request::new("20260601", "20260629", "001"))
+        .await
+        .expect("t8428 should succeed");
+    assert_eq!(resp.outblock1.len(), 1);
+    assert_eq!(resp.outblock1[0].jisu, "2610.62", "index witness round-trips");
+    assert_eq!(resp.outblock1[0].custmoney, "550000", "customer-deposit witness");
+
+    let single: T8428Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8428OutBlock1": { "date": "20260627", "jisu": 2610.62, "custmoney": 550000 }
+    }))
+    .expect("single tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+
+    let empty: T8428Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8428OutBlock1": []
+    }))
+    .expect("empty deserializes");
+    assert!(empty.outblock1.is_empty(), "empty trend is the pending case");
 }

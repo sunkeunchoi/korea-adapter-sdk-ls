@@ -42,6 +42,7 @@ use ls_sdk::market_session::{
     G3101Request, G3102Request, G3103Request, G3104Request, G3106Request, G3190Request,
     O3101Request, O3105Request, O3106Request, O3121Request, O3125Request, O3126Request,
     O3104Request, O3127Request, T8462Request,
+    T8427Request, T2210Request, T2424Request, T8428Request,
     T9945Request, T3202Request, T3521Request,
     T0167Request,
 };
@@ -60,6 +61,7 @@ use ls_sdk::paginated::{
     T3518Request,
     O3103Request, O3108Request, O3116Request, O3117Request, O3123Request, O3128Request,
     O3136Request, O3137Request, O3139Request,
+    T2541Request, T2214Request,
 };
 use ls_sdk_test_support::{assert_nonempty_witness, scrub_secrets};
 use ls_sdk::realtime::WsLane;
@@ -6009,22 +6011,29 @@ async fn live_smoke_t8463() {
     let date = Utc::now().format("%Y-%m-%d");
     match sdk
         .market_session()
-        .night_investor_timeslot(&T8463Request::new("N", "F", "101"))
+        .night_investor_timeslot(&T8463Request::new("D", "F", "K2I"))
         .await
     {
         Ok(resp) => {
-            if resp.outblock1.is_empty() {
+            // Named witness: a real investor row carries a net-buy volume
+            // (외국인순매수거래량 formsvol / 개인순매수거래량 indmsvol). An empty
+            // array, or rows with only sentinel/zero volumes, is the off-data case.
+            let witnessed = resp
+                .outblock1
+                .iter()
+                .any(|r| !r.formsvol.is_empty() || !r.indmsvol.is_empty());
+            if resp.outblock1.is_empty() || !witnessed {
                 eprintln!(
-                    "SMOKE-FAIL target=live-smoke-t8463 empty time-series array (rsp_cd={}) — night window closed? re-run ~18:00–05:00 KST",
+                    "SMOKE-FAIL target=live-smoke-t8463 empty/no-witness investor array (rsp_cd={})",
                     resp.rsp_cd
                 );
-                panic!("live-smoke-t8463: empty time-series array (00707) — off-window/PENDING, not Implemented");
+                panic!("live-smoke-t8463: no named investor witness (00707/off-data) — PENDING, not Implemented");
             }
             let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "rows")
                 .expect("an Ok outcome yields a result line");
             record(
                 "live-smoke-t8463",
-                &format!("env=paper tm_rng=N fot_clsf_cd=F bsc_asts_id=101 date={date}"),
+                &format!("env=paper tm_rng=D fot_clsf_cd=F bsc_asts_id=K2I date={date}"),
                 &line,
             );
         }
@@ -6821,7 +6830,10 @@ async fn live_smoke_o3123() {
     }
 }
 
-/// `make live-smoke-o3127`: overseas-futopt watchlist board (`nrec=20`).
+/// `make live-smoke-o3127`: overseas-futopt watchlist board for one watched symbol
+/// (`mktgb=0`, `symbol=CUSN26` — the current overseas-futures front-month). An
+/// `nrec`-only request returns placeholder rows with a zero `price`; the watched
+/// `o3127InBlock1` symbol is what makes the board return a real quote.
 #[tokio::test]
 #[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-o3127`"]
 async fn live_smoke_o3127() {
@@ -6829,7 +6841,7 @@ async fn live_smoke_o3127() {
     let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
     let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
     assert!(!token.is_empty(), "token must be non-empty");
-    let req = O3127Request::new("20");
+    let req = O3127Request::new("0", "CUSN26");
     match sdk.market_session().overseas_futopt_watchlist(&req).await {
         Ok(resp) => {
             assert!(!resp.outblock.is_empty(), "live-smoke-o3127: empty out-block (00707) — PENDING");
@@ -6837,11 +6849,208 @@ async fn live_smoke_o3127() {
                 .expect("live-smoke-o3127: 현재가 must be substantive (R4)");
             let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock.len())), "ovs-futopt-board")
                 .expect("an Ok outcome yields a result line");
-            record("live-smoke-o3127", "env=paper nrec=20", &line);
+            record("live-smoke-o3127", "env=paper mktgb=0 symbol=CUSN26", &line);
         }
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-o3127 market-data failure (not evidence)");
             panic!("live-smoke-o3127 failed: {}", scrub_secrets(&e.to_string()));
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// F-O market-data reads (plan -001 open-window flip wave). The contract code is
+// self-sourced at runtime from the t8467 index-futures master (front-month codes
+// expire — never hard-coded), mirroring live_smoke_t8406/t8407. Each asserts a
+// NAMED market-data witness (close/volume/price) is substantive before record().
+// ---------------------------------------------------------------------------
+
+/// Fetch the first live front-month F/O contract from the t8467 index-futures
+/// master, or emit a credential-safe SMOKE-FAIL and panic. Returns the `shcode`.
+async fn fo_front_month_shcode(sdk: &LsSdk, target: &str) -> String {
+    let masters = sdk
+        .market_session()
+        .index_futures_master(&T8467Request::new("Q"))
+        .await
+        .expect("t8467 index-futures master (contract source) failed");
+    if masters.outblock.is_empty() {
+        eprintln!("SMOKE-FAIL target={target} t8467 contract source empty (rsp_cd={})", masters.rsp_cd);
+        panic!("{target}: no contract to key the read");
+    }
+    masters.outblock[0].shcode.clone()
+}
+
+/// `make live-smoke-t8427`: t8467 front-month source → one `t8427` F/O day chart
+/// for that contract. Witness: a non-empty OHLCV row (`close`/`volume`).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8427`"]
+async fn live_smoke_t8427() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let focode = fo_front_month_shcode(&sdk, "live-smoke-t8427").await;
+    let now = Utc::now();
+    let (yyyy, mm, date) = (now.format("%Y").to_string(), now.format("%m").to_string(), now.format("%Y%m%d").to_string());
+    match sdk
+        .market_session()
+        .fo_minute_day_chart(&T8427Request::new(&focode, &yyyy, &mm, &date))
+        .await
+    {
+        Ok(resp) => {
+            let first = resp.outblock1.first();
+            assert!(
+                first.is_some_and(|r| !r.close.is_empty() || !r.volume.is_empty()),
+                "live-smoke-t8427: empty chart (00707/off-data) — PENDING, not Implemented"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "fo-chart")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t8427", &format!("env=paper focode={focode} yyyy={yyyy} mm={mm} date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8427 market-data failure (not evidence)");
+            panic!("live-smoke-t8427 failed: {}", scrub_secrets(&e.to_string()));
+        }
+    }
+}
+
+/// `make live-smoke-t2214`: t8467 front-month source → one page of `t2214` F/O
+/// daily OHLCV. Witness: a non-empty daily row (`close`/`volume`).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t2214`"]
+async fn live_smoke_t2214() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let shcode = fo_front_month_shcode(&sdk, "live-smoke-t2214").await;
+    let date = Utc::now().format("%Y%m%d").to_string();
+    match sdk.paginated().fo_daily_chart(&T2214Request::new(&shcode, &date)).await {
+        Ok(resp) => {
+            let first = resp.outblock1.first();
+            assert!(
+                first.is_some_and(|r| !r.close.is_empty() || !r.volume.is_empty()),
+                "live-smoke-t2214: empty daily chart (00707/off-data) — PENDING, not Implemented"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "fo-daily")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t2214", &format!("env=paper shcode={shcode} date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t2214 market-data failure (not evidence)");
+            panic!("live-smoke-t2214 failed: {}", scrub_secrets(&e.to_string()));
+        }
+    }
+}
+
+/// `make live-smoke-t2424`: t8467 front-month source → one `t2424` F/O N-minute
+/// bars. Witness: header `price` substantive OR a non-empty bar `close`.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t2424`"]
+async fn live_smoke_t2424() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let focode = fo_front_month_shcode(&sdk, "live-smoke-t2424").await;
+    match sdk.market_session().fo_minute_bars(&T2424Request::new(&focode)).await {
+        Ok(resp) => {
+            let price_ok = !resp.outblock.price.is_empty() && resp.outblock.price != "0";
+            let bar_ok = resp.outblock1.first().is_some_and(|r| !r.close.is_empty());
+            assert!(
+                price_ok || bar_ok,
+                "live-smoke-t2424: empty/no-witness bars (00707/off-data) — PENDING, not Implemented"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "fo-bars")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t2424", &format!("env=paper focode={focode}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t2424 market-data failure (not evidence)");
+            panic!("live-smoke-t2424 failed: {}", scrub_secrets(&e.to_string()));
+        }
+    }
+}
+
+/// `make live-smoke-t2210`: t8467 front-month source → one `t2210` F/O
+/// unusual-volume conclusion-count read over the regular window. Witness: a
+/// NON-ZERO buy/sell 체결수량 (`msvolume`/`mdvolume`); all-zero is PENDING (AE4 —
+/// body length alone never justifies a flip).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t2210`"]
+async fn live_smoke_t2210() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let focode = fo_front_month_shcode(&sdk, "live-smoke-t2210").await;
+    match sdk.market_session().fo_unusual_volume(&T2210Request::new(&focode, "0900", "1530")).await {
+        Ok(resp) => {
+            let nonzero = |s: &str| !s.is_empty() && s != "0";
+            assert!(
+                nonzero(&resp.outblock.msvolume) || nonzero(&resp.outblock.mdvolume),
+                "live-smoke-t2210: all-zero conclusion counts (off-data) — PENDING, not Implemented (AE4)"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), 1)), "fo-unusual-vol")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t2210", &format!("env=paper focode={focode} stime=0900 etime=1530"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t2210 market-data failure (not evidence)");
+            panic!("live-smoke-t2210 failed: {}", scrub_secrets(&e.to_string()));
+        }
+    }
+}
+
+/// `make live-smoke-t2541`: one page of `t2541` F/O investor-by-time net-buy for
+/// `upcode="001"`. Witness: a non-empty per-time row (`sv_17` 외국인순매수) OR the
+/// summary `ms_08` 개인매수.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t2541`"]
+async fn live_smoke_t2541() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.paginated().fo_investor_by_time(&T2541Request::new("001")).await {
+        Ok(resp) => {
+            let row_ok = resp.outblock1.first().is_some_and(|r| !r.sv_17.is_empty() || !r.sv_08.is_empty());
+            let sum_ok = !resp.outblock.ms_08.is_empty() || !resp.outblock.svolume_17.is_empty();
+            assert!(
+                row_ok || sum_ok,
+                "live-smoke-t2541: empty/no-witness investor data (00707/off-data) — PENDING, not Implemented"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "fo-investor")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t2541", &format!("env=paper eitem=01 market=1 upcode=001 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t2541 market-data failure (not evidence)");
+            panic!("live-smoke-t2541 failed: {}", scrub_secrets(&e.to_string()));
+        }
+    }
+}
+
+/// `make live-smoke-t8428`: one `t8428` deposit-balance trend over a recent date
+/// range for `upcode="001"` (MAIN .env, domestic). Witness: a non-empty row
+/// (`jisu` 지수 / `custmoney` 고객예탁금).
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t8428`"]
+async fn live_smoke_t8428() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token acquisition failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+    let date = Utc::now().format("%Y-%m-%d");
+    match sdk.market_session().deposit_balance_trend(&T8428Request::new("20260601", "20260629", "001")).await {
+        Ok(resp) => {
+            let first = resp.outblock1.first();
+            assert!(
+                first.is_some_and(|r| !r.jisu.is_empty() || !r.custmoney.is_empty()),
+                "live-smoke-t8428: empty/no-witness deposit trend (00707/off-data) — PENDING, not Implemented"
+            );
+            let line = smoke_result(Ok((resp.rsp_cd.clone(), resp.outblock1.len())), "deposit-trend")
+                .expect("an Ok outcome yields a result line");
+            record("live-smoke-t8428", &format!("env=paper fdate=20260601 tdate=20260629 upcode=001 date={date}"), &line);
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t8428 market-data failure (not evidence)");
+            panic!("live-smoke-t8428 failed: {}", scrub_secrets(&e.to_string()));
         }
     }
 }

@@ -9510,17 +9510,39 @@ pub struct O3127InBlock {
     pub nrec: String,
 }
 
-/// `o3127` request — serializes to `{"o3127InBlock":{...}}`. Non-paginated.
+/// Repeated request sub-block `o3127InBlock1` (Occurs) — one watch entry per
+/// requested symbol. The gateway returns a per-symbol quote row only when the
+/// symbol is supplied here; an `nrec`-only request returns placeholder rows with
+/// a zero `price` (not a real quote).
+#[derive(Serialize, Debug, Clone)]
+pub struct O3127InBlock1 {
+    /// Market distinction / 기본입력 (e.g. `"0"`).
+    pub mktgb: String,
+    /// Symbol / 종목심볼 (e.g. `"CUSN26"`).
+    pub symbol: String,
+}
+
+/// `o3127` request — serializes to `{"o3127InBlock":{...},"o3127InBlock1":[...]}`.
+/// Non-paginated. The repeated `o3127InBlock1` carries the watched symbols.
 #[derive(Serialize, Debug, Clone)]
 pub struct O3127Request {
     #[serde(rename = "o3127InBlock")]
     pub inblock: O3127InBlock,
+    #[serde(rename = "o3127InBlock1")]
+    pub inblock1: Vec<O3127InBlock1>,
 }
 impl O3127Request {
-    /// Build an `o3127` watchlist-board request for `nrec` rows.
-    pub fn new(nrec: impl Into<String>) -> Self {
+    /// Build an `o3127` watchlist-board request for one watched `symbol` under
+    /// `mktgb`; `nrec` is set to match the single supplied entry.
+    pub fn new(mktgb: impl Into<String>, symbol: impl Into<String>) -> Self {
         O3127Request {
-            inblock: O3127InBlock { nrec: nrec.into() },
+            inblock: O3127InBlock {
+                nrec: "1".to_string(),
+            },
+            inblock1: vec![O3127InBlock1 {
+                mktgb: mktgb.into(),
+                symbol: symbol.into(),
+            }],
         }
     }
 }
@@ -9565,6 +9587,389 @@ pub struct O3127Response {
         deserialize_with = "ls_core::de_vec_or_single"
     )]
     pub outblock: Vec<O3127OutBlock>,
+}
+
+// ---------------------------------------------------------------------------
+// F-O market-data reads (plan -001 open-window flip wave). Non-paginated reads on
+// /futureoption/market-data, keyed by a contract code self-sourced at runtime from
+// the t8467 index-futures master (front-month codes expire — never hard-coded).
+// Numeric request slots (actprice/cvolume/nmin/cnt) serialize as JSON numbers via
+// `string_as_number` (the string form returns IGW40011).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t8427` — 선물옵션 N분주가 (F/O minute/day chart). `actprice` is a
+/// genuinely-numeric request slot (JSON number; IGW40011 guard); the rest are
+/// request Strings. `focode` is the contract; `dt_gbn`/`min_term` select day vs.
+/// minute granularity.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8427InBlock {
+    /// F/O division / 선물옵션구분 (`"F"` futures).
+    pub fo_gbn: String,
+    /// Query year / 조회년도 (YYYY).
+    pub yyyy: String,
+    /// Query month / 조회월 (MM).
+    pub mm: String,
+    /// Call/put division / 옵션콜풋구분.
+    pub cp_gbn: String,
+    /// Option strike / 옵션행사가 (numeric).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub actprice: String,
+    /// Contract code / 선물옵션코드.
+    pub focode: String,
+    /// Day/minute division / 일분구분.
+    pub dt_gbn: String,
+    /// Minute interval / 분간격.
+    pub min_term: String,
+    /// Anchor date / 날짜 (YYYYMMDD).
+    pub date: String,
+    /// Time / 시간 (HHMMSS).
+    pub time: String,
+}
+
+/// `t8427` request — serializes to `{"t8427InBlock":{...}}`. Non-paginated.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8427Request {
+    #[serde(rename = "t8427InBlock")]
+    pub inblock: T8427InBlock,
+}
+impl T8427Request {
+    /// Build a `t8427` F/O day-chart request for one futures `focode` on `date`
+    /// (`fo_gbn="F"`, `dt_gbn="1"` daily, `actprice=0`, empty call/put + minute
+    /// fields). `yyyy`/`mm` bound the query month.
+    pub fn new(
+        focode: impl Into<String>,
+        yyyy: impl Into<String>,
+        mm: impl Into<String>,
+        date: impl Into<String>,
+    ) -> Self {
+        T8427Request {
+            inblock: T8427InBlock {
+                fo_gbn: "F".to_string(),
+                yyyy: yyyy.into(),
+                mm: mm.into(),
+                cp_gbn: String::new(),
+                actprice: "0".to_string(),
+                focode: focode.into(),
+                dt_gbn: "1".to_string(),
+                min_term: String::new(),
+                date: date.into(),
+                time: String::new(),
+            },
+        }
+    }
+}
+
+/// `t8427OutBlock1` — one OHLCV chart row (representative subset). `close`/`volume`
+/// are the substantive witnesses.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8427OutBlock1 {
+    /// Date / 날짜.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    /// Time / 시간.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub time: String,
+    /// Open / 시가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    /// High / 고가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    /// Low / 저가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    /// Close / 종가 (the substantive witness).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub close: String,
+    /// Volume / 거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Open interest / 미결수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub openyak: String,
+}
+
+/// `t8427` response — chart rows under `t8427OutBlock1` (single-or-array). The
+/// `t8427OutBlock` header carries the echo `focode`/`date`/`time`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8427Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t8427OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T8427OutBlock1>,
+}
+
+/// Input block for `t2210` — 선물옵션 특이거래량 (F/O unusual-volume conclusion
+/// counts) over a time window. `cvolume` (특이거래량 threshold) is a genuinely-numeric
+/// request slot (JSON number; IGW40011 guard); the rest are request Strings.
+#[derive(Serialize, Debug, Clone)]
+pub struct T2210InBlock {
+    /// Contract code / 단축코드.
+    pub focode: String,
+    /// Unusual-volume threshold / 특이거래량 (numeric).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub cvolume: String,
+    /// Window start / 시작시간 (HHMM).
+    pub stime: String,
+    /// Window end / 종료시간 (HHMM).
+    pub etime: String,
+}
+
+/// `t2210` request — serializes to `{"t2210InBlock":{...}}`. Non-paginated.
+#[derive(Serialize, Debug, Clone)]
+pub struct T2210Request {
+    #[serde(rename = "t2210InBlock")]
+    pub inblock: T2210InBlock,
+}
+impl T2210Request {
+    /// Build a `t2210` unusual-volume request for one `focode` over `stime`..`etime`
+    /// (`cvolume=0` = no threshold filter).
+    pub fn new(
+        focode: impl Into<String>,
+        stime: impl Into<String>,
+        etime: impl Into<String>,
+    ) -> Self {
+        T2210Request {
+            inblock: T2210InBlock {
+                focode: focode.into(),
+                cvolume: "0".to_string(),
+                stime: stime.into(),
+                etime: etime.into(),
+            },
+        }
+    }
+}
+
+/// `t2210OutBlock` — the buy/sell conclusion counts. `msvolume`/`mdvolume` (매수/매도
+/// 체결수량) are the substantive witnesses (a NON-ZERO count proves real flow).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T2210OutBlock {
+    /// Sell conclusion volume / 매도체결수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub mdvolume: String,
+    /// Sell conclusion count / 매도체결건수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub mdchecnt: String,
+    /// Buy conclusion volume / 매수체결수량 (the substantive witness).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub msvolume: String,
+    /// Buy conclusion count / 매수체결건수.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub mschecnt: String,
+}
+
+/// `t2210` response — single conclusion-count block under `t2210OutBlock`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T2210Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t2210OutBlock", default)]
+    pub outblock: T2210OutBlock,
+}
+
+/// Input block for `t2424` — 선물옵션 N분봉 (F/O N-minute bars). `nmin` (N분) and `cnt`
+/// (조회건수) are genuinely-numeric request slots (JSON numbers; IGW40011 guard).
+#[derive(Serialize, Debug, Clone)]
+pub struct T2424InBlock {
+    /// Contract code / 종목코드.
+    pub focode: String,
+    /// Day/minute division / 분일구분.
+    pub bdgubun: String,
+    /// N-minute interval / N분 (numeric).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub nmin: String,
+    /// Same-day continuation division / 당일연결구분.
+    pub tcgubun: String,
+    /// Requested bar count / 조회건수 (numeric).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub cnt: String,
+}
+
+/// `t2424` request — serializes to `{"t2424InBlock":{...}}`. Non-paginated.
+#[derive(Serialize, Debug, Clone)]
+pub struct T2424Request {
+    #[serde(rename = "t2424InBlock")]
+    pub inblock: T2424InBlock,
+}
+impl T2424Request {
+    /// Build a `t2424` N-minute-bar request for one `focode` (`bdgubun="1"`,
+    /// `tcgubun="0"`, `nmin=1`, `cnt="20"`).
+    pub fn new(focode: impl Into<String>) -> Self {
+        T2424Request {
+            inblock: T2424InBlock {
+                focode: focode.into(),
+                bdgubun: "1".to_string(),
+                nmin: "1".to_string(),
+                tcgubun: "0".to_string(),
+                cnt: "20".to_string(),
+            },
+        }
+    }
+}
+
+/// `t2424OutBlock` — the current-price header (`price` 현재가 is the substantive
+/// witness; the volume/open-interest aggregates).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T2424OutBlock {
+    /// Current price / 현재가 (the substantive witness).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub price: String,
+    /// Conclusion volume / 체결수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub cvolume: String,
+    /// Cumulative volume / 누적거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Open interest / 미결제수량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub openyak: String,
+}
+
+/// `t2424OutBlock1` — one N-minute bar (representative subset). `close` is a
+/// substantive witness.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T2424OutBlock1 {
+    /// Date-time / 일자시간.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dt: String,
+    /// Open / 시가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    /// High / 고가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    /// Low / 저가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    /// Close / 종가 (the substantive witness).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub close: String,
+}
+
+/// `t2424` response — header under `t2424OutBlock`; bars under `t2424OutBlock1`
+/// (single-or-array).
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T2424Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t2424OutBlock", default)]
+    pub outblock: T2424OutBlock,
+    #[serde(
+        rename = "t2424OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T2424OutBlock1>,
+}
+
+// ---------------------------------------------------------------------------
+// t8428 — 투자자별 예탁금추이 (deposit-balance trend by investor). Non-paginated
+// /stock/investinfo read over a from/to date range; a `t8428OutBlock1[]` row array
+// (de_vec_or_single). `cnt` is the genuinely-numeric request count.
+// ---------------------------------------------------------------------------
+
+/// Input block for `t8428` — deposit-balance trend. `cnt` is a genuinely-numeric
+/// request slot (JSON number; IGW40011 guard); the rest are request Strings.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8428InBlock {
+    /// From date / from일자 (YYYYMMDD).
+    pub fdate: String,
+    /// To date / to일자 (YYYYMMDD).
+    pub tdate: String,
+    /// Division / 구분.
+    pub gubun: String,
+    /// Cursor date / 날짜 (continuation; first page = `""`).
+    pub key_date: String,
+    /// Sector code / 업종코드.
+    pub upcode: String,
+    /// Requested row count / 조회건수 (numeric).
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub cnt: String,
+}
+
+/// `t8428` request — serializes to `{"t8428InBlock":{...}}`. Non-paginated.
+#[derive(Serialize, Debug, Clone)]
+pub struct T8428Request {
+    #[serde(rename = "t8428InBlock")]
+    pub inblock: T8428InBlock,
+}
+impl T8428Request {
+    /// Build a `t8428` deposit-trend request over `fdate`..`tdate` for one `upcode`
+    /// (`gubun="1"`, empty first-page `key_date`, `cnt="20"`).
+    pub fn new(
+        fdate: impl Into<String>,
+        tdate: impl Into<String>,
+        upcode: impl Into<String>,
+    ) -> Self {
+        T8428Request {
+            inblock: T8428InBlock {
+                fdate: fdate.into(),
+                tdate: tdate.into(),
+                gubun: "1".to_string(),
+                key_date: String::new(),
+                upcode: upcode.into(),
+                cnt: "20".to_string(),
+            },
+        }
+    }
+}
+
+/// `t8428OutBlock1` — one deposit-trend row (representative subset). `jisu` (지수) and
+/// `custmoney` (고객예탁금) are the substantive witnesses.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8428OutBlock1 {
+    /// Date / 일자.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    /// Index / 지수 (a substantive witness).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub jisu: String,
+    /// Change sign / 대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Change / 대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Volume / 거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Customer deposit (억원) / 고객예탁금 (the substantive witness).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub custmoney: String,
+    /// Deposit change (억원) / 예탁증감.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub yecha: String,
+}
+
+/// `t8428` response — deposit-trend rows under `t8428OutBlock1` (single-or-array).
+/// The `t8428OutBlock` header carries the cursor `date`.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8428Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(
+        rename = "t8428OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T8428OutBlock1>,
 }
 
 // ---------------------------------------------------------------------------
@@ -11327,6 +11732,38 @@ impl MarketSession {
     pub async fn overseas_futopt_watchlist(&self, req: &O3127Request) -> LsResult<O3127Response> {
         self.inner
             .post(&ls_core::endpoint_policy::O3127_POLICY, req)
+            .await
+    }
+
+    /// Read the F/O minute/day chart (선물옵션 N분주가) via `t8427`. Non-paginated;
+    /// keyed by a contract `focode`. OHLCV rows under `t8427OutBlock1`.
+    pub async fn fo_minute_day_chart(&self, req: &T8427Request) -> LsResult<T8427Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8427_POLICY, req)
+            .await
+    }
+
+    /// Read the F/O unusual-volume conclusion counts (선물옵션 특이거래량) over a time
+    /// window via `t2210`. Non-paginated; the buy/sell 체결수량 are the witnesses.
+    pub async fn fo_unusual_volume(&self, req: &T2210Request) -> LsResult<T2210Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T2210_POLICY, req)
+            .await
+    }
+
+    /// Read the F/O N-minute bars (선물옵션 N분봉) via `t2424`. Non-paginated; current
+    /// price header + a bar array under `t2424OutBlock1`.
+    pub async fn fo_minute_bars(&self, req: &T2424Request) -> LsResult<T2424Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T2424_POLICY, req)
+            .await
+    }
+
+    /// Read the deposit-balance trend by investor (투자자별 예탁금추이) via `t8428`.
+    /// Non-paginated; deposit-info rows under `t8428OutBlock1`.
+    pub async fn deposit_balance_trend(&self, req: &T8428Request) -> LsResult<T8428Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T8428_POLICY, req)
             .await
     }
 

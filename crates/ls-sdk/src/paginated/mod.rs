@@ -21,6 +21,8 @@ mod chart;
 mod designation_board;
 mod exchange_broker;
 mod expected_conclusion;
+mod fo_daily_chart;
+mod fo_investor_time;
 mod historical_chart;
 mod invest_opinion;
 mod investor;
@@ -38,6 +40,8 @@ pub use chart::*;
 pub use designation_board::*;
 pub use exchange_broker::*;
 pub use expected_conclusion::*;
+pub use fo_daily_chart::*;
+pub use fo_investor_time::*;
 pub use historical_chart::*;
 pub use invest_opinion::*;
 pub use investor::*;
@@ -184,6 +188,24 @@ impl Paginated {
     pub async fn sector_trend(&self, req: &T1514Request) -> LsResult<T1514Response> {
         self.inner
             .post_paginated(&ls_core::endpoint_policy::T1514_POLICY, req)
+            .await
+    }
+
+    /// Read one page of F/O investor-by-time net-buy (선물옵션 투자자별 매매추이) via
+    /// `t2541`. Self-paginated on the body `cts_time`/`cts_idx` cursor (`cts_idx`/
+    /// `cnt` serialized as numbers); single-page scope.
+    pub async fn fo_investor_by_time(&self, req: &T2541Request) -> LsResult<T2541Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T2541_POLICY, req)
+            .await
+    }
+
+    /// Read one page of F/O daily OHLCV (선물옵션 기간별주가) via `t2214`.
+    /// Self-paginated on the body `cts_code` cursor (`cnt` serialized as a number);
+    /// single-page scope.
+    pub async fn fo_daily_chart(&self, req: &T2214Request) -> LsResult<T2214Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T2214_POLICY, req)
             .await
     }
 

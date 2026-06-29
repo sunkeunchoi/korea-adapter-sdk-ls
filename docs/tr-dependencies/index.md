@@ -212,15 +212,15 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t2106` | 선물/옵션현재가시세메모 | `market_session` | tracked | [t2106](./t2106.md) |
 | `t2111` | 선물/옵션현재가(시세)조회 | `market_session` | implemented | [t2111](./t2111.md) |
 | `t2112` | 선물/옵션현재가호가조회 | `market_session` | implemented | [t2112](./t2112.md) |
-| `t2210` | 선물옵션시간대별체결조회(단일출력용) | `market_session` | tracked | [t2210](./t2210.md) |
+| `t2210` | 선물옵션시간대별체결조회(단일출력용) | `market_session` | implemented | [t2210](./t2210.md) |
 | `t2212` | 선물옵션시간대별체결조회 | `paginated` | tracked | [t2212](./t2212.md) |
-| `t2214` | 기간별주가 | `paginated` | tracked | [t2214](./t2214.md) |
+| `t2214` | 기간별주가 | `paginated` | implemented | [t2214](./t2214.md) |
 | `t2216` | 선물옵션틱분별체결조회차트 | `market_session` | implemented | [t2216](./t2216.md) |
 | `t2301` | 옵션전광판 | `market_session` | implemented | [t2301](./t2301.md) |
 | `t2407` | 선물옵션호가잔량비율챠트 | `paginated` | tracked | [t2407](./t2407.md) |
-| `t2424` | 미결제약정추이 | `market_session` | tracked | [t2424](./t2424.md) |
+| `t2424` | 미결제약정추이 | `market_session` | implemented | [t2424](./t2424.md) |
 | `t2522` | 주식선물기초자산조회 | `market_session` | implemented | [t2522](./t2522.md) |
-| `t2541` | 상품선물투자자매매동향(실시간) | `paginated` | tracked | [t2541](./t2541.md) |
+| `t2541` | 상품선물투자자매매동향(실시간) | `paginated` | implemented | [t2541](./t2541.md) |
 | `t2545` | 상품선물투자자매매동향(챠트용) | `market_session` | implemented | [t2545](./t2545.md) |
 | `t3102` | 뉴스본문 | `standalone` | tracked | [t3102](./t3102.md) |
 | `t3202` | 종목별증시일정 | `market_session` | implemented | [t3202](./t3202.md) |
@@ -247,7 +247,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t8425` | 전체테마 | `market_session` | implemented | [t8425](./t8425.md) |
 | `t8426` | 상품선물마스터조회(API용) | `market_session` | implemented | [t8426](./t8426.md) |
 | `t8427` | 과거데이터시간대별조회 | `market_session` | tracked | [t8427](./t8427.md) |
-| `t8428` | 증시주변자금추이 | `market_session` | tracked | [t8428](./t8428.md) |
+| `t8428` | 증시주변자금추이 | `market_session` | implemented | [t8428](./t8428.md) |
 | `t8430` | 주식종목조회 | `market_session` | implemented | [t8430](./t8430.md) |
 | `t8431` | ELW종목조회 | `market_session` | implemented | [t8431](./t8431.md) |
 | `t8433` | 지수옵션마스터조회API용 | `market_session` | implemented | [t8433](./t8433.md) |
@@ -262,7 +262,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t8455` | KRX야간파생 마스터조회(API용) | `market_session` | tracked | [t8455](./t8455.md) |
 | `t8460` | KRX야간파생 옵션 전광판 | `market_session` | tracked | [t8460](./t8460.md) |
 | `t8462` | KRX야간파생 투자자기간별(API용) | `market_session` | implemented | [t8462](./t8462.md) |
-| `t8463` | KRX야간파생 투자자시간대별(API용) | `market_session` | tracked | [t8463](./t8463.md) |
+| `t8463` | KRX야간파생 투자자시간대별(API용) | `market_session` | implemented | [t8463](./t8463.md) |
 | `t8464` | 선물옵션차트(틱/n틱) | `paginated` | implemented | [t8464](./t8464.md) |
 | `t8465` | 선물/옵션차트(N분) | `paginated` | implemented | [t8465](./t8465.md) |
 | `t8466` | 선물/옵션차트(일주월) | `paginated` | implemented | [t8466](./t8466.md) |
