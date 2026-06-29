@@ -4702,6 +4702,112 @@ fn ws_p3_failure_note_carries_no_payload() {
     assert!(!note.contains("AcntNo"));
 }
 
+/// `make live-smoke-ws-p4`: COMBINED lifecycle smoke for the 39 NEW market-data
+/// realtime TRs of the open-window WS track/flip wave (plan 2026-06-29-001). The
+/// operator runs ONE command to gate the whole flip.
+///
+/// Iterates all 39 `(tr_cd, tr_key, WsLane::MarketData)` tuples, each on a FRESH
+/// manager via [`ws_lifecycle_try`]. RESILIENT: a per-TR subscribe/lifecycle
+/// failure is CAUGHT and recorded as that TR's `record(...)` line, so one bad TR
+/// cannot hide the other 38. After the sweep, panics only if ANY TR failed (so
+/// the make target reports red) — but every TR's line is emitted first.
+///
+/// `tr_key`s are public, spec-grounded values taken from each channel's raw
+/// `req_example` body (stock `shcode`s overridable via `LS_LIVE_SMOKE_SHCODE`;
+/// index/sector feeds key by upcode; F-O by fut/opt code; overseas-futures by
+/// symbol). AFR carries only a placeholder key in the raw capture, so it uses the
+/// representative stock symbol. Per KTD6 (`NOT-OBSERVABLE`), a clean lifecycle
+/// here proves **connection reachability only**, not per-TR reachability — flip
+/// each TR's metadata with that weaker claim. NO raw-frame logging.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-ws-p4`"]
+async fn live_smoke_ws_p4() {
+    let stock_key = resolve_symbol();
+    // (tr_cd, tr_key) — public spec-grounded keys; stock key overridable via env.
+    let trs: [(&str, &str); 39] = [
+        ("AFR", stock_key.as_str()),
+        ("B7_", "069500"),
+        ("C02", "101W6000"),
+        ("CD0", "165T6000"),
+        ("DBM", "UFK2I"),
+        ("DBT", "UFK2I"),
+        ("DC0", "101W6000"),
+        ("DD0", "101W6000"),
+        ("DH0", "101W6000"),
+        ("DH1", stock_key.as_str()),
+        ("DHA", "086520"),
+        ("DK3", "086520"),
+        ("DS3", stock_key.as_str()),
+        ("DVI", "086520"),
+        ("ESN", "52HAAA"),
+        ("FX9", "A0166000"),
+        ("H02", "101W6000"),
+        ("H2_", stock_key.as_str()),
+        ("HB_", "086520"),
+        ("I5_", "069500"),
+        ("JX0", "111T7000"),
+        ("NBM", "N003"),
+        ("NPM", "N0"),
+        ("NVI", "0000000000"),
+        ("O02", "101W6000"),
+        ("OX0", "201T7395"),
+        ("SHC", "1"),
+        ("SHD", "1"),
+        ("SHI", "1"),
+        ("SHO", "1"),
+        ("UBM", "U001"),
+        ("UBT", "U001"),
+        ("UK1", "U000080"),
+        ("UVI", "0000000000"),
+        ("UYS", "U005930"),
+        ("YC3", "165T6000"),
+        ("YJC", "111T7000"),
+        ("YJ_", "001"),
+        ("h3_", "52HAAA"),
+    ];
+
+    let mut failures = 0usize;
+    for (tr_cd, tr_key) in trs {
+        // Each TR on a fresh manager; a failure is recorded, never propagated.
+        let result = ws_lifecycle_try(tr_cd, tr_key, WsLane::MarketData).await;
+        let row_note = match result {
+            Ok(note) => note,
+            Err(err) => {
+                failures += 1;
+                format!("LIFECYCLE-FAIL: {err}")
+            }
+        };
+        // target= names the REAL runnable make target (the combined sweep); the
+        // per-TR identity is carried by tr_cd= in inputs.
+        record(
+            "live-smoke-ws-p4",
+            &format!("tr_cd={tr_cd} tr_key={tr_key} ws_port=29443 tr_type=3"),
+            &row_note,
+        );
+    }
+
+    assert_eq!(
+        failures, 0,
+        "{failures} of 39 P4 market-data TRs failed their lifecycle (see per-TR lines above)"
+    );
+}
+
+/// Offline: the P4 sweep's Err branch records only a STRUCTURAL note — no response
+/// body, `rsp_msg`, account number, or token. `ws_lifecycle_try`'s error strings
+/// are transport/port-level only; this asserts the formatted `LIFECYCLE-FAIL` note
+/// a failed P4 leg would emit carries no payload.
+#[test]
+fn ws_p4_failure_note_carries_no_payload() {
+    let err = "resolved WS URL is not the paper port 29443".to_string();
+    let note = format!("LIFECYCLE-FAIL: {err}");
+    assert!(note.starts_with("LIFECYCLE-FAIL:"));
+    // No JSON body / rsp_msg / account-shaped digit run leaks through.
+    assert!(!note.contains("rsp_msg"));
+    assert!(!note.contains("body"));
+    assert!(!note.contains("token"));
+    assert!(!note.contains("AcntNo"));
+}
+
 /// `make live-smoke-ws-negative`: LIVE half of the KTD6 negative control.
 ///
 /// Subscribes a deliberately-INVALID `tr_cd` and reports whether the paper

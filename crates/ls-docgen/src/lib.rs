@@ -674,7 +674,7 @@ mod tests {
     /// `t1101`, `t1102`, `t8412`, `CSPAQ12200`, `S3_`, `CSPAT00601`) plus the 41
     /// read-only stock/sector TRs brought into tracked-only maintenance ownership
     /// (incl. the Wave A sector cluster t8424/t1511/t1514/t1516/t1485).
-    const TRACKED_TRS: [&str; 268] = [
+    const TRACKED_TRS: [&str; 307] = [
         "AS0",
         "AS1",
         "AS2",
@@ -944,6 +944,45 @@ mod tests {
         "YK3",
         "YOC",
         "YS3",
+        "AFR",
+        "B7_",
+        "C02",
+        "CD0",
+        "DBM",
+        "DBT",
+        "DC0",
+        "DD0",
+        "DH0",
+        "DH1",
+        "DHA",
+        "DK3",
+        "DS3",
+        "DVI",
+        "ESN",
+        "FX9",
+        "H02",
+        "H2_",
+        "HB_",
+        "I5_",
+        "JX0",
+        "NBM",
+        "NPM",
+        "NVI",
+        "O02",
+        "OX0",
+        "SHC",
+        "SHD",
+        "SHI",
+        "SHO",
+        "UBM",
+        "UBT",
+        "UK1",
+        "UVI",
+        "UYS",
+        "YC3",
+        "YJC",
+        "YJ_",
+        "h3_",
     ];
 
     #[test]
@@ -1138,6 +1177,14 @@ mod tests {
             // carry no day-session/paper feed, flags kept); t8427 PENDS (empty
             // chart); o3127 PENDS (zero price/empty symbolname).
             "t2541", "t2214", "t2424", "t2210", "t8428", "t8463",
+            // Open-window WS track/flip wave (plan 2026-06-29-001): 39
+            // connection-reachable-only realtime channels flipped on a clean paper
+            // lifecycle sweep (make live-smoke-ws-p4; KTD6 NOT-OBSERVABLE, so the
+            // claim is connection reachability only). All 39 connected cleanly.
+            "AFR", "B7_", "C02", "CD0", "DBM", "DBT", "DC0", "DD0", "DH0", "DH1", "DHA", "DK3",
+            "DS3", "DVI", "ESN", "FX9", "H02", "H2_", "HB_", "I5_", "JX0", "NBM", "NPM", "NVI",
+            "O02", "OX0", "SHC", "SHD", "SHI", "SHO", "UBM", "UBT", "UK1", "UVI", "UYS", "YC3",
+            "YJC", "YJ_", "h3_",
         ];
         for tr in banner_trs {
             let page = reference
@@ -1330,9 +1377,12 @@ mod tests {
         // Open-window F-O + domestic reads (plan -001): t2541/t2214/t2424/t2210/t8428/
         // t8463 — all certified non-empty on in-window paper smokes (KRX open
         // 2026-06-29) — add 6.
+        // Open-window WS track/flip wave (plan 2026-06-29-001): 39 realtime channels
+        // (AFR/B7_/C02/.../h3_) flipped connection-reachable-only on a clean paper WS
+        // lifecycle sweep (make live-smoke-ws-p4; KTD6 NOT-OBSERVABLE) — add 39.
         assert_eq!(
             reference.len(),
-            240,
+            279,
             "index + the implemented reference pages"
         );
 
