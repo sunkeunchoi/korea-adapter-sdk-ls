@@ -71,15 +71,19 @@ rejection must not be mis-recorded as a closure/empty result.
 
 ## Dispositions recorded this wave (2026-06-29, KRX closed)
 
-- **`t1631` — operator-gated, no code change.** Its structs, facade
-  (`program_trade_summary`), `T1631_POLICY`, both crosscheck registrations, the
-  `live_smoke_t1631` smoke, the Makefile target, and the smoke-map row already
-  exist; it is `implemented: false` only because the smoke has not carried. Its
-  request is **all-String** (no `string_as_number` applies) and its recorded
+- **`t1631` — PENDING, gateway-side defect (live-confirmed 2026-06-29).** Its
+  structs, facade (`program_trade_summary`), `T1631_POLICY`, both crosscheck
+  registrations, the `live_smoke_t1631` smoke, the Makefile target, and the
+  smoke-map row already exist; it is `implemented: false` because the smoke does
+  not carry. Its request is **all-String** (no `string_as_number` applies) and its
   blocker is gateway-side `IGW40014`, not the `IGW40011` numeric-serialize class —
-  so it is not a request-shape defect. Operator runs `make live-smoke-t1631`; flip
-  only if a modeled out-block returns non-empty, else it stays PENDING and the
-  re-probe defers to an open window.
+  so it is not a request-shape defect. The live smoke reproduces it exactly:
+  `IGW40014: id=[매수수량(bidvolume)] in.data=[@..]` — the gateway fails to parse
+  **its own response** field `bidvolume`, whose bytes come back as garbage
+  (a literal `@`), "neither a decimal digit ... nor e-notation." This is a defect
+  in what the gateway *returns*; neither the SDK nor session timing can fix it.
+  **Do not re-attempt `t1631` as a flip candidate** — it is permanently PENDING
+  pending an upstream gateway fix.
 - **`t3102` — chained smoke staged, flip gated on a live frame.** `NWS` is
   Implemented and its 24-char `realkey` is the `sNewsno` feeder, so the chain
   `NWS.realkey → t3102.sNewsno` is the unblock path. `live_smoke_nws_t3102`

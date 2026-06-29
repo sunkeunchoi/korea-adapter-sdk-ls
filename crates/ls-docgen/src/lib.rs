@@ -1357,7 +1357,8 @@ mod tests {
         // (o3107/o3127 stayed PENDING: account-state watchlist boards empty/zero.)
         // Open-window domestic program-trade reads: intraday-trend t1632 +
         // daily-trend t1633 certified non-empty (20-row series each) — add 2.
-        // (t1631 stayed PENDING: gateway-side IGW40014 on its own response payload.)
+        // (t1631 stayed PENDING: gateway-side IGW40014 on its own response payload —
+        //  live-confirmed 2026-06-29, garbage bytes in bidvolume; not flippable.)
         // Open-window domestic reads: foreign/institution by-issue trend t1702 +
         // net-buy trend t1717, investor-by-sector chart t1665, intraday
         // quote-remainder trend t1471, VP-relative ranking t1475 — all certified
