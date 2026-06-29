@@ -7,7 +7,7 @@ API사용자조건검색실시간
 ## Support
 
 - Tracked: yes
-- Implemented: no
+- Implemented: yes
 - Recommended: no
 
 ## Ownership

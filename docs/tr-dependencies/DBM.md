@@ -7,7 +7,7 @@ KRX야간파생 투자자매매현황
 ## Support
 
 - Tracked: yes
-- Implemented: no
+- Implemented: yes
 - Recommended: no
 
 ## Ownership

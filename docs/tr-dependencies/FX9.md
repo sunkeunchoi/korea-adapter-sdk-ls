@@ -7,7 +7,7 @@ KOSPI200선물가격제한폭확대
 ## Support
 
 - Tracked: yes
-- Implemented: no
+- Implemented: yes
 - Recommended: no
 
 ## Ownership

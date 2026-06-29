@@ -6,20 +6,20 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 
 | TR | Name | Owner class | Support | Page |
 |----|------|-------------|---------|------|
-| `AFR` | API사용자조건검색실시간 | `realtime` | tracked | [AFR](./AFR.md) |
+| `AFR` | API사용자조건검색실시간 | `realtime` | implemented | [AFR](./AFR.md) |
 | `AS0` | 해외주식 주문접수 실시간 | `realtime` | implemented | [AS0](./AS0.md) |
 | `AS1` | 해외주식 주문체결 실시간 | `realtime` | implemented | [AS1](./AS1.md) |
 | `AS2` | 해외주식 주문정정 실시간 | `realtime` | implemented | [AS2](./AS2.md) |
 | `AS3` | 해외주식 주문취소 실시간 | `realtime` | implemented | [AS3](./AS3.md) |
 | `AS4` | 해외주식 주문거부 실시간 | `realtime` | implemented | [AS4](./AS4.md) |
-| `B7_` | ETF호가잔량 | `realtime` | tracked | [B7_](./B7_.md) |
+| `B7_` | ETF호가잔량 | `realtime` | implemented | [B7_](./B7_.md) |
 | `BMT` | 시간대별투자자매매추이 | `realtime` | implemented | [BMT](./BMT.md) |
 | `BM_` | 업종별투자자별매매현황 | `realtime` | implemented | [BM_](./BM_.md) |
 | `C01` | 선물옵션 주문체결 실시간 | `realtime` | implemented | [C01](./C01.md) |
-| `C02` | KRX야간파생 선물체결 | `realtime` | tracked | [C02](./C02.md) |
+| `C02` | KRX야간파생 선물체결 | `realtime` | implemented | [C02](./C02.md) |
 | `CCENQ10100` | KRX야간파생 주문가능수량 조회 | `account` | tracked | [CCENQ10100](./CCENQ10100.md) |
 | `CCENQ90200` | KRX야간파생 잔고조회 | `account` | tracked | [CCENQ90200](./CCENQ90200.md) |
-| `CD0` | 상품선물실시간상하한가 | `realtime` | tracked | [CD0](./CD0.md) |
+| `CD0` | 상품선물실시간상하한가 | `realtime` | implemented | [CD0](./CD0.md) |
 | `CFOAQ10100` | 선물옵션 주문가능수량조회 | `account` | implemented | [CFOAQ10100](./CFOAQ10100.md) |
 | `CFOBQ10500` | 선물옵션 계좌예탁금증거금조회 | `account` | implemented | [CFOBQ10500](./CFOBQ10500.md) |
 | `CFOEQ11100` | 선물옵션가정산예탁금상세 | `account` | implemented | [CFOEQ11100](./CFOEQ11100.md) |
@@ -35,53 +35,53 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `CSPAT00801` | 현물취소주문 (cash equity order cancel) | `orders` | implemented | [CSPAT00801](./CSPAT00801.md) |
 | `CSPBQ00200` | 현물계좌증거금률별주문가능수량조회 | `account` | tracked | [CSPBQ00200](./CSPBQ00200.md) |
 | `CUR` | 현물정보USD실시간 | `realtime` | implemented | [CUR](./CUR.md) |
-| `DBM` | KRX야간파생 투자자매매현황 | `realtime` | tracked | [DBM](./DBM.md) |
-| `DBT` | KRX야간파생 투자자별현황 | `realtime` | tracked | [DBT](./DBT.md) |
-| `DC0` | KRX야간파생 체결 | `realtime` | tracked | [DC0](./DC0.md) |
-| `DD0` | KRX야간파생 실시간상하한가 | `realtime` | tracked | [DD0](./DD0.md) |
-| `DH0` | KRX야간파생 호가 | `realtime` | tracked | [DH0](./DH0.md) |
-| `DH1` | KOSPI시간외단일가호가잔량 | `realtime` | tracked | [DH1](./DH1.md) |
-| `DHA` | KOSDAQ시간외단일가호가잔량 | `realtime` | tracked | [DHA](./DHA.md) |
-| `DK3` | KOSDAQ시간외단일가체결 | `realtime` | tracked | [DK3](./DK3.md) |
-| `DS3` | KOSPI시간외단일가체결 | `realtime` | tracked | [DS3](./DS3.md) |
-| `DVI` | 시간외단일가VI발동해제 | `realtime` | tracked | [DVI](./DVI.md) |
-| `ESN` | 뉴ELW투자지표민감도 | `realtime` | tracked | [ESN](./ESN.md) |
+| `DBM` | KRX야간파생 투자자매매현황 | `realtime` | implemented | [DBM](./DBM.md) |
+| `DBT` | KRX야간파생 투자자별현황 | `realtime` | implemented | [DBT](./DBT.md) |
+| `DC0` | KRX야간파생 체결 | `realtime` | implemented | [DC0](./DC0.md) |
+| `DD0` | KRX야간파생 실시간상하한가 | `realtime` | implemented | [DD0](./DD0.md) |
+| `DH0` | KRX야간파생 호가 | `realtime` | implemented | [DH0](./DH0.md) |
+| `DH1` | KOSPI시간외단일가호가잔량 | `realtime` | implemented | [DH1](./DH1.md) |
+| `DHA` | KOSDAQ시간외단일가호가잔량 | `realtime` | implemented | [DHA](./DHA.md) |
+| `DK3` | KOSDAQ시간외단일가체결 | `realtime` | implemented | [DK3](./DK3.md) |
+| `DS3` | KOSPI시간외단일가체결 | `realtime` | implemented | [DS3](./DS3.md) |
+| `DVI` | 시간외단일가VI발동해제 | `realtime` | implemented | [DVI](./DVI.md) |
+| `ESN` | 뉴ELW투자지표민감도 | `realtime` | implemented | [ESN](./ESN.md) |
 | `FC9` | 선물 체결 실시간 시세 | `realtime` | implemented | [FC9](./FC9.md) |
 | `FD0` | KOSPI200선물실시간상하한가 | `realtime` | implemented | [FD0](./FD0.md) |
 | `FH9` | 선물 호가 실시간 시세 | `realtime` | implemented | [FH9](./FH9.md) |
-| `FX9` | KOSPI200선물가격제한폭확대 | `realtime` | tracked | [FX9](./FX9.md) |
+| `FX9` | KOSPI200선물가격제한폭확대 | `realtime` | implemented | [FX9](./FX9.md) |
 | `GSC` | 해외주식 체결 실시간 시세 | `realtime` | implemented | [GSC](./GSC.md) |
 | `GSH` | 해외주식 호가 실시간 시세 | `realtime` | implemented | [GSH](./GSH.md) |
 | `H01` | 선물옵션 주문정정취소 실시간 | `realtime` | implemented | [H01](./H01.md) |
-| `H02` | KRX야간파생 선물정정취소 | `realtime` | tracked | [H02](./H02.md) |
+| `H02` | KRX야간파생 선물정정취소 | `realtime` | implemented | [H02](./H02.md) |
 | `H1_` | KOSPI 호가 실시간 시세 | `realtime` | implemented | [H1_](./H1_.md) |
-| `H2_` | KOSPI장전시간외호가잔량 | `realtime` | tracked | [H2_](./H2_.md) |
+| `H2_` | KOSPI장전시간외호가잔량 | `realtime` | implemented | [H2_](./H2_.md) |
 | `HA_` | KOSDAQ 호가 실시간 시세 | `realtime` | implemented | [HA_](./HA_.md) |
-| `HB_` | KOSDAQ장전시간외호가잔량 | `realtime` | tracked | [HB_](./HB_.md) |
-| `I5_` | 코스피ETF종목실시간NAV | `realtime` | tracked | [I5_](./I5_.md) |
+| `HB_` | KOSDAQ장전시간외호가잔량 | `realtime` | implemented | [HB_](./HB_.md) |
+| `I5_` | 코스피ETF종목실시간NAV | `realtime` | implemented | [I5_](./I5_.md) |
 | `IJ_` | 지수 | `realtime` | implemented | [IJ_](./IJ_.md) |
 | `JC0` | 주식선물체결 | `realtime` | implemented | [JC0](./JC0.md) |
 | `JD0` | 주식선물실시간상하한가 | `realtime` | implemented | [JD0](./JD0.md) |
 | `JH0` | 주식선물호가 | `realtime` | implemented | [JH0](./JH0.md) |
 | `JIF` | 장운영정보 | `realtime` | implemented | [JIF](./JIF.md) |
-| `JX0` | 주식선물가격제한폭확대 | `realtime` | tracked | [JX0](./JX0.md) |
+| `JX0` | 주식선물가격제한폭확대 | `realtime` | implemented | [JX0](./JX0.md) |
 | `K1_` | KOSPI거래원 | `realtime` | implemented | [K1_](./K1_.md) |
 | `K3_` | KOSDAQ 체결 실시간 시세 | `realtime` | implemented | [K3_](./K3_.md) |
 | `KH_` | KOSDAQ프로그램매매종목별 | `realtime` | implemented | [KH_](./KH_.md) |
 | `KM_` | KOSDAQ프로그램매매전체집계 | `realtime` | implemented | [KM_](./KM_.md) |
 | `KS_` | KOSDAQ우선호가 | `realtime` | implemented | [KS_](./KS_.md) |
 | `MK2` | US지수 | `realtime` | implemented | [MK2](./MK2.md) |
-| `NBM` | (NXT)업종별투자자별매매현황 | `realtime` | tracked | [NBM](./NBM.md) |
+| `NBM` | (NXT)업종별투자자별매매현황 | `realtime` | implemented | [NBM](./NBM.md) |
 | `NBT` | (NXT)시간대별투자자매매추이 | `realtime` | implemented | [NBT](./NBT.md) |
 | `NH1` | (NXT)호가잔량 | `realtime` | implemented | [NH1](./NH1.md) |
 | `NK1` | (NXT)거래원 | `realtime` | implemented | [NK1](./NK1.md) |
-| `NPM` | (NXT)프로그램매매전체집계 | `realtime` | tracked | [NPM](./NPM.md) |
+| `NPM` | (NXT)프로그램매매전체집계 | `realtime` | implemented | [NPM](./NPM.md) |
 | `NS2` | (NXT)우선호가 | `realtime` | implemented | [NS2](./NS2.md) |
 | `NS3` | (NXT)체결 | `realtime` | implemented | [NS3](./NS3.md) |
-| `NVI` | (NXT)VI 발동 해제 | `realtime` | tracked | [NVI](./NVI.md) |
+| `NVI` | (NXT)VI 발동 해제 | `realtime` | implemented | [NVI](./NVI.md) |
 | `NWS` | 실시간뉴스제목패킷 | `realtime` | implemented | [NWS](./NWS.md) |
 | `O01` | 선물옵션 주문접수 실시간 | `realtime` | implemented | [O01](./O01.md) |
-| `O02` | KRX야간파생 선물접수 | `realtime` | tracked | [O02](./O02.md) |
+| `O02` | KRX야간파생 선물접수 | `realtime` | implemented | [O02](./O02.md) |
 | `OC0` | 옵션 체결 실시간 시세 | `realtime` | implemented | [OC0](./OC0.md) |
 | `OD0` | KOSPI200옵션실시간상하한가 | `realtime` | implemented | [OD0](./OD0.md) |
 | `OH0` | 옵션 호가 실시간 시세 | `realtime` | implemented | [OH0](./OH0.md) |
@@ -89,7 +89,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `OMG` | KOSPI200옵션민감도 | `realtime` | implemented | [OMG](./OMG.md) |
 | `OVC` | 해외선물 체결 실시간 시세 | `realtime` | implemented | [OVC](./OVC.md) |
 | `OVH` | 해외선물 호가 실시간 시세 | `realtime` | implemented | [OVH](./OVH.md) |
-| `OX0` | KOSPI200옵션가격제한폭확대 | `realtime` | tracked | [OX0](./OX0.md) |
+| `OX0` | KOSPI200옵션가격제한폭확대 | `realtime` | implemented | [OX0](./OX0.md) |
 | `PH_` | KOSPI프로그램매매종목별 | `realtime` | implemented | [PH_](./PH_.md) |
 | `S2_` | KOSPI 우선호가 실시간 시세 | `realtime` | implemented | [S2_](./S2_.md) |
 | `S3_` | KOSPI 체결 실시간 시세 | `realtime` | recommended | [S3_](./S3_.md) |
@@ -98,28 +98,28 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `SC2` | 주식 주문정정 실시간 | `realtime` | implemented | [SC2](./SC2.md) |
 | `SC3` | 주식 주문취소 실시간 | `realtime` | implemented | [SC3](./SC3.md) |
 | `SC4` | 주식 주문거부 실시간 | `realtime` | implemented | [SC4](./SC4.md) |
-| `SHC` | 상/하한가근접진입 | `realtime` | tracked | [SHC](./SHC.md) |
-| `SHD` | 상/하한가근접이탈 | `realtime` | tracked | [SHD](./SHD.md) |
-| `SHI` | 상/하한가진입 | `realtime` | tracked | [SHI](./SHI.md) |
-| `SHO` | 상/하한가이탈 | `realtime` | tracked | [SHO](./SHO.md) |
+| `SHC` | 상/하한가근접진입 | `realtime` | implemented | [SHC](./SHC.md) |
+| `SHD` | 상/하한가근접이탈 | `realtime` | implemented | [SHD](./SHD.md) |
+| `SHI` | 상/하한가진입 | `realtime` | implemented | [SHI](./SHI.md) |
+| `SHO` | 상/하한가이탈 | `realtime` | implemented | [SHO](./SHO.md) |
 | `TC1` | 해외선물 주문접수 실시간 | `realtime` | implemented | [TC1](./TC1.md) |
 | `TC2` | 해외선물 주문응답 실시간 | `realtime` | implemented | [TC2](./TC2.md) |
 | `TC3` | 해외선물 주문체결 실시간 | `realtime` | implemented | [TC3](./TC3.md) |
-| `UBM` | (통합) 업종별투자자별매매현황 | `realtime` | tracked | [UBM](./UBM.md) |
-| `UBT` | (통합)시간대별투자자매매추이 | `realtime` | tracked | [UBT](./UBT.md) |
+| `UBM` | (통합) 업종별투자자별매매현황 | `realtime` | implemented | [UBM](./UBM.md) |
+| `UBT` | (통합)시간대별투자자매매추이 | `realtime` | implemented | [UBT](./UBT.md) |
 | `UH1` | 통합 호가 실시간 시세 | `realtime` | implemented | [UH1](./UH1.md) |
-| `UK1` | (통합)거래원 | `realtime` | tracked | [UK1](./UK1.md) |
+| `UK1` | (통합)거래원 | `realtime` | implemented | [UK1](./UK1.md) |
 | `US2` | 통합 우선호가 실시간 시세 | `realtime` | implemented | [US2](./US2.md) |
 | `US3` | 통합 체결 실시간 시세 | `realtime` | implemented | [US3](./US3.md) |
-| `UVI` | (통합)VI발동해제 | `realtime` | tracked | [UVI](./UVI.md) |
-| `UYS` | (통합)예상체결 | `realtime` | tracked | [UYS](./UYS.md) |
+| `UVI` | (통합)VI발동해제 | `realtime` | implemented | [UVI](./UVI.md) |
+| `UYS` | (통합)예상체결 | `realtime` | implemented | [UYS](./UYS.md) |
 | `VI_` | VI발동해제 | `realtime` | implemented | [VI_](./VI_.md) |
 | `WOC` | 해외옵션 체결 | `realtime` | implemented | [WOC](./WOC.md) |
 | `WOH` | 해외옵션 호가 | `realtime` | implemented | [WOH](./WOH.md) |
-| `YC3` | 상품선물예상체결 | `realtime` | tracked | [YC3](./YC3.md) |
+| `YC3` | 상품선물예상체결 | `realtime` | implemented | [YC3](./YC3.md) |
 | `YF9` | 지수선물예상체결 | `realtime` | implemented | [YF9](./YF9.md) |
-| `YJC` | 주식선물예상체결 | `realtime` | tracked | [YJC](./YJC.md) |
-| `YJ_` | 예상지수 | `realtime` | tracked | [YJ_](./YJ_.md) |
+| `YJC` | 주식선물예상체결 | `realtime` | implemented | [YJC](./YJC.md) |
+| `YJ_` | 예상지수 | `realtime` | implemented | [YJ_](./YJ_.md) |
 | `YK3` | KOSDAQ예상체결 | `realtime` | implemented | [YK3](./YK3.md) |
 | `YOC` | 지수옵션예상체결 | `realtime` | implemented | [YOC](./YOC.md) |
 | `YS3` | KOSPI예상체결 | `realtime` | implemented | [YS3](./YS3.md) |
@@ -129,7 +129,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `g3104` | 해외주식 API 종목정보 조회 | `market_session` | tracked | [g3104](./g3104.md) |
 | `g3106` | 해외주식 API 현재가호가 조회 | `market_session` | tracked | [g3106](./g3106.md) |
 | `g3190` | 해외주식 API 마스터 조회 | `market_session` | tracked | [g3190](./g3190.md) |
-| `h3_` | ELW호가잔량 | `realtime` | tracked | [h3_](./h3_.md) |
+| `h3_` | ELW호가잔량 | `realtime` | implemented | [h3_](./h3_.md) |
 | `o3101` | 해외선물마스터조회 | `market_session` | implemented | [o3101](./o3101.md) |
 | `o3103` | 해외선물차트 분봉 조회 | `paginated` | implemented | [o3103](./o3103.md) |
 | `o3104` | 해외선물 일별체결 조회 | `market_session` | implemented | [o3104](./o3104.md) |
