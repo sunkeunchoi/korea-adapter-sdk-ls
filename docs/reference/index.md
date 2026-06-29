@@ -11,6 +11,8 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `AS2` | 해외주식 주문정정 실시간 | `realtime` | implemented, not yet recommended |
 | `AS3` | 해외주식 주문취소 실시간 | `realtime` | implemented, not yet recommended |
 | `AS4` | 해외주식 주문거부 실시간 | `realtime` | implemented, not yet recommended |
+| `BMT` | 시간대별투자자매매추이 | `realtime` | implemented, not yet recommended |
+| `BM_` | 업종별투자자별매매현황 | `realtime` | implemented, not yet recommended |
 | `C01` | 선물옵션 주문체결 실시간 | `realtime` | implemented, not yet recommended |
 | `CFOAQ10100` | 선물옵션 주문가능수량조회 | `account` | implemented, not yet recommended |
 | `CFOBQ10500` | 선물옵션 계좌예탁금증거금조회 | `account` | implemented, not yet recommended |
@@ -25,19 +27,41 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `CSPAT00601` | 현물 정규주문 (cash equity order submission) | `orders` | implemented, not yet recommended |
 | `CSPAT00701` | 현물정정주문 (cash equity order modify) | `orders` | implemented, not yet recommended |
 | `CSPAT00801` | 현물취소주문 (cash equity order cancel) | `orders` | implemented, not yet recommended |
+| `CUR` | 현물정보USD실시간 | `realtime` | implemented, not yet recommended |
 | `FC9` | 선물 체결 실시간 시세 | `realtime` | implemented, not yet recommended |
+| `FD0` | KOSPI200선물실시간상하한가 | `realtime` | implemented, not yet recommended |
 | `FH9` | 선물 호가 실시간 시세 | `realtime` | implemented, not yet recommended |
 | `GSC` | 해외주식 체결 실시간 시세 | `realtime` | implemented, not yet recommended |
 | `GSH` | 해외주식 호가 실시간 시세 | `realtime` | implemented, not yet recommended |
 | `H01` | 선물옵션 주문정정취소 실시간 | `realtime` | implemented, not yet recommended |
 | `H1_` | KOSPI 호가 실시간 시세 | `realtime` | implemented, not yet recommended |
 | `HA_` | KOSDAQ 호가 실시간 시세 | `realtime` | implemented, not yet recommended |
+| `IJ_` | 지수 | `realtime` | implemented, not yet recommended |
+| `JC0` | 주식선물체결 | `realtime` | implemented, not yet recommended |
+| `JD0` | 주식선물실시간상하한가 | `realtime` | implemented, not yet recommended |
+| `JH0` | 주식선물호가 | `realtime` | implemented, not yet recommended |
+| `JIF` | 장운영정보 | `realtime` | implemented, not yet recommended |
+| `K1_` | KOSPI거래원 | `realtime` | implemented, not yet recommended |
 | `K3_` | KOSDAQ 체결 실시간 시세 | `realtime` | implemented, not yet recommended |
+| `KH_` | KOSDAQ프로그램매매종목별 | `realtime` | implemented, not yet recommended |
+| `KM_` | KOSDAQ프로그램매매전체집계 | `realtime` | implemented, not yet recommended |
+| `KS_` | KOSDAQ우선호가 | `realtime` | implemented, not yet recommended |
+| `MK2` | US지수 | `realtime` | implemented, not yet recommended |
+| `NBT` | (NXT)시간대별투자자매매추이 | `realtime` | implemented, not yet recommended |
+| `NH1` | (NXT)호가잔량 | `realtime` | implemented, not yet recommended |
+| `NK1` | (NXT)거래원 | `realtime` | implemented, not yet recommended |
+| `NS2` | (NXT)우선호가 | `realtime` | implemented, not yet recommended |
+| `NS3` | (NXT)체결 | `realtime` | implemented, not yet recommended |
+| `NWS` | 실시간뉴스제목패킷 | `realtime` | implemented, not yet recommended |
 | `O01` | 선물옵션 주문접수 실시간 | `realtime` | implemented, not yet recommended |
 | `OC0` | 옵션 체결 실시간 시세 | `realtime` | implemented, not yet recommended |
+| `OD0` | KOSPI200옵션실시간상하한가 | `realtime` | implemented, not yet recommended |
 | `OH0` | 옵션 호가 실시간 시세 | `realtime` | implemented, not yet recommended |
+| `OK_` | KOSDAQ거래원 | `realtime` | implemented, not yet recommended |
+| `OMG` | KOSPI200옵션민감도 | `realtime` | implemented, not yet recommended |
 | `OVC` | 해외선물 체결 실시간 시세 | `realtime` | implemented, not yet recommended |
 | `OVH` | 해외선물 호가 실시간 시세 | `realtime` | implemented, not yet recommended |
+| `PH_` | KOSPI프로그램매매종목별 | `realtime` | implemented, not yet recommended |
 | `S2_` | KOSPI 우선호가 실시간 시세 | `realtime` | implemented, not yet recommended |
 | `S3_` | KOSPI 체결 실시간 시세 | `realtime` | recommended |
 | `SC0` | 주식 주문접수 실시간 | `realtime` | implemented, not yet recommended |
@@ -51,6 +75,13 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `UH1` | 통합 호가 실시간 시세 | `realtime` | implemented, not yet recommended |
 | `US2` | 통합 우선호가 실시간 시세 | `realtime` | implemented, not yet recommended |
 | `US3` | 통합 체결 실시간 시세 | `realtime` | implemented, not yet recommended |
+| `VI_` | VI발동해제 | `realtime` | implemented, not yet recommended |
+| `WOC` | 해외옵션 체결 | `realtime` | implemented, not yet recommended |
+| `WOH` | 해외옵션 호가 | `realtime` | implemented, not yet recommended |
+| `YF9` | 지수선물예상체결 | `realtime` | implemented, not yet recommended |
+| `YK3` | KOSDAQ예상체결 | `realtime` | implemented, not yet recommended |
+| `YOC` | 지수옵션예상체결 | `realtime` | implemented, not yet recommended |
+| `YS3` | KOSPI예상체결 | `realtime` | implemented, not yet recommended |
 | `o3101` | 해외선물마스터조회 | `market_session` | implemented, not yet recommended |
 | `o3103` | 해외선물차트 분봉 조회 | `paginated` | implemented, not yet recommended |
 | `o3104` | 해외선물 일별체결 조회 | `market_session` | implemented, not yet recommended |

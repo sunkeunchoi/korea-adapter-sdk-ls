@@ -7,7 +7,7 @@ VI발동해제
 ## Support
 
 - Tracked: yes
-- Implemented: no
+- Implemented: yes
 - Recommended: no
 
 ## Ownership
