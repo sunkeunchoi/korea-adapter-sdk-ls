@@ -136,3 +136,92 @@ Tracked, so no track step; assert a named non-sentinel, non-account-identifying
 witness per KTD2; numeric request slots `string_as_number` per KTD5), reclassify
 the rest (U7 — PENDING for `00707` session/funding-dependent, `paper_incompatible`
 for `01900`/proven-dead; re-confirm prior flags). This is Lane 2 / PR B (KTD7).
+
+## U5 probe disposition (executed 2026-06-29, market OPEN/in-session)
+
+Ran `make raw-probe` (via direct cargo, credential-safe http/rsp_cd/body_len) for all 69.
+Because KRX was **in-session** (Monday), far more reads carry data than the closure-era
+plan anticipated: **44 returned 00000 with a non-trivial body**, 2 re-confirmed `01900`,
+the rest empty/no-feed. Calibration: empty out-blocks ~26-98 bytes; populated >500.
+
+| TR | owner_class | domain | http | rsp_cd | body_len | disposition |
+|---|---|---|---|---|---|---|
+| CCENQ10100 | account | futures_options | 200 | 01900 | 95 | paper_incompatible (01900) — re-confirmed (prev paper_incompat) |
+| CCENQ90200 | account | futures_options | 200 | 01900 | 95 | paper_incompatible (01900) — re-confirmed (prev paper_incompat) |
+| CSPBQ00200 | account | stock | 200 | 00136 | 1076 | 00136 success-no-data → PENDING |
+| g3101 | market_session | overseas_stock | 200 | EMPTY | 26 | empty/no-feed → PENDING / paper_incompatible (re-confirm) (prev paper_incompat) |
+| g3102 | market_session | overseas_stock | 200 | EMPTY | 26 | empty/no-feed → PENDING / paper_incompatible (re-confirm) (prev paper_incompat) |
+| g3103 | market_session | overseas_stock | 200 | 00009 | 61 | 00009 → PENDING (param/session) (prev paper_incompat) |
+| g3104 | market_session | overseas_stock | 200 | EMPTY | 26 | empty/no-feed → PENDING / paper_incompatible (re-confirm) (prev paper_incompat) |
+| g3106 | market_session | overseas_stock | 200 | EMPTY | 26 | empty/no-feed → PENDING / paper_incompatible (re-confirm) (prev paper_incompat) |
+| g3190 | market_session | overseas_stock | 200 | 00000 | 187 | small-body → verify witness before flip (prev paper_incompat) |
+| o3107 | market_session | overseas_futures | 200 | 00000 | 98 | success-empty (all-default) → PENDING |
+| o3127 | market_session | overseas_futures | 200 | 00000 | 5237 | DATA-CARRIER → flip (U6) |
+| t0441 | account | futures_options | 200 | 00000 | 170 | small-body → verify witness before flip |
+| t1109 | paginated | stock | 200 | 00000 | 1305 | DATA-CARRIER → flip (U6) |
+| t1301 | paginated | stock | 200 | 00000 | 4431 | DATA-CARRIER → flip (U6) |
+| t1308 | market_session | stock | 200 | 00000 | 16373 | DATA-CARRIER → flip (U6) |
+| t1411 | paginated | stock | 200 | 00000 | 7011 | DATA-CARRIER → flip (U6) |
+| t1449 | market_session | stock | 200 | 00000 | 5123 | DATA-CARRIER → flip (U6) |
+| t1471 | market_session | stock | 200 | 00000 | 2094 | DATA-CARRIER → flip (U6) |
+| t1475 | market_session | stock | 200 | 00000 | 3361 | DATA-CARRIER → flip (U6) |
+| t1486 | paginated | stock | 200 | 00000 | 3425 | DATA-CARRIER → flip (U6) |
+| t1488 | paginated | stock | 200 | 00000 | 4324 | DATA-CARRIER → flip (U6) |
+| t1602 | paginated | stock | 200 | 00000 | 1115 | DATA-CARRIER → flip (U6) |
+| t1603 | paginated | stock | 200 | 00000 | 2767 | DATA-CARRIER → flip (U6) |
+| t1617 | paginated | stock | 200 | 00000 | 1994 | DATA-CARRIER → flip (U6) |
+| t1621 | market_session | stock | 200 | 00000 | 10769 | DATA-CARRIER → flip (U6) |
+| t1631 | market_session | stock | 200 | 00000 | 1160 | DATA-CARRIER → flip (U6) |
+| t1632 | market_session | stock | 200 | 00000 | 3608 | DATA-CARRIER → flip (U6) |
+| t1633 | market_session | stock | 200 | 00000 | 23997 | DATA-CARRIER → flip (U6) |
+| t1637 | paginated | stock | 200 | 00000 | 8065 | DATA-CARRIER → flip (U6) |
+| t1638 | market_session | stock | 200 | 00000 | 172742 | DATA-CARRIER → flip (U6) |
+| t1665 | market_session | stock | 200 | 00000 | 50471 | DATA-CARRIER → flip (U6) |
+| t1702 | market_session | stock | 200 | 00000 | 991 | DATA-CARRIER → flip (U6) |
+| t1716 | market_session | stock | 200 | 00000 | 30365 | DATA-CARRIER → flip (U6) |
+| t1717 | market_session | stock | 200 | 00000 | 664 | DATA-CARRIER → flip (U6) |
+| t1752 | paginated | stock | 200 | 00000 | 6570 | DATA-CARRIER → flip (U6) |
+| t1771 | paginated | stock | 200 | 00000 | 31412 | DATA-CARRIER → flip (U6) |
+| t1902 | market_session | stock | 200 | 00000 | 4437 | DATA-CARRIER → flip (U6) |
+| t1904 | market_session | stock | 200 | 00000 | 2406 | DATA-CARRIER → flip (U6) |
+| t1906 | market_session | stock | 200 | 00000 | 1784 | DATA-CARRIER → flip (U6) |
+| t1927 | market_session | stock | 200 | 00000 | 5090 | DATA-CARRIER → flip (U6) |
+| t1941 | market_session | stock | 200 | 00000 | 18272 | DATA-CARRIER → flip (U6) |
+| t1950 | market_session | stock | 200 | 00000 | 60 | success-empty (all-default) → PENDING |
+| t1951 | paginated | stock | 200 | 00000 | 64 | success-empty (all-default) → PENDING |
+| t1954 | market_session | stock | 200 | 00000 | 61 | success-empty (all-default) → PENDING |
+| t1956 | market_session | stock | 200 | 00000 | 57 | success-empty (all-default) → PENDING |
+| t1959 | market_session | stock | 200 | 00000 | 156990 | DATA-CARRIER → flip (U6) |
+| t1969 | market_session | stock | 200 | EMPTY | 1733536 | empty/no-feed → PENDING / paper_incompatible (re-confirm) |
+| t1971 | market_session | stock | 200 | 00000 | 60 | success-empty (all-default) → PENDING |
+| t1972 | market_session | stock | 200 | 00000 | 60 | success-empty (all-default) → PENDING |
+| t1973 | paginated | stock | 200 | 00000 | 60 | success-empty (all-default) → PENDING |
+| t1974 | market_session | stock | 200 | 00000 | 60 | success-empty (all-default) → PENDING |
+| t2106 | market_session | futures_options | 200 | 00000 | 62 | success-empty (all-default) → PENDING |
+| t2210 | market_session | futures_options | 200 | 00000 | 149 | small-body → verify witness before flip |
+| t2212 | paginated | futures_options | 200 | 00000 | 60 | success-empty (all-default) → PENDING |
+| t2214 | paginated | futures_options | 200 | 00000 | 170 | small-body → verify witness before flip |
+| t2407 | paginated | futures_options | 200 | 00000 | 80 | success-empty (all-default) → PENDING |
+| t2424 | market_session | futures_options | 200 | 00000 | 200 | small-body → verify witness before flip |
+| t2541 | paginated | futures_options | 200 | 00000 | 1170 | DATA-CARRIER → flip (U6) |
+| t2545 | market_session | futures_options | 200 | 00000 | 60 | success-empty (all-default) → PENDING |
+| t8404 | paginated | futures_options | 200 | 00000 | 60 | success-empty (all-default) → PENDING |
+| t8406 | market_session | futures_options | 200 | 00000 | 60 | success-empty (all-default) → PENDING |
+| t8407 | market_session | stock | 200 | 00000 | 1163 | DATA-CARRIER → flip (U6) |
+| t8427 | market_session | futures_options | 200 | 00000 | 4687 | DATA-CARRIER → flip (U6) |
+| t8428 | market_session | stock | 200 | 00000 | 421 | small-body → verify witness before flip |
+| t8450 | market_session | stock | 200 | 00000 | 2151 | DATA-CARRIER → flip (U6) |
+| t8454 | paginated | stock | 200 | 00000 | 4806 | DATA-CARRIER → flip (U6) |
+| t8455 | market_session | futures_options | 200 | 00000 | 1498 | DATA-CARRIER → flip (U6) (prev paper_incompat) |
+| t8460 | market_session | futures_options | 200 | 00000 | 60 | success-empty (all-default) → PENDING (prev paper_incompat) |
+| t8463 | market_session | futures_options | 200 | 00000 | 4759 | DATA-CARRIER → flip (U6) (prev paper_incompat) |
+
+### Flip batches (U6) — carriers are ~32 domestic stock + overseas/F-O; multi-PR mechanical work
+- **High-confidence domestic stock carriers (body>500, 00000):** t1109 t1301 t1308 t1411 t1449 t1471 t1475 t1486 t1488 t1602 t1603 t1617 t1621 t1631 t1632 t1633 t1637 t1638 t1665 t1702 t1717 t1752 t1771 t1902 t1904 t1906 t1927 t1941 t1959 t8407 t8450 t8454 — each needs a full implement-tr (struct+facade+policy+offline+typed smoke, witness per KTD2).
+- **F/O carriers (domestic_option lane to re-probe for account ones):** t1716 t2210 t2214 t2424 t2541 t8427 t8428 t8463(prev paper_incompat — now 4759B, re-verify night-deriv) t8455(prev paper_incompat — now 1498B).
+- **Overseas (need overseas_option lane re-probe):** o3127(5237 market-data), g3190(187).
+- **Account (need account context / lane):** CSPBQ00200(00136 no-data→PENDING), t0441(170 all-default→PENDING).
+### U7 reclassify (probe-backed)
+- **paper_incompatible re-confirmed (01900):** CCENQ10100, CCENQ90200 — flag stands.
+- **overseas-stock g31xx re-confirmed no paper feed:** g3101/g3102/g3104/g3106 (26B error), g3103 (00009) — flag stands (§14).
+- **success-empty / session-empty → stay PENDING (already tracked-not-implemented):** o3107 t1950 t1951 t1954 t1956 t1969 t1971 t1972 t1973 t1974 t2106 t2212 t2407 t2545 t8404 t8406 t8460.
