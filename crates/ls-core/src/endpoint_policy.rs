@@ -308,6 +308,201 @@ pub const T1959_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(5),
 };
 
+/// t1716 — 외인기관종목별동향 (foreign/institution by-issue trend; non-paginated).
+/// path /stock/frgr-itt, group [주식] 외인/기관.
+pub const T1716_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1716",
+    path: "/stock/frgr-itt",
+    module: "stock",
+    group: "[주식] 외인/기관",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1902 — ETF시간별추이 (ETF intraday NAV/price trend; non-paginated).
+/// path /stock/etf, group [주식] ETF.
+pub const T1902_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1902",
+    path: "/stock/etf",
+    module: "stock",
+    group: "[주식] ETF",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1904 — ETF구성종목조회 (ETF PDF / constituent basket; non-paginated).
+/// path /stock/etf, group [주식] ETF.
+pub const T1904_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1904",
+    path: "/stock/etf",
+    module: "stock",
+    group: "[주식] ETF",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1927 — 공매도일별추이 (short-selling daily trend; non-paginated).
+/// path /stock/etc, group [주식] 기타.
+pub const T1927_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1927",
+    path: "/stock/etc",
+    module: "stock",
+    group: "[주식] 기타",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1941 — 종목별대차거래일간추이 (per-issue stock-loan/대차 daily trend; non-paginated).
+/// path /stock/etc, group [주식] 기타.
+pub const T1941_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1941",
+    path: "/stock/etc",
+    module: "stock",
+    group: "[주식] 기타",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1631 — 프로그램매매종합조회 (program-trade综合; non-paginated).
+/// path /stock/program, group [주식] 프로그램.
+pub const T1631_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1631",
+    path: "/stock/program",
+    module: "stock",
+    group: "[주식] 프로그램",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1632 — 프로그램매매추이(시간) (program-trade intraday trend; non-paginated).
+/// path /stock/program, group [주식] 프로그램.
+pub const T1632_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1632",
+    path: "/stock/program",
+    module: "stock",
+    group: "[주식] 프로그램",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1633 — 프로그램매매추이(일별) (program-trade daily trend; non-paginated).
+/// path /stock/program, group [주식] 프로그램.
+pub const T1633_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1633",
+    path: "/stock/program",
+    module: "stock",
+    group: "[주식] 프로그램",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1702 — 외국인/기관별 매매추이 (foreign/institution by-issue trend; non-paginated).
+/// path /stock/frgr-itt, group [주식] 외인/기관.
+pub const T1702_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1702",
+    path: "/stock/frgr-itt",
+    module: "stock",
+    group: "[주식] 외인/기관",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1717 — 외국인/기관 순매수추이 (foreign/institution net-buy trend; non-paginated).
+/// path /stock/frgr-itt, group [주식] 외인/기관.
+pub const T1717_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1717",
+    path: "/stock/frgr-itt",
+    module: "stock",
+    group: "[주식] 외인/기관",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1665 — 투자자별 매매추이(업종) (investor-by-sector trend chart; non-paginated).
+/// path /stock/chart, group [주식] 차트.
+pub const T1665_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1665",
+    path: "/stock/chart",
+    module: "stock",
+    group: "[주식] 차트",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1471 — 시간대별호가잔량추이 (intraday best-quote-remainder trend; non-paginated).
+/// path /stock/market-data, group [주식] 시세.
+pub const T1471_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1471",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1475 — VP대비등락률상하위 (VP-relative rise/fall ranking; non-paginated).
+/// path /stock/market-data, group [주식] 시세. corp rate is 2/s (per baseline).
+pub const T1475_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1475",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(2),
+};
+
 /// t1950 — ELW현재가(시세)조회 (ELW current-price/quote; non-paginated).
 /// path /stock/elw, group [주식] ELW.
 pub const T1950_POLICY: EndpointPolicy = EndpointPolicy {
@@ -929,6 +1124,165 @@ pub const T1809_POLICY: EndpointPolicy = EndpointPolicy {
     path: "/stock/item-search",
     module: "stock",
     group: "[주식] 종목검색",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1109 — 시간외체결량 (after-hours tick conclusion; self-paginated on the body
+/// `dan_chetime`/`idx` cursor, `idx` serialized as a JSON number). Open-window
+/// domestic reads (plan -001).
+pub const T1109_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1109",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
+/// t1301 — 시간대별체결조회 (time-band tick conclusion; self-paginated on the body
+/// `cts_time` cursor; `cvolume` filter serialized as a JSON number). Open-window
+/// domestic reads (plan -001).
+pub const T1301_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1301",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1486 — 예상체결가등락율 (expected-conclusion; self-paginated on the body
+/// `cts_time` cursor; `cnt` count serialized as a JSON number). Open-window
+/// domestic reads (plan -001).
+pub const T1486_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1486",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(2),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t8454 — 시간대별체결조회 (exchange-qualified time-band tick conclusion;
+/// self-paginated on the body `cts_time` cursor; `cvolume` filter serialized as a
+/// JSON number). Open-window domestic reads (plan -001).
+pub const T8454_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t8454",
+    path: "/stock/market-data",
+    module: "stock",
+    group: "[주식] 시세",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(1),
+};
+
+/// t1637 — 프로그램매매추이(종목별) (per-stock program-trade flow; self-paginated on
+/// the body `cts_idx` cursor serialized as a JSON number). Open-window domestic
+/// reads (plan -001).
+pub const T1637_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1637",
+    path: "/stock/program",
+    module: "stock",
+    group: "[주식] 프로그램",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1602 — 시간대별투자자매매추이 (time-band investor flow by sector; self-paginated
+/// on the body `cts_time` cursor; `cts_idx`/`cnt` serialized as JSON numbers).
+/// Open-window domestic reads (plan -001).
+pub const T1602_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1602",
+    path: "/stock/investor",
+    module: "stock",
+    group: "[주식] 투자자",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1603 — 투자자별매매종목 (investor detail by issue; self-paginated on the body
+/// `cts_time` cursor; `cts_idx`/`cnt` serialized as JSON numbers). Open-window
+/// domestic reads (plan -001).
+pub const T1603_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1603",
+    path: "/stock/investor",
+    module: "stock",
+    group: "[주식] 투자자",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1617 — 투자자별일별매매추이 (investor time/daily flow; self-paginated on the body
+/// `cts_date`/`cts_time` cursors; all request slots String). Open-window domestic
+/// reads (plan -001).
+pub const T1617_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1617",
+    path: "/stock/investor",
+    module: "stock",
+    group: "[주식] 투자자",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1752 — 거래원별종목별동향 (broker-by-issue; self-paginated on the body `cts_idx`
+/// cursor serialized as a JSON number). Open-window domestic reads (plan -001).
+pub const T1752_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1752",
+    path: "/stock/exchange",
+    module: "stock",
+    group: "[주식] 거래원",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: true,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
+/// t1771 — 거래원별시간대별추이 (broker time-series by issue; self-paginated on the
+/// body `cts_idx` cursor; `cts_idx`/`cnt` serialized as JSON numbers; row array
+/// under `t1771OutBlock2`). Open-window domestic reads (plan -001).
+pub const T1771_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1771",
+    path: "/stock/exchange",
+    module: "stock",
+    group: "[주식] 거래원",
     protocol: Protocol::Rest,
     category: RateLimitCategory::MarketData,
     is_order: false,
@@ -3779,6 +4133,24 @@ mod tests {
             T8406_POLICY,
             // Closed-window more-flips wave (plan -001): multi-symbol current-price read.
             T8407_POLICY,
+            // Open-window domestic program-trade reads: 综合 / intraday-trend / daily-trend.
+            T1631_POLICY,
+            T1632_POLICY,
+            T1633_POLICY,
+            // Open-window domestic reads: foreign/institution by-issue trend, ETF
+            // intraday-trend + constituents, short-sale daily trend, stock-loan trend.
+            T1716_POLICY,
+            T1902_POLICY,
+            T1904_POLICY,
+            T1927_POLICY,
+            T1941_POLICY,
+            // Open-window domestic reads: foreign/institution trends, sector-investor
+            // chart, intraday quote-remainder trend, VP-relative ranking.
+            T1702_POLICY,
+            T1717_POLICY,
+            T1665_POLICY,
+            T1471_POLICY,
+            T1475_POLICY,
             // Closed-window more-flips wave (plan -001): LP-target ELW issue list read.
             T1959_POLICY,
             // Closed-window more-flips wave (plan -001): ELW current-price/quote read.
@@ -3806,6 +4178,20 @@ mod tests {
             T1636_POLICY,
             // Closed-window more-flips wave (plan -001): self-paginated stock read (signal search).
             T1809_POLICY,
+            // Open-window domestic reads (plan -001): self-paginated stock tick/conclusion
+            // + program-flow reads.
+            T1109_POLICY,
+            T1301_POLICY,
+            T1486_POLICY,
+            T8454_POLICY,
+            T1637_POLICY,
+            // Open-window domestic reads (plan -001): self-paginated investor-flow
+            // + exchange-broker reads.
+            T1602_POLICY,
+            T1603_POLICY,
+            T1617_POLICY,
+            T1752_POLICY,
+            T1771_POLICY,
             CSPAQ12200_POLICY,
             CSPAQ12300_POLICY,
             CSPAQ22200_POLICY,

@@ -1103,6 +1103,31 @@ mod tests {
             "NS3", "NH1", "NS2", "NK1", "NBT", "KS_", "OK_", "KH_", "KM_", "PH_", "K1_", "IJ_",
             "YS3", "YK3", "VI_", "JC0", "JH0", "JD0", "FD0", "OD0", "OMG", "YF9", "YOC", "BM_",
             "WOC", "WOH", "JIF", "NWS", "BMT", "CUR", "MK2",
+            // Open-window domestic program-trade reads: intraday-trend t1632 +
+            // daily-trend t1633 certified non-empty (t1631 PENDING — gateway IGW40014).
+            "t1632", "t1633",
+            // Open-window domestic reads: foreign/institution by-issue trend t1702 +
+            // net-buy trend t1717, investor-by-sector chart t1665, intraday
+            // quote-remainder trend t1471, VP-relative ranking t1475 — all certified
+            // non-empty on in-window paper smokes (KRX open 2026-06-29).
+            "t1702", "t1717", "t1665", "t1471", "t1475",
+            // Open-window domestic reads: foreign/institution by-issue trend t1716,
+            // ETF intraday-trend t1902 + constituents t1904, short-sale daily trend
+            // t1927, stock-loan/대차 daily trend t1941 — all certified non-empty on
+            // in-window paper smokes (KRX open 2026-06-29).
+            "t1716", "t1902", "t1904", "t1927", "t1941",
+            // Open-window domestic paginated reads (plan -001): time-band tick
+            // conclusion t1301 + t8454, expected-conclusion t1486, per-stock
+            // program-trade flow t1637 — all certified non-empty on in-window paper
+            // smokes (KRX open 2026-06-29). t1109 (시간외체결량) PENDS: empty 00707
+            // in the regular continuous session (after-hours data does not populate).
+            "t1301", "t1486", "t8454", "t1637",
+            // Open-window domestic paginated reads (plan -001): investor-flow reads
+            // t1602 (time-band by sector) + t1603 (detail by issue) + t1617
+            // (time/daily) and exchange-broker reads t1752 (broker-by-issue) +
+            // t1771 (broker time-series) — all certified non-empty on in-window
+            // paper smokes (KRX open 2026-06-29).
+            "t1602", "t1603", "t1617", "t1752", "t1771",
         ];
         for tr in banner_trs {
             let page = reference
@@ -1273,9 +1298,28 @@ mod tests {
         // o3137/o3139 (front-month CUSN26 persists under closure) + t8462 (KRX
         // night-derivatives investor table) certified non-empty — add 11.
         // (o3107/o3127 stayed PENDING: account-state watchlist boards empty/zero.)
+        // Open-window domestic program-trade reads: intraday-trend t1632 +
+        // daily-trend t1633 certified non-empty (20-row series each) — add 2.
+        // (t1631 stayed PENDING: gateway-side IGW40014 on its own response payload.)
+        // Open-window domestic reads: foreign/institution by-issue trend t1702 +
+        // net-buy trend t1717, investor-by-sector chart t1665, intraday
+        // quote-remainder trend t1471, VP-relative ranking t1475 — all certified
+        // non-empty on in-window paper smokes (KRX open 2026-06-29) — add 5.
+        // Open-window domestic reads: foreign/institution by-issue trend t1716, ETF
+        // intraday-trend t1902 + constituents t1904, short-sale daily trend t1927,
+        // stock-loan/대차 daily trend t1941 — all certified non-empty on in-window
+        // paper smokes (KRX open 2026-06-29) — add 5.
+        // Open-window domestic paginated reads (plan -001): time-band tick conclusion
+        // t1301 + t8454, expected-conclusion t1486, per-stock program-trade flow t1637
+        // — all certified non-empty (20/20/20/21-row series) on in-window paper smokes
+        // (KRX open 2026-06-29) — add 4. (t1109 stayed PENDING: empty 00707 in the
+        // regular continuous session.)
+        // Open-window domestic paginated reads (plan -001): investor-flow t1602/t1603/
+        // t1617 + exchange-broker t1752/t1771 — all certified non-empty (20/20/20/15/1-row
+        // series) on in-window paper smokes (KRX open 2026-06-29) — add 5.
         assert_eq!(
             reference.len(),
-            213,
+            234,
             "index + the implemented reference pages"
         );
 

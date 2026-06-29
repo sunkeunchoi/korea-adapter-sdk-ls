@@ -19,26 +19,36 @@ use ls_core::{Inner, LsResult};
 mod breadth_board;
 mod chart;
 mod designation_board;
+mod exchange_broker;
+mod expected_conclusion;
 mod historical_chart;
 mod invest_opinion;
+mod investor;
 mod item_search;
 mod low_liquidity;
 mod overseas_futures_chart;
 mod overseas_index;
+mod program_flow;
 mod rank_screen;
 mod sector_index;
+mod tick_conclusion;
 
 pub use breadth_board::*;
 pub use chart::*;
 pub use designation_board::*;
+pub use exchange_broker::*;
+pub use expected_conclusion::*;
 pub use historical_chart::*;
 pub use invest_opinion::*;
+pub use investor::*;
 pub use item_search::*;
 pub use low_liquidity::*;
 pub use overseas_futures_chart::*;
 pub use overseas_index::*;
+pub use program_flow::*;
 pub use rank_screen::*;
 pub use sector_index::*;
+pub use tick_conclusion::*;
 
 /// Paginated operations, backed by the shared runtime core.
 ///
@@ -549,6 +559,106 @@ impl Paginated {
     pub async fn signal_search(&self, req: &T1809Request) -> LsResult<T1809Response> {
         self.inner
             .post_paginated(&ls_core::endpoint_policy::T1809_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t1109` after-hours tick conclusion (시간외체결량).
+    /// Self-paginated on the body `dan_chetime`/`idx` cursor (first page `idx=0`,
+    /// serialized as a JSON number per `string_as_number`); single-page scope
+    /// (open-window domestic reads, plan -001).
+    pub async fn after_hours_ticks(&self, req: &T1109Request) -> LsResult<T1109Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1109_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t1301` time-band tick conclusion (시간대별체결).
+    /// Self-paginated on the body `cts_time` cursor (first page `""`); the
+    /// `cvolume` filter serializes as a JSON number per `string_as_number`.
+    /// Single-page scope (open-window domestic reads, plan -001).
+    pub async fn time_band_ticks(&self, req: &T1301Request) -> LsResult<T1301Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1301_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t1486` expected-conclusion (예상체결). Self-paginated
+    /// on the body `cts_time` cursor (first page `""`); the `cnt` count serializes
+    /// as a JSON number per `string_as_number`. Single-page scope (open-window
+    /// domestic reads, plan -001).
+    pub async fn expected_ticks(&self, req: &T1486Request) -> LsResult<T1486Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1486_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t8454` exchange-qualified time-band tick conclusion
+    /// (시간대별체결). Self-paginated on the body `cts_time` cursor (first page `""`);
+    /// the `cvolume` filter serializes as a JSON number per `string_as_number`.
+    /// Single-page scope (open-window domestic reads, plan -001).
+    pub async fn time_band_ticks_ex(&self, req: &T8454Request) -> LsResult<T8454Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T8454_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t1637` per-stock program-trade flow (프로그램매매추이).
+    /// Self-paginated on the body `cts_idx` cursor (first page `0`, serialized as a
+    /// JSON number per `string_as_number`); single-page scope (open-window domestic
+    /// reads, plan -001).
+    pub async fn program_trade_flow(&self, req: &T1637Request) -> LsResult<T1637Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1637_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t1602` time-band investor flow by sector
+    /// (시간대별투자자매매추이). Self-paginated on the body `cts_time` cursor (first
+    /// page `""`); the `cts_idx`/`cnt` slots serialize as JSON numbers per
+    /// `string_as_number`. Single-page scope (open-window domestic reads, plan -001).
+    pub async fn investor_flow_time_band(&self, req: &T1602Request) -> LsResult<T1602Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1602_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t1603` investor detail by issue (투자자별매매종목).
+    /// Self-paginated on the body `cts_time` cursor (first page `""`); the
+    /// `cts_idx`/`cnt` slots serialize as JSON numbers per `string_as_number`.
+    /// Single-page scope (open-window domestic reads, plan -001).
+    pub async fn investor_detail(&self, req: &T1603Request) -> LsResult<T1603Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1603_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t1617` investor time/daily flow (투자자별일별매매추이).
+    /// Self-paginated on the body `cts_date`/`cts_time` cursors (first page `""`);
+    /// all request slots are strings. Single-page scope (open-window domestic reads,
+    /// plan -001).
+    pub async fn investor_flow_daily(&self, req: &T1617Request) -> LsResult<T1617Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1617_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t1752` broker-by-issue (거래원별종목별동향).
+    /// Self-paginated on the body `cts_idx` cursor (first page `0`, serialized as a
+    /// JSON number per `string_as_number`); single-page scope (open-window domestic
+    /// reads, plan -001).
+    pub async fn broker_by_issue(&self, req: &T1752Request) -> LsResult<T1752Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1752_POLICY, req)
+            .await
+    }
+
+    /// Fetch a SINGLE page of `t1771` broker time-series by issue (거래원별시간대별추이).
+    /// Self-paginated on the body `cts_idx` cursor (first page `0`, serialized as a
+    /// JSON number per `string_as_number`); the row array arrives under
+    /// `t1771OutBlock2`. Single-page scope (open-window domestic reads, plan -001).
+    pub async fn broker_time_series(&self, req: &T1771Request) -> LsResult<T1771Response> {
+        self.inner
+            .post_paginated(&ls_core::endpoint_policy::T1771_POLICY, req)
             .await
     }
 }

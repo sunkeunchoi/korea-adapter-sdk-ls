@@ -33,13 +33,23 @@ use ls_sdk::paginated::{
     T1488Request, T1488Response,
     T1636Request, T1636Response,
     T1809Request, T1809Response,
+    T1109Request, T1109Response,
+    T1301Request, T1301Response,
+    T1486Request, T1486Response,
+    T8454Request, T8454Response,
+    T1637Request, T1637Response,
+    T1602Request, T1602Response,
+    T1603Request, T1603Response,
+    T1617Request, T1617Response,
+    T1752Request, T1752Response,
+    T1771Request, T1771Response,
     T8417Request, T8417Response, T8418Request, T8418Response, T8411Request, T8411Response,
     T8452Request, T8452Response, T8453Request, T8453Response,
     T8464Request, T8464Response, T8465Request, T8465Response, T8466Request, T8466Response,
     T8405Request, T8405Response,
     T1444Request, T1444Response, T1422Request, T1422Response, T1427Request, T1427Response, T1442Request, T1442Response, T1405Request, T1405Response, T1960Request, T1960Response, T1961Request, T1961Response, T1966Request, T1966Response, T1921Request, T1921Response,
 };
-use ls_core::endpoint_policy::{T1310_POLICY, T1404_POLICY, T1410_POLICY, T1411_POLICY, T1488_POLICY, T1636_POLICY, T1809_POLICY, T1514_POLICY};
+use ls_core::endpoint_policy::{T1310_POLICY, T1404_POLICY, T1410_POLICY, T1411_POLICY, T1488_POLICY, T1636_POLICY, T1809_POLICY, T1514_POLICY, T1109_POLICY, T1301_POLICY, T1486_POLICY, T8454_POLICY, T1637_POLICY, T1602_POLICY, T1603_POLICY, T1617_POLICY, T1752_POLICY, T1771_POLICY};
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::mock_http::{mock_config, mount_token};
 use wiremock::matchers::{header, method, path};
@@ -1269,6 +1279,8 @@ const T1636_FIXTURE: &str = include_str!("fixtures/t1636_resp.json");
 /// `T1636_POLICY.path` — the mounted endpoint for the `[주식] 프로그램`
 /// program-trading read (plan -001, closed-window more-flips).
 const STOCK_PROGRAM_PATH: &str = "/stock/program";
+const STOCK_INVESTOR_PATH: &str = "/stock/investor";
+const STOCK_EXCHANGE_PATH: &str = "/stock/exchange";
 
 /// Covers R3. The `t1636` request serializes the string filters as JSON strings,
 /// with the body `cts_idx` cursor serialized as a JSON NUMBER via
@@ -2812,4 +2824,854 @@ fn t1921_request_and_response_round_trip() {
     assert_eq!(resp.outblock1[0].close, "41945", "close from JSON number via string_or_number");
     let empty: T1921Response = serde_json::from_str(r#"{"rsp_cd":"00707","t1921OutBlock":{},"t1921OutBlock1":[]}"#).expect("empty deserializes");
     assert!(empty.outblock1.is_empty());
+}
+
+// --- t1109 — 시간외체결량 (after-hours tick conclusion; self-paginated on idx) ---
+
+/// Covers R3. `t1109` serializes `idx` as a JSON **number** (string form returns
+/// IGW40011), the `dan_chetime` cursor + identifiers stay strings, header cursors
+/// skipped.
+#[test]
+fn t1109_request_serializes_idx_as_number() {
+    let value = serde_json::to_value(T1109Request::new("005930")).expect("serialize t1109 request");
+    let obj = value.as_object().expect("request is a JSON object");
+    assert_eq!(obj.len(), 1, "only t1109InBlock at the top level");
+    let inblock = &value["t1109InBlock"];
+    assert!(inblock["idx"].is_number(), "idx is a JSON number, not a string");
+    assert!(inblock["shcode"].is_string(), "shcode stays a string");
+    assert_eq!(inblock["shcode"], "005930");
+    assert_eq!(inblock["dan_chetime"], "", "first-page dan_chetime cursor");
+    assert!(value.get("tr_cont").is_none(), "header cursor skipped from body");
+    assert!(value.get("tr_cont_key").is_none(), "header cursor skipped from body");
+}
+
+/// Covers R4. An inline first-page body deserializes through REAL paginated dispatch;
+/// a modeled non-key field (`dan_price`) holds a real non-default value.
+#[tokio::test]
+async fn t1109_deserializes_first_page_shape() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(STOCK_MARKET_DATA_PATH))
+        .and(header("tr_cd", "t1109"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    r#"{"rsp_cd":"00000","rsp_msg":"ok","t1109OutBlock":{"ctsshcode":"005930","ctschetime":"153000","idx":3},"t1109OutBlock1":[{"dan_chetime":"153000","dan_price":71500,"dan_sign":"2","dan_change":500,"dan_cvolume":120,"dan_volume":9876543}]}"#,
+                )
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+    let resp = sdk_for(&server)
+        .paginated()
+        .after_hours_ticks(&T1109Request::new("005930"))
+        .await
+        .expect("t1109 after_hours_ticks should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert!(!resp.outblock1.is_empty(), "first-page tick rows round-trip");
+    assert_eq!(resp.outblock1[0].dan_price, "71500", "real non-default price (from JSON number)");
+    assert_eq!(resp.outblock.ctschetime, "153000", "next-page cursor round-trips");
+}
+
+/// Covers R4. The tick array tolerates single-or-array + empty, and
+/// `string_or_number` parses `dan_price`/`dan_volume` from BOTH string and number.
+#[test]
+fn t1109_response_round_trips_single_or_array_and_empty() {
+    let single: T1109Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1109OutBlock": { "ctsshcode": "005930", "ctschetime": "153000", "idx": 3 },
+        "t1109OutBlock1": { "dan_chetime": "153000", "dan_price": "71500", "dan_volume": "9876543" }
+    }))
+    .expect("single tick row tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].dan_price, "71500", "price from JSON string");
+
+    let number: T1109Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1109OutBlock": { "ctschetime": "153000", "idx": 3 },
+        "t1109OutBlock1": [{ "dan_chetime": "153000", "dan_price": 71500, "dan_volume": 9876543 }]
+    }))
+    .expect("numeric price/volume tolerated");
+    assert_eq!(number.outblock1[0].dan_volume, "9876543", "volume from JSON number");
+
+    let empty: T1109Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t1109OutBlock": { "ctschetime": "" }, "t1109OutBlock1": []
+    }))
+    .expect("empty result deserializes");
+    assert!(empty.outblock1.is_empty(), "empty first page is the pending case");
+}
+
+/// Registration guard (R3/R8): `T1109_POLICY` is a real paginated non-order policy.
+#[test]
+fn t1109_policy_is_registered_and_paginated() {
+    assert_eq!(T1109_POLICY.tr_code, "t1109");
+    assert_eq!(T1109_POLICY.path, "/stock/market-data");
+    assert!(T1109_POLICY.has_pagination, "t1109 self-paginates (idx)");
+    assert!(!T1109_POLICY.is_order, "t1109 is a non-order read");
+}
+
+// --- t1301 — 시간대별체결조회 (time-band tick conclusion; self-paginated on cts_time) ---
+
+/// Covers R3. `t1301` serializes `cvolume` as a JSON **number** (string form
+/// returns IGW40011), the `cts_time` cursor + window bounds stay strings, header
+/// cursors skipped.
+#[test]
+fn t1301_request_serializes_cvolume_as_number() {
+    let value = serde_json::to_value(T1301Request::new("005930", "0900", "1530"))
+        .expect("serialize t1301 request");
+    let inblock = &value["t1301InBlock"];
+    assert!(inblock["cvolume"].is_number(), "cvolume is a JSON number");
+    assert!(inblock["cts_time"].is_string(), "cts_time cursor stays a string");
+    assert!(inblock["starttime"].is_string(), "starttime stays a string");
+    assert_eq!(inblock["shcode"], "005930");
+    assert_eq!(inblock["cts_time"], "", "first-page cts_time cursor");
+    assert!(value.get("tr_cont").is_none(), "header cursor skipped from body");
+    assert!(value.get("tr_cont_key").is_none(), "header cursor skipped from body");
+}
+
+/// Covers R4. An inline first-page body deserializes through REAL paginated dispatch;
+/// a modeled non-key field (`price`) holds a real non-default value.
+#[tokio::test]
+async fn t1301_deserializes_first_page_shape() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(STOCK_MARKET_DATA_PATH))
+        .and(header("tr_cd", "t1301"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    r#"{"rsp_cd":"00000","rsp_msg":"ok","t1301OutBlock":{"cts_time":"100700"},"t1301OutBlock1":[{"chetime":"100700","price":71500,"sign":"2","change":500,"cvolume":120,"volume":1234567}]}"#,
+                )
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+    let resp = sdk_for(&server)
+        .paginated()
+        .time_band_ticks(&T1301Request::new("005930", "0900", "1530"))
+        .await
+        .expect("t1301 time_band_ticks should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert!(!resp.outblock1.is_empty(), "first-page tick rows round-trip");
+    assert_eq!(resp.outblock1[0].price, "71500", "real non-default price (from JSON number)");
+    assert_eq!(resp.outblock.cts_time, "100700", "next-page cursor round-trips");
+}
+
+/// Covers R4. The tick array tolerates single-or-array + empty; `price`/`volume`
+/// parse from BOTH string and number.
+#[test]
+fn t1301_response_round_trips_single_or_array_and_empty() {
+    let single: T1301Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1301OutBlock": { "cts_time": "100700" },
+        "t1301OutBlock1": { "chetime": "100700", "price": "71500", "volume": "1234567" }
+    }))
+    .expect("single tick row tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].price, "71500", "price from JSON string");
+
+    let number: T1301Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1301OutBlock": { "cts_time": "100700" },
+        "t1301OutBlock1": [{ "chetime": "100700", "price": 71500, "volume": 1234567 }]
+    }))
+    .expect("numeric price/volume tolerated");
+    assert_eq!(number.outblock1[0].volume, "1234567", "volume from JSON number");
+
+    let empty: T1301Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t1301OutBlock": { "cts_time": "" }, "t1301OutBlock1": []
+    }))
+    .expect("empty result deserializes");
+    assert!(empty.outblock1.is_empty(), "empty first page is the pending case");
+}
+
+/// Registration guard (R3/R8): `T1301_POLICY` is a real paginated non-order policy.
+#[test]
+fn t1301_policy_is_registered_and_paginated() {
+    assert_eq!(T1301_POLICY.tr_code, "t1301");
+    assert_eq!(T1301_POLICY.path, "/stock/market-data");
+    assert!(T1301_POLICY.has_pagination, "t1301 self-paginates (cts_time)");
+    assert!(!T1301_POLICY.is_order, "t1301 is a non-order read");
+}
+
+// --- t1486 — 예상체결가등락율 (expected-conclusion; self-paginated on cts_time) ---
+
+/// Covers R3. `t1486` serializes `cnt` as a JSON **number** (string form returns
+/// IGW40011), the `cts_time` cursor + identifiers stay strings, header cursors
+/// skipped.
+#[test]
+fn t1486_request_serializes_cnt_as_number() {
+    let value =
+        serde_json::to_value(T1486Request::new("005930", "1")).expect("serialize t1486 request");
+    let inblock = &value["t1486InBlock"];
+    assert!(inblock["cnt"].is_number(), "cnt is a JSON number");
+    assert!(inblock["cts_time"].is_string(), "cts_time cursor stays a string");
+    assert_eq!(inblock["shcode"], "005930");
+    assert_eq!(inblock["exchgubun"], "1");
+    assert_eq!(inblock["cts_time"], "", "first-page cts_time cursor");
+    assert!(value.get("tr_cont").is_none(), "header cursor skipped from body");
+    assert!(value.get("tr_cont_key").is_none(), "header cursor skipped from body");
+}
+
+/// Covers R4. An inline first-page body deserializes through REAL paginated dispatch;
+/// a modeled non-key field (`price`) holds a real non-default value.
+#[tokio::test]
+async fn t1486_deserializes_first_page_shape() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(STOCK_MARKET_DATA_PATH))
+        .and(header("tr_cd", "t1486"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    r#"{"rsp_cd":"00000","rsp_msg":"ok","t1486OutBlock":{"cts_time":"090000","ex_shcode":"005930"},"t1486OutBlock1":[{"chetime":"085900","price":71600,"sign":"2","change":600,"cvolume":340}]}"#,
+                )
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+    let resp = sdk_for(&server)
+        .paginated()
+        .expected_ticks(&T1486Request::new("005930", "1"))
+        .await
+        .expect("t1486 expected_ticks should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert!(!resp.outblock1.is_empty(), "first-page expected rows round-trip");
+    assert_eq!(resp.outblock1[0].price, "71600", "real non-default price (from JSON number)");
+    assert_eq!(resp.outblock.cts_time, "090000", "next-page cursor round-trips");
+}
+
+/// Covers R4. The expected-conclusion array tolerates single-or-array + empty;
+/// `price`/`cvolume` parse from BOTH string and number.
+#[test]
+fn t1486_response_round_trips_single_or_array_and_empty() {
+    let single: T1486Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1486OutBlock": { "cts_time": "090000", "ex_shcode": "005930" },
+        "t1486OutBlock1": { "chetime": "085900", "price": "71600", "cvolume": "340" }
+    }))
+    .expect("single expected row tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].price, "71600", "price from JSON string");
+
+    let number: T1486Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1486OutBlock": { "cts_time": "090000" },
+        "t1486OutBlock1": [{ "chetime": "085900", "price": 71600, "cvolume": 340 }]
+    }))
+    .expect("numeric price/cvolume tolerated");
+    assert_eq!(number.outblock1[0].cvolume, "340", "cvolume from JSON number");
+
+    let empty: T1486Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t1486OutBlock": { "cts_time": "" }, "t1486OutBlock1": []
+    }))
+    .expect("empty result deserializes");
+    assert!(empty.outblock1.is_empty(), "empty first page is the pending case");
+}
+
+/// Registration guard (R3/R8): `T1486_POLICY` is a real paginated non-order policy.
+#[test]
+fn t1486_policy_is_registered_and_paginated() {
+    assert_eq!(T1486_POLICY.tr_code, "t1486");
+    assert_eq!(T1486_POLICY.path, "/stock/market-data");
+    assert!(T1486_POLICY.has_pagination, "t1486 self-paginates (cts_time)");
+    assert!(!T1486_POLICY.is_order, "t1486 is a non-order read");
+}
+
+// --- t8454 — 시간대별체결조회 (exchange-qualified time-band; self-paginated on cts_time) ---
+
+/// Covers R3. `t8454` serializes `cvolume` as a JSON **number** (string form
+/// returns IGW40011), the `cts_time` cursor + window/exchange stay strings, header
+/// cursors skipped.
+#[test]
+fn t8454_request_serializes_cvolume_as_number() {
+    let value = serde_json::to_value(T8454Request::new("005930", "0900", "1530", "1"))
+        .expect("serialize t8454 request");
+    let inblock = &value["t8454InBlock"];
+    assert!(inblock["cvolume"].is_number(), "cvolume is a JSON number");
+    assert!(inblock["cts_time"].is_string(), "cts_time cursor stays a string");
+    assert_eq!(inblock["shcode"], "005930");
+    assert_eq!(inblock["exchgubun"], "1");
+    assert_eq!(inblock["cts_time"], "", "first-page cts_time cursor");
+    assert!(value.get("tr_cont").is_none(), "header cursor skipped from body");
+    assert!(value.get("tr_cont_key").is_none(), "header cursor skipped from body");
+}
+
+/// Covers R4. An inline first-page body deserializes through REAL paginated dispatch;
+/// a modeled non-key field (`price`) holds a real non-default value.
+#[tokio::test]
+async fn t8454_deserializes_first_page_shape() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(STOCK_MARKET_DATA_PATH))
+        .and(header("tr_cd", "t8454"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    r#"{"rsp_cd":"00000","rsp_msg":"ok","t8454OutBlock":{"cts_time":"100700","ex_shcode":"005930"},"t8454OutBlock1":[{"chetime":"100700","price":71500,"sign":"2","change":500,"cvolume":120,"volume":1234567}]}"#,
+                )
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+    let resp = sdk_for(&server)
+        .paginated()
+        .time_band_ticks_ex(&T8454Request::new("005930", "0900", "1530", "1"))
+        .await
+        .expect("t8454 time_band_ticks_ex should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert!(!resp.outblock1.is_empty(), "first-page tick rows round-trip");
+    assert_eq!(resp.outblock1[0].price, "71500", "real non-default price (from JSON number)");
+    assert_eq!(resp.outblock.cts_time, "100700", "next-page cursor round-trips");
+}
+
+/// Covers R4. The tick array tolerates single-or-array + empty; `price`/`volume`
+/// parse from BOTH string and number.
+#[test]
+fn t8454_response_round_trips_single_or_array_and_empty() {
+    let single: T8454Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8454OutBlock": { "cts_time": "100700", "ex_shcode": "005930" },
+        "t8454OutBlock1": { "chetime": "100700", "price": "71500", "volume": "1234567" }
+    }))
+    .expect("single tick row tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].price, "71500", "price from JSON string");
+
+    let number: T8454Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t8454OutBlock": { "cts_time": "100700" },
+        "t8454OutBlock1": [{ "chetime": "100700", "price": 71500, "volume": 1234567 }]
+    }))
+    .expect("numeric price/volume tolerated");
+    assert_eq!(number.outblock1[0].volume, "1234567", "volume from JSON number");
+
+    let empty: T8454Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t8454OutBlock": { "cts_time": "" }, "t8454OutBlock1": []
+    }))
+    .expect("empty result deserializes");
+    assert!(empty.outblock1.is_empty(), "empty first page is the pending case");
+}
+
+/// Registration guard (R3/R8): `T8454_POLICY` is a real paginated non-order policy.
+#[test]
+fn t8454_policy_is_registered_and_paginated() {
+    assert_eq!(T8454_POLICY.tr_code, "t8454");
+    assert_eq!(T8454_POLICY.path, "/stock/market-data");
+    assert!(T8454_POLICY.has_pagination, "t8454 self-paginates (cts_time)");
+    assert!(!T8454_POLICY.is_order, "t8454 is a non-order read");
+}
+
+// --- t1637 — 프로그램매매추이(종목별) (per-stock program flow; self-paginated on cts_idx) ---
+
+/// Covers R3. `t1637` serializes `cts_idx` as a JSON **number** (string form
+/// returns IGW40011), the remaining fields stay strings, header cursors skipped.
+#[test]
+fn t1637_request_serializes_cts_idx_as_number() {
+    let value = serde_json::to_value(T1637Request::new("0", "0", "005930", "20260629", "1"))
+        .expect("serialize t1637 request");
+    let inblock = &value["t1637InBlock"];
+    assert!(inblock["cts_idx"].is_number(), "cts_idx is a JSON number");
+    assert!(inblock["shcode"].is_string(), "shcode stays a string");
+    assert_eq!(inblock["shcode"], "005930");
+    assert_eq!(inblock["date"], "20260629");
+    assert_eq!(inblock["exchgubun"], "1");
+    assert!(value.get("tr_cont").is_none(), "header cursor skipped from body");
+    assert!(value.get("tr_cont_key").is_none(), "header cursor skipped from body");
+}
+
+/// Covers R4. An inline first-page body deserializes through REAL paginated dispatch;
+/// a modeled non-key field (`price`) holds a real non-default value.
+#[tokio::test]
+async fn t1637_deserializes_first_page_shape() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(STOCK_PROGRAM_PATH))
+        .and(header("tr_cd", "t1637"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    r#"{"rsp_cd":"00000","rsp_msg":"ok","t1637OutBlock":{"cts_idx":5},"t1637OutBlock1":[{"date":"20260629","time":"100000","price":71500,"sign":"2","change":500,"volume":1234567,"svolume":4200,"shcode":"005930"}]}"#,
+                )
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+    let resp = sdk_for(&server)
+        .paginated()
+        .program_trade_flow(&T1637Request::new("0", "0", "005930", "20260629", "1"))
+        .await
+        .expect("t1637 program_trade_flow should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert!(!resp.outblock1.is_empty(), "first-page program-flow rows round-trip");
+    assert_eq!(resp.outblock1[0].price, "71500", "real non-default price (from JSON number)");
+    assert_eq!(resp.outblock.cts_idx, "5", "next-page cursor round-trips");
+}
+
+/// Covers R4. The program-flow array tolerates single-or-array + empty;
+/// `price`/`volume`/`svolume` parse from BOTH string and number.
+#[test]
+fn t1637_response_round_trips_single_or_array_and_empty() {
+    let single: T1637Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1637OutBlock": { "cts_idx": 5 },
+        "t1637OutBlock1": { "date": "20260629", "time": "100000", "price": "71500", "volume": "1234567", "svolume": "4200" }
+    }))
+    .expect("single program-flow row tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].price, "71500", "price from JSON string");
+
+    let number: T1637Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1637OutBlock": { "cts_idx": 5 },
+        "t1637OutBlock1": [{ "date": "20260629", "time": "100000", "price": 71500, "volume": 1234567, "svolume": 4200 }]
+    }))
+    .expect("numeric price/volume/svolume tolerated");
+    assert_eq!(number.outblock1[0].svolume, "4200", "svolume from JSON number");
+
+    let empty: T1637Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t1637OutBlock": { "cts_idx": 0 }, "t1637OutBlock1": []
+    }))
+    .expect("empty result deserializes");
+    assert!(empty.outblock1.is_empty(), "empty first page is the pending case");
+}
+
+/// Registration guard (R3/R8): `T1637_POLICY` is a real paginated non-order policy.
+#[test]
+fn t1637_policy_is_registered_and_paginated() {
+    assert_eq!(T1637_POLICY.tr_code, "t1637");
+    assert_eq!(T1637_POLICY.path, "/stock/program");
+    assert!(T1637_POLICY.has_pagination, "t1637 self-paginates (cts_idx)");
+    assert!(!T1637_POLICY.is_order, "t1637 is a non-order read");
+}
+
+// --- t1602 — 시간대별투자자매매추이 (time-band investor flow; self-paginated on cts_time) ---
+
+/// Covers R3. `t1602` serializes `cts_idx`/`cnt` as JSON **numbers** (string form
+/// returns IGW40011); the `cts_time` cursor + string filters stay strings; header
+/// cursors skipped.
+#[test]
+fn t1602_request_serializes_numeric_slots() {
+    let value = serde_json::to_value(T1602Request::new("1", "001", "1", "0", "1"))
+        .expect("serialize t1602 request");
+    let inblock = &value["t1602InBlock"];
+    assert!(inblock["cts_idx"].is_number(), "cts_idx is a JSON number");
+    assert!(inblock["cnt"].is_number(), "cnt is a JSON number");
+    assert!(inblock["cts_time"].is_string(), "cts_time cursor stays a string");
+    assert_eq!(inblock["market"], "1");
+    assert_eq!(inblock["upcode"], "001");
+    assert_eq!(inblock["cts_time"], "", "first-page cts_time cursor");
+    assert!(value.get("tr_cont").is_none(), "header cursor skipped from body");
+    assert!(value.get("tr_cont_key").is_none(), "header cursor skipped from body");
+}
+
+/// Covers R4. An inline first-page body deserializes through REAL paginated dispatch;
+/// a modeled non-key field (`sv_17`) holds a real non-default value.
+#[tokio::test]
+async fn t1602_deserializes_first_page_shape() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(STOCK_INVESTOR_PATH))
+        .and(header("tr_cd", "t1602"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    r#"{"rsp_cd":"00000","rsp_msg":"ok","t1602OutBlock":{"cts_time":"100000","ms_08":12345,"ms_17":67890,"svolume_17":4200,"ms_18":111},"t1602OutBlock1":[{"time":"100000","sv_08":-1500,"sv_17":4200,"sv_18":-700}]}"#,
+                )
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+    let resp = sdk_for(&server)
+        .paginated()
+        .investor_flow_time_band(&T1602Request::new("1", "001", "1", "0", "1"))
+        .await
+        .expect("t1602 investor_flow_time_band should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert!(!resp.outblock1.is_empty(), "first-page investor-flow rows round-trip");
+    assert_eq!(resp.outblock1[0].sv_17, "4200", "real non-default net-buy (from JSON number)");
+    assert_eq!(resp.outblock.cts_time, "100000", "next-page cursor round-trips");
+}
+
+/// Covers R4. The flow array tolerates single-or-array + empty, and
+/// `string_or_number` parses `sv_17` from BOTH string and number.
+#[test]
+fn t1602_response_round_trips_single_or_array_and_empty() {
+    let single: T1602Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1602OutBlock": { "cts_time": "100000", "svolume_17": 4200 },
+        "t1602OutBlock1": { "time": "100000", "sv_17": "4200" }
+    }))
+    .expect("single flow row tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].sv_17, "4200", "net-buy from JSON string");
+
+    let number: T1602Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1602OutBlock": { "cts_time": "100000" },
+        "t1602OutBlock1": [{ "time": "100000", "sv_17": 4200 }]
+    }))
+    .expect("numeric net-buy tolerated");
+    assert_eq!(number.outblock1[0].sv_17, "4200", "net-buy from JSON number");
+
+    let empty: T1602Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t1602OutBlock": { "cts_time": "" }, "t1602OutBlock1": []
+    }))
+    .expect("empty result deserializes");
+    assert!(empty.outblock1.is_empty(), "empty first page is the pending case");
+}
+
+/// Registration guard (R3/R8): `T1602_POLICY` is a real paginated non-order policy.
+#[test]
+fn t1602_policy_is_registered_and_paginated() {
+    assert_eq!(T1602_POLICY.tr_code, "t1602");
+    assert_eq!(T1602_POLICY.path, "/stock/investor");
+    assert!(T1602_POLICY.has_pagination, "t1602 self-paginates (cts_time)");
+    assert!(!T1602_POLICY.is_order, "t1602 is a non-order read");
+}
+
+// --- t1603 — 투자자별매매종목 (investor detail by issue; self-paginated on cts_time) ---
+
+/// Covers R3. `t1603` serializes `cts_idx`/`cnt` as JSON **numbers**; the
+/// `cts_time` cursor + string filters stay strings; header cursors skipped.
+#[test]
+fn t1603_request_serializes_numeric_slots() {
+    let value = serde_json::to_value(T1603Request::new("1", "1", "0", "001", "1"))
+        .expect("serialize t1603 request");
+    let inblock = &value["t1603InBlock"];
+    assert!(inblock["cts_idx"].is_number(), "cts_idx is a JSON number");
+    assert!(inblock["cnt"].is_number(), "cnt is a JSON number");
+    assert!(inblock["cts_time"].is_string(), "cts_time cursor stays a string");
+    assert_eq!(inblock["market"], "1");
+    assert_eq!(inblock["upcode"], "001");
+    assert!(value.get("tr_cont").is_none(), "header cursor skipped from body");
+    assert!(value.get("tr_cont_key").is_none(), "header cursor skipped from body");
+}
+
+/// Covers R4. An inline first-page body deserializes through REAL paginated dispatch;
+/// a modeled non-key field (`msvolume`) holds a real non-default value.
+#[tokio::test]
+async fn t1603_deserializes_first_page_shape() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(STOCK_INVESTOR_PATH))
+        .and(header("tr_cd", "t1603"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    r#"{"rsp_cd":"00000","rsp_msg":"ok","t1603OutBlock":{"cts_idx":7,"cts_time":"100000"},"t1603OutBlock1":[{"time":"100000","tjjcode":"0000","msvolume":12345,"mdvolume":6789,"svolume":5556}]}"#,
+                )
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+    let resp = sdk_for(&server)
+        .paginated()
+        .investor_detail(&T1603Request::new("1", "1", "0", "001", "1"))
+        .await
+        .expect("t1603 investor_detail should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert!(!resp.outblock1.is_empty(), "first-page investor rows round-trip");
+    assert_eq!(resp.outblock1[0].msvolume, "12345", "real non-default buy quantity (from JSON number)");
+    assert_eq!(resp.outblock.cts_time, "100000", "next-page cursor round-trips");
+}
+
+/// Covers R4. The flow array tolerates single-or-array + empty, and
+/// `string_or_number` parses `msvolume`/`svolume` from BOTH string and number.
+#[test]
+fn t1603_response_round_trips_single_or_array_and_empty() {
+    let single: T1603Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1603OutBlock": { "cts_idx": 7, "cts_time": "100000" },
+        "t1603OutBlock1": { "time": "100000", "msvolume": "12345", "svolume": "5556" }
+    }))
+    .expect("single investor row tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].msvolume, "12345", "buy quantity from JSON string");
+
+    let number: T1603Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1603OutBlock": { "cts_idx": 7 },
+        "t1603OutBlock1": [{ "time": "100000", "msvolume": 12345, "svolume": 5556 }]
+    }))
+    .expect("numeric quantities tolerated");
+    assert_eq!(number.outblock1[0].svolume, "5556", "net-buy quantity from JSON number");
+
+    let empty: T1603Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t1603OutBlock": { "cts_idx": 0 }, "t1603OutBlock1": []
+    }))
+    .expect("empty result deserializes");
+    assert!(empty.outblock1.is_empty(), "empty first page is the pending case");
+}
+
+/// Registration guard (R3/R8): `T1603_POLICY` is a real paginated non-order policy.
+#[test]
+fn t1603_policy_is_registered_and_paginated() {
+    assert_eq!(T1603_POLICY.tr_code, "t1603");
+    assert_eq!(T1603_POLICY.path, "/stock/investor");
+    assert!(T1603_POLICY.has_pagination, "t1603 self-paginates (cts_time)");
+    assert!(!T1603_POLICY.is_order, "t1603 is a non-order read");
+}
+
+// --- t1617 — 투자자별일별매매추이 (investor time/daily flow; all-String request) ---
+
+/// Covers R3. `t1617` has NO numeric request slot — all fields serialize as JSON
+/// strings, including the `cts_date`/`cts_time` cursors; header cursors skipped.
+#[test]
+fn t1617_request_is_all_string() {
+    let value = serde_json::to_value(T1617Request::new("1", "1", "1", "1"))
+        .expect("serialize t1617 request");
+    let inblock = &value["t1617InBlock"];
+    assert!(inblock["gubun1"].is_string(), "gubun1 stays a string");
+    assert!(inblock["cts_date"].is_string(), "cts_date cursor stays a string");
+    assert!(inblock["cts_time"].is_string(), "cts_time cursor stays a string");
+    assert_eq!(inblock["cts_date"], "", "first-page cts_date cursor");
+    assert_eq!(inblock["cts_time"], "", "first-page cts_time cursor");
+    assert_eq!(inblock["exchgubun"], "1");
+    assert!(value.get("tr_cont").is_none(), "header cursor skipped from body");
+    assert!(value.get("tr_cont_key").is_none(), "header cursor skipped from body");
+}
+
+/// Covers R4. An inline first-page body deserializes through REAL paginated dispatch;
+/// a modeled non-key field (`sv_17`) holds a real non-default value.
+#[tokio::test]
+async fn t1617_deserializes_first_page_shape() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(STOCK_INVESTOR_PATH))
+        .and(header("tr_cd", "t1617"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    r#"{"rsp_cd":"00000","rsp_msg":"ok","t1617OutBlock":{"cts_date":"20260629","cts_time":"100000","sv_08":-1500,"sv_17":4200,"sv_18":-700},"t1617OutBlock1":[{"date":"20260629","time":"100000","sv_08":-1500,"sv_17":4200,"sv_18":-700}]}"#,
+                )
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+    let resp = sdk_for(&server)
+        .paginated()
+        .investor_flow_daily(&T1617Request::new("1", "1", "1", "1"))
+        .await
+        .expect("t1617 investor_flow_daily should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert!(!resp.outblock1.is_empty(), "first-page flow rows round-trip");
+    assert_eq!(resp.outblock1[0].sv_17, "4200", "real non-default net-buy (from JSON number)");
+    assert_eq!(resp.outblock.cts_date, "20260629", "next-page cursor round-trips");
+}
+
+/// Covers R4. The flow array tolerates single-or-array + empty, and
+/// `string_or_number` parses `sv_17` from BOTH string and number.
+#[test]
+fn t1617_response_round_trips_single_or_array_and_empty() {
+    let single: T1617Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1617OutBlock": { "cts_date": "20260629", "sv_17": 4200 },
+        "t1617OutBlock1": { "date": "20260629", "time": "100000", "sv_17": "4200" }
+    }))
+    .expect("single flow row tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].sv_17, "4200", "net-buy from JSON string");
+
+    let number: T1617Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1617OutBlock": { "cts_date": "20260629" },
+        "t1617OutBlock1": [{ "date": "20260629", "time": "100000", "sv_17": 4200 }]
+    }))
+    .expect("numeric net-buy tolerated");
+    assert_eq!(number.outblock1[0].sv_17, "4200", "net-buy from JSON number");
+
+    let empty: T1617Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t1617OutBlock": { "cts_date": "" }, "t1617OutBlock1": []
+    }))
+    .expect("empty result deserializes");
+    assert!(empty.outblock1.is_empty(), "empty first page is the pending case");
+}
+
+/// Registration guard (R3/R8): `T1617_POLICY` is a real paginated non-order policy.
+#[test]
+fn t1617_policy_is_registered_and_paginated() {
+    assert_eq!(T1617_POLICY.tr_code, "t1617");
+    assert_eq!(T1617_POLICY.path, "/stock/investor");
+    assert!(T1617_POLICY.has_pagination, "t1617 self-paginates (cts_date/cts_time)");
+    assert!(!T1617_POLICY.is_order, "t1617 is a non-order read");
+}
+
+// --- t1752 — 거래원별종목별동향 (broker-by-issue; self-paginated on cts_idx) ---
+
+/// Covers R3. `t1752` serializes `cts_idx` as a JSON **number** (string form
+/// returns IGW40011); the identifiers + window bounds stay strings; header cursors
+/// skipped.
+#[test]
+fn t1752_request_serializes_cts_idx_as_number() {
+    let value = serde_json::to_value(T1752Request::new("005930", "20260629", "20260629", "0", "1"))
+        .expect("serialize t1752 request");
+    let inblock = &value["t1752InBlock"];
+    assert!(inblock["cts_idx"].is_number(), "cts_idx is a JSON number");
+    assert!(inblock["shcode"].is_string(), "shcode stays a string");
+    assert_eq!(inblock["shcode"], "005930");
+    assert_eq!(inblock["traddate1"], "20260629");
+    assert_eq!(inblock["exchgubun"], "1");
+    assert!(value.get("tr_cont").is_none(), "header cursor skipped from body");
+    assert!(value.get("tr_cont_key").is_none(), "header cursor skipped from body");
+}
+
+/// Covers R4. An inline first-page body deserializes through REAL paginated dispatch;
+/// a modeled non-key field (`tradmsvol`) holds a real non-default value.
+#[tokio::test]
+async fn t1752_deserializes_first_page_shape() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(STOCK_EXCHANGE_PATH))
+        .and(header("tr_cd", "t1752"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    r#"{"rsp_cd":"00000","rsp_msg":"ok","t1752OutBlock":{"fwdvl":1000,"fwsvl":2000,"cts_idx":4},"t1752OutBlock1":[{"tradname":"미래에셋","tradmdvol":3000,"tradmsvol":5000,"tradmssvol":2000,"tradno":"063"}]}"#,
+                )
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+    let resp = sdk_for(&server)
+        .paginated()
+        .broker_by_issue(&T1752Request::new("005930", "20260629", "20260629", "0", "1"))
+        .await
+        .expect("t1752 broker_by_issue should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert!(!resp.outblock1.is_empty(), "first-page broker rows round-trip");
+    assert_eq!(resp.outblock1[0].tradmsvol, "5000", "real non-default buy quantity (from JSON number)");
+    assert_eq!(resp.outblock.cts_idx, "4", "next-page cursor round-trips");
+}
+
+/// Covers R4. The broker array tolerates single-or-array + empty, and
+/// `string_or_number` parses `tradmsvol` from BOTH string and number.
+#[test]
+fn t1752_response_round_trips_single_or_array_and_empty() {
+    let single: T1752Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1752OutBlock": { "cts_idx": 4 },
+        "t1752OutBlock1": { "tradname": "미래에셋", "tradmsvol": "5000" }
+    }))
+    .expect("single broker row tolerated as array");
+    assert_eq!(single.outblock1.len(), 1);
+    assert_eq!(single.outblock1[0].tradmsvol, "5000", "buy quantity from JSON string");
+
+    let number: T1752Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1752OutBlock": { "cts_idx": 4 },
+        "t1752OutBlock1": [{ "tradname": "미래에셋", "tradmsvol": 5000 }]
+    }))
+    .expect("numeric quantity tolerated");
+    assert_eq!(number.outblock1[0].tradmsvol, "5000", "buy quantity from JSON number");
+
+    let empty: T1752Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t1752OutBlock": { "cts_idx": 0 }, "t1752OutBlock1": []
+    }))
+    .expect("empty result deserializes");
+    assert!(empty.outblock1.is_empty(), "empty first page is the pending case");
+}
+
+/// Registration guard (R3/R8): `T1752_POLICY` is a real paginated non-order policy.
+#[test]
+fn t1752_policy_is_registered_and_paginated() {
+    assert_eq!(T1752_POLICY.tr_code, "t1752");
+    assert_eq!(T1752_POLICY.path, "/stock/exchange");
+    assert!(T1752_POLICY.has_pagination, "t1752 self-paginates (cts_idx)");
+    assert!(!T1752_POLICY.is_order, "t1752 is a non-order read");
+}
+
+// --- t1771 — 거래원별시간대별추이 (broker time-series; row array under OutBlock2) ---
+
+/// Covers R3. `t1771` serializes `cts_idx`/`cnt` as JSON **numbers**; the
+/// identifiers + window bounds stay strings; header cursors skipped.
+#[test]
+fn t1771_request_serializes_numeric_slots() {
+    let value = serde_json::to_value(T1771Request::new("005930", "", "0", "20260629", "20260629", "1"))
+        .expect("serialize t1771 request");
+    let inblock = &value["t1771InBlock"];
+    assert!(inblock["cts_idx"].is_number(), "cts_idx is a JSON number");
+    assert!(inblock["cnt"].is_number(), "cnt is a JSON number");
+    assert!(inblock["shcode"].is_string(), "shcode stays a string");
+    assert_eq!(inblock["shcode"], "005930");
+    assert_eq!(inblock["tradno"], "", "first-page (all brokers) tradno empty");
+    assert_eq!(inblock["exchgubun"], "1");
+    assert!(value.get("tr_cont").is_none(), "header cursor skipped from body");
+    assert!(value.get("tr_cont_key").is_none(), "header cursor skipped from body");
+}
+
+/// Covers R4. An inline first-page body deserializes through REAL paginated dispatch;
+/// the row array arrives under `t1771OutBlock2` and a modeled non-key field
+/// (`price`) holds a real non-default value.
+#[tokio::test]
+async fn t1771_deserializes_first_page_shape() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(STOCK_EXCHANGE_PATH))
+        .and(header("tr_cd", "t1771"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(
+                    r#"{"rsp_cd":"00000","rsp_msg":"ok","t1771OutBlock":{"cts_idx":9},"t1771OutBlock2":[{"traddate":"20260629","tradtime":"100000","price":71500,"sign":"2","change":500,"volume":1234567,"tradmsscha":4200}]}"#,
+                )
+                .insert_header("content-type", "application/json"),
+        )
+        .mount(&server)
+        .await;
+    let resp = sdk_for(&server)
+        .paginated()
+        .broker_time_series(&T1771Request::new("005930", "", "0", "20260629", "20260629", "1"))
+        .await
+        .expect("t1771 broker_time_series should succeed");
+    assert_eq!(resp.rsp_cd, "00000");
+    assert!(!resp.outblock2.is_empty(), "first-page broker-time rows round-trip (OutBlock2)");
+    assert_eq!(resp.outblock2[0].price, "71500", "real non-default price (from JSON number)");
+    assert_eq!(resp.outblock.cts_idx, "9", "next-page cursor round-trips");
+}
+
+/// Covers R4. The OutBlock2 array tolerates single-or-array + empty, and
+/// `string_or_number` parses `price`/`volume` from BOTH string and number.
+#[test]
+fn t1771_response_round_trips_single_or_array_and_empty() {
+    let single: T1771Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1771OutBlock": { "cts_idx": 9 },
+        "t1771OutBlock2": { "traddate": "20260629", "tradtime": "100000", "price": "71500", "volume": "1234567" }
+    }))
+    .expect("single broker-time row tolerated as array");
+    assert_eq!(single.outblock2.len(), 1);
+    assert_eq!(single.outblock2[0].price, "71500", "price from JSON string");
+
+    let number: T1771Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1771OutBlock": { "cts_idx": 9 },
+        "t1771OutBlock2": [{ "traddate": "20260629", "tradtime": "100000", "price": 71500, "volume": 1234567 }]
+    }))
+    .expect("numeric price/volume tolerated");
+    assert_eq!(number.outblock2[0].volume, "1234567", "volume from JSON number");
+
+    let empty: T1771Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "t1771OutBlock": { "cts_idx": 0 }, "t1771OutBlock2": []
+    }))
+    .expect("empty result deserializes");
+    assert!(empty.outblock2.is_empty(), "empty first page is the pending case");
+}
+
+/// Registration guard (R3/R8): `T1771_POLICY` is a real paginated non-order policy.
+#[test]
+fn t1771_policy_is_registered_and_paginated() {
+    assert_eq!(T1771_POLICY.tr_code, "t1771");
+    assert_eq!(T1771_POLICY.path, "/stock/exchange");
+    assert!(T1771_POLICY.has_pagination, "t1771 self-paginates (cts_idx)");
+    assert!(!T1771_POLICY.is_order, "t1771 is a non-order read");
 }
