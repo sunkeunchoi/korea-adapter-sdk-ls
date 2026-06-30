@@ -43,10 +43,11 @@
 #![allow(dead_code)] // helpers are exercised by offline tests + the ignored live run.
 
 use ls_core::{LsConfig, LsError, LsResult};
-use ls_sdk::market_session::T1102Request;
+use ls_sdk::account::{T0441OutBlock1, T0441Request};
+use ls_sdk::market_session::{T1102Request, T2111Request};
 use ls_sdk::orders::{
-    CSPAT00601Request, CSPAT00701Request, CSPAT00801Request, OrderIntent, OrderState,
-    T0425InBlock, T0425OutBlock1, T0425Request,
+    CFOAT00100Request, CFOAT00200Request, CFOAT00300Request, CSPAT00601Request, CSPAT00701Request,
+    CSPAT00801Request, OrderIntent, OrderState, T0425InBlock, T0425OutBlock1, T0425Request,
 };
 use ls_sdk::LsSdk;
 
@@ -1652,4 +1653,599 @@ async fn order_chained_smoke() {
         "ORDER-CHAIN teardown=cancel+flat-assert note=[cancel is the primary teardown; the \
          traded-symbol working-order flat assertion confirms no order remains resting]"
     );
+}
+
+// ===========================================================================
+// F/O order chain (CFOAT00100 submit → CFOAT00200 modify → CFOAT00300 cancel).
+// U3 (plan 2026-06-30-003): the domestic futures/options sibling of the stock
+// chain. Reuses the autonomy / paper-resolved / leak-suppressor / scrub guards
+// verbatim (KTD5). The F/O-specific pieces are:
+//   - a daily-limit price anchor from t2111 (KTD2) — F/O prices are FRACTIONAL,
+//   - a TWO-PART, fail-closed flatness check (KTD3): t0441 detects a FILL (잔고),
+//     and the clean cancel response confirms the resting order's removal (no F/O
+//     미체결 read exists to scan the working board).
+// `#[ignore]`; runs only via `make live-smoke-fo-order`.
+// ===========================================================================
+
+// ---- F/O daily price band (KTD2) — fractional, sourced from t2111 -----------
+
+/// A validated F/O daily price band from `t2111` (`uplmtprice` 상한가 / `dnlmtprice`
+/// 하한가). Prices are FRACTIONAL (e.g. `342.25`), unlike the integer stock [`Band`].
+/// The verbatim gateway strings are preserved as the resting-order anchors so the
+/// limit price is a guaranteed valid tick (re-deriving an on-tick F/O price would need
+/// the per-product tick ladder).
+#[derive(Debug, Clone)]
+struct FoBand {
+    uplmt: f64,
+    dnlmt: f64,
+    uplmt_str: String,
+    dnlmt_str: String,
+}
+
+/// Validate a `t2111` F/O band: both prices parse as `f64`, are strictly positive, and
+/// `up > dn`. A degenerate band (halted / limit-locked / newly-listed / empty quote)
+/// is rejected so the smoke records "not certified" and places NO order — a missing
+/// anchor must NEVER fall back to a near-market (fillable) price (KTD2 fail-closed).
+fn validate_fo_band(uplmtprice: &str, dnlmtprice: &str) -> Result<FoBand, String> {
+    let up_s = uplmtprice.trim();
+    let dn_s = dnlmtprice.trim();
+    let up: f64 = up_s
+        .parse()
+        .map_err(|_| format!("unparseable F/O uplmtprice '{up_s}'"))?;
+    let dn: f64 = dn_s
+        .parse()
+        .map_err(|_| format!("unparseable F/O dnlmtprice '{dn_s}'"))?;
+    if !(up > 0.0) || !(dn > 0.0) {
+        return Err(format!("degenerate F/O band (non-positive): up={up} dn={dn}"));
+    }
+    if up <= dn {
+        return Err(format!("degenerate F/O band (up<=dn): up={up} dn={dn}"));
+    }
+    Ok(FoBand {
+        uplmt: up,
+        dnlmt: dn,
+        uplmt_str: up_s.to_string(),
+        dnlmt_str: dn_s.to_string(),
+    })
+}
+
+impl FoBand {
+    /// Resting BUY price — the daily floor (`dnlmtprice`): valid yet far below market,
+    /// so it rests unfilled. Returned verbatim (a guaranteed valid tick).
+    fn resting_buy_price(&self) -> &str {
+        &self.dnlmt_str
+    }
+    /// Resting SELL price — the daily ceiling (`uplmtprice`): valid yet far above
+    /// market.
+    fn resting_sell_price(&self) -> &str {
+        &self.uplmt_str
+    }
+}
+
+// ---- F/O flatness over t0441 balance rows (KTD3, fill-detection only) --------
+
+/// The F/O flatness verdict from a `t0441` (선물옵션잔고평가) balance read. `t0441`
+/// sees a **filled** position (잔고), NOT a resting unfilled order — so this is only
+/// the FILL half of the two-part flatness check (the other half is a clean cancel
+/// response confirming the resting order's removal). Fail-closed per R6: only a
+/// positively-parsed zero-position read is `Flat`; an empty/unreadable read is
+/// `NotFlat` and blocks the flip.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum FoFlatVerdict {
+    /// Positively confirmed: balance rows present and every position is zero.
+    Flat,
+    /// One or more FILLED positions (`jqty != 0`) — unrecoverable by cancel (paper
+    /// reset is the sole remediation). Carries the position contract codes.
+    Fill(Vec<String>),
+    /// Empty / unreadable / ambiguous — cannot positively confirm no fill, so it is
+    /// treated as NOT flat (fail-closed, R6) and blocks the flip.
+    NotFlat,
+}
+
+/// `true` if a `t0441` quantity field is a non-zero (or unparseable) position. F/O
+/// 잔고 can be SHORT (negative), so this keys on `!= 0` via `f64`, not a `u64` parse
+/// that would silently drop a `-1`. An UNPARSEABLE value is treated as non-zero
+/// (fail-safe: an unreadable quantity is assumed to be a position, never silently
+/// zero).
+fn fo_qty_is_position(s: &str) -> bool {
+    let t = s.trim();
+    if t.is_empty() || t == "0" {
+        return false;
+    }
+    match t.parse::<f64>() {
+        Ok(v) => v != 0.0,
+        Err(_) => true,
+    }
+}
+
+/// Classify a `t0441` balance-row set into an F/O flatness verdict (KTD3, R6).
+fn fo_flat_verdict(rows: &[T0441OutBlock1]) -> FoFlatVerdict {
+    // Empty = cannot positively confirm no fill → fail-closed NOT flat (R6). A
+    // genuinely position-less account that returns an empty array is indistinguishable
+    // here from a scoped-out / failed read, so the operator must confirm manually.
+    if rows.is_empty() {
+        return FoFlatVerdict::NotFlat;
+    }
+    let fills: Vec<String> = rows
+        .iter()
+        .filter(|r| fo_qty_is_position(&r.jqty))
+        .map(|r| r.expcode.trim().to_string())
+        .collect();
+    if fills.is_empty() {
+        FoFlatVerdict::Flat
+    } else {
+        FoFlatVerdict::Fill(fills)
+    }
+}
+
+// ---- F/O per-leg certification predicate (R6, guards the U4 flip decision) ---
+
+/// The F/O order-success codes (seed): `00040` buy / `00039` sell (submit), `00132`
+/// (modify), `00156` (cancel) — read from the raw CFOAT success examples. Seed-only
+/// until the operator's live run confirms them (mirrors `ls_core`'s order-ack seed).
+const FO_ORDER_OK_CODES: [&str; 4] = ["00040", "00039", "00132", "00156"];
+
+/// Per-leg certification (R6): a leg certifies ONLY on a genuinely clean row — a
+/// recognized F/O order-ack `rsp_cd` AND a present order number. A generic-success
+/// envelope (`00000`/empty), an unrecognized code, or a missing order-number block is
+/// NOT certified. This is the offline-tested decision the operator's U4 run exercises
+/// live (PR #74 shipped a status-text cert bug that only review caught — this keeps the
+/// F/O cert keyed on the business code + order number, never status text).
+fn fo_leg_certified(rsp_cd: &str, order_no: &str) -> bool {
+    let o = order_no.trim();
+    FO_ORDER_OK_CODES.contains(&rsp_cd.trim()) && !o.is_empty() && o != "0"
+}
+
+/// Format a credential-free `t0441` row diagnostic line. Every field — including the
+/// row's own `expcode`/`appamt` (NOT just `rsp_msg`) — is routed through
+/// [`scrub_secrets`], because a balance row can carry account-shaped values (R6).
+fn fo_t0441_row_line(r: &T0441OutBlock1) -> String {
+    format!(
+        "ORDER-CHAIN-FO t0441-row expcode=[{}] jqty={} cqty={} appamt=[{}]",
+        scrub_secrets(&r.expcode),
+        scrub_secrets(&r.jqty),
+        scrub_secrets(&r.cqty),
+        scrub_secrets(&r.appamt),
+    )
+}
+
+/// Two-part-flatness FILL half (KTD3 part 1): read `t0441` and assert NO filled F/O
+/// position remains. Fail-closed — empty/unreadable counts as NOT flat (R6). On a
+/// `Fill` or `NotFlat` verdict it raises a LOUD operator-action-required signal
+/// (panic, the operator run's failure channel) naming the order numbers; the kill
+/// switch is engaged as a no-new-orders guard. A clean `Flat` records a positive pass.
+async fn fo_assert_no_fill(sdk: &LsSdk, ordnos: &[String]) {
+    match sdk.account().fo_balance_eval(&T0441Request::new()).await {
+        Ok(resp) => {
+            for r in &resp.outblock1 {
+                println!("{}", fo_t0441_row_line(r));
+            }
+            match fo_flat_verdict(&resp.outblock1) {
+                FoFlatVerdict::Flat => {
+                    println!(
+                        "ORDER-CHAIN-FO flat=confirmed scan=t0441 note=[zero-position; no fill]"
+                    );
+                }
+                FoFlatVerdict::Fill(syms) => {
+                    sdk.inner().set_orders_enabled(false);
+                    panic!(
+                        "{}",
+                        loud_failure(
+                            "fo-unexpected-fill",
+                            ordnos,
+                            &format!(
+                                "t0441 shows a filled F/O position on [{}] — a fill cannot be \
+                                 canceled; reset the paper book and flatten manually",
+                                syms.join(",")
+                            ),
+                        )
+                    );
+                }
+                FoFlatVerdict::NotFlat => {
+                    sdk.inner().set_orders_enabled(false);
+                    panic!(
+                        "{}",
+                        loud_failure(
+                            "fo-flat-unconfirmed",
+                            ordnos,
+                            "t0441 returned empty/unreadable — cannot POSITIVELY confirm no F/O \
+                             fill (fail-closed, R6); MANUAL board check required before any flip",
+                        )
+                    );
+                }
+            }
+        }
+        Err(e) => {
+            sdk.inner().set_orders_enabled(false);
+            panic!(
+                "{}",
+                loud_failure(
+                    "fo-flat-scan-failed",
+                    ordnos,
+                    &format!("t0441 read failed: {}", scrub_secrets(&e.to_string())),
+                )
+            );
+        }
+    }
+}
+
+/// AUTONOMOUS-guarded F/O chained paper-order run (U3/U4): submit a resting
+/// far-from-market F/O order (gate 1 evidence), modify it, then cancel it as the
+/// PRIMARY teardown — each leg certified from its OWN `rsp_cd` (R6/R7) — then run the
+/// two-part flatness check (clean cancel = removal; `t0441` = no fill).
+///
+/// Inherits every guard from [`order_chained_smoke`] verbatim (KTD5): the U1 autonomy
+/// precondition (CI/no-TTY refusal + fresh per-wave nonce), the U2 resolved-paper
+/// assertion, the U4 fail-closed dispatch-log suppressor, and the widened
+/// [`scrub_secrets`]. The F/O contract is supplied via `LS_FO_ORDER_SMOKE_SHCODE` with
+/// NO default (a stale/absent contract cannot be defaulted — the current-contract
+/// gotcha, deps).
+///
+/// Capability outcomes (R8): `01491`/`01900` → Pending, classified by
+/// `is_paper_order_incapable` only when `01491`; any OTHER rejection code is recorded
+/// VERBATIM and explicitly NOT assumed to be paper-order-incapable. A clean run leaves
+/// per-leg evidence the operator (U4/U6) flips from; the offline portions below prove
+/// the decision logic without placing anything.
+///
+/// `#[ignore]` — runs only via `make live-smoke-fo-order`.
+#[tokio::test]
+#[ignore = "guarded F/O chained paper order: needs credentials + LS_ORDER_SMOKE=1 + a fresh LS_ORDER_SMOKE_NONCE + LS_FO_ORDER_SMOKE_SHCODE; run via `make live-smoke-fo-order`"]
+async fn fo_order_chained_smoke() {
+    // U4: install the fail-closed dispatch-log suppressor BEFORE any dispatch (incl. the
+    // t2111 price-band and t0441 reads, whose raw bodies carry account data).
+    if let Err(e) = install_dispatch_log_suppressor() {
+        panic!("{}", scrub_secrets(&e.to_string()));
+    }
+
+    // The current valid F/O contract — REQUIRED, no default. A stale hardcoded contract
+    // fails (the current-contract gotcha); the operator supplies a live one per run.
+    let contract = match std::env::var("LS_FO_ORDER_SMOKE_SHCODE") {
+        Ok(v)
+            if !v.trim().is_empty()
+                && v.trim().chars().all(|c| c.is_ascii_alphanumeric()) =>
+        {
+            v.trim().to_string()
+        }
+        _ => {
+            OrderEvidence::not_certified(
+                "preflight",
+                "LS_FO_ORDER_SMOKE_SHCODE (a current valid F/O contract) is required; refusing \
+                 to default a possibly-stale contract",
+            )
+            .record();
+            panic!("LS_FO_ORDER_SMOKE_SHCODE required (a stale/absent F/O contract cannot be defaulted)");
+        }
+    };
+
+    // U1+U2: autonomy precondition + paper-resolved SDK. A refusal places nothing.
+    let sdk = match autonomous_order_smoke_sdk() {
+        Ok(s) => s,
+        Err(e) => panic!("{}", scrub_secrets(&e.to_string())),
+    };
+    let account = sdk.fo_orders().account_no().to_string();
+    let _ = &account; // reconcile_intent is available; the F/O flat-assert uses t0441.
+
+    // Price anchor: the daily limits from t2111 (KTD2). FAIL-CLOSED — if no valid,
+    // non-empty anchor can be sourced, place NO order.
+    let band = match sdk
+        .market_session()
+        .fo_quote(&T2111Request::new(&contract))
+        .await
+    {
+        Ok(resp) => match validate_fo_band(&resp.outblock.uplmtprice, &resp.outblock.dnlmtprice) {
+            Ok(b) => b,
+            Err(e) => {
+                OrderEvidence::not_certified("band", &e).record();
+                OrderEvidence::pending("fo-chain", "no valid F/O price anchor; placed nothing")
+                    .record();
+                return;
+            }
+        },
+        Err(e) => {
+            OrderEvidence::pending(
+                "band",
+                &format!("t2111 F/O anchor fetch failed: {}", scrub_secrets(&e.to_string())),
+            )
+            .record();
+            return;
+        }
+    };
+
+    // ---- SUBMIT leg (gate 1 evidence): a resting buy at the daily floor. ----
+    let submit_req = CFOAT00100Request::limit(&contract, "1", band.resting_buy_price(), "2");
+    let mut sev = leg_evidence("CFOAT00100", "fo_submit_resting_buy");
+    let submit_ordno = match sdk.fo_orders().submit(&submit_req).await {
+        Ok(resp) => {
+            sev.certification = if fo_leg_certified(&resp.rsp_cd, resp.order_no()) {
+                Certification::Certified
+            } else {
+                Certification::Pending
+            };
+            sev.rsp_cd = resp.rsp_cd.clone();
+            sev.rsp_msg = resp.rsp_msg.clone();
+            sev.order_no = Some(resp.order_no().to_string());
+            sev.record();
+            resp.order_no().to_string()
+        }
+        Err(LsError::ApiError { code, message })
+            if ls_core::is_paper_order_incapable(&code) =>
+        {
+            // 01491 — the account is provisioned read/inquiry-only. Classified (R8).
+            sev.rsp_cd = code.clone();
+            sev.rsp_msg = message;
+            sev.reconciliation = Some("classified:paper-order-incapable".into());
+            sev.record();
+            OrderEvidence::pending(
+                "fo-chain",
+                &format!("paper account not F/O-order-capable ({code}, classified); chain not run"),
+            )
+            .record();
+            return;
+        }
+        Err(LsError::ApiError { code, message }) if ls_core::is_paper_incompatible(&code) => {
+            // 01900 — service not provided in Paper.
+            sev.rsp_cd = code.clone();
+            sev.rsp_msg = message;
+            sev.record();
+            OrderEvidence::pending(
+                "fo-chain",
+                &format!("F/O order service not in Paper ({code}); chain not run"),
+            )
+            .record();
+            return;
+        }
+        Err(LsError::ApiError { code, message }) => {
+            // R8: ANY OTHER paper-order rejection (e.g. a venue-not-provisioned code).
+            // Recorded VERBATIM and explicitly NOT assumed to be paper-order-incapable —
+            // `is_paper_order_incapable` is not consulted for a non-01491 code.
+            sev.rsp_cd = code.clone();
+            sev.rsp_msg = message;
+            sev.reconciliation = Some("unclassified-rejection".into());
+            sev.record();
+            OrderEvidence::pending(
+                "fo-chain",
+                &format!(
+                    "F/O submit rejected ({code}); recorded verbatim, NOT classified as \
+                     paper-order-incapable; chain not run"
+                ),
+            )
+            .record();
+            return;
+        }
+        Err(e) => {
+            // Ambiguous / transport: the order MAY have reached the gateway. Confirm no
+            // fill (fail-closed) BEFORE recording Pending — never assume not-placed.
+            sev.rsp_msg = format!("submit failed: {}", scrub_secrets(&e.to_string()));
+            sev.record();
+            fo_assert_no_fill(&sdk, &[]).await;
+            OrderEvidence::pending(
+                "fo-chain",
+                "F/O submit did not cleanly place; no fill confirmed; chain not run",
+            )
+            .record();
+            return;
+        }
+    };
+    if submit_ordno.trim().is_empty() || submit_ordno.trim() == "0" {
+        OrderEvidence::pending(
+            "fo-chain",
+            "F/O submit returned no usable order number; chain not run",
+        )
+        .record();
+        return;
+    }
+
+    // ---- MODIFY leg: amend the resting order's QUANTITY (price stays at the valid
+    // floor tick, so it stays far-from-market and cannot fill). The modify is absolute
+    // (full target qty), KTD4. Changing quantity rather than price avoids re-deriving an
+    // on-tick F/O price near the floor. ----
+    let modify_req = CFOAT00200Request::limit(&submit_ordno, &contract, "2", band.resting_buy_price());
+    let mut mev = leg_evidence("CFOAT00200", "fo_modify_resting_qty");
+    let (live_ordno, resting_qty) = match sdk.fo_orders().modify(&modify_req).await {
+        Ok(resp) => {
+            mev.certification = if fo_leg_certified(&resp.rsp_cd, resp.order_no()) {
+                Certification::Certified
+            } else {
+                Certification::Pending
+            };
+            mev.rsp_cd = resp.rsp_cd.clone();
+            mev.rsp_msg = resp.rsp_msg.clone();
+            mev.order_no = Some(resp.order_no().to_string());
+            // The F/O modify echoes the parent in OutBlock1.OrgOrdNo (no PrntOrdNo).
+            mev.reconciliation = Some(format!("parent_ordno={}", resp.parent_order_no()));
+            mev.record();
+            let n = resp.order_no().to_string();
+            let live = if n.trim().is_empty() || n.trim() == "0" {
+                submit_ordno.clone()
+            } else {
+                n
+            };
+            (live, "2".to_string()) // modified target quantity
+        }
+        Err(e) => {
+            // Gate 1 already flipped on the submit leg; gate 2 stays Pending.
+            mev.rsp_msg = format!("modify failed: {}", scrub_secrets(&e.to_string()));
+            mev.record();
+            OrderEvidence::pending(
+                "fo-chain",
+                "F/O modify link failed; gate 2 not flipped (gate 1 stands)",
+            )
+            .record();
+            (submit_ordno.clone(), "1".to_string()) // still resting at the submit quantity
+        }
+    };
+
+    // ---- CANCEL leg (PRIMARY teardown + gate 2 evidence). A CLEAN cancel response is
+    // the only confirmation of the resting order's removal — no F/O 미체결 read exists
+    // to scan the board (KTD3 part 2). ----
+    let cancel_req = CFOAT00300Request::new(&live_ordno, &contract, &resting_qty);
+    let mut cev = leg_evidence("CFOAT00300", "fo_cancel_teardown");
+    let cancel_clean = match sdk.fo_orders().cancel(&cancel_req).await {
+        Ok(resp) => {
+            let ok = fo_leg_certified(&resp.rsp_cd, resp.order_no());
+            cev.certification = if ok {
+                Certification::Certified
+            } else {
+                Certification::Pending
+            };
+            cev.rsp_cd = resp.rsp_cd.clone();
+            cev.rsp_msg = resp.rsp_msg.clone();
+            cev.order_no = Some(resp.order_no().to_string());
+            cev.record();
+            ok
+        }
+        Err(e) => {
+            cev.rsp_msg = format!("cancel failed: {}", scrub_secrets(&e.to_string()));
+            cev.record();
+            OrderEvidence::pending("fo-chain", "F/O cancel link failed; gate 2 not flipped")
+                .record();
+            false
+        }
+    };
+
+    // KTD3 cancel-failure path: a non-clean cancel does NOT confirm removal. Do NOT
+    // assume flat — raise a loud operator-action-required signal (no F/O working-orders
+    // read exists to auto-verify; a MANUAL board check + flatten is required).
+    if !cancel_clean {
+        println!(
+            "{}",
+            loud_failure(
+                "fo-cancel-not-clean",
+                &[live_ordno.clone()],
+                "F/O cancel did not cleanly remove the resting order — MANUAL board check + \
+                 flatten required (no F/O 미체결 read to auto-verify removal)",
+            )
+        );
+    }
+
+    // Two-part flatness — FILL half (KTD3 part 1): t0441 must positively confirm no
+    // filled F/O position. Fail-closed; raises operator-action-required on Fill/NotFlat.
+    fo_assert_no_fill(&sdk, &[submit_ordno.clone(), live_ordno.clone()]).await;
+
+    println!(
+        "ORDER-CHAIN-FO teardown=cancel+t0441-fill-assert note=[clean-cancel confirms resting-\
+         order removal; t0441 confirms no fill; F/O flatness is two-part and fail-closed]"
+    );
+}
+
+// ===========================================================================
+// F/O offline fail-closed tests (run in the normal suite)
+// ===========================================================================
+
+// ---- KTD2: fail-closed fractional price anchor ---------------------------
+
+#[test]
+fn fo_band_rejects_degenerate_and_keeps_verbatim_anchor() {
+    assert!(validate_fo_band("0", "0").is_err(), "zero band");
+    assert!(validate_fo_band("342.30", "342.30").is_err(), "up==dn (limit-locked)");
+    assert!(validate_fo_band("100", "200").is_err(), "up<dn inverted");
+    assert!(validate_fo_band("nan", "1").is_err(), "unparseable");
+    assert!(validate_fo_band("", "1").is_err(), "empty anchor → no order");
+    // A healthy fractional F/O band: the resting BUY anchor is the daily floor, verbatim
+    // (a guaranteed valid tick), and sits strictly below the ceiling.
+    let band = validate_fo_band("1214.75", "1034.85").expect("a healthy F/O band");
+    assert_eq!(band.resting_buy_price(), "1034.85");
+    assert_eq!(band.resting_sell_price(), "1214.75");
+    assert!(band.dnlmt < band.uplmt);
+}
+
+// ---- KTD3/R6: two-part flatness — t0441 fill detection -------------------
+
+/// A `t0441` balance-row helper for the F/O flat-verdict tests.
+fn fo_bal_row(expcode: &str, jqty: &str) -> T0441OutBlock1 {
+    T0441OutBlock1 {
+        expcode: expcode.into(),
+        jqty: jqty.into(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn fo_flat_verdict_fill_blocks_empty_failclosed_zero_position_flat() {
+    // Covers R6. jqty>0 → Fill (block the flip); a SHORT position (negative) is also a Fill.
+    assert_eq!(
+        fo_flat_verdict(&[fo_bal_row("101T9000", "2")]),
+        FoFlatVerdict::Fill(vec!["101T9000".into()]),
+    );
+    assert_eq!(
+        fo_flat_verdict(&[fo_bal_row("101T9000", "-1")]),
+        FoFlatVerdict::Fill(vec!["101T9000".into()]),
+        "a short F/O position is still a fill"
+    );
+    // Empty / unreadable → NOT flat (fail-closed): an empty array cannot positively
+    // confirm no fill.
+    assert_eq!(fo_flat_verdict(&[]), FoFlatVerdict::NotFlat);
+    // Zero-position rows present → positively Flat.
+    assert_eq!(
+        fo_flat_verdict(&[fo_bal_row("101T9000", "0"), fo_bal_row("105V3000", "0")]),
+        FoFlatVerdict::Flat,
+    );
+    // An unparseable quantity is treated as a position (fail-safe), never silently zero.
+    assert_eq!(
+        fo_flat_verdict(&[fo_bal_row("101T9000", "??")]),
+        FoFlatVerdict::Fill(vec!["101T9000".into()]),
+    );
+}
+
+// ---- R6: per-leg certification predicate (guards the U4 flip decision) ----
+
+#[test]
+fn fo_leg_certifies_only_on_clean_rows() {
+    // Covers R6. Clean success (recognized ack + order number) → certified.
+    assert!(fo_leg_certified("00040", "69007"), "buy submit ack");
+    assert!(fo_leg_certified("00039", "69007"), "sell submit ack");
+    assert!(fo_leg_certified("00132", "69041"), "F/O modify ack");
+    assert!(fo_leg_certified("00156", "69044"), "F/O cancel ack");
+    // Soft-reject in a success-shaped envelope (generic 00000 / empty) → NOT certified.
+    assert!(!fo_leg_certified("00000", "69007"), "generic success is not an order ack");
+    assert!(!fo_leg_certified("", "69007"), "empty rsp_cd is ambiguous");
+    // Missing order-number block → NOT certified even with a good code.
+    assert!(!fo_leg_certified("00040", "0"), "no order number");
+    assert!(!fo_leg_certified("00040", ""), "empty order number");
+    // An unrecognized broker code → NOT certified.
+    assert!(!fo_leg_certified("03181", "69007"), "a reject code is not certified");
+}
+
+// ---- R6/KTD4: credential-safe t0441 ROW diagnostic ------------------------
+
+#[test]
+fn fo_t0441_row_line_scrubs_account_shaped_row_fields() {
+    // A synthetic account-number-shaped value embedded in a t0441 ROW field (here
+    // `appamt`, NOT rsp_msg) must be masked; short quantities survive so the line
+    // stays useful.
+    let mut r = fo_bal_row("101T9000", "1");
+    r.appamt = "1234567890".into(); // account-number-shaped (>=6 digit run)
+    let line = fo_t0441_row_line(&r);
+    assert!(!line.contains("1234567890"), "account-shaped row field leaked: {line}");
+    assert!(line.contains("jqty=1"), "short quantity must survive: {line}");
+}
+
+// ---- R8: 01491 vs an unclassified venue rejection -------------------------
+
+#[test]
+fn fo_rejection_classifies_only_01491_not_other_codes() {
+    // Covers R8. A simulated 01491 is classified paper-order-incapable.
+    assert!(ls_core::is_paper_order_incapable("01491"));
+    // A simulated NON-01491 rejection (an unknown venue-not-provisioned code) is NOT
+    // classified by is_paper_order_incapable — it is recorded verbatim instead.
+    assert!(!ls_core::is_paper_order_incapable("09999"), "unknown code must not be classified");
+    assert!(!ls_core::is_paper_incompatible("09999"), "unknown code is not 01900 either");
+}
+
+// ---- KTD3: a non-clean cancel raises operator-action-required (no auto-flat) ----
+
+#[test]
+fn fo_non_clean_cancel_signal_is_loud_and_account_free() {
+    // A non-clean cancel (rejected/ambiguous rsp_cd, so fo_leg_certified is false) drives
+    // the operator-action-required path. The loud message names the order yet leaks no
+    // account, even when the broker detail embeds an account-shaped value.
+    assert!(!fo_leg_certified("03181", "69044"), "a reject cancel is not clean");
+    let msg = loud_failure(
+        "fo-cancel-not-clean",
+        &["69044".into()],
+        "broker said 계좌 00000000-01 거부 for order 69044",
+    );
+    assert!(msg.contains("69044"), "the order must be named: {msg}");
+    assert!(!msg.contains("00000000"), "account leaked: {msg}");
+    assert!(!msg.contains("-01"), "account suffix leaked: {msg}");
 }
