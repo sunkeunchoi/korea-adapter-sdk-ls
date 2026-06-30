@@ -1,0 +1,561 @@
+# Focused Evidence — CSPAT00601 (cash-equity order SUBMIT)
+#
+# A durable, credential-free record of a genuine Paper Live Smoke that placed a
+# REAL paper order. The `line` below is captured VERBATIM from the order harness
+# stdout of `make live-smoke-order-chain`
+# (crates/ls-sdk/tests/order_smoke.rs::order_chained_smoke). The order harness
+# emits an `ORDER-SMOKE` line per leg (not the single `LIVE-SMOKE` line the
+# read-smoke recipe records) — note that divergence. Each line is already routed
+# through the harness `scrub_secrets` (account numbers, `-NN` suffixes, and
+# bearer tokens/appkeys masked) before printing.
+#
+# Source note: the in-window order-chain run (2026-06-30) is the canonical
+# evidence source for the four order TRs — it is where the Implemented gate
+# certified them (plan -005), and its first leg IS gate-1 (submit) evidence
+# (order_smoke.rs). The `live-smoke-order` matrix is NOT used for the autonomous
+# wave: its marketable scenario fills on an open market and leaves a position
+# that needs an out-of-band paper reset, whereas the chain leaves the account
+# positively confirmed flat.
+#
+# Secret-safety: response code + a public 5-digit order number + the gateway's
+# Korean success text only — never a token, appkey, secret, or account number.
+# `rsp_cd=00040` is the submit-accepted code; `order_no` is a public order
+# reference (<6 digits, not an account number).
+tr_code: CSPAT00601
+date: 2026-06-30
+env: paper
+target: live-smoke-order-chain
+line: "ORDER-SMOKE tr=CSPAT00601 scenario=submit_resting_buy cert=certified rsp_cd=00040 order_no=22123 recon=unknown production_not_run=true msg=[모의투자 매수주문이 완료 되었습니다.]"
+
+attested_normalizer_version: 2
+attested_shape:
+  tr_code: CSPAT00601
+  tr_name: 현물주문
+  protocol: rest
+  is_websocket: false
+  endpoint_path: /stock/order
+  api_group_id: d0e216e0-10d9-479f-8a4d-e175b8bae307
+  source_group_name: '[주식] 주문'
+  request_blocks:
+  - direction: request
+    block_name: request_header
+    field_index: 0
+    field_name: contenttype
+    korean_name: 컨텐츠타입
+    type: String
+    length: 100
+    required: true
+    description_hash: b6d96823e389735e
+  - direction: request
+    block_name: request_header
+    field_index: 1
+    field_name: authorization
+    korean_name: 접근토큰
+    type: String
+    length: 1000
+    required: true
+    description_hash: 62956eed2a6e506a
+  - direction: request
+    block_name: request_header
+    field_index: 2
+    field_name: tr_cd
+    korean_name: 거래 CD
+    type: String
+    length: 10
+    required: true
+    description_hash: 4927a2d7cd706e4e
+  - direction: request
+    block_name: request_header
+    field_index: 3
+    field_name: tr_cont
+    korean_name: 연속 거래 여부
+    type: String
+    length: 1
+    required: true
+    description_hash: 1156a435c1de5ba4
+  - direction: request
+    block_name: request_header
+    field_index: 4
+    field_name: tr_cont_key
+    korean_name: 연속 거래 Key
+    type: String
+    length: 18
+    required: true
+    description_hash: 84021bf5d87f407d
+  - direction: request
+    block_name: request_header
+    field_index: 5
+    field_name: mac_address
+    korean_name: MAC 주소
+    type: String
+    length: 12
+    required: true
+    description_hash: 1d2213655779faf2
+  - direction: request
+    block_name: CSPAT00601InBlock1
+    field_index: 0
+    field_name: IsuNo
+    korean_name: 종목번호
+    type: String
+    length: 12
+    required: true
+    description_hash: 11b2cbd773ee377c
+  - direction: request
+    block_name: CSPAT00601InBlock1
+    field_index: 1
+    field_name: OrdQty
+    korean_name: 주문수량
+    type: Number
+    length: 16
+    required: true
+  - direction: request
+    block_name: CSPAT00601InBlock1
+    field_index: 2
+    field_name: OrdPrc
+    korean_name: 주문가
+    type: Number
+    required: true
+  - direction: request
+    block_name: CSPAT00601InBlock1
+    field_index: 3
+    field_name: BnsTpCode
+    korean_name: 매매구분
+    type: String
+    length: 1
+    required: true
+    description_hash: 885001116171c9b4
+  - direction: request
+    block_name: CSPAT00601InBlock1
+    field_index: 4
+    field_name: OrdprcPtnCode
+    korean_name: 호가유형코드
+    type: String
+    length: 2
+    required: true
+    description_hash: fabfb7578d144a91
+  - direction: request
+    block_name: CSPAT00601InBlock1
+    field_index: 5
+    field_name: MgntrnCode
+    korean_name: 신용거래코드
+    type: String
+    length: 3
+    required: true
+    description_hash: 9ffe1c852801d3b4
+  - direction: request
+    block_name: CSPAT00601InBlock1
+    field_index: 6
+    field_name: LoanDt
+    korean_name: 대출일
+    type: String
+    length: 8
+    required: true
+  - direction: request
+    block_name: CSPAT00601InBlock1
+    field_index: 7
+    field_name: OrdCndiTpCode
+    korean_name: 주문조건구분
+    type: String
+    length: 1
+    required: true
+    description_hash: e1eabb013f3ea2d9
+  - direction: request
+    block_name: CSPAT00601InBlock1
+    field_index: 8
+    field_name: MbrNo
+    korean_name: 회원사번호
+    type: String
+    length: 3
+    required: true
+    description_hash: 0246ae785cdee5d8
+  response_blocks:
+  - direction: response
+    block_name: response_header
+    field_index: 0
+    field_name: contenttype
+    korean_name: 컨텐츠타입
+    type: String
+    length: 100
+    required: true
+    description_hash: b6d96823e389735e
+  - direction: response
+    block_name: response_header
+    field_index: 1
+    field_name: tr_cd
+    korean_name: 거래 CD
+    type: String
+    length: 10
+    required: true
+    description_hash: 4927a2d7cd706e4e
+  - direction: response
+    block_name: response_header
+    field_index: 2
+    field_name: tr_cont
+    korean_name: 연속 거래 여부
+    type: String
+    length: 1
+    required: true
+    description_hash: 1156a435c1de5ba4
+  - direction: response
+    block_name: response_header
+    field_index: 3
+    field_name: tr_cont_key
+    korean_name: 연속 거래 Key
+    type: String
+    length: 18
+    required: true
+    description_hash: 84021bf5d87f407d
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 0
+    field_name: RecCnt
+    korean_name: 레코드갯수
+    type: Number
+    length: 5
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 1
+    field_name: AcntNo
+    korean_name: 계좌번호
+    type: String
+    length: 20
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 2
+    field_name: InptPwd
+    korean_name: 입력비밀번호
+    type: String
+    length: 8
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 3
+    field_name: IsuNo
+    korean_name: 종목번호
+    type: String
+    length: 12
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 4
+    field_name: OrdQty
+    korean_name: 주문수량
+    type: Number
+    length: 16
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 5
+    field_name: OrdPrc
+    korean_name: 주문가
+    type: Number
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 6
+    field_name: BnsTpCode
+    korean_name: 매매구분
+    type: String
+    length: 1
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 7
+    field_name: OrdprcPtnCode
+    korean_name: 호가유형코드
+    type: String
+    length: 2
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 8
+    field_name: PrgmOrdprcPtnCode
+    korean_name: 프로그램호가유형코드
+    type: String
+    length: 2
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 9
+    field_name: StslAbleYn
+    korean_name: 공매도가능여부
+    type: String
+    length: 1
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 10
+    field_name: StslOrdprcTpCode
+    korean_name: 공매도호가구분
+    type: String
+    length: 1
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 11
+    field_name: CommdaCode
+    korean_name: 통신매체코드
+    type: String
+    length: 2
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 12
+    field_name: MgntrnCode
+    korean_name: 신용거래코드
+    type: String
+    length: 3
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 13
+    field_name: LoanDt
+    korean_name: 대출일
+    type: String
+    length: 8
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 14
+    field_name: MbrNo
+    korean_name: 회원번호
+    type: String
+    length: 3
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 15
+    field_name: OrdCndiTpCode
+    korean_name: 주문조건구분
+    type: String
+    length: 1
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 16
+    field_name: StrtgCode
+    korean_name: 전략코드
+    type: String
+    length: 6
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 17
+    field_name: GrpId
+    korean_name: 그룹ID
+    type: String
+    length: 20
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 18
+    field_name: OrdSeqNo
+    korean_name: 주문회차
+    type: Number
+    length: 10
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 19
+    field_name: PtflNo
+    korean_name: 포트폴리오번호
+    type: Number
+    length: 10
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 20
+    field_name: BskNo
+    korean_name: 바스켓번호
+    type: Number
+    length: 10
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 21
+    field_name: TrchNo
+    korean_name: 트렌치번호
+    type: Number
+    length: 10
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 22
+    field_name: ItemNo
+    korean_name: 아이템번호
+    type: Number
+    length: 10
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 23
+    field_name: OpDrtnNo
+    korean_name: 운용지시번호
+    type: String
+    length: 12
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 24
+    field_name: LpYn
+    korean_name: 유동성공급자여부
+    type: String
+    length: 1
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock1
+    field_index: 25
+    field_name: CvrgTpCode
+    korean_name: 반대매매구분
+    type: String
+    length: 1
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock2
+    field_index: 0
+    field_name: RecCnt
+    korean_name: 레코드갯수
+    type: Number
+    length: 5
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock2
+    field_index: 1
+    field_name: OrdNo
+    korean_name: 주문번호
+    type: Number
+    length: 10
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock2
+    field_index: 2
+    field_name: OrdTime
+    korean_name: 주문시각
+    type: String
+    length: 9
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock2
+    field_index: 3
+    field_name: OrdMktCode
+    korean_name: 주문시장코드
+    type: String
+    length: 2
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock2
+    field_index: 4
+    field_name: OrdPtnCode
+    korean_name: 주문유형코드
+    type: String
+    length: 2
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock2
+    field_index: 5
+    field_name: ShtnIsuNo
+    korean_name: 단축종목번호
+    type: String
+    length: 9
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock2
+    field_index: 6
+    field_name: MgempNo
+    korean_name: 관리사원번호
+    type: String
+    length: 9
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock2
+    field_index: 7
+    field_name: OrdAmt
+    korean_name: 주문금액
+    type: Number
+    length: 16
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock2
+    field_index: 8
+    field_name: SpareOrdNo
+    korean_name: 예비주문번호
+    type: Number
+    length: 10
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock2
+    field_index: 9
+    field_name: CvrgSeqno
+    korean_name: 반대매매일련번호
+    type: Number
+    length: 10
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock2
+    field_index: 10
+    field_name: RsvOrdNo
+    korean_name: 예약주문번호
+    type: Number
+    length: 10
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock2
+    field_index: 11
+    field_name: SpotOrdQty
+    korean_name: 실물주문수량
+    type: Number
+    length: 16
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock2
+    field_index: 12
+    field_name: RuseOrdQty
+    korean_name: 재사용주문수량
+    type: Number
+    length: 16
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock2
+    field_index: 13
+    field_name: MnyOrdAmt
+    korean_name: 현금주문금액
+    type: Number
+    length: 16
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock2
+    field_index: 14
+    field_name: SubstOrdAmt
+    korean_name: 대용주문금액
+    type: Number
+    length: 16
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock2
+    field_index: 15
+    field_name: RuseOrdAmt
+    korean_name: 재사용주문금액
+    type: Number
+    length: 16
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock2
+    field_index: 16
+    field_name: AcntNm
+    korean_name: 계좌명
+    type: String
+    length: 40
+    required: true
+  - direction: response
+    block_name: CSPAT00601OutBlock2
+    field_index: 17
+    field_name: IsuNm
+    korean_name: 종목명
+    type: String
+    length: 40
+    required: true
+  rate_limit_per_sec: 10
+  corp_rate_limit_per_sec: 10
+  rate_source_group: d0e216e0-10d9-479f-8a4d-e175b8bae307

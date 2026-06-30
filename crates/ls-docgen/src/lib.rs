@@ -1127,7 +1127,8 @@ mod tests {
             "t8417", "t8418", "t8411", "t8452", "t8453", "t1302",
             "t8464", "t8465", "t8466", "t2216", "t8405",
             "t1444", "t1422", "t1427", "t1442", "t1405", "t1960", "t1961", "t1966", "t1921", "t1532", "t1533", "t1926", "t1764", "t1903",
-            "CSPAT00601", "CSPAT00701", "CSPAT00801", "t0425",
+            // CSPAT00601/00701/00801 + t0425 promoted to Recommended (plan
+            // 2026-06-30-002) — moved to the recommended-no-banner loop below.
             // Closed-window account-lane flip wave (plan -001).
             "t0424", "t0167", "CLNAQ00100",
             // Paper account credential lanes (plan -002): F/O + overseas-F/O account
@@ -1198,10 +1199,15 @@ mod tests {
             );
         }
 
-        // token, t1101, t1102, t8412, S3_, and CSPAQ12200 are Recommended TRs: each
-        // still renders a Reference page (all stay implemented), but the banner is gone
-        // now that they are promoted.
-        for rec in ["token", "t1101", "t1102", "t8412", "S3_", "CSPAQ12200"] {
+        // token, t1101, t1102, t8412, S3_, CSPAQ12200, and the four order TRs
+        // (CSPAT00601/00701/00801 submit/modify/cancel + t0425 reconciliation,
+        // promoted by plan 2026-06-30-002) are Recommended TRs: each still renders a
+        // Reference page (all stay implemented), but the banner is gone now that they
+        // are promoted.
+        for rec in [
+            "token", "t1101", "t1102", "t8412", "S3_", "CSPAQ12200", "CSPAT00601",
+            "CSPAT00701", "CSPAT00801", "t0425",
+        ] {
             let page = reference
                 .get(Path::new(&format!("docs/reference/{rec}.md")))
                 .unwrap_or_else(|| {

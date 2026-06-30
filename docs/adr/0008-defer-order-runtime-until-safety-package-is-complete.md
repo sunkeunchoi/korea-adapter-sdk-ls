@@ -22,3 +22,30 @@ success predicate is **seed-only/unconfirmed** (the `00039`/`00040` hypothesis
 recorded in `order-safety-design.md` §1, not yet confirmed against observed live
 codes). A clean in-window `make live-smoke-order` run flips both TRs and
 supersedes this ADR; see `.agents/skills/implement-order-tr/SKILL.md`.
+
+## Status update (2026-06-30): evidence ran — deferral retired (SUPERSEDED)
+
+Both gates this ADR deferred have now run on real in-window paper order
+placement, so the deferral is **fully retired**:
+
+- **Implemented gate (plan 2026-06-25-005).** A clean in-window guarded
+  order-chain certified the submit/modify/cancel legs from observed live broker
+  codes (`00040` / `00462` / `00463`), confirming the order success predicate
+  that was seed-only/unconfirmed above. `CSPAT00601`, `CSPAT00701`, `CSPAT00801`,
+  and `t0425` flipped Tracked → **Implemented**.
+- **Recommended gate (plan 2026-06-30-002, this retirement).** The Recommended
+  tier is the point at which the SDK endorses *live order placement* — the
+  endorsement this ADR held back pending an in-window evidence run. A fresh clean
+  in-window `make live-smoke-order-chain` placed a real paper submit→modify→cancel
+  lifecycle (`cert=certified`, `00040`/`00462`/`00463`) and the harness flat
+  assertion positively confirmed the account flat afterward. On that evidence the
+  four order TRs flipped Implemented → **Recommended** with credential-free
+  Focused Evidence (`metadata/evidence/{CSPAT00601,CSPAT00701,CSPAT00801,t0425}.yaml`).
+
+The technical blocker ("the safety package is incomplete") and the evidence
+blocker ("no in-window order-placement run has happened") are both resolved. This
+ADR is **SUPERSEDED** — the order surface is callable, Implemented, and now
+Recommended on paper. (Note: the live-placement evidence was sourced from the
+autonomous `live-smoke-order-chain`, not the `live-smoke-order` matrix — the
+matrix's marketable scenario fills on an open market and would leave a position
+needing an out-of-band paper reset; the chain leaves the account confirmed flat.)

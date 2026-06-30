@@ -513,14 +513,14 @@ mod tests {
         let report = evaluate_recommended(&real_trs(), date(2026, 6, 18));
         assert!(report.findings.is_empty());
         assert!(!report.has_errors());
-        assert_eq!(report.recommended_count, 6);
+        assert_eq!(report.recommended_count, 10);
     }
 
     #[test]
     fn stale_emits_one_evidence_finding_per_recommended_tr() {
         let report = evaluate_recommended(&real_trs(), date(2026, 10, 1));
-        assert_eq!(report.findings.len(), 6);
-        assert_eq!(report.recommended_count, 6);
+        assert_eq!(report.findings.len(), 10);
+        assert_eq!(report.recommended_count, 10);
         for f in &report.findings {
             assert_eq!(f.severity, Severity::Evidence);
             assert_eq!(f.reasons, vec![Reason::Age]);
@@ -541,11 +541,13 @@ mod tests {
     #[test]
     fn non_recommended_trs_are_exempt() {
         let report = evaluate_recommended(&real_trs(), date(2026, 10, 1));
-        assert_eq!(report.recommended_count, 6);
-        let recommended: std::collections::BTreeSet<&str> =
-            ["token", "t1101", "t1102", "t8412", "S3_", "CSPAQ12200"]
-                .into_iter()
-                .collect();
+        assert_eq!(report.recommended_count, 10);
+        let recommended: std::collections::BTreeSet<&str> = [
+            "token", "t1101", "t1102", "t8412", "S3_", "CSPAQ12200", "CSPAT00601",
+            "CSPAT00701", "CSPAT00801", "t0425",
+        ]
+        .into_iter()
+        .collect();
         for f in &report.findings {
             assert!(
                 recommended.contains(f.tr_code.as_str()),
@@ -559,7 +561,7 @@ mod tests {
     fn default_today_uses_a_real_forward_moving_clock() {
         assert!(today() >= date(2026, 6, 19));
         let report = evaluate_recommended(&real_trs(), today());
-        assert_eq!(report.recommended_count, 6);
+        assert_eq!(report.recommended_count, 10);
         assert!(!report.has_errors());
     }
 
@@ -576,7 +578,7 @@ mod tests {
         }
         let cleared = evaluate_recommended(&trs, as_of);
         assert!(!cleared.has_stale());
-        assert_eq!(cleared.recommended_count, 6);
+        assert_eq!(cleared.recommended_count, 10);
     }
 
     #[test]
@@ -587,10 +589,10 @@ mod tests {
             meta.maintenance.last_reviewed = "not-a-date".to_string();
         }
         let report = evaluate_recommended(&trs, as_of);
-        assert_eq!(report.recommended_count, 6);
+        assert_eq!(report.recommended_count, 10);
         assert_eq!(report.unparseable, vec!["token".to_string()]);
         assert!(report.has_errors());
-        assert_eq!(report.findings.len(), 5);
+        assert_eq!(report.findings.len(), 9);
         assert!(report.findings.iter().all(|f| f.tr_code != "token"));
     }
 
@@ -1083,7 +1085,7 @@ recommendation:
         let v = parse_json(&report_to_json(&report, date(2026, 6, 18), DEFAULT_WINDOW_DAYS));
         assert_eq!(v["stale"].as_array().unwrap().len(), 0);
         assert_eq!(v["has_errors"], serde_json::json!(false));
-        assert_eq!(v["recommended_count"], serde_json::json!(6));
+        assert_eq!(v["recommended_count"], serde_json::json!(10));
         assert_eq!(v["window_days"], serde_json::json!(90));
         assert_eq!(v["as_of"], serde_json::json!("2026-06-18"));
         assert_eq!(v["reattest"], serde_json::json!([]));

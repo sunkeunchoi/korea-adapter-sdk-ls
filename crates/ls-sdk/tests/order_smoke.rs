@@ -46,7 +46,7 @@ use ls_core::{LsConfig, LsError, LsResult};
 use ls_sdk::market_session::T1102Request;
 use ls_sdk::orders::{
     CSPAT00601Request, CSPAT00701Request, CSPAT00801Request, OrderIntent, OrderState,
-    T0425InBlock, T0425OutBlock1, T0425Request, T0425Response,
+    T0425InBlock, T0425OutBlock1, T0425Request,
 };
 use ls_sdk::LsSdk;
 
@@ -629,7 +629,7 @@ fn parse_qty(s: &str) -> u64 {
     s.trim().parse().unwrap_or(0)
 }
 
-/// Classify an account-wide `t0425` row set into a flatness verdict (KTD2/KTD3).
+/// Classify a `t0425` row set into a flatness verdict (KTD2/KTD3).
 ///
 /// Keys on QUANTITIES, never the status TEXT (KTD2: "the flat check keys on
 /// `ordrem`"). A FILL (`cheqty > 0`) outranks a resting remainder: a fill is
@@ -644,9 +644,13 @@ fn parse_qty(s: &str) -> u64 {
 /// would wrongly skip it and conclude flat while a paper order rests. The production
 /// `reconcile::classify_status` likewise treats 거부 as still-live, never terminal.
 ///
-/// NOTE this counts EVERY live row, not just the smoke's own order — that is the
-/// whole point of the account-wide scan vs the per-intent `reconcile_rows`: a
-/// leftover resting order from a prior aborted run must surface as NOT flat.
+/// NOTE this counts EVERY row it is GIVEN, not just the smoke's own order — unlike the
+/// per-intent `reconcile_rows`, so a leftover resting order from a prior aborted run on
+/// the SAME symbol still surfaces as NOT flat. The row set is bounded by the caller
+/// (`scan_symbol_working_orders`: traded-symbol, unfilled-only, single page) rather than
+/// account-wide; see that function for what the scope deliberately does and does not
+/// cover (a fully-filled row or an other-symbol leftover is out of scope, and why that
+/// is safe for the non-marketable single-symbol chain).
 fn flat_verdict(rows: &[T0425OutBlock1]) -> FlatVerdict {
     let mut fills = Vec::new();
     let mut resting = Vec::new();
@@ -670,16 +674,45 @@ fn flat_verdict(rows: &[T0425OutBlock1]) -> FlatVerdict {
     }
 }
 
-/// Run the ACCOUNT-WIDE `t0425` working-orders scan, exhausting every page (KTD2).
-/// `expcode` empty queries all symbols; `collect_all` follows the `cts_ordno`/
-/// `tr_cont` continuation to the terminal page. Returns `Err` on any failure OR a
-/// truncated scan — the caller treats that as NOT flat (positive confirmation only).
-async fn scan_account_wide_working_orders(sdk: &LsSdk) -> Result<Vec<T0425OutBlock1>, String> {
-    use std::sync::Arc;
-    let base = T0425Request {
+/// Run the `t0425` working-orders scan for the traded symbol (KTD2). Returns `Err` on
+/// any failure — the caller treats that as NOT flat (positive confirmation only).
+///
+/// Two deliberate scopings keep this bounded on a heavily-used paper account, where an
+/// exhaustive scan cannot complete:
+/// - `chegb = "2"` (UNFILLED only): the flat assertion's job is to catch a still-WORKING
+///   order left on the book. Unfilled/working orders are inherently few (a flat account
+///   returns zero), and the gateway filters server-side, so the result is the currently-
+///   resting set — not the account's entire filled history. A still-RESTING order
+///   (`ordrem > 0`) and a PARTIAL fill (`cheqty > 0 && ordrem > 0`, still 미체결) both
+///   carry unfilled remainder, so both appear here and `flat_verdict` flags them. The
+///   one row this filter does NOT return is a FULLY-filled order (`ordrem == 0`):
+///   excluded as 체결, it is invisible to this scan. That is an accepted, bounded
+///   limitation — the chain places only NON-MARKETABLE limit orders at the band floor/
+///   ceiling that cannot fill, and the fill-prone matrix scenario tears down via paper
+///   reset (not this scan) — so no full fill the chain could create goes undetected. A
+///   future fill-capable caller must NOT reuse this helper (use `chegb = "0"`).
+/// - A SINGLE page (plain `inquiry`/`post_paginated`, not `collect_all`): the paper
+///   gateway's `t0425` `cts_ordno` cursor does not terminate for this query —
+///   `collect_all` walks to its 100-page cap and fails even when the working set is one
+///   row. The working set fits one page in practice, but rather than ASSUME that we
+///   fail CLOSED on a continuation signal (`tr_cont` not empty/`N`): a paginated working
+///   set returns `Err` (NOT flat), never a falsely-flat truncated page. (`reconcile`'s
+///   own `collect_all` is unchanged — this bounds only the test harness's teardown scan.)
+///
+/// Scoped to `symbol` rather than account-wide because the chain only ever places
+/// orders on the single traded symbol. The earlier account-wide scan also surfaced a
+/// leftover on ANOTHER symbol from a prior aborted run; that is no longer covered, but
+/// the chain cannot create such a leftover (it trades one symbol), and the account-wide
+/// `chegb="0"` form is the very query that overran the page cap here.
+async fn scan_symbol_working_orders(
+    sdk: &LsSdk,
+    symbol: &str,
+) -> Result<Vec<T0425OutBlock1>, String> {
+    use ls_core::HasPagination;
+    let req = T0425Request {
         inblock: T0425InBlock {
-            expcode: String::new(), // all symbols — catch leftovers from prior runs
-            chegb: "0".into(),      // filled + unfilled
+            expcode: symbol.into(), // the smoke's only traded symbol — its own orders
+            chegb: "2".into(),      // UNFILLED only — see the doc comment above
             medosu: "0".into(),     // both sides
             sortgb: "2".into(),
             cts_ordno: " ".into(),
@@ -687,25 +720,29 @@ async fn scan_account_wide_working_orders(sdk: &LsSdk) -> Result<Vec<T0425OutBlo
         tr_cont: String::new(),
         tr_cont_key: String::new(),
     };
-    let inner = Arc::clone(sdk.inner());
-    let pages = sdk
-        .inner()
-        .collect_all(base, move |req| {
-            let inner = Arc::clone(&inner);
-            async move {
-                inner
-                    .post_paginated::<T0425Request, T0425Response>(
-                        &ls_core::endpoint_policy::T0425_POLICY,
-                        &req,
-                    )
-                    .await
+    // Let the gateway's per-TR `t0425` budget (2/s) refill before this one critical
+    // read: the preceding reconcile/dump reads burst against the same per-TR cap, so a
+    // back-to-back flat scan can be throttled (`IGW00201`). One short pause guarantees a
+    // clean budget for the single call that decides flatness. (The order placement
+    // bucket is independent and untouched.)
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    match sdk.orders().inquiry(&req).await {
+        Ok(resp) => {
+            // Positive confirmation only: a single page that did NOT exhaust the working
+            // set cannot prove flatness. If the gateway signals more pages, fail CLOSED
+            // (NOT flat) rather than conclude flat from a truncated page. In practice the
+            // working set is <= one page, so this never fires on a real flat account.
+            let cont = resp.tr_cont().trim();
+            if !cont.is_empty() && !cont.eq_ignore_ascii_case("N") {
+                return Err(format!(
+                    "traded-symbol t0425 working-order scan is paginated (tr_cont={cont}) — \
+                     a single page cannot positively confirm flat"
+                ));
             }
-        })
-        .await;
-    match pages {
-        Ok(pages) => Ok(pages.into_iter().flat_map(|p| p.outblock1).collect()),
+            Ok(resp.outblock1)
+        }
         Err(e) => Err(format!(
-            "account-wide t0425 scan did not complete ({}) — cannot positively confirm flat",
+            "traded-symbol t0425 scan did not complete ({}) — cannot positively confirm flat",
             scrub_secrets(&e.to_string())
         )),
     }
@@ -1285,9 +1322,11 @@ async fn dump_t0425_rows(sdk: &LsSdk, symbol: &str, org_ordno: &str) {
     }
 }
 
-/// Post-run account-flat assertion + best-effort cleanup (U3, R3/R4, KTD2/KTD3).
+/// Post-run flat assertion + best-effort cleanup for the traded symbol (U3, R3/R4,
+/// KTD2/KTD3).
 ///
-/// Runs the ACCOUNT-WIDE `t0425` scan and acts on the verdict:
+/// Runs the traded-symbol working-orders `t0425` scan (see
+/// [`scan_symbol_working_orders`] for the deliberate scope) and acts on the verdict:
 /// - `Flat` → record a positively-confirmed clean pass.
 /// - `Resting` → retry-cancel each still-resting order (while dispatch is enabled),
 ///   re-scan; if now flat record a pass with a cleanup note, else engage the
@@ -1302,8 +1341,8 @@ async fn dump_t0425_rows(sdk: &LsSdk, symbol: &str, org_ordno: &str) {
 /// remove a resting order); retry-cancel is the only removal path, and it runs
 /// BEFORE the switch (KTD3). Every loud failure routes free text through
 /// [`scrub_secrets`] and names order numbers verbatim.
-async fn assert_account_flat(sdk: &LsSdk) {
-    let rows = match scan_account_wide_working_orders(sdk).await {
+async fn assert_account_flat(sdk: &LsSdk, symbol: &str) {
+    let rows = match scan_symbol_working_orders(sdk, symbol).await {
         Ok(rows) => rows,
         Err(e) => {
             sdk.inner().set_orders_enabled(false);
@@ -1312,7 +1351,7 @@ async fn assert_account_flat(sdk: &LsSdk) {
     };
     match flat_verdict(&rows) {
         FlatVerdict::Flat => {
-            println!("ORDER-CHAIN flat=confirmed scan=account-wide note=[zero live rows]");
+            println!("ORDER-CHAIN flat=confirmed scan=traded-symbol note=[zero live rows]");
         }
         FlatVerdict::Fill(ordnos) => {
             sdk.inner().set_orders_enabled(false);
@@ -1353,7 +1392,7 @@ async fn assert_account_flat(sdk: &LsSdk) {
                 }
             }
             // Re-scan: positive confirmation only.
-            let still = match scan_account_wide_working_orders(sdk).await {
+            let still = match scan_symbol_working_orders(sdk, symbol).await {
                 Ok(rows) => flat_verdict(&rows),
                 Err(e) => {
                     sdk.inner().set_orders_enabled(false);
@@ -1394,7 +1433,7 @@ async fn assert_account_flat(sdk: &LsSdk) {
 /// AUTONOMOUS chained paper-order run (U5): the agent invokes this directly during a
 /// human-present wave — there is NO operator handoff. Submit a resting far-from-market
 /// order (gate 1 evidence), modify it, then cancel it as teardown — each observed via
-/// `t0425` — then assert the account is account-wide FLAT (U3). Cancel is the PRIMARY
+/// `t0425` — then assert the traded symbol is FLAT (U3). Cancel is the PRIMARY
 /// teardown; the flat assertion + retry-cancel is the autonomous fallback when the
 /// cancel link fails or a resting order remains; paper reset is the last resort.
 ///
@@ -1410,8 +1449,9 @@ async fn assert_account_flat(sdk: &LsSdk) {
 /// - U1: refuses unless a CI/no-TTY marker is ABSENT and a fresh per-wave human nonce
 ///   (`LS_ORDER_SMOKE_NONCE=$(date +%s)`) is present and within TTL.
 /// - U2: asserts the RESOLVED environment is paper after credential load.
-/// - U3: after teardown, an account-wide `t0425` scan must positively confirm zero
-///   live rows; a resting remainder triggers retry-cancel then a loud hard-fail, a
+/// - U3: after teardown, the traded-symbol working-order `t0425` scan must positively
+///   confirm zero live rows; a resting remainder triggers retry-cancel then a loud
+///   hard-fail, a
 ///   fill hard-fails immediately, and a failed/ambiguous scan is treated as NOT flat.
 /// - U4: installs a fail-closed dispatch-log suppressor and scrubs all output.
 ///
@@ -1508,14 +1548,14 @@ async fn order_chained_smoke() {
             // The catch-all submit error — including `LsError::AmbiguousOrder`, which
             // means the order MAY have reached the gateway (an ambiguous send is
             // reconciled, never assumed not-placed). With no operator to clean up, run
-            // the account-wide flat assertion BEFORE recording Pending: a resting order
+            // the traded-symbol flat assertion BEFORE recording Pending: a resting order
             // is retry-canceled then hard-failed naming it; a clean transport failure
             // (nothing placed) positively confirms flat and falls through to Pending
             // (R3/R5). The proven-not-placed arm above (01900/01491) is the only
             // post-submit path that may skip this.
             sev.rsp_msg = format!("submit failed: {}", scrub_secrets(&e.to_string()));
             sev.record();
-            assert_account_flat(&sdk).await;
+            assert_account_flat(&sdk, &params.symbol).await;
             OrderEvidence::pending(
                 "chain",
                 "submit leg did not cleanly place; account confirmed flat; chain not run",
@@ -1587,7 +1627,7 @@ async fn order_chained_smoke() {
         }
         Err(e) => {
             // The cancel link itself failed → gate 2 does not flip; gate 1 is
-            // unaffected (AE5). Do NOT return — fall through to the account-wide flat
+            // unaffected (AE5). Do NOT return — fall through to the traded-symbol flat
             // assertion (U3), which retry-cancels the still-resting order and either
             // clears the book or hard-fails loudly naming it.
             cev.rsp_msg = format!("cancel failed: {}", scrub_secrets(&e.to_string()));
@@ -1600,14 +1640,16 @@ async fn order_chained_smoke() {
         }
     }
 
-    // U3 (R3/R4, KTD2/KTD3): assert the account is account-wide FLAT after the run.
-    // This is the autonomous replacement for the operator's out-of-band paper reset —
-    // a resting remainder is retry-canceled then hard-failed, a fill hard-fails
-    // immediately, and a failed scan is treated as NOT flat.
-    assert_account_flat(&sdk).await;
+    // U3 (R3/R4, KTD2/KTD3): assert the traded symbol is FLAT after the run. This is
+    // the autonomous replacement for the operator's out-of-band paper reset — a
+    // resting remainder is retry-canceled then hard-failed, a fill hard-fails
+    // immediately, and a failed scan is treated as NOT flat. Scoped to the traded
+    // symbol (the only symbol the chain places on) so the scan completes on a
+    // heavily-used paper account instead of overrunning the history-page cap.
+    assert_account_flat(&sdk, &params.symbol).await;
 
     println!(
         "ORDER-CHAIN teardown=cancel+flat-assert note=[cancel is the primary teardown; the \
-         account-wide flat assertion confirms no order remains resting]"
+         traded-symbol working-order flat assertion confirms no order remains resting]"
     );
 }

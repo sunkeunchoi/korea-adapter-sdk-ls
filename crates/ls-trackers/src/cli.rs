@@ -2376,8 +2376,8 @@ mod tests {
         // Inject an as-of well past the 90-day window for every Recommended TR.
         let result = run_freshness_check(&paths, chrono::NaiveDate::from_ymd_opt(2026, 10, 1).unwrap());
         let report = result.as_ref().unwrap();
-        assert_eq!(report.findings.len(), 6);
-        assert_eq!(report.recommended_count, 6);
+        assert_eq!(report.findings.len(), 10);
+        assert_eq!(report.recommended_count, 10);
         // Advisory — stale evidence never gates.
         assert_eq!(freshness_exit_for(&result), Exit::Ok);
     }

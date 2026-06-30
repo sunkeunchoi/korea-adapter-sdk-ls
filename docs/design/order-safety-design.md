@@ -1,16 +1,22 @@
 # Order-Safety Design Contract
 
-**Status:** machinery-complete, evidence-pending (updated 2026-06-25). The first
-order package has built the runtime this contract requires —
-`Inner::post_order` (no-retry, §1), the `OrderDeduplicator` (§2), the global
-kill switch (§1), the order success predicate (§1), the redaction/tracing
-contract (§5), the six-state reconciliation matcher (§3), the re-added
-`LsError::DuplicateOrder` variant, and the guarded paper-order evidence harness
-(§4, `make live-smoke-order`). The order logic is proven against mocks
-(`crates/ls-sdk/tests/order_logic_gate.rs`). What has NOT yet happened is the
-guarded **live paper order** that gates Implemented (§4): until that in-window
-run, `CSPAT00601` and `t0425` stay Tracked-not-Implemented and the §1 accepted
-codes are seed-only/unconfirmed. This note remains the live safety bar.
+**Status:** evidence ran — Implemented + Recommended (updated 2026-06-30). The
+order package built the runtime this contract requires — `Inner::post_order`
+(no-retry, §1), the `OrderDeduplicator` (§2), the global kill switch (§1), the
+order success predicate (§1), the redaction/tracing contract (§5), the six-state
+reconciliation matcher (§3), the re-added `LsError::DuplicateOrder` variant, and
+the guarded paper-order evidence harness (§4, `make live-smoke-order` /
+`make live-smoke-order-chain`) — and the guarded **live paper order** runs that
+gate Implemented and Recommended have now both happened in-window:
+`CSPAT00601` / `CSPAT00701` / `CSPAT00801` + `t0425` are **Implemented**
+(plan 2026-06-25-005, observed `00040`/`00462`/`00463`) and **Recommended**
+(plan 2026-06-30-002, a fresh clean in-window order-chain with the account
+positively confirmed flat afterward). The §1 accepted codes are confirmed
+against observed live codes, no longer seed-only. ADR 0008's deferral is retired.
+The evidence was sourced from the autonomous `live-smoke-order-chain` (the
+`live-smoke-order` matrix's marketable scenario fills on an open market and would
+leave a position needing an out-of-band paper reset). The order logic also stays
+proven against mocks (`crates/ls-sdk/tests/order_logic_gate.rs`).
 
 The order class is the one place where a bug is not a stale quote but a real,
 irreversible market action. Everything below exists to make a duplicate or
