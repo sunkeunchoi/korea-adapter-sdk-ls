@@ -1780,20 +1780,25 @@ fn fo_flat_verdict(rows: &[T0441OutBlock1]) -> FoFlatVerdict {
 
 // ---- F/O per-leg certification predicate (R6, guards the U4 flip decision) ---
 
-/// The F/O order-success codes (seed): `00040` buy / `00039` sell (submit), `00132`
-/// (modify), `00156` (cancel) — read from the raw CFOAT success examples. Seed-only
-/// until the operator's live run confirms them (mirrors `ls_core`'s order-ack seed).
-const FO_ORDER_OK_CODES: [&str; 4] = ["00040", "00039", "00132", "00156"];
+/// The F/O order-ack codes, PER LEG (seed; read from the raw CFOAT success examples,
+/// seed-only until the operator's live run confirms them). Kept leg-specific so a
+/// submit that returns a modify/cancel code (a gateway anomaly) is NOT certified as a
+/// clean submit. `ls_core`'s runtime accept gate (`classify_order_rsp_cd`) is
+/// intentionally a coarser union across all order TRs — it only decides retry/dedup
+/// safety; per-leg certification is the stricter offline check the U4/U6 flip relies on.
+const FO_SUBMIT_OK: [&str; 2] = ["00040", "00039"]; // buy / sell
+const FO_MODIFY_OK: [&str; 1] = ["00132"];
+const FO_CANCEL_OK: [&str; 1] = ["00156"];
 
-/// Per-leg certification (R6): a leg certifies ONLY on a genuinely clean row — a
-/// recognized F/O order-ack `rsp_cd` AND a present order number. A generic-success
-/// envelope (`00000`/empty), an unrecognized code, or a missing order-number block is
-/// NOT certified. This is the offline-tested decision the operator's U4 run exercises
-/// live (PR #74 shipped a status-text cert bug that only review caught — this keeps the
-/// F/O cert keyed on the business code + order number, never status text).
-fn fo_leg_certified(rsp_cd: &str, order_no: &str) -> bool {
+/// Per-leg certification (R6): a leg certifies ONLY on a genuinely clean row — the
+/// `rsp_cd` is in that LEG's accepted set AND a usable order number is present. A
+/// generic-success envelope (`00000`/empty), a wrong-leg or unrecognized code, or a
+/// missing order-number block is NOT certified. Keyed on the business code + order
+/// number, never status text (PR #74 shipped a status-text cert bug that only review
+/// caught). This is the offline-tested decision the operator's U4/U6 run exercises live.
+fn fo_leg_certified(expected: &[&str], rsp_cd: &str, order_no: &str) -> bool {
     let o = order_no.trim();
-    FO_ORDER_OK_CODES.contains(&rsp_cd.trim()) && !o.is_empty() && o != "0"
+    expected.contains(&rsp_cd.trim()) && !o.is_empty() && o != "0"
 }
 
 /// Format a credential-free `t0441` row diagnostic line. Every field — including the
@@ -1922,8 +1927,9 @@ async fn fo_order_chained_smoke() {
         Ok(s) => s,
         Err(e) => panic!("{}", scrub_secrets(&e.to_string())),
     };
-    let account = sdk.fo_orders().account_no().to_string();
-    let _ = &account; // reconcile_intent is available; the F/O flat-assert uses t0441.
+    // NB: the F/O surface has no t0425-style reconcile (no F/O 미체결 read), so unlike
+    // the stock chain this run never builds a reconcile intent — flatness is t0441
+    // fill-detection + clean-cancel removal. The account number is therefore not needed.
 
     // Price anchor: the daily limits from t2111 (KTD2). FAIL-CLOSED — if no valid,
     // non-empty anchor can be sourced, place NO order.
@@ -1956,7 +1962,7 @@ async fn fo_order_chained_smoke() {
     let mut sev = leg_evidence("CFOAT00100", "fo_submit_resting_buy");
     let submit_ordno = match sdk.fo_orders().submit(&submit_req).await {
         Ok(resp) => {
-            sev.certification = if fo_leg_certified(&resp.rsp_cd, resp.order_no()) {
+            sev.certification = if fo_leg_certified(&FO_SUBMIT_OK, &resp.rsp_cd, resp.order_no()) {
                 Certification::Certified
             } else {
                 Certification::Pending
@@ -2027,12 +2033,22 @@ async fn fo_order_chained_smoke() {
         }
     };
     if submit_ordno.trim().is_empty() || submit_ordno.trim() == "0" {
-        OrderEvidence::pending(
-            "fo-chain",
-            "F/O submit returned no usable order number; chain not run",
-        )
-        .record();
-        return;
+        // An ACCEPTED submit with no usable order number is AMBIGUOUS-PLACED: an order
+        // may now be resting that the harness cannot reference to cancel. Do NOT silently
+        // record Pending and return (fail-OPEN) — engage the kill switch, best-effort
+        // check for a fill, then hard-fail loud so the operator does a manual board check
+        // + flatten (fail-closed; t0441 sees fills only, never a resting order).
+        sdk.inner().set_orders_enabled(false);
+        fo_assert_no_fill(&sdk, &[]).await;
+        panic!(
+            "{}",
+            loud_failure(
+                "fo-submit-no-ordno",
+                &[],
+                "F/O submit was ACCEPTED but returned no usable order number — an order may rest \
+                 uncancelable; MANUAL board check + flatten required",
+            )
+        );
     }
 
     // ---- MODIFY leg: amend the resting order's QUANTITY (price stays at the valid
@@ -2041,9 +2057,10 @@ async fn fo_order_chained_smoke() {
     // on-tick F/O price near the floor. ----
     let modify_req = CFOAT00200Request::limit(&submit_ordno, &contract, "2", band.resting_buy_price());
     let mut mev = leg_evidence("CFOAT00200", "fo_modify_resting_qty");
-    let (live_ordno, resting_qty) = match sdk.fo_orders().modify(&modify_req).await {
+    let (live_ordno, resting_qty, modify_uncertain) = match sdk.fo_orders().modify(&modify_req).await {
         Ok(resp) => {
-            mev.certification = if fo_leg_certified(&resp.rsp_cd, resp.order_no()) {
+            let certified = fo_leg_certified(&FO_MODIFY_OK, &resp.rsp_cd, resp.order_no());
+            mev.certification = if certified {
                 Certification::Certified
             } else {
                 Certification::Pending
@@ -2055,15 +2072,26 @@ async fn fo_order_chained_smoke() {
             mev.reconciliation = Some(format!("parent_ordno={}", resp.parent_order_no()));
             mev.record();
             let n = resp.order_no().to_string();
-            let live = if n.trim().is_empty() || n.trim() == "0" {
-                submit_ordno.clone()
+            if certified {
+                // A CLEANLY certified modify transitioned the resting order to the NEW
+                // order number at the modified quantity — cancel that.
+                (n, "2".to_string(), false)
             } else {
-                n
-            };
-            (live, "2".to_string()) // modified target quantity
+                // Ok but NOT cleanly certified (wrong-leg/unrecognized code, or empty/zero
+                // new order number): it is ambiguous which order is now live. Best-effort
+                // cancel the known order, but force a loud teardown-uncertain hard-fail at
+                // the end — never conclude success from an ambiguous modify.
+                let live = if n.trim().is_empty() || n.trim() == "0" {
+                    submit_ordno.clone()
+                } else {
+                    n
+                };
+                (live, "2".to_string(), true)
+            }
         }
         Err(e) => {
-            // Gate 1 already flipped on the submit leg; gate 2 stays Pending.
+            // Gate 1 already flipped on the submit leg; gate 2 stays Pending. The original
+            // submit order is untouched and still rests at the submit quantity.
             mev.rsp_msg = format!("modify failed: {}", scrub_secrets(&e.to_string()));
             mev.record();
             OrderEvidence::pending(
@@ -2071,7 +2099,7 @@ async fn fo_order_chained_smoke() {
                 "F/O modify link failed; gate 2 not flipped (gate 1 stands)",
             )
             .record();
-            (submit_ordno.clone(), "1".to_string()) // still resting at the submit quantity
+            (submit_ordno.clone(), "1".to_string(), false)
         }
     };
 
@@ -2082,7 +2110,7 @@ async fn fo_order_chained_smoke() {
     let mut cev = leg_evidence("CFOAT00300", "fo_cancel_teardown");
     let cancel_clean = match sdk.fo_orders().cancel(&cancel_req).await {
         Ok(resp) => {
-            let ok = fo_leg_certified(&resp.rsp_cd, resp.order_no());
+            let ok = fo_leg_certified(&FO_CANCEL_OK, &resp.rsp_cd, resp.order_no());
             cev.certification = if ok {
                 Certification::Certified
             } else {
@@ -2103,17 +2131,25 @@ async fn fo_order_chained_smoke() {
         }
     };
 
-    // KTD3 cancel-failure path: a non-clean cancel does NOT confirm removal. Do NOT
-    // assume flat — raise a loud operator-action-required signal (no F/O working-orders
-    // read exists to auto-verify; a MANUAL board check + flatten is required).
-    if !cancel_clean {
-        println!(
+    // KTD3 teardown gate (fail-closed): the resting order's removal is confirmed ONLY by
+    // a CLEAN cancel response — there is no F/O 미체결 read to scan the board, and t0441
+    // sees FILLS only, never a resting order. So a non-clean cancel OR an ambiguous modify
+    // (which leaves it unclear which order is live) means removal is UNCONFIRMABLE. In
+    // either case do NOT proceed to the success line: engage the kill switch, best-effort
+    // check for a fill, then hard-fail loud so the operator does a manual board check +
+    // flatten. (A clean cancel of a cleanly-certified order is the only success path.)
+    let teardown_uncertain = modify_uncertain || !cancel_clean;
+    if teardown_uncertain {
+        sdk.inner().set_orders_enabled(false);
+        fo_assert_no_fill(&sdk, &[submit_ordno.clone(), live_ordno.clone()]).await;
+        panic!(
             "{}",
             loud_failure(
-                "fo-cancel-not-clean",
-                &[live_ordno.clone()],
-                "F/O cancel did not cleanly remove the resting order — MANUAL board check + \
-                 flatten required (no F/O 미체결 read to auto-verify removal)",
+                "fo-teardown-uncertain",
+                &[submit_ordno.clone(), live_ordno.clone()],
+                "F/O teardown could not confirm the resting order was removed (non-clean cancel \
+                 or ambiguous modify) — t0441 sees fills only, no F/O 미체결 read exists; MANUAL \
+                 board check + flatten required",
             )
         );
     }
@@ -2191,32 +2227,40 @@ fn fo_flat_verdict_fill_blocks_empty_failclosed_zero_position_flat() {
 
 #[test]
 fn fo_leg_certifies_only_on_clean_rows() {
-    // Covers R6. Clean success (recognized ack + order number) → certified.
-    assert!(fo_leg_certified("00040", "69007"), "buy submit ack");
-    assert!(fo_leg_certified("00039", "69007"), "sell submit ack");
-    assert!(fo_leg_certified("00132", "69041"), "F/O modify ack");
-    assert!(fo_leg_certified("00156", "69044"), "F/O cancel ack");
+    // Covers R6. Clean success per leg (recognized ack for THAT leg + order number).
+    assert!(fo_leg_certified(&FO_SUBMIT_OK, "00040", "69007"), "buy submit ack");
+    assert!(fo_leg_certified(&FO_SUBMIT_OK, "00039", "69007"), "sell submit ack");
+    assert!(fo_leg_certified(&FO_MODIFY_OK, "00132", "69041"), "F/O modify ack");
+    assert!(fo_leg_certified(&FO_CANCEL_OK, "00156", "69044"), "F/O cancel ack");
+    // Leg-specificity: a code valid for ANOTHER leg is NOT certified on this leg — a
+    // submit returning a modify/cancel code is a gateway anomaly, never a clean submit.
+    assert!(!fo_leg_certified(&FO_SUBMIT_OK, "00132", "69007"), "modify code on submit leg");
+    assert!(!fo_leg_certified(&FO_SUBMIT_OK, "00156", "69007"), "cancel code on submit leg");
+    assert!(!fo_leg_certified(&FO_MODIFY_OK, "00040", "69041"), "submit code on modify leg");
+    assert!(!fo_leg_certified(&FO_CANCEL_OK, "00132", "69044"), "modify code on cancel leg");
     // Soft-reject in a success-shaped envelope (generic 00000 / empty) → NOT certified.
-    assert!(!fo_leg_certified("00000", "69007"), "generic success is not an order ack");
-    assert!(!fo_leg_certified("", "69007"), "empty rsp_cd is ambiguous");
+    assert!(!fo_leg_certified(&FO_SUBMIT_OK, "00000", "69007"), "generic success is not an order ack");
+    assert!(!fo_leg_certified(&FO_SUBMIT_OK, "", "69007"), "empty rsp_cd is ambiguous");
     // Missing order-number block → NOT certified even with a good code.
-    assert!(!fo_leg_certified("00040", "0"), "no order number");
-    assert!(!fo_leg_certified("00040", ""), "empty order number");
+    assert!(!fo_leg_certified(&FO_SUBMIT_OK, "00040", "0"), "no order number");
+    assert!(!fo_leg_certified(&FO_SUBMIT_OK, "00040", ""), "empty order number");
     // An unrecognized broker code → NOT certified.
-    assert!(!fo_leg_certified("03181", "69007"), "a reject code is not certified");
+    assert!(!fo_leg_certified(&FO_SUBMIT_OK, "03181", "69007"), "a reject code is not certified");
 }
 
 // ---- R6/KTD4: credential-safe t0441 ROW diagnostic ------------------------
 
 #[test]
 fn fo_t0441_row_line_scrubs_account_shaped_row_fields() {
-    // A synthetic account-number-shaped value embedded in a t0441 ROW field (here
-    // `appamt`, NOT rsp_msg) must be masked; short quantities survive so the line
-    // stays useful.
-    let mut r = fo_bal_row("101T9000", "1");
-    r.appamt = "1234567890".into(); // account-number-shaped (>=6 digit run)
+    // Synthetic account-number-shaped values embedded in t0441 ROW fields (here BOTH
+    // `appamt` and `expcode`, NOT just rsp_msg) must be masked; short quantities survive
+    // so the line stays useful. Two distinct fields prove the scrub is per-field, not
+    // limited to one column.
+    let mut r = fo_bal_row("9876543210", "1"); // account-shaped expcode (>=6 digit run)
+    r.appamt = "1234567890".into(); // account-number-shaped
     let line = fo_t0441_row_line(&r);
-    assert!(!line.contains("1234567890"), "account-shaped row field leaked: {line}");
+    assert!(!line.contains("1234567890"), "account-shaped appamt leaked: {line}");
+    assert!(!line.contains("9876543210"), "account-shaped expcode leaked: {line}");
     assert!(line.contains("jqty=1"), "short quantity must survive: {line}");
 }
 
@@ -2239,7 +2283,7 @@ fn fo_non_clean_cancel_signal_is_loud_and_account_free() {
     // A non-clean cancel (rejected/ambiguous rsp_cd, so fo_leg_certified is false) drives
     // the operator-action-required path. The loud message names the order yet leaks no
     // account, even when the broker detail embeds an account-shaped value.
-    assert!(!fo_leg_certified("03181", "69044"), "a reject cancel is not clean");
+    assert!(!fo_leg_certified(&FO_CANCEL_OK, "03181", "69044"), "a reject cancel is not clean");
     let msg = loud_failure(
         "fo-cancel-not-clean",
         &["69044".into()],
