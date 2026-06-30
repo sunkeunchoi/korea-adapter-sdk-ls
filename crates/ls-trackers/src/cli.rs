@@ -1808,7 +1808,7 @@ mod tests {
         let written: Manifest =
             read_json(&scratch.join(MANIFEST_FILE)).expect("written manifest reloads");
         assert_eq!(written.refreshed, "2026-06-20");
-        assert_eq!(run.shapes.len(), 307, "three-hundred-seven maintained shapes");
+        assert_eq!(run.shapes.len(), 320, "three-hundred-twenty maintained shapes");
         assert_eq!(run.code_set.len(), 365, "full inventory code-set preserved");
         assert!(
             run.code_set.provisional,
@@ -1873,7 +1873,7 @@ mod tests {
             scratch.join(TRS_DIR).join("token.json").exists(),
             "maintained shapes remain"
         );
-        assert_eq!(run.shapes.len(), 307);
+        assert_eq!(run.shapes.len(), 320);
     }
 
     fn empty_run(codes: &[&str]) -> NormalizedRun {
@@ -2776,7 +2776,7 @@ recommendation:
 
         let outcome = promote_committed(&paths, Some(&staged), "ENG-1", false, "2026-06-21").unwrap();
         assert!(
-            matches!(outcome, PromoteOutcome::Promoted { gated: false, maintained_shapes } if maintained_shapes == 307)
+            matches!(outcome, PromoteOutcome::Promoted { gated: false, maintained_shapes } if maintained_shapes == 320)
         );
 
         // Raw replaced byte-for-byte by the staged raw (R1, R9).
@@ -2784,7 +2784,7 @@ recommendation:
         // Normalized re-derived with the injected refresh date (KTD8); ghost pruned.
         let committed = load_normalized(&paths.baseline_dir).unwrap();
         assert_eq!(committed.manifest.refreshed, "2026-06-21");
-        assert_eq!(committed.shapes.len(), 307);
+        assert_eq!(committed.shapes.len(), 320);
         assert!(
             !paths.baseline_dir.join(TRS_DIR).join("ghost.json").exists(),
             "a stale shape is pruned by promote (R10)"

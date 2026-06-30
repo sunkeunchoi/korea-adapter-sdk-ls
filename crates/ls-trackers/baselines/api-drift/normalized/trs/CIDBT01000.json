@@ -1,0 +1,330 @@
+{
+  "tr_code": "CIDBT01000",
+  "tr_name": "해외선물 취소주문",
+  "protocol": "rest",
+  "is_websocket": false,
+  "endpoint_path": "/overseas-futureoption/order",
+  "api_group_id": "b820f925-e189-4553-a7d1-8e5f2750fe08",
+  "source_group_name": "[해외선물] 주문",
+  "request_blocks": [
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 1,
+      "field_name": "authorization",
+      "korean_name": "접근토큰",
+      "type": "String",
+      "length": 1000,
+      "required": true,
+      "description_hash": "62956eed2a6e506a"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 2,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 3,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 4,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 5,
+      "field_name": "mac_address",
+      "korean_name": "MAC 주소",
+      "type": "String",
+      "length": 12,
+      "required": true,
+      "description_hash": "1d2213655779faf2"
+    },
+    {
+      "direction": "request",
+      "block_name": "CIDBT01000InBlock1",
+      "field_index": 0,
+      "field_name": "OrdDt",
+      "korean_name": "주문일자",
+      "type": "String",
+      "length": 8,
+      "required": true,
+      "description_hash": "e8f06aaf4fd73185"
+    },
+    {
+      "direction": "request",
+      "block_name": "CIDBT01000InBlock1",
+      "field_index": 1,
+      "field_name": "IsuCodeVal",
+      "korean_name": "종목코드값",
+      "type": "String",
+      "length": 30,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "CIDBT01000InBlock1",
+      "field_index": 2,
+      "field_name": "OvrsFutsOrgOrdNo",
+      "korean_name": "해외선물원주문번호",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "CIDBT01000InBlock1",
+      "field_index": 3,
+      "field_name": "FutsOrdTpCode",
+      "korean_name": "선물주문구분코드",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "0d00781773d2d76f"
+    },
+    {
+      "direction": "request",
+      "block_name": "CIDBT01000InBlock1",
+      "field_index": 4,
+      "field_name": "PrdtTpCode",
+      "korean_name": "상품구분코드",
+      "type": "String",
+      "length": 2,
+      "required": true,
+      "description_hash": "c58fd8e487bbf685"
+    },
+    {
+      "direction": "request",
+      "block_name": "CIDBT01000InBlock1",
+      "field_index": 5,
+      "field_name": "ExchCode",
+      "korean_name": "거래소코드",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "c58fd8e487bbf685"
+    }
+  ],
+  "response_blocks": [
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 1,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "4927a2d7cd706e4e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 2,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "1156a435c1de5ba4"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 3,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "84021bf5d87f407d"
+    },
+    {
+      "direction": "response",
+      "block_name": "CIDBT01000OutBlock1",
+      "field_index": 0,
+      "field_name": "RecCnt",
+      "korean_name": "레코드갯수",
+      "type": "Number",
+      "length": 5,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CIDBT01000OutBlock1",
+      "field_index": 1,
+      "field_name": "OrdDt",
+      "korean_name": "주문일자",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CIDBT01000OutBlock1",
+      "field_index": 2,
+      "field_name": "BrnNo",
+      "korean_name": "지점번호",
+      "type": "String",
+      "length": 3,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CIDBT01000OutBlock1",
+      "field_index": 3,
+      "field_name": "AcntNo",
+      "korean_name": "계좌번호",
+      "type": "String",
+      "length": 20,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CIDBT01000OutBlock1",
+      "field_index": 4,
+      "field_name": "Pwd",
+      "korean_name": "비밀번호",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CIDBT01000OutBlock1",
+      "field_index": 5,
+      "field_name": "IsuCodeVal",
+      "korean_name": "종목코드값",
+      "type": "String",
+      "length": 30,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CIDBT01000OutBlock1",
+      "field_index": 6,
+      "field_name": "OvrsFutsOrgOrdNo",
+      "korean_name": "해외선물원주문번호",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CIDBT01000OutBlock1",
+      "field_index": 7,
+      "field_name": "FutsOrdTpCode",
+      "korean_name": "선물주문구분코드",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CIDBT01000OutBlock1",
+      "field_index": 8,
+      "field_name": "PrdtTpCode",
+      "korean_name": "상품구분코드",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CIDBT01000OutBlock1",
+      "field_index": 9,
+      "field_name": "ExchCode",
+      "korean_name": "거래소코드",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CIDBT01000OutBlock2",
+      "field_index": 0,
+      "field_name": "RecCnt",
+      "korean_name": "레코드갯수",
+      "type": "Number",
+      "length": 5,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CIDBT01000OutBlock2",
+      "field_index": 1,
+      "field_name": "AcntNo",
+      "korean_name": "계좌번호",
+      "type": "String",
+      "length": 20,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CIDBT01000OutBlock2",
+      "field_index": 2,
+      "field_name": "OvrsFutsOrdNo",
+      "korean_name": "해외선물주문번호",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CIDBT01000OutBlock2",
+      "field_index": 3,
+      "field_name": "InnerMsgCnts",
+      "korean_name": "내부메시지내용",
+      "type": "String",
+      "length": 80,
+      "required": true
+    }
+  ],
+  "rate_limit_per_sec": 5,
+  "corp_rate_limit_per_sec": 5,
+  "rate_source_group": "b820f925-e189-4553-a7d1-8e5f2750fe08"
+}

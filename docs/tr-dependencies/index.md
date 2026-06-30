@@ -19,14 +19,27 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `C02` | KRX야간파생 선물체결 | `realtime` | implemented | [C02](./C02.md) |
 | `CCENQ10100` | KRX야간파생 주문가능수량 조회 | `account` | tracked | [CCENQ10100](./CCENQ10100.md) |
 | `CCENQ90200` | KRX야간파생 잔고조회 | `account` | tracked | [CCENQ90200](./CCENQ90200.md) |
+| `CCENT00100` | KRX야간파생 위탁 신규 주문 (night-deriv order submit) | `orders` | tracked | [CCENT00100](./CCENT00100.md) |
+| `CCENT00200` | KRX야간파생 위탁 정정 주문 (night-deriv order modify) | `orders` | tracked | [CCENT00200](./CCENT00200.md) |
+| `CCENT00300` | KRX야간파생 위탁 취소 주문 (night-deriv order cancel) | `orders` | tracked | [CCENT00300](./CCENT00300.md) |
 | `CD0` | 상품선물실시간상하한가 | `realtime` | implemented | [CD0](./CD0.md) |
 | `CFOAQ10100` | 선물옵션 주문가능수량조회 | `account` | implemented | [CFOAQ10100](./CFOAQ10100.md) |
+| `CFOAT00100` | 선물옵션 정상주문 (domestic F/O order submit) | `orders` | tracked | [CFOAT00100](./CFOAT00100.md) |
+| `CFOAT00200` | 선물옵션 정정주문 (domestic F/O order modify) | `orders` | tracked | [CFOAT00200](./CFOAT00200.md) |
+| `CFOAT00300` | 선물옵션 취소주문 (domestic F/O order cancel) | `orders` | tracked | [CFOAT00300](./CFOAT00300.md) |
 | `CFOBQ10500` | 선물옵션 계좌예탁금증거금조회 | `account` | implemented | [CFOBQ10500](./CFOBQ10500.md) |
 | `CFOEQ11100` | 선물옵션가정산예탁금상세 | `account` | implemented | [CFOEQ11100](./CFOEQ11100.md) |
 | `CIDBQ01400` | 해외선물 체결내역개별 조회(주문가능수량) | `account` | implemented | [CIDBQ01400](./CIDBQ01400.md) |
 | `CIDBQ03000` | 해외선물 예수금/잔고현황 | `account` | implemented | [CIDBQ03000](./CIDBQ03000.md) |
 | `CIDBQ05300` | 해외선물 예탁자산 조회 | `account` | implemented | [CIDBQ05300](./CIDBQ05300.md) |
+| `CIDBT00100` | 해외선물 신규주문 (overseas-futures order submit) | `orders` | tracked | [CIDBT00100](./CIDBT00100.md) |
+| `CIDBT00900` | 해외선물 정정주문 (overseas-futures order modify) | `orders` | tracked | [CIDBT00900](./CIDBT00900.md) |
+| `CIDBT01000` | 해외선물 취소주문 (overseas-futures order cancel) | `orders` | tracked | [CIDBT01000](./CIDBT01000.md) |
 | `CLNAQ00100` | 예탁담보융자가능종목현황조회 | `account` | implemented | [CLNAQ00100](./CLNAQ00100.md) |
+| `COSAT00301` | 미국시장주문 (overseas US-stock order) | `orders` | tracked | [COSAT00301](./COSAT00301.md) |
+| `COSAT00311` | 미국시장정정주문 (overseas US-stock order modify) | `orders` | tracked | [COSAT00311](./COSAT00311.md) |
+| `COSAT00400` | 해외주식 예약주문 등록 및 취소 (overseas US-stock reserved order reg/cancel) | `orders` | tracked | [COSAT00400](./COSAT00400.md) |
+| `COSMT00300` | 해외증권 매도상환주문(미국) (overseas US-stock sell/redemption) | `orders` | tracked | [COSMT00300](./COSMT00300.md) |
 | `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | recommended | [CSPAQ12200](./CSPAQ12200.md) |
 | `CSPAQ12300` | BEP단가조회 | `account` | implemented | [CSPAQ12300](./CSPAQ12300.md) |
 | `CSPAQ22200` | 현물계좌예수금 주문가능금액 총평가2 | `account` | implemented | [CSPAQ22200](./CSPAQ22200.md) |

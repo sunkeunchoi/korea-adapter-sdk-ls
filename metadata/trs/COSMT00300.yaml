@@ -1,0 +1,28 @@
+tr_code: COSMT00300
+name: 해외증권 매도상환주문(미국) (overseas US-stock sell/redemption)
+owner_class: orders
+facets:
+  protocol: rest
+  instrument_domain: overseas_stock
+  venue_session: unspecified
+  date_sensitive: false
+  self_paginated: false
+  account_state: true
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: orders
+  caller_supplied_identifiers: [IsuNo]
+dependencies:
+  self_continuation_fields: []
+  strong_order_fields: []
+support:
+  # PENDING: overseas US-stock order. Unproven paper-order capability and
+  # off-window for a KRX session — not attempted live this wave; Tracked-rung only,
+  # flip-ready for a future operator pass that confirms the venue window + capability
+  # (R2).
+  tracked: true
+  implemented: false
+  recommended: false
+maintenance:
+  source_spec_hash: 7a8b9c0d1e2f
+  last_reviewed: 2026-06-30

@@ -1,0 +1,27 @@
+tr_code: CCENT00200
+name: KRX야간파생 위탁 정정 주문 (night-deriv order modify)
+owner_class: orders
+facets:
+  protocol: rest
+  instrument_domain: futures_options
+  venue_session: krx_extended
+  date_sensitive: false
+  self_paginated: false
+  account_state: true
+  paper_incompatible: true
+  certification_path: none
+  rate_bucket: orders
+  caller_supplied_identifiers: [OrgOrdNo, FnoIsuNo]
+dependencies:
+  self_continuation_fields: []
+  strong_order_fields: []
+support:
+  # paper_incompatible: the KRX 야간파생 (night-derivative) venue mirrors its
+  # already-tracked read siblings CCENQ10100/CCENQ90200 — the paper gateway carries
+  # no data/order capability for this feed, so no live order is attempted (R2/AE3).
+  tracked: true
+  implemented: false
+  recommended: false
+maintenance:
+  source_spec_hash: e5f6a1b2c3d4
+  last_reviewed: 2026-06-30
