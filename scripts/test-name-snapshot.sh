@@ -21,4 +21,4 @@ shift || true
 cargo test -p ls-sdk --test "$bin" -- --list "$@" 2>/dev/null \
   | grep ': test$' \
   | sed -E 's/^.*:://' \
-  | sort
+  | LC_ALL=C sort

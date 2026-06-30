@@ -38,10 +38,24 @@ diff before.txt after.base.txt   # MUST be empty; count MUST match
 `scripts/test-name-snapshot.sh <bin>` wraps this (emits the sorted base-name set).
 
 A second, stronger pure-relocation check (catches a silently *edited* test body that
-`--list` cannot): the sorted multiset of source lines across the new parent + family
-files — minus the added `mod <fam>;` / `use super::*;` lines and with `../fixtures`
-normalized back to `fixtures` — equals the sorted multiset of the original file's
-lines. Empty diff ⇒ relocation only.
+`--list` cannot): the non-blank line multiset across the new parent + family files —
+minus the added `mod <fam>;` / `#[path = "…"]` / `use super::*;` lines and with
+`../fixtures` normalized back to `fixtures` — equals the multiset of the original
+monolith's lines. Run it with the committed, locale-safe verifier:
+
+```
+scripts/relocation-check.py <base-ref> <parent-path> <family-dir>
+# e.g. scripts/relocation-check.py main \
+#        crates/ls-sdk/tests/account_tests.rs crates/ls-sdk/tests/account
+```
+
+`RELOCATION OK` ⇒ relocation only. **Do not** reimplement this as a shell
+`diff <(sort …) <(sort …)`: the default UTF-8 collation makes `sort` reorder the
+Korean fixture strings (`정상처리` / `조회완료` …) inconsistently between the two
+sides, producing a permanent FALSE-POSITIVE symmetric diff that never reaches empty —
+masking exactly the one-line body edit this check exists to catch. The committed
+script compares multisets in Python (collation-independent); a shell fallback MUST
+pin `LC_ALL=C` on every `sort`.
 
 ## Per-file BEFORE test counts (the diffable "before")
 
