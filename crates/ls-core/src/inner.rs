@@ -523,16 +523,8 @@ impl Inner {
         self.post_with_retry::<Req, Res>(
             policy,
             req,
-            if tr_cont.is_empty() {
-                None
-            } else {
-                Some(tr_cont)
-            },
-            if tr_cont_key.is_empty() {
-                None
-            } else {
-                Some(tr_cont_key)
-            },
+            Some(tr_cont).filter(|s| !s.is_empty()),
+            Some(tr_cont_key).filter(|s| !s.is_empty()),
         )
         .await
     }
@@ -661,7 +653,7 @@ impl Inner {
                 break;
             }
             // Continuing: extract continuation strings before `push` moves `page`.
-            let tr_cont = page.tr_cont().to_string();
+            let tr_cont = cont.to_string();
             let tr_cont_key = page.tr_cont_key().to_string();
             results.push(page);
             truncated = true;

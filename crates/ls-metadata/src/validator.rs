@@ -240,38 +240,45 @@ pub fn check_routing(
     meta: &TrMetadata,
     errors: &mut Vec<ValidationError>,
 ) {
-    let checks: [(&'static str, String, String); 4] = [
-        (
-            "owner_class",
-            format!("{:?}", entry.owner_class),
-            format!("{:?}", meta.owner_class),
-        ),
-        (
-            "protocol",
-            format!("{:?}", entry.protocol),
-            format!("{:?}", meta.facets.protocol),
-        ),
-        (
-            "instrument_domain",
-            format!("{:?}", entry.instrument_domain),
-            format!("{:?}", meta.facets.instrument_domain),
-        ),
-        (
-            "venue_session",
-            format!("{:?}", entry.venue_session),
-            format!("{:?}", meta.facets.venue_session),
-        ),
-    ];
-    for (field, index_value, file_value) in checks {
-        if index_value != file_value {
+    fn check<T: PartialEq + std::fmt::Debug>(
+        code: &str,
+        field: &'static str,
+        index: T,
+        file: T,
+        errors: &mut Vec<ValidationError>,
+    ) {
+        if index != file {
             errors.push(ValidationError::RoutingMismatch {
-                tr_code: tr_code.to_string(),
+                tr_code: code.to_string(),
                 field,
-                index_value,
-                file_value,
+                index_value: format!("{index:?}"),
+                file_value: format!("{file:?}"),
             });
         }
     }
+
+    check(tr_code, "owner_class", entry.owner_class, meta.owner_class, errors);
+    check(
+        tr_code,
+        "protocol",
+        entry.protocol,
+        meta.facets.protocol,
+        errors,
+    );
+    check(
+        tr_code,
+        "instrument_domain",
+        entry.instrument_domain,
+        meta.facets.instrument_domain,
+        errors,
+    );
+    check(
+        tr_code,
+        "venue_session",
+        entry.venue_session,
+        meta.facets.venue_session,
+        errors,
+    );
 }
 
 /// Check a parsed TR's recommendation contract and (when recommended) its linked
