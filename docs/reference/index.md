@@ -28,9 +28,9 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | recommended |
 | `CSPAQ12300` | BEP단가조회 | `account` | implemented, not yet recommended |
 | `CSPAQ22200` | 현물계좌예수금 주문가능금액 총평가2 | `account` | implemented, not yet recommended |
-| `CSPAT00601` | 현물 정규주문 (cash equity order submission) | `orders` | implemented, not yet recommended |
-| `CSPAT00701` | 현물정정주문 (cash equity order modify) | `orders` | implemented, not yet recommended |
-| `CSPAT00801` | 현물취소주문 (cash equity order cancel) | `orders` | implemented, not yet recommended |
+| `CSPAT00601` | 현물 정규주문 (cash equity order submission) | `orders` | recommended |
+| `CSPAT00701` | 현물정정주문 (cash equity order modify) | `orders` | recommended |
+| `CSPAT00801` | 현물취소주문 (cash equity order cancel) | `orders` | recommended |
 | `CUR` | 현물정보USD실시간 | `realtime` | implemented, not yet recommended |
 | `DBM` | KRX야간파생 투자자매매현황 | `realtime` | implemented, not yet recommended |
 | `DBT` | KRX야간파생 투자자별현황 | `realtime` | implemented, not yet recommended |
@@ -140,7 +140,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `revoke` | 접근토큰 폐기 (OAuth2 token revoke) | `standalone` | implemented, not yet recommended |
 | `t0167` | 서버시간조회 | `market_session` | implemented, not yet recommended |
 | `t0424` | 주식잔고2 | `account` | implemented, not yet recommended |
-| `t0425` | 주식체결/미체결 (stock filled/unfilled order inquiry) | `paginated` | implemented, not yet recommended |
+| `t0425` | 주식체결/미체결 (stock filled/unfilled order inquiry) | `paginated` | recommended |
 | `t1101` | 주식 현재가호가 조회 | `market_session` | recommended |
 | `t1102` | 주식 현재가(시세) 조회 | `market_session` | recommended |
 | `t1104` | 주식현재가시세메모 | `market_session` | implemented, not yet recommended |

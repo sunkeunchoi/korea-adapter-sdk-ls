@@ -16,9 +16,17 @@ dependencies:
   self_continuation_fields: []
   strong_order_fields: []
 support:
+  # PENDING (not flipped) — the 2026-06-30 in-window paper smoke
+  # (`make live-smoke-cspbq00200`) returned a structurally-valid row
+  # (rsp_cd=00136, 1 row) but every substantive capacity field defaulted to zero
+  # (Dps / PrsmptDpsD1 / SeOrdAbleAmt all non_default=false): the paper account
+  # carries no cash deposit, so margin-rate orderable quantity is funding-gated to
+  # zero. No orderable-quantity witness to assert, so the read stays Tracked, not
+  # Implemented (R2/R3/AE1). Verified not a wrong-credential-lane artifact — this is
+  # a 현물(spot)-account read on the default paper credential lane (the correct lane).
   tracked: true
   implemented: false
   recommended: false
 maintenance:
   source_spec_hash: c1d2e3f4a5b6
-  last_reviewed: 2026-06-28
+  last_reviewed: 2026-06-30

@@ -106,8 +106,11 @@ freshness evaluator. The advisory spec-doc point (2) holds by construction. Only
   signal. A first-seen date carried into the rolling issue (a dead-man's-switch) is
   deferred; the normalizer-bump blind window is bounded operationally by the runbook
   re-attestation window instead.
-- **Per-class freshness tightening.** With six Recommended TRs (`token`, `t1101`,
-  `t1102`, `t8412`, `S3_`, `CSPAQ12200`) spanning five classes (standalone,
-  market_session, paginated, realtime, account), the 90-day default applies uniformly;
-  per-class tightening (e.g. a shorter window for `orders`) stays deferred until those
-  classes have recommended TRs.
+- **Per-class freshness tightening.** With ten Recommended TRs (`token`, `t1101`,
+  `t1102`, `t8412`, `S3_`, `CSPAQ12200`, and the four order TRs `CSPAT00601` submit /
+  `CSPAT00701` modify / `CSPAT00801` cancel [`orders` class] + `t0425` reconciliation
+  read [`paginated` class], promoted by plan 2026-06-30-002 on a clean in-window paper
+  order-chain) spanning six classes (standalone, market_session, paginated, realtime,
+  account, orders), the 90-day default applies uniformly; per-class tightening (e.g. a
+  shorter window for the now-Recommended `orders` class, whose evidence endorses live
+  order placement) stays deferred but is now actionable.

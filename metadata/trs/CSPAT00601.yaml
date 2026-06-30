@@ -19,13 +19,24 @@ dependencies:
   # the request; these are the fields that make two submissions "the same order".
   strong_order_fields: [IsuNo, BnsTpCode, OrdQty, OrdPrc]
 support:
-  # Implemented: submit leg certified on a clean guarded paper order-chain smoke
-  # (rsp_cd 00040 매수주문 완료; `make live-smoke-order-chain`, plan -005). Stops at
-  # Implemented — Recommended endorses live order placement (ADR 0008), a separate
-  # pass. See docs/design/order-safety-design.md.
+  # Recommended: submit leg certified on a clean in-window guarded paper
+  # order-chain smoke (rsp_cd 00040 매수주문 완료; `make live-smoke-order-chain`,
+  # plan 2026-06-30-002), the live order-placement evidence ADR 0008 deferred the
+  # Recommended endorsement on. The account was positively confirmed flat after the
+  # run. See docs/design/order-safety-design.md.
   tracked: true
   implemented: true
-  recommended: false
+  recommended: true
 maintenance:
   source_spec_hash: f6a1b2c3d4e5
-  last_reviewed: 2026-06-15
+  last_reviewed: 2026-06-30
+recommendation:
+  behavior: Paper cash-equity limit order SUBMIT (현물 정규주문), one symbol, single lifecycle
+  evidence_ref: evidence/CSPAT00601.yaml
+  excludes:
+    - Production-credential order placement (evidence is paper only)
+    - Partial fills / unexpected fills (evidence is a non-marketable resting submit)
+    - Order behavior during halts/VI or outside KRX regular session
+    - Multi-symbol / basket order placement (single-symbol evidence)
+    - Behavior beyond the single proven submit→modify→cancel lifecycle
+    - Auto-revoking the recommendation on a change-driven structural change — detection ships; auto-revoke of support.recommended stays deferred

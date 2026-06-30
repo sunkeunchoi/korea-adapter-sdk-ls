@@ -23,12 +23,24 @@ dependencies:
   # dedup rather than re-dispatch.
   strong_order_fields: [OrgOrdNo, IsuNo, OrdQty]
 support:
-  # Implemented: cancel leg certified on a clean guarded paper order-chain smoke
-  # (rsp_cd 00463 취소주문 완료; `make live-smoke-order-chain`, plan -005). Stops at
-  # Implemented — Recommended is a separate pass (ADR 0008 / order-safety §4).
+  # Recommended: cancel leg certified on a clean in-window guarded paper
+  # order-chain smoke (rsp_cd 00463 취소주문 완료; `make live-smoke-order-chain`,
+  # plan 2026-06-30-002), the live order-placement evidence ADR 0008 deferred the
+  # Recommended endorsement on. The cancel is the chain's primary teardown and the
+  # account was positively confirmed flat after the run.
   tracked: true
   implemented: true
-  recommended: false
+  recommended: true
 maintenance:
   source_spec_hash: be317c823cc5
-  last_reviewed: 2026-06-25
+  last_reviewed: 2026-06-30
+recommendation:
+  behavior: Paper cash-equity order CANCEL (현물취소주문) of a live resting order (primary teardown), single lifecycle
+  evidence_ref: evidence/CSPAT00801.yaml
+  excludes:
+    - Production-credential order cancellation (evidence is paper only)
+    - Partial fills / unexpected fills (evidence is a non-marketable resting cancel)
+    - Cancel behavior during halts/VI or outside KRX regular session
+    - Multi-symbol / basket cancellation (single-symbol evidence)
+    - Behavior beyond the single proven submit→modify→cancel lifecycle
+    - Auto-revoking the recommendation on a change-driven structural change — detection ships; auto-revoke of support.recommended stays deferred

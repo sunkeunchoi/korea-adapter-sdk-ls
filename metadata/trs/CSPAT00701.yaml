@@ -23,12 +23,24 @@ dependencies:
   # "same order" action and must dedup.
   strong_order_fields: [OrgOrdNo, IsuNo, OrdQty, OrdPrc]
 support:
-  # Implemented: modify leg certified on a clean guarded paper order-chain smoke
-  # (rsp_cd 00462 정정주문 완료; `make live-smoke-order-chain`, plan -005). Stops at
-  # Implemented — Recommended is a separate pass (ADR 0008 / order-safety §4).
+  # Recommended: modify leg certified on a clean in-window guarded paper
+  # order-chain smoke (rsp_cd 00462 정정주문 완료; `make live-smoke-order-chain`,
+  # plan 2026-06-30-002), the live order-placement evidence ADR 0008 deferred the
+  # Recommended endorsement on. The account was positively confirmed flat after the
+  # run. See docs/design/order-safety-design.md.
   tracked: true
   implemented: true
-  recommended: false
+  recommended: true
 maintenance:
   source_spec_hash: bfd073603ce2
-  last_reviewed: 2026-06-25
+  last_reviewed: 2026-06-30
+recommendation:
+  behavior: Paper cash-equity order MODIFY (현물정정주문) of a live resting order, single lifecycle
+  evidence_ref: evidence/CSPAT00701.yaml
+  excludes:
+    - Production-credential order modification (evidence is paper only)
+    - Partial fills / unexpected fills (evidence is a non-marketable resting modify)
+    - Modify behavior during halts/VI or outside KRX regular session
+    - Multi-symbol / basket modification (single-symbol evidence)
+    - Behavior beyond the single proven submit→modify→cancel lifecycle
+    - Auto-revoking the recommendation on a change-driven structural change — detection ships; auto-revoke of support.recommended stays deferred
