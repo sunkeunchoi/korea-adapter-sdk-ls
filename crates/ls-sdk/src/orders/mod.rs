@@ -37,8 +37,15 @@ use serde::{Deserialize, Serialize};
 
 use ls_core::{Inner, LsResult};
 
+pub mod futureoption;
 pub mod reconcile;
 
+pub use futureoption::{
+    CFOAT00100InBlock1, CFOAT00100OutBlock1, CFOAT00100OutBlock2, CFOAT00100Request,
+    CFOAT00100Response, CFOAT00200InBlock1, CFOAT00200OutBlock1, CFOAT00200OutBlock2,
+    CFOAT00200Request, CFOAT00200Response, CFOAT00300InBlock1, CFOAT00300OutBlock1,
+    CFOAT00300OutBlock2, CFOAT00300Request, CFOAT00300Response, FoOrders,
+};
 pub use reconcile::{
     reconcile, reconcile_rows, OrderAction, OrderIntent, OrderState, ReconcileOutcome,
     ReconciliationRecord,

@@ -69,6 +69,61 @@ pub const CSPAT00801_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(3),
 };
 
+/// CFOAT00100 — 선물옵션 정상주문 (domestic F/O order SUBMIT).
+///
+/// The F/O sibling of `CSPAT00601`: an `is_order: true` policy routing through
+/// [`Inner::post_order`](crate::Inner::post_order) (no-retry / dedup / kill switch),
+/// charging the `Orders` bucket. Registered in the policy-index crosscheck ONLY — it
+/// must NOT appear in `slice_rest_policies_are_non_order_rest` (R12/KTD4).
+pub const CFOAT00100_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CFOAT00100",
+    path: "/futureoption/order",
+    module: "futureoption",
+    group: "[선물/옵션] 주문",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Orders,
+    is_order: true,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(10),
+};
+
+/// CFOAT00200 — 선물옵션 정정주문 (domestic F/O order MODIFY).
+///
+/// An `is_order: true` policy, same dispatch contract as `CFOAT00100`. Registered in
+/// the policy-index crosscheck ONLY (R12/KTD4).
+pub const CFOAT00200_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CFOAT00200",
+    path: "/futureoption/order",
+    module: "futureoption",
+    group: "[선물/옵션] 주문",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Orders,
+    is_order: true,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(10),
+};
+
+/// CFOAT00300 — 선물옵션 취소주문 (domestic F/O order CANCEL).
+///
+/// An `is_order: true` policy, same dispatch contract as `CFOAT00100`. A cancel
+/// re-sent identically within the dedup TTL is idempotent-for-free (the full body,
+/// incl. `OrgOrdNo`, is the dedup key). Registered in the policy-index crosscheck
+/// ONLY (R12/KTD4).
+pub const CFOAT00300_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CFOAT00300",
+    path: "/futureoption/order",
+    module: "futureoption",
+    group: "[선물/옵션] 주문",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Orders,
+    is_order: true,
+    has_pagination: false,
+    rate_limit_per_sec: Some(10),
+    corp_rate_limit_per_sec: Some(10),
+};
+
 /// t0425 — 주식체결/미체결 (stock filled/unfilled order inquiry).
 ///
 /// The reconciliation companion to `CSPAT00601` — a READ (`is_order: false`),

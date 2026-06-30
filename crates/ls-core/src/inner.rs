@@ -107,15 +107,18 @@ enum OrderAck {
 /// - `00462` — modify (`CSPAT00701`) completed.
 /// - `00463` / `00156` — cancel (`CSPAT00801`) completed (`00156` is the spec
 ///   alternative cancel-completion code; the raw `CSPAT00801` success example
-///   carries `00156`).
+///   carries `00156`). `00156` is also the F/O cancel (`CFOAT00300`) completion code.
+/// - `00132` — F/O modify (`CFOAT00200`) completed. The domestic-stock modify
+///   completes with `00462`; the F/O modify completes with `00132` per the raw
+///   `CFOAT00200` success example.
 ///
 /// The modify/cancel codes are **seed-only/unconfirmed** at this rung — they were
-/// empirically observed in the old migration source (2026-05-21) but not yet
-/// re-confirmed against the live paper gateway in this wave. The guarded live
-/// evidence run (U6) confirms or amends this set; a wider live set forces a
-/// mock-gate re-run before any flip — KTD2/R2/R8.
+/// empirically observed in the old migration source / raw capture but not yet
+/// re-confirmed against the live paper gateway in this wave (the F/O `00132` modify
+/// code included). The guarded live evidence run confirms or amends this set; a wider
+/// live set forces a mock-gate re-run before any flip — KTD2/R2/R8.
 fn rsp_cd_is_order_success(code: &str) -> bool {
-    matches!(code, "00039" | "00040" | "00462" | "00463" | "00156")
+    matches!(code, "00039" | "00040" | "00462" | "00463" | "00156" | "00132")
 }
 
 /// Classify an order `rsp_cd` into [`OrderAck`].
@@ -1149,6 +1152,8 @@ mod tests {
         assert_eq!(classify_order_rsp_cd("00462"), OrderAck::Accepted);
         assert_eq!(classify_order_rsp_cd("00463"), OrderAck::Accepted);
         assert_eq!(classify_order_rsp_cd("00156"), OrderAck::Accepted);
+        // F/O modify (00132) seed accept (CFOAT00200, seed-only/unconfirmed).
+        assert_eq!(classify_order_rsp_cd("00132"), OrderAck::Accepted);
         // Generic-success codes are AMBIGUOUS for orders, never Rejected — the
         // double-fill guard, since the read path trusts 00000.
         assert_eq!(classify_order_rsp_cd("00000"), OrderAck::Ambiguous);
@@ -1167,6 +1172,7 @@ mod tests {
         assert!(rsp_cd_is_order_success("00462"));
         assert!(rsp_cd_is_order_success("00463"));
         assert!(rsp_cd_is_order_success("00156"));
+        assert!(rsp_cd_is_order_success("00132"));
         assert!(!rsp_cd_is_order_success("00000"));
     }
 
