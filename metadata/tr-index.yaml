@@ -1860,3 +1860,81 @@ trs:
     protocol: websocket
     instrument_domain: realtime_invest
     venue_session: unspecified
+  CFOAT00100:
+    file: trs/CFOAT00100.yaml
+    owner_class: orders
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  CFOAT00200:
+    file: trs/CFOAT00200.yaml
+    owner_class: orders
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  CFOAT00300:
+    file: trs/CFOAT00300.yaml
+    owner_class: orders
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_regular
+  CCENT00100:
+    file: trs/CCENT00100.yaml
+    owner_class: orders
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_extended
+  CCENT00200:
+    file: trs/CCENT00200.yaml
+    owner_class: orders
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_extended
+  CCENT00300:
+    file: trs/CCENT00300.yaml
+    owner_class: orders
+    protocol: rest
+    instrument_domain: futures_options
+    venue_session: krx_extended
+  CIDBT00100:
+    file: trs/CIDBT00100.yaml
+    owner_class: orders
+    protocol: rest
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  CIDBT00900:
+    file: trs/CIDBT00900.yaml
+    owner_class: orders
+    protocol: rest
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  CIDBT01000:
+    file: trs/CIDBT01000.yaml
+    owner_class: orders
+    protocol: rest
+    instrument_domain: overseas_futures
+    venue_session: unspecified
+  COSAT00301:
+    file: trs/COSAT00301.yaml
+    owner_class: orders
+    protocol: rest
+    instrument_domain: overseas_stock
+    venue_session: unspecified
+  COSAT00311:
+    file: trs/COSAT00311.yaml
+    owner_class: orders
+    protocol: rest
+    instrument_domain: overseas_stock
+    venue_session: unspecified
+  COSAT00400:
+    file: trs/COSAT00400.yaml
+    owner_class: orders
+    protocol: rest
+    instrument_domain: overseas_stock
+    venue_session: unspecified
+  COSMT00300:
+    file: trs/COSMT00300.yaml
+    owner_class: orders
+    protocol: rest
+    instrument_domain: overseas_stock
+    venue_session: unspecified

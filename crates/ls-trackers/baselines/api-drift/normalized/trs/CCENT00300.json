@@ -1,0 +1,446 @@
+{
+  "tr_code": "CCENT00300",
+  "tr_name": "KRX야간파생 위탁 취소 주문",
+  "protocol": "rest",
+  "is_websocket": false,
+  "endpoint_path": "/futureoption/order",
+  "api_group_id": "b579d38a-3ce5-4b1b-b94e-b0c4bbbf1d27",
+  "source_group_name": "[선물/옵션] 주문",
+  "request_blocks": [
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 1,
+      "field_name": "authorization",
+      "korean_name": "접근토큰",
+      "type": "String",
+      "length": 1000,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 2,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 3,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 4,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 5,
+      "field_name": "mac_address",
+      "korean_name": "MAC 주소",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "CCENT00300InBlock1",
+      "field_index": 0,
+      "field_name": "FnoIsuNo",
+      "korean_name": "선물옵션종목번호",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "CCENT00300InBlock1",
+      "field_index": 1,
+      "field_name": "OrgOrdNo",
+      "korean_name": "원주문번호",
+      "type": "Number",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "CCENT00300InBlock1",
+      "field_index": 2,
+      "field_name": "CancQty",
+      "korean_name": "취소수량",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    }
+  ],
+  "response_blocks": [
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 1,
+      "field_name": "tr_cd",
+      "korean_name": "거래 CD",
+      "type": "String",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 2,
+      "field_name": "tr_cont",
+      "korean_name": "연속 거래 여부",
+      "type": "String",
+      "length": 1,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 3,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속 거래 Key",
+      "type": "String",
+      "length": 18,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock1",
+      "field_index": 0,
+      "field_name": "RecCnt",
+      "korean_name": "레코드갯수",
+      "type": "Number",
+      "length": 5,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock1",
+      "field_index": 1,
+      "field_name": "OrdMktCode",
+      "korean_name": "주문시장코드",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock1",
+      "field_index": 2,
+      "field_name": "AcntNo",
+      "korean_name": "계좌번호",
+      "type": "String",
+      "length": 20,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock1",
+      "field_index": 3,
+      "field_name": "Pwd",
+      "korean_name": "비밀번호",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock1",
+      "field_index": 4,
+      "field_name": "FnoIsuNo",
+      "korean_name": "선물옵션종목번호",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock1",
+      "field_index": 5,
+      "field_name": "FnoOrdPtnCode",
+      "korean_name": "선물옵션주문유형코드",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock1",
+      "field_index": 6,
+      "field_name": "OrgOrdNo",
+      "korean_name": "원주문번호",
+      "type": "Number",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock1",
+      "field_index": 7,
+      "field_name": "CancQty",
+      "korean_name": "취소수량",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock1",
+      "field_index": 8,
+      "field_name": "CommdaCode",
+      "korean_name": "통신매체코드",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock1",
+      "field_index": 9,
+      "field_name": "DscusBnsCmpltTime",
+      "korean_name": "협의매매완료시각",
+      "type": "String",
+      "length": 9,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock1",
+      "field_index": 10,
+      "field_name": "GrpId",
+      "korean_name": "그룹ID",
+      "type": "String",
+      "length": 20,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock1",
+      "field_index": 11,
+      "field_name": "OrdSeqno",
+      "korean_name": "주문일련번호",
+      "type": "Number",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock1",
+      "field_index": 12,
+      "field_name": "PtflNo",
+      "korean_name": "포트폴리오번호",
+      "type": "Number",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock1",
+      "field_index": 13,
+      "field_name": "BskNo",
+      "korean_name": "바스켓번호",
+      "type": "Number",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock1",
+      "field_index": 14,
+      "field_name": "TrchNo",
+      "korean_name": "트렌치번호",
+      "type": "Number",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock1",
+      "field_index": 15,
+      "field_name": "ItemNo",
+      "korean_name": "아이템번호",
+      "type": "Number",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock1",
+      "field_index": 16,
+      "field_name": "MgempNo",
+      "korean_name": "관리사원번호",
+      "type": "String",
+      "length": 9,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock1",
+      "field_index": 17,
+      "field_name": "FundId",
+      "korean_name": "펀드ID",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock1",
+      "field_index": 18,
+      "field_name": "FundOrgOrdNo",
+      "korean_name": "펀드원주문번호",
+      "type": "Number",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock1",
+      "field_index": 19,
+      "field_name": "FundOrdNo",
+      "korean_name": "펀드주문번호",
+      "type": "Number",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock2",
+      "field_index": 0,
+      "field_name": "RecCnt",
+      "korean_name": "레코드갯수",
+      "type": "Number",
+      "length": 5,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock2",
+      "field_index": 1,
+      "field_name": "OrdNo",
+      "korean_name": "주문번호",
+      "type": "Number",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock2",
+      "field_index": 2,
+      "field_name": "BrnNm",
+      "korean_name": "지점명",
+      "type": "String",
+      "length": 40,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock2",
+      "field_index": 3,
+      "field_name": "AcntNm",
+      "korean_name": "계좌명",
+      "type": "String",
+      "length": 40,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock2",
+      "field_index": 4,
+      "field_name": "IsuNm",
+      "korean_name": "종목명",
+      "type": "String",
+      "length": 50,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock2",
+      "field_index": 5,
+      "field_name": "OrdAbleAmt",
+      "korean_name": "주문가능금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock2",
+      "field_index": 6,
+      "field_name": "MnyOrdAbleAmt",
+      "korean_name": "현금주문가능금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock2",
+      "field_index": 7,
+      "field_name": "OrdMgn",
+      "korean_name": "주문증거금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock2",
+      "field_index": 8,
+      "field_name": "MnyOrdMgn",
+      "korean_name": "현금주문증거금액",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "CCENT00300OutBlock2",
+      "field_index": 9,
+      "field_name": "OrdAbleQty",
+      "korean_name": "주문가능수량",
+      "type": "Number",
+      "length": 16,
+      "required": true
+    }
+  ],
+  "rate_limit_per_sec": 5,
+  "corp_rate_limit_per_sec": 5,
+  "rate_source_group": "b579d38a-3ce5-4b1b-b94e-b0c4bbbf1d27"
+}

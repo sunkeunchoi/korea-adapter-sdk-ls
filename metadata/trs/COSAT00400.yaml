@@ -1,0 +1,28 @@
+tr_code: COSAT00400
+name: 해외주식 예약주문 등록 및 취소 (overseas US-stock reserved order reg/cancel)
+owner_class: orders
+facets:
+  protocol: rest
+  instrument_domain: overseas_stock
+  venue_session: unspecified
+  date_sensitive: false
+  self_paginated: false
+  account_state: true
+  paper_incompatible: false
+  certification_path: none
+  rate_bucket: orders
+  caller_supplied_identifiers: [IsuNo]
+dependencies:
+  self_continuation_fields: []
+  strong_order_fields: []
+support:
+  # PENDING: overseas US-stock order. Unproven paper-order capability and
+  # off-window for a KRX session — not attempted live this wave; Tracked-rung only,
+  # flip-ready for a future operator pass that confirms the venue window + capability
+  # (R2).
+  tracked: true
+  implemented: false
+  recommended: false
+maintenance:
+  source_spec_hash: 6f1a2b3c4d5e
+  last_reviewed: 2026-06-30

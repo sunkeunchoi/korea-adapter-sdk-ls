@@ -71,6 +71,15 @@ pub struct T2111OutBlock {
     /// Open interest / 미결제량.
     #[serde(deserialize_with = "ls_core::string_or_number")]
     pub mgjv: String,
+    /// Daily upper price limit / 상한가 — the daily price band ceiling, used as the
+    /// far-from-market resting-SELL anchor by the F/O order smoke (KTD2). Static and
+    /// reliably populated on paper, unlike the intraday 호가 book.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub uplmtprice: String,
+    /// Daily lower price limit / 하한가 — the daily price band floor, used as the
+    /// far-from-market resting-BUY anchor by the F/O order smoke (KTD2).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub dnlmtprice: String,
     /// Composite index / 종합지수.
     #[serde(deserialize_with = "ls_core::string_or_number")]
     pub pricejisu: String,

@@ -1,0 +1,29 @@
+tr_code: CFOAT00100
+name: 선물옵션 정상주문 (domestic F/O order submit)
+owner_class: orders
+facets:
+  protocol: rest
+  instrument_domain: futures_options
+  venue_session: krx_regular
+  date_sensitive: false
+  self_paginated: false
+  account_state: true
+  paper_incompatible: false
+  certification_path: manual
+  rate_bucket: orders
+  caller_supplied_identifiers: [FnoIsuNo]
+dependencies:
+  self_continuation_fields: []
+  strong_order_fields: [FnoIsuNo, BnsTpCode, OrdQty, FnoOrdPrc]
+support:
+  # Tracked-rung order TR; live-flip target this wave. The submit/cancel/modify
+  # Rust + the operator-gated F/O order smoke (`make live-smoke-fo-order`) are built,
+  # but implemented stays false until the operator certifies each leg in-window
+  # (plan 2026-06-30-003, U4/U6). Whether the paper account is F/O-order-capable is
+  # resolved at smoke time (R8).
+  tracked: true
+  implemented: false
+  recommended: false
+maintenance:
+  source_spec_hash: a1b2c3d4e5f6
+  last_reviewed: 2026-06-30

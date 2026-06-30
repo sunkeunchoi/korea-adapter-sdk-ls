@@ -86,6 +86,15 @@ impl LsSdk {
         orders::Orders::new(Arc::clone(&self.inner))
     }
 
+    /// The domestic futures/options (F/O) order handle — the `CFOAT00100` submit /
+    /// `CFOAT00200` modify / `CFOAT00300` cancel chain. Like [`Self::orders`] every
+    /// leg routes through the no-retry / dedup / kill-switch `post_order` path. The
+    /// F/O legs reuse the stock order runtime (the `OrderAction`/`org_order_no`
+    /// reconcile seam, the dedup window, the kill switch, the `01491` classifier).
+    pub fn fo_orders(&self) -> orders::FoOrders {
+        orders::FoOrders::new(Arc::clone(&self.inner))
+    }
+
     /// The realtime dependency class: the S3_ KOSPI-trade WebSocket subscription.
     ///
     /// Returns an `Arc<WsManager>` built from the shared core's components —

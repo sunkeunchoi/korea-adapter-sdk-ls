@@ -1,0 +1,378 @@
+{
+  "tr_code": "COSAT00311",
+  "tr_name": "미국시장정정주문 API",
+  "protocol": "rest",
+  "is_websocket": false,
+  "endpoint_path": "/overseas-stock/order",
+  "api_group_id": "6bafc43c-6080-4541-bfc2-c2608b269ca0",
+  "source_group_name": "[해외주식] 주문",
+  "request_blocks": [
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 1,
+      "field_name": "authorization",
+      "korean_name": "접근토큰",
+      "type": "String",
+      "length": 1000,
+      "required": true,
+      "description_hash": "92517de24a32d41e"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 2,
+      "field_name": "tr_cd",
+      "korean_name": "거래CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "0e1b562b5a8b95d4"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 3,
+      "field_name": "tr_cont",
+      "korean_name": "연속거래여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "cf83961d05729330"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 4,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속거래Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "fb5e0315866c2427"
+    },
+    {
+      "direction": "request",
+      "block_name": "request_header",
+      "field_index": 5,
+      "field_name": "mac_address",
+      "korean_name": "MAC주소",
+      "type": "String",
+      "length": 12,
+      "required": true,
+      "description_hash": "44ba0c0dd45b4410"
+    },
+    {
+      "direction": "request",
+      "block_name": "COSAT00311InBlock1",
+      "field_index": 0,
+      "field_name": "RecCnt",
+      "korean_name": "레코드갯수",
+      "type": "Number",
+      "length": 5,
+      "required": true,
+      "description_hash": "902e9bab9ee3d3cc"
+    },
+    {
+      "direction": "request",
+      "block_name": "COSAT00311InBlock1",
+      "field_index": 1,
+      "field_name": "OrdPtnCode",
+      "korean_name": "주문유형코드",
+      "type": "String",
+      "length": 2,
+      "required": true,
+      "description_hash": "55c56b6f0a5b116a"
+    },
+    {
+      "direction": "request",
+      "block_name": "COSAT00311InBlock1",
+      "field_index": 2,
+      "field_name": "OrgOrdNo",
+      "korean_name": "원주문번호",
+      "type": "Number",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "COSAT00311InBlock1",
+      "field_index": 3,
+      "field_name": "OrdMktCode",
+      "korean_name": "주문시장코드",
+      "type": "String",
+      "length": 2,
+      "required": true,
+      "description_hash": "b5c93b2670373963"
+    },
+    {
+      "direction": "request",
+      "block_name": "COSAT00311InBlock1",
+      "field_index": 4,
+      "field_name": "IsuNo",
+      "korean_name": "종목번호",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "COSAT00311InBlock1",
+      "field_index": 5,
+      "field_name": "OrdQty",
+      "korean_name": "주문수량",
+      "type": "Number",
+      "length": 16,
+      "required": true,
+      "description_hash": "52b8b47bcd7f9010"
+    },
+    {
+      "direction": "request",
+      "block_name": "COSAT00311InBlock1",
+      "field_index": 6,
+      "field_name": "OvrsOrdPrc",
+      "korean_name": "해외주문가",
+      "type": "Number",
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "COSAT00311InBlock1",
+      "field_index": 7,
+      "field_name": "OrdprcPtnCode",
+      "korean_name": "호가유형코드",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "request",
+      "block_name": "COSAT00311InBlock1",
+      "field_index": 8,
+      "field_name": "BrkTpCode",
+      "korean_name": "중개인구분코드",
+      "type": "String",
+      "length": 2,
+      "required": true
+    }
+  ],
+  "response_blocks": [
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 0,
+      "field_name": "contenttype",
+      "korean_name": "컨텐츠타입",
+      "type": "String",
+      "length": 100,
+      "required": true,
+      "description_hash": "b6d96823e389735e"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 1,
+      "field_name": "tr_cd",
+      "korean_name": "거래CD",
+      "type": "String",
+      "length": 10,
+      "required": true,
+      "description_hash": "0e1b562b5a8b95d4"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 2,
+      "field_name": "tr_cont",
+      "korean_name": "연속거래여부",
+      "type": "String",
+      "length": 1,
+      "required": true,
+      "description_hash": "cf83961d05729330"
+    },
+    {
+      "direction": "response",
+      "block_name": "response_header",
+      "field_index": 3,
+      "field_name": "tr_cont_key",
+      "korean_name": "연속거래Key",
+      "type": "String",
+      "length": 18,
+      "required": true,
+      "description_hash": "fb5e0315866c2427"
+    },
+    {
+      "direction": "response",
+      "block_name": "COSAT00311OutBlock1",
+      "field_index": 0,
+      "field_name": "RecCnt",
+      "korean_name": "레코드갯수",
+      "type": "Object",
+      "length": 5,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "COSAT00311OutBlock1",
+      "field_index": 1,
+      "field_name": "OrdPtnCode",
+      "korean_name": "주문유형코드",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "COSAT00311OutBlock1",
+      "field_index": 2,
+      "field_name": "OrgOrdNo",
+      "korean_name": "원주문번호",
+      "type": "Object",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "COSAT00311OutBlock1",
+      "field_index": 3,
+      "field_name": "AcntNo",
+      "korean_name": "계좌번호",
+      "type": "String",
+      "length": 20,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "COSAT00311OutBlock1",
+      "field_index": 4,
+      "field_name": "InptPwd",
+      "korean_name": "입력비밀번호",
+      "type": "String",
+      "length": 8,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "COSAT00311OutBlock1",
+      "field_index": 5,
+      "field_name": "OrdMktCode",
+      "korean_name": "주문시장코드",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "COSAT00311OutBlock1",
+      "field_index": 6,
+      "field_name": "IsuNo",
+      "korean_name": "종목번호",
+      "type": "String",
+      "length": 12,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "COSAT00311OutBlock1",
+      "field_index": 7,
+      "field_name": "OrdQty",
+      "korean_name": "주문수량",
+      "type": "Object",
+      "length": 16,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "COSAT00311OutBlock1",
+      "field_index": 8,
+      "field_name": "OvrsOrdPrc",
+      "korean_name": "해외주문가",
+      "type": "Object",
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "COSAT00311OutBlock1",
+      "field_index": 9,
+      "field_name": "OrdprcPtnCode",
+      "korean_name": "호가유형코드",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "COSAT00311OutBlock1",
+      "field_index": 10,
+      "field_name": "RegCommdaCode",
+      "korean_name": "등록통신매체코드",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "COSAT00311OutBlock1",
+      "field_index": 11,
+      "field_name": "BrkTpCode",
+      "korean_name": "중개인구분코드",
+      "type": "String",
+      "length": 2,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "COSAT00311OutBlock2",
+      "field_index": 0,
+      "field_name": "RecCnt",
+      "korean_name": "레코드갯수",
+      "type": "Object",
+      "length": 5,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "COSAT00311OutBlock2",
+      "field_index": 1,
+      "field_name": "OrdNo",
+      "korean_name": "주문번호",
+      "type": "Object",
+      "length": 10,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "COSAT00311OutBlock2",
+      "field_index": 2,
+      "field_name": "AcntNm",
+      "korean_name": "계좌명",
+      "type": "String",
+      "length": 40,
+      "required": true
+    },
+    {
+      "direction": "response",
+      "block_name": "COSAT00311OutBlock2",
+      "field_index": 3,
+      "field_name": "IsuNm",
+      "korean_name": "종목명",
+      "type": "String",
+      "length": 40,
+      "required": true
+    }
+  ],
+  "rate_limit_per_sec": 10,
+  "corp_rate_limit_per_sec": 10,
+  "rate_source_group": "6bafc43c-6080-4541-bfc2-c2608b269ca0"
+}
