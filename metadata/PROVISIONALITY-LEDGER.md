@@ -1043,3 +1043,91 @@ board. Stays HELD per `implement-tr` §0.
 unchanged (a tracked→implemented flip is not a tracking event). The 4 already-wired
 targets (t1109/t8427/t2106/t1964) stay `implemented: false` — their carriers and
 smokes remain in place for a future qualifying session.
+
+## 20. Closed-window probe-and-flip sweep — full-residue disposition pass (2026-06-30)
+
+Plan `docs/plans/2026-06-30-004-feat-closed-window-probe-flip-sweep-plan.md`. Goal:
+drive every one of the **41 Tracked-not-Implemented TRs** to exactly one terminal
+disposition under KRX closure. Outcome: **0 flips** — every flip requires a live
+non-empty deserializable witness (KTD2/R4), which the autonomous closed-window run
+cannot certify; the gate does not run live smokes, so a metadata flip without a
+passing `make live-smoke-<tr>` would be green-but-uncertified (forbidden). The
+deliverable is this consolidated, current-dated disposition ledger for all 41 plus
+a handoff of the 5 genuinely probe-gated candidates.
+
+**D5 honesty note: this wave is predominantly RE-CONFIRMATION, ~0 net-new
+dispositions.** By execution time every one of the 41 already carried a current
+terminal disposition (most from §13–§19; the intraday-feed cohort and t1109 were
+freshly probed *the same day* in the §19 open window). The wave's genuine value is
+(a) proving the Tracked-not-Implemented residue is fully and currently
+dispositioned, (b) confirming both the raw pool *and* the offline tracked-flip pool
+are exhausted under closure, and (c) surfacing the 5 probe-gated candidates an
+operator (creds + right session) could still move. A 0-flip pure-reconfirmation
+outcome is a successful wave per the plan DoD.
+
+**Partition of the 41 (KTD1):** 19 confirm-only + 10 deferred-orders + 7
+§19-reconfirm intraday feeds + 5 probe-gated = 41.
+
+**Lane A — confirm-only (19), re-affirmed, no live attempt (R6/R7).**
+- *paper_incompatible (13):* `g3101` `g3102` `g3103` `g3104` `g3106` `g3190`
+  (overseas-stock, no paper feed — §14); `t8455` `t8460` (KRX night-derivative
+  quote/board, off-window paper-empty — §17); `CCENT00100/00200/00300` `CCENQ10100`
+  `CCENQ90200` (KRX 야간파생 order/account, `krx_extended` + `01900` — §16/§17/§18).
+  Facet `paper_incompatible: true` holds; reason unchanged.
+- *carried-forward terminal (3, plan-explicit):* `t1631` permanent PENDING (gateway
+  `IGW40014` — server fails to serialize its own `bidvolume`; recorded in
+  `docs/solutions/conventions/tr-pool-exhaustion-and-closure-viability.md`); `t3102`
+  HELD (no off-hours `NWS` frame; feeder identified, flip awaits a live news event —
+  §13); `t1964` HELD (10 unresolved filter-enum defaults; §19 in-window found an
+  empty board — §7/§19).
+- *de-facto terminal — structural/scope (3, re-routed here by judgment, not in the
+  plan's explicit confirm-only list):* `t1852` / `t1856` PENDING (required `sFileData`
+  screening blob ~26.8 KB unsourced — a probe cannot construct a valid request, so a
+  fresh closed-window probe cannot change the outcome — §6); `t1860` HELD
+  (realtime-registration control, not a read — §6). Routed to confirm-only because
+  the blocker is structural/scope, not session/funding; **no operator probe needed.**
+
+**Lane B — deferred-orders (10), re-confirmed `deferred` (R3/KTD1).** F/O order chain
+`CFOAT00100/00200/00300`; overseas-futures orders `CIDBT00100/00900/01000`;
+overseas-stock orders `COSAT00301/00311/00400` `COSMT00300`. All `owner_class:
+orders`, already recorded EXCLUDED-order in §18. Not probed — orders reject
+off-window (only re-derives `01458 장종료`). Flip is an operator-run open-window F/O
+order smoke (deferred wave), out of this wave's identity.
+
+**Lane C1 — §19-reconfirm intraday feeds (7), PENDING, no re-probe.** `t1951`
+`t1973` `t2212` `t2407` `t8404` `t8427` `t2106` were all probed **the same day** in
+the §19 open window and recorded PENDING paper-empty. §19 concluded paper carries no
+data for these intraday F/O/ELW feeds *regardless of session* — so a closed-window
+re-probe cannot beat an in-window empty. Disposition unchanged (PENDING).
+*Note:* the plan scope-boundary anticipated a `deferred` label for these as "genuine
+open-window reads"; §19's same-day **in-window** empty evidence overrides that to
+PENDING — they are paper-feed-absent, not merely session-gated, so they would not
+flip on an open window either.
+
+**Lane C2 — probe-gated, BLOCKED, handed back to operator (5).** Disposition carried
+forward; an operator with credentials and the right session could still move these.
+- `t1109` (주식시간외체결) — **`deferred` to an after-hours run (KTD5).** §19 confirmed
+  its last probe was the regular session (10:xx KST); it needs the post-15:30
+  after-hours window, untested. If the operator runs in the after-hours window, probe
+  and flip only on non-empty 시간외체결 ticks; otherwise it stays `deferred`. Carrier
+  is already fully wired (finish-the-flip — metadata + docgen only on a non-empty
+  witness).
+- `CSPBQ00200` (증거금률별주문가능수량, account) — carry-forward PENDING (§16; all-default
+  `00136` on a zero-deposit account). Needs a funded margin context. Credential-gated.
+- `o3107` (해외선물 관심종목) / `o3127` (해외선물옵션 관심종목 board) — carry-forward PENDING
+  (§18; empty/`price=0`, no registered watchlist symbols). `overseas_option` lane +
+  account watchlist state. Per the plan Assumption + R7, carried forward absent a
+  plausible account-state change since §18 (2026-06-28/29); **not re-probed** in this
+  autonomous run. Operator may re-probe under the `.env.overseas_option` lane
+  (holdings/board gate, KTD3) to harden or flip.
+- `t0441` (선물/옵션잔고평가, account) — carry-forward PENDING (§18; `positions=0` on the
+  funded …51 account). Needs an open F/O position. `domestic_option` lane,
+  position-state-gated; carried forward absent a plausible position change. Operator
+  may re-probe under `.env.domestic_option`.
+
+**Count tally (R8/R13).** 0 flips → nothing moves. `reference.len()` stays **280**,
+`banner_trs` unchanged, `maintained_tr_count` stays **320**, `cli.rs` literals,
+`api_drift`, and `TRACKED_TRS` all unchanged. No `metadata/trs/*.yaml` facets edited
+(every reason on file still holds). `recommended` deferred for all (no flips). The
+41-TR residue is fully and currently dispositioned; the offline tracked-flip pool is
+exhausted under closure.
