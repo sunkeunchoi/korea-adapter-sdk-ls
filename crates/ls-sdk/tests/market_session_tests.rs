@@ -3731,6 +3731,23 @@ fn t1954_success_body_deserializes_with_nondefault_field() {
     assert_eq!(as_string.outblock1[0].close, "000000000210");
 }
 
+/// A populated `t1954OutBlock` header round-trips its base-asset rename keys
+/// (`bsjgubun`/`bscode`/`bjcode`), locking the header field names against drift —
+/// the success-body test only exercises the `t1954OutBlock1` rows.
+#[test]
+fn t1954_header_block_round_trips_base_asset_keys() {
+    let resp: T1954Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1954OutBlock": { "date": "20230608", "bsjgubun": "1", "bscode": "005930", "bjcode": "201" },
+        "t1954OutBlock1": [ { "date": "20230608", "close": 210 } ]
+    }))
+    .expect("populated-header body must deserialize");
+    assert_eq!(resp.outblock.bscode, "005930", "header 현물 code rename key");
+    assert_eq!(resp.outblock.bjcode, "201", "header 지수 code rename key");
+    assert_eq!(resp.outblock.bsjgubun, "1");
+    assert_eq!(resp.outblock1.len(), 1);
+}
+
 /// A single (non-array) `t1954OutBlock1` row is tolerated via `de_vec_or_single`.
 #[test]
 fn t1954_single_out_block_is_tolerated() {
