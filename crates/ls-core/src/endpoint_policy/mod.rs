@@ -234,6 +234,8 @@ mod tests {
             T1959_POLICY,
             // Closed-window more-flips wave (plan -001): ELW current-price/quote read.
             T1950_POLICY,
+            // Open-window flip wave (plan -001, 2026-06-30): ELW daily-price read.
+            T1954_POLICY,
             // Closed-window more-flips wave (plan -001): ELW current-price + quote-board read.
             T1971_POLICY,
             // Closed-window more-flips wave (plan -001): ELW current-price + trading-member board read.

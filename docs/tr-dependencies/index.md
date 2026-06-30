@@ -234,7 +234,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t1941` | 종목별대차거래일간추이 | `market_session` | implemented | [t1941](./t1941.md) |
 | `t1950` | ELW현재가(시세)조회 | `market_session` | implemented | [t1950](./t1950.md) |
 | `t1951` | ELW시간대별체결조회 | `paginated` | tracked | [t1951](./t1951.md) |
-| `t1954` | ELW일별주가 | `market_session` | tracked | [t1954](./t1954.md) |
+| `t1954` | ELW일별주가 | `market_session` | implemented | [t1954](./t1954.md) |
 | `t1956` | ELW현재가(확정지급액)조회 | `market_session` | implemented | [t1956](./t1956.md) |
 | `t1958` | ELW종목비교 | `market_session` | implemented | [t1958](./t1958.md) |
 | `t1959` | LP대상종목정보조회 | `market_session` | implemented | [t1959](./t1959.md) |

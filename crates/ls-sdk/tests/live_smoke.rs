@@ -26,7 +26,7 @@ use ls_sdk::market_session::{
     T1101Request, T1102Request, T1485Request, T1511Request, T1516Request, T1531Request,
     T1537Request, T1601Request, T1615Request, T1640Request, T1662Request, T1664Request,
     T1104Request, T1105Request, T1825Request, T1826Request, T1859Request, T1901Request,
-    T1906Request, T8450Request, T1638Request, T1308Request, T1449Request, T1621Request, T2545Request, T8406Request, T8407Request, T1631Request, T1632Request, T1633Request, T1716Request, T1902Request, T1904Request, T1927Request, T1941Request, T1702Request, T1717Request, T1665Request, T1471Request, T1475Request, T1959Request, T1950Request, T1971Request, T1972Request, T1974Request, T1956Request, T1969Request,
+    T1906Request, T8450Request, T1638Request, T1308Request, T1449Request, T1621Request, T2545Request, T8406Request, T8407Request, T1631Request, T1632Request, T1633Request, T1716Request, T1902Request, T1904Request, T1927Request, T1941Request, T1702Request, T1717Request, T1665Request, T1471Request, T1475Request, T1959Request, T1950Request, T1954Request, T1971Request, T1972Request, T1974Request, T1956Request, T1969Request,
     T1302Request, T2216Request,
     T1532Request, T1533Request, T1926Request, T1764Request, T1903Request,
     T1958Request, T1964Request, T2301Request,
@@ -2344,6 +2344,74 @@ async fn live_smoke_t1950() {
         Err(e) => {
             eprintln!("SMOKE-FAIL target=live-smoke-t1950 elw failure (not evidence)");
             panic!("live-smoke-t1950 failed: {e}");
+        }
+    }
+}
+
+/// `make live-smoke-t1954`: paper guard → token → `t8431` ELW-symbol list → `t1954`
+/// ELW daily-price series for the first live ELW `shcode`.
+///
+/// CHAINED, self-sourcing (R8): the `shcode` comes from a live `t8431` call, never
+/// fabricated — ELW codes EXPIRE, so a hard-coded one would silently rot. ELW
+/// `shcode`s are public market identifiers (may appear in `inputs`). The gate is a
+/// non-empty `t1954OutBlock1` daily row carrying a real `close` (a NAMED market-data
+/// witness, not a status field). A success `rsp_cd` with no daily rows is the
+/// `00707`/off-data case → PENDING (does NOT record). The recorded line is
+/// credential-free (`rsp_cd` + row count, never `rsp_msg`); a failed run emits a
+/// `SMOKE-FAIL` stderr line, never a `LIVE-SMOKE` one.
+#[tokio::test]
+#[ignore = "live smoke: needs real LS paper credentials; run via `make live-smoke-t1954`"]
+async fn live_smoke_t1954() {
+    let sdk = paper_sdk().expect("paper guard + config must succeed for a paper run");
+    let token = sdk.standalone().token().await.expect("OAuth token failed");
+    assert!(!token.is_empty(), "token must be non-empty");
+
+    // Self-source a fresh ELW shcode from a live t8431 list (codes expire).
+    let elws = sdk
+        .market_session()
+        .elw_symbols(&T8431Request::new())
+        .await
+        .expect("t8431 elw_symbols (shcode source) failed");
+    if elws.outblock.is_empty() {
+        eprintln!(
+            "SMOKE-FAIL target=live-smoke-t1954 t8431 spine source empty (rsp_cd={})",
+            elws.rsp_cd
+        );
+        panic!("live-smoke-t1954: need an ELW shcode for the daily series");
+    }
+    let shcode = elws.outblock[0].shcode.clone();
+
+    match sdk
+        .market_session()
+        .elw_daily(&T1954Request::for_shcode(&shcode))
+        .await
+    {
+        Ok(resp) => {
+            // NAMED market-data witness (close), not a status/count field.
+            let witnessed = resp.outblock1.first().is_some_and(|r| !r.close.is_empty());
+            if !witnessed {
+                // 00000 with no daily row carrying a close (off-data) → PENDING.
+                eprintln!(
+                    "SMOKE-FAIL target=live-smoke-t1954 empty daily series (rsp_cd={})",
+                    resp.rsp_cd
+                );
+                panic!("live-smoke-t1954: empty daily series (00707/off-data — PENDING)");
+            }
+            // shcode is a public ELW identifier — OK to record.
+            record(
+                "live-smoke-t1954",
+                &format!("env=paper shcode={shcode}"),
+                &format!(
+                    "rsp_cd={} rows={} close_len={}",
+                    resp.rsp_cd,
+                    resp.outblock1.len(),
+                    resp.outblock1[0].close.len()
+                ),
+            );
+        }
+        Err(e) => {
+            eprintln!("SMOKE-FAIL target=live-smoke-t1954 elw failure (not evidence)");
+            panic!("live-smoke-t1954 failed: {e}");
         }
     }
 }

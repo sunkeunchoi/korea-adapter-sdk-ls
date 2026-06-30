@@ -1,6 +1,7 @@
 ---
 title: "Disposition a market-hours-dependent read's empty paper smoke by the session clock, not as a shape failure"
 date: 2026-06-23
+last_updated: 2026-06-30
 category: conventions
 module: ls-sdk Paper Live Smoke harness, implement-tr / track-tr recipes
 problem_type: convention
@@ -42,7 +43,8 @@ run and disposition mechanically — never as a judgment call:
    session before any verdict. Do not DROP and do not flip anything.
 2. **Empty + in-window** → **PENDING** with a concrete reason (e.g. "in-window
    empty board"); keep the TR's provisional ledger rows so nothing ships with a
-   stale "re-verify" instruction.
+   stale "re-verify" instruction. **In-window is necessary but not sufficient on
+   paper** — see "Paper feed-family availability" below.
 3. **Non-empty + in-window + deserializes** → **IMPLEMENTED.**
 4. **A `00707` (empty success) still deserializes** — only the non-empty *arm*
    fails the gate. So an empty result is a deserialize success: it proves the wire
@@ -74,6 +76,29 @@ least one member, never an off-hours result.
 - Historical/period reads (e.g. `t1514` 업종기간별추이) and static-ish list reads
   (e.g. `t8424` 전체업종) are usually non-empty regardless of the clock — they are the
   members most likely to flip window-free and make good anchors.
+
+### Paper feed-family availability (in-window ≠ sufficient)
+
+An open KRX regular session is necessary but **not sufficient** to flip a
+session-dependent read on paper — the paper gateway simply does not carry some feed
+families regardless of the clock. The 2026-06-30 open-window wave probed the residual
+"session-dependent" cohort live mid-session and found the in-window outcome is
+**predictable by feed family**, not random:
+
+- **Live on paper:** ELW **daily**-price + ELW current-price/quote reads (`t1954`,
+  `t1950`, `t1971`, `t8431`). Daily/persistent data flips reliably in-window.
+- **Empty on paper even in-window:** F/O index-futures **intraday** feeds — charts,
+  time-and-sales, price-memo (`t8427` with a *live* front-month contract via t8467,
+  `t2106`, `t2212`, `t2407`, `t8404`) — and ELW **intraday** tick feeds (`t1951`;
+  `t1973` 예상체결 is auction-period-only). These are a paper-data gap, not a shape or
+  session-clock issue. Disposition PENDING and **do not re-attempt as breadth**.
+- **Wrong session, not empty data:** after-hours reads (`t1109` 주식시간외체결) are
+  empty during the regular session by construction; they need the **after-hours**
+  window (after 15:30 KST), not the regular session.
+
+So when an in-window smoke comes back empty, classify by feed family before recording:
+a derivative-intraday or after-hours read smoking empty in the regular session is the
+expected paper outcome, not a reason to keep re-probing it each wave.
 
 ## Examples
 

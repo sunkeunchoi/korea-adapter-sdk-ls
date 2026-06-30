@@ -1000,3 +1000,46 @@ o3107 + o3127); manifest + `api_drift.rs` + `cli.rs` (×4) + docgen `TRACKED_TRS
 (`[&str; 237]`) all consistent; `manifest.refreshed` held at 2026-06-22 (KTD7).
 `reference.len()` 169 → 182 (+13 flips); `banner_trs` +13. WebSocket channels add
 nothing this wave (deferred). The §14/§16/§17 retired terminals are NOT re-probed.
+
+## 19. Open-window flip wave — ELW daily flip + session-residual dispositions (2026-06-30)
+
+Plan `docs/plans/2026-06-30-001-feat-open-window-domestic-flip-wave-plan.md`. The
+raw pool was exhausted, so this wave targeted the residual of the §15
+"session-dependent (35)" cohort under a live KRX regular session (10:xx KST). The
+window's real unlock was narrow: **ELW daily-price data is live on paper; F/O
+index-futures intraday feeds and ELW *intraday* tick feeds are paper-empty even
+mid-session, and the after-hours read needs the after-hours session.** Probed all 10
+targets in-window (raw-probe + the 4 already-wired typed smokes); every target now
+carries one terminal disposition (R11), so a future wave does not re-prospect them.
+
+**Flipped (1).** `t1954` (ELW일별주가) — open-window paper smoke `rsp_cd=00000
+rows=20`, non-empty first-row `close` witness. market_session ELW read, `cnt` numeric
+request slot (`string_as_number`). `reference.len()` 279 → 280; `banner_trs` +1;
+`maintained_tr_count` unchanged (tracked→implemented). `recommended: false`
+(open-window freshness re-check deferred to a later Recommended pass, R9). No
+per-facet ledger entries existed for t1954 (clean projected baseline) — nothing to
+retire.
+
+**PENDING — paper-empty under the open window (5).** Confirmed empty on a live
+in-window probe/smoke, not a closure artifact: `t1951` (ELW시간대별체결, tick array
+body_len≈112 ≈ empty), `t2212`/`t8404` (F/O 시간대별체결) and `t2407` (F/O
+호가잔량비율챠트) — same paper-empty family as the already-wired `t8427` (F/O day
+chart, live front-month contract → empty) and `t2106` (F/O 시세메모, empty memo).
+`t1973` (ELW시간대별예상체결, body_len≈424) is auction-period data, near-empty in
+continuous session — held PENDING (no carrier per KTD2). Paper carries no data for
+these intraday derivative feeds regardless of session; do not re-attempt as
+breadth.
+
+**PENDING — wrong session (1).** `t1109` (주식시간외체결, after-hours ticks) returns
+empty `00707` during the regular session by construction; it would require the
+after-hours window (after 15:30 KST). Retriable then; not a paper-data gap.
+
+**HELD (1).** `t1964` (ELW board) — its blocker is the 10 unresolved filter-enum
+defaults (§ prior HELD), not the window; the in-window smoke found no non-empty
+board. Stays HELD per `implement-tr` §0.
+
+**Count tally (R13).** Only `reference.len()` (279→280) and `banner_trs` (+1) move;
+`maintained_tr_count`, `cli.rs` literals, `api_drift`, and `TRACKED_TRS` are
+unchanged (a tracked→implemented flip is not a tracking event). The 4 already-wired
+targets (t1109/t8427/t2106/t1964) stay `implemented: false` — their carriers and
+smokes remain in place for a future qualifying session.

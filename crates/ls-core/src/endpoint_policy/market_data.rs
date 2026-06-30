@@ -396,6 +396,21 @@ pub const T1950_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(5),
 };
 
+/// t1954 — ELW일별주가 (ELW daily prices; non-paginated). `cnt` is a numeric
+/// request slot (string_as_number). path /stock/elw, group [주식] ELW.
+pub const T1954_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "t1954",
+    path: "/stock/elw",
+    module: "stock",
+    group: "[주식] ELW",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::MarketData,
+    is_order: false,
+    has_pagination: false,
+    rate_limit_per_sec: Some(1),
+    corp_rate_limit_per_sec: Some(3),
+};
+
 /// t1971 — ELW현재가호가조회 (ELW current-price + 10-level quote board;
 /// non-paginated). path /stock/elw, group [주식] ELW.
 pub const T1971_POLICY: EndpointPolicy = EndpointPolicy {
