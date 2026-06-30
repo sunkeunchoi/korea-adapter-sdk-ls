@@ -13,7 +13,17 @@ applies_when:
   - "Asserting an account is flat after an autonomous order run (no operator to clean up)"
   - "Scrubbing autonomous-run output of account numbers / bearer tokens / broker rsp_msg"
   - "Invoking make live-smoke-order-chain from an agent (Bash tool) and seeing it refuse"
+  - "Extending the flat assertion to a venue (F/O) with NO Implemented working-orders read"
 ---
+
+> **2026-06-30 extension (F/O).** The account-wide `t0425` flat scan below assumes an
+> Implemented working-orders (미체결) read. The domestic F/O chain has none, so its
+> flatness is two-part — `t0441` fill-detection (fail-closed: empty/unreadable = NOT
+> flat; detect short/negative positions via `f64 != 0.0`) PLUS a clean cancel response
+> as the only resting-order-removal confirmation — and ANY teardown-uncertain state
+> (accepted-submit-without-order-number, ambiguous modify, or non-clean cancel)
+> HARD-FAILS rather than printing success. See
+> `docs/solutions/conventions/authoring-fo-order-tr-chain.md` §5.
 
 # Autonomous order-smoke: fail-closed invocation contract
 
