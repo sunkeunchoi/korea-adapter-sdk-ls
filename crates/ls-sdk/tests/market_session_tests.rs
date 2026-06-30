@@ -41,7 +41,7 @@ use ls_sdk::market_session::{
     T1471Request, T1471Response,
     T1475Request, T1475Response,
     T1959Request, T1959Response,
-    T1950Request, T1950Response,
+    T1950Request, T1950Response, T1954Request, T1954Response,
     T1971Request, T1971Response,
     T1972Request, T1972Response,
     T1974Request, T1974Response,
@@ -3667,6 +3667,93 @@ fn t1950_empty_result_deserializes_to_defaults() {
     assert_eq!(empty.rsp_cd, "00707");
     assert!(empty.outblock.hname.is_empty(), "no quote → default object");
     assert!(empty.outblock1.is_empty(), "no basket → empty Vec");
+}
+
+// ---- t1954 ELW일별주가 (open-window flip wave 2026-06-30; market_session ELW daily OHLCV series) ----
+
+/// `t1954` serializes to `{"t1954InBlock":{"shcode":"52XXXX","date":"","cnt":20}}` —
+/// shcode/date under the renamed key, and `cnt` as a JSON NUMBER (not a string) per
+/// `string_as_number` (the string form risks IGW40011). Non-paginated — no tr_cont.
+#[test]
+fn t1954_request_serializes_with_numeric_cnt() {
+    let value =
+        serde_json::to_value(T1954Request::new("52L905", "", 20)).expect("serialize t1954 request");
+    assert_eq!(value["t1954InBlock"]["shcode"], "52L905");
+    assert_eq!(value["t1954InBlock"]["date"], "");
+    assert!(
+        value["t1954InBlock"]["cnt"].is_number(),
+        "cnt must serialize as a JSON number, not a string"
+    );
+    assert_eq!(value["t1954InBlock"]["cnt"], serde_json::json!(20));
+    assert!(value.get("tr_cont").is_none(), "non-paginated: no tr_cont");
+    // for_shcode defaults to the latest session + 20 rows.
+    let other = serde_json::to_value(T1954Request::for_shcode("58L034")).expect("serialize");
+    assert_eq!(other["t1954InBlock"]["shcode"], "58L034");
+    assert_eq!(other["t1954InBlock"]["cnt"], serde_json::json!(20));
+}
+
+/// A representative success body deserializes AND a modeled non-key field (`close`)
+/// holds a real, non-default value. The gateway sends OHLC as JSON numbers and the
+/// analytics as strings, so every numeric-bearing field tolerates both via
+/// `string_or_number`; the daily rows are under the `t1954OutBlock1` array.
+#[test]
+fn t1954_success_body_deserializes_with_nondefault_field() {
+    // Mixed wire types: open/high/low/close/change as JSON numbers, analytics as strings.
+    let body: T1954Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1954OutBlock1": [
+            {
+                "date": "20230608", "open": 210, "high": 210, "low": 210, "close": 210,
+                "sign": "2", "change": 60, "diff": "40.00", "volume": "000000000030",
+                "parity": "171.65", "egearing": "0.73", "premium": "-14.43",
+                "gearing": "3.66", "mness": "2"
+            }
+        ],
+        "rsp_msg": "조회완료"
+    }))
+    .expect("mixed-type body must deserialize");
+    assert_eq!(body.outblock1.len(), 1, "daily array round-trips");
+    assert_eq!(
+        body.outblock1[0].close, "210",
+        "JSON-number close coerces to the String witness"
+    );
+    assert_eq!(body.outblock1[0].date, "20230608");
+    assert_eq!(
+        body.outblock1[0].parity, "171.65",
+        "string analytic round-trips"
+    );
+    // close also tolerates a string form.
+    let as_string: T1954Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1954OutBlock1": [ { "date": "20230608", "close": "000000000210", "volume": "30" } ]
+    }))
+    .expect("string-close body must deserialize");
+    assert_eq!(as_string.outblock1[0].close, "000000000210");
+}
+
+/// A single (non-array) `t1954OutBlock1` row is tolerated via `de_vec_or_single`.
+#[test]
+fn t1954_single_out_block_is_tolerated() {
+    let resp: T1954Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00000",
+        "t1954OutBlock1": { "date": "20230608", "close": 210 }
+    }))
+    .expect("single-object row must deserialize");
+    assert_eq!(resp.outblock1.len(), 1, "single object → one-element Vec");
+    assert_eq!(resp.outblock1[0].close, "210");
+}
+
+/// An empty result (`00707`, no out-blocks) deserializes cleanly — header default,
+/// daily array empty; the empty/pending case.
+#[test]
+fn t1954_empty_result_deserializes_to_defaults() {
+    let empty: T1954Response = serde_json::from_value(serde_json::json!({
+        "rsp_cd": "00707", "rsp_msg": "조회할 자료가 없습니다."
+    }))
+    .expect("an empty t1954 envelope must deserialize");
+    assert_eq!(empty.rsp_cd, "00707");
+    assert!(empty.outblock1.is_empty(), "no rows → empty Vec");
+    assert!(empty.outblock.date.is_empty(), "no header → default object");
 }
 
 // ---- t1971 ELW현재가호가조회 (closed-window more-flips; market_session ELW current-price + quote board, single object) ----

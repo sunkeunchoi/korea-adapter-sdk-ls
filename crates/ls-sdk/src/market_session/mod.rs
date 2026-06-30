@@ -449,6 +449,18 @@ impl MarketSession {
             .await
     }
 
+    /// Fetch the ELW daily-price series via `t1954` (ELW일별주가) for one `shcode`
+    /// (a fresh, non-expired ELW issue code — e.g. the first `shcode` of `t8431`).
+    /// Returns the `t1954OutBlock1` daily OHLCV + ELW-analytics array (plus the
+    /// `t1954OutBlock` base-asset header). `cnt` serializes as a JSON number.
+    /// Non-paginated; dispatches through [`ls_core::Inner::post`] on the MarketData
+    /// bucket (`/stock/elw`).
+    pub async fn elw_daily(&self, req: &T1954Request) -> LsResult<T1954Response> {
+        self.inner
+            .post(&ls_core::endpoint_policy::T1954_POLICY, req)
+            .await
+    }
+
     /// Run the ELW screener via `t1969` (ELW지표검색). [`T1969Request::new`] builds
     /// the unfiltered "all ELWs" board. The numeric range bounds serialize as JSON
     /// numbers (`IGW40011` otherwise). Non-paginated; dispatches through

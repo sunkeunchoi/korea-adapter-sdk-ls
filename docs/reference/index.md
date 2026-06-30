@@ -216,6 +216,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t1927` | 공매도일별추이 | `market_session` | implemented, not yet recommended |
 | `t1941` | 종목별대차거래일간추이 | `market_session` | implemented, not yet recommended |
 | `t1950` | ELW현재가(시세)조회 | `market_session` | implemented, not yet recommended |
+| `t1954` | ELW일별주가 | `market_session` | implemented, not yet recommended |
 | `t1956` | ELW현재가(확정지급액)조회 | `market_session` | implemented, not yet recommended |
 | `t1958` | ELW종목비교 | `market_session` | implemented, not yet recommended |
 | `t1959` | LP대상종목정보조회 | `market_session` | implemented, not yet recommended |

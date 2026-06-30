@@ -1121,6 +1121,8 @@ mod tests {
             "o3103", "o3104", "o3108", "o3116", "o3117", "o3123", "o3128", "o3136", "o3137", "o3139",
             "t8462",
             "t1901", "t1906", "t8450", "t1638", "t1308", "t1449", "t1621", "t2545", "t8406", "t8407", "t1959", "t1950", "t1971", "t1972", "t1974", "t1956", "t1969", "t1105", "t1104", "t1305",
+            // Open-window flip wave (plan -001, 2026-06-30): ELW daily-price read.
+            "t1954",
             "t1310", "t1404", "t1410", "t1411", "t1488", "t1636", "t1809",
             "t8417", "t8418", "t8411", "t8452", "t8453", "t1302",
             "t8464", "t8465", "t8466", "t2216", "t8405",
@@ -1381,9 +1383,11 @@ mod tests {
         // Open-window WS track/flip wave (plan 2026-06-29-001): 39 realtime channels
         // (AFR/B7_/C02/.../h3_) flipped connection-reachable-only on a clean paper WS
         // lifecycle sweep (make live-smoke-ws-p4; KTD6 NOT-OBSERVABLE) — add 39.
+        // Open-window flip wave (plan 2026-06-30-001): t1954 ELW daily-price read
+        // flipped on a non-empty open-window paper smoke (rows=20, close witness) — add 1.
         assert_eq!(
             reference.len(),
-            279,
+            280,
             "index + the implemented reference pages"
         );
 

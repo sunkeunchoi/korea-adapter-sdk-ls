@@ -128,6 +128,160 @@ pub struct T1950Response {
 }
 
 // ---------------------------------------------------------------------------
+// t1954 — ELW일별주가 (ELW daily prices). A market_session ELW read; path
+// /stock/elw, group [주식] ELW. Given one ELW `shcode`, a row count `cnt` and an
+// optional anchor `date`, returns the daily OHLCV + ELW-analytics series under the
+// `t1954OutBlock1` array (date/open/high/low/close + change/volume + parity/
+// gearing/premium/...), plus a `t1954OutBlock` header (base-asset codes). `cnt` is a
+// spec Number and MUST serialize as a JSON NUMBER via `ls_core::string_as_number`
+// (the string form risks IGW40011). `shcode` is a six-digit ELW issue code (these
+// EXPIRE — a live caller sources a fresh one, e.g. the first `shcode` of t8431). The
+// gateway sends OHLC as JSON numbers and the analytics as strings, so every
+// numeric-bearing response field uses `ls_core::string_or_number`. Confirmed
+// non-empty on an open-window paper smoke (plan -001 open-window flip wave 2026-06-30).
+// ---------------------------------------------------------------------------
+
+/// Input block for `t1954` — the ELW short code (`shcode`), an anchor `date`
+/// (`YYYYMMDD`, empty for "latest") and the row count `cnt`.
+///
+/// `shcode` is a six-digit ELW issue code; ELW codes EXPIRE, so a live caller should
+/// source a fresh one at runtime (e.g. the first `shcode` of `t8431`). `cnt` is the
+/// numeric request slot — wire-serialized as a JSON NUMBER via
+/// [`ls_core::string_as_number`] (the string form risks `IGW40011`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1954InBlock {
+    /// ELW short code / 단축코드 — a six-digit, expiring issue code.
+    pub shcode: String,
+    /// Anchor date / 날짜 (`YYYYMMDD`; empty for the latest session).
+    pub date: String,
+    /// Row count / 조회갯수 — the numeric request slot.
+    #[serde(serialize_with = "ls_core::string_as_number")]
+    pub cnt: String,
+}
+
+/// `t1954` request — serializes to
+/// `{"t1954InBlock":{"shcode":"52XXXX","date":"","cnt":20}}` (with `cnt` a JSON
+/// number). Not paginated (`facets.self_paginated: false`).
+#[derive(Serialize, Debug, Clone)]
+pub struct T1954Request {
+    #[serde(rename = "t1954InBlock")]
+    pub inblock: T1954InBlock,
+}
+
+impl T1954Request {
+    /// Build a `t1954` ELW daily-price request for one `shcode`, anchor `date`
+    /// (`YYYYMMDD`, empty for the latest session) and row count `cnt`.
+    pub fn new(shcode: impl Into<String>, date: impl Into<String>, cnt: u32) -> Self {
+        T1954Request {
+            inblock: T1954InBlock {
+                shcode: shcode.into(),
+                date: date.into(),
+                cnt: cnt.to_string(),
+            },
+        }
+    }
+
+    /// Build a `t1954` request for one `shcode` with the default window (latest
+    /// `date`, 20 rows).
+    pub fn for_shcode(shcode: impl Into<String>) -> Self {
+        T1954Request::new(shcode, "", 20)
+    }
+}
+
+/// `t1954OutBlock` — the daily-series header: the anchor date plus the base-asset
+/// keys (현물/지수 codes). Numeric-bearing fields via [`ls_core::string_or_number`];
+/// `#[serde(default)]` so a sparse/empty header deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1954OutBlock {
+    /// Anchor date / 날짜.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    /// Base-asset kind / 기초자산구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bsjgubun: String,
+    /// Base-asset code (현물) / 기초자산코드(현물).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bscode: String,
+    /// Base-asset code (지수) / 기초자산코드(지수).
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub bjcode: String,
+}
+
+/// `t1954OutBlock1` — one daily-price row (a representative, spec-grounded subset):
+/// the date, the day OHLC (`open`/`high`/`low`/`close`), the prior-day change
+/// (`sign`/`change`/`diff`), the `volume`, and the ELW analytics
+/// (`parity`/`egearing`/`premium`/`gearing`/`mness`). The gateway sends OHLC as JSON
+/// numbers and the analytics as strings, so every numeric-bearing field via
+/// [`ls_core::string_or_number`]; `#[serde(default)]` lets a sparse row deserialize
+/// and unknown fields are ignored.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T1954OutBlock1 {
+    /// Date / 날짜.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub date: String,
+    /// Day open / 시가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub open: String,
+    /// Day high / 고가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub high: String,
+    /// Day low / 저가.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub low: String,
+    /// Day close / 종가 — the NAMED market-data witness.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub close: String,
+    /// Prior-day change sign / 전일대비구분.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub sign: String,
+    /// Prior-day change / 전일대비.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub change: String,
+    /// Change rate / 등락율.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub diff: String,
+    /// Volume / 거래량.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub volume: String,
+    /// Parity / 패리티.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub parity: String,
+    /// Effective gearing / e.기어링.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub egearing: String,
+    /// Premium / 프리미엄.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub premium: String,
+    /// Gearing / 기어링.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub gearing: String,
+    /// Moneyness / Moneyness.
+    #[serde(deserialize_with = "ls_core::string_or_number")]
+    pub mness: String,
+}
+
+/// `t1954` response — the `t1954OutBlock` header plus the `t1954OutBlock1`
+/// daily-price array (tolerated single-or-array via [`ls_core::de_vec_or_single`]).
+/// All `#[serde(default)]` so an empty `00707` envelope deserializes.
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T1954Response {
+    #[serde(default)]
+    pub rsp_cd: String,
+    #[serde(default)]
+    pub rsp_msg: String,
+    #[serde(rename = "t1954OutBlock", default)]
+    pub outblock: T1954OutBlock,
+    #[serde(
+        rename = "t1954OutBlock1",
+        default,
+        deserialize_with = "ls_core::de_vec_or_single"
+    )]
+    pub outblock1: Vec<T1954OutBlock1>,
+}
+
+// ---------------------------------------------------------------------------
 // t1969 — ELW지표검색 (ELW screener / indicator search). market_session ELW read;
 // path /stock/elw, group [주식] ELW. A MANY-field screen request (`t1969InBlock`):
 // chk*/cb*/duedate*/lp_code/cbkoba are filter Strings; the numeric range fields
