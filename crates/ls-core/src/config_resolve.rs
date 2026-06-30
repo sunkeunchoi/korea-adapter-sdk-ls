@@ -65,19 +65,16 @@ pub struct ResolvedRateLimits {
 impl ResolvedRateLimits {
     /// Materialize from an optional [`RateLimitConfig`].
     pub fn from_raw(raw: &Option<RateLimitConfig>) -> Self {
-        match raw {
-            Some(c) => Self {
-                market_data_per_sec: c.market_data_per_sec.unwrap_or(DEFAULT_MARKET_DATA_PER_SEC),
-                orders_per_sec: c.orders_per_sec.unwrap_or(DEFAULT_ORDERS_PER_SEC),
-                account_per_sec: c.account_per_sec.unwrap_or(DEFAULT_ACCOUNT_PER_SEC),
-                auth_per_sec: c.auth_per_sec.unwrap_or(DEFAULT_AUTH_PER_SEC),
-            },
-            None => Self {
-                market_data_per_sec: DEFAULT_MARKET_DATA_PER_SEC,
-                orders_per_sec: DEFAULT_ORDERS_PER_SEC,
-                account_per_sec: DEFAULT_ACCOUNT_PER_SEC,
-                auth_per_sec: DEFAULT_AUTH_PER_SEC,
-            },
+        let c = raw.as_ref();
+        Self {
+            market_data_per_sec: c
+                .and_then(|c| c.market_data_per_sec)
+                .unwrap_or(DEFAULT_MARKET_DATA_PER_SEC),
+            orders_per_sec: c.and_then(|c| c.orders_per_sec).unwrap_or(DEFAULT_ORDERS_PER_SEC),
+            account_per_sec: c
+                .and_then(|c| c.account_per_sec)
+                .unwrap_or(DEFAULT_ACCOUNT_PER_SEC),
+            auth_per_sec: c.and_then(|c| c.auth_per_sec).unwrap_or(DEFAULT_AUTH_PER_SEC),
         }
     }
 }
