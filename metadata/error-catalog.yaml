@@ -1,0 +1,79 @@
+# Shared gateway error-explanation catalog (error-resilience gate, U1/R8/R9).
+#
+# The single source mapping every gateway response code `ls-core` knows how to
+# classify to a human-readable explanation. Consumed twice:
+#   - `ls-core` embeds this file (build.rs) and `LsError::ApiError::explain()`
+#     looks up the code at runtime, so a caller gets a reason instead of a raw
+#     code. No `rsp_msg` / account data is ever surfaced from the response.
+#   - `ls-docgen` reads the same file to project the per-TR "Errors & validation"
+#     Reference section (R11).
+#
+# Environment / entitlement codes (session-closed 904, paper-incompatible 01900,
+# account-not-order-capable 01491) are explained here ONCE (R9) and never
+# reproduced per TR — they are unsummonable on demand and unpreflightable.
+#
+# `kind` classifies each code for grouping/rendering; `explanation` is the
+# user-facing reason. Success codes are included for completeness so the catalog
+# is a total map over the codes the runtime recognises.
+version: 1
+codes:
+  "00000":
+    kind: success
+    explanation: >-
+      Success. The gateway processed the request and returned valid data.
+  "00136":
+    kind: success
+    explanation: >-
+      Inquiry completed (조회가 완료되었습니다). A read succeeded and the response
+      carries data. Treated as success by the read path.
+  "00707":
+    kind: success
+    explanation: >-
+      Inquiry completed with an empty result set (조회할 내역이 없습니다). The query
+      ran successfully but matched no rows. Treated as success, not an error.
+  "01900":
+    kind: paper_incompatible
+    explanation: >-
+      This service is not provided in the Paper (모의투자) environment
+      (모의투자에서는 해당업무가 제공되지 않습니다). A per-service capability gate: no
+      Paper account can clear it. Not a problem with your request. Retry against a
+      Production credential set, or treat the TR as paper-incompatible.
+  "01491":
+    kind: account_not_order_capable
+    explanation: >-
+      This paper account cannot place orders (모의투자 주문이 불가한 계좌입니다). A
+      per-account capability gate distinct from 01900: the request reached the
+      gateway and was cleanly rejected, nothing was placed. Swap in an
+      order-enabled paper account to clear it.
+  "904":
+    kind: session_closed
+    explanation: >-
+      The market session required for this TR is closed. An environment
+      condition, not a request defect: the same request succeeds inside the
+      correct trading window. Retry in-session.
+  IGW40011:
+    kind: request_shape
+    explanation: >-
+      A request field the gateway expects as a JSON number was sent as a quoted
+      string. Serialize numeric request fields as JSON numbers
+      (`string_as_number` / `string_as_decimal`) rather than strings. This is a
+      request-shape defect the caller can fix.
+  IGW40013:
+    kind: gateway_error
+    explanation: >-
+      The gateway rejected the request (IGW40013). A hard gateway-side failure —
+      commonly a wrong-account / entitlement mismatch on account TRs. Verify the
+      credential lane and account routing before retrying.
+  IGW40014:
+    kind: gateway_error
+    explanation: >-
+      The gateway failed to serialize its own response payload (IGW40014). An
+      environmental gateway-side defect, NOT a request-shape problem: the request
+      was well-formed but the gateway emitted a malformed response. Not fixable by
+      changing the request.
+  IGW50008:
+    kind: gateway_error
+    explanation: >-
+      Internal gateway failure (IGW50008). A hard server-side error. The request
+      may or may not have been processed; for reads, retry; for orders, reconcile
+      rather than blindly resubmit.

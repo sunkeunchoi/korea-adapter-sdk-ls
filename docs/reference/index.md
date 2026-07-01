@@ -28,12 +28,12 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `CIDBQ03000` | 해외선물 예수금/잔고현황 | `account` | implemented, not yet recommended |
 | `CIDBQ05300` | 해외선물 예탁자산 조회 | `account` | implemented, not yet recommended |
 | `CLNAQ00100` | 예탁담보융자가능종목현황조회 | `account` | implemented, not yet recommended |
-| `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | recommended |
+| `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | implemented, not yet recommended |
 | `CSPAQ12300` | BEP단가조회 | `account` | implemented, not yet recommended |
 | `CSPAQ22200` | 현물계좌예수금 주문가능금액 총평가2 | `account` | implemented, not yet recommended |
-| `CSPAT00601` | 현물 정규주문 (cash equity order submission) | `orders` | recommended |
-| `CSPAT00701` | 현물정정주문 (cash equity order modify) | `orders` | recommended |
-| `CSPAT00801` | 현물취소주문 (cash equity order cancel) | `orders` | recommended |
+| `CSPAT00601` | 현물 정규주문 (cash equity order submission) | `orders` | implemented, not yet recommended |
+| `CSPAT00701` | 현물정정주문 (cash equity order modify) | `orders` | implemented, not yet recommended |
+| `CSPAT00801` | 현물취소주문 (cash equity order cancel) | `orders` | implemented, not yet recommended |
 | `CUR` | 현물정보USD실시간 | `realtime` | implemented, not yet recommended |
 | `DBM` | KRX야간파생 투자자매매현황 | `realtime` | implemented, not yet recommended |
 | `DBT` | KRX야간파생 투자자별현황 | `realtime` | implemented, not yet recommended |
@@ -92,7 +92,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `OX0` | KOSPI200옵션가격제한폭확대 | `realtime` | implemented, not yet recommended |
 | `PH_` | KOSPI프로그램매매종목별 | `realtime` | implemented, not yet recommended |
 | `S2_` | KOSPI 우선호가 실시간 시세 | `realtime` | implemented, not yet recommended |
-| `S3_` | KOSPI 체결 실시간 시세 | `realtime` | recommended |
+| `S3_` | KOSPI 체결 실시간 시세 | `realtime` | implemented, not yet recommended |
 | `SC0` | 주식 주문접수 실시간 | `realtime` | implemented, not yet recommended |
 | `SC1` | 주식 주문체결 실시간 | `realtime` | implemented, not yet recommended |
 | `SC2` | 주식 주문정정 실시간 | `realtime` | implemented, not yet recommended |
@@ -143,9 +143,9 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `revoke` | 접근토큰 폐기 (OAuth2 token revoke) | `standalone` | implemented, not yet recommended |
 | `t0167` | 서버시간조회 | `market_session` | implemented, not yet recommended |
 | `t0424` | 주식잔고2 | `account` | implemented, not yet recommended |
-| `t0425` | 주식체결/미체결 (stock filled/unfilled order inquiry) | `paginated` | recommended |
-| `t1101` | 주식 현재가호가 조회 | `market_session` | recommended |
-| `t1102` | 주식 현재가(시세) 조회 | `market_session` | recommended |
+| `t0425` | 주식체결/미체결 (stock filled/unfilled order inquiry) | `paginated` | implemented, not yet recommended |
+| `t1101` | 주식 현재가호가 조회 | `market_session` | implemented, not yet recommended |
+| `t1102` | 주식 현재가(시세) 조회 | `market_session` | implemented, not yet recommended |
 | `t1104` | 주식현재가시세메모 | `market_session` | implemented, not yet recommended |
 | `t1105` | 주식피봇/디마크조회 | `market_session` | implemented, not yet recommended |
 | `t1301` | 주식시간대별체결조회 | `paginated` | implemented, not yet recommended |
@@ -256,7 +256,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t8407` | API용주식멀티현재가조회 | `market_session` | implemented, not yet recommended |
 | `t8410` | API전용주식차트(일주월년) | `paginated` | implemented, not yet recommended |
 | `t8411` | 주식차트(틱/n틱) | `paginated` | implemented, not yet recommended |
-| `t8412` | 주식 차트(N분봉) 조회 | `paginated` | recommended |
+| `t8412` | 주식 차트(N분봉) 조회 | `paginated` | implemented, not yet recommended |
 | `t8417` | 업종차트(틱/n틱) | `paginated` | implemented, not yet recommended |
 | `t8418` | 업종차트(N분) | `paginated` | implemented, not yet recommended |
 | `t8419` | 업종차트(일주월) | `paginated` | implemented, not yet recommended |
@@ -287,4 +287,4 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t9943` | 지수선물마스터조회API용 | `market_session` | implemented, not yet recommended |
 | `t9944` | 지수옵션마스터조회API용 | `market_session` | implemented, not yet recommended |
 | `t9945` | 주식마스터조회API용 | `market_session` | implemented, not yet recommended |
-| `token` | 접근토큰 발급 (OAuth2 token issue) | `standalone` | recommended |
+| `token` | 접근토큰 발급 (OAuth2 token issue) | `standalone` | implemented, not yet recommended |

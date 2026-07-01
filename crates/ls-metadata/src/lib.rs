@@ -6,21 +6,26 @@
 //! verification set from changed TRs, owning dependency classes, and facets.
 //! No hand-maintained JSON Schema (ADR 0012).
 
+pub mod constraints;
 pub mod freshness;
 pub mod planner;
 pub mod schema;
 pub mod shape;
 pub mod validator;
 
+pub use constraints::{
+    baseline_request_fields, ground_constraints, BaselineField, GroundingError,
+};
 pub use freshness::{evaluate, review_by, FreshnessError, FreshnessState, DEFAULT_WINDOW_DAYS};
 pub use shape::{BlockField, Direction, TrShape};
 pub use planner::{plan_changes, plan_with_metadata, ChangeSet, PlanError, TestGroup};
 pub use schema::{
-    CertificationPath, Dependencies, EvidenceRecord, Facets, IndexEntry, InstrumentDomain,
-    Maintenance, OwnerClass, Protocol, RateBucket, Recommendation, Support, TrIndex, TrMetadata,
-    VenueSession,
+    CatalogEntry, CertificationPath, ClassCoverage, ConstraintSchema, CrossFieldRule, Dependencies,
+    EnumRule, ErrorCatalog, ErrorCoverage, EvidenceRecord, Facets, FieldConstraint, FieldType,
+    FormatKind, FormatRule, IndexEntry, InstrumentDomain, Maintenance, OwnerClass, ProbeStatus,
+    Protocol, RangeRule, RateBucket, Recommendation, Support, TrIndex, TrMetadata, VenueSession,
 };
 pub use validator::{
-    check_recommendation, check_routing, parse_tr_metadata, validate_dir, ValidationError,
-    ValidationReport, INDEX_FILE_NAME,
+    check_artifacts, check_recommendation, check_routing, parse_tr_metadata, validate_dir,
+    ValidationError, ValidationReport, CATALOG_FILE_NAME, INDEX_FILE_NAME,
 };

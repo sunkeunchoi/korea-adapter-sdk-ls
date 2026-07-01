@@ -807,6 +807,8 @@ mod tests {
                 last_reviewed: "2026-06-16".to_string(),
             },
             recommendation: None,
+            constraints_ref: None,
+            error_coverage_ref: None,
         }
     }
 

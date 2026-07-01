@@ -75,15 +75,25 @@ fn authored_slice_metadata_validates_clean() {
     );
 }
 
-/// `token` is the first Recommended TR (R1). Guards the promotion against an
-/// accidental revert of `support.recommended`.
+/// The error-resilience gate (plan 2026-07-01-004, R12) demoted the 10 TRs
+/// promoted under the old happy-path gate back to Implemented; each re-promotes
+/// only after passing the new differential-probe gate (U8, operator-run across
+/// live windows). Until then the Recommended set is EMPTY, so the badge carries a
+/// single consistent meaning ("this call fails gracefully"). This test guards
+/// against an accidental re-promotion that skips the new gate.
 #[test]
-fn token_is_the_first_recommended_tr() {
+fn recommended_set_is_empty_pending_error_resilience_recert() {
     let report = validate_dir(&metadata_root()).expect("slice metadata validates");
-    let token = report.trs.get("token").expect("token present in metadata");
+    let recommended: Vec<&String> = report
+        .trs
+        .iter()
+        .filter(|(_, m)| m.support.recommended)
+        .map(|(code, _)| code)
+        .collect();
     assert!(
-        token.support.recommended,
-        "token must be recommended (the first Recommended TR)"
+        recommended.is_empty(),
+        "no TR may be Recommended until re-certified through the error-resilience \
+         gate (U8); found: {recommended:?}"
     );
 }
 

@@ -77,6 +77,33 @@ proves a genuine round-trip, then `tr_code`, `date` (today, UTC), `env: paper`,
 `target`, and the verbatim `line`. **`date` MUST equal the TR's
 `maintenance.last_reviewed`** (the validator cross-checks this).
 
+## 4b. Error-resilience gate (blocking — plan 2026-07-01-004, R1/R10)
+
+Recommended now additionally means "this call fails gracefully," so a green
+happy-path smoke is NOT sufficient. Before flipping:
+
+1. **Constraint schema.** Author (or confirm) `metadata/constraints/<tr>.yaml` —
+   per request field: `type`, `required`, and explicit `enum`/`range`/`format`
+   markers (`applicable: false` for an inapplicable class; R5 exhaustiveness). The
+   `type`/`required` declarations must ground against the normalized baseline
+   (`crates/ls-core` `constraint_grounding` test blocks in CI; the permissive
+   direction — declaring a wire-required field caller-optional — is allowed).
+2. **Differential probe.** Run `make live-smoke-<tr>-negative` in the correct
+   in-window session with a valid seed. It runs a valid control plus each
+   mechanically-generated invalid variant IN THE SAME SESSION and prints
+   `NEG-PROBE … outcome=CLEAN/HELD/DIVERGENT` per variant. A valid-control failure
+   (session-closed / unfunded / stale seed / paper-incompatible) is **HELD** —
+   inconclusive, `HELD <tr> — negative probe control failed`, leave the TR
+   Implemented. A **DIVERGENT** variant (paper accepted an injected invalid, or
+   rejected a valid value) blocks promotion until the schema is reconciled.
+3. **Error-coverage evidence.** Write `metadata/error-coverage/<tr>.yaml`: the
+   per-(field, class) coverage map (probe outcomes) and the reachable
+   `gateway_codes` (a subset of `metadata/error-catalog.yaml`). The validator
+   REQUIRES `error_coverage_ref` on a recommended TR (a distinct condition from the
+   evidence ref — neither implies the other).
+
+Only a CLEAN differential probe with a written coverage artifact clears this gate.
+
 ## 5. Flip the TR + write the recommendation block (the judgment step)
 
 Edit `metadata/trs/<tr>.yaml`:
@@ -84,6 +111,9 @@ Edit `metadata/trs/<tr>.yaml`:
 - `maintenance.last_reviewed: <today>` (== evidence `date`)
 - Add a `recommendation:` block: `behavior`, `evidence_ref: evidence/<tr>.yaml`,
   and `excludes`.
+- Ensure `constraints_ref: constraints/<tr>.yaml` and `error_coverage_ref:
+  error-coverage/<tr>.yaml` are present (error-resilience gate — the validator
+  rejects a recommended TR without error coverage).
 
 **Scope discipline (do not skip — this is the whole point of scoping):** the
 `behavior` describes *exactly* what the smoke exercised (paper env, single
@@ -106,7 +136,9 @@ See `references/templates.md` for worked `excludes` lists per class.
 In `crates/ls-docgen/src/lib.rs`, function
 `reference_covers_implemented_with_banner_and_omits_unimplemented`:
 - remove `<tr>` from the `banner_trs` array,
-- add `<tr>` to the recommended-no-banner `for rec in [...]` loop,
+- add `<tr>` to the recommended-no-banner list (currently
+  `let recommended_no_banner: [&str; 0] = [];` after the error-resilience demotion
+  — change the length and add the code, e.g. `["<tr>"]`),
 - update the count comment to match (the `reference.len()` assertion is unchanged
   — promoted TRs stay implemented).
 If a per-TR dependency-facts test asserts `- Recommended: no` for this TR (only

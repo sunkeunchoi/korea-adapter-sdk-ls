@@ -57,6 +57,7 @@ F/O order rights are a separate per-account gate. Two ways to confirm:
 
 | TR | `make` target | Test fn | Gate / required input | Promotion | Scope |
 |----|---------------|---------|-----------------------|-----------|-------|
+| `t8412` (negative) | `live-smoke-t8412-negative` | `live_smoke_t8412_negative` | open session + valid seed (differential probe, R10) | implemented-only | error-resilience gate: valid control + per-class invalid variants, HELD/CLEAN/DIVERGENT |
 | `token` | `live-smoke` | `live_smoke_default` | open session | ready | paper OAuth token issuance |
 | `t1102` | `live-smoke` | `live_smoke_default` | open session | ready | paper current-price quote |
 | `t1101` | `live-smoke-book` | `live_smoke_book` | open session | ready | paper price + 10-level order book |

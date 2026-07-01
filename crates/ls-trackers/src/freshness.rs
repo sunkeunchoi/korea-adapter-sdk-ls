@@ -492,14 +492,31 @@ mod tests {
     use crate::{gates_for, SupportState};
     use std::path::PathBuf;
 
+    /// The real authored metadata, with the 10 error-resilience-demoted TRs
+    /// re-marked `recommended` so the freshness *machinery* (the age/change rules)
+    /// stays exercised against a realistic 10-TR recommended set. The error-
+    /// resilience gate (plan 2026-07-01-004, R12) demoted those 10 to Implemented
+    /// pending re-certification through the differential-probe gate (U8), so the
+    /// committed set is currently empty; these tests validate the evaluator, not
+    /// the current promotion state, so they restore a synthetic recommended set.
+    /// (Freshness reads only `support.recommended` + `maintenance.last_reviewed`.)
     fn real_trs() -> BTreeMap<String, TrMetadata> {
         let metadata = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("..")
             .join("..")
             .join("metadata");
-        ls_metadata::validate_dir(&metadata)
+        let mut trs = ls_metadata::validate_dir(&metadata)
             .expect("authored metadata validates")
-            .trs
+            .trs;
+        for code in [
+            "token", "t1101", "t1102", "t8412", "S3_", "CSPAQ12200", "CSPAT00601", "CSPAT00701",
+            "CSPAT00801", "t0425",
+        ] {
+            if let Some(m) = trs.get_mut(code) {
+                m.support.recommended = true;
+            }
+        }
+        trs
     }
 
     fn date(y: i32, m: u32, d: u32) -> NaiveDate {

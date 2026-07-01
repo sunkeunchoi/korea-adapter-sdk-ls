@@ -17,10 +17,15 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use crate::schema::{EvidenceRecord, IndexEntry, TrIndex, TrMetadata};
+use crate::schema::{
+    ConstraintSchema, ErrorCatalog, ErrorCoverage, EvidenceRecord, IndexEntry, TrIndex, TrMetadata,
+};
 
 /// The conventional index filename under a metadata root.
 pub const INDEX_FILE_NAME: &str = "tr-index.yaml";
+
+/// The shared error-explanation catalog filename under a metadata root.
+pub const CATALOG_FILE_NAME: &str = "error-catalog.yaml";
 
 /// A located validation failure. Every variant carries enough context to point
 /// a maintainer at the offending TR (and field, when the failure is field-level).
@@ -85,6 +90,31 @@ pub enum ValidationError {
     /// the freshness path, which loads the manifest — KTD7). Clear it with
     /// `ls-trackers freshness re-pin <tr>`.
     AttestedShapeMissing { tr_code: String },
+    /// A TR's `constraints_ref` does not resolve to a file on disk.
+    ConstraintFileMissing { tr_code: String, path: PathBuf },
+    /// A TR's constraint schema could not be parsed (covers a missing per-class
+    /// N/A marker — the exhaustiveness audit, R5 — surfaced as a serde
+    /// missing-field error, and unknown keys).
+    ConstraintParse {
+        tr_code: String,
+        path: PathBuf,
+        message: String,
+    },
+    /// A TR's `error_coverage_ref` does not resolve to a file on disk.
+    ErrorCoverageFileMissing { tr_code: String, path: PathBuf },
+    /// A TR's error-coverage artifact could not be parsed.
+    ErrorCoverageParse {
+        tr_code: String,
+        path: PathBuf,
+        message: String,
+    },
+    /// A `recommended` TR carries no `error_coverage_ref` — the error-resilience
+    /// gate (R1) requires one before promotion. Distinct from a present-but-
+    /// unparseable coverage file: this is the presence condition, independent of
+    /// the coverage's input-class content (R2).
+    RecommendedMissingErrorCoverage { tr_code: String },
+    /// The shared error catalog (`error-catalog.yaml`) could not be read/parsed.
+    CatalogRead { path: PathBuf, message: String },
 }
 
 impl fmt::Display for ValidationError {
@@ -173,6 +203,43 @@ impl fmt::Display for ValidationError {
                 f,
                 "TR `{tr_code}`: recommended evidence record is missing `attested_shape` / `attested_normalizer_version` — re-pin with `ls-trackers freshness re-pin {tr_code}`"
             ),
+            ValidationError::ConstraintFileMissing { tr_code, path } => write!(
+                f,
+                "TR `{tr_code}`: constraints_ref does not resolve — no file at {}",
+                path.display()
+            ),
+            ValidationError::ConstraintParse {
+                tr_code,
+                path,
+                message,
+            } => write!(
+                f,
+                "TR `{tr_code}`: failed to parse constraint schema {}: {message}",
+                path.display()
+            ),
+            ValidationError::ErrorCoverageFileMissing { tr_code, path } => write!(
+                f,
+                "TR `{tr_code}`: error_coverage_ref does not resolve — no file at {}",
+                path.display()
+            ),
+            ValidationError::ErrorCoverageParse {
+                tr_code,
+                path,
+                message,
+            } => write!(
+                f,
+                "TR `{tr_code}`: failed to parse error-coverage artifact {}: {message}",
+                path.display()
+            ),
+            ValidationError::RecommendedMissingErrorCoverage { tr_code } => write!(
+                f,
+                "TR `{tr_code}`: support.recommended is true but no `error_coverage_ref` is present — the error-resilience gate requires error coverage before promotion"
+            ),
+            ValidationError::CatalogRead { path, message } => write!(
+                f,
+                "failed to read/parse error catalog {}: {message}",
+                path.display()
+            ),
         }
     }
 }
@@ -190,6 +257,17 @@ pub struct ValidationReport {
     /// Populated only for TRs that pass the recommendation/evidence checks, so a
     /// consumer (e.g. `ls-docgen`) can render the evidence environment level.
     pub evidence: BTreeMap<String, EvidenceRecord>,
+    /// Parsed request field-constraint schemas, keyed by TR code — for any TR that
+    /// declares a `constraints_ref` and parses cleanly (error-resilience gate).
+    /// `ls-docgen` projects the preflight rules from these.
+    pub constraints: BTreeMap<String, ConstraintSchema>,
+    /// Parsed error-coverage artifacts, keyed by TR code — for any TR that declares
+    /// an `error_coverage_ref` and parses cleanly. `ls-docgen` projects the
+    /// reachable-code table from these.
+    pub error_coverage: BTreeMap<String, ErrorCoverage>,
+    /// The shared gateway error-explanation catalog (`error-catalog.yaml`), parsed
+    /// once. `ls-docgen` projects each reachable code's explanation from it (R11).
+    pub error_catalog: ErrorCatalog,
 }
 
 impl ValidationReport {
@@ -358,6 +436,88 @@ pub fn check_recommendation(
     }
 }
 
+/// Check a parsed TR's error-resilience artifacts (constraint schema + error
+/// coverage) and enforce the promotion gate (R1). Accumulates located errors and,
+/// on a clean parse, inserts the parsed artifacts into `constraints` /
+/// `error_coverage` for downstream projection.
+///
+/// Rules, encoded as independent conditions so neither implies the other (R2):
+/// - Any TR that declares a `constraints_ref` must resolve+parse it (the R5
+///   exhaustiveness audit rides on the parse: a field missing an `enum`/`range`/
+///   `format` class is a serde error).
+/// - Any TR that declares an `error_coverage_ref` must resolve+parse it.
+/// - A `recommended` TR must *declare* an `error_coverage_ref` (presence
+///   condition, independent of the coverage's input-class content).
+pub fn check_artifacts(
+    metadata_root: &Path,
+    tr_code: &str,
+    meta: &TrMetadata,
+    constraints: &mut BTreeMap<String, ConstraintSchema>,
+    error_coverage: &mut BTreeMap<String, ErrorCoverage>,
+    errors: &mut Vec<ValidationError>,
+) {
+    if let Some(ref rel) = meta.constraints_ref {
+        let path = metadata_root.join(rel);
+        match std::fs::read_to_string(&path) {
+            Ok(yaml) => match serde_yaml::from_str::<ConstraintSchema>(&yaml) {
+                Ok(schema) => {
+                    constraints.insert(tr_code.to_string(), schema);
+                }
+                Err(e) => errors.push(ValidationError::ConstraintParse {
+                    tr_code: tr_code.to_string(),
+                    path,
+                    message: e.to_string(),
+                }),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                errors.push(ValidationError::ConstraintFileMissing {
+                    tr_code: tr_code.to_string(),
+                    path,
+                });
+            }
+            Err(e) => errors.push(ValidationError::ConstraintParse {
+                tr_code: tr_code.to_string(),
+                path,
+                message: e.to_string(),
+            }),
+        }
+    }
+
+    if let Some(ref rel) = meta.error_coverage_ref {
+        let path = metadata_root.join(rel);
+        match std::fs::read_to_string(&path) {
+            Ok(yaml) => match serde_yaml::from_str::<ErrorCoverage>(&yaml) {
+                Ok(coverage) => {
+                    error_coverage.insert(tr_code.to_string(), coverage);
+                }
+                Err(e) => errors.push(ValidationError::ErrorCoverageParse {
+                    tr_code: tr_code.to_string(),
+                    path,
+                    message: e.to_string(),
+                }),
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                errors.push(ValidationError::ErrorCoverageFileMissing {
+                    tr_code: tr_code.to_string(),
+                    path,
+                });
+            }
+            Err(e) => errors.push(ValidationError::ErrorCoverageParse {
+                tr_code: tr_code.to_string(),
+                path,
+                message: e.to_string(),
+            }),
+        }
+    }
+
+    // Promotion gate (R1): a recommended TR must declare error coverage.
+    if meta.support.recommended && meta.error_coverage_ref.is_none() {
+        errors.push(ValidationError::RecommendedMissingErrorCoverage {
+            tr_code: tr_code.to_string(),
+        });
+    }
+}
+
 /// Validate a metadata directory: load `tr-index.yaml`, then load and check
 /// every per-TR file it references.
 ///
@@ -391,6 +551,40 @@ pub fn validate_dir(metadata_root: &Path) -> Result<ValidationReport, Vec<Valida
     let mut errors: Vec<ValidationError> = Vec::new();
     let mut trs: BTreeMap<String, TrMetadata> = BTreeMap::new();
     let mut evidence: BTreeMap<String, EvidenceRecord> = BTreeMap::new();
+    let mut constraints: BTreeMap<String, ConstraintSchema> = BTreeMap::new();
+    let mut error_coverage: BTreeMap<String, ErrorCoverage> = BTreeMap::new();
+
+    // The shared error catalog is a single committed data file (KTD2). Parse it
+    // once for the docgen projection. An ABSENT catalog is treated as empty (the
+    // catalog is a projection input, not a per-TR validation gate — its existence
+    // and coverage are enforced by `ls-core`'s build.rs + tests); a PRESENT but
+    // malformed catalog is a located error, so drift in the committed file is
+    // caught without forcing every temp-root validator test to author one.
+    let catalog_path = metadata_root.join(CATALOG_FILE_NAME);
+    let empty_catalog = ErrorCatalog {
+        version: 0,
+        codes: BTreeMap::new(),
+    };
+    let error_catalog = match std::fs::read_to_string(&catalog_path) {
+        Ok(s) => match serde_yaml::from_str::<ErrorCatalog>(&s) {
+            Ok(c) => c,
+            Err(e) => {
+                errors.push(ValidationError::CatalogRead {
+                    path: catalog_path,
+                    message: e.to_string(),
+                });
+                empty_catalog
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => empty_catalog,
+        Err(e) => {
+            errors.push(ValidationError::CatalogRead {
+                path: catalog_path,
+                message: e.to_string(),
+            });
+            empty_catalog
+        }
+    };
 
     for (tr_code, entry) in &index.trs {
         // Per-TR `file` paths are recorded relative to the metadata root
@@ -420,6 +614,14 @@ pub fn validate_dir(metadata_root: &Path) -> Result<ValidationReport, Vec<Valida
             Ok(meta) => {
                 check_routing(tr_code, entry, &meta, &mut errors);
                 check_recommendation(metadata_root, tr_code, &meta, &mut evidence, &mut errors);
+                check_artifacts(
+                    metadata_root,
+                    tr_code,
+                    &meta,
+                    &mut constraints,
+                    &mut error_coverage,
+                    &mut errors,
+                );
                 trs.insert(tr_code.clone(), meta);
             }
             Err(e) => errors.push(e),
@@ -431,6 +633,9 @@ pub fn validate_dir(metadata_root: &Path) -> Result<ValidationReport, Vec<Valida
             index,
             trs,
             evidence,
+            constraints,
+            error_coverage,
+            error_catalog,
         })
     } else {
         Err(errors)
@@ -876,6 +1081,181 @@ attested_shape:
             e,
             ValidationError::AttestedShapeMissing { tr_code } if tr_code == "token"
         )));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    // --- error-resilience gate artifacts (U2/U6) ---------------------------
+
+    /// A minimal implemented TR YAML, optionally recommended, with optional
+    /// constraint/coverage refs — for the artifact checks.
+    fn tr_yaml(recommended: bool, constraints_ref: Option<&str>, coverage_ref: Option<&str>) -> String {
+        let mut y = format!(
+            "\
+tr_code: t8412
+owner_class: paginated
+facets:
+  protocol: rest
+  instrument_domain: stock
+  venue_session: krx_regular
+  date_sensitive: true
+  self_paginated: true
+  account_state: false
+  paper_incompatible: false
+  certification_path: automated
+  rate_bucket: market_data
+  caller_supplied_identifiers: [shcode]
+support:
+  tracked: true
+  implemented: true
+  recommended: {recommended}
+maintenance:
+  source_spec_hash: deadbeef
+  last_reviewed: 2026-06-22
+"
+        );
+        if let Some(c) = constraints_ref {
+            y.push_str(&format!("constraints_ref: {c}\n"));
+        }
+        if let Some(c) = coverage_ref {
+            y.push_str(&format!("error_coverage_ref: {c}\n"));
+        }
+        y
+    }
+
+    const EXEMPLAR_CONSTRAINTS: &str = r#"
+tr_code: t8412
+fields:
+  - name: shcode
+    type: string
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: true, kind: symbol, confirmed: false }
+"#;
+
+    const EXEMPLAR_COVERAGE: &str = r#"
+tr_code: t8412
+probe_status: not_probed
+input_classes: []
+gateway_codes: ["01900"]
+"#;
+
+    #[test]
+    fn recommended_without_error_coverage_is_located_error() {
+        // U6: a recommended TR with no error_coverage_ref fails the promotion gate.
+        let root = temp_metadata_root();
+        let m = meta("t8412", &tr_yaml(true, None, None));
+        let mut errors = Vec::new();
+        check_artifacts(
+            &root,
+            "t8412",
+            &m,
+            &mut BTreeMap::new(),
+            &mut BTreeMap::new(),
+            &mut errors,
+        );
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            ValidationError::RecommendedMissingErrorCoverage { tr_code } if tr_code == "t8412"
+        )));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn recommended_with_empty_input_class_coverage_still_validates() {
+        // U6/R2 independence: coverage present (even with an empty input-class set)
+        // satisfies the presence gate — the two conditions don't collapse.
+        let root = temp_metadata_root();
+        write(&root, "error-coverage/t8412.yaml", EXEMPLAR_COVERAGE);
+        let m = meta("t8412", &tr_yaml(true, None, Some("error-coverage/t8412.yaml")));
+        let mut coverage = BTreeMap::new();
+        let mut errors = Vec::new();
+        check_artifacts(&root, "t8412", &m, &mut BTreeMap::new(), &mut coverage, &mut errors);
+        assert!(errors.is_empty(), "coverage present is enough: {errors:?}");
+        assert!(coverage.contains_key("t8412"));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn implemented_non_recommended_without_coverage_validates_clean() {
+        // U6: an implemented, non-recommended TR needs no coverage.
+        let root = temp_metadata_root();
+        let m = meta("t8412", &tr_yaml(false, None, None));
+        let mut errors = Vec::new();
+        check_artifacts(
+            &root,
+            "t8412",
+            &m,
+            &mut BTreeMap::new(),
+            &mut BTreeMap::new(),
+            &mut errors,
+        );
+        assert!(errors.is_empty(), "no coverage required: {errors:?}");
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn constraints_ref_missing_file_is_located_error() {
+        let root = temp_metadata_root();
+        let m = meta("t8412", &tr_yaml(false, Some("constraints/t8412.yaml"), None));
+        let mut errors = Vec::new();
+        check_artifacts(
+            &root,
+            "t8412",
+            &m,
+            &mut BTreeMap::new(),
+            &mut BTreeMap::new(),
+            &mut errors,
+        );
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            ValidationError::ConstraintFileMissing { tr_code, .. } if tr_code == "t8412"
+        )));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn constraint_schema_missing_class_marker_is_parse_error() {
+        // R5 exhaustiveness: a field omitting the `range` class marker is a parse
+        // error (the non-optional class field is missing) — not a silent gap.
+        let root = temp_metadata_root();
+        let bad = r#"
+tr_code: t8412
+fields:
+  - name: shcode
+    type: string
+    required: true
+    enum: { applicable: false }
+    format: { applicable: false }
+"#;
+        write(&root, "constraints/t8412.yaml", bad);
+        let m = meta("t8412", &tr_yaml(false, Some("constraints/t8412.yaml"), None));
+        let mut errors = Vec::new();
+        check_artifacts(
+            &root,
+            "t8412",
+            &m,
+            &mut BTreeMap::new(),
+            &mut BTreeMap::new(),
+            &mut errors,
+        );
+        assert!(errors.iter().any(|e| matches!(
+            e,
+            ValidationError::ConstraintParse { tr_code, .. } if tr_code == "t8412"
+        )));
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn well_formed_constraints_parse_and_are_recorded() {
+        let root = temp_metadata_root();
+        write(&root, "constraints/t8412.yaml", EXEMPLAR_CONSTRAINTS);
+        let m = meta("t8412", &tr_yaml(false, Some("constraints/t8412.yaml"), None));
+        let mut constraints = BTreeMap::new();
+        let mut errors = Vec::new();
+        check_artifacts(&root, "t8412", &m, &mut constraints, &mut BTreeMap::new(), &mut errors);
+        assert!(errors.is_empty(), "clean schema: {errors:?}");
+        assert_eq!(constraints["t8412"].fields.len(), 1);
         std::fs::remove_dir_all(&root).ok();
     }
 

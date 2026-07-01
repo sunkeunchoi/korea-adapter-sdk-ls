@@ -18,15 +18,14 @@ dependencies:
 support:
   tracked: true
   implemented: true
-  recommended: true
+  recommended: false
 maintenance:
   source_spec_hash: 238beb842b1a
   last_reviewed: 2026-06-22
-recommendation:
-  behavior: Paper N-minute chart page for one symbol on a single trading day
-  evidence_ref: evidence/t8412.yaml
-  excludes:
-    - Production-credential charts (evidence is paper only)
-    - Multi-page chart_all correctness beyond a single page
-    - Chart correctness on halts/VI days or outside KRX regular session
-    - Auto-revoking the recommendation on a change-driven structural change — change-driven *detection* ships (a qualifying Structural API Shape change stales the evidence, surfaced advisory by the freshness check); auto-revoke of support.recommended stays deferred
+# Error-resilience gate exemplar (plan 2026-07-01-004): request field-constraint
+# schema (drives preflight + the negative probe + the Reference "Errors &
+# validation" section) and the error-coverage evidence artifact. Coverage is
+# offline-authored (probe_status: not_probed) — the differential live probe (R10)
+# gates re-promotion to Recommended (U8), not this offline gate.
+constraints_ref: constraints/t8412.yaml
+error_coverage_ref: error-coverage/t8412.yaml

@@ -1,0 +1,59 @@
+# Error-coverage evidence for t8412 (주식차트 N분) — the exemplar (R10/R11).
+#
+# Records the per-(field, class) coverage derived from constraints/t8412.yaml and
+# the reachable gateway codes the Reference page explains from the shared catalog.
+# This artifact is OFFLINE-authored: `probe_status: not_probed`. The differential
+# negative probe (`make live-smoke-t8412-negative`, R10) confirms the declared
+# bounds against paper and flips per-class status to `confirmed` / `held` /
+# `divergent`; that probe gates re-promotion to Recommended (U8), never this
+# offline gate.
+#
+# `status` legend: declared = authored offline, not yet probed; confirmed = the
+# differential probe confirmed the bound; held = inconclusive (session-closed /
+# unfunded / stale seed / paper-incompatible); divergent = observed behavior
+# disagreed with the declaration; n_a = the class does not apply to the field.
+tr_code: t8412
+probe_status: not_probed
+seed: "shcode=005930 nday=1 sdate/edate=a recent trading week"
+input_classes:
+  - { field: shcode, class: type, status: declared }
+  - { field: shcode, class: required, status: declared }
+  - { field: shcode, class: enum, status: n_a }
+  - { field: shcode, class: range, status: n_a }
+  - { field: shcode, class: format, status: declared }
+  - { field: ncnt, class: type, status: declared }
+  - { field: ncnt, class: required, status: declared }
+  - { field: ncnt, class: enum, status: n_a }
+  - { field: ncnt, class: range, status: n_a }
+  - { field: ncnt, class: format, status: n_a }
+  - { field: qrycnt, class: type, status: declared }
+  - { field: qrycnt, class: required, status: declared }
+  - { field: qrycnt, class: enum, status: n_a }
+  - { field: qrycnt, class: range, status: n_a }
+  - { field: qrycnt, class: format, status: n_a }
+  - { field: nday, class: type, status: declared }
+  - { field: nday, class: required, status: declared }
+  - { field: nday, class: enum, status: declared }
+  - { field: nday, class: range, status: n_a }
+  - { field: nday, class: format, status: n_a }
+  - { field: sdate, class: type, status: declared }
+  - { field: sdate, class: required, status: declared }
+  - { field: sdate, class: enum, status: n_a }
+  - { field: sdate, class: range, status: n_a }
+  - { field: sdate, class: format, status: declared }
+  - { field: edate, class: type, status: declared }
+  - { field: edate, class: required, status: declared }
+  - { field: edate, class: enum, status: n_a }
+  - { field: edate, class: range, status: n_a }
+  - { field: edate, class: format, status: declared }
+  - { field: "sdate/edate", class: cross_field, status: declared }
+# Reachable gateway codes for this read TR, explained once from the shared catalog
+# (R8/R9). Environment/entitlement codes are not reproduced per TR — they point at
+# the same catalog entries.
+gateway_codes:
+  - "00000"
+  - "00136"
+  - "00707"
+  - "904"
+  - "01900"
+  - IGW40011

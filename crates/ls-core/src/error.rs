@@ -73,6 +73,16 @@ pub enum LsError {
     /// Numeric string parsing failure — empty, malformed, or unsupported format.
     #[error("parse error: {0}")]
     Parse(String),
+
+    /// Preflight validation rejected the request BEFORE any network call
+    /// (error-resilience gate R6/R7). The request violated a positively-confirmed
+    /// field constraint declared in the TR's constraint schema; `field` names the
+    /// offending request field and `reason` explains why. No HTTP request is
+    /// issued. Distinct from [`ApiError`](Self::ApiError) (a gateway rejection):
+    /// this never reached the wire, so the caller can fix the input and retry
+    /// with no dedup or reconciliation concern.
+    #[error("invalid request field `{field}`: {reason}")]
+    Invalid { field: String, reason: String },
 }
 
 impl LsError {
@@ -98,6 +108,27 @@ impl LsError {
     /// [`crate::is_paper_order_incapable`].
     pub fn is_paper_order_incapable(&self) -> bool {
         matches!(self, LsError::ApiError { code, .. } if crate::inner::is_paper_order_incapable(code))
+    }
+
+    /// Surface a human-readable explanation for a gateway error from the shared
+    /// error catalog (error-resilience gate R8/R9). For an [`ApiError`] /
+    /// [`AmbiguousOrder`], the `code` is looked up in `metadata/error-catalog.yaml`
+    /// and its explanation returned; environment/entitlement codes (`904`,
+    /// `01900`, `01491`) resolve to their once-authored catalog entry rather than
+    /// a per-TR reproduction. An unrecognized code returns the stable generic
+    /// fallback, never the raw broker `rsp_msg` (which is withheld to avoid
+    /// leaking account data). Returns `None` for non-gateway variants (transport,
+    /// decode, preflight `Invalid`, ...), which carry their own `Display`.
+    ///
+    /// [`ApiError`]: Self::ApiError
+    /// [`AmbiguousOrder`]: Self::AmbiguousOrder
+    pub fn explain(&self) -> Option<&'static str> {
+        match self {
+            LsError::ApiError { code, .. } | LsError::AmbiguousOrder { code, .. } => {
+                Some(crate::error_catalog::explain_or_default(code))
+            }
+            _ => None,
+        }
     }
 }
 
