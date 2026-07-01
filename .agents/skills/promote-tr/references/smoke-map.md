@@ -22,6 +22,36 @@ them, plan -005); the `live-smoke-order` matrix's marketable scenario fills on a
 market and leaves a position requiring an out-of-band paper reset, so it is not used for
 the autonomous wave's evidence. Per-TR evidence: `metadata/evidence/{tr}.yaml`.
 
+**Pre-window F/O-order-capability probe (2026-07-01, plan 2026-07-01-001 U2/Q1):**
+Before committing the operator's scarce in-window session to `make live-smoke-fo-order`,
+confirm the `domestic_option` lane (account `…51`) is F/O-**order**-capable. The prior
+domestic-**spot** `01491` clearance does NOT establish derivatives order entitlement —
+F/O order rights are a separate per-account gate. Two ways to confirm:
+
+1. **Carry-forward (preferred, zero-risk):** if a prior `fo_order_chained_smoke` run on
+   this lane already certified a CFOAT submit (`00040`/`00039`), the account is proven
+   F/O-order-capable — skip the live probe and proceed.
+2. **Live raw-probe (cheap, credential-safe):** issue one classifier POST at the F/O
+   order endpoint on the corrected lane:
+
+   ```
+   make raw-probe LS_SMOKE_LANE=domestic_option \
+     LS_PROBE_TR_CD=CFOAT00100 LS_PROBE_PATH=/futureoption/order \
+     LS_PROBE_BODY='{"CFOAT00100InBlock1":{"FnoIsuNo":"<current F/O contract>","BnsTpCode":"1","FnoOrdprcPtnCode":"00","FnoOrdPrc":<t2111 상한가 daily-limit>,"OrdQty":1}}'
+   ```
+
+   `FnoOrdPrc`/`OrdQty` are JSON **numbers** (unquoted) or the gateway returns `IGW40011`;
+   price at the t2111 상한가 daily limit so an accepted probe rests far from market (cannot
+   fill). `raw-probe` prints only `http` / `rsp_cd` / `body_len` (never account data).
+
+   **Decision rule:** `rsp_cd` exact `01491` → account NOT F/O-order-capable → record the
+   CFOAT chain PENDING (R7) and **skip** the operator session (do not spend it). Any accept
+   (`00040`/`00039`) or other code → account is order-capable → proceed to the in-window
+   `make live-smoke-fo-order`. **Caveat:** an *accepted* probe places a REAL resting daily-
+   limit order that the full smoke's teardown will NOT cancel (it cancels only its own
+   order) — the operator must cancel the probe order out-of-band (or run the probe only when
+   they will immediately run the full chain and reconcile the board manually).
+
 | TR | `make` target | Test fn | Gate / required input | Promotion | Scope |
 |----|---------------|---------|-----------------------|-----------|-------|
 | `token` | `live-smoke` | `live_smoke_default` | open session | ready | paper OAuth token issuance |
