@@ -125,15 +125,19 @@ fn fo_flat_verdict(rows: &[T0441OutBlock1]) -> FoFlatVerdict {
 
 // ---- F/O per-leg certification predicate (R6, guards the U4 flip decision) ---
 
-/// The F/O order-ack codes, PER LEG (seed; read from the raw CFOAT success examples,
-/// seed-only until the operator's live run confirms them). Kept leg-specific so a
-/// submit that returns a modify/cancel code (a gateway anomaly) is NOT certified as a
-/// clean submit. `ls_core`'s runtime accept gate (`classify_order_rsp_cd`) is
-/// intentionally a coarser union across all order TRs — it only decides retry/dedup
+/// The F/O order-ack codes, PER LEG. Submit (00040 buy / 00039 sell) and cancel (00463)
+/// are CONFIRMED from the operator's 2026-07-01 in-window live run; the F/O family shares
+/// the domestic-stock chain's ack codes (stock submit 00040 / modify 00462 / cancel 00463).
+/// Modify carries BOTH the inferred stock-family 00462 and the original raw-example seed
+/// 00132, pending a clean live modify to pin it — the 2026-07-01 run's modify was rejected
+/// 01442 (정정수량 초과) before it acked, so its success code is not yet directly observed.
+/// Kept leg-specific so a submit that returns a modify/cancel code (a gateway anomaly) is
+/// NOT certified as a clean submit. `ls_core`'s runtime accept gate (`classify_order_rsp_cd`)
+/// is intentionally a coarser union across all order TRs — it only decides retry/dedup
 /// safety; per-leg certification is the stricter offline check the U4/U6 flip relies on.
-const FO_SUBMIT_OK: [&str; 2] = ["00040", "00039"]; // buy / sell
-const FO_MODIFY_OK: [&str; 1] = ["00132"];
-const FO_CANCEL_OK: [&str; 1] = ["00156"];
+const FO_SUBMIT_OK: [&str; 2] = ["00040", "00039"]; // buy / sell (00040 confirmed live 2026-07-01)
+const FO_MODIFY_OK: [&str; 2] = ["00462", "00132"]; // 00462 inferred (stock-family); 00132 raw seed
+const FO_CANCEL_OK: [&str; 1] = ["00463"]; // confirmed live 2026-07-01 (was seed 00156)
 
 /// Per-leg certification (R6): a leg certifies ONLY on a genuinely clean row — the
 /// `rsp_cd` is in that LEG's accepted set AND a usable order number is present. A
@@ -342,8 +346,10 @@ async fn fo_order_chained_smoke() {
         }
     };
 
-    // ---- SUBMIT leg (gate 1 evidence): a resting buy at the daily floor. ----
-    let submit_req = CFOAT00100Request::limit(&contract, "1", band.resting_buy_price(), "2");
+    // ---- SUBMIT leg (gate 1 evidence): a resting buy at the daily floor. Qty is 2 so the
+    // MODIFY leg can exercise a valid quantity REDUCTION (2 → 1); F/O 정정 cannot INCREASE
+    // qty. Args: (contract, ordqty="2", price, bnstpcode="2"=buy). ----
+    let submit_req = CFOAT00100Request::limit(&contract, "2", band.resting_buy_price(), "2");
     let mut sev = leg_evidence("CFOAT00100", "fo_submit_resting_buy");
     let submit_ordno = match sdk.fo_orders().submit(&submit_req).await {
         Ok(resp) => {
@@ -436,11 +442,13 @@ async fn fo_order_chained_smoke() {
         );
     }
 
-    // ---- MODIFY leg: amend the resting order's QUANTITY (price stays at the valid
-    // floor tick, so it stays far-from-market and cannot fill). The modify is absolute
-    // (full target qty), KTD4. Changing quantity rather than price avoids re-deriving an
-    // on-tick F/O price near the floor. ----
-    let modify_req = CFOAT00200Request::limit(&submit_ordno, &contract, "2", band.resting_buy_price());
+    // ---- MODIFY leg: REDUCE the resting order's QUANTITY from 2 → 1 (price stays at the
+    // valid floor tick, so it stays far-from-market and cannot fill). The modify is
+    // absolute (full target qty), KTD4, and MUST be a reduction: F/O 정정 cannot INCREASE
+    // quantity above the resting qty (a larger target is rejected 01442 정정수량 초과 —
+    // proven by the 2026-07-01 live run). Changing quantity rather than price avoids
+    // re-deriving an on-tick F/O price near the floor. ----
+    let modify_req = CFOAT00200Request::limit(&submit_ordno, &contract, "1", band.resting_buy_price());
     let mut mev = leg_evidence("CFOAT00200", "fo_modify_resting_qty");
     let (live_ordno, resting_qty, modify_uncertain) = match sdk.fo_orders().modify(&modify_req).await {
         Ok(resp) => {
@@ -459,8 +467,8 @@ async fn fo_order_chained_smoke() {
             let n = resp.order_no().to_string();
             if certified {
                 // A CLEANLY certified modify transitioned the resting order to the NEW
-                // order number at the modified quantity — cancel that.
-                (n, "2".to_string(), false)
+                // order number at the modified quantity (now 1) — cancel that.
+                (n, "1".to_string(), false)
             } else {
                 // Ok but NOT cleanly certified (wrong-leg/unrecognized code, or empty/zero
                 // new order number): it is ambiguous which order is now live. Best-effort
@@ -471,12 +479,12 @@ async fn fo_order_chained_smoke() {
                 } else {
                     n
                 };
-                (live, "2".to_string(), true)
+                (live, "1".to_string(), true)
             }
         }
         Err(e) => {
             // Gate 1 already flipped on the submit leg; gate 2 stays Pending. The original
-            // submit order is untouched and still rests at the submit quantity.
+            // submit order is untouched and still rests at the submit quantity (2).
             mev.rsp_msg = format!("modify failed: {}", scrub_secrets(&e.to_string()));
             mev.record();
             OrderEvidence::pending(
@@ -484,7 +492,7 @@ async fn fo_order_chained_smoke() {
                 "F/O modify link failed; gate 2 not flipped (gate 1 stands)",
             )
             .record();
-            (submit_ordno.clone(), "1".to_string(), false)
+            (submit_ordno.clone(), "2".to_string(), false)
         }
     };
 
@@ -615,12 +623,13 @@ fn fo_leg_certifies_only_on_clean_rows() {
     // Covers R6. Clean success per leg (recognized ack for THAT leg + order number).
     assert!(fo_leg_certified(&FO_SUBMIT_OK, "00040", "69007"), "buy submit ack");
     assert!(fo_leg_certified(&FO_SUBMIT_OK, "00039", "69007"), "sell submit ack");
-    assert!(fo_leg_certified(&FO_MODIFY_OK, "00132", "69041"), "F/O modify ack");
-    assert!(fo_leg_certified(&FO_CANCEL_OK, "00156", "69044"), "F/O cancel ack");
+    assert!(fo_leg_certified(&FO_MODIFY_OK, "00462", "69041"), "F/O modify ack (stock-family, inferred)");
+    assert!(fo_leg_certified(&FO_MODIFY_OK, "00132", "69041"), "F/O modify ack (raw seed, hedged)");
+    assert!(fo_leg_certified(&FO_CANCEL_OK, "00463", "69044"), "F/O cancel ack (confirmed live)");
     // Leg-specificity: a code valid for ANOTHER leg is NOT certified on this leg — a
     // submit returning a modify/cancel code is a gateway anomaly, never a clean submit.
-    assert!(!fo_leg_certified(&FO_SUBMIT_OK, "00132", "69007"), "modify code on submit leg");
-    assert!(!fo_leg_certified(&FO_SUBMIT_OK, "00156", "69007"), "cancel code on submit leg");
+    assert!(!fo_leg_certified(&FO_SUBMIT_OK, "00462", "69007"), "modify code on submit leg");
+    assert!(!fo_leg_certified(&FO_SUBMIT_OK, "00463", "69007"), "cancel code on submit leg");
     assert!(!fo_leg_certified(&FO_MODIFY_OK, "00040", "69041"), "submit code on modify leg");
     assert!(!fo_leg_certified(&FO_CANCEL_OK, "00132", "69044"), "modify code on cancel leg");
     // Soft-reject in a success-shaped envelope (generic 00000 / empty) → NOT certified.
