@@ -31,7 +31,22 @@ The lowest *maintained* rung: the TR has committed metadata and a maintained bas
 The middle rung: the TR has hand-authored callable Rust and has passed a Paper Live Smoke (a representative call that constructs, returns a success code, yields a non-empty result, and deserializes). An Implemented TR is callable but carries no recommendation and no recorded evidence — explicitly *not* endorsed for production use.
 
 ### Recommended
-The top rung: an Implemented TR additionally cleared for production use, backed by recorded Focused Evidence and a recommendation block. Promotion to Recommended is a separate, deliberate act beyond Implemented.
+The top rung: an Implemented TR additionally cleared for production use, backed by recorded Focused Evidence and a recommendation block. Promotion to Recommended is a separate, deliberate act beyond Implemented. As of the [[Error-resilience gate]] it additionally means "this call fails gracefully" — promotion requires passing the gate (error coverage), not just a green happy-path smoke.
+
+### Error-resilience gate
+The blocking condition, layered on top of the happy-path [[Paper Live Smoke]] + [[Focused Evidence]] + recommendation block, that a TR must pass to reach [[Recommended]]. It redefines the badge to mean "this call fails gracefully": invalid input is caught before the network call ([[Preflight validation]]) and every reachable gateway error is explained. Its per-TR evidence is [[Error coverage]], produced by the [[Differential negative probe]].
+
+### Preflight validation
+Rejecting an invalid request *before any network call* with a typed `LsError::Invalid { field, reason }`, from a per-TR [[Constraint schema]]. Runs at the single `dispatch_once` seam (so it covers every owner_class, including orders). Deliberately **permissive by default**: only `type`/`required` (grounded against the normalized baseline) always block; value-class bounds (enum/range/format) stay permissive until a live probe confirms them, because a false-reject silently breaks a caller's valid request with no detector.
+
+### Constraint schema
+A declarative per-TR sidecar (`metadata/constraints/<tr>.yaml`) describing each request field's type, required-ness, and per-input-class markers (enum/range/format, each explicitly N/A when inapplicable). The single source from which preflight validation, the negative probe, and the Reference "Errors & validation" section are all derived. Grounded offline against the TR's normalized baseline.
+
+### Differential negative probe
+The operator-run probe that certifies a [[Constraint schema]] against paper: a valid control request plus each mechanically-generated invalid variant run in the *same session*, so the injected violation — not an environment condition — is what a rejection reflects. Outcomes per variant: CLEAN (control ok, variant rejected), DIVERGENT (control ok, variant accepted — blocks promotion), or HELD (control failed → inconclusive, distinct from a divergence). Gates re-promotion, never the offline CI gate.
+
+### Error coverage
+The per-TR evidence artifact (`metadata/error-coverage/<tr>.yaml`) recording the [[Differential negative probe]]'s per-(field, class) outcomes plus the reachable gateway codes the Reference page explains from the shared error catalog. Required on a Recommended TR by the validator ([[Error-resilience gate]]).
 
 ### Paper Live Smoke
 A credential-gated integration test that hits the real LS *paper* gateway with real credentials to prove a TR is genuinely callable. It is the gate for flipping a TR to Implemented; a smoke that returns an empty result leaves the TR callable-but-unconfirmed (pending), not Implemented. For `realtime`/websocket TRs the gate is instead *lifecycle (Transport) reachability* — a clean connect → subscribe → unsubscribe — and a row that does or does not arrive is bonus, not the gate; row contents stay provisional until a separate FrameDecode pass.

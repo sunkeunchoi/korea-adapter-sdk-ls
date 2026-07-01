@@ -40,12 +40,12 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `COSAT00311` | 미국시장정정주문 (overseas US-stock order modify) | `orders` | tracked | [COSAT00311](./COSAT00311.md) |
 | `COSAT00400` | 해외주식 예약주문 등록 및 취소 (overseas US-stock reserved order reg/cancel) | `orders` | tracked | [COSAT00400](./COSAT00400.md) |
 | `COSMT00300` | 해외증권 매도상환주문(미국) (overseas US-stock sell/redemption) | `orders` | tracked | [COSMT00300](./COSMT00300.md) |
-| `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | recommended | [CSPAQ12200](./CSPAQ12200.md) |
+| `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | implemented | [CSPAQ12200](./CSPAQ12200.md) |
 | `CSPAQ12300` | BEP단가조회 | `account` | implemented | [CSPAQ12300](./CSPAQ12300.md) |
 | `CSPAQ22200` | 현물계좌예수금 주문가능금액 총평가2 | `account` | implemented | [CSPAQ22200](./CSPAQ22200.md) |
-| `CSPAT00601` | 현물 정규주문 (cash equity order submission) | `orders` | recommended | [CSPAT00601](./CSPAT00601.md) |
-| `CSPAT00701` | 현물정정주문 (cash equity order modify) | `orders` | recommended | [CSPAT00701](./CSPAT00701.md) |
-| `CSPAT00801` | 현물취소주문 (cash equity order cancel) | `orders` | recommended | [CSPAT00801](./CSPAT00801.md) |
+| `CSPAT00601` | 현물 정규주문 (cash equity order submission) | `orders` | implemented | [CSPAT00601](./CSPAT00601.md) |
+| `CSPAT00701` | 현물정정주문 (cash equity order modify) | `orders` | implemented | [CSPAT00701](./CSPAT00701.md) |
+| `CSPAT00801` | 현물취소주문 (cash equity order cancel) | `orders` | implemented | [CSPAT00801](./CSPAT00801.md) |
 | `CSPBQ00200` | 현물계좌증거금률별주문가능수량조회 | `account` | tracked | [CSPBQ00200](./CSPBQ00200.md) |
 | `CUR` | 현물정보USD실시간 | `realtime` | implemented | [CUR](./CUR.md) |
 | `DBM` | KRX야간파생 투자자매매현황 | `realtime` | implemented | [DBM](./DBM.md) |
@@ -105,7 +105,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `OX0` | KOSPI200옵션가격제한폭확대 | `realtime` | implemented | [OX0](./OX0.md) |
 | `PH_` | KOSPI프로그램매매종목별 | `realtime` | implemented | [PH_](./PH_.md) |
 | `S2_` | KOSPI 우선호가 실시간 시세 | `realtime` | implemented | [S2_](./S2_.md) |
-| `S3_` | KOSPI 체결 실시간 시세 | `realtime` | recommended | [S3_](./S3_.md) |
+| `S3_` | KOSPI 체결 실시간 시세 | `realtime` | implemented | [S3_](./S3_.md) |
 | `SC0` | 주식 주문접수 실시간 | `realtime` | implemented | [SC0](./SC0.md) |
 | `SC1` | 주식 주문체결 실시간 | `realtime` | implemented | [SC1](./SC1.md) |
 | `SC2` | 주식 주문정정 실시간 | `realtime` | implemented | [SC2](./SC2.md) |
@@ -164,10 +164,10 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `revoke` | 접근토큰 폐기 (OAuth2 token revoke) | `standalone` | implemented | [revoke](./revoke.md) |
 | `t0167` | 서버시간조회 | `market_session` | implemented | [t0167](./t0167.md) |
 | `t0424` | 주식잔고2 | `account` | implemented | [t0424](./t0424.md) |
-| `t0425` | 주식체결/미체결 (stock filled/unfilled order inquiry) | `paginated` | recommended | [t0425](./t0425.md) |
+| `t0425` | 주식체결/미체결 (stock filled/unfilled order inquiry) | `paginated` | implemented | [t0425](./t0425.md) |
 | `t0441` | 선물/옵션잔고평가(이동평균) | `account` | tracked | [t0441](./t0441.md) |
-| `t1101` | 주식 현재가호가 조회 | `market_session` | recommended | [t1101](./t1101.md) |
-| `t1102` | 주식 현재가(시세) 조회 | `market_session` | recommended | [t1102](./t1102.md) |
+| `t1101` | 주식 현재가호가 조회 | `market_session` | implemented | [t1101](./t1101.md) |
+| `t1102` | 주식 현재가(시세) 조회 | `market_session` | implemented | [t1102](./t1102.md) |
 | `t1104` | 주식현재가시세메모 | `market_session` | implemented | [t1104](./t1104.md) |
 | `t1105` | 주식피봇/디마크조회 | `market_session` | implemented | [t1105](./t1105.md) |
 | `t1109` | 시간외체결량 | `paginated` | tracked | [t1109](./t1109.md) |
@@ -291,7 +291,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t8407` | API용주식멀티현재가조회 | `market_session` | implemented | [t8407](./t8407.md) |
 | `t8410` | API전용주식차트(일주월년) | `paginated` | implemented | [t8410](./t8410.md) |
 | `t8411` | 주식차트(틱/n틱) | `paginated` | implemented | [t8411](./t8411.md) |
-| `t8412` | 주식 차트(N분봉) 조회 | `paginated` | recommended | [t8412](./t8412.md) |
+| `t8412` | 주식 차트(N분봉) 조회 | `paginated` | implemented | [t8412](./t8412.md) |
 | `t8417` | 업종차트(틱/n틱) | `paginated` | implemented | [t8417](./t8417.md) |
 | `t8418` | 업종차트(N분) | `paginated` | implemented | [t8418](./t8418.md) |
 | `t8419` | 업종차트(일주월) | `paginated` | implemented | [t8419](./t8419.md) |
@@ -325,4 +325,4 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t9943` | 지수선물마스터조회API용 | `market_session` | implemented | [t9943](./t9943.md) |
 | `t9944` | 지수옵션마스터조회API용 | `market_session` | implemented | [t9944](./t9944.md) |
 | `t9945` | 주식마스터조회API용 | `market_session` | implemented | [t9945](./t9945.md) |
-| `token` | 접근토큰 발급 (OAuth2 token issue) | `standalone` | recommended | [token](./token.md) |
+| `token` | 접근토큰 발급 (OAuth2 token issue) | `standalone` | implemented | [token](./token.md) |

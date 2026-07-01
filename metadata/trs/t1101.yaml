@@ -18,15 +18,7 @@ dependencies:
 support:
   tracked: true
   implemented: true
-  recommended: true
+  recommended: false
 maintenance:
   source_spec_hash: e5f6a1b2c3d4
   last_reviewed: 2026-06-22
-recommendation:
-  behavior: Paper current-price + 10-level order-book (호가) snapshot for one symbol
-  evidence_ref: evidence/t1101.yaml
-  excludes:
-    - Production-credential quotes (evidence is paper only)
-    - Fields outside the modeled subset (price header + 10 offer/bid levels)
-    - Order-book correctness during halts/VI or outside KRX regular session
-    - Auto-revoking the recommendation on a change-driven structural change — change-driven *detection* ships (a qualifying Structural API Shape change stales the evidence, surfaced advisory by the freshness check); auto-revoke of support.recommended stays deferred

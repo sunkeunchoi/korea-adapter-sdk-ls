@@ -106,11 +106,13 @@ freshness evaluator. The advisory spec-doc point (2) holds by construction. Only
   signal. A first-seen date carried into the rolling issue (a dead-man's-switch) is
   deferred; the normalizer-bump blind window is bounded operationally by the runbook
   re-attestation window instead.
-- **Per-class freshness tightening.** With ten Recommended TRs (`token`, `t1101`,
-  `t1102`, `t8412`, `S3_`, `CSPAQ12200`, and the four order TRs `CSPAT00601` submit /
-  `CSPAT00701` modify / `CSPAT00801` cancel [`orders` class] + `t0425` reconciliation
-  read [`paginated` class], promoted by plan 2026-06-30-002 on a clean in-window paper
-  order-chain) spanning six classes (standalone, market_session, paginated, realtime,
-  account, orders), the 90-day default applies uniformly; per-class tightening (e.g. a
-  shorter window for the now-Recommended `orders` class, whose evidence endorses live
-  order placement) stays deferred but is now actionable.
+- **Per-class freshness tightening.** The **error-resilience gate** (plan
+  2026-07-01-004, R12) demoted the ten TRs promoted under the old happy-path gate
+  (`token`, `t1101`, `t1102`, `t8412`, `S3_`, `CSPAQ12200`, and the four order TRs
+  `CSPAT00601` submit / `CSPAT00701` modify / `CSPAT00801` cancel + `t0425`
+  reconciliation read) back to Implemented, so the **current Recommended count is
+  0**: the badge now means "this call fails gracefully," and each TR re-promotes
+  only after passing the new differential-probe gate (U8, operator-run across live
+  windows). Until re-certification the freshness evaluator has no Recommended TR to
+  evaluate; per-class tightening (e.g. a shorter window for the `orders` class)
+  stays deferred and becomes actionable again as TRs re-promote.

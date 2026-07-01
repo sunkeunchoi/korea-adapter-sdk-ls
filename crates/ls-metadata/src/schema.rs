@@ -182,6 +182,174 @@ pub struct EvidenceRecord {
     pub attested_normalizer_version: Option<u32>,
 }
 
+// ---------------------------------------------------------------------------
+// Error-resilience gate artifacts (constraint schema + error coverage).
+//
+// These types mirror the runtime copies in `ls_core::preflight` — the shared
+// per-TR YAML (`metadata/constraints/<tr>.yaml`) is the contract between them.
+// ls-core cannot depend on ls-metadata at runtime (it ships to consumers), so
+// the type is deliberately duplicated; this copy is the authority for offline
+// grounding, validation, and docgen projection.
+// ---------------------------------------------------------------------------
+
+/// The declared wire type of a request field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FieldType {
+    String,
+    Integer,
+    Number,
+}
+
+/// Allowed-enum input class. `applicable: false` is the explicit N/A marker (R5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnumRule {
+    pub applicable: bool,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub values: Vec<String>,
+    #[serde(default)]
+    pub confirmed: bool,
+}
+
+/// Out-of-range input class (inclusive bounds).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RangeRule {
+    pub applicable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub min: Option<i64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max: Option<i64>,
+    #[serde(default)]
+    pub confirmed: bool,
+}
+
+/// A recognised value format for the malformed-symbol/date class.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FormatKind {
+    Symbol,
+    Date,
+}
+
+/// Malformed-format input class. `applicable: false` is the explicit N/A marker.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FormatRule {
+    pub applicable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<FormatKind>,
+    #[serde(default)]
+    pub confirmed: bool,
+}
+
+/// One request field's constraints across every input class. `enum`/`range`/
+/// `format` are non-optional so an inapplicable class must be explicitly marked
+/// N/A — exhaustiveness is auditable, not inferred from silence (R5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FieldConstraint {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub field_type: FieldType,
+    pub required: bool,
+    #[serde(rename = "enum")]
+    pub enum_rule: EnumRule,
+    pub range: RangeRule,
+    pub format: FormatRule,
+}
+
+/// A cross-field / combination-invalidity rule (R7).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CrossFieldRule {
+    DateOrder {
+        start: String,
+        end: String,
+        #[serde(default)]
+        confirmed: bool,
+    },
+}
+
+/// A per-TR declarative request-field constraint schema
+/// (`metadata/constraints/<tr>.yaml`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConstraintSchema {
+    pub tr_code: String,
+    pub fields: Vec<FieldConstraint>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cross_field: Vec<CrossFieldRule>,
+}
+
+/// One entry in the shared gateway error-explanation catalog
+/// (`metadata/error-catalog.yaml`). `ls-core` embeds the same file for runtime
+/// `explain`; docgen projects these onto the Reference page (R8/R9/R11).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CatalogEntry {
+    /// Coarse classification (`success`, `paper_incompatible`, `session_closed`,
+    /// `request_shape`, `gateway_error`, ...).
+    pub kind: String,
+    /// The user-facing explanation.
+    pub explanation: String,
+}
+
+/// The parsed shared error catalog: a `version` plus a code → entry map.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ErrorCatalog {
+    pub version: u32,
+    #[serde(default)]
+    pub codes: std::collections::BTreeMap<String, CatalogEntry>,
+}
+
+/// Outcome of the differential negative probe for a TR (R10). Offline artifacts
+/// are `NotProbed`; the operator probe records the rest.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProbeStatus {
+    /// No live probe has run yet (offline-authored coverage).
+    NotProbed,
+    /// Valid control succeeded and every invalid variant failed distinctly.
+    Clean,
+    /// Inconclusive — valid control failed (session-closed / unfunded / stale
+    /// seed / paper-incompatible). Distinct from a divergence.
+    Held,
+    /// The declared bound diverged from observed behavior — promotion is blocked.
+    Divergent,
+}
+
+/// Per-(field, class) probe outcome recorded in error coverage.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ClassCoverage {
+    /// The request field (or `"<cross-field>"` for a combination rule).
+    pub field: String,
+    /// The input class: `type`, `required`, `enum`, `range`, `format`, or
+    /// `cross_field`.
+    pub class: String,
+    /// The per-class outcome: `declared` (offline, unprobed), `confirmed`,
+    /// `held`, `divergent`, or `n_a`.
+    pub status: String,
+}
+
+/// The per-TR error-coverage evidence artifact
+/// (`metadata/error-coverage/<tr>.yaml`, R10/R11). Records the differential probe
+/// outcome, the per-class coverage map, and the reachable gateway codes the
+/// Reference page explains from the shared catalog.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ErrorCoverage {
+    pub tr_code: String,
+    #[serde(default = "default_probe_status")]
+    pub probe_status: ProbeStatus,
+    /// The maintained valid-seed fixture the probe's control uses, when declared.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub seed: Option<String>,
+    #[serde(default)]
+    pub input_classes: Vec<ClassCoverage>,
+    /// Reachable gateway codes for this TR (a subset of `error-catalog.yaml`).
+    #[serde(default)]
+    pub gateway_codes: Vec<String>,
+}
+
+fn default_probe_status() -> ProbeStatus {
+    ProbeStatus::NotProbed
+}
+
 /// The full per-TR maintenance metadata record (`metadata/trs/<tr>.yaml`).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TrMetadata {
@@ -198,6 +366,16 @@ pub struct TrMetadata {
     /// user-facing recommendation contract.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub recommendation: Option<Recommendation>,
+    /// Path (relative to the metadata root) of the TR's request field-constraint
+    /// schema (`constraints/<tr>.yaml`), when authored. Drives preflight, the
+    /// negative probe, and the Reference "Errors & validation" section.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub constraints_ref: Option<String>,
+    /// Path (relative to the metadata root) of the TR's error-coverage evidence
+    /// (`error-coverage/<tr>.yaml`), when authored. Required for a `recommended`
+    /// TR (error-resilience gate R1) — enforced by the validator.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error_coverage_ref: Option<String>,
 }
 
 /// One routing entry in `tr-index.yaml`. Duplicates only selector fields used

@@ -248,6 +248,15 @@ impl Inner {
         span.record("tr_code", policy.tr_code);
         span.record("path", policy.path);
 
+        // Step 0: preflight validation (error-resilience gate R6/R7). The SINGLE
+        // seam for every owner_class — post/post_paginated/post_order all funnel
+        // here. If the TR carries a constraint schema, an invalid request is
+        // rejected with `LsError::Invalid` BEFORE any token fetch or HTTP I/O; a
+        // TR with no schema is permissive (unchanged behavior). Preflight failures
+        // are not retryable (`is_retryable` matches only transport errors), so a
+        // block fails on the first attempt without a network call.
+        crate::preflight::preflight_request(policy.tr_code, req)?;
+
         // Step 1: obtain a valid bearer token (fetches or refreshes lazily).
         let token = self
             .token_manager
@@ -763,6 +772,70 @@ mod tests {
             .expect("post should succeed");
         assert_eq!(res.value, "hello");
         assert_eq!(res.rsp_cd, "00000");
+    }
+
+    /// A policy for the exemplar TR (`t8412`) that carries an embedded constraint
+    /// schema, so preflight (Step 0 of `dispatch_once`) is exercised.
+    fn t8412_policy() -> EndpointPolicy {
+        EndpointPolicy {
+            tr_code: "t8412",
+            path: "/stock/chart",
+            ..test_policy()
+        }
+    }
+
+    #[tokio::test]
+    async fn preflight_block_issues_no_http_request() {
+        // Error-resilience gate R6/AE1: an invalid request against a TR with a
+        // constraint schema is rejected with `LsError::Invalid` BEFORE any network
+        // call. Mount the token endpoint but NO TR endpoint; assert zero requests
+        // reached the server (not even a token fetch).
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        // `shcode` is required by t8412's schema; an empty value is a preflight
+        // block (structurally-grounded required-ness always blocks).
+        let bad_req = serde_json::json!({"shcode": "", "ncnt": "1", "qrycnt": "20"});
+        let err = inner
+            .post::<_, EchoRes>(&t8412_policy(), &bad_req)
+            .await
+            .expect_err("preflight must reject the invalid request");
+        match err {
+            LsError::Invalid { field, .. } => assert_eq!(field, "shcode"),
+            other => panic!("expected LsError::Invalid, got {other:?}"),
+        }
+
+        let received = server
+            .received_requests()
+            .await
+            .expect("wiremock records requests");
+        assert!(
+            received.is_empty(),
+            "preflight block must issue no HTTP request, saw {} request(s)",
+            received.len()
+        );
+    }
+
+    #[tokio::test]
+    async fn preflight_permissive_when_no_schema_dispatches_normally() {
+        // A TR with no constraint schema is permissive — dispatch is unchanged.
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        Mock::given(method("POST"))
+            .and(path("/test/path"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "rsp_cd": "00000",
+                "value": "ok"
+            })))
+            .mount(&server)
+            .await;
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        let res: EchoRes = inner
+            .post(&test_policy(), &serde_json::json!({"shcode": ""}))
+            .await
+            .expect("no-schema TR is permissive");
+        assert_eq!(res.value, "ok");
     }
 
     #[tokio::test]

@@ -8,12 +8,15 @@ pub mod auth;
 pub mod client;
 pub mod config;
 pub mod config_resolve;
+mod embedded;
 pub mod endpoint_policy;
 pub mod error;
+pub mod error_catalog;
 pub mod inner;
 pub mod order_dedup;
 pub mod pagination;
 pub mod parse;
+pub mod preflight;
 pub mod rate_limiter;
 
 pub use auth::{revoke_token_http, TokenData, TokenManager};
@@ -22,6 +25,12 @@ pub use config::{Environment, LsConfig, RateLimitConfig, WsOverflowPolicy};
 pub use config_resolve::{ResolvedConfig, ResolvedRateLimits};
 pub use endpoint_policy::{EndpointPolicy, Protocol};
 pub use error::{LsError, LsResult};
+pub use error_catalog::{explain, explain_or_default, CatalogEntry};
+pub use preflight::{
+    classify_probe, generate_invalid_variants, preflight_request, schema_for, validate_request,
+    ConstraintSchema, CrossFieldRule, EnumRule, FieldConstraint, FieldType, FormatKind, FormatRule,
+    InvalidVariant, PreflightError, ProbeOutcome, RangeRule,
+};
 pub use inner::{
     is_paper_incompatible, is_paper_order_incapable, Inner, PAPER_INCOMPATIBLE_CODE,
     PAPER_ORDER_INCAPABLE_CODE,

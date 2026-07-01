@@ -1,0 +1,70 @@
+# Request field-constraint schema for t8412 (주식차트 N분) — the exemplar for the
+# error-resilience gate (R3/R4/R5). The single source from which the preflight
+# validator (ls-core), the differential negative probe, and the Reference
+# "Errors & validation" section are derived.
+#
+# Grounding (KTD5, R4):
+#   - `type` + `required` are cross-checked offline against the normalized
+#     baseline (crates/ls-trackers/baselines/api-drift/normalized/trs/t8412.json).
+#     A field may be declared LESS required than the wire (the permissive
+#     direction, e.g. the continuation fields), never MORE.
+#   - `enum` / `range` / `format` bounds are graded offline from the source spec;
+#     each carries `confirmed: false` until the differential live probe (R10)
+#     confirms it, so preflight stays permissive on them (R6) until then.
+#   - every field marks each inapplicable class N/A explicitly (`applicable:
+#     false`) so exhaustiveness is auditable, not inferred from silence (R5).
+tr_code: t8412
+fields:
+  - name: shcode
+    type: string          # baseline: String, required
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: true, kind: symbol, confirmed: false }
+  - name: ncnt
+    type: integer         # baseline: Number, required (N-minute interval)
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: qrycnt
+    type: integer         # baseline: Number, required (row count)
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: nday
+    type: string          # baseline: String, required (0=intraday, 1=daily)
+    required: true
+    enum: { applicable: true, values: ["0", "1"], confirmed: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: sdate
+    type: string          # baseline: String, required on the wire, but the date
+    required: false        # range is a filter the gateway defaults — declared
+    enum: { applicable: false }   # caller-optional (permissive direction, R6) to
+    range: { applicable: false }  # avoid false-rejecting an empty-range query.
+    format: { applicable: true, kind: date, confirmed: false }
+  - name: edate
+    type: string          # baseline: String, required on the wire, caller-optional
+    required: false        # (permissive direction — a range filter, R6).
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: true, kind: date, confirmed: false }
+  - name: cts_date
+    type: string          # baseline: String, required on the wire, but caller-
+    required: false        # optional (empty on the first page; set by collect_all)
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: cts_time
+    type: string          # baseline: String, required on the wire, caller-optional
+    required: false
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }
+cross_field:
+  - kind: date_order
+    start: sdate
+    end: edate
+    confirmed: false

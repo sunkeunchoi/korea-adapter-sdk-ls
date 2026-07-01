@@ -20,7 +20,8 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use ls_metadata::{
-    validate_dir, CertificationPath, EvidenceRecord, InstrumentDomain, OwnerClass, Protocol,
+    validate_dir, CertificationPath, ConstraintSchema, CrossFieldRule, ErrorCatalog, ErrorCoverage,
+    EvidenceRecord, FieldConstraint, FieldType, FormatKind, InstrumentDomain, OwnerClass, Protocol,
     RateBucket, Support, TrIndex, TrMetadata, ValidationError, ValidationReport, VenueSession,
 };
 
@@ -454,10 +455,149 @@ fn render_recommendation(meta: &TrMetadata, evidence: Option<&EvidenceRecord>) -
     out
 }
 
+/// Describe one field-type for the preflight rules list.
+fn field_type_str(t: FieldType) -> &'static str {
+    match t {
+        FieldType::String => "string",
+        FieldType::Integer => "integer",
+        FieldType::Number => "number",
+    }
+}
+
+/// Render one field's preflight rules line from its declared constraints. Type +
+/// required always enforce; enum/range/format note "permissive until confirmed"
+/// when their bound is unconfirmed (R6), so users understand a declared-but-
+/// unconfirmed bound does not (yet) reject locally.
+fn render_field_rule(field: &FieldConstraint) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    parts.push(format!("type `{}`", field_type_str(field.field_type)));
+    parts.push(if field.required {
+        "required".to_string()
+    } else {
+        "optional".to_string()
+    });
+    if field.enum_rule.applicable {
+        let suffix = if field.enum_rule.confirmed {
+            "enforced"
+        } else {
+            "permissive until confirmed"
+        };
+        parts.push(format!(
+            "one of [{}] ({suffix})",
+            field.enum_rule.values.join(", ")
+        ));
+    }
+    if field.range.applicable {
+        let suffix = if field.range.confirmed {
+            "enforced"
+        } else {
+            "permissive until confirmed"
+        };
+        let bound = match (field.range.min, field.range.max) {
+            (Some(min), Some(max)) => format!("{min}..={max}"),
+            (Some(min), None) => format!(">= {min}"),
+            (None, Some(max)) => format!("<= {max}"),
+            (None, None) => "range".to_string(),
+        };
+        parts.push(format!("{bound} ({suffix})"));
+    }
+    if field.format.applicable {
+        let suffix = if field.format.confirmed {
+            "enforced"
+        } else {
+            "permissive until confirmed"
+        };
+        let kind = match field.format.kind {
+            Some(FormatKind::Symbol) => "alphanumeric symbol",
+            Some(FormatKind::Date) => "YYYYMMDD date",
+            None => "format",
+        };
+        parts.push(format!("{kind} ({suffix})"));
+    }
+    format!("- `{}` — {}\n", field.name, parts.join("; "))
+}
+
+/// Render the per-TR "Errors & validation" section (R11) from the constraint
+/// schema, the error-coverage evidence, and the shared catalog. Deterministic
+/// (no clock, stable ordering). Returns an empty string when the TR has neither a
+/// constraint schema nor error coverage, so pages without artifacts are
+/// byte-unchanged.
+fn render_errors_and_validation(
+    constraint: Option<&ConstraintSchema>,
+    coverage: Option<&ErrorCoverage>,
+    catalog: &ErrorCatalog,
+) -> String {
+    if constraint.is_none() && coverage.is_none() {
+        return String::new();
+    }
+    let mut out = String::new();
+    out.push_str("\n## Errors & validation\n\n");
+
+    if let Some(schema) = constraint {
+        out.push_str(
+            "Preflight validation runs before any network call; an invalid request is \
+             rejected locally (`LsError::Invalid`) with no HTTP call. Type and required-ness \
+             always enforce; a value-class bound (enum/range/format) is permissive until the \
+             differential probe confirms it, so a valid request is never falsely rejected.\n\n",
+        );
+        out.push_str("**Request field rules:**\n\n");
+        for field in &schema.fields {
+            out.push_str(&render_field_rule(field));
+        }
+        for rule in &schema.cross_field {
+            match rule {
+                CrossFieldRule::DateOrder {
+                    start,
+                    end,
+                    confirmed,
+                } => {
+                    let suffix = if *confirmed {
+                        "enforced"
+                    } else {
+                        "permissive until confirmed"
+                    };
+                    out.push_str(&format!(
+                        "- cross-field: `{start}` must not be after `{end}` ({suffix})\n"
+                    ));
+                }
+            }
+        }
+        out.push('\n');
+    }
+
+    if let Some(cov) = coverage {
+        if !cov.gateway_codes.is_empty() {
+            out.push_str(
+                "**Reachable gateway errors** (explained once from the shared catalog; \
+                 environment/entitlement codes are not reproduced per TR):\n\n",
+            );
+            for code in &cov.gateway_codes {
+                let explanation = catalog
+                    .codes
+                    .get(code)
+                    .map(|e| e.explanation.as_str())
+                    .unwrap_or("(no catalog entry)");
+                out.push_str(&format!("- `{code}` — {explanation}\n"));
+            }
+            out.push('\n');
+        }
+    }
+
+    out
+}
+
 /// Render a single implemented TR's Reference page. A Recommended TR carries its
 /// full recommendation contract (R9); an implemented-but-not-recommended TR keeps
-/// the not-recommended banner and the schemas/examples-deferred caveat.
-fn render_reference_page(meta: &TrMetadata, evidence: Option<&EvidenceRecord>) -> String {
+/// the not-recommended banner and the schemas/examples-deferred caveat. A TR with
+/// an error-resilience constraint schema / coverage additionally carries the
+/// "Errors & validation" section (R11).
+fn render_reference_page(
+    meta: &TrMetadata,
+    evidence: Option<&EvidenceRecord>,
+    constraint: Option<&ConstraintSchema>,
+    coverage: Option<&ErrorCoverage>,
+    catalog: &ErrorCatalog,
+) -> String {
     let mut out = String::new();
     out.push_str(&format!("# SDK Reference: {}\n\n", meta.tr_code));
     if let Some(name) = &meta.name {
@@ -487,6 +627,7 @@ fn render_reference_page(meta: &TrMetadata, evidence: Option<&EvidenceRecord>) -
              recommended status or a real consumer exists._\n",
         );
     }
+    out.push_str(&render_errors_and_validation(constraint, coverage, catalog));
     out
 }
 
@@ -527,6 +668,9 @@ fn render_reference_index(implemented: &BTreeMap<&String, &TrMetadata>) -> Strin
 pub fn render_reference_docs(
     trs: &BTreeMap<String, TrMetadata>,
     evidence: &BTreeMap<String, EvidenceRecord>,
+    constraints: &BTreeMap<String, ConstraintSchema>,
+    error_coverage: &BTreeMap<String, ErrorCoverage>,
+    catalog: &ErrorCatalog,
 ) -> BTreeMap<PathBuf, String> {
     let dir = Path::new(REFERENCE_DOCS_DIR);
     let implemented: BTreeMap<&String, &TrMetadata> = trs
@@ -539,7 +683,13 @@ pub fn render_reference_docs(
     for (tr_code, meta) in &implemented {
         files.insert(
             dir.join(format!("{tr_code}.md")),
-            render_reference_page(meta, evidence.get(*tr_code)),
+            render_reference_page(
+                meta,
+                evidence.get(*tr_code),
+                constraints.get(*tr_code),
+                error_coverage.get(*tr_code),
+                catalog,
+            ),
         );
     }
     files
@@ -549,7 +699,13 @@ pub fn render_reference_docs(
 /// [`ValidationReport`], keyed by repo-relative path.
 pub fn render_all(report: &ValidationReport) -> BTreeMap<PathBuf, String> {
     let mut files = render_dependency_docs(&report.trs, &report.index);
-    files.extend(render_reference_docs(&report.trs, &report.evidence));
+    files.extend(render_reference_docs(
+        &report.trs,
+        &report.evidence,
+        &report.constraints,
+        &report.error_coverage,
+        &report.error_catalog,
+    ));
     files
 }
 
@@ -668,6 +824,31 @@ mod tests {
     /// integration check that the real set renders.
     fn authored_report() -> ValidationReport {
         validate_dir(&metadata_root()).expect("authored metadata must validate clean")
+    }
+
+    /// An empty error catalog for tests that render pages without exercising the
+    /// error-resilience projection.
+    fn empty_catalog() -> ErrorCatalog {
+        ErrorCatalog {
+            version: 1,
+            codes: BTreeMap::new(),
+        }
+    }
+
+    /// Render the reference docs from `trs` + `evidence` with no constraint /
+    /// coverage / catalog inputs (the pre-error-resilience shape). Keeps the many
+    /// projection tests that predate the "Errors & validation" section terse.
+    fn render_ref_basic(
+        trs: &BTreeMap<String, TrMetadata>,
+        evidence: &BTreeMap<String, EvidenceRecord>,
+    ) -> BTreeMap<PathBuf, String> {
+        render_reference_docs(
+            trs,
+            evidence,
+            &BTreeMap::new(),
+            &BTreeMap::new(),
+            &empty_catalog(),
+        )
     }
 
     /// The tracked TRs in the slice. The original eight (`token`, `revoke`,
@@ -1010,7 +1191,9 @@ mod tests {
         assert!(page.contains("Owner class: `paginated`"));
         assert!(page.contains("- Tracked: yes"));
         assert!(page.contains("- Implemented: yes"));
-        assert!(page.contains("- Recommended: yes"));
+        // Demoted to Implemented by the error-resilience gate (plan 2026-07-01-004,
+        // R12); re-promotes only after passing the new differential-probe gate (U8).
+        assert!(page.contains("- Recommended: no"));
         assert!(page.contains("Venue / session: `krx_regular`"));
         assert!(page.contains("Date sensitive: yes"));
         assert!(page.contains("Self-paginated: yes"));
@@ -1103,13 +1286,15 @@ mod tests {
                 last_reviewed: "2026-06-15".to_string(),
             },
             recommendation: None,
+            constraints_ref: None,
+            error_coverage_ref: None,
         }
     }
 
     #[test]
     fn reference_covers_implemented_with_banner_and_omits_unimplemented() {
         let report = authored_report();
-        let reference = render_reference_docs(&report.trs, &report.evidence);
+        let reference = render_reference_docs(&report.trs, &report.evidence, &report.constraints, &report.error_coverage, &report.error_catalog);
         let dependency = render_dependency_docs(&report.trs, &report.index);
 
         // The still-unrecommended implemented TRs each carry the banner.
@@ -1205,6 +1390,12 @@ mod tests {
             // F/O order chain certified in-window (submit 00040 / modify 00462 / cancel
             // 00463, flat confirmed; make live-smoke-fo-order). Implemented-not-recommended.
             "CFOAT00100", "CFOAT00200", "CFOAT00300",
+            // Error-resilience gate (plan 2026-07-01-004, R12): the 10 TRs promoted
+            // under the old happy-path gate demoted to Implemented so the badge means
+            // "fails gracefully". Each carries the not-recommended banner again until
+            // re-certified through the new differential-probe gate (U8, operator-run).
+            "token", "t1101", "t1102", "t8412", "S3_", "CSPAQ12200", "CSPAT00601",
+            "CSPAT00701", "CSPAT00801", "t0425",
         ];
         for tr in banner_trs {
             let page = reference
@@ -1216,15 +1407,11 @@ mod tests {
             );
         }
 
-        // token, t1101, t1102, t8412, S3_, CSPAQ12200, and the four order TRs
-        // (CSPAT00601/00701/00801 submit/modify/cancel + t0425 reconciliation,
-        // promoted by plan 2026-06-30-002) are Recommended TRs: each still renders a
-        // Reference page (all stay implemented), but the banner is gone now that they
-        // are promoted.
-        for rec in [
-            "token", "t1101", "t1102", "t8412", "S3_", "CSPAQ12200", "CSPAT00601",
-            "CSPAT00701", "CSPAT00801", "t0425",
-        ] {
+        // The Recommended set is EMPTY after the error-resilience demotion (R12):
+        // no reference page omits the banner. Re-promotion (U8) is operator-gated and
+        // proceeds independently across live windows.
+        let recommended_no_banner: [&str; 0] = [];
+        for rec in recommended_no_banner {
             let page = reference
                 .get(Path::new(&format!("docs/reference/{rec}.md")))
                 .unwrap_or_else(|| {
@@ -1437,7 +1624,7 @@ mod tests {
         trs.insert("rec".to_string(), sample_meta("rec", true, true));
         trs.insert("notrec".to_string(), sample_meta("notrec", true, false));
 
-        let reference = render_reference_docs(&trs, &BTreeMap::new());
+        let reference = render_ref_basic(&trs, &BTreeMap::new());
 
         let rec = &reference[Path::new("docs/reference/rec.md")];
         let notrec = &reference[Path::new("docs/reference/notrec.md")];
@@ -1460,7 +1647,7 @@ mod tests {
             sample_meta("tracked_only", false, false),
         );
 
-        let reference = render_reference_docs(&trs, &BTreeMap::new());
+        let reference = render_ref_basic(&trs, &BTreeMap::new());
         assert!(reference.contains_key(Path::new("docs/reference/done.md")));
         assert!(!reference.contains_key(Path::new("docs/reference/tracked_only.md")));
     }
@@ -1500,7 +1687,7 @@ mod tests {
         // Covers AE3: behavior, evidence + env, freshness date, and excludes are
         // all present; the schemas-deferred caveat is gone for a recommended TR.
         let (trs, evidence) = recommended_with_evidence();
-        let reference = render_reference_docs(&trs, &evidence);
+        let reference = render_ref_basic(&trs, &evidence);
         let page = &reference[Path::new("docs/reference/token.md")];
 
         assert!(page.contains("## Recommendation"));
@@ -1524,7 +1711,7 @@ mod tests {
         // (no clock), the docgen surface for R8/R9 as refined. token's freshness
         // date 2026-06-15 + 90 days = 2026-09-13.
         let (trs, evidence) = recommended_with_evidence();
-        let reference = render_reference_docs(&trs, &evidence);
+        let reference = render_ref_basic(&trs, &evidence);
         let page = &reference[Path::new("docs/reference/token.md")];
         assert!(
             page.contains("Review by: `2026-09-13` (freshness date + 90-day backstop)"),
@@ -1539,7 +1726,7 @@ mod tests {
         // as deferred. Guards against both over-claiming auto-revoke and
         // under-claiming the enforced detection.
         let (trs, evidence) = recommended_with_evidence();
-        let reference = render_reference_docs(&trs, &evidence);
+        let reference = render_ref_basic(&trs, &evidence);
         let page = &reference[Path::new("docs/reference/token.md")];
 
         assert!(
@@ -1563,7 +1750,7 @@ mod tests {
         // implemented-but-not-recommended pages still defer schemas and warn.
         let mut trs = BTreeMap::new();
         trs.insert("notrec".to_string(), sample_meta("notrec", true, false));
-        let reference = render_reference_docs(&trs, &BTreeMap::new());
+        let reference = render_ref_basic(&trs, &BTreeMap::new());
         let page = &reference[Path::new("docs/reference/notrec.md")];
 
         assert!(page.contains("Implemented, not yet recommended"));
@@ -1578,8 +1765,8 @@ mod tests {
     #[test]
     fn recommended_rendering_is_deterministic() {
         let (trs, evidence) = recommended_with_evidence();
-        let a = render_reference_docs(&trs, &evidence);
-        let b = render_reference_docs(&trs, &evidence);
+        let a = render_ref_basic(&trs, &evidence);
+        let b = render_ref_basic(&trs, &evidence);
         assert_eq!(
             a, b,
             "identical metadata + evidence yields identical output"

@@ -30,16 +30,7 @@ support:
   # order legs it reconciles.
   tracked: true
   implemented: true
-  recommended: true
+  recommended: false
 maintenance:
   source_spec_hash: e6eff49b1783
   last_reviewed: 2026-06-30
-recommendation:
-  behavior: Paper filled/unfilled order inquiry (주식체결/미체결) read for one symbol — order reconciliation
-  evidence_ref: evidence/t0425.yaml
-  excludes:
-    - Production-credential reconciliation reads (evidence is paper only)
-    - Fields outside the modeled order-row subset (ordno/orgordno/status/ordrem/cheqty)
-    - Read correctness outside KRX regular session
-    - Exhaustive account-wide history pagination (evidence is a single-symbol working-orders read)
-    - Auto-revoking the recommendation on a change-driven structural change — detection ships; auto-revoke of support.recommended stays deferred
