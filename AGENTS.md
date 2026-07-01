@@ -29,6 +29,7 @@ make docs            # regenerate docs/ from metadata
 cargo test           # workspace
 cargo test -p ls-core  # metadata validation + policy index cross-check
 make docs-check      # assert generated docs match committed
+make lane-check      # smoke-harness fail-fast lane guard (offline; no gateway)
 ```
 
 Keep the tree green; never commit with a red gate.
