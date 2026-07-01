@@ -66,8 +66,8 @@ script -q /dev/null env LS_ORDER_SMOKE_NONCE=$(date +%s) make live-smoke-order-c
 ```
 
 Mint the nonce immediately before the call. Do **not** put `LS_ORDER_SMOKE_NONCE` in
-`.env` — the Makefile sources `.env`, so a stale value there clobbers the fresh shell
-value (fails closed, but confusingly). The autonomy delivered is removal of the
+the lane file (`.env.domestic`) — the Makefile sources the lane file, so a stale
+value there clobbers the fresh shell value (fails closed, but confusingly). The autonomy delivered is removal of the
 handoff *protocol*, not the human: a human still mints the nonce and the run still
 needs an attended context.
 

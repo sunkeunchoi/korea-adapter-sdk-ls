@@ -55,14 +55,18 @@ the smoke harness sources the right file by the TR's `instrument_domain` facet:
 
 | `instrument_domain` | lane file | account |
 |---|---|---|
-| `stock` / `overseas_stock` / unmapped | `.env` (`.env.domestic`) | `…01` |
+| `stock` / unmapped (default lane) | `.env.domestic` | `…3701` |
 | `futures_options` | `.env.domestic_option` | `…51` |
+| `overseas_stock` | `.env.overseas` | `…` |
 | `overseas_futures` | `.env.overseas_option` | `…71` |
 
 Routing lives in the Makefile (a target-specific `LS_SMOKE_LANE`), not the SDK —
 the SDK stays single-config ("one client = one account/token"); the Makefile
-sources `.env.<lane>` in the recipe shell and **fails fast if the lane file is
-missing** (a silent fall-back to `.env` would re-introduce the wrong-account bug).
+resolves an empty `LS_SMOKE_LANE` to the `domestic` lane, then sources
+`.env.<lane>` in the recipe shell and **fails fast if the lane file is missing**
+— every lane (including the default) runs the guard; there is no bare-`.env`
+fallback (the legacy `.env` was deleted in the env-lane cutover, plan
+2026-07-01-002; a silent fall-back would re-introduce the wrong-account bug).
 
 ### The `rsp_cd` flip-signature for account reads
 
@@ -118,7 +122,7 @@ re-prospect these dry codes forever.
 # Makefile: target-specific lane, fail-fast on a missing lane file (no .env fallback).
 live-smoke-cfoeq11100 ... live-smoke-t8406: LS_SMOKE_LANE = domestic_option
 live-smoke-cidbq01400 live-smoke-cidbq03000 live-smoke-cidbq05300 ...: LS_SMOKE_LANE = overseas_option
-# run_smoke sources .env.$(LS_SMOKE_LANE) when set, else .env; missing lane file -> FAIL.
+# run_smoke sources .env.$(LS_SMOKE_LANE), defaulting an empty lane to .env.domestic; missing lane file -> FAIL.
 ```
 
 ```

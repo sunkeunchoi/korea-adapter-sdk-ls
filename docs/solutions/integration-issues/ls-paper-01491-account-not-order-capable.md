@@ -48,7 +48,8 @@ order-enabled paper account clears it, where `01900` cannot be cleared by any ac
 Two parts — one operational, one classification:
 
 1. **Operational (clears the blocker):** provision/enable an LS paper account with paper
-   order placement enabled, put its credentials in the gitignored `.env`, then re-run
+   order placement enabled, put its credentials in the gitignored `.env.domestic`
+   (the default domestic lane), then re-run
    `make live-smoke-order-chain` during an open KRX regular session (09:00–15:30 KST,
    weekday). One clean chained run flips all four TRs (gate 1: `CSPAT00601` + `t0425`;
    gate 2: `CSPAT00701` + `CSPAT00801`).
