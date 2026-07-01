@@ -80,7 +80,7 @@ live-smoke:
 live-smoke-order:
 	@set -a; [ -f .env ] && . ./.env; set +a; \
 	export LS_ORDER_SMOKE=1 LS_ORDER_SMOKE_TR=CSPAT00601; \
-	out=$$(cargo test -p ls-sdk --test order_smoke -- --ignored --exact --nocapture order_smoke_matrix 2>&1); \
+	out=$$(cargo test -p ls-sdk --test order_smoke -- --ignored --exact --nocapture chain::order_smoke_matrix 2>&1); \
 	echo "$$out"; \
 	echo "$$out" | grep -q "1 passed" || { echo "FAIL: order smoke did not run (0 tests) or did not pass"; exit 1; }
 
@@ -108,7 +108,7 @@ live-smoke-order:
 live-smoke-order-chain:
 	@set -a; [ -f .env ] && . ./.env; set +a; \
 	export LS_ORDER_SMOKE=1 LS_ORDER_SMOKE_TR=CSPAT00601; \
-	out=$$(cargo test -p ls-sdk --test order_smoke -- --ignored --exact --nocapture order_chained_smoke 2>&1); \
+	out=$$(cargo test -p ls-sdk --test order_smoke -- --ignored --exact --nocapture chain::order_chained_smoke 2>&1); \
 	echo "$$out"; \
 	echo "$$out" | grep -q "1 passed" || { echo "FAIL: chained order smoke did not run (0 tests) or did not pass"; exit 1; }
 
@@ -135,7 +135,7 @@ live-smoke-fo-order:
 		set -a; [ -f .env ] && . ./.env; set +a; \
 	fi; \
 	export LS_ORDER_SMOKE=1; \
-	out=$$(cargo test -p ls-sdk --test order_smoke -- --ignored --exact --nocapture fo_order_chained_smoke 2>&1); \
+	out=$$(cargo test -p ls-sdk --test order_smoke -- --ignored --exact --nocapture fo::fo_order_chained_smoke 2>&1); \
 	echo "$$out"; \
 	echo "$$out" | grep -q "1 passed" || { echo "FAIL: F/O chained order smoke did not run (0 tests) or did not pass"; exit 1; }
 
