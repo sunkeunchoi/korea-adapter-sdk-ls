@@ -24,9 +24,9 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `CCENT00300` | KRX야간파생 위탁 취소 주문 (night-deriv order cancel) | `orders` | tracked | [CCENT00300](./CCENT00300.md) |
 | `CD0` | 상품선물실시간상하한가 | `realtime` | implemented | [CD0](./CD0.md) |
 | `CFOAQ10100` | 선물옵션 주문가능수량조회 | `account` | implemented | [CFOAQ10100](./CFOAQ10100.md) |
-| `CFOAT00100` | 선물옵션 정상주문 (domestic F/O order submit) | `orders` | tracked | [CFOAT00100](./CFOAT00100.md) |
-| `CFOAT00200` | 선물옵션 정정주문 (domestic F/O order modify) | `orders` | tracked | [CFOAT00200](./CFOAT00200.md) |
-| `CFOAT00300` | 선물옵션 취소주문 (domestic F/O order cancel) | `orders` | tracked | [CFOAT00300](./CFOAT00300.md) |
+| `CFOAT00100` | 선물옵션 정상주문 (domestic F/O order submit) | `orders` | implemented | [CFOAT00100](./CFOAT00100.md) |
+| `CFOAT00200` | 선물옵션 정정주문 (domestic F/O order modify) | `orders` | implemented | [CFOAT00200](./CFOAT00200.md) |
+| `CFOAT00300` | 선물옵션 취소주문 (domestic F/O order cancel) | `orders` | implemented | [CFOAT00300](./CFOAT00300.md) |
 | `CFOBQ10500` | 선물옵션 계좌예탁금증거금조회 | `account` | implemented | [CFOBQ10500](./CFOBQ10500.md) |
 | `CFOEQ11100` | 선물옵션가정산예탁금상세 | `account` | implemented | [CFOEQ11100](./CFOEQ11100.md) |
 | `CIDBQ01400` | 해외선물 체결내역개별 조회(주문가능수량) | `account` | implemented | [CIDBQ01400](./CIDBQ01400.md) |
