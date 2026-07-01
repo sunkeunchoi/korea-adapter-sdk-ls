@@ -72,19 +72,21 @@ impl FoBand {
 /// The F/O flatness verdict from a `t0441` (선물옵션잔고평가) balance read. `t0441`
 /// sees a **filled** position (잔고), NOT a resting unfilled order — so this is only
 /// the FILL half of the two-part flatness check (the other half is a clean cancel
-/// response confirming the resting order's removal). Fail-closed per R6: only a
-/// positively-parsed zero-position read is `Flat`; an empty/unreadable read is
-/// `NotFlat` and blocks the flip.
+/// response confirming the resting order's removal). A t0441 read that genuinely FAILS
+/// is the caller's `Err` arm (panics `fo-flat-scan-failed`); an `Ok` read reaching this
+/// verdict is a successful "your positions are: <rows>" answer, so an empty row set
+/// means no position (R6, revised from the plan's AE3 "positions=0 row" assumption to
+/// the observed empty-array reality — see [`fo_flat_verdict`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum FoFlatVerdict {
-    /// Positively confirmed: balance rows present and every position is zero.
+    /// No F/O position: either no balance rows at all (t0441 returns an empty array on a
+    /// position-less account) or rows whose every quantity is zero. Positively confirms
+    /// no fill — the caller trusts it only after a CLEAN cancel already removed the
+    /// resting order.
     Flat,
     /// One or more FILLED positions (`jqty != 0`) — unrecoverable by cancel (paper
     /// reset is the sole remediation). Carries the position contract codes.
     Fill(Vec<String>),
-    /// Empty / unreadable / ambiguous — cannot positively confirm no fill, so it is
-    /// treated as NOT flat (fail-closed, R6) and blocks the flip.
-    NotFlat,
 }
 
 /// `true` if a `t0441` quantity field is a non-zero (or unparseable) position. F/O
@@ -105,12 +107,16 @@ fn fo_qty_is_position(s: &str) -> bool {
 
 /// Classify a `t0441` balance-row set into an F/O flatness verdict (KTD3, R6).
 fn fo_flat_verdict(rows: &[T0441OutBlock1]) -> FoFlatVerdict {
-    // Empty = cannot positively confirm no fill → fail-closed NOT flat (R6). A
-    // genuinely position-less account that returns an empty array is indistinguishable
-    // here from a scoped-out / failed read, so the operator must confirm manually.
-    if rows.is_empty() {
-        return FoFlatVerdict::NotFlat;
-    }
+    // No row with a non-zero quantity = no F/O position = Flat. t0441 (선물/옵션 잔고평가)
+    // returns an EMPTY array on a position-less account (confirmed live 2026-07-01, both
+    // operator runs) — NOT a zero-qty row — so empty must read as Flat, or the
+    // always-flat chain (unfillable daily-limit rest + clean cancel) could never certify.
+    // This is NOT fail-OPEN: a genuinely failed/unreadable t0441 read is the caller's
+    // `Err` arm (panics `fo-flat-scan-failed`), so an `Ok` empty read here is a real "no
+    // positions" answer; a FILL (full or partial) still surfaces as a non-empty,
+    // non-zero-`jqty` row → `Fill`; and the caller only consults this after a CLEAN
+    // cancel, which itself proves the order was resting/unfilled (a filled order cannot
+    // be canceled).
     let fills: Vec<String> = rows
         .iter()
         .filter(|r| fo_qty_is_position(&r.jqty))
@@ -164,10 +170,11 @@ fn fo_t0441_row_line(r: &T0441OutBlock1) -> String {
 }
 
 /// Two-part-flatness FILL half (KTD3 part 1): read `t0441` and assert NO filled F/O
-/// position remains. Fail-closed — empty/unreadable counts as NOT flat (R6). On a
-/// `Fill` or `NotFlat` verdict it raises a LOUD operator-action-required signal
-/// (panic, the operator run's failure channel) naming the order numbers; the kill
-/// switch is engaged as a no-new-orders guard. A clean `Flat` records a positive pass.
+/// position remains. A `Fill` verdict (a non-zero position) OR a genuinely failed t0441
+/// read raises a LOUD operator-action-required signal (panic, the operator run's failure
+/// channel) naming the order numbers; the kill switch is engaged as a no-new-orders
+/// guard. An `Ok` read with no non-zero position (empty array or all-zero rows) records a
+/// positive `Flat` pass (R6) — the resting order was already removed by the clean cancel.
 async fn fo_assert_no_fill(sdk: &LsSdk, ordnos: &[String]) {
     match sdk.account().fo_balance_eval(&T0441Request::new()).await {
         Ok(resp) => {
@@ -192,18 +199,6 @@ async fn fo_assert_no_fill(sdk: &LsSdk, ordnos: &[String]) {
                                  canceled; reset the paper book and flatten manually",
                                 syms.join(",")
                             ),
-                        )
-                    );
-                }
-                FoFlatVerdict::NotFlat => {
-                    sdk.inner().set_orders_enabled(false);
-                    panic!(
-                        "{}",
-                        loud_failure(
-                            "fo-flat-unconfirmed",
-                            ordnos,
-                            "t0441 returned empty/unreadable — cannot POSITIVELY confirm no F/O \
-                             fill (fail-closed, R6); MANUAL board check required before any flip",
                         )
                     );
                 }
@@ -547,8 +542,9 @@ async fn fo_order_chained_smoke() {
         );
     }
 
-    // Two-part flatness — FILL half (KTD3 part 1): t0441 must positively confirm no
-    // filled F/O position. Fail-closed; raises operator-action-required on Fill/NotFlat.
+    // Two-part flatness — FILL half (KTD3 part 1): t0441 must show no filled F/O position
+    // (empty array or all-zero rows = Flat). Raises operator-action-required on a Fill or
+    // a failed t0441 read.
     fo_assert_no_fill(&sdk, &[submit_ordno.clone(), live_ordno.clone()]).await;
 
     println!(
@@ -590,7 +586,7 @@ fn fo_bal_row(expcode: &str, jqty: &str) -> T0441OutBlock1 {
 }
 
 #[test]
-fn fo_flat_verdict_fill_blocks_empty_failclosed_zero_position_flat() {
+fn fo_flat_verdict_fill_blocks_and_empty_or_zero_is_flat() {
     // Covers R6. jqty>0 → Fill (block the flip); a SHORT position (negative) is also a Fill.
     assert_eq!(
         fo_flat_verdict(&[fo_bal_row("101T9000", "2")]),
@@ -601,9 +597,10 @@ fn fo_flat_verdict_fill_blocks_empty_failclosed_zero_position_flat() {
         FoFlatVerdict::Fill(vec!["101T9000".into()]),
         "a short F/O position is still a fill"
     );
-    // Empty / unreadable → NOT flat (fail-closed): an empty array cannot positively
-    // confirm no fill.
-    assert_eq!(fo_flat_verdict(&[]), FoFlatVerdict::NotFlat);
+    // Empty array = no F/O position = Flat. t0441 returns an empty array on a
+    // position-less account (confirmed live 2026-07-01); a genuinely failed READ is the
+    // caller's Err arm, never an Ok-empty, so empty here positively confirms no fill.
+    assert_eq!(fo_flat_verdict(&[]), FoFlatVerdict::Flat);
     // Zero-position rows present → positively Flat.
     assert_eq!(
         fo_flat_verdict(&[fo_bal_row("101T9000", "0"), fo_bal_row("105V3000", "0")]),
