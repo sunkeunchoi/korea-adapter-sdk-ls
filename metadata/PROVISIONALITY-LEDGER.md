@@ -1191,3 +1191,113 @@ positively confirmed no fill, account left flat.
 `recommended` deferred for all. The domestic F/O order chain is now callable and
 Implemented on paper; the deferred-order residue drops the three domestic F/O TRs
 (overseas-stock/overseas-futures order chains remain deferred — other sessions/lanes).
+
+## 22. Domestic account-state flip + exhaustion close-out (2026-07-01)
+
+Plan `docs/plans/2026-07-01-003-feat-domestic-account-state-flip-exhaustion-closeout-plan.md`.
+Goal: flip `t0441` (선물/옵션잔고평가) by MANUFACTURING a transient domestic F/O position
+(Track A), and write the honest TERMINAL disposition for the remaining
+Tracked-not-Implemented residue (Track B). Outcome: **0 flips this pass** — Track A's
+live certification is operator- and window-gated and did not run autonomously; the
+`fo_position_manufacture_smoke` harness (U2) and this close-out (U4) landed offline. If
+the operator later runs `make live-smoke-fo-position` in an open KRX F/O window (after
+the U1 feasibility probe proves flatten-in-session), `t0441` flips as a follow-up
+(metadata + docgen only; see U3).
+
+**D-honesty note: this is a TERMINAL exhaustion close-out, not a probe pass.** The raw
+pool is exhausted (0 untracked TRs) and the offline tracked-flip pool is spent. As of
+§21 the inventory is **320 Tracked, 282 Implemented** (docgen `reference.len` is **283**
+— it counts the index page plus the implemented reference pages, so it is NOT the
+residue divisor), 0 Recommended, leaving a **38-TR Tracked-not-Implemented residue**
+(320 − 282). Every one of the 38 already carried a current terminal disposition from
+§13–§21; this section consolidates them into one current-dated partition and records
+that BOTH pools are exhausted. Only two genuine Implemented-tier levers remain, and both
+are account-state-gated, not wave-blocked: `t0441` (reachable, needs a manufactured
+position) and `CSPBQ00200` (needs an out-of-band spot-lane deposit). Repeated "flip
+more" waves past this point re-run disposition passes that yield nothing — the honest
+close-out IS the deliverable.
+
+**Partition of the 38 (R5):** 13 `paper_incompatible` + 7 intraday paper-empty + 6
+HELD-structural + 7 deferred overseas-order + 5 account-gated = 38.
+
+**Lane A — `paper_incompatible` (13), terminal (§14/§16/§17).** The paper gateway
+carries no feed / no service for these; facet `paper_incompatible: true` holds, reason
+unchanged.
+- *Overseas-stock, no paper feed (6):* `g3101` `g3102` `g3103` `g3104` `g3106` `g3190`.
+- *KRX night-derivative quote/board, off-window paper-empty (2):* `t8455` `t8460`.
+- *KRX 야간파생 order/account, `krx_extended` + `01900` (5):* `CCENT00100` `CCENT00200`
+  `CCENT00300` `CCENQ10100` `CCENQ90200`.
+
+**Lane B — intraday paper-empty (7), PENDING (§19/§20).** `t1951` `t1973` `t2212`
+`t2407` `t8404` `t8427` `t2106` — all probed IN-window in the §19 open session and
+recorded empty. Paper carries no data for these intraday F/O/ELW feeds *regardless of
+session*, so neither a closed- nor an open-window re-probe beats an in-window empty.
+Disposition unchanged.
+
+**Lane C — HELD-structural (6), terminal by structure/scope (§6/§7/§13/§19).** The
+blocker is structural, not session/funding — no operator probe can change it as-is.
+- `t1852` / `t1856` — required `sFileData` screening blob (~26.8 KB) unsourced; a probe
+  cannot construct a valid request.
+- `t1860` — realtime-registration CONTROL, not a read.
+- `t1964` — 10 unresolved filter-enum defaults; the §19 in-window read found an empty
+  board even once callable.
+- `t1109` — after-hours 시간외체결; every probe to date was the regular continuous
+  session (wrong window). Carries a concrete reopen trigger (an after-hours run), so it
+  also appears under Deferred, but stays in the HELD-structural count here.
+- `t3102` — no off-hours `NWS` news frame; the feeder is scaffolded (`live_smoke_nws_t3102`),
+  the flip awaits a live news event. Reopen-triggered, counted here.
+
+**Lane D — deferred overseas-order (7), `deferred` (§18/§20/§21).** `CIDBT00100`
+`CIDBT00900` `CIDBT01000` (overseas-futures orders); `COSAT00301` `COSAT00311`
+`COSAT00400` `COSMT00300` (overseas-stock orders). All `owner_class: orders`; orders
+reject off-window (only re-derive `01458 장종료`). The flip is an operator-run
+open-**overseas**-window order smoke on the correct lane — out of this wave's identity
+(the §21 domestic F/O order flip is the template; the overseas windows/lanes are the
+gate). The domestic F/O order chain that shared this bucket in §20 flipped in §21.
+
+**Lane E — account-gated (5), the only genuine remaining levers.** An operator with the
+right account STATE could still move the first two; the last three are terminal absent
+an external event.
+- `t0441` (선물/옵션잔고평가, account) — **carry-forward PENDING, feasibility/window-gated.**
+  Reachable on the funded `domestic_option` (…51) lane (returns `00000`, empty only
+  because the account holds no open F/O position). This wave STAGED the manufacture path
+  (`fo_position_manufacture_smoke` + `make live-smoke-fo-position` + smoke-map row) to
+  flip it from a *manufactured* non-default `jqty` read (R1), but the live certification
+  is operator- and window-gated (an open KRX F/O window) AND pre-gated on the U1
+  feasibility probe (can a FILLED F/O paper position flatten in-session, or does it need
+  an out-of-band reset?). Neither ran autonomously → 0 flips this pass. Reopen trigger:
+  operator runs U1 then `make live-smoke-fo-position` in-window; on a certified
+  non-empty read, flip is metadata + docgen only (`reference.len` 283→284, `banner_trs`
+  +`t0441`).
+- `CSPBQ00200` (현물계좌증거금률별주문가능수량, account) — **carry-forward PENDING, funding-gated**
+  (§16/§20/§21). A 현물/spot read on the default `.env.domestic` lane, which carries no
+  cash deposit; all deposit fields default to zero (`00136`, not a defect). No SDK path
+  funds it — a paper deposit is an out-of-band operator action on the LS portal. Reopen
+  trigger: the operator funds the spot lane, then a re-smoke witnesses a non-default
+  deposit/orderable-quantity field.
+- `o3107` (해외선물 관심종목) / `o3127` (해외선물옵션 관심종목 board) — **carry-forward PENDING,
+  watchlist-gated** (§18/§20). Empty / `price=0` with no registered watchlist symbols;
+  need the `overseas_option` lane + account watchlist state + an open overseas window.
+- `t1631` (프로그램매매 종목별, domestic) — **permanent PENDING, gateway defect** (§19/§20).
+  Gateway `IGW40014`: the server fails to serialize its OWN `bidvolume` response field
+  (environmental, all-String request — NOT a request-shape `IGW40011`). No client-side
+  fix; recorded in `docs/solutions/conventions/tr-pool-exhaustion-and-closure-viability.md`.
+
+**Pool exhaustion + reopen triggers (R6).** Both the **raw pool** (0 untracked TRs — no
+new REST/WS TR to track) and the **offline tracked-flip pool** (every Tracked TR whose
+flip needs only offline artifacts is already Implemented) are **EXHAUSTED**. Further
+Implemented-tier yield requires a CONCRETE external event, not another disposition pass:
+(a) **new account state** — a manufactured/funded F/O position flips `t0441`; a funded
+spot deposit flips `CSPBQ00200`; a registered overseas watchlist flips `o3107`/`o3127`;
+(b) a **live `NWS` news event** flips `t3102`; (c) an **open overseas window** on the
+correct lane flips the 7 deferred overseas-order TRs; (d) an **entitlement/gateway fix**
+would be needed for `t1631` (server-side `IGW40014`) and the 13 `paper_incompatible`
+feeds. Absent one of these, the residue is fully and currently dispositioned; no future
+"flip more" wave will find offline-stageable yield.
+
+**Count tally (R-count).** **0 flips** this pass → nothing moves. `reference.len()` stays
+**283**, `banner_trs` unchanged, `maintained_tr_count` stays **320**, `cli.rs` literals,
+`api_drift`, and `TRACKED_TRS` all unchanged. No `metadata/trs/*.yaml` facets edited
+(every reason on file still holds). The 38-TR residue (13 + 7 + 6 + 7 + 5) is fully and
+currently dispositioned; a `t0441` flip is teed up as an operator-gated follow-up
+(harness staged, live certification pending an open window + the U1 verdict).
