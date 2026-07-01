@@ -4,6 +4,19 @@ A **maintained Rust SDK** for the LS Securities Open API. The SDK is built by
 tracking upstream API and documentation change and applying *reviewed* SDK
 changes — not by regenerating a full surface from specs.
 
+## Start here
+
+New to the codebase? These maintainer/contributor docs orient you:
+
+- [`USER_GUIDE.md`](USER_GUIDE.md) — build, the gate, and how to work on a TR.
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — the workspace, the dispatch runtime, and
+  how metadata projects into docs.
+- [`TR_LIFECYCLE.md`](TR_LIFECYCLE.md) — how a TR climbs Raw → Tracked →
+  Implemented → Recommended, and the gate at each rung.
+- [`AGENTS.md`](AGENTS.md) — the working agreement for agents in this repo (gate,
+  layout, gotchas).
+- [`CONCEPTS.md`](CONCEPTS.md) — the authoritative domain glossary.
+
 ## What this is (and is not)
 
 This SDK surface is **selective by design**. It does not aim to expose every
