@@ -1201,6 +1201,10 @@ mod tests {
             "DS3", "DVI", "ESN", "FX9", "H02", "H2_", "HB_", "I5_", "JX0", "NBM", "NPM", "NVI",
             "O02", "OX0", "SHC", "SHD", "SHI", "SHO", "UBM", "UBT", "UK1", "UVI", "UYS", "YC3",
             "YJC", "YJ_", "h3_",
+            // KRX-open domestic F/O order certify-flip (plan 2026-07-01-001): the domestic
+            // F/O order chain certified in-window (submit 00040 / modify 00462 / cancel
+            // 00463, flat confirmed; make live-smoke-fo-order). Implemented-not-recommended.
+            "CFOAT00100", "CFOAT00200", "CFOAT00300",
         ];
         for tr in banner_trs {
             let page = reference
@@ -1404,9 +1408,13 @@ mod tests {
         // lifecycle sweep (make live-smoke-ws-p4; KTD6 NOT-OBSERVABLE) — add 39.
         // Open-window flip wave (plan 2026-06-30-001): t1954 ELW daily-price read
         // flipped on a non-empty open-window paper smoke (rows=20, close witness) — add 1.
+        // KRX-open domestic F/O order certify-flip (plan 2026-07-01-001): the domestic
+        // F/O order chain CFOAT00100/00200/00300 (submit/modify/cancel) certified on a
+        // clean in-window guarded paper order-chain smoke (rsp_cd 00040/00462/00463, flat
+        // confirmed; make live-smoke-fo-order, KRX open 2026-07-01) — add 3.
         assert_eq!(
             reference.len(),
-            280,
+            283,
             "index + the implemented reference pages"
         );
 

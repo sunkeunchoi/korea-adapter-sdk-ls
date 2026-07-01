@@ -22,6 +22,39 @@ them, plan -005); the `live-smoke-order` matrix's marketable scenario fills on a
 market and leaves a position requiring an out-of-band paper reset, so it is not used for
 the autonomous wave's evidence. Per-TR evidence: `metadata/evidence/{tr}.yaml`.
 
+**Pre-window F/O-order-capability probe (2026-07-01, plan 2026-07-01-001 U2/Q1):**
+Before committing the operator's scarce in-window session to `make live-smoke-fo-order`,
+confirm the `domestic_option` lane (account `…51`) is F/O-**order**-capable. The prior
+domestic-**spot** `01491` clearance does NOT establish derivatives order entitlement —
+F/O order rights are a separate per-account gate. Two ways to confirm:
+
+1. **Carry-forward (preferred, zero-risk):** if a prior `fo_order_chained_smoke` run on
+   this lane already certified a CFOAT submit (`00040`/`00039`), the account is proven
+   F/O-order-capable — skip the live probe and proceed.
+2. **Live raw-probe (cheap, credential-safe):** issue one classifier POST at the F/O
+   order endpoint on the corrected lane:
+
+   ```
+   make raw-probe LS_SMOKE_LANE=domestic_option \
+     LS_PROBE_TR_CD=CFOAT00100 LS_PROBE_PATH=/futureoption/order \
+     LS_PROBE_BODY='{"CFOAT00100InBlock1":{"FnoIsuNo":"<t8467 front-month shcode>","BnsTpCode":"1","FnoOrdprcPtnCode":"00","FnoOrdPrc":<t2111 상한가 daily-limit>,"OrdQty":1}}'
+   ```
+
+   `FnoIsuNo` is the current front-month contract from the t8467 index-futures master
+   (`make live-smoke-t8467`, first row `shcode`) — the SAME source `fo_order_chained_smoke`
+   now auto-sources, so a hardcoded contract never goes stale.
+   `FnoOrdPrc`/`OrdQty` are JSON **numbers** (unquoted) or the gateway returns `IGW40011`;
+   price at the t2111 상한가 daily limit so an accepted probe rests far from market (cannot
+   fill). `raw-probe` prints only `http` / `rsp_cd` / `body_len` (never account data).
+
+   **Decision rule:** `rsp_cd` exact `01491` → account NOT F/O-order-capable → record the
+   CFOAT chain PENDING (R7) and **skip** the operator session (do not spend it). Any accept
+   (`00040`/`00039`) or other code → account is order-capable → proceed to the in-window
+   `make live-smoke-fo-order`. **Caveat:** an *accepted* probe places a REAL resting daily-
+   limit order that the full smoke's teardown will NOT cancel (it cancels only its own
+   order) — the operator must cancel the probe order out-of-band (or run the probe only when
+   they will immediately run the full chain and reconcile the board manually).
+
 | TR | `make` target | Test fn | Gate / required input | Promotion | Scope |
 |----|---------------|---------|-----------------------|-----------|-------|
 | `token` | `live-smoke` | `live_smoke_default` | open session | ready | paper OAuth token issuance |
@@ -297,9 +330,9 @@ the autonomous wave's evidence. Per-TR evidence: `metadata/evidence/{tr}.yaml`.
 | `t0425` | `live-smoke-order` | `order_smoke_matrix` | provisioned paper account + `LS_ORDER_SMOKE=1`; the reconciliation inquiry leg of the submit matrix (a READ, `is_order: false`) | ready | paper filled/unfilled order inquiry — order reconciliation read (plan -005); promotion-ready (see order-TR basis note below) |
 | `CSPAT00701` | `live-smoke-order-chain` | `order_chained_smoke` | gate 2 — **AUTONOMOUS** chained submit→modify→cancel→flat-assert; ORDER-CAPABLE paper account + `LS_ORDER_SMOKE=1` + **fresh `LS_ORDER_SMOKE_NONCE=$(date +%s)`** + attended PTY (refuses on CI/no-TTY or stale nonce, U1); places REAL paper orders; modify-link failure → gate 2 PENDING (gate 1 stands) | ready | paper cash-equity order MODIFY — gate 2 evidence (plan -005; autonomy plan -002); promotion-ready (see order-TR basis note below) |
 | `CSPAT00801` | `live-smoke-order-chain` | `order_chained_smoke` | gate 2 — **AUTONOMOUS** chained submit→modify→cancel (PRIMARY teardown) + account-wide flat assertion (U3); ORDER-CAPABLE paper account + `LS_ORDER_SMOKE=1` + fresh nonce + attended PTY; still-resting → retry-cancel then hard-fail naming the order, fill → immediate hard-fail (paper reset sole remedy) | ready | paper cash-equity order CANCEL — gate 2 evidence + teardown (plan -005; autonomy plan -002); promotion-ready (see order-TR basis note below) |
-| `CFOAT00100` | `live-smoke-fo-order` | `fo_order_chained_smoke` | **OPERATOR-RUN** (never autonomous) domestic F/O chain submit→modify→cancel; ORDER-CAPABLE paper account + `LS_ORDER_SMOKE=1` + fresh `LS_ORDER_SMOKE_NONCE` + attended PTY + **`LS_FO_ORDER_SMOKE_SHCODE`** (current valid F/O contract, no default); resting limit at the t2111 daily floor (cannot fill); `01491`→PENDING (classified), any OTHER reject→PENDING recorded VERBATIM (R8); flatness two-part fail-closed (t0441 fill-detection + clean cancel) | implemented-only | paper F/O order SUBMIT — gate 1 evidence (plan 2026-06-30-003 U4); live flip operator-gated |
-| `CFOAT00200` | `live-smoke-fo-order` | `fo_order_chained_smoke` | gate 2 — OPERATOR-RUN F/O modify (quantity, price stays at the valid floor tick); modify-link failure → gate 2 PENDING (gate 1 stands); success `rsp_cd` `00132` (seed) | implemented-only | paper F/O order MODIFY — gate 2 evidence (plan 2026-06-30-003 U6); live flip operator-gated |
-| `CFOAT00300` | `live-smoke-fo-order` | `fo_order_chained_smoke` | gate 2 — OPERATOR-RUN F/O cancel (PRIMARY teardown); a CLEAN cancel response is the only resting-order-removal confirmation (no F/O 미체결 read); non-clean cancel → loud operator-action-required (manual board check + flatten); success `rsp_cd` `00156` | implemented-only | paper F/O order CANCEL — gate 2 evidence + teardown (plan 2026-06-30-003 U4); live flip operator-gated |
+| `CFOAT00100` | `live-smoke-fo-order` | `fo_order_chained_smoke` | **OPERATOR-RUN** (never autonomous) domestic F/O chain submit→modify→cancel; ORDER-CAPABLE paper account + `LS_ORDER_SMOKE=1` + fresh `LS_ORDER_SMOKE_NONCE` + attended PTY (contract self-sourced from the t8467 index-futures master front-month — no operator input; optional `LS_FO_ORDER_SMOKE_SHCODE` override); resting limit at the t2111 daily floor (cannot fill); `01491`→PENDING (classified), any OTHER reject→PENDING recorded VERBATIM (R8); flatness two-part fail-closed (t0441 fill-detection + clean cancel) | implemented-only | paper F/O order SUBMIT — gate 1 evidence (plan 2026-06-30-003 U4); live flip operator-gated |
+| `CFOAT00200` | `live-smoke-fo-order` | `fo_order_chained_smoke` | gate 2 — OPERATOR-RUN F/O modify: a quantity REDUCTION (submit qty 2 → modify 1; an INCREASE is rejected `01442` 정정수량 초과, proven 2026-07-01), price stays at the valid floor tick; modify-link failure → gate 2 PENDING (gate 1 stands); success `rsp_cd` `00462` (CONFIRMED live 2026-07-01; was seed `00132`) | implemented-only | paper F/O order MODIFY — gate 2 evidence (plan 2026-06-30-003 U6); live flip operator-gated |
+| `CFOAT00300` | `live-smoke-fo-order` | `fo_order_chained_smoke` | gate 2 — OPERATOR-RUN F/O cancel (PRIMARY teardown); a CLEAN cancel response is the only resting-order-removal confirmation (no F/O 미체결 read); non-clean cancel → loud operator-action-required (manual board check + flatten); success `rsp_cd` `00463` (CONFIRMED live 2026-07-01; was seed `00156`) | implemented-only | paper F/O order CANCEL — gate 2 evidence + teardown (plan 2026-06-30-003 U4); live flip operator-gated |
 | `t8417` | `live-smoke-t8417` | `live_smoke_t8417` | any session (certified UNDER closure); `shcode="001"` `ncnt="1"` — 업종차트 틱/n틱, non-empty `t8417OutBlock1` (else PENDING) | implemented-only | paper sector tick chart, paginated single-page (plan -004) |
 | `t8418` | `live-smoke-t8418` | `live_smoke_t8418` | any session (certified UNDER closure); `shcode="001"` `ncnt="1"` — 업종차트 N분, non-empty `t8418OutBlock1` | implemented-only | paper sector N-minute chart, paginated single-page (plan -004) |
 | `t8411` | `live-smoke-t8411` | `live_smoke_t8411` | any session (certified UNDER closure); `shcode="005930"` `ncnt="1"` `edate="99999999"` — 주식차트 틱/n틱, non-empty `t8411OutBlock1` | implemented-only | paper stock tick chart, paginated single-page (plan -004) |

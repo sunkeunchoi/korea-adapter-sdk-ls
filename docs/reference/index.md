@@ -19,6 +19,9 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `C02` | KRX야간파생 선물체결 | `realtime` | implemented, not yet recommended |
 | `CD0` | 상품선물실시간상하한가 | `realtime` | implemented, not yet recommended |
 | `CFOAQ10100` | 선물옵션 주문가능수량조회 | `account` | implemented, not yet recommended |
+| `CFOAT00100` | 선물옵션 정상주문 (domestic F/O order submit) | `orders` | implemented, not yet recommended |
+| `CFOAT00200` | 선물옵션 정정주문 (domestic F/O order modify) | `orders` | implemented, not yet recommended |
+| `CFOAT00300` | 선물옵션 취소주문 (domestic F/O order cancel) | `orders` | implemented, not yet recommended |
 | `CFOBQ10500` | 선물옵션 계좌예탁금증거금조회 | `account` | implemented, not yet recommended |
 | `CFOEQ11100` | 선물옵션가정산예탁금상세 | `account` | implemented, not yet recommended |
 | `CIDBQ01400` | 해외선물 체결내역개별 조회(주문가능수량) | `account` | implemented, not yet recommended |

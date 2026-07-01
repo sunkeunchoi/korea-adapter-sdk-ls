@@ -1131,3 +1131,63 @@ forward; an operator with credentials and the right session could still move the
 (every reason on file still holds). `recommended` deferred for all (no flips). The
 41-TR residue is fully and currently dispositioned; the offline tracked-flip pool is
 exhausted under closure.
+
+## 21. KRX-open domestic F/O order certify-and-flip wave (2026-07-01)
+
+Plan `docs/plans/2026-07-01-001-feat-krx-open-domestic-fo-order-certify-flip-plan.md`.
+Goal: certify and flip the staged domestic F/O order chain
+`CFOAT00100/00200/00300` (deferred-order Lane B of §20) on a live in-window run, plus
+the conditional funded-margin read `CSPBQ00200`. Outcome: **3 flips** (the F/O order
+chain → Implemented); `CSPBQ00200` and `t0441` carried forward PENDING.
+
+**Prerequisite (U1) — F/O order-smoke credential lane.** `make live-smoke-fo-order`
+sourced the default `.env` while the F/O reads (incl. `t0441`) authenticate on
+`.env.domestic_option` (…51). Corrected to the `domestic_option` lane with a
+fail-closed guard (refuses to fall back to `.env` when the lane file is absent) so the
+order chain and `t0441` read the same F/O-capable account. Also repaired three
+decomposition-drift bugs the first live run exposed (test-decomposition PR #78 renamed
+the order-smoke tests into `#[path]` submodules, so the Makefile `--exact` filters
+matched 0 tests) and self-sourced the F/O contract from the `t8467` index-futures
+master (front-month) so no stale contract is hand-supplied.
+
+**Certification (R4/R5) — three operator in-window runs, KRX open 2026-07-01.** The
+first two runs were **non-certifying but diagnostic** (R7): they proved the plan's
+seed ack codes and the modify leg were wrong, and that `t0441` returns an EMPTY array
+(not a `positions=0` row) on a flat account. Corrected wire truth (F/O shares the
+domestic-stock ack family): **submit `00040`, modify `00462`, cancel `00463`** (the
+plan's `00132`/`00156` seeds were both wrong); the modify is a quantity REDUCTION
+(submit qty 2 → 1; an INCREASE is rejected `01442` 정정수량 초과); and an empty `t0441`
+read is `Flat` (no position), not fail-closed `NotFlat` (else the always-flat chain
+could never certify — the resting daily-limit order is unfillable and the clean cancel
+proves removal). The **third run certified clean**: each leg acked from its own
+response (submit `00040`/27158, modify `00462`/27159, cancel `00463`/27160), `t0441`
+positively confirmed no fill, account left flat.
+
+**Flips (R8) — 3.**
+- `CFOAT00100` (선물옵션 정상주문, submit) → **Implemented** (rsp_cd `00040` 매수주문 완료).
+- `CFOAT00200` (선물옵션 정정주문, modify) → **Implemented** (rsp_cd `00462` 정정주문 완료).
+- `CFOAT00300` (선물옵션 취소주문, cancel) → **Implemented** (rsp_cd `00463` 취소주문 완료).
+  `recommended` deferred for all three (live order-placement endorsement is a separate
+  pass). Policies were already crosscheck-registered (order TRs, `is_order: true`,
+  excluded from `slice_rest_policies_are_non_order_rest`) — no `ls-core` change.
+
+**Carry-forward PENDING (R9/R10).**
+- `CSPBQ00200` (현물계좌증거금률별주문가능수량, account) — **carry-forward PENDING** (§16/§20).
+  R9 flips it only on a funded-margin witness; no funded-margin context was smoked this
+  wave (the funded account is the `…51` F/O lane, whereas `CSPBQ00200` is a 현물/spot read
+  on the default lane, which carries no cash deposit). Reason unchanged; re-attempt when
+  a funded spot-margin context exists.
+- `t0441` (선물/옵션잔고평가, account) — **carry-forward PENDING** (§18/§20). Needs a
+  deliberately-held open F/O position, which the flatness-preserving chain never holds
+  (a deliberate-position leg was considered and rejected for this wave). The corrected
+  `t0441` empty→Flat verdict is the *no-fill* confirmation used inside the chain, not a
+  balance-row witness — `t0441`'s own flip still awaits a non-empty position read.
+
+**Count tally (R8/R13).** 3 flips (Tracked → Implemented). `reference.len()` **280 →
+283** and `banner_trs` gains `CFOAT00100/00200/00300` (hand-edited in
+`crates/ls-docgen/src/lib.rs::reference_covers_implemented_with_banner_and_omits_unimplemented`
+— not caught by `make docs`). Tracked → Implemented does **not** move
+`maintained_tr_count` (stays **320**), `cli.rs` literals, `api_drift`, or `TRACKED_TRS`.
+`recommended` deferred for all. The domestic F/O order chain is now callable and
+Implemented on paper; the deferred-order residue drops the three domestic F/O TRs
+(overseas-stock/overseas-futures order chains remain deferred — other sessions/lanes).

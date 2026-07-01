@@ -16,13 +16,14 @@ dependencies:
   self_continuation_fields: []
   strong_order_fields: [OrgOrdNo, FnoIsuNo, MdfyQty, FnoOrdPrc]
 support:
-  # Tracked-rung order TR; live-flip target this wave. The submit/cancel/modify
-  # Rust + the operator-gated F/O order smoke (`make live-smoke-fo-order`) are built,
-  # but implemented stays false until the operator certifies each leg in-window
-  # (plan 2026-06-30-003, U4/U6). Whether the paper account is F/O-order-capable is
-  # resolved at smoke time (R8).
+  # Implemented: the domestic F/O order MODIFY leg certified on a clean in-window
+  # guarded F/O paper order-chain smoke (rsp_cd 00462 모의투자 정정주문 완료;
+  # `make live-smoke-fo-order`, plan 2026-07-01-001 U3, KRX open 2026-07-01). The
+  # modify is a quantity REDUCTION (submit qty 2 -> 1) at the resting daily-limit
+  # price; an INCREASE is rejected 01442 (정정수량 초과). The chain ended flat
+  # (t0441 no fill). Recommended deferred (live order-placement endorsement, separate pass).
   tracked: true
-  implemented: false
+  implemented: true
   recommended: false
 maintenance:
   source_spec_hash: b2c3d4e5f6a1

@@ -1,6 +1,7 @@
 ---
 title: Authoring the domestic F/O order chain (CFOAT) — wire + harness gotchas
 date: 2026-06-30
+last_updated: 2026-07-01
 problem_type: convention
 module: orders
 component: futureoption-order-chain
@@ -13,6 +14,7 @@ tags:
   - order-smoke
   - fail-closed
   - reconciliation
+  - live-certification
 related:
   - "docs/solutions/integration-issues/ls-gateway-igw40011-numeric-request-fields.md"
   - "docs/solutions/architecture-patterns/autonomous-order-smoke-fail-closed-contract.md"
@@ -65,23 +67,39 @@ the `req_example` shows whether it carries decimals. Decide per field, not per s
 Keep the doc comment honest — a comment claiming `string_as_number` over a field that
 actually uses `string_as_decimal` is its own review finding.
 
-### 2. Per-venue order success codes differ — confirm from the raw success example
+### 2. Per-venue order success codes: the raw `res_example` seed can be WRONG — only the live run pins it
 
-The order-ack seed in `ls_core::rsp_cd_is_order_success` is a **union across all order
-TRs** and only gates retry/dedup safety in `post_order` (accept vs reject vs
-ambiguous). The stock modify completes with `00462`; the **F/O modify completes with
-`00132`** (`CFOAT00200` raw success example), and the F/O cancel with `00156` (shared
-with the stock-cancel alternate). Add the new code to the seed when authoring:
+**Live correction (2026-07-01 certification, plan 2026-07-01-001):** the offline
+authoring seeded F/O modify `00132` and cancel `00156` from the `CFOAT00200`/`CFOAT00300`
+raw `res_example`s. Both were **wrong**. The live paper gateway returned **modify `00462`
+and cancel `00463`** — i.e. the F/O family uses the **domestic-stock ack codes exactly**
+(submit `00040`/`00039`, modify `00462`, cancel `00463`). The first operator run showed
+cancel `00463` ("취소주문 완료"), and once the modify was fixed (see the qty rule below)
+the second and third runs both acked modify `00462`.
 
 ```rust
 fn rsp_cd_is_order_success(code: &str) -> bool {
-    matches!(code, "00039" | "00040" | "00462" | "00463" | "00156" | "00132")
-    //                                                                  ^^^^^ F/O modify
+    matches!(code, "00039" | "00040" | "00462" | "00463")
+    //  F/O shares the stock-family codes; the 00132/00156 raw-example seeds were disproven live
 }
 ```
 
-Always read the success `rsp_cd` from the TR's own raw `res_example`; do not assume the
-stock code carries over.
+Lesson: the raw `res_example` is a **seed, not ground truth** — a per-leg code stays
+provisional until a live run acks it. Mark seed codes as seed-only in the code comment
+(`crates/ls-sdk/tests/order/fo.rs` labels each ack set with its confirmation state), and
+never flip a leg to Implemented off an unobserved code. When a sibling family (here:
+stock) is already live-confirmed, prefer *its* codes over an unproven raw seed.
+
+### 2a. F/O 정정 (modify) can only REDUCE quantity — an increase is rejected `01442`
+
+`CFOAT00200`'s `MdfyQty` is an **absolute** target quantity, and the F/O gateway rejects
+a modify whose target **exceeds** the resting quantity with `01442` (정정수량이 정정가능수량을
+초과). So a modify-quantity smoke must submit qty ≥ 2 and modify **down** (e.g. 2 → 1); a
+copy-from-stock harness that submits qty 1 and modifies to 2 fails `01442` every run
+(this masqueraded as a harness bug for two operator sessions before the direction was
+fixed). To exercise modify without extra margin you could instead modify the *price* to
+another valid tick, but the daily-limit anchor gives only one on-tick price per side, so
+the quantity reduction is the cheaper lever.
 
 ### 3. The F/O modify/cancel result block has NO `PrntOrdNo` — the parent is in OutBlock1
 
@@ -120,25 +138,46 @@ The stock chain confirms post-teardown flatness by scanning `t0425` (a working-o
 independent parts, both fail-closed:
 
 - **No fill** — `t0441` (선물옵션잔고평가) detects a *filled position* (잔고 `jqty`), not a
-  resting order. Empty/unreadable counts as **NOT flat** (cannot positively confirm).
-  Detect a position with `f64 != 0.0`, not a `u64` parse — an F/O position can be
-  **short (negative)** and a `u64` parse would silently drop `-1`; an unparseable
-  quantity is treated as a position (fail-safe).
+  resting order. **Live correction (2026-07-01):** the offline authoring made an empty
+  `t0441` read `NotFlat` (fail-closed), but a position-less account returns an **empty
+  array** (not a `positions=0` row) on *every* successful flat run — so `NotFlat`-on-empty
+  made the always-flat chain (unfillable daily-limit rest + clean cancel) **impossible to
+  certify**. The verdict must read an **`Ok`-empty (or all-zero) `t0441` as Flat**. This is
+  not fail-open: a genuinely *failed* read is the caller's `Err` arm (still panics
+  `fo-flat-scan-failed`), and a real *fill* still surfaces as a non-zero `jqty` row →
+  `Fill`. Detect a position with `f64 != 0.0`, not a `u64` parse — an F/O position can be
+  **short (negative)** and a `u64` parse would silently drop `-1`; an unparseable quantity
+  is treated as a position (fail-safe).
 - **Resting-order removal** — confirmed ONLY by a **clean cancel response**. There is no
   board read to verify it independently.
 
-The load-bearing consequence (a cross-model review caught this; the stock harness hid it
-behind its `t0425` backstop): **any state where the resting order's removal is
-unconfirmable must HARD-FAIL, never print a success line.** Three such states, all
-funneled to one loud `set_orders_enabled(false)` + `panic!` operator-action-required
-signal:
+The load-bearing consequence (a cross-model review caught this twice — once for the stock
+harness's `t0425` backstop, once for the flatness relaxation below): **any state where the
+resting order's removal is unconfirmable must HARD-FAIL, never print a success line.** Four
+such states, all funneled to one loud `set_orders_enabled(false)` + `panic!`
+operator-action-required signal:
 
 1. An **accepted submit that returns no usable order number** — an order may rest that
    the harness cannot reference to cancel. Do not silently record Pending and return.
-2. An **`Ok` modify that is not cleanly certified** (wrong-leg/unrecognized code or
+2. A **submit that fails AMBIGUOUSLY** (transport / `AmbiguousOrder` error) — the order
+   MAY have reached the gateway and be resting, with no order number to cancel. This one
+   is the subtle trap: since `t0441` sees fills only, and (after the correction above) an
+   empty `t0441` now reads **Flat**, an ambiguous-submit path that leans on the flatness
+   check would pass `1 passed` with a real resting order alive. It must hard-fail on its
+   own — do not route resting-order safety through the fill verdict.
+3. An **`Ok` modify that is not cleanly certified** (wrong-leg/unrecognized code or
    empty new order number) — it is ambiguous which order is now live.
-3. A **non-clean cancel** — removal is unconfirmed and `t0441` (fills only) cannot see
+4. A **non-clean cancel** — removal is unconfirmed and `t0441` (fills only) cannot see
    the survivor.
+
+**The evolved principle:** one fail-closed check often serves two jobs. The old
+`NotFlat`-on-empty verdict was simultaneously (a) the happy-path flatness confirmation and
+(b) the catch-all for a resting order after an ambiguous placement. Relaxing it for (a)
+(so the flat chain can certify) silently removed (b). When you relax or remove a
+fail-closed guard, **enumerate every path that depended on it** and give each its own
+explicit guard — here, the placement-error paths (#1, #2) hard-fail independently of the
+fill verdict, so `empty t0441 = Flat` is only ever trusted *after a clean cancel has
+proven removal*.
 
 Gate the new-order-number adoption on clean certification: a cleanly-certified modify
 transitioned the order to the new number (cancel that); an ambiguous modify best-effort
@@ -152,9 +191,9 @@ stricter per-leg check, keyed on the business code + order number, **never statu
 (PR #74 shipped a status-text cert bug that only review caught):
 
 ```rust
-const FO_SUBMIT_OK: [&str; 2] = ["00040", "00039"];
-const FO_MODIFY_OK: [&str; 1] = ["00132"];
-const FO_CANCEL_OK: [&str; 1] = ["00156"];
+const FO_SUBMIT_OK: [&str; 2] = ["00040", "00039"]; // confirmed live 2026-07-01
+const FO_MODIFY_OK: [&str; 1] = ["00462"];          // confirmed live (was seed 00132)
+const FO_CANCEL_OK: [&str; 1] = ["00463"];          // confirmed live (was seed 00156)
 fn fo_leg_certified(expected: &[&str], rsp_cd: &str, order_no: &str) -> bool {
     let o = order_no.trim();
     expected.contains(&rsp_cd.trim()) && !o.is_empty() && o != "0"
@@ -196,8 +235,18 @@ two-part fail-closed flatness with the teardown-uncertain hard-fail.
 The reference implementation is the CFOAT chain itself:
 `crates/ls-sdk/src/orders/futureoption.rs` (structs, serializers, `order_no`/
 `parent_order_no`, `FoOrders`), `crates/ls-core/src/endpoint_policy/order.rs` (the three
-`is_order: true` policies), `crates/ls-core/src/inner.rs` (`00132` in the seed), and
-`crates/ls-sdk/tests/order_smoke.rs` (`fo_order_chained_smoke`, `validate_fo_band`,
+`is_order: true` policies), and `crates/ls-sdk/tests/order/fo.rs` (the F/O harness after
+the test-file decomposition: `fo_order_chained_smoke`, `validate_fo_band`,
 `fo_flat_verdict`, `fo_qty_is_position`, `fo_leg_certified`, the `teardown_uncertain`
-hard-fail). The operator runs it via `make live-smoke-fo-order` with a current valid
-`LS_FO_ORDER_SMOKE_SHCODE`.
+hard-fail, and the ack-code constants). The operator runs it via `make live-smoke-fo-order`
+— which now self-sources the contract from the `t8467` index-futures master (front-month),
+so no `LS_FO_ORDER_SMOKE_SHCODE` is needed (it stays an optional override).
+
+**Harness gotcha (test decomposition):** when the order-smoke tests were split into
+`#[path]` submodules (`order/fo.rs`, `order/chain.rs`), their exact test names gained a
+`fo::`/`chain::` prefix, but the Makefile smoke targets still passed the bare names to
+`cargo test -- --ignored --exact`. `--exact <bare-name>` then matched **0 tests**, and the
+`grep -q "1 passed"` guard failed with "did not run (0 tests)" — a silent green-to-broken
+drift the offline gate never catches (the live smokes are `#[ignore]`). After any
+test-file decomposition, re-derive the `--exact` filters from `cargo test <bin> -- --list`
+(via `rtk proxy cargo …` if a summarizing proxy strips the list output).

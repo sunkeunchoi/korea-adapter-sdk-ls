@@ -72,19 +72,21 @@ impl FoBand {
 /// The F/O flatness verdict from a `t0441` (선물옵션잔고평가) balance read. `t0441`
 /// sees a **filled** position (잔고), NOT a resting unfilled order — so this is only
 /// the FILL half of the two-part flatness check (the other half is a clean cancel
-/// response confirming the resting order's removal). Fail-closed per R6: only a
-/// positively-parsed zero-position read is `Flat`; an empty/unreadable read is
-/// `NotFlat` and blocks the flip.
+/// response confirming the resting order's removal). A t0441 read that genuinely FAILS
+/// is the caller's `Err` arm (panics `fo-flat-scan-failed`); an `Ok` read reaching this
+/// verdict is a successful "your positions are: <rows>" answer, so an empty row set
+/// means no position (R6, revised from the plan's AE3 "positions=0 row" assumption to
+/// the observed empty-array reality — see [`fo_flat_verdict`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum FoFlatVerdict {
-    /// Positively confirmed: balance rows present and every position is zero.
+    /// No F/O position: either no balance rows at all (t0441 returns an empty array on a
+    /// position-less account) or rows whose every quantity is zero. Positively confirms
+    /// no fill — the caller trusts it only after a CLEAN cancel already removed the
+    /// resting order.
     Flat,
     /// One or more FILLED positions (`jqty != 0`) — unrecoverable by cancel (paper
     /// reset is the sole remediation). Carries the position contract codes.
     Fill(Vec<String>),
-    /// Empty / unreadable / ambiguous — cannot positively confirm no fill, so it is
-    /// treated as NOT flat (fail-closed, R6) and blocks the flip.
-    NotFlat,
 }
 
 /// `true` if a `t0441` quantity field is a non-zero (or unparseable) position. F/O
@@ -105,12 +107,16 @@ fn fo_qty_is_position(s: &str) -> bool {
 
 /// Classify a `t0441` balance-row set into an F/O flatness verdict (KTD3, R6).
 fn fo_flat_verdict(rows: &[T0441OutBlock1]) -> FoFlatVerdict {
-    // Empty = cannot positively confirm no fill → fail-closed NOT flat (R6). A
-    // genuinely position-less account that returns an empty array is indistinguishable
-    // here from a scoped-out / failed read, so the operator must confirm manually.
-    if rows.is_empty() {
-        return FoFlatVerdict::NotFlat;
-    }
+    // No row with a non-zero quantity = no F/O position = Flat. t0441 (선물/옵션 잔고평가)
+    // returns an EMPTY array on a position-less account (confirmed live 2026-07-01, both
+    // operator runs) — NOT a zero-qty row — so empty must read as Flat, or the
+    // always-flat chain (unfillable daily-limit rest + clean cancel) could never certify.
+    // This is NOT fail-OPEN: a genuinely failed/unreadable t0441 read is the caller's
+    // `Err` arm (panics `fo-flat-scan-failed`), so an `Ok` empty read here is a real "no
+    // positions" answer; a FILL (full or partial) still surfaces as a non-empty,
+    // non-zero-`jqty` row → `Fill`; and the caller only consults this after a CLEAN
+    // cancel, which itself proves the order was resting/unfilled (a filled order cannot
+    // be canceled).
     let fills: Vec<String> = rows
         .iter()
         .filter(|r| fo_qty_is_position(&r.jqty))
@@ -125,15 +131,19 @@ fn fo_flat_verdict(rows: &[T0441OutBlock1]) -> FoFlatVerdict {
 
 // ---- F/O per-leg certification predicate (R6, guards the U4 flip decision) ---
 
-/// The F/O order-ack codes, PER LEG (seed; read from the raw CFOAT success examples,
-/// seed-only until the operator's live run confirms them). Kept leg-specific so a
-/// submit that returns a modify/cancel code (a gateway anomaly) is NOT certified as a
-/// clean submit. `ls_core`'s runtime accept gate (`classify_order_rsp_cd`) is
-/// intentionally a coarser union across all order TRs — it only decides retry/dedup
-/// safety; per-leg certification is the stricter offline check the U4/U6 flip relies on.
-const FO_SUBMIT_OK: [&str; 2] = ["00040", "00039"]; // buy / sell
-const FO_MODIFY_OK: [&str; 1] = ["00132"];
-const FO_CANCEL_OK: [&str; 1] = ["00156"];
+/// The F/O order-ack codes, PER LEG — all three CONFIRMED from the operator's 2026-07-01
+/// in-window live runs: submit 00040 (buy) / 00039 (sell), modify 00462, cancel 00463. The
+/// F/O family shares the domestic-stock chain's ack codes exactly. (The plan's raw-example
+/// seeds 00132/00156 for modify/cancel were both disproven by the live runs — the first run
+/// showed cancel 00463, and once the modify was fixed to a valid quantity reduction the
+/// second and third runs both acked modify 00462.) Kept leg-specific so a submit that returns
+/// a modify/cancel code (a gateway anomaly) is NOT certified as a clean submit. `ls_core`'s
+/// runtime accept gate (`classify_order_rsp_cd`) is intentionally a coarser union across all
+/// order TRs — it only decides retry/dedup safety; per-leg certification is the stricter
+/// offline check the U4/U6 flip relies on.
+const FO_SUBMIT_OK: [&str; 2] = ["00040", "00039"]; // buy / sell (confirmed live 2026-07-01)
+const FO_MODIFY_OK: [&str; 1] = ["00462"]; // confirmed live 2026-07-01 (was seed 00132)
+const FO_CANCEL_OK: [&str; 1] = ["00463"]; // confirmed live 2026-07-01 (was seed 00156)
 
 /// Per-leg certification (R6): a leg certifies ONLY on a genuinely clean row — the
 /// `rsp_cd` is in that LEG's accepted set AND a usable order number is present. A
@@ -160,10 +170,11 @@ fn fo_t0441_row_line(r: &T0441OutBlock1) -> String {
 }
 
 /// Two-part-flatness FILL half (KTD3 part 1): read `t0441` and assert NO filled F/O
-/// position remains. Fail-closed — empty/unreadable counts as NOT flat (R6). On a
-/// `Fill` or `NotFlat` verdict it raises a LOUD operator-action-required signal
-/// (panic, the operator run's failure channel) naming the order numbers; the kill
-/// switch is engaged as a no-new-orders guard. A clean `Flat` records a positive pass.
+/// position remains. A `Fill` verdict (a non-zero position) OR a genuinely failed t0441
+/// read raises a LOUD operator-action-required signal (panic, the operator run's failure
+/// channel) naming the order numbers; the kill switch is engaged as a no-new-orders
+/// guard. An `Ok` read with no non-zero position (empty array or all-zero rows) records a
+/// positive `Flat` pass (R6) — the resting order was already removed by the clean cancel.
 async fn fo_assert_no_fill(sdk: &LsSdk, ordnos: &[String]) {
     match sdk.account().fo_balance_eval(&T0441Request::new()).await {
         Ok(resp) => {
@@ -191,18 +202,6 @@ async fn fo_assert_no_fill(sdk: &LsSdk, ordnos: &[String]) {
                         )
                     );
                 }
-                FoFlatVerdict::NotFlat => {
-                    sdk.inner().set_orders_enabled(false);
-                    panic!(
-                        "{}",
-                        loud_failure(
-                            "fo-flat-unconfirmed",
-                            ordnos,
-                            "t0441 returned empty/unreadable — cannot POSITIVELY confirm no F/O \
-                             fill (fail-closed, R6); MANUAL board check required before any flip",
-                        )
-                    );
-                }
             }
         }
         Err(e) => {
@@ -227,9 +226,10 @@ async fn fo_assert_no_fill(sdk: &LsSdk, ordnos: &[String]) {
 /// Inherits every guard from [`order_chained_smoke`] verbatim (KTD5): the U1 autonomy
 /// precondition (CI/no-TTY refusal + fresh per-wave nonce), the U2 resolved-paper
 /// assertion, the U4 fail-closed dispatch-log suppressor, and the widened
-/// [`scrub_secrets`]. The F/O contract is supplied via `LS_FO_ORDER_SMOKE_SHCODE` with
-/// NO default (a stale/absent contract cannot be defaulted — the current-contract
-/// gotcha, deps).
+/// [`scrub_secrets`]. The F/O contract is self-sourced at runtime from the t8467
+/// index-futures master (front-month) so it is never stale — an explicit
+/// `LS_FO_ORDER_SMOKE_SHCODE` override still wins when a specific contract is wanted
+/// (the current-contract gotcha, deps).
 ///
 /// Capability outcomes (R8): `01491`/`01900` → Pending, classified by
 /// `is_paper_order_incapable` only when `01491`; any OTHER rejection code is recorded
@@ -239,7 +239,7 @@ async fn fo_assert_no_fill(sdk: &LsSdk, ordnos: &[String]) {
 ///
 /// `#[ignore]` — runs only via `make live-smoke-fo-order`.
 #[tokio::test]
-#[ignore = "guarded F/O chained paper order: needs credentials + LS_ORDER_SMOKE=1 + a fresh LS_ORDER_SMOKE_NONCE + LS_FO_ORDER_SMOKE_SHCODE; run via `make live-smoke-fo-order`"]
+#[ignore = "guarded F/O chained paper order: needs credentials + LS_ORDER_SMOKE=1 + a fresh LS_ORDER_SMOKE_NONCE (contract self-sourced from t8467; optional LS_FO_ORDER_SMOKE_SHCODE override); run via `make live-smoke-fo-order`"]
 async fn fo_order_chained_smoke() {
     // U4: install the fail-closed dispatch-log suppressor BEFORE any dispatch (incl. the
     // t2111 price-band and t0441 reads, whose raw bodies carry account data).
@@ -247,27 +247,9 @@ async fn fo_order_chained_smoke() {
         panic!("{}", scrub_secrets(&e.to_string()));
     }
 
-    // The current valid F/O contract — REQUIRED, no default. A stale hardcoded contract
-    // fails (the current-contract gotcha); the operator supplies a live one per run.
-    let contract = match std::env::var("LS_FO_ORDER_SMOKE_SHCODE") {
-        Ok(v)
-            if !v.trim().is_empty()
-                && v.trim().chars().all(|c| c.is_ascii_alphanumeric()) =>
-        {
-            v.trim().to_string()
-        }
-        _ => {
-            OrderEvidence::not_certified(
-                "preflight",
-                "LS_FO_ORDER_SMOKE_SHCODE (a current valid F/O contract) is required; refusing \
-                 to default a possibly-stale contract",
-            )
-            .record();
-            panic!("LS_FO_ORDER_SMOKE_SHCODE required (a stale/absent F/O contract cannot be defaulted)");
-        }
-    };
-
-    // U1+U2: autonomy precondition + paper-resolved SDK. A refusal places nothing.
+    // U1+U2: autonomy precondition + paper-resolved SDK. A refusal places nothing —
+    // built FIRST so a no-TTY / unattended / non-paper run refuses before any network
+    // I/O (including the contract-source read below).
     let sdk = match autonomous_order_smoke_sdk() {
         Ok(s) => s,
         Err(e) => panic!("{}", scrub_secrets(&e.to_string())),
@@ -275,6 +257,63 @@ async fn fo_order_chained_smoke() {
     // NB: the F/O surface has no t0425-style reconcile (no F/O 미체결 read), so unlike
     // the stock chain this run never builds a reconcile intent — flatness is t0441
     // fill-detection + clean-cancel removal. The account number is therefore not needed.
+
+    // The current valid F/O contract. A hardcoded contract goes stale (the current-
+    // contract gotcha), so it is NEVER defaulted — it is self-sourced at runtime from
+    // the t8467 index-futures master (gubun "Q", front-month = first row), the SAME
+    // current-contract source the F/O read/chart smokes use (mirrors
+    // `fo_front_month_shcode` in live_smoke.rs). An explicit `LS_FO_ORDER_SMOKE_SHCODE`
+    // override still wins when the operator wants to pin a specific contract. A missing /
+    // empty master certifies nothing and places NO order (records Pending, R7).
+    let contract = match std::env::var("LS_FO_ORDER_SMOKE_SHCODE") {
+        Ok(v)
+            if !v.trim().is_empty()
+                && v.trim().chars().all(|c| c.is_ascii_alphanumeric()) =>
+        {
+            v.trim().to_string()
+        }
+        _ => match sdk
+            .market_session()
+            .index_futures_master(&T8467Request::new("Q"))
+            .await
+        {
+            Ok(m) if !m.outblock.is_empty() => m.outblock[0].shcode.trim().to_string(),
+            Ok(m) => {
+                OrderEvidence::not_certified(
+                    "preflight",
+                    &format!(
+                        "t8467 index-futures master returned no contract (rsp_cd={}); placed nothing",
+                        m.rsp_cd
+                    ),
+                )
+                .record();
+                OrderEvidence::pending("fo-chain", "no F/O contract to key the chain; placed nothing")
+                    .record();
+                return;
+            }
+            Err(e) => {
+                OrderEvidence::not_certified(
+                    "preflight",
+                    &format!("t8467 contract source failed: {}", scrub_secrets(&e.to_string())),
+                )
+                .record();
+                OrderEvidence::pending("fo-chain", "F/O contract source unavailable; placed nothing")
+                    .record();
+                return;
+            }
+        },
+    };
+    // Defensive: a self-sourced contract must still be a plain alphanumeric code before
+    // it keys any order (the master could in principle return an unexpected shape).
+    if contract.is_empty() || !contract.chars().all(|c| c.is_ascii_alphanumeric()) {
+        OrderEvidence::not_certified(
+            "preflight",
+            "resolved F/O contract is empty / non-alphanumeric; placed nothing",
+        )
+        .record();
+        OrderEvidence::pending("fo-chain", "no valid F/O contract; placed nothing").record();
+        return;
+    }
 
     // Price anchor: the daily limits from t2111 (KTD2). FAIL-CLOSED — if no valid,
     // non-empty anchor can be sourced, place NO order.
@@ -302,8 +341,10 @@ async fn fo_order_chained_smoke() {
         }
     };
 
-    // ---- SUBMIT leg (gate 1 evidence): a resting buy at the daily floor. ----
-    let submit_req = CFOAT00100Request::limit(&contract, "1", band.resting_buy_price(), "2");
+    // ---- SUBMIT leg (gate 1 evidence): a resting buy at the daily floor. Qty is 2 so the
+    // MODIFY leg can exercise a valid quantity REDUCTION (2 → 1); F/O 정정 cannot INCREASE
+    // qty. Args: (contract, ordqty="2", price, bnstpcode="2"=buy). ----
+    let submit_req = CFOAT00100Request::limit(&contract, "2", band.resting_buy_price(), "2");
     let mut sev = leg_evidence("CFOAT00100", "fo_submit_resting_buy");
     let submit_ordno = match sdk.fo_orders().submit(&submit_req).await {
         Ok(resp) => {
@@ -364,17 +405,29 @@ async fn fo_order_chained_smoke() {
             return;
         }
         Err(e) => {
-            // Ambiguous / transport: the order MAY have reached the gateway. Confirm no
-            // fill (fail-closed) BEFORE recording Pending — never assume not-placed.
+            // Ambiguous / transport: the order MAY have reached the gateway and be RESTING
+            // now, with NO order number to cancel it — and t0441 sees fills only, never a
+            // resting order (KTD3). So this is fail-closed LOUD, not a silent Pending: since
+            // `fo_flat_verdict` now reads an empty t0441 as Flat (no fill), an empty read here
+            // must NOT be mistaken for "board is clear" — a resting order would pass silently.
+            // Engage the kill switch, best-effort check for a fill, then hard-fail so the
+            // operator does a manual board check + flatten. Mirrors the accepted-but-no-order-
+            // number path below (never assume an ambiguous submit placed nothing).
             sev.rsp_msg = format!("submit failed: {}", scrub_secrets(&e.to_string()));
             sev.record();
+            sdk.inner().set_orders_enabled(false);
             fo_assert_no_fill(&sdk, &[]).await;
-            OrderEvidence::pending(
-                "fo-chain",
-                "F/O submit did not cleanly place; no fill confirmed; chain not run",
-            )
-            .record();
-            return;
+            panic!(
+                "{}",
+                loud_failure(
+                    "fo-submit-ambiguous",
+                    &[],
+                    "F/O submit failed AMBIGUOUSLY (transport/ambiguous error) — an order MAY \
+                     rest uncancelable (no order number; t0441 sees fills only, and an empty \
+                     t0441 no longer implies an empty order board); MANUAL board check + \
+                     flatten required",
+                )
+            );
         }
     };
     if submit_ordno.trim().is_empty() || submit_ordno.trim() == "0" {
@@ -396,11 +449,13 @@ async fn fo_order_chained_smoke() {
         );
     }
 
-    // ---- MODIFY leg: amend the resting order's QUANTITY (price stays at the valid
-    // floor tick, so it stays far-from-market and cannot fill). The modify is absolute
-    // (full target qty), KTD4. Changing quantity rather than price avoids re-deriving an
-    // on-tick F/O price near the floor. ----
-    let modify_req = CFOAT00200Request::limit(&submit_ordno, &contract, "2", band.resting_buy_price());
+    // ---- MODIFY leg: REDUCE the resting order's QUANTITY from 2 → 1 (price stays at the
+    // valid floor tick, so it stays far-from-market and cannot fill). The modify is
+    // absolute (full target qty), KTD4, and MUST be a reduction: F/O 정정 cannot INCREASE
+    // quantity above the resting qty (a larger target is rejected 01442 정정수량 초과 —
+    // proven by the 2026-07-01 live run). Changing quantity rather than price avoids
+    // re-deriving an on-tick F/O price near the floor. ----
+    let modify_req = CFOAT00200Request::limit(&submit_ordno, &contract, "1", band.resting_buy_price());
     let mut mev = leg_evidence("CFOAT00200", "fo_modify_resting_qty");
     let (live_ordno, resting_qty, modify_uncertain) = match sdk.fo_orders().modify(&modify_req).await {
         Ok(resp) => {
@@ -419,8 +474,8 @@ async fn fo_order_chained_smoke() {
             let n = resp.order_no().to_string();
             if certified {
                 // A CLEANLY certified modify transitioned the resting order to the NEW
-                // order number at the modified quantity — cancel that.
-                (n, "2".to_string(), false)
+                // order number at the modified quantity (now 1) — cancel that.
+                (n, "1".to_string(), false)
             } else {
                 // Ok but NOT cleanly certified (wrong-leg/unrecognized code, or empty/zero
                 // new order number): it is ambiguous which order is now live. Best-effort
@@ -431,12 +486,12 @@ async fn fo_order_chained_smoke() {
                 } else {
                     n
                 };
-                (live, "2".to_string(), true)
+                (live, "1".to_string(), true)
             }
         }
         Err(e) => {
             // Gate 1 already flipped on the submit leg; gate 2 stays Pending. The original
-            // submit order is untouched and still rests at the submit quantity.
+            // submit order is untouched and still rests at the submit quantity (2).
             mev.rsp_msg = format!("modify failed: {}", scrub_secrets(&e.to_string()));
             mev.record();
             OrderEvidence::pending(
@@ -444,7 +499,7 @@ async fn fo_order_chained_smoke() {
                 "F/O modify link failed; gate 2 not flipped (gate 1 stands)",
             )
             .record();
-            (submit_ordno.clone(), "1".to_string(), false)
+            (submit_ordno.clone(), "2".to_string(), false)
         }
     };
 
@@ -499,8 +554,9 @@ async fn fo_order_chained_smoke() {
         );
     }
 
-    // Two-part flatness — FILL half (KTD3 part 1): t0441 must positively confirm no
-    // filled F/O position. Fail-closed; raises operator-action-required on Fill/NotFlat.
+    // Two-part flatness — FILL half (KTD3 part 1): t0441 must show no filled F/O position
+    // (empty array or all-zero rows = Flat). Raises operator-action-required on a Fill or
+    // a failed t0441 read.
     fo_assert_no_fill(&sdk, &[submit_ordno.clone(), live_ordno.clone()]).await;
 
     println!(
@@ -542,7 +598,7 @@ fn fo_bal_row(expcode: &str, jqty: &str) -> T0441OutBlock1 {
 }
 
 #[test]
-fn fo_flat_verdict_fill_blocks_empty_failclosed_zero_position_flat() {
+fn fo_flat_verdict_fill_blocks_and_empty_or_zero_is_flat() {
     // Covers R6. jqty>0 → Fill (block the flip); a SHORT position (negative) is also a Fill.
     assert_eq!(
         fo_flat_verdict(&[fo_bal_row("101T9000", "2")]),
@@ -553,9 +609,10 @@ fn fo_flat_verdict_fill_blocks_empty_failclosed_zero_position_flat() {
         FoFlatVerdict::Fill(vec!["101T9000".into()]),
         "a short F/O position is still a fill"
     );
-    // Empty / unreadable → NOT flat (fail-closed): an empty array cannot positively
-    // confirm no fill.
-    assert_eq!(fo_flat_verdict(&[]), FoFlatVerdict::NotFlat);
+    // Empty array = no F/O position = Flat. t0441 returns an empty array on a
+    // position-less account (confirmed live 2026-07-01); a genuinely failed READ is the
+    // caller's Err arm, never an Ok-empty, so empty here positively confirms no fill.
+    assert_eq!(fo_flat_verdict(&[]), FoFlatVerdict::Flat);
     // Zero-position rows present → positively Flat.
     assert_eq!(
         fo_flat_verdict(&[fo_bal_row("101T9000", "0"), fo_bal_row("105V3000", "0")]),
@@ -575,14 +632,14 @@ fn fo_leg_certifies_only_on_clean_rows() {
     // Covers R6. Clean success per leg (recognized ack for THAT leg + order number).
     assert!(fo_leg_certified(&FO_SUBMIT_OK, "00040", "69007"), "buy submit ack");
     assert!(fo_leg_certified(&FO_SUBMIT_OK, "00039", "69007"), "sell submit ack");
-    assert!(fo_leg_certified(&FO_MODIFY_OK, "00132", "69041"), "F/O modify ack");
-    assert!(fo_leg_certified(&FO_CANCEL_OK, "00156", "69044"), "F/O cancel ack");
+    assert!(fo_leg_certified(&FO_MODIFY_OK, "00462", "69041"), "F/O modify ack (confirmed live)");
+    assert!(fo_leg_certified(&FO_CANCEL_OK, "00463", "69044"), "F/O cancel ack (confirmed live)");
     // Leg-specificity: a code valid for ANOTHER leg is NOT certified on this leg — a
     // submit returning a modify/cancel code is a gateway anomaly, never a clean submit.
-    assert!(!fo_leg_certified(&FO_SUBMIT_OK, "00132", "69007"), "modify code on submit leg");
-    assert!(!fo_leg_certified(&FO_SUBMIT_OK, "00156", "69007"), "cancel code on submit leg");
+    assert!(!fo_leg_certified(&FO_SUBMIT_OK, "00462", "69007"), "modify code on submit leg");
+    assert!(!fo_leg_certified(&FO_SUBMIT_OK, "00463", "69007"), "cancel code on submit leg");
     assert!(!fo_leg_certified(&FO_MODIFY_OK, "00040", "69041"), "submit code on modify leg");
-    assert!(!fo_leg_certified(&FO_CANCEL_OK, "00132", "69044"), "modify code on cancel leg");
+    assert!(!fo_leg_certified(&FO_CANCEL_OK, "00462", "69044"), "modify code on cancel leg");
     // Soft-reject in a success-shaped envelope (generic 00000 / empty) → NOT certified.
     assert!(!fo_leg_certified(&FO_SUBMIT_OK, "00000", "69007"), "generic success is not an order ack");
     assert!(!fo_leg_certified(&FO_SUBMIT_OK, "", "69007"), "empty rsp_cd is ambiguous");

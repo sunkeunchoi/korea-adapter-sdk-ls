@@ -55,7 +55,7 @@ live-smoke-t9943 live-smoke-t9944 live-smoke-t2111 live-smoke-t2112 live-smoke-t
 live-smoke-t8402 live-smoke-t8403 live-smoke-t8434 live-smoke-t8455 live-smoke-t8460 \
 live-smoke-t8463 live-smoke-t2545 live-smoke-t8406 live-smoke-t8462 \
 live-smoke-t8427 live-smoke-t2210 live-smoke-t2424 live-smoke-t2541 \
-live-smoke-t2214: LS_SMOKE_LANE = domestic_option
+live-smoke-t2214 live-smoke-fo-order: LS_SMOKE_LANE = domestic_option
 
 # overseas_futures reads authenticate as the overseas-option account (...71).
 live-smoke-cidbq01400 live-smoke-cidbq03000 live-smoke-cidbq05300 \
@@ -80,7 +80,7 @@ live-smoke:
 live-smoke-order:
 	@set -a; [ -f .env ] && . ./.env; set +a; \
 	export LS_ORDER_SMOKE=1 LS_ORDER_SMOKE_TR=CSPAT00601; \
-	out=$$(cargo test -p ls-sdk --test order_smoke -- --ignored --exact --nocapture order_smoke_matrix 2>&1); \
+	out=$$(cargo test -p ls-sdk --test order_smoke -- --ignored --exact --nocapture chain::order_smoke_matrix 2>&1); \
 	echo "$$out"; \
 	echo "$$out" | grep -q "1 passed" || { echo "FAIL: order smoke did not run (0 tests) or did not pass"; exit 1; }
 
@@ -108,24 +108,35 @@ live-smoke-order:
 live-smoke-order-chain:
 	@set -a; [ -f .env ] && . ./.env; set +a; \
 	export LS_ORDER_SMOKE=1 LS_ORDER_SMOKE_TR=CSPAT00601; \
-	out=$$(cargo test -p ls-sdk --test order_smoke -- --ignored --exact --nocapture order_chained_smoke 2>&1); \
+	out=$$(cargo test -p ls-sdk --test order_smoke -- --ignored --exact --nocapture chain::order_chained_smoke 2>&1); \
 	echo "$$out"; \
 	echo "$$out" | grep -q "1 passed" || { echo "FAIL: chained order smoke did not run (0 tests) or did not pass"; exit 1; }
 
 ## Guarded F/O chained paper order (plan 2026-06-30-003, U4/U6): submit → modify →
 ## cancel the DOMESTIC futures/options order chain (CFOAT00100/00200/00300) against the
 ## real LS paper gateway. Same fail-closed guards as live-smoke-order-chain (paper +
-## LS_ORDER_SMOKE=1 double opt-in, no CI/no-TTY, a FRESH per-wave nonce). ADDITIONALLY
-## requires the CURRENT valid F/O contract (no default — a stale contract fails):
-##   export LS_FO_ORDER_SMOKE_SHCODE=<current F/O contract, e.g. 101VC000>
+## LS_ORDER_SMOKE=1 double opt-in, no CI/no-TTY, a FRESH per-wave nonce). The CURRENT
+## valid F/O contract is self-sourced at runtime from the t8467 index-futures master
+## (front-month) so the operator supplies NO contract; set LS_FO_ORDER_SMOKE_SHCODE only
+## to OVERRIDE with a specific contract (a stale hardcoded value would fail).
 ## Pricing is at the daily limit (t2111 상한가/하한가) so the order rests far from market;
 ## flatness is two-part and fail-closed (t0441 fill-detection + clean-cancel removal).
 ## OPERATOR-RUN, never autonomous (U4/U6). Run in an attended PTY:
-##   export LS_ORDER_SMOKE_NONCE=$(date +%s); export LS_FO_ORDER_SMOKE_SHCODE=...; make live-smoke-fo-order
+##   export LS_ORDER_SMOKE_NONCE=$(date +%s); make live-smoke-fo-order
+## Authenticates on the domestic_option lane (...51, LS_SMOKE_LANE mapping above) —
+## the SAME F/O-capable account the F/O reads (incl. t0441) use — with a fail-closed
+## guard that refuses to fall back to .env when the lane file is absent (wrong-account
+## hazard; mirrors the run_smoke guard). Plan 2026-07-01-001 U1 (R1, R2).
 live-smoke-fo-order:
-	@set -a; [ -f .env ] && . ./.env; set +a; \
+	@if [ -n "$(LS_SMOKE_LANE)" ]; then \
+		lane_file=".env.$(LS_SMOKE_LANE)"; \
+		[ -f "$$lane_file" ] || { echo "FAIL: fo_order_chained_smoke: lane file $$lane_file missing (LS_SMOKE_LANE=$(LS_SMOKE_LANE)); refusing to fall back to .env (wrong-account hazard)"; exit 1; }; \
+		set -a; . "./$$lane_file"; set +a; \
+	else \
+		set -a; [ -f .env ] && . ./.env; set +a; \
+	fi; \
 	export LS_ORDER_SMOKE=1; \
-	out=$$(cargo test -p ls-sdk --test order_smoke -- --ignored --exact --nocapture fo_order_chained_smoke 2>&1); \
+	out=$$(cargo test -p ls-sdk --test order_smoke -- --ignored --exact --nocapture fo::fo_order_chained_smoke 2>&1); \
 	echo "$$out"; \
 	echo "$$out" | grep -q "1 passed" || { echo "FAIL: F/O chained order smoke did not run (0 tests) or did not pass"; exit 1; }
 
