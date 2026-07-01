@@ -227,9 +227,10 @@ async fn fo_assert_no_fill(sdk: &LsSdk, ordnos: &[String]) {
 /// Inherits every guard from [`order_chained_smoke`] verbatim (KTD5): the U1 autonomy
 /// precondition (CI/no-TTY refusal + fresh per-wave nonce), the U2 resolved-paper
 /// assertion, the U4 fail-closed dispatch-log suppressor, and the widened
-/// [`scrub_secrets`]. The F/O contract is supplied via `LS_FO_ORDER_SMOKE_SHCODE` with
-/// NO default (a stale/absent contract cannot be defaulted — the current-contract
-/// gotcha, deps).
+/// [`scrub_secrets`]. The F/O contract is self-sourced at runtime from the t8467
+/// index-futures master (front-month) so it is never stale — an explicit
+/// `LS_FO_ORDER_SMOKE_SHCODE` override still wins when a specific contract is wanted
+/// (the current-contract gotcha, deps).
 ///
 /// Capability outcomes (R8): `01491`/`01900` → Pending, classified by
 /// `is_paper_order_incapable` only when `01491`; any OTHER rejection code is recorded
@@ -239,7 +240,7 @@ async fn fo_assert_no_fill(sdk: &LsSdk, ordnos: &[String]) {
 ///
 /// `#[ignore]` — runs only via `make live-smoke-fo-order`.
 #[tokio::test]
-#[ignore = "guarded F/O chained paper order: needs credentials + LS_ORDER_SMOKE=1 + a fresh LS_ORDER_SMOKE_NONCE + LS_FO_ORDER_SMOKE_SHCODE; run via `make live-smoke-fo-order`"]
+#[ignore = "guarded F/O chained paper order: needs credentials + LS_ORDER_SMOKE=1 + a fresh LS_ORDER_SMOKE_NONCE (contract self-sourced from t8467; optional LS_FO_ORDER_SMOKE_SHCODE override); run via `make live-smoke-fo-order`"]
 async fn fo_order_chained_smoke() {
     // U4: install the fail-closed dispatch-log suppressor BEFORE any dispatch (incl. the
     // t2111 price-band and t0441 reads, whose raw bodies carry account data).
@@ -247,27 +248,9 @@ async fn fo_order_chained_smoke() {
         panic!("{}", scrub_secrets(&e.to_string()));
     }
 
-    // The current valid F/O contract — REQUIRED, no default. A stale hardcoded contract
-    // fails (the current-contract gotcha); the operator supplies a live one per run.
-    let contract = match std::env::var("LS_FO_ORDER_SMOKE_SHCODE") {
-        Ok(v)
-            if !v.trim().is_empty()
-                && v.trim().chars().all(|c| c.is_ascii_alphanumeric()) =>
-        {
-            v.trim().to_string()
-        }
-        _ => {
-            OrderEvidence::not_certified(
-                "preflight",
-                "LS_FO_ORDER_SMOKE_SHCODE (a current valid F/O contract) is required; refusing \
-                 to default a possibly-stale contract",
-            )
-            .record();
-            panic!("LS_FO_ORDER_SMOKE_SHCODE required (a stale/absent F/O contract cannot be defaulted)");
-        }
-    };
-
-    // U1+U2: autonomy precondition + paper-resolved SDK. A refusal places nothing.
+    // U1+U2: autonomy precondition + paper-resolved SDK. A refusal places nothing —
+    // built FIRST so a no-TTY / unattended / non-paper run refuses before any network
+    // I/O (including the contract-source read below).
     let sdk = match autonomous_order_smoke_sdk() {
         Ok(s) => s,
         Err(e) => panic!("{}", scrub_secrets(&e.to_string())),
@@ -275,6 +258,63 @@ async fn fo_order_chained_smoke() {
     // NB: the F/O surface has no t0425-style reconcile (no F/O 미체결 read), so unlike
     // the stock chain this run never builds a reconcile intent — flatness is t0441
     // fill-detection + clean-cancel removal. The account number is therefore not needed.
+
+    // The current valid F/O contract. A hardcoded contract goes stale (the current-
+    // contract gotcha), so it is NEVER defaulted — it is self-sourced at runtime from
+    // the t8467 index-futures master (gubun "Q", front-month = first row), the SAME
+    // current-contract source the F/O read/chart smokes use (mirrors
+    // `fo_front_month_shcode` in live_smoke.rs). An explicit `LS_FO_ORDER_SMOKE_SHCODE`
+    // override still wins when the operator wants to pin a specific contract. A missing /
+    // empty master certifies nothing and places NO order (records Pending, R7).
+    let contract = match std::env::var("LS_FO_ORDER_SMOKE_SHCODE") {
+        Ok(v)
+            if !v.trim().is_empty()
+                && v.trim().chars().all(|c| c.is_ascii_alphanumeric()) =>
+        {
+            v.trim().to_string()
+        }
+        _ => match sdk
+            .market_session()
+            .index_futures_master(&T8467Request::new("Q"))
+            .await
+        {
+            Ok(m) if !m.outblock.is_empty() => m.outblock[0].shcode.trim().to_string(),
+            Ok(m) => {
+                OrderEvidence::not_certified(
+                    "preflight",
+                    &format!(
+                        "t8467 index-futures master returned no contract (rsp_cd={}); placed nothing",
+                        m.rsp_cd
+                    ),
+                )
+                .record();
+                OrderEvidence::pending("fo-chain", "no F/O contract to key the chain; placed nothing")
+                    .record();
+                return;
+            }
+            Err(e) => {
+                OrderEvidence::not_certified(
+                    "preflight",
+                    &format!("t8467 contract source failed: {}", scrub_secrets(&e.to_string())),
+                )
+                .record();
+                OrderEvidence::pending("fo-chain", "F/O contract source unavailable; placed nothing")
+                    .record();
+                return;
+            }
+        },
+    };
+    // Defensive: a self-sourced contract must still be a plain alphanumeric code before
+    // it keys any order (the master could in principle return an unexpected shape).
+    if contract.is_empty() || !contract.chars().all(|c| c.is_ascii_alphanumeric()) {
+        OrderEvidence::not_certified(
+            "preflight",
+            "resolved F/O contract is empty / non-alphanumeric; placed nothing",
+        )
+        .record();
+        OrderEvidence::pending("fo-chain", "no valid F/O contract; placed nothing").record();
+        return;
+    }
 
     // Price anchor: the daily limits from t2111 (KTD2). FAIL-CLOSED — if no valid,
     // non-empty anchor can be sourced, place NO order.

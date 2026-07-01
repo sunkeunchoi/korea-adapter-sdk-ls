@@ -115,13 +115,14 @@ live-smoke-order-chain:
 ## Guarded F/O chained paper order (plan 2026-06-30-003, U4/U6): submit → modify →
 ## cancel the DOMESTIC futures/options order chain (CFOAT00100/00200/00300) against the
 ## real LS paper gateway. Same fail-closed guards as live-smoke-order-chain (paper +
-## LS_ORDER_SMOKE=1 double opt-in, no CI/no-TTY, a FRESH per-wave nonce). ADDITIONALLY
-## requires the CURRENT valid F/O contract (no default — a stale contract fails):
-##   export LS_FO_ORDER_SMOKE_SHCODE=<current F/O contract, e.g. 101VC000>
+## LS_ORDER_SMOKE=1 double opt-in, no CI/no-TTY, a FRESH per-wave nonce). The CURRENT
+## valid F/O contract is self-sourced at runtime from the t8467 index-futures master
+## (front-month) so the operator supplies NO contract; set LS_FO_ORDER_SMOKE_SHCODE only
+## to OVERRIDE with a specific contract (a stale hardcoded value would fail).
 ## Pricing is at the daily limit (t2111 상한가/하한가) so the order rests far from market;
 ## flatness is two-part and fail-closed (t0441 fill-detection + clean-cancel removal).
 ## OPERATOR-RUN, never autonomous (U4/U6). Run in an attended PTY:
-##   export LS_ORDER_SMOKE_NONCE=$(date +%s); export LS_FO_ORDER_SMOKE_SHCODE=...; make live-smoke-fo-order
+##   export LS_ORDER_SMOKE_NONCE=$(date +%s); make live-smoke-fo-order
 ## Authenticates on the domestic_option lane (...51, LS_SMOKE_LANE mapping above) —
 ## the SAME F/O-capable account the F/O reads (incl. t0441) use — with a fail-closed
 ## guard that refuses to fall back to .env when the lane file is absent (wrong-account
