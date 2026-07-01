@@ -131,18 +131,18 @@ fn fo_flat_verdict(rows: &[T0441OutBlock1]) -> FoFlatVerdict {
 
 // ---- F/O per-leg certification predicate (R6, guards the U4 flip decision) ---
 
-/// The F/O order-ack codes, PER LEG. Submit (00040 buy / 00039 sell) and cancel (00463)
-/// are CONFIRMED from the operator's 2026-07-01 in-window live run; the F/O family shares
-/// the domestic-stock chain's ack codes (stock submit 00040 / modify 00462 / cancel 00463).
-/// Modify carries BOTH the inferred stock-family 00462 and the original raw-example seed
-/// 00132, pending a clean live modify to pin it — the 2026-07-01 run's modify was rejected
-/// 01442 (정정수량 초과) before it acked, so its success code is not yet directly observed.
-/// Kept leg-specific so a submit that returns a modify/cancel code (a gateway anomaly) is
-/// NOT certified as a clean submit. `ls_core`'s runtime accept gate (`classify_order_rsp_cd`)
-/// is intentionally a coarser union across all order TRs — it only decides retry/dedup
-/// safety; per-leg certification is the stricter offline check the U4/U6 flip relies on.
-const FO_SUBMIT_OK: [&str; 2] = ["00040", "00039"]; // buy / sell (00040 confirmed live 2026-07-01)
-const FO_MODIFY_OK: [&str; 2] = ["00462", "00132"]; // 00462 inferred (stock-family); 00132 raw seed
+/// The F/O order-ack codes, PER LEG — all three CONFIRMED from the operator's 2026-07-01
+/// in-window live runs: submit 00040 (buy) / 00039 (sell), modify 00462, cancel 00463. The
+/// F/O family shares the domestic-stock chain's ack codes exactly. (The plan's raw-example
+/// seeds 00132/00156 for modify/cancel were both disproven by the live runs — the first run
+/// showed cancel 00463, and once the modify was fixed to a valid quantity reduction the
+/// second and third runs both acked modify 00462.) Kept leg-specific so a submit that returns
+/// a modify/cancel code (a gateway anomaly) is NOT certified as a clean submit. `ls_core`'s
+/// runtime accept gate (`classify_order_rsp_cd`) is intentionally a coarser union across all
+/// order TRs — it only decides retry/dedup safety; per-leg certification is the stricter
+/// offline check the U4/U6 flip relies on.
+const FO_SUBMIT_OK: [&str; 2] = ["00040", "00039"]; // buy / sell (confirmed live 2026-07-01)
+const FO_MODIFY_OK: [&str; 1] = ["00462"]; // confirmed live 2026-07-01 (was seed 00132)
 const FO_CANCEL_OK: [&str; 1] = ["00463"]; // confirmed live 2026-07-01 (was seed 00156)
 
 /// Per-leg certification (R6): a leg certifies ONLY on a genuinely clean row — the
@@ -405,17 +405,29 @@ async fn fo_order_chained_smoke() {
             return;
         }
         Err(e) => {
-            // Ambiguous / transport: the order MAY have reached the gateway. Confirm no
-            // fill (fail-closed) BEFORE recording Pending — never assume not-placed.
+            // Ambiguous / transport: the order MAY have reached the gateway and be RESTING
+            // now, with NO order number to cancel it — and t0441 sees fills only, never a
+            // resting order (KTD3). So this is fail-closed LOUD, not a silent Pending: since
+            // `fo_flat_verdict` now reads an empty t0441 as Flat (no fill), an empty read here
+            // must NOT be mistaken for "board is clear" — a resting order would pass silently.
+            // Engage the kill switch, best-effort check for a fill, then hard-fail so the
+            // operator does a manual board check + flatten. Mirrors the accepted-but-no-order-
+            // number path below (never assume an ambiguous submit placed nothing).
             sev.rsp_msg = format!("submit failed: {}", scrub_secrets(&e.to_string()));
             sev.record();
+            sdk.inner().set_orders_enabled(false);
             fo_assert_no_fill(&sdk, &[]).await;
-            OrderEvidence::pending(
-                "fo-chain",
-                "F/O submit did not cleanly place; no fill confirmed; chain not run",
-            )
-            .record();
-            return;
+            panic!(
+                "{}",
+                loud_failure(
+                    "fo-submit-ambiguous",
+                    &[],
+                    "F/O submit failed AMBIGUOUSLY (transport/ambiguous error) — an order MAY \
+                     rest uncancelable (no order number; t0441 sees fills only, and an empty \
+                     t0441 no longer implies an empty order board); MANUAL board check + \
+                     flatten required",
+                )
+            );
         }
     };
     if submit_ordno.trim().is_empty() || submit_ordno.trim() == "0" {
@@ -620,15 +632,14 @@ fn fo_leg_certifies_only_on_clean_rows() {
     // Covers R6. Clean success per leg (recognized ack for THAT leg + order number).
     assert!(fo_leg_certified(&FO_SUBMIT_OK, "00040", "69007"), "buy submit ack");
     assert!(fo_leg_certified(&FO_SUBMIT_OK, "00039", "69007"), "sell submit ack");
-    assert!(fo_leg_certified(&FO_MODIFY_OK, "00462", "69041"), "F/O modify ack (stock-family, inferred)");
-    assert!(fo_leg_certified(&FO_MODIFY_OK, "00132", "69041"), "F/O modify ack (raw seed, hedged)");
+    assert!(fo_leg_certified(&FO_MODIFY_OK, "00462", "69041"), "F/O modify ack (confirmed live)");
     assert!(fo_leg_certified(&FO_CANCEL_OK, "00463", "69044"), "F/O cancel ack (confirmed live)");
     // Leg-specificity: a code valid for ANOTHER leg is NOT certified on this leg — a
     // submit returning a modify/cancel code is a gateway anomaly, never a clean submit.
     assert!(!fo_leg_certified(&FO_SUBMIT_OK, "00462", "69007"), "modify code on submit leg");
     assert!(!fo_leg_certified(&FO_SUBMIT_OK, "00463", "69007"), "cancel code on submit leg");
     assert!(!fo_leg_certified(&FO_MODIFY_OK, "00040", "69041"), "submit code on modify leg");
-    assert!(!fo_leg_certified(&FO_CANCEL_OK, "00132", "69044"), "modify code on cancel leg");
+    assert!(!fo_leg_certified(&FO_CANCEL_OK, "00462", "69044"), "modify code on cancel leg");
     // Soft-reject in a success-shaped envelope (generic 00000 / empty) → NOT certified.
     assert!(!fo_leg_certified(&FO_SUBMIT_OK, "00000", "69007"), "generic success is not an order ack");
     assert!(!fo_leg_certified(&FO_SUBMIT_OK, "", "69007"), "empty rsp_cd is ambiguous");
