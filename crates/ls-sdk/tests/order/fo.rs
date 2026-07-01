@@ -151,24 +151,25 @@ fn fo_flat_verdict(rows: &[T0441OutBlock1]) -> FoFlatVerdict {
 // `jqty` is the substantive balance-qty field (KTD3), corroborated at the call site by
 // the row `appamt` / summary `tappamt` valuations.
 
-/// Total |`jqty`| across every `t0441` row for `symbol` (F/O 잔고 can be SHORT, so
-/// magnitude, not signed). `Some(0)` = the symbol holds no position (or no row);
-/// `Some(q)` = a `q`-lot position; `None` = a row for the symbol carries an
-/// UNPARSEABLE `jqty` — the position cannot be safely sized, so the caller must fail
-/// closed rather than guess a close quantity (never silently treat it as flat).
-fn fo_symbol_position_qty(rows: &[T0441OutBlock1], symbol: &str) -> Option<u64> {
+/// SIGNED net position for `symbol` across every `t0441` row (F/O 잔고 can be SHORT).
+/// The sign is load-bearing: it decides both the certification side (only a LONG of the
+/// submitted qty certifies our manufactured buy) and the close side (sell a long, buy a
+/// short). `Some(0)` = flat (or no row); `Some(n)` = net `n` lots (`n<0` short); `None` =
+/// a row carries an UNPARSEABLE `jqty` — the position cannot be safely sized, so the
+/// caller must fail closed rather than guess a close quantity (never silently flat).
+fn fo_symbol_position_qty(rows: &[T0441OutBlock1], symbol: &str) -> Option<i64> {
     let sym = symbol.trim();
-    let mut mag = 0f64;
+    let mut net = 0i64;
     let mut saw_row = false;
     for r in rows.iter().filter(|r| r.expcode.trim() == sym) {
         saw_row = true;
         let v: f64 = r.jqty.trim().parse().ok()?; // unparseable → cannot size a close
-        mag += v.abs();
+        net += v.round() as i64;
     }
     if !saw_row {
         return Some(0);
     }
-    Some(mag.round() as u64)
+    Some(net)
 }
 
 /// The manufactured-fill verdict for the buy leg's `t0441` read (R1/R3).
@@ -177,25 +178,30 @@ enum FoFillWitness {
     /// No position on the manufactured symbol yet — the marketable buy has not filled
     /// (keep polling within the bound, then treat as no-fill / clean-cancel).
     NoFill,
-    /// A position exists but it is NOT the full submitted qty (a partial, an over-fill,
-    /// or an unreadable `jqty`). Does NOT certify — flatten fail-closed (see U2 edges).
+    /// A position exists but it is NOT a LONG of exactly the submitted qty (a partial, an
+    /// over-fill, a WRONG-SIDE short, or an unreadable `jqty`). Does NOT certify — flatten
+    /// fail-closed (see U2 edges). A short here is an anomaly: the manufacture buy should
+    /// produce a long, and a pre-existing short would be caught by the preflight flat gate.
     NotFull,
-    /// |`jqty`| equals the submitted qty on the manufactured symbol — the full-fill
+    /// A LONG of exactly the submitted qty on the manufactured symbol — the full-fill
     /// certification witness (R1). Carries the observed lot count.
     Full(u64),
 }
 
 /// Classify a `t0441` read for the MANUFACTURED symbol against the submitted qty
-/// (R1/R3). Only the manufactured symbol's row is the certification witness; a
-/// full-fill (`jqty` magnitude == submitted) is the sole certifying outcome — a
-/// partial/over-fill/unreadable is `NotFull` (never certified). The always-full
-/// certification bar is why U2 submits qty 1 (a 1-lot cannot partially fill).
+/// (R1/R3). Only the manufactured symbol's row is the certification witness; a LONG of
+/// exactly the submitted qty is the sole certifying outcome — a partial/over-fill/
+/// wrong-side-short/unreadable is `NotFull` (never certified). The always-full-long
+/// certification bar is why U2 submits qty 1 (a 1-lot cannot partially fill) after
+/// preflight-asserting the account is flat.
 fn fo_fill_witness(rows: &[T0441OutBlock1], symbol: &str, submitted: u64) -> FoFillWitness {
     match fo_symbol_position_qty(rows, symbol) {
         Some(0) => FoFillWitness::NoFill,
-        Some(q) if q == submitted => FoFillWitness::Full(q),
-        Some(_) => FoFillWitness::NotFull, // partial or over-fill
-        None => FoFillWitness::NotFull,    // unreadable jqty on the symbol row
+        // A LONG (positive) of exactly the submitted qty is the only certifying witness.
+        Some(n) if n == submitted as i64 => FoFillWitness::Full(submitted),
+        // Partial, over-fill, or a WRONG-SIDE short — never certified.
+        Some(_) => FoFillWitness::NotFull,
+        None => FoFillWitness::NotFull, // unreadable jqty on the symbol row
     }
 }
 
@@ -226,12 +232,13 @@ fn fo_leg_certified(expected: &[&str], rsp_cd: &str, order_no: &str) -> bool {
     expected.contains(&rsp_cd.trim()) && !o.is_empty() && o != "0"
 }
 
-/// Format a credential-free `t0441` row diagnostic line. Every field — including the
-/// row's own `expcode`/`appamt` (NOT just `rsp_msg`) — is routed through
+/// Format a credential-free `t0441` row diagnostic line under `prefix` (so the chain and
+/// the manufacture smoke each log under their own grep-able tag). Every field — including
+/// the row's own `expcode`/`appamt` (NOT just `rsp_msg`) — is routed through
 /// [`scrub_secrets`], because a balance row can carry account-shaped values (R6).
-fn fo_t0441_row_line(r: &T0441OutBlock1) -> String {
+fn fo_t0441_row_line(prefix: &str, r: &T0441OutBlock1) -> String {
     format!(
-        "ORDER-CHAIN-FO t0441-row expcode=[{}] jqty={} cqty={} appamt=[{}]",
+        "{prefix} t0441-row expcode=[{}] jqty={} cqty={} appamt=[{}]",
         scrub_secrets(&r.expcode),
         scrub_secrets(&r.jqty),
         scrub_secrets(&r.cqty),
@@ -249,7 +256,7 @@ async fn fo_assert_no_fill(sdk: &LsSdk, ordnos: &[String]) {
     match sdk.account().fo_balance_eval(&T0441Request::new()).await {
         Ok(resp) => {
             for r in &resp.outblock1 {
-                println!("{}", fo_t0441_row_line(r));
+                println!("{}", fo_t0441_row_line("ORDER-CHAIN-FO", r));
             }
             match fo_flat_verdict(&resp.outblock1) {
                 FoFlatVerdict::Flat => {
@@ -655,17 +662,35 @@ async fn fo_order_chained_smoke() {
 /// tune the bound without a recompile.
 const FO_MANUFACTURE_POLL_ATTEMPTS: u32 = 6;
 const FO_MANUFACTURE_POLL_INTERVAL_MS: u64 = 600;
+/// Hard upper bound on the operator override — a fill that has not landed within ~36s
+/// (60 × 600ms) is a no-fill, not a slow fill. Caps `LS_FO_MANUFACTURE_POLL_ATTEMPTS` so
+/// a fat-fingered value can never turn the poll into an effectively-unbounded live wait
+/// holding a real position open.
+const FO_MANUFACTURE_POLL_ATTEMPTS_MAX: u32 = 60;
 /// Submit exactly one lot — a 1-lot cannot PARTIALLY fill, so the full-fill
 /// certification bar (KTD3) is either met (`jqty==1`) or not met (`jqty==0`), and a
 /// single-lot close cleanly offsets it (no partial-close hazard).
 const FO_MANUFACTURE_QTY: &str = "1";
 
-/// Resolve the bounded fill-poll attempt count (U1-calibrated, env-overridable).
-fn fo_manufacture_poll_attempts() -> u32 {
-    match std::env::var("LS_FO_MANUFACTURE_POLL_ATTEMPTS") {
-        Ok(v) => v.trim().parse().ok().filter(|&n| n > 0).unwrap_or(FO_MANUFACTURE_POLL_ATTEMPTS),
-        Err(_) => FO_MANUFACTURE_POLL_ATTEMPTS,
+/// Pure resolver for the fill-poll attempt count (`raw` = the env var value, if set).
+/// A valid override in `1..=FO_MANUFACTURE_POLL_ATTEMPTS_MAX` wins; anything else — unset,
+/// zero, negative, non-numeric, or above the cap — falls back to the default. Pure so the
+/// `n>0` / clamp logic is offline-tested without mutating a process-global env var.
+fn fo_poll_attempts_from(raw: Option<&str>) -> u32 {
+    match raw {
+        Some(v) => v
+            .trim()
+            .parse::<u32>()
+            .ok()
+            .filter(|&n| n >= 1 && n <= FO_MANUFACTURE_POLL_ATTEMPTS_MAX)
+            .unwrap_or(FO_MANUFACTURE_POLL_ATTEMPTS),
+        None => FO_MANUFACTURE_POLL_ATTEMPTS,
     }
+}
+
+/// Resolve the bounded fill-poll attempt count (U1-calibrated, env-overridable + clamped).
+fn fo_manufacture_poll_attempts() -> u32 {
+    fo_poll_attempts_from(std::env::var("LS_FO_MANUFACTURE_POLL_ATTEMPTS").ok().as_deref())
 }
 
 /// Read `t0441` once for the manufacture smoke, returning `(rows, tappamt)` or a
@@ -678,162 +703,146 @@ async fn fo_read_balance(sdk: &LsSdk) -> Result<(Vec<T0441OutBlock1>, String), S
     }
 }
 
-/// Flatten a manufactured LONG F/O position fail-closed (R2, AE2): size the held qty
-/// from `t0441`, submit an opposite-side marketable SELL close for exactly that qty,
-/// then confirm `t0441` returns flat. On ANY unconfirmed-flat outcome — unreadable
-/// position, non-clean close ack, or a close that itself rests — make AT MOST ONE
-/// cancel-then-reflatten attempt, then engage the kill switch and `panic!`. Never
-/// loops; never exits with a position open. `prior_ordnos` names the manufacture
-/// order(s) in the loud failure so the operator can act.
-async fn fo_flatten_long_fail_closed(
-    sdk: &LsSdk,
-    band: &FoBand,
-    contract: &str,
-    prior_ordnos: &[String],
-) {
-    // 1. Size the position from t0441 — close EXACTLY what is held (not the submitted
-    //    qty), so a partial or unexpected magnitude is closed correctly.
-    let held = match fo_read_balance(sdk).await {
-        Ok((rows, _)) => fo_symbol_position_qty(&rows, contract),
-        Err(e) => {
-            sdk.inner().set_orders_enabled(false);
-            panic!(
-                "{}",
-                loud_failure("fo-manufacture-flatten-read-failed", prior_ordnos, &e)
-            );
-        }
-    };
-    let qty = match held {
-        Some(0) => {
-            println!(
-                "ORDER-MANUFACTURE-FO flatten=noop note=[t0441 already flat; nothing to close]"
-            );
-            return;
-        }
-        Some(q) => q,
-        None => {
-            // A position row exists but its jqty is UNPARSEABLE — we cannot size a safe
-            // close. Fail closed loud; the operator flattens manually.
-            sdk.inner().set_orders_enabled(false);
-            panic!(
-                "{}",
-                loud_failure(
-                    "fo-manufacture-unreadable-position",
-                    prior_ordnos,
-                    "t0441 shows a position on the manufactured symbol with an unparseable \
-                     jqty — cannot size a close; MANUAL flatten required",
-                )
-            );
-        }
-    };
+/// Flatten a manufactured F/O position fail-closed (R2, AE2). Reads the SIGNED held
+/// position from `t0441` and closes it with an opposite-side marketable order — a SELL to
+/// flatten a long, a BUY to flatten a short (the side is derived from the sign, so a
+/// stray short is never "closed" by another sell). Makes AT MOST TWO close attempts: the
+/// initial close, and — if that close RESTS instead of filling — exactly one
+/// cancel-then-reflatten (cancel the resting close first so the two sells can never stack
+/// into an over-close, then submit one fresh close). Any still-unflat outcome engages the
+/// kill switch and `panic!`s. Never loops; never exits with a position open. IMPORTANT:
+/// the caller must NOT engage the kill switch before calling this — it needs order
+/// dispatch to place the close; it engages the kill switch itself only on its own
+/// terminal failure arms.
+async fn fo_flatten_fail_closed(sdk: &LsSdk, band: &FoBand, contract: &str, prior_ordnos: &[String]) {
+    // At most 2 close attempts: initial + one reflatten after canceling a rested close.
+    for attempt in 1..=2u32 {
+        // Size the SIGNED position from t0441 — close EXACTLY what is held, deriving the
+        // side from the sign (a partial/short/unexpected magnitude is closed correctly).
+        let net = match fo_read_balance(sdk).await {
+            Ok((rows, _)) => fo_symbol_position_qty(&rows, contract),
+            Err(e) => {
+                sdk.inner().set_orders_enabled(false);
+                panic!("{}", loud_failure("fo-manufacture-flatten-read-failed", prior_ordnos, &e));
+            }
+        };
+        let net = match net {
+            Some(0) => {
+                println!(
+                    "ORDER-MANUFACTURE-FO flatten=confirmed attempt={attempt} \
+                     note=[t0441 flat; nothing (else) to close]"
+                );
+                return;
+            }
+            Some(n) => n,
+            None => {
+                // A position row exists but its jqty is UNPARSEABLE — cannot size a safe
+                // close. Fail closed loud; the operator flattens manually.
+                sdk.inner().set_orders_enabled(false);
+                panic!(
+                    "{}",
+                    loud_failure(
+                        "fo-manufacture-unreadable-position",
+                        prior_ordnos,
+                        "t0441 shows a position on the manufactured symbol with an unparseable \
+                         jqty — cannot size a close; MANUAL flatten required",
+                    )
+                );
+            }
+        };
 
-    // 2. Opposite-side MARKETABLE close: a SELL (bnstpcode "1") at the daily floor
-    //    crosses the book downward (KTD4). Qty = the held magnitude.
-    let close_req = CFOAT00100Request::limit(
-        contract,
-        &qty.to_string(),
-        band.marketable_sell_price(),
-        "1",
-    );
-    let mut close_ev = leg_evidence("CFOAT00100", "fo_manufacture_close_sell");
-    let close_ordno = match sdk.fo_orders().submit(&close_req).await {
-        Ok(resp) => {
-            // Certification of the close ack is informational only — the AUTHORITATIVE
-            // flat check is the t0441 re-read below, never the ack alone (R2).
-            close_ev.certification = if fo_leg_certified(&FO_SUBMIT_OK, &resp.rsp_cd, resp.order_no())
-            {
-                Certification::Certified
-            } else {
-                Certification::Pending
-            };
-            close_ev.rsp_cd = resp.rsp_cd.clone();
-            close_ev.rsp_msg = resp.rsp_msg.clone();
-            close_ev.order_no = Some(resp.order_no().to_string());
-            close_ev.record();
-            resp.order_no().to_string()
-        }
-        Err(e) => {
-            // The close was rejected or errored — the long is still open. Fail closed.
-            close_ev.rsp_msg = format!("close submit failed: {}", scrub_secrets(&e.to_string()));
-            close_ev.record();
-            sdk.inner().set_orders_enabled(false);
-            panic!(
-                "{}",
-                loud_failure(
-                    "fo-manufacture-close-failed",
-                    prior_ordnos,
-                    "opposite-side close SUBMIT failed — the manufactured position is still \
-                     open; MANUAL flatten required",
-                )
-            );
-        }
-    };
+        // Opposite-side MARKETABLE close (KTD4): SELL a long at the daily floor / BUY a
+        // short at the daily ceiling — both cross the book to fill. Qty = |net|.
+        let (side, price) = if net > 0 {
+            ("1", band.marketable_sell_price()) // long → sell to close
+        } else {
+            ("2", band.marketable_buy_price()) // short → buy to close
+        };
+        let qty = net.unsigned_abs();
+        let close_req = CFOAT00100Request::limit(contract, &qty.to_string(), price, side);
+        let mut close_ev = leg_evidence("CFOAT00100", "fo_manufacture_close");
+        let close_ordno = match sdk.fo_orders().submit(&close_req).await {
+            Ok(resp) => {
+                // The ack is informational — the AUTHORITATIVE flat check is the t0441
+                // re-read below, never the ack alone (R2).
+                close_ev.certification =
+                    if fo_leg_certified(&FO_SUBMIT_OK, &resp.rsp_cd, resp.order_no()) {
+                        Certification::Certified
+                    } else {
+                        Certification::Pending
+                    };
+                close_ev.rsp_cd = resp.rsp_cd.clone();
+                close_ev.rsp_msg = resp.rsp_msg.clone();
+                close_ev.order_no = Some(resp.order_no().to_string());
+                close_ev.record();
+                resp.order_no().to_string()
+            }
+            Err(e) => {
+                // The close was rejected or errored — the position is still open. Fail closed.
+                close_ev.rsp_msg = format!("close submit failed: {}", scrub_secrets(&e.to_string()));
+                close_ev.record();
+                sdk.inner().set_orders_enabled(false);
+                panic!(
+                    "{}",
+                    loud_failure(
+                        "fo-manufacture-close-failed",
+                        prior_ordnos,
+                        "opposite-side close SUBMIT failed — the manufactured position is still \
+                         open; MANUAL flatten required",
+                    )
+                );
+            }
+        };
 
-    // 3. Confirm flat. A marketable close should fill; if it did, t0441 is now flat.
-    match fo_read_balance(sdk).await {
-        Ok((rows, _)) if fo_flat_verdict(&rows) == FoFlatVerdict::Flat => {
-            println!(
-                "ORDER-MANUFACTURE-FO flatten=confirmed note=[opposite-side marketable close \
-                 filled; t0441 flat]"
-            );
-            return;
+        // Confirm flat. A marketable close should fill; if it did, t0441 is now flat.
+        match fo_read_balance(sdk).await {
+            Ok((rows, _)) if fo_flat_verdict(&rows) == FoFlatVerdict::Flat => {
+                println!(
+                    "ORDER-MANUFACTURE-FO flatten=confirmed attempt={attempt} \
+                     note=[opposite-side marketable close filled; t0441 flat]"
+                );
+                return;
+            }
+            Ok(_) => { /* still holding — the close RESTED or netted partially */ }
+            Err(e) => {
+                sdk.inner().set_orders_enabled(false);
+                panic!("{}", loud_failure("fo-manufacture-postclose-read-failed", prior_ordnos, &e));
+            }
         }
-        Ok(_) => { /* still holding — fall through to the single cancel-then-reflatten */ }
-        Err(e) => {
-            sdk.inner().set_orders_enabled(false);
-            panic!(
-                "{}",
-                loud_failure("fo-manufacture-postclose-read-failed", prior_ordnos, &e)
-            );
+
+        // The position remains — the close likely RESTED (marketable but thin book).
+        // Cancel the resting close BEFORE any reflatten so a second close can never stack
+        // on the first into an over-close (which would flip us to the opposite side).
+        if !close_ordno.trim().is_empty() && close_ordno.trim() != "0" {
+            let cancel_req = CFOAT00300Request::new(&close_ordno, contract, &qty.to_string());
+            match sdk.fo_orders().cancel(&cancel_req).await {
+                Ok(resp) => println!(
+                    "ORDER-MANUFACTURE-FO close-cancel attempt={attempt} ordno={} rsp_cd={}",
+                    resp.order_no().trim(),
+                    resp.rsp_cd.trim()
+                ),
+                Err(e) => println!(
+                    "ORDER-MANUFACTURE-FO close-cancel attempt={attempt} failed: {}",
+                    scrub_secrets(&e.to_string())
+                ),
+            }
         }
+        // Loop for the ONE reflatten (attempt 2), which re-sizes from a fresh t0441 read
+        // (so if the canceled close had actually netted flat, attempt 2 sees Some(0) and
+        // returns). The `1..=2` bound guarantees no infinite loop.
     }
 
-    // 3b. The position remains — the close likely RESTED (marketable but thin book) or
-    //     acked non-clean. Cancel the resting close ONCE (if it has an order number),
-    //     re-read, and if STILL not flat, fail closed. Never loops (the exact hazard U1
-    //     must have cleared).
-    if !close_ordno.trim().is_empty() && close_ordno.trim() != "0" {
-        let cancel_req = CFOAT00300Request::new(&close_ordno, contract, &qty.to_string());
-        match sdk.fo_orders().cancel(&cancel_req).await {
-            Ok(resp) => println!(
-                "ORDER-MANUFACTURE-FO close-cancel ordno={} rsp_cd={}",
-                resp.order_no().trim(),
-                resp.rsp_cd.trim()
-            ),
-            Err(e) => println!(
-                "ORDER-MANUFACTURE-FO close-cancel failed: {}",
-                scrub_secrets(&e.to_string())
-            ),
-        }
-    }
-    let (still_rows, _) = match fo_read_balance(sdk).await {
-        Ok(v) => v,
-        Err(e) => {
-            sdk.inner().set_orders_enabled(false);
-            panic!(
-                "{}",
-                loud_failure("fo-manufacture-reflatten-read-failed", prior_ordnos, &e)
-            );
-        }
-    };
-    if fo_flat_verdict(&still_rows) == FoFlatVerdict::Flat {
-        println!(
-            "ORDER-MANUFACTURE-FO flatten=confirmed-after-cancel note=[resting close canceled; \
-             the manufactured position had already netted flat]"
-        );
-        return;
-    }
-    // Unrecoverable: a position remains after one close + one cancel. This is the
-    // out-of-band-reset scenario U1 exists to rule out.
+    // Both attempts exhausted with a position still open — the out-of-band-reset scenario
+    // U1 exists to rule out. Fail closed loud.
     sdk.inner().set_orders_enabled(false);
     panic!(
         "{}",
         loud_failure(
             "fo-manufacture-not-flat",
             prior_ordnos,
-            "the manufactured F/O position could not be flattened by an opposite-side \
-             marketable close + one cancel — an out-of-band paper reset is required; MANUAL \
-             flatten required",
+            "the manufactured F/O position could not be flattened by two opposite-side \
+             marketable closes (with a cancel between) — an out-of-band paper reset is \
+             required; MANUAL flatten required",
         )
     );
 }
@@ -925,6 +934,36 @@ async fn fo_position_manufacture_smoke() {
         }
     };
 
+    // ---- PREFLIGHT flat gate: the account MUST be flat before we manufacture. The
+    //      witness/close logic assumes any post-buy position is OUR manufactured long; a
+    //      pre-existing position (e.g. a short stranded by a prior aborted run) would
+    //      corrupt both the fill witness and the close side. Refuse to manufacture on a
+    //      non-flat book — place nothing, record Pending (R2 fail-closed). ----
+    match fo_read_balance(&sdk).await {
+        Ok((rows, _)) => {
+            if fo_flat_verdict(&rows) != FoFlatVerdict::Flat {
+                for r in rows.iter() {
+                    println!("{}", fo_t0441_row_line("ORDER-MANUFACTURE-FO", r));
+                }
+                OrderEvidence::pending(
+                    "fo-manufacture",
+                    "account is NOT flat before manufacture (pre-existing F/O position); refusing \
+                     to manufacture on an existing position; placed nothing",
+                )
+                .record();
+                return;
+            }
+        }
+        Err(e) => {
+            OrderEvidence::pending(
+                "fo-manufacture",
+                &format!("preflight t0441 read failed: {}; placed nothing", scrub_secrets(&e)),
+            )
+            .record();
+            return;
+        }
+    }
+
     // ---- MANUFACTURE leg: a MARKETABLE buy at the daily CEILING (KTD4) so it fills. ----
     let submit_qty: u64 = FO_MANUFACTURE_QTY.parse().expect("FO_MANUFACTURE_QTY is a literal 1");
     let buy_req =
@@ -943,18 +982,18 @@ async fn fo_position_manufacture_smoke() {
             buy_ev.order_no = Some(resp.order_no().to_string());
             buy_ev.record();
             if !clean {
-                // A non-clean marketable buy ack is ambiguous — it MAY have filled. Fail
-                // closed: kill switch, best-effort flatten, then panic loud.
-                sdk.inner().set_orders_enabled(false);
-                fo_flatten_long_fail_closed(&sdk, &band, &contract, &[resp.order_no().to_string()])
-                    .await;
+                // A non-clean marketable buy ack is ambiguous — it MAY have filled. Flatten
+                // with orders STILL ENABLED (the close needs dispatch; engaging the kill
+                // switch first would block it), then panic loud. `fo_flatten_fail_closed`
+                // engages the kill switch itself on its own terminal failure.
+                fo_flatten_fail_closed(&sdk, &band, &contract, &[resp.order_no().to_string()]).await;
                 panic!(
                     "{}",
                     loud_failure(
                         "fo-manufacture-buy-not-clean",
                         &[resp.order_no().to_string()],
-                        "marketable buy ack was not clean — a position MAY exist; flattened \
-                         best-effort; MANUAL verify required",
+                        "marketable buy ack was not clean — a position MAY exist; checked + \
+                         flattened if present; MANUAL verify required",
                     )
                 );
             }
@@ -997,18 +1036,18 @@ async fn fo_position_manufacture_smoke() {
         }
         Err(e) => {
             // Ambiguous/transport: a MARKETABLE order may have reached the gateway and
-            // FILLED with no order number to reference. Fail closed loud.
+            // FILLED with no order number to reference. Flatten with orders STILL ENABLED
+            // (so the close can dispatch), then panic loud.
             buy_ev.rsp_msg = format!("buy failed: {}", scrub_secrets(&e.to_string()));
             buy_ev.record();
-            sdk.inner().set_orders_enabled(false);
-            fo_flatten_long_fail_closed(&sdk, &band, &contract, &[]).await;
+            fo_flatten_fail_closed(&sdk, &band, &contract, &[]).await;
             panic!(
                 "{}",
                 loud_failure(
                     "fo-manufacture-buy-ambiguous",
                     &[],
                     "marketable buy failed AMBIGUOUSLY — an order may have filled uncancelable; \
-                     flattened best-effort; MANUAL verify required",
+                     checked + flattened if present; MANUAL verify required",
                 )
             );
         }
@@ -1023,8 +1062,9 @@ async fn fo_position_manufacture_smoke() {
             Ok(v) => v,
             Err(e) => {
                 // A t0441 read failure mid-poll with a possibly-open position is fail-closed.
-                sdk.inner().set_orders_enabled(false);
-                fo_flatten_long_fail_closed(&sdk, &band, &contract, &[buy_ordno.clone()]).await;
+                // Flatten with orders STILL ENABLED so the close can dispatch; the helper
+                // engages the kill switch itself if it cannot flatten.
+                fo_flatten_fail_closed(&sdk, &band, &contract, &[buy_ordno.clone()]).await;
                 panic!(
                     "{}",
                     loud_failure("fo-manufacture-fill-poll-read-failed", &[buy_ordno.clone()], &e)
@@ -1032,7 +1072,7 @@ async fn fo_position_manufacture_smoke() {
             }
         };
         for r in rows.iter().filter(|r| r.expcode.trim() == contract.trim()) {
-            println!("{}", fo_t0441_row_line(r));
+            println!("{}", fo_t0441_row_line("ORDER-MANUFACTURE-FO", r));
         }
         match fo_fill_witness(&rows, &contract, submit_qty) {
             FoFillWitness::Full(q) => {
@@ -1048,7 +1088,7 @@ async fn fo_position_manufacture_smoke() {
                 // Partial/over-fill (a 1-lot should not partial; U1 confirmed full fills,
                 // so this is an anomaly). Do NOT certify — flatten fail-closed and exit.
                 println!("ORDER-MANUFACTURE-FO fill=not-full attempt={attempt} action=flatten-fail-closed");
-                fo_flatten_long_fail_closed(&sdk, &band, &contract, &[buy_ordno.clone()]).await;
+                fo_flatten_fail_closed(&sdk, &band, &contract, &[buy_ordno.clone()]).await;
                 OrderEvidence::pending(
                     "fo-manufacture",
                     "non-full fill (partial/anomaly); flattened; t0441 NOT certified",
@@ -1077,16 +1117,29 @@ async fn fo_position_manufacture_smoke() {
                     false
                 }
             };
-            // Fail-closed no-fill confirmation: even if the cancel acked, verify t0441 is
-            // flat (a race could have filled the marketable order just before the cancel).
+            // Flatten any race-fill FIRST, orders still enabled (a marketable buy could have
+            // filled just before the cancel); the helper closes it or fails loud.
+            fo_flatten_fail_closed(&sdk, &band, &contract, &[buy_ordno.clone()]).await;
+            // t0441 sees FILLS only, never a RESTING order — so a non-clean cancel leaves the
+            // resting buy's removal UNCONFIRMED. Fail loud (mirrors the chain's
+            // teardown-uncertain) rather than record a misleading "confirmed flat".
             if !cancel_clean {
                 sdk.inner().set_orders_enabled(false);
+                panic!(
+                    "{}",
+                    loud_failure(
+                        "fo-manufacture-cancel-uncertain",
+                        &[buy_ordno.clone()],
+                        "the resting marketable buy's cancel was not clean — removal is \
+                         unconfirmed (t0441 sees fills only, no F/O 미체결 read); MANUAL board \
+                         check + flatten required",
+                    )
+                );
             }
-            fo_flatten_long_fail_closed(&sdk, &band, &contract, &[buy_ordno.clone()]).await;
             OrderEvidence::pending(
                 "fo-manufacture",
-                "marketable buy did not fill within the poll bound; canceled + confirmed flat; \
-                 t0441 NOT certified",
+                "marketable buy did not fill within the poll bound; cleanly canceled + confirmed \
+                 flat; t0441 NOT certified",
             )
             .record();
             return;
@@ -1103,7 +1156,7 @@ async fn fo_position_manufacture_smoke() {
     cert.record();
 
     // ---- FLATTEN fail-closed (R2, AE2): opposite-side marketable close + confirm flat. ----
-    fo_flatten_long_fail_closed(&sdk, &band, &contract, &[buy_ordno.clone()]).await;
+    fo_flatten_fail_closed(&sdk, &band, &contract, &[buy_ordno.clone()]).await;
 
     println!(
         "ORDER-MANUFACTURE-FO result=certified jqty={jqty} \
@@ -1189,7 +1242,7 @@ fn fo_band_marketable_prices_cross_the_book() {
 }
 
 #[test]
-fn fo_symbol_position_qty_sizes_and_fails_safe() {
+fn fo_symbol_position_qty_signs_sizes_and_fails_safe() {
     // No row for the symbol → Some(0) (nothing held).
     assert_eq!(fo_symbol_position_qty(&[], "101T9000"), Some(0));
     assert_eq!(
@@ -1197,16 +1250,25 @@ fn fo_symbol_position_qty_sizes_and_fails_safe() {
         Some(0),
         "a different symbol's position is not this symbol's"
     );
-    // A LONG and a SHORT both size by MAGNITUDE (F/O 잔고 can be negative).
+    // SIGN is preserved: a long is positive, a short is negative (the close side depends
+    // on it — sell a long, buy a short).
     assert_eq!(fo_symbol_position_qty(&[fo_bal_row("101T9000", "2")], "101T9000"), Some(2));
-    assert_eq!(fo_symbol_position_qty(&[fo_bal_row("101T9000", "-2")], "101T9000"), Some(2));
+    assert_eq!(fo_symbol_position_qty(&[fo_bal_row("101T9000", "-2")], "101T9000"), Some(-2));
+    // Multiple rows for the SAME symbol sum SIGNED (a long + a short net): 2 + (-1) = 1.
+    assert_eq!(
+        fo_symbol_position_qty(
+            &[fo_bal_row("101T9000", "2"), fo_bal_row("101T9000", "-1")],
+            "101T9000"
+        ),
+        Some(1),
+    );
     // An UNPARSEABLE jqty on the symbol row → None (cannot size a safe close).
     assert_eq!(fo_symbol_position_qty(&[fo_bal_row("101T9000", "??")], "101T9000"), None);
 }
 
 #[test]
-fn fo_fill_witness_certifies_only_full_fill() {
-    // R1/R3: only a full fill (|jqty| == submitted) on the manufactured symbol certifies.
+fn fo_fill_witness_certifies_only_a_full_long() {
+    // R1/R3: only a LONG of exactly the submitted qty on the manufactured symbol certifies.
     let sym = "101T9000";
     // Empty / zero / other-symbol → NoFill (keep polling).
     assert_eq!(fo_fill_witness(&[], sym, 1), FoFillWitness::NoFill);
@@ -1216,17 +1278,45 @@ fn fo_fill_witness_certifies_only_full_fill() {
         FoFillWitness::NoFill,
         "a fill on a DIFFERENT symbol does not certify this one"
     );
-    // Full fill (equal magnitude, long OR short) → Full — the certification witness.
+    // Full LONG of the submitted qty → Full — the certification witness.
     assert_eq!(fo_fill_witness(&[fo_bal_row(sym, "1")], sym, 1), FoFillWitness::Full(1));
+    // A SHORT is NOT our manufactured buy — never certifies (it would be "closed" by
+    // another sell, deepening the short). This is the wrong-side guard.
     assert_eq!(
         fo_fill_witness(&[fo_bal_row(sym, "-1")], sym, 1),
-        FoFillWitness::Full(1),
-        "a filled short is still a full-fill witness (magnitude matches)"
+        FoFillWitness::NotFull,
+        "a short of matching magnitude is the WRONG side — must NOT certify"
     );
     // Partial / over-fill / unparseable → NotFull (never certified).
     assert_eq!(fo_fill_witness(&[fo_bal_row(sym, "1")], sym, 2), FoFillWitness::NotFull);
     assert_eq!(fo_fill_witness(&[fo_bal_row(sym, "3")], sym, 2), FoFillWitness::NotFull);
     assert_eq!(fo_fill_witness(&[fo_bal_row(sym, "??")], sym, 1), FoFillWitness::NotFull);
+}
+
+#[test]
+fn fo_poll_attempts_overrides_clamps_and_fails_safe() {
+    // Pure resolver (no env mutation): a valid override in 1..=MAX wins; everything else
+    // (unset, zero, negative, non-numeric, above the cap) falls back to the default.
+    assert_eq!(fo_poll_attempts_from(None), FO_MANUFACTURE_POLL_ATTEMPTS, "unset → default");
+    assert_eq!(fo_poll_attempts_from(Some("3")), 3, "valid override wins");
+    assert_eq!(fo_poll_attempts_from(Some(" 12 ")), 12, "trimmed override wins");
+    assert_eq!(
+        fo_poll_attempts_from(Some("0")),
+        FO_MANUFACTURE_POLL_ATTEMPTS,
+        "0 rejected (would be a zero-iteration poll)"
+    );
+    assert_eq!(fo_poll_attempts_from(Some("-4")), FO_MANUFACTURE_POLL_ATTEMPTS, "negative → default");
+    assert_eq!(fo_poll_attempts_from(Some("nope")), FO_MANUFACTURE_POLL_ATTEMPTS, "non-numeric → default");
+    assert_eq!(
+        fo_poll_attempts_from(Some(&(FO_MANUFACTURE_POLL_ATTEMPTS_MAX + 1).to_string())),
+        FO_MANUFACTURE_POLL_ATTEMPTS,
+        "above the cap → default (never an unbounded live wait)"
+    );
+    assert_eq!(
+        fo_poll_attempts_from(Some(&FO_MANUFACTURE_POLL_ATTEMPTS_MAX.to_string())),
+        FO_MANUFACTURE_POLL_ATTEMPTS_MAX,
+        "exactly the cap is allowed"
+    );
 }
 
 // ---- R6: per-leg certification predicate (guards the U4 flip decision) ----
@@ -1264,10 +1354,11 @@ fn fo_t0441_row_line_scrubs_account_shaped_row_fields() {
     // limited to one column.
     let mut r = fo_bal_row("9876543210", "1"); // account-shaped expcode (>=6 digit run)
     r.appamt = "1234567890".into(); // account-number-shaped
-    let line = fo_t0441_row_line(&r);
+    let line = fo_t0441_row_line("ORDER-CHAIN-FO", &r);
     assert!(!line.contains("1234567890"), "account-shaped appamt leaked: {line}");
     assert!(!line.contains("9876543210"), "account-shaped expcode leaked: {line}");
     assert!(line.contains("jqty=1"), "short quantity must survive: {line}");
+    assert!(line.starts_with("ORDER-CHAIN-FO"), "prefix is applied: {line}");
 }
 
 // ---- R8: 01491 vs an unclassified venue rejection -------------------------
