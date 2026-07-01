@@ -29,6 +29,7 @@ make docs            # regenerate docs/ from metadata
 cargo test           # workspace
 cargo test -p ls-core  # metadata validation + policy index cross-check
 make docs-check      # assert generated docs match committed
+make lane-check      # smoke-harness fail-fast lane guard (offline; no gateway)
 ```
 
 Keep the tree green; never commit with a red gate.
@@ -54,7 +55,9 @@ types, and array-vs-single shapes come from the normalized baseline
 ## Live smokes & gateway
 
 - `make live-smoke-<tr>` hits the **real LS paper gateway** with credentials from
-  a gitignored `.env`; requires `LS_TRADING_ENV=paper`. The smoke registry is
+  a gitignored named per-lane env file (`.env.domestic` by default; `.env.<lane>`
+  per instrument domain — no legacy `.env` fallback); requires
+  `LS_TRADING_ENV=paper`. The smoke registry is
   `.agents/skills/promote-tr/references/smoke-map.md`.
 - `make raw-probe LS_PROBE_TR_CD=.. LS_PROBE_PATH=.. LS_PROBE_BODY=..` is the
   credential-safe failure classifier (prints only http/rsp_cd/body_len). Use it to
