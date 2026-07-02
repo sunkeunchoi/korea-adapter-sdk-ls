@@ -50,7 +50,10 @@ be registered in **both** cross-check lists (see the recipe); a **WebSocket**
 never the REST-only `slice_rest_policies_are_non_order_rest` list — see
 `.agents/skills/implement-realtime-tr/SKILL.md`. Wire field names,
 types, and array-vs-single shapes come from the normalized baseline
-(`crates/ls-trackers/baselines/api-drift/normalized/trs/<tr>.json`), not guesswork.
+(`crates/ls-trackers/baselines/api-drift/normalized/trs/<tr>.json`), not guesswork —
+but the baseline can under-report a request block; where a live-certified SDK request
+struct exists, it wins on disagreement (see
+`docs/solutions/conventions/normalized-baseline-can-underreport-request-block.md`).
 
 ## Live smokes & gateway
 

@@ -228,6 +228,10 @@ make raw-probe LS_PROBE_TR_CD=t8467 LS_PROBE_PATH=/futureoption/market-data \
   — the *request-side* (`string_as_number` on serialize) counterpart to this
   doc's *response-side* (`de_vec_or_single` on deserialize); shares the
   `make raw-probe` diagnostic.
+- `docs/solutions/conventions/normalized-baseline-can-underreport-request-block.md`
+  — the request-side *existence* counterpart: the normalized baseline can also
+  under-report which request fields exist at all (not just types); a live-certified
+  SDK request struct wins on disagreement.
 - `docs/solutions/conventions/market-hours-read-empty-result-disposition.md` — for
   the empty-result branch; this doc's "assert non-empty" rule complements its
   "empty isn't always a defect / a real DROP is raw-probe-OK-but-SDK-deserialize-fails"
