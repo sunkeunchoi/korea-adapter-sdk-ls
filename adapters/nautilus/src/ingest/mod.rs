@@ -32,13 +32,39 @@ use nautilus_persistence::backend::catalog::ParquetDataCatalog;
 
 use crate::error::{AdapterError, AdapterResult};
 use crate::lock::{AdvisoryLock, LockKind};
+use crate::parse::strict_i64;
 use crate::rules::{KRX_REGULAR_CLOSE, KST_UTC_OFFSET_HOURS};
-use self::checkpoint::{Checkpoint, GapReason};
+use self::checkpoint::{Checkpoint, CoverageGap, GapReason};
 use self::pacer::{Pacer, MARKET_DATA_CATEGORY_PER_SEC};
 
 /// A defensive upper bound on daily-cursor pages per symbol (guards a gateway that
 /// never terminates the cursor).
 const MAX_DAILY_PAGES: usize = 500;
+
+/// The default post-close safety buffer for the accumulate session-clock rule
+/// (16:30 KST): today counts as a *closed* session only after this time, so a
+/// post-close cron delivers the just-closed session rather than lagging a day, and
+/// the watermark never advances into an in-session day (U5, KTD7).
+pub const ACCUMULATE_CLOSE_BUFFER: NaiveTime = match NaiveTime::from_hms_opt(16, 30, 0) {
+    Some(t) => t,
+    None => unreachable!(),
+};
+
+/// The last **closed** trading session date for the current KST wall-clock (U5,
+/// KTD7). Today counts as closed once now-KST is past the regular close plus a
+/// safety buffer (`close_buffer`); otherwise the last closed session is
+/// yesterday-or-earlier. Weekends/holidays with no session simply yield no new
+/// bars (the gateway returns a coverage gap) while the watermark still advances.
+pub fn last_closed_session(now_kst: NaiveDateTime, close_buffer: NaiveTime) -> NaiveDate {
+    if now_kst.time() >= close_buffer {
+        now_kst.date()
+    } else {
+        now_kst
+            .date()
+            .pred_opt()
+            .expect("a date always has a predecessor")
+    }
+}
 
 /// Which bar series to ingest.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,38 +164,12 @@ fn parse_hms(field: &str, s: &str) -> AdapterResult<NaiveTime> {
 }
 
 fn price_from_krw(field: &str, s: &str) -> AdapterResult<Price> {
-    let v = s.trim();
-    let i = if v.is_empty() {
-        0
-    } else if let Ok(i) = v.parse::<i64>() {
-        i
-    } else if let Ok(f) = v.parse::<f64>() {
-        f.trunc() as i64
-    } else {
-        return Err(AdapterError::FieldParse {
-            field: field.to_string(),
-            value: s.to_string(),
-            reason: "expected integer KRW".to_string(),
-        });
-    };
+    let i = strict_i64(field, s)?;
     Ok(Price::from(i.max(0).to_string().as_str()))
 }
 
 fn qty_from_str(field: &str, s: &str) -> AdapterResult<Quantity> {
-    let v = s.trim();
-    let i = if v.is_empty() {
-        0
-    } else if let Ok(i) = v.parse::<i64>() {
-        i
-    } else if let Ok(f) = v.parse::<f64>() {
-        f.trunc() as i64
-    } else {
-        return Err(AdapterError::FieldParse {
-            field: field.to_string(),
-            value: s.to_string(),
-            reason: "expected integer volume".to_string(),
-        });
-    };
+    let i = strict_i64(field, s)?;
     Ok(Quantity::from(i.max(0)))
 }
 
@@ -233,11 +233,19 @@ fn build_bar(
 // with fakes, while production fetches route through the SDK + pacer.
 // ---------------------------------------------------------------------------
 
-/// Fetches one daily-chart page for a symbol at a body cursor.
+/// Fetches one daily-chart page for a symbol at a body cursor over `[sdate, edate]`.
 #[async_trait]
 pub trait DailyFetcher {
-    /// Fetch the t8410 page at `cts_date` (`""` = first page).
-    async fn fetch_daily_page(&self, shcode: &str, cts_date: &str) -> AdapterResult<T8410Response>;
+    /// Fetch the t8410 page for `[sdate, edate]` at `cts_date` (`""` = first page).
+    /// Per-call dates (matching [`MinuteFetcher`]) so accumulate-forward can request
+    /// a different range per instrument (U5).
+    async fn fetch_daily_page(
+        &self,
+        shcode: &str,
+        sdate: &str,
+        edate: &str,
+        cts_date: &str,
+    ) -> AdapterResult<T8410Response>;
 }
 
 /// Fetches all minute-chart pages for a symbol over a date chunk.
@@ -254,41 +262,45 @@ pub trait MinuteFetcher {
     ) -> AdapterResult<Vec<T8412Response>>;
 }
 
-/// Production fetcher over the SDK, paced per-TR (KTD4).
+/// Production fetcher over the SDK, paced per-TR (KTD4). Dates ride per call (U5),
+/// so one fetcher serves both the range-global backfill and per-instrument
+/// accumulate-forward ranges.
 pub struct SdkFetcher {
     sdk: LsSdk,
     daily_pacer: Pacer,
     minute_pacer: Pacer,
     daily_qrycnt: usize,
     minute_qrycnt: usize,
-    sdate: String,
-    edate: String,
 }
 
 impl SdkFetcher {
-    fn new(sdk: LsSdk, sdate: String, edate: String) -> Self {
+    fn new(sdk: LsSdk) -> Self {
         SdkFetcher {
             sdk,
             daily_pacer: Pacer::for_policy(&T8410_POLICY, MARKET_DATA_CATEGORY_PER_SEC),
             minute_pacer: Pacer::for_policy(&T8412_POLICY, MARKET_DATA_CATEGORY_PER_SEC),
             daily_qrycnt: 900,
             minute_qrycnt: 900,
-            sdate,
-            edate,
         }
     }
 }
 
 #[async_trait]
 impl DailyFetcher for SdkFetcher {
-    async fn fetch_daily_page(&self, shcode: &str, cts_date: &str) -> AdapterResult<T8410Response> {
+    async fn fetch_daily_page(
+        &self,
+        shcode: &str,
+        sdate: &str,
+        edate: &str,
+        cts_date: &str,
+    ) -> AdapterResult<T8410Response> {
         self.daily_pacer.acquire().await;
         let mut req = T8410Request::new(
             shcode,
             "2", // daily
             self.daily_qrycnt.to_string(),
-            self.sdate.clone(),
-            self.edate.clone(),
+            sdate.to_string(),
+            edate.to_string(),
         );
         req.inblock.cts_date = cts_date.to_string();
         Ok(self.sdk.paginated().stock_chart_period(&req).await?)
@@ -331,6 +343,8 @@ async fn collect_daily<F: DailyFetcher>(
     fetcher: &F,
     shcode: &str,
     bar_type: BarType,
+    sdate: &str,
+    edate: &str,
 ) -> AdapterResult<TripleOutcome> {
     let mut bars = Vec::new();
     let mut cts_date = String::new();
@@ -338,7 +352,7 @@ async fn collect_daily<F: DailyFetcher>(
     let mut hit_cap = true;
 
     for _ in 0..MAX_DAILY_PAGES {
-        let resp = match fetcher.fetch_daily_page(shcode, &cts_date).await {
+        let resp = match fetcher.fetch_daily_page(shcode, sdate, edate, &cts_date).await {
             Ok(r) => r,
             Err(AdapterError::Sdk(LsError::ApiError { code, .. })) if code == "01715" => {
                 return Ok(TripleOutcome::Gap(GapReason::NonTradingDay));
@@ -524,7 +538,7 @@ pub struct Ingestor {
 impl Ingestor {
     /// Build an ingestor over an SDK handle and config.
     pub fn new(sdk: LsSdk, config: IngestConfig) -> Self {
-        let fetcher = SdkFetcher::new(sdk, config.sdate.clone(), config.edate.clone());
+        let fetcher = SdkFetcher::new(sdk);
         Ingestor { fetcher, config }
     }
 
@@ -562,7 +576,9 @@ impl Ingestor {
                 }
                 let bar_type = kind.bar_type(*id)?;
                 let outcome = match kind {
-                    BarKind::Daily => collect_daily(&self.fetcher, &shcode, bar_type).await?,
+                    BarKind::Daily => {
+                        collect_daily(&self.fetcher, &shcode, bar_type, &self.config.sdate, &self.config.edate).await?
+                    }
                     BarKind::Minute(n) => {
                         collect_minute(
                             &self.fetcher,
@@ -615,6 +631,140 @@ impl Ingestor {
             "ingest budget estimate"
         );
 
+        Ok(CoverageReport {
+            bars_written,
+            triples_ingested: ingested,
+            triples_skipped: skipped,
+            gaps: gaps_this_run,
+            budget,
+        })
+    }
+
+    /// Accumulate-forward run under the R15 lock (refuses while a live session runs).
+    /// The caller re-snapshots the universe first (`write_instruments`).
+    pub async fn run_accumulate_locked(
+        &mut self,
+        universe: &[InstrumentId],
+        last_closed: NaiveDate,
+        lookback_floor: NaiveDate,
+    ) -> AdapterResult<CoverageReport> {
+        let _lock = AdvisoryLock::acquire(&self.config.catalog_path, LockKind::Ingest)?;
+        self.run_accumulate(universe, last_closed, lookback_floor).await
+    }
+
+    /// Accumulate-forward: grow whole-universe coverage from each instrument's
+    /// watermark to `last_closed`, reusing the proven per-triple fetch loop over a
+    /// per-instrument range (U5, KTD7). The **watermark map is the sole skip
+    /// authority**: a triple already current makes zero bar fetches (R6/AE4). An
+    /// instrument with no watermark starts at `lookback_floor` (the initial bounded
+    /// backfill, R8; a newly-listed symbol begins here too, R7/AE5). The watermark
+    /// advances to `last_closed` even for a gap day, so an empty history is reported
+    /// once and never retried forever (R10). Does not take the lock or re-snapshot
+    /// the universe — use [`Self::run_accumulate_locked`] and pre-write instruments.
+    pub async fn run_accumulate(
+        &mut self,
+        universe: &[InstrumentId],
+        last_closed: NaiveDate,
+        lookback_floor: NaiveDate,
+    ) -> AdapterResult<CoverageReport> {
+        std::fs::create_dir_all(&self.config.catalog_path).map_err(|e| {
+            AdapterError::Ingest(format!("mkdir catalog {}: {e}", self.config.catalog_path.display()))
+        })?;
+        let checkpoint_path = self.config.checkpoint_path();
+        let mut checkpoint = Checkpoint::load(&checkpoint_path)?;
+        checkpoint.adjusted_prices = self.config.adjusted_prices;
+
+        let mut bars_written = 0usize;
+        let mut ingested = 0usize;
+        let mut skipped = 0usize;
+        let mut gaps_this_run: Vec<CoverageGap> = Vec::new();
+
+        for id in universe {
+            let shcode = id.symbol.as_str().to_string();
+            let instrument = id.to_string();
+            for &kind in &self.config.bar_kinds {
+                let label = kind.label();
+                // Range = watermark+1 .. last closed session (or floor if unseen).
+                let start = match checkpoint.watermark(&instrument, &label) {
+                    Some(d) => d.succ_opt().expect("a date always has a successor"),
+                    None => lookback_floor,
+                };
+                if start > last_closed {
+                    // Already current — the sole skip authority makes this a no-op
+                    // (no bar fetch), even though the universe re-snapshot still ran.
+                    skipped += 1;
+                    continue;
+                }
+                let sdate = start.format("%Y%m%d").to_string();
+                let edate = last_closed.format("%Y%m%d").to_string();
+                let range = format!("{sdate}..{edate}");
+                let bar_type = kind.bar_type(*id)?;
+                let outcome = match kind {
+                    BarKind::Daily => {
+                        collect_daily(&self.fetcher, &shcode, bar_type, &sdate, &edate).await?
+                    }
+                    BarKind::Minute(n) => {
+                        collect_minute(&self.fetcher, &shcode, n, bar_type, &sdate, &edate).await?
+                    }
+                };
+                // A PaperThin outcome means the fetch was TRUNCATED (page cap hit /
+                // single-day chunk still overflowed) — the range is only partially
+                // retrieved, so the watermark must NOT advance past it or the
+                // un-fetched older history is skipped forever. Every other outcome
+                // (bars, empty history, non-trading day) is complete-for-the-range
+                // and advances (R10 — a gap day is covered-but-empty, never retried).
+                let mut advance = true;
+                match outcome {
+                    TripleOutcome::Bars(bars) if !bars.is_empty() => {
+                        let n = bars.len();
+                        write_bars(&self.config.catalog_path, bars).await?;
+                        bars_written += n;
+                        ingested += 1;
+                    }
+                    TripleOutcome::Bars(_) => gaps_this_run.push(CoverageGap {
+                        instrument: instrument.clone(),
+                        bar_type: label.clone(),
+                        range: range.clone(),
+                        reason: GapReason::EmptyHistory,
+                    }),
+                    TripleOutcome::Gap(reason) => {
+                        if reason == GapReason::PaperThin {
+                            advance = false;
+                        }
+                        gaps_this_run.push(CoverageGap {
+                            instrument: instrument.clone(),
+                            bar_type: label.clone(),
+                            range: range.clone(),
+                            reason,
+                        });
+                    }
+                }
+                if advance {
+                    checkpoint.set_watermark(&instrument, &label, last_closed);
+                }
+                // Persist after each triple for crash safety.
+                checkpoint.save(&checkpoint_path)?;
+            }
+        }
+
+        // Prune legacy completed/gap rows below the watermarks so daily runs stay
+        // bounded (KTD7); the run's own gaps report comes from memory.
+        checkpoint.prune_below_watermarks();
+        checkpoint.save(&checkpoint_path)?;
+
+        let budget = BudgetEstimate {
+            symbols: universe.len(),
+            bar_kinds: self.config.bar_kinds.len(),
+            per_sec_cap: self.fetcher.daily_pacer_cap(),
+            min_requests: universe.len() * self.config.bar_kinds.len(),
+        };
+        tracing::info!(
+            symbols = budget.symbols,
+            ingested,
+            skipped,
+            gaps = gaps_this_run.len(),
+            "accumulate-forward run complete"
+        );
         Ok(CoverageReport {
             bars_written,
             triples_ingested: ingested,
@@ -761,6 +911,21 @@ mod tests {
     }
 
     #[test]
+    fn last_closed_session_respects_the_post_close_buffer() {
+        let day = NaiveDate::from_ymd_opt(2024, 1, 5).unwrap();
+        // 18:00 KST (past the 16:30 buffer) → today is the last closed session.
+        let evening = NaiveDateTime::new(day, NaiveTime::from_hms_opt(18, 0, 0).unwrap());
+        assert_eq!(last_closed_session(evening, ACCUMULATE_CLOSE_BUFFER), day);
+        // 10:00 KST (mid-session, before the buffer) → yesterday, never today (the
+        // watermark must not advance into an in-session day, KTD7).
+        let morning = NaiveDateTime::new(day, NaiveTime::from_hms_opt(10, 0, 0).unwrap());
+        assert_eq!(
+            last_closed_session(morning, ACCUMULATE_CLOSE_BUFFER),
+            NaiveDate::from_ymd_opt(2024, 1, 4).unwrap()
+        );
+    }
+
+    #[test]
     fn split_range_narrows_and_bottoms_out() {
         let s = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
         let e = NaiveDate::from_ymd_opt(2024, 1, 10).unwrap();
@@ -805,7 +970,7 @@ mod tests {
     }
     #[async_trait]
     impl DailyFetcher for FixedDaily {
-        async fn fetch_daily_page(&self, _shcode: &str, _cts: &str) -> AdapterResult<T8410Response> {
+        async fn fetch_daily_page(&self, _shcode: &str, _sd: &str, _ed: &str, _cts: &str) -> AdapterResult<T8410Response> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(self.resp.clone())
         }
@@ -816,7 +981,7 @@ mod tests {
     }
     #[async_trait]
     impl DailyFetcher for ErrDaily {
-        async fn fetch_daily_page(&self, _shcode: &str, _cts: &str) -> AdapterResult<T8410Response> {
+        async fn fetch_daily_page(&self, _shcode: &str, _sd: &str, _ed: &str, _cts: &str) -> AdapterResult<T8410Response> {
             Err(AdapterError::Sdk(LsError::ApiError {
                 code: self.code.clone(),
                 message: "non-trading day".to_string(),
@@ -836,7 +1001,7 @@ mod tests {
         };
         resp.outblock.cts_date = String::new(); // single page
         let fetcher = FixedDaily { resp, calls: AtomicUsize::new(0) };
-        let outcome = collect_daily(&fetcher, "005930", bar_type).await.unwrap();
+        let outcome = collect_daily(&fetcher, "005930", bar_type, "20240101", "20240131").await.unwrap();
         let bars = match outcome {
             TripleOutcome::Bars(b) => b,
             _ => panic!("expected bars"),
@@ -857,7 +1022,7 @@ mod tests {
             resp: daily_resp("", "20240105"),
             calls: AtomicUsize::new(0),
         };
-        let outcome = collect_daily(&fetcher, "005930", bar_type).await.unwrap();
+        let outcome = collect_daily(&fetcher, "005930", bar_type, "20240101", "20240131").await.unwrap();
         assert_eq!(fetcher.calls.load(Ordering::SeqCst), 1, "empty cursor stops after one page");
         assert!(matches!(outcome, TripleOutcome::Bars(ref b) if b.len() == 1));
     }
@@ -870,7 +1035,7 @@ mod tests {
             resp: daily_resp("SAME", "20240105"),
             calls: AtomicUsize::new(0),
         };
-        let outcome = collect_daily(&fetcher, "005930", bar_type).await.unwrap();
+        let outcome = collect_daily(&fetcher, "005930", bar_type, "20240101", "20240131").await.unwrap();
         assert_eq!(
             fetcher.calls.load(Ordering::SeqCst),
             2,
@@ -883,7 +1048,7 @@ mod tests {
     async fn daily_01715_becomes_non_trading_day_gap() {
         let bar_type = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
         let fetcher = ErrDaily { code: "01715".to_string() };
-        let outcome = collect_daily(&fetcher, "005930", bar_type).await.unwrap();
+        let outcome = collect_daily(&fetcher, "005930", bar_type, "20240101", "20240131").await.unwrap();
         assert!(matches!(outcome, TripleOutcome::Gap(GapReason::NonTradingDay)));
     }
 

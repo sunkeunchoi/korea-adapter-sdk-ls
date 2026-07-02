@@ -3,12 +3,25 @@
 //! AE6. The exhaustive `LsError`-variant mapping lives in the `orders::map` unit
 //! tests. No live calls.
 
+use std::time::Duration;
+
 use ls_sdk::orders::{CSPAT00601Request, OrderIntent};
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::{mock_config, mount_token};
+use nautilus_common::clients::ExecutionClient;
+use nautilus_common::live::runner::replace_exec_event_sender;
+use nautilus_common::messages::execution::{CancelOrder, ModifyOrder, SubmitOrder};
+use nautilus_common::messages::ExecutionEvent;
+use nautilus_core::{UnixNanos, UUID4};
 use nautilus_ls::execution::LsExecClient;
 use nautilus_ls::orders::map::{classify_submit_error, SubmitAction};
-use nautilus_model::enums::AccountType;
+use nautilus_model::enums::{AccountType, OrderSide, OrderType, TimeInForce};
+use nautilus_model::events::OrderEventAny;
+use nautilus_model::identifiers::{ClientOrderId, InstrumentId, StrategyId, TraderId};
+use nautilus_model::orders::{OrderAny, OrderTestBuilder};
+use nautilus_model::types::{Price, Quantity};
+use tokio::sync::mpsc;
+use tokio::time::timeout;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -241,4 +254,424 @@ async fn halt_hook_disables_orders() {
     assert!(client.orders_enabled(), "orders enabled by default");
     client.halt();
     assert!(!client.orders_enabled(), "halt disarms the order path");
+}
+
+// ---------------------------------------------------------------------------
+// U3 (poll-derived fills) + U4 (modify/cancel) + the DoD submit→fill→cancel
+// round-trip, driven through the real ExecutionClient surface. Emitted
+// execution events are captured via the runner's (thread-local) exec sender.
+// ---------------------------------------------------------------------------
+
+/// Capture the execution events the client emits (`start()` copies this sender
+/// into the emitter; spawned workers emit through that copy).
+fn capture_exec_events() -> mpsc::UnboundedReceiver<ExecutionEvent> {
+    let (tx, rx) = mpsc::unbounded_channel::<ExecutionEvent>();
+    replace_exec_event_sender(tx);
+    rx
+}
+
+fn test_order(client_id: &str, qty: i64, price: i64) -> OrderAny {
+    OrderTestBuilder::new(OrderType::Limit)
+        .trader_id(TraderId::from("LS-TRADER-001"))
+        .strategy_id(StrategyId::from("S-ORB-1"))
+        .instrument_id(InstrumentId::from("005930.XKRX"))
+        .client_order_id(ClientOrderId::from(client_id))
+        .side(OrderSide::Buy)
+        .quantity(Quantity::from(qty))
+        .price(Price::from(price.to_string().as_str()))
+        .time_in_force(TimeInForce::Day)
+        .build()
+}
+
+fn submit_cmd(order: &OrderAny) -> SubmitOrder {
+    SubmitOrder::from_order(order, TraderId::from("LS-TRADER-001"), None, None, UUID4::new(), UnixNanos::default())
+}
+
+/// Mount a successful order ack (`CSPAT006/007/008`) returning `ordno` (+ optional
+/// parent) on the OutBlock2. Orders use TR-specific success codes (a generic
+/// `00000` is AMBIGUOUS, never accepted): submit `00040` (buy-ack), modify `00462`,
+/// cancel `00463`.
+async fn mount_order_ok(server: &MockServer, tr_cd: &str, ordno: &str, prnt: &str) {
+    let rsp_cd = match tr_cd {
+        "CSPAT00601" => "00040", // buy-ack
+        "CSPAT00701" => "00462", // modify completed
+        "CSPAT00801" => "00463", // cancel completed
+        other => panic!("no success code mapped for {other}"),
+    };
+    let mut ob2 = serde_json::json!({ "OrdNo": ordno });
+    if !prnt.is_empty() {
+        ob2["PrntOrdNo"] = serde_json::json!(prnt);
+    }
+    let body = serde_json::json!({
+        "rsp_cd": rsp_cd,
+        "rsp_msg": "OK",
+        format!("{tr_cd}OutBlock1"): {},
+        format!("{tr_cd}OutBlock2"): ob2,
+    });
+    Mock::given(method("POST"))
+        .and(path(ORDER_PATH))
+        .and(header("tr_cd", tr_cd))
+        .respond_with(ok_json(body))
+        .mount(server)
+        .await;
+}
+
+/// Mount a clean business rejection (2xx, non-`00000` rsp_cd → `ApiError` → Reject).
+async fn mount_order_business_reject(server: &MockServer, tr_cd: &str, code: &str) {
+    let body = serde_json::json!({ "rsp_cd": code, "rsp_msg": "rejected" });
+    Mock::given(method("POST"))
+        .and(path(ORDER_PATH))
+        .and(header("tr_cd", tr_cd))
+        .respond_with(ok_json(body))
+        .mount(server)
+        .await;
+}
+
+/// Mount a transport failure (5xx → `AmbiguousOrder` → Pending → reconcile).
+async fn mount_order_ambiguous(server: &MockServer, tr_cd: &str) {
+    Mock::given(method("POST"))
+        .and(path(ORDER_PATH))
+        .and(header("tr_cd", tr_cd))
+        .respond_with(ResponseTemplate::new(500))
+        .mount(server)
+        .await;
+}
+
+fn t0425_row(ordno: &str, orgordno: &str, cheqty: &str, ordrem: &str, status: &str) -> serde_json::Value {
+    serde_json::json!({
+        "ordno": ordno, "expcode": "005930", "medosu": "매수", "qty": "10",
+        "price": "60000", "cheqty": cheqty, "ordrem": ordrem, "status": status,
+        "orgordno": orgordno, "ordtime": "0900"
+    })
+}
+
+/// Await the next order event (skipping any non-order execution events).
+async fn next_order_event(rx: &mut mpsc::UnboundedReceiver<ExecutionEvent>) -> OrderEventAny {
+    loop {
+        let ev = timeout(Duration::from_secs(3), rx.recv())
+            .await
+            .expect("an execution event arrives")
+            .expect("channel open");
+        if let ExecutionEvent::Order(o) = ev {
+            return o;
+        }
+    }
+}
+
+/// Drain submitted+accepted after a submit so the order is registered + resting.
+async fn drain_submit_accept(rx: &mut mpsc::UnboundedReceiver<ExecutionEvent>) {
+    for _ in 0..2 {
+        let _ = next_order_event(rx).await;
+    }
+}
+
+/// AE3 / U3: an accepted order later shows cheqty>0 on t0425 → OrderFilled emits
+/// with the poll-derived quantity at the order's limit price — no SC lane involved.
+#[tokio::test]
+async fn poll_derived_fill_emits_independently_of_sc() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    mount_order_ok(&server, "CSPAT00601", "1001", "").await;
+    let order = test_order("O-POLL-1", 10, 60_000);
+    client.submit_order(submit_cmd(&order)).unwrap();
+    drain_submit_accept(&mut rx).await;
+
+    // t0425 now reports 4 filled of 10 → a single poll pass emits OrderFilled(4).
+    mount_t0425(&server, "", serde_json::json!([t0425_row("1001", "", "4", "6", "체결")])).await;
+    let outcome = client.poll_once().await;
+    assert_eq!(outcome.deltas.len(), 1);
+
+    match next_order_event(&mut rx).await {
+        OrderEventAny::Filled(f) => {
+            assert_eq!(f.last_qty, Quantity::from(4));
+            assert_eq!(f.last_px, Price::from("60000"), "poll fills emit at the order limit price");
+        }
+        other => panic!("expected OrderFilled, got {other:?}"),
+    }
+}
+
+/// DoD round-trip: submit → (partial) fill → cancel, entirely through the client.
+#[tokio::test]
+async fn submit_fill_cancel_round_trip() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    mount_order_ok(&server, "CSPAT00601", "1001", "").await;
+    let order = test_order("O-RT-1", 10, 60_000);
+    client.submit_order(submit_cmd(&order)).unwrap();
+    drain_submit_accept(&mut rx).await;
+
+    // Partial fill (4 of 10) via the poll lane.
+    mount_t0425(&server, "", serde_json::json!([t0425_row("1001", "", "4", "6", "체결")])).await;
+    client.poll_once().await;
+    assert!(matches!(next_order_event(&mut rx).await, OrderEventAny::Filled(_)));
+
+    // Cancel the resting remainder.
+    mount_order_ok(&server, "CSPAT00801", "1002", "1001").await;
+    client
+        .cancel_order(CancelOrder::new(
+            TraderId::from("LS-TRADER-001"),
+            None,
+            StrategyId::from("S-ORB-1"),
+            InstrumentId::from("005930.XKRX"),
+            ClientOrderId::from("O-RT-1"),
+            None,
+            UUID4::new(),
+            UnixNanos::default(),
+            None,
+            None,
+        ))
+        .unwrap();
+    assert!(
+        matches!(next_order_event(&mut rx).await, OrderEventAny::Canceled(_)),
+        "the resting remainder cancels"
+    );
+}
+
+/// AE2 / U4: a modify acks a new OrdNo (1002); a later poll fill keyed on the
+/// ORIGINAL OrdNo (1001) still resolves and emits on the original order.
+#[tokio::test]
+async fn modify_ack_then_fill_on_original_ordno_resolves() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    mount_order_ok(&server, "CSPAT00601", "1001", "").await;
+    let order = test_order("O-MOD-1", 10, 60_000);
+    client.submit_order(submit_cmd(&order)).unwrap();
+    drain_submit_accept(&mut rx).await;
+
+    // Modify → new OrdNo 1002 (parent 1001).
+    mount_order_ok(&server, "CSPAT00701", "1002", "1001").await;
+    client
+        .modify_order(ModifyOrder::new(
+            TraderId::from("LS-TRADER-001"),
+            None,
+            StrategyId::from("S-ORB-1"),
+            InstrumentId::from("005930.XKRX"),
+            ClientOrderId::from("O-MOD-1"),
+            None,
+            Some(Quantity::from(10)),
+            Some(Price::from("60100")),
+            None,
+            UUID4::new(),
+            UnixNanos::default(),
+            None,
+            None,
+        ))
+        .unwrap();
+    match next_order_event(&mut rx).await {
+        OrderEventAny::Updated(_) => {}
+        other => panic!("expected OrderUpdated, got {other:?}"),
+    }
+
+    // A fill still keyed on the ORIGINAL OrdNo 1001 resolves + emits (chain intact).
+    mount_t0425(&server, "", serde_json::json!([t0425_row("1001", "", "5", "5", "체결")])).await;
+    client.poll_once().await;
+    match next_order_event(&mut rx).await {
+        OrderEventAny::Filled(f) => assert_eq!(f.last_qty, Quantity::from(5)),
+        other => panic!("expected OrderFilled on the original client order, got {other:?}"),
+    }
+}
+
+/// The most-recent request body the mock received for `tr_cd`.
+async fn last_request_body(server: &MockServer, tr_cd: &str) -> serde_json::Value {
+    let reqs = server.received_requests().await.unwrap_or_default();
+    let r = reqs
+        .iter()
+        .rev()
+        .find(|r| r.headers.get("tr_cd").and_then(|v| v.to_str().ok()) == Some(tr_cd))
+        .expect("a request for tr_cd was received");
+    serde_json::from_slice(&r.body).expect("request body is JSON")
+}
+
+/// U4 regression: a price-only re-modify (`cmd.quantity == None`) after a quantity
+/// reduction must keep the REDUCED quantity — not resurrect the original from the
+/// stale retained OrderAny (which would silently re-increase live exposure).
+#[tokio::test]
+async fn price_only_remodify_keeps_the_reduced_quantity() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    mount_order_ok(&server, "CSPAT00601", "1001", "").await;
+    let order = test_order("O-RM-1", 10, 60_000);
+    client.submit_order(submit_cmd(&order)).unwrap();
+    drain_submit_accept(&mut rx).await;
+
+    mount_order_ok(&server, "CSPAT00701", "1002", "1001").await;
+    // Modify 1: reduce quantity 10 -> 5.
+    client
+        .modify_order(ModifyOrder::new(
+            TraderId::from("LS-TRADER-001"), None, StrategyId::from("S-ORB-1"),
+            InstrumentId::from("005930.XKRX"), ClientOrderId::from("O-RM-1"), None,
+            Some(Quantity::from(5)), Some(Price::from("60000")), None,
+            UUID4::new(), UnixNanos::default(), None, None,
+        ))
+        .unwrap();
+    assert!(matches!(next_order_event(&mut rx).await, OrderEventAny::Updated(_)));
+
+    // Modify 2: PRICE ONLY (quantity None) — must reuse the reduced qty 5.
+    client
+        .modify_order(ModifyOrder::new(
+            TraderId::from("LS-TRADER-001"), None, StrategyId::from("S-ORB-1"),
+            InstrumentId::from("005930.XKRX"), ClientOrderId::from("O-RM-1"), None,
+            None, Some(Price::from("60100")), None,
+            UUID4::new(), UnixNanos::default(), None, None,
+        ))
+        .unwrap();
+    assert!(matches!(next_order_event(&mut rx).await, OrderEventAny::Updated(_)));
+
+    let body = last_request_body(&server, "CSPAT00701").await;
+    let ordqty = body["CSPAT00701InBlock1"]["OrdQty"].as_i64();
+    assert_eq!(
+        ordqty,
+        Some(5),
+        "a price-only re-modify must keep the reduced qty (5), not the original 10; got {ordqty:?}"
+    );
+}
+
+/// U4 / KTD6: a cleanly-rejected cancel emits **cancel-rejected**, not canceled —
+/// the order stays open.
+#[tokio::test]
+async fn cancel_business_reject_emits_cancel_rejected() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    mount_order_ok(&server, "CSPAT00601", "1001", "").await;
+    let order = test_order("O-CR-1", 10, 60_000);
+    client.submit_order(submit_cmd(&order)).unwrap();
+    drain_submit_accept(&mut rx).await;
+
+    mount_order_business_reject(&server, "CSPAT00801", "40580").await;
+    client
+        .cancel_order(CancelOrder::new(
+            TraderId::from("LS-TRADER-001"),
+            None,
+            StrategyId::from("S-ORB-1"),
+            InstrumentId::from("005930.XKRX"),
+            ClientOrderId::from("O-CR-1"),
+            None,
+            UUID4::new(),
+            UnixNanos::default(),
+            None,
+            None,
+        ))
+        .unwrap();
+    match next_order_event(&mut rx).await {
+        OrderEventAny::CancelRejected(_) => {}
+        other => panic!("a rejected cancel must emit CancelRejected (order stays open), got {other:?}"),
+    }
+}
+
+/// U4: an ambiguous (5xx) cancel reconciles; a t0425 취소 row → OrderCanceled.
+#[tokio::test]
+async fn ambiguous_cancel_reconciles_to_canceled() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    mount_order_ok(&server, "CSPAT00601", "1001", "").await;
+    let order = test_order("O-AC-1", 10, 60_000);
+    client.submit_order(submit_cmd(&order)).unwrap();
+    drain_submit_accept(&mut rx).await;
+
+    mount_order_ambiguous(&server, "CSPAT00801").await;
+    // The reconcile inquiry shows an explicit 취소 (canceled) row for OrdNo 1001.
+    mount_t0425(&server, "", serde_json::json!([t0425_row("1001", "", "0", "0", "취소")])).await;
+    client
+        .cancel_order(CancelOrder::new(
+            TraderId::from("LS-TRADER-001"),
+            None,
+            StrategyId::from("S-ORB-1"),
+            InstrumentId::from("005930.XKRX"),
+            ClientOrderId::from("O-AC-1"),
+            None,
+            UUID4::new(),
+            UnixNanos::default(),
+            None,
+            None,
+        ))
+        .unwrap();
+    match next_order_event(&mut rx).await {
+        OrderEventAny::Canceled(_) => {}
+        other => panic!("an ambiguous cancel reconciled to 취소 must emit Canceled, got {other:?}"),
+    }
+}
+
+/// U4: an ambiguous cancel whose reconcile is inconclusive (still-접수, Unknown)
+/// stays pending — NO canceled event is emitted (never guessed).
+#[tokio::test]
+async fn ambiguous_cancel_reconcile_unknown_stays_pending() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    mount_order_ok(&server, "CSPAT00601", "1001", "").await;
+    let order = test_order("O-AU-1", 10, 60_000);
+    client.submit_order(submit_cmd(&order)).unwrap();
+    drain_submit_accept(&mut rx).await;
+
+    mount_order_ambiguous(&server, "CSPAT00801").await;
+    // The order is still 접수 (accepted) — a cancel cannot be proven, so it stays
+    // pending and never emits a canceled/rejected event.
+    mount_t0425(&server, "", serde_json::json!([t0425_row("1001", "", "0", "10", "접수")])).await;
+    client
+        .cancel_order(CancelOrder::new(
+            TraderId::from("LS-TRADER-001"),
+            None,
+            StrategyId::from("S-ORB-1"),
+            InstrumentId::from("005930.XKRX"),
+            ClientOrderId::from("O-AU-1"),
+            None,
+            UUID4::new(),
+            UnixNanos::default(),
+            None,
+            None,
+        ))
+        .unwrap();
+    // No terminal event should arrive within the window (stays pending).
+    let got = timeout(Duration::from_millis(600), rx.recv()).await;
+    assert!(got.is_err(), "an unprovable cancel must NOT emit a canceled/rejected event");
+}
+
+/// U4: a modify of an unknown/never-accepted order is denied — nothing is sent to
+/// the venue and no updated/rejected event is emitted.
+#[tokio::test]
+async fn modify_unknown_order_emits_nothing() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    client
+        .modify_order(ModifyOrder::new(
+            TraderId::from("LS-TRADER-001"),
+            None,
+            StrategyId::from("S-ORB-1"),
+            InstrumentId::from("005930.XKRX"),
+            ClientOrderId::from("O-NEVER"),
+            None,
+            Some(Quantity::from(10)),
+            Some(Price::from("60000")),
+            None,
+            UUID4::new(),
+            UnixNanos::default(),
+            None,
+            None,
+        ))
+        .unwrap();
+    let got = timeout(Duration::from_millis(500), rx.recv()).await;
+    assert!(got.is_err(), "a modify of an unknown order emits nothing (denied)");
 }
