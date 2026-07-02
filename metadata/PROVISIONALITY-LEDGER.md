@@ -1334,7 +1334,11 @@ open session is opportunistic, not required — so the probes remain runnable at
   LS_PROBE_BODY='{"CSPBQ00200InBlock1":{"RecCnt":1,"BnsTpCode":"1","IsuNo":"KR7005930003","OrdPrc":75000,"RegCommdaCode":"41"}}'`
   (`RecCnt`/`OrdPrc` are JSON **numbers** — string slots return `IGW40011`) — expected:
   `00136` with all-default deposit fields on the cash-only default lane → filed as
-  **funding-gated** reconfirmation.
+  **funding-gated** reconfirmation. Body source of truth: the proven-live SDK request
+  struct (`CSPBQ00200InBlock1`, `crates/ls-sdk/src/account/capacity.rs` — the shape the
+  §16 live smoke certified with `00136`), which is a SUPERSET of the normalized
+  baseline's request block: the baseline under-reports `RecCnt`/`RegCommdaCode` for this
+  TR, so mirror the SDK struct, not the baseline alone, when re-deriving this body.
 
 A run records ONLY the `http` / `rsp_cd` / `body_len` triple plus the gate label in the
 matching row below — never response-body contents or account identifiers. A probe that
@@ -1388,9 +1392,10 @@ gate reason pointing here; no `metadata/trs/*.yaml` facet is edited.
 event, never on another disposition pass: (a) **position manufacture** — operator runs
 the §22 U1 feasibility probe then `make live-smoke-fo-position` in an open KRX F/O
 window → `t0441` flips (metadata + docgen only); (b) an **out-of-band spot-lane
-deposit** + re-smoke witnessing a non-default capacity field → `CSPBQ00200` flips;
-(c) an **after-hours (15:30–17:50 KST) run** → `t1109` flips or is re-dispositioned on
-fresh in-window evidence; (d) a **live `NWS` news event** → `t3102` flips via the
+deposit** + re-smoke (`make live-smoke-cspbq00200`) witnessing a non-default capacity
+field → `CSPBQ00200` flips;
+(c) an **after-hours (15:30–17:50 KST) run** (`make live-smoke-t1109`) → `t1109` flips
+or is re-dispositioned on fresh in-window evidence; (d) a **live `NWS` news event** → `t3102` flips via the
 staged feeder; (e) a **gateway-side `IGW40014` fix** reopens `t1631`; (f) the
 `sFileData`-sourcing / realtime-design / filter-enum levers for `t1852`/`t1856`/
 `t1860`/`t1964` are design-scoped, not session-scoped; (g) an **open overseas window**

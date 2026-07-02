@@ -133,7 +133,7 @@ U1 (operator probe) → U2 (author §23) → U3 (verify invariants + gate). U2 c
   - `t0441` — `make raw-probe LS_SMOKE_LANE=domestic_option LS_PROBE_TR_CD=t0441 LS_PROBE_PATH=<from baseline> LS_PROBE_BODY='{"t0441InBlock":{...}}'` (F/O balance on the funded …51 account; expect success rsp_cd with an empty/all-default balance because no position is held).
   - `CSPBQ00200` — `make raw-probe LS_SMOKE_LANE=domestic LS_PROBE_TR_CD=CSPBQ00200 LS_PROBE_PATH=<from baseline> LS_PROBE_BODY='{"CSPBQ00200InBlock":{...}}'` (spot margin on the cash-only default lane; expect a funding-gated result — all-default deposit fields / `00136`, or the documented margin rejection).
   - `t1109` is NOT probed (its after-hours gate cannot be witnessed in a regular session — cite §19/§20 in U2).
-- **Execution note:** Operator-run, never autonomous. `raw-probe` is credential-safe (prints only http / rsp_cd / body_len); numeric request-body fields must serialize as JSON numbers or the gateway returns `IGW40011` (source shapes from the baseline, not guesswork).
+- **Execution note:** Operator-run, never autonomous. `raw-probe` is credential-safe (prints only http / rsp_cd / body_len); numeric request-body fields must serialize as JSON numbers or the gateway returns `IGW40011` (source shapes from the baseline, not guesswork — and cross-check against the proven-live SDK request struct where one exists: the CSPBQ00200 baseline under-reports `RecCnt`/`RegCommdaCode`, which the certified SDK shape sends).
 - **Test scenarios:** Test expectation: none — this is an operator probe that emits classifier output, not code under test. Its correctness gate is U2's classification (R2) and the AE3 escalation branch.
 - **Verification:** Two `RAW-PROBE` lines captured, each classified against its expected gate per R2; any contradicting (unexpectedly populated) result flagged as a re-open candidate per AE3 rather than filed as reconfirmation.
 
@@ -171,7 +171,7 @@ U1 (operator probe) → U2 (author §23) → U3 (verify invariants + gate). U2 c
 | Smoke lane guard | `make lane-check` | U3 | offline lane guard passes |
 | Diff scope | `git diff --stat` | U3 | only `metadata/PROVISIONALITY-LEDGER.md` + this plan |
 
-Live probes (U1) are operator-run and credential-gated; they are never part of the autonomous gate (`raw-probe` is not an `#[ignore]` smoke wired into `cargo test`).
+Live probes (U1) are operator-run and credential-gated; they are never part of the autonomous gate (`raw-probe` runs the `#[ignore]`-gated `raw_http_probe` test via `--ignored`, so a default `cargo test` never executes it).
 
 ## Definition of Done
 
