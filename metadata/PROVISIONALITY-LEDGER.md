@@ -1409,3 +1409,100 @@ facet edited. The only tree change is this section's prose. The 16-TR domestic r
 (2 + 1 + 7 + 5 + 1) is fully and currently dispositioned against §22's 38 (13 + 7 + 6 +
 7 + 5); the next domestic window should be spent on a reopen trigger above, not on
 another re-probe of this pool.
+
+## 24. Domestic trigger-run certify wave — armed-trigger prep + smoke-target defect fix (2026-07-02)
+
+Plan `docs/plans/2026-07-02-002-feat-domestic-trigger-run-certify-wave-plan.md`.
+Goal: spend an open KRX F/O window executing the two §23 reopen triggers that are armed
+without out-of-band action — position manufacture → `t0441`, and the live-`NWS` listener
+→ `t3102` — for 1–2 domestic flips, refreshing the account-gated PENDING evidence either
+way. **Outcome: 0 flips this pass** — every certifying leg (the raw-probes, the typed
+`t0441`/`CSPBQ00200` read smokes, `make live-smoke-fo-position`, and the `NWS` listener
+loop) is credential-gated and operator-run in an attended PTY (never autonomous, per the
+plan's execution profile); none ran in the autonomous pass that authored this section.
+The deliverable is this record plus a real smoke-harness defect fix (below); the flips
+remain armed for the operator.
+
+**Honesty note: the certify legs are operator-pending, but this wave is not empty.** §22
+is the terminal exhaustion close-out and §23 re-confirmed the 16-TR domestic slice; the
+account state that produced the current PENDINGs is unchanged (no probe ran to move it),
+so the §23 partition below is re-confirmed verbatim. What *did* land is desk prep (U1)
+and a latent-defect correction: three wave-critical `make live-smoke-*` targets matched
+**zero** tests and would have exited FAIL before touching the gateway.
+
+**Smoke-target defect fix (U1, KTD9).** The `live_smoke` test binary was decomposed into
+per-family submodules (`account::`, `market_session_charts::`, …), so the `run_smoke`
+recipe's `--exact` filter — which takes the full `module::test` path — no longer matched
+the bare test names still hard-coded in most targets. A bare name silently matches 0
+tests while the `1 passed` grep reads the empty run as failure, so every affected target
+was dead. This wave fixed the **three wave-critical** call sites to their real paths:
+- `live-smoke-t0441` → `account::live_smoke_t0441`
+- `live-smoke-cspbq00200` → `account::live_smoke_cspbq00200`
+- `live-smoke-nws-t3102` → `market_session_charts::live_smoke_nws_t3102`
+Also amended the stale `live-smoke-fo-position` gating comment (KTD1): the harness's own
+preflight flat-gate + bounded flatten + kill-switch-after-teardown machinery IS the
+flatten-feasibility gate — the separate hand-run feasibility spike (plan 2026-07-01-003
+U1) is superseded. **Repo-wide follow-up (flagged, not swept):** cross-checking all 198
+`run_smoke` call sites against the decomposed `--list` output, **194 remain broken** by
+the same bare-name-vs-`module::` mismatch. A separate mechanical sweep PR should repoint
+every target from its `--list` path; out of scope for this certify wave.
+
+**U2 probe/branch status (operator-pending, KTD2/KTD3).** The two session-independent
+raw-probes remain runnable at any time and record ONLY the `http`/`rsp_cd`/`body_len`
+triple plus the gate label — never response bodies or account identifiers. The `t0441`
+flat/positioned branch does **not** ride the probe's `body_len`; the operator runs the
+typed read and the reported `positions=` count decides (KTD2): `positions=0` before the
+15:15 KST cutoff → flat, proceed to manufacture; `positions>0` with `tappamt_nondefault`
+→ that read is itself the R10 certifying witness, manufacture skipped. Commands (verbatim
+from §23):
+- `t0441` — `make raw-probe LS_SMOKE_LANE=domestic_option LS_PROBE_TR_CD=t0441
+  LS_PROBE_PATH=/futureoption/accno
+  LS_PROBE_BODY='{"t0441InBlock":{"cts_expcode":"","cts_medocd":""}}'` (the
+  `LS_SMOKE_LANE=domestic_option` is mandatory — `raw-probe` has no lane mapping and
+  silently authenticates as the domestic cash account …3701 without it), then the typed
+  `make live-smoke-t0441` read for the branch decision.
+- `CSPBQ00200` — `make raw-probe LS_PROBE_TR_CD=CSPBQ00200 LS_PROBE_PATH=/stock/accno
+  LS_PROBE_BODY='{"CSPBQ00200InBlock1":{"RecCnt":1,"BnsTpCode":"1","IsuNo":"KR7005930003","OrdPrc":75000,"RegCommdaCode":"41"}}'`
+  (`RecCnt`/`OrdPrc` are JSON **numbers** — string slots return `IGW40011`; body mirrors
+  the certified SDK struct `CSPBQ00200InBlock1`, a superset of the under-reporting
+  normalized baseline). Expected `00136` all-default → funding-gated PENDING re-confirmed;
+  unexpectedly populated → operator runs `make live-smoke-cspbq00200`, and per KTD8 (R2)
+  a non-default capacity flag flips it inline — this wave's Product Contract supersedes
+  §23's "never flip inline (AE3)" prohibition. KTD8 did **not** fire this pass (no probe
+  ran).
+
+**Certify legs (operator-run, staged and armed).**
+- `t0441` (선물/옵션잔고평가) — flat branch: operator mints a fresh `LS_ORDER_SMOKE_NONCE`
+  and runs `make live-smoke-fo-position` (domestic_option lane, …51) in the open F/O
+  window before 15:15 KST; flips only on the `ORDER-MANUFACTURE-FO result=certified`
+  witness line (KTD3), never the make exit status. Fail-closed arms (non-flat preflight,
+  degenerate band, rejected buy, no-fill clean-cancel, panic) → PENDING with the arm
+  recorded; a panic *without* a preceding `flatten=confirmed` (or carrying `MANUAL
+  flatten required`) is the stranded arm that halts all order legs (KTD4). Not run.
+- `t3102` (뉴스본문) — operator runs `LS_NWS_SMOKE_SECS=1800 make live-smoke-nws-t3102`
+  (default domestic lane, …3701) as a looped long timebox; flips only on a `LIVE-SMOKE`
+  record with non-empty `title_len`. HELD re-confirmed absent a live news frame. Not run.
+
+**The 16-TR domestic partition — re-confirmed from §23 (no probe moved it):** 2
+current-probeable account reads (`t0441`, `CSPBQ00200`) + 1 after-hours-gated (`t1109`) +
+7 intraday paper-empty (`t1951` `t1973` `t2106` `t2212` `t2407` `t8404` `t8427`) + 5
+structurally held (`t1852` `t1856` `t1860` `t1964` `t3102`) + 1 gateway defect (`t1631`,
+`IGW40014`) = 16. Every row keeps `implemented: false` with its §16–§23 reason intact; no
+`metadata/trs/*.yaml` facet edited this pass.
+
+**Supersession (R5).** For these 16 this section is the current disposition record,
+refining §23's reasons in place (not stacking a parallel layer). The reopen triggers of
+§23 carry forward unchanged: (a) position manufacture → `t0441`; (b) out-of-band spot
+deposit + re-smoke → `CSPBQ00200`; (c) after-hours run → `t1109`; (d) live `NWS` event →
+`t3102`; (e) gateway `IGW40014` fix → `t1631`; (f) design-scoped levers for
+`t1852`/`t1856`/`t1860`/`t1964`; (g) open overseas window → the overseas residue. The two
+armed-this-window triggers (a) and (d) stay armed for the operator; the harnesses are
+staged on `main` and now reachable via the fixed Makefile targets.
+
+**Count tally (R6).** **0 flips** → nothing moves. `reference.len()` stays **283**,
+`banner_trs` unchanged, `maintained_tr_count` stays **320**, the four `cli.rs` literals,
+`api_drift`, and `TRACKED_TRS` all unchanged; no `metadata/trs/*.yaml` `implemented`
+facet edited. The only tree changes this wave are the three Makefile target fixes, the
+one Makefile gating-comment amendment, and this section's prose. The 16-TR domestic
+residue remains fully and currently dispositioned; the next domestic window should still
+be spent on an armed reopen trigger, now that the targets that run them are un-broken.

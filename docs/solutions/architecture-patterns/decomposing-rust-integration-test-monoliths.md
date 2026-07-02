@@ -82,8 +82,16 @@ Moving a test into a named submodule prefixes its `cargo test --list` path:
 What is invariant — and what the silent-drop guard actually needs — is the **base-name
 multiset** (the final `::` segment) plus the count. A dropped family makes its base names
 vanish, so the diff is non-empty and the drop is caught. The prefix is run-semantics-
-preserving: `cargo test foo` still substring-matches `balance::foo`, the `#[ignore]` set is
-unchanged, and the count is unchanged.
+preserving for **substring** invocation: `cargo test foo` still substring-matches
+`balance::foo`, the `#[ignore]` set is unchanged, and the count is unchanged.
+
+**Caveat — this is NOT preserving for `--exact` callers.** A caller that passes `--exact`
+(the repo's `make live-smoke-*` targets do — `run_smoke` runs `cargo test … --exact <name>`)
+matches the *full* module path only, so a bare `foo` matches **zero** tests after the move.
+The internal base-name snapshot proves no test was dropped, but it does **not** cover
+external tooling that names tests by path — that is a separate repo-wide grep, and skipping
+it left 194 `run_smoke` targets silently broken after this split. See
+[`test-decomposition-breaks-exact-name-callers`](../conventions/test-decomposition-breaks-exact-name-callers.md).
 
 ```bash
 # scripts/test-name-snapshot.sh — strip to base name, sort, diff before vs after
