@@ -1,0 +1,6 @@
+/target
+*.log
+# Local catalog + ingest/live state written by ls-ingest and the tester binaries.
+/catalog
+/*.lock
+!Cargo.lock
