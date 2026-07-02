@@ -95,6 +95,16 @@ impl LsSdk {
         orders::FoOrders::new(Arc::clone(&self.inner))
     }
 
+    /// The overseas futures/options order handle — the `CIDBT00100` submit /
+    /// `CIDBT00900` modify / `CIDBT01000` cancel chain. Like [`Self::fo_orders`] every
+    /// leg routes through the no-retry / dedup / kill-switch `post_order` path. Unlike
+    /// the domestic F/O chain, the parent order number flows in as a caller-supplied
+    /// `OvrsFutsOrgOrdNo` request field (no read-back), and there is no transient-position
+    /// read for fill detection — flatness rests on clean-cancel confirmation.
+    pub fn overseas_fo_orders(&self) -> orders::OverseasFoOrders {
+        orders::OverseasFoOrders::new(Arc::clone(&self.inner))
+    }
+
     /// The realtime dependency class: the S3_ KOSPI-trade WebSocket subscription.
     ///
     /// Returns an `Arc<WsManager>` built from the shared core's components —

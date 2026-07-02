@@ -124,6 +124,64 @@ pub const CFOAT00300_POLICY: EndpointPolicy = EndpointPolicy {
     corp_rate_limit_per_sec: Some(10),
 };
 
+/// CIDBT00100 — 해외선물 신규주문 (overseas-futures order SUBMIT).
+///
+/// The overseas-futures sibling of `CFOAT00100`: an `is_order: true` policy routing
+/// through [`Inner::post_order`](crate::Inner::post_order) (no-retry / dedup / kill
+/// switch), charging the `Orders` bucket. Registered in the policy-index crosscheck
+/// ONLY — it must NOT appear in `slice_rest_policies_are_non_order_rest` (R12/KTD4).
+pub const CIDBT00100_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CIDBT00100",
+    path: "/overseas-futureoption/order",
+    module: "overseas_futureoption",
+    group: "[해외선물] 주문",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Orders,
+    is_order: true,
+    has_pagination: false,
+    // Per the CIDBT00100 normalized baseline (5/s), NOT the domestic CFOAT's 10/s.
+    rate_limit_per_sec: Some(5),
+    corp_rate_limit_per_sec: Some(5),
+};
+
+/// CIDBT00900 — 해외선물 정정주문 (overseas-futures order MODIFY).
+///
+/// An `is_order: true` policy, same dispatch contract as `CIDBT00100`. Registered in
+/// the policy-index crosscheck ONLY (R12/KTD4).
+pub const CIDBT00900_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CIDBT00900",
+    path: "/overseas-futureoption/order",
+    module: "overseas_futureoption",
+    group: "[해외선물] 주문",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Orders,
+    is_order: true,
+    has_pagination: false,
+    // Per the CIDBT00900 normalized baseline (5/s).
+    rate_limit_per_sec: Some(5),
+    corp_rate_limit_per_sec: Some(5),
+};
+
+/// CIDBT01000 — 해외선물 취소주문 (overseas-futures order CANCEL).
+///
+/// An `is_order: true` policy, same dispatch contract as `CIDBT00100`. A cancel
+/// re-sent identically within the dedup TTL is idempotent-for-free (the full body,
+/// incl. `OvrsFutsOrgOrdNo`, is the dedup key). Registered in the policy-index
+/// crosscheck ONLY (R12/KTD4).
+pub const CIDBT01000_POLICY: EndpointPolicy = EndpointPolicy {
+    tr_code: "CIDBT01000",
+    path: "/overseas-futureoption/order",
+    module: "overseas_futureoption",
+    group: "[해외선물] 주문",
+    protocol: Protocol::Rest,
+    category: RateLimitCategory::Orders,
+    is_order: true,
+    has_pagination: false,
+    // Per the CIDBT01000 normalized baseline (5/s).
+    rate_limit_per_sec: Some(5),
+    corp_rate_limit_per_sec: Some(5),
+};
+
 /// t0425 — 주식체결/미체결 (stock filled/unfilled order inquiry).
 ///
 /// The reconciliation companion to `CSPAT00601` — a READ (`is_order: false`),

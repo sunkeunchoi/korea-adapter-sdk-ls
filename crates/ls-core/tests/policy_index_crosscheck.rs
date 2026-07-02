@@ -11,6 +11,7 @@ use ls_core::endpoint_policy::{
     CCENQ10100_POLICY, CCENQ90200_POLICY, CFOAQ10100_POLICY, CFOBQ10500_POLICY, CSPAQ12200_POLICY,
     CSPAQ12300_POLICY, CSPAQ22200_POLICY, CSPAT00601_POLICY, CSPAT00701_POLICY, CSPAT00801_POLICY,
     CFOAT00100_POLICY, CFOAT00200_POLICY, CFOAT00300_POLICY,
+    CIDBT00100_POLICY, CIDBT00900_POLICY, CIDBT01000_POLICY,
     T0424_POLICY, T0167_POLICY, CSPBQ00200_POLICY, CLNAQ00100_POLICY, CFOEQ11100_POLICY, T0441_POLICY, CIDBQ01400_POLICY,
     CIDBQ03000_POLICY, CIDBQ05300_POLICY,
     T0425_POLICY, K3_POLICY, REVOKE_POLICY,
@@ -215,6 +216,12 @@ fn slice_policies_mirror_metadata_index() {
         CFOAT00100_POLICY, // F/O submit
         CFOAT00200_POLICY, // F/O modify
         CFOAT00300_POLICY, // F/O cancel
+        // Overseas F/O order chain (is_order: true) — crosscheck list ONLY (KTD4).
+        // is_order: true → registered HERE only, never in
+        // `slice_rest_policies_are_non_order_rest` (which asserts is_order: false).
+        CIDBT00100_POLICY, // overseas F/O submit
+        CIDBT00900_POLICY, // overseas F/O modify
+        CIDBT01000_POLICY, // overseas F/O cancel
         // t0425 reconciliation read (is_order: false) — registered in BOTH lists.
         T0425_POLICY,
         CFOBQ10500_POLICY,
