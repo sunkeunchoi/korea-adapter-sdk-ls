@@ -5,36 +5,30 @@
 //! the SDK's. The KOSPI/KOSDAQ trade rows (S3_/K3_) are field-identical, as are the
 //! order-book rows (H1_/HA_), so one [`TradeRow`] and one [`BookRow`] cover both
 //! segments; the segment is carried by the `tr_cd` the adapter subscribes with, not
-//! the row shape. v1 consumes trades + top-of-book; the full ladder is decoded so
-//! depth is additive later.
+//! the row shape. v1 consumes trades + top-of-book. NOTE (corrected 2026-07-02):
+//! [`BookRow`] decodes only levels 1–2 + book totals, **not** the full 10-level
+//! ladder — full-depth (`OrderBookDeltas`/`Depth10`) is *new* decode work, not a
+//! purely-additive extension (the v1 plan's "already decode the full ladder" was an
+//! error).
 
 use serde::Deserialize;
 
+use nautilus_common::messages::DataEvent;
 use nautilus_core::UnixNanos;
 use nautilus_model::data::{Data, QuoteTick, TradeTick};
 use nautilus_model::enums::AggressorSide;
 use nautilus_model::identifiers::{InstrumentId, TradeId};
 use nautilus_model::types::{Price, Quantity};
 
-fn i64_from(s: &str) -> i64 {
-    let t = s.trim();
-    if t.is_empty() {
-        0
-    } else if let Ok(i) = t.parse::<i64>() {
-        i
-    } else if let Ok(f) = t.parse::<f64>() {
-        f.trunc() as i64
-    } else {
-        0
-    }
-}
+use crate::orders::ledger::FillObservation;
+use crate::parse::lossy_i64;
 
 fn price0(s: &str) -> Price {
-    Price::from(i64_from(s).max(0).to_string().as_str())
+    Price::from(lossy_i64(s).max(0).to_string().as_str())
 }
 
 fn qty0(s: &str) -> Quantity {
-    Quantity::from(i64_from(s).max(0))
+    Quantity::from(lossy_i64(s).max(0))
 }
 
 /// An S3_ (KOSPI) or K3_ (KOSDAQ) real-time trade row. All fields are strings on
@@ -147,39 +141,53 @@ impl BookRow {
     }
 }
 
-/// A row that decodes to a nautilus [`Data`] event (blanket over the WS row types),
-/// so the reader task is generic over trade vs quote rows.
-pub trait ToData: for<'de> Deserialize<'de> + Send + 'static {
+/// A WS row that decodes to a lane event `E` (blanket over the row types), so the
+/// supervisor's reader task is generic over the market-data lane (`E = DataEvent`)
+/// and the order-event lane (`E = OrderEventMsg`) alike (KTD3, R5).
+pub trait ToEvent<E>: for<'de> Deserialize<'de> + Send + 'static {
     /// Whether this row is a registration-ACK (filtered from emission).
     fn is_ack(&self) -> bool;
-    /// Convert to a nautilus data event, or `None` if it is an ACK.
-    fn to_data(&self, instrument_id: InstrumentId, ts: UnixNanos) -> Option<Data>;
+    /// Convert to a lane event `E`, or `None` if it is an ACK / carries nothing.
+    fn to_event(&self, instrument_id: InstrumentId, ts: UnixNanos) -> Option<E>;
 }
 
-impl ToData for TradeRow {
+impl ToEvent<DataEvent> for TradeRow {
     fn is_ack(&self) -> bool {
         TradeRow::is_ack(self)
     }
-    fn to_data(&self, instrument_id: InstrumentId, ts: UnixNanos) -> Option<Data> {
-        TradeRow::to_data(self, instrument_id, ts)
+    fn to_event(&self, instrument_id: InstrumentId, ts: UnixNanos) -> Option<DataEvent> {
+        TradeRow::to_data(self, instrument_id, ts).map(DataEvent::Data)
     }
 }
 
-impl ToData for BookRow {
+impl ToEvent<DataEvent> for BookRow {
     fn is_ack(&self) -> bool {
         BookRow::is_ack(self)
     }
-    fn to_data(&self, instrument_id: InstrumentId, ts: UnixNanos) -> Option<Data> {
-        BookRow::to_data(self, instrument_id, ts)
+    fn to_event(&self, instrument_id: InstrumentId, ts: UnixNanos) -> Option<DataEvent> {
+        BookRow::to_data(self, instrument_id, ts).map(DataEvent::Data)
     }
 }
 
-/// SC0 — order-accept (주식 주문접수) row on the OrderEvent lane.
-///
-/// **Staged, not wired in v1.** The order-event (SC) lane is not observable on the
-/// bare paper gateway (no counterparty fills), so v1 recovers order state via
-/// `Orders::reconcile` + t0425 polling (the repo's KTD6 stance); this decode struct
-/// is here for the follow-on live fill/modify-chain wave.
+/// A decoded order-event-lane message (KTD3). SC1 fills become [`FillObservation`]s
+/// for the ledger; SC0 accepts are a chain cross-check signal (the modify/cancel
+/// chain is authoritatively driven by the synchronous REST acks, KTD4).
+#[derive(Debug, Clone)]
+pub enum OrderEventMsg {
+    /// SC0 — an order was accepted at the venue: its OrdNo (+ parent OrdNo, if this
+    /// is a modify/cancel acceptance).
+    Accept {
+        /// The accepted order number.
+        ord_no: String,
+        /// The parent (original) order number, if any.
+        org_ord_no: String,
+    },
+    /// SC1 — an execution (fill) observation for the ledger.
+    Fill(FillObservation),
+}
+
+/// SC0 — order-accept (주식 주문접수) row on the OrderEvent lane. Wired in this
+/// increment (U2): an accept is a chain cross-check signal ([`OrderEventMsg::Accept`]).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Sc0Row {
@@ -197,9 +205,30 @@ pub struct Sc0Row {
     pub ordprice: String,
 }
 
-/// SC1 — order-fill (주식 주문체결) row on the OrderEvent lane. **Staged, not wired
-/// in v1** (see [`Sc0Row`]): it *will* drive `emit_order_filled` once the OrderEvent
-/// lane is subscribed in the live fill wave; v1 recovers fills via reconcile+t0425.
+impl Sc0Row {
+    /// Whether this is a registration-ACK / all-default row (no order number).
+    pub fn is_ack(&self) -> bool {
+        self.ordno.trim().is_empty()
+    }
+}
+
+impl ToEvent<OrderEventMsg> for Sc0Row {
+    fn is_ack(&self) -> bool {
+        Sc0Row::is_ack(self)
+    }
+    fn to_event(&self, _instrument_id: InstrumentId, _ts: UnixNanos) -> Option<OrderEventMsg> {
+        if self.is_ack() {
+            return None;
+        }
+        Some(OrderEventMsg::Accept {
+            ord_no: self.ordno.trim().to_string(),
+            org_ord_no: self.orgordno.trim().to_string(),
+        })
+    }
+}
+
+/// SC1 — order-fill (주식 주문체결) row on the OrderEvent lane. Wired in this
+/// increment (U2): a fill becomes a [`FillObservation`] fed to the ledger.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Sc1Row {
@@ -225,12 +254,31 @@ impl Sc1Row {
 
     /// The filled quantity as an integer (0 if unparseable/blank).
     pub fn exec_qty(&self) -> i64 {
-        i64_from(&self.execqty).max(0)
+        lossy_i64(&self.execqty).max(0)
     }
 
     /// The fill price as an integer KRW (0 if unparseable/blank).
     pub fn exec_price(&self) -> i64 {
-        i64_from(&self.execprc).max(0)
+        lossy_i64(&self.execprc).max(0)
+    }
+}
+
+impl ToEvent<OrderEventMsg> for Sc1Row {
+    fn is_ack(&self) -> bool {
+        Sc1Row::is_ack(self)
+    }
+    fn to_event(&self, _instrument_id: InstrumentId, _ts: UnixNanos) -> Option<OrderEventMsg> {
+        // An ACK (no order number) or a zero-quantity / execno-less frame is not a
+        // fill — filtered from emission exactly like a market-data ACK row.
+        if self.is_ack() || self.execno.trim().is_empty() || self.exec_qty() == 0 {
+            return None;
+        }
+        Some(OrderEventMsg::Fill(FillObservation::sc(
+            self.ordno.trim(),
+            self.exec_qty(),
+            self.exec_price(),
+            self.execno.trim(),
+        )))
     }
 }
 

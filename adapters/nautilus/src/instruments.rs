@@ -26,6 +26,7 @@ use serde_json::Value;
 use ustr::Ustr;
 
 use crate::error::{AdapterError, AdapterResult};
+use crate::parse::strict_i64;
 use crate::rules::{tick_size, Market, TickRegime};
 use crate::KRX_VENUE;
 
@@ -73,30 +74,6 @@ pub struct MasterEnrichmentView<'a> {
     pub etf: bool,
 }
 
-/// Parse a stringly-typed numeric field to `i64`.
-///
-/// Empty (or whitespace) resolves to `0` — the LS masters leave optional numerics
-/// blank. A non-empty non-numeric value is a **named** [`AdapterError::FieldParse`]
-/// (never a panic). Accepts an integer or a decimal form (truncating), since the
-/// gateway occasionally decorates integer prices with `.00`.
-fn parse_krw(field: &str, value: &str) -> AdapterResult<i64> {
-    let v = value.trim();
-    if v.is_empty() {
-        return Ok(0);
-    }
-    if let Ok(i) = v.parse::<i64>() {
-        return Ok(i);
-    }
-    if let Ok(f) = v.parse::<f64>() {
-        return Ok(f.trunc() as i64);
-    }
-    Err(AdapterError::FieldParse {
-        field: field.to_string(),
-        value: value.to_string(),
-        reason: "expected an integer KRW amount".to_string(),
-    })
-}
-
 fn market_str(market: Market) -> &'static str {
     match market {
         Market::Kospi => "KOSPI",
@@ -130,21 +107,21 @@ pub fn map_equity(
 
     // Reference price picks the current tick band (KTD7): 기준가 (recprice), else
     // 전일가 (jnilclose). The instrument's static increment uses today's regime.
-    let recprice = parse_krw("recprice", &row.recprice)?;
-    let jnilclose = parse_krw("jnilclose", &row.jnilclose)?;
+    let recprice = strict_i64("recprice", &row.recprice)?;
+    let jnilclose = strict_i64("jnilclose", &row.jnilclose)?;
     let reference = if recprice > 0 { recprice } else { jnilclose };
     let tick = tick_size(market, TickRegime::Post2023, reference.max(0))?;
     let price_increment = Price::from(tick.to_string().as_str());
 
     // Lot size from 주문수량단위 (memedan); default 1 (lot must be positive).
-    let lot_raw = parse_krw("memedan", &row.memedan)?;
+    let lot_raw = strict_i64("memedan", &row.memedan)?;
     let lot = if lot_raw > 0 { lot_raw } else { 1 };
     let lot_size = Some(Quantity::from(lot));
 
     // Daily price limits are session-scoped — carried in `info`, NOT as instrument
     // constants (KTD7). ETF/ISIN/NXT enrichment from t9945.
-    let uplmt = parse_krw("uplmtprice", &row.uplmtprice)?;
-    let dnlmt = parse_krw("dnlmtprice", &row.dnlmtprice)?;
+    let uplmt = strict_i64("uplmtprice", &row.uplmtprice)?;
+    let dnlmt = strict_i64("dnlmtprice", &row.dnlmtprice)?;
     let etf_from_t8430 = row.etfgubun.trim() == "1";
     let (isin_from_t9945, nxt_listed, etf) = match enrichment {
         Some(e) => (

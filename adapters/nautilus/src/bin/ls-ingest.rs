@@ -6,33 +6,56 @@
 //! for the duration (refusing to start while a live session is running).
 //!
 //! Configuration (env vars):
-//! - `LS_INGEST_CATALOG`   — catalog directory (required)
-//! - `LS_INGEST_SDATE`     — range start `YYYYMMDD`, a trading day (required)
-//! - `LS_INGEST_EDATE`     — range end `YYYYMMDD`, a trading day (required)
-//! - `LS_INGEST_LANE_FILE` — optional lane env-file (else the process env is used)
-//! - `LS_INGEST_SYMBOLS`   — optional comma-separated shcodes to bound the universe
-//!                           (else the whole loaded universe; minute backfills MUST
-//!                           be bounded — see the README budget note)
-//! - `LS_INGEST_KIND`      — `daily` (default) | `minute:<n>` | `daily,minute:<n>`
+//! - `LS_INGEST_CATALOG`: catalog directory (required).
+//! - `LS_INGEST_MODE`: `range` (default) | `accumulate` (U5). In `accumulate` mode,
+//!   `SDATE`/`EDATE` are ignored; coverage grows from each instrument's watermark to
+//!   the last closed session.
+//! - `LS_INGEST_SDATE` / `LS_INGEST_EDATE`: range bounds `YYYYMMDD` (required in
+//!   `range` mode).
+//! - `LS_INGEST_LOOKBACK`: accumulate-mode floor `YYYYMMDD` for an unseen/newly
+//!   listed instrument (required in `accumulate` mode).
+//! - `LS_INGEST_LANE_FILE`: optional lane env-file (else the process env is used).
+//! - `LS_INGEST_SYMBOLS`: optional comma-separated shcodes to bound the universe
+//!   (else the whole loaded universe; minute backfills MUST be bounded).
+//! - `LS_INGEST_KIND`: `daily` (default) | `minute:<n>` | `daily,minute:<n>`.
 
 use std::path::PathBuf;
 
+use chrono::{Duration, NaiveDate, Utc};
 use nautilus_ls::config::LsAdapterConfig;
-use nautilus_ls::ingest::{BarKind, IngestConfig, Ingestor};
+use nautilus_ls::ingest::{
+    last_closed_session, BarKind, IngestConfig, Ingestor, ACCUMULATE_CLOSE_BUFFER,
+};
 use nautilus_ls::instruments::{InstrumentDomain, InstrumentProvider};
 use nautilus_ls::lock::{AdvisoryLock, LockKind};
 use nautilus_ls::scrub;
 use nautilus_model::identifiers::{InstrumentId, Symbol, Venue};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> std::process::ExitCode {
     // Credential hygiene before any output (mirrors the repo's smoke convention).
     scrub::install();
+    // Scrub the terminal error too — a `?`-propagated SDK error would otherwise be
+    // printed unscrubbed by the runtime, leaking a raw broker message.
+    match run().await {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("error: {}", scrub::scrub_secrets(&e.to_string()));
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     require_paper()?;
 
     let catalog: PathBuf = env_required("LS_INGEST_CATALOG")?.into();
-    let sdate = env_required("LS_INGEST_SDATE")?;
-    let edate = env_required("LS_INGEST_EDATE")?;
+    let mode = std::env::var("LS_INGEST_MODE").unwrap_or_else(|_| "range".into());
+    let accumulate = match mode.as_str() {
+        "range" => false,
+        "accumulate" => true,
+        other => return Err(format!("unknown LS_INGEST_MODE {other:?} (want range | accumulate)").into()),
+    };
     let bar_kinds = parse_kinds(&std::env::var("LS_INGEST_KIND").unwrap_or_else(|_| "daily".into()))?;
 
     // Take the R15 ingest lock FIRST — before any gateway request — so a live
@@ -62,19 +85,36 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(_) => provider.all().map(|e| e.id).collect(),
     };
 
-    // Persist the instrument definitions beside the bars.
+    // Persist the instrument definitions beside the bars (the universe re-snapshot,
+    // R7 — newly-listed symbols enter coverage from this run forward).
     nautilus_ls::ingest::write_instruments(&catalog, provider.all_any()).await?;
+
+    // Resolve the per-mode date range.
+    let (sdate, edate) = if accumulate {
+        let floor = env_required("LS_INGEST_LOOKBACK")?;
+        let now_kst = (Utc::now() + Duration::hours(9)).naive_utc();
+        let last_closed = last_closed_session(now_kst, ACCUMULATE_CLOSE_BUFFER);
+        (floor, last_closed.format("%Y%m%d").to_string())
+    } else {
+        (env_required("LS_INGEST_SDATE")?, env_required("LS_INGEST_EDATE")?)
+    };
 
     let config = IngestConfig {
         catalog_path: catalog,
         bar_kinds,
-        sdate,
-        edate,
+        sdate: sdate.clone(),
+        edate: edate.clone(),
         adjusted_prices: true,
     };
     // The ingest lock is already held (`_lock`), so run without re-acquiring it.
     let mut ingestor = Ingestor::new(sdk, config);
-    let report = ingestor.run(&universe).await?;
+    let report = if accumulate {
+        let floor = parse_yyyymmdd(&sdate)?;
+        let last_closed = parse_yyyymmdd(&edate)?;
+        ingestor.run_accumulate(&universe, last_closed, floor).await?
+    } else {
+        ingestor.run(&universe).await?
+    };
 
     println!(
         "ingest complete: {} bars across {} triples ({} skipped), {} coverage gaps",
@@ -95,6 +135,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn env_required(key: &str) -> Result<String, String> {
     std::env::var(key).map_err(|_| format!("missing required env var {key}"))
+}
+
+fn parse_yyyymmdd(s: &str) -> Result<NaiveDate, String> {
+    NaiveDate::parse_from_str(s.trim(), "%Y%m%d").map_err(|e| format!("bad date {s:?}: {e}"))
 }
 
 fn require_paper() -> Result<(), Box<dyn std::error::Error>> {

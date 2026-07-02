@@ -72,6 +72,12 @@ impl LsDataClient {
         let tr_cd = match kind {
             RowKind::Trade => trade_tr_cd(market),
             RowKind::Quote => quote_tr_cd(market),
+            // The data client only ever subscribes market-data kinds; the order-event
+            // kinds ride the exec client's own supervisor, never this one.
+            RowKind::OrderAccept | RowKind::OrderFill => {
+                tracing::error!(?kind, "data client received an order-event RowKind; ignoring");
+                trade_tr_cd(market)
+            }
         };
         SubSpec {
             tr_cd: tr_cd.to_string(),

@@ -4,6 +4,7 @@
 
 use std::path::Path;
 
+use chrono::NaiveDate;
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::{mock_config, mount_token};
 use nautilus_ls::ingest::checkpoint::Checkpoint;
@@ -13,6 +14,10 @@ use nautilus_model::identifiers::InstrumentId;
 use tempfile::tempdir;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+fn ymd(y: i32, m: u32, d: u32) -> NaiveDate {
+    NaiveDate::from_ymd_opt(y, m, d).unwrap()
+}
 
 const CHART_PATH: &str = "/stock/chart";
 
@@ -170,6 +175,82 @@ async fn adjusted_price_flag_lands_in_checkpoint_metadata() {
 
     let cp = Checkpoint::load(&catalog_path.join("ingest-checkpoint.json")).unwrap();
     assert!(cp.adjusted_prices, "sujung=Y basis recorded in the checkpoint");
+}
+
+/// AE4: accumulate-forward run twice with coverage current → the second run makes
+/// ZERO bar fetches (the watermark is the sole skip authority).
+#[tokio::test]
+async fn accumulate_second_run_is_a_noop() {
+    let dir = tempdir().unwrap();
+    let catalog_path = dir.path().join("catalog");
+    let server = MockServer::start().await;
+    let sdk = sdk_over(&server, daily_body_three_rows()).await;
+    let universe = [InstrumentId::from("005930.XKRX")];
+    let last_closed = ymd(2024, 1, 5);
+    let floor = ymd(2024, 1, 1);
+
+    let mut ingestor = Ingestor::new(sdk.clone(), daily_config(&catalog_path));
+    let first = ingestor.run_accumulate(&universe, last_closed, floor).await.unwrap();
+    assert_eq!(first.triples_ingested, 1, "first run covers the range");
+    let after_first = count_t8410(&server).await;
+    assert!(after_first >= 1);
+
+    // Second run, same last-closed session → already current → no bar fetch.
+    let mut ingestor2 = Ingestor::new(sdk, daily_config(&catalog_path));
+    let second = ingestor2.run_accumulate(&universe, last_closed, floor).await.unwrap();
+    assert_eq!(second.triples_skipped, 1, "already current → skipped");
+    assert_eq!(second.bars_written, 0);
+    assert_eq!(count_t8410(&server).await, after_first, "no refetch when current (AE4)");
+}
+
+/// AE5: a symbol newly listed since the last run enters the universe and begins
+/// coverage at the lookback floor.
+#[tokio::test]
+async fn accumulate_new_instrument_begins_coverage() {
+    let dir = tempdir().unwrap();
+    let catalog_path = dir.path().join("catalog");
+    let server = MockServer::start().await;
+    let sdk = sdk_over(&server, daily_body_three_rows()).await;
+    let last_closed = ymd(2024, 1, 5);
+    let floor = ymd(2024, 1, 1);
+
+    // Run 1: only 005930 exists.
+    let mut ingestor = Ingestor::new(sdk.clone(), daily_config(&catalog_path));
+    ingestor
+        .run_accumulate(&[InstrumentId::from("005930.XKRX")], last_closed, floor)
+        .await
+        .unwrap();
+
+    // Run 2: a newly-listed 000660 appears → it begins coverage; 005930 is current.
+    let universe = [InstrumentId::from("005930.XKRX"), InstrumentId::from("000660.XKRX")];
+    let mut ingestor2 = Ingestor::new(sdk, daily_config(&catalog_path));
+    let second = ingestor2.run_accumulate(&universe, last_closed, floor).await.unwrap();
+    assert_eq!(second.triples_ingested, 1, "only the newly-listed symbol is fetched");
+    assert_eq!(second.triples_skipped, 1, "the already-covered symbol is skipped");
+}
+
+/// A gap-reason triple (empty history) advances the watermark and is reported once,
+/// not retried forever.
+#[tokio::test]
+async fn accumulate_gap_advances_watermark_and_reports_once() {
+    let dir = tempdir().unwrap();
+    let catalog_path = dir.path().join("catalog");
+    let server = MockServer::start().await;
+    let sdk = sdk_over(&server, daily_body_empty()).await;
+    let universe = [InstrumentId::from("005930.XKRX")];
+    let last_closed = ymd(2024, 1, 5);
+    let floor = ymd(2024, 1, 1);
+
+    let mut ingestor = Ingestor::new(sdk.clone(), daily_config(&catalog_path));
+    let first = ingestor.run_accumulate(&universe, last_closed, floor).await.unwrap();
+    assert_eq!(first.gaps.len(), 1, "the empty history is reported as a gap");
+    let after_first = count_t8410(&server).await;
+
+    // The watermark advanced to last_closed → a re-run at the same session skips.
+    let mut ingestor2 = Ingestor::new(sdk, daily_config(&catalog_path));
+    let second = ingestor2.run_accumulate(&universe, last_closed, floor).await.unwrap();
+    assert_eq!(second.triples_skipped, 1, "the gap day is not retried forever");
+    assert_eq!(count_t8410(&server).await, after_first, "no refetch of the gap day");
 }
 
 #[tokio::test]

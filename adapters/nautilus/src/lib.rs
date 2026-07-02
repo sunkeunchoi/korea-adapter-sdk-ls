@@ -23,8 +23,10 @@
 
 pub mod config;
 pub mod error;
+pub mod guard;
 pub mod instruments;
 pub mod lock;
+pub mod parse;
 pub mod rules;
 
 pub mod ingest;
@@ -33,6 +35,7 @@ pub mod data;
 pub mod execution;
 pub mod factories;
 pub mod orders;
+pub mod probe;
 pub mod scrub;
 pub mod ws;
 
