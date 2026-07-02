@@ -194,9 +194,11 @@ live-smoke-overseas-fo-order:
 ## t0441 flip witness), then flatten fail-closed via an opposite-side marketable close.
 ## UNLIKE live-smoke-fo-order (which rests unfillable at the daily limit and never holds a
 ## position), this DELIBERATELY manufactures a transient position — so it places REAL
-## marketable paper orders and MUST run in an open KRX F/O window, ONLY after the U1
-## feasibility probe proves a filled F/O paper position can be flattened in-session (no
-## out-of-band reset). Same fail-closed guards as live-smoke-fo-order (paper +
+## marketable paper orders and MUST run in an open KRX F/O window. The harness IS the
+## flatten-feasibility gate (no separate hand-run spike): its preflight flat-gate, 1-lot
+## marketable buy, bounded flatten (<=2 attempts), and kill-switch-after-teardown machinery
+## prove in-session flatness safely and fail closed if they cannot (no out-of-band reset).
+## Same fail-closed guards as live-smoke-fo-order (paper +
 ## LS_ORDER_SMOKE=1 double opt-in, no CI/no-TTY, a FRESH per-wave nonce); authenticates on
 ## the domestic_option lane (...51, the F/O-capable account t0441 reads). The fill-poll
 ## bound is U1-calibrated — override with LS_FO_MANUFACTURE_POLL_ATTEMPTS if U1 measured a
@@ -246,7 +248,7 @@ live-smoke-t0167:
 ## Order-capacity smoke: read-only CSPBQ00200 (capacity by margin rate; numeric
 ## RecCnt/OrdPrc serialize as JSON numbers or IGW40011).
 live-smoke-cspbq00200:
-	$(call run_smoke,live_smoke_cspbq00200)
+	$(call run_smoke,account::live_smoke_cspbq00200)
 
 ## Loanable-stock smoke: read-only CLNAQ00100 reference list (full-list mode;
 ## persistent universe, closure-viable).
@@ -261,7 +263,7 @@ live-smoke-cfoeq11100:
 ## F/O balance-valuation smoke: read-only t0441 (positions + summary; empty on a
 ## position-less paper account → PENDING).
 live-smoke-t0441:
-	$(call run_smoke,live_smoke_t0441)
+	$(call run_smoke,account::live_smoke_t0441)
 
 ## Overseas-futures order-qty smoke: read-only CIDBQ01400 (overseas paper feeds
 ## historically empty → PENDING).
@@ -493,7 +495,7 @@ live-smoke-t1631:
 ## (off-hours base rate may be ~zero → SMOKE-FAIL/HELD). Override
 ## LS_NWS_SMOKE_SECS (wait window) / LS_NWS_TR_KEY (subscribe key).
 live-smoke-nws-t3102:
-	$(call run_smoke,live_smoke_nws_t3102)
+	$(call run_smoke,market_session_charts::live_smoke_nws_t3102)
 ## Program-trade intraday-trend smoke: read-only t1632 프로그램매매추이(시간)
 ## (market-wide, today). Override LS_LIVE_SMOKE_DATE.
 live-smoke-t1632:
