@@ -1285,3 +1285,5 @@ async fn assert_account_flat(sdk: &LsSdk, symbol: &str) {
 mod chain;
 #[path = "order/fo.rs"]
 mod fo;
+#[path = "order/overseas_fo.rs"]
+mod overseas_fo;
