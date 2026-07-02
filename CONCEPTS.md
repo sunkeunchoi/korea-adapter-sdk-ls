@@ -17,6 +17,11 @@ A single classified property of a TR (its session scope, instrument domain, rate
 ### In-block / Out-block
 The named blocks of a TR's wire payload: an in-block carries the caller-supplied request fields, an out-block carries one section of the response. A single TR may expose several out-blocks — commonly a single-record header block alongside a repeated-row array block — and each block's name is the load-bearing key the SDK struct binds to.
 
+### Normalized baseline
+The projected, committed record of a TR's wire shape — field names, types, and block structure — derived mechanically from the raw OpenAPI capture, never hand-authored. It is what drift detection observes and what struct authoring starts from.
+
+It is a snapshot, not a runtime oracle: it can under-report a request block (omit fields the gateway accepts or requires). Once a TR's request struct has been certified against the live gateway, that certified shape is the stronger witness and wins any disagreement with the baseline — the baseline alone is the floor for an unimplemented TR, not the ceiling for an implemented one.
+
 ## Support lifecycle
 
 A TR climbs a three-rung support ladder; each rung is a deliberate, separately-gated promotion.

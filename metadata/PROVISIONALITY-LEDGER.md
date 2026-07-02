@@ -1301,3 +1301,111 @@ feeds. Absent one of these, the residue is fully and currently dispositioned; no
 (every reason on file still holds). The 38-TR residue (13 + 7 + 6 + 7 + 5) is fully and
 currently dispositioned; a `t0441` flip is teed up as an operator-gated follow-up
 (harness staged, live certification pending an open window + the U1 verdict).
+
+## 23. Domestic KRX-open reconfirmation & close-out (2026-07-02)
+
+Plan `docs/plans/2026-07-02-001-chore-domestic-krx-open-reconfirm-closeout-plan.md`.
+Goal: spend the open domestic KRX session capturing fresh, current-dated gate evidence
+for the domestic Tracked-not-Implemented residue, then record the disposition so the
+next wave stops re-probing a spent pool. **0 flips is the successful outcome** — the
+deliverable is this record, not a count change.
+
+**Honesty note: §22 is already the terminal close-out; §23's delta is narrow.** §22
+consolidated the full 38-TR residue into a current terminal partition. This section
+(a) isolates the **16-TR domestic slice** (38 − 13 `paper_incompatible` − 7 deferred
+overseas-order − 2 overseas watchlist `o3107`/`o3127` = 16, all
+`paper_incompatible: false`), (b) re-partitions it by blocker class and reconciles that
+finer partition to §22's lanes, and (c) reserves fresh raw-probe slots for the only two
+current-probeable candidates. Overseas is closed this session, which keeps the CIDBT
+order chain and the watchlist reads out of reach; no order placement or position
+manufacture runs this wave.
+
+**U1 probe status (KTD3 fail-open).** The two live raw-probes (`t0441`, `CSPBQ00200`)
+are operator-run and credential-gated; they did **not** run in the autonomous pass that
+authored this section, so this close-out stands documentation-only on the §16–§22
+evidence cited per row below. Both are session-independent account-state reads — the
+open session is opportunistic, not required — so the probes remain runnable at any time:
+- `t0441` — `make raw-probe LS_SMOKE_LANE=domestic_option LS_PROBE_TR_CD=t0441
+  LS_PROBE_PATH=/futureoption/accno
+  LS_PROBE_BODY='{"t0441InBlock":{"cts_expcode":"","cts_medocd":""}}'` — expected: a
+  success `rsp_cd` with a small `body_len` (empty/all-default balance on the flat …51
+  account) → filed as **position-gated** reconfirmation.
+- `CSPBQ00200` — `make raw-probe LS_PROBE_TR_CD=CSPBQ00200 LS_PROBE_PATH=/stock/accno
+  LS_PROBE_BODY='{"CSPBQ00200InBlock1":{"RecCnt":1,"BnsTpCode":"1","IsuNo":"KR7005930003","OrdPrc":75000,"RegCommdaCode":"41"}}'`
+  (`RecCnt`/`OrdPrc` are JSON **numbers** — string slots return `IGW40011`) — expected:
+  `00136` with all-default deposit fields on the cash-only default lane → filed as
+  **funding-gated** reconfirmation. Body source of truth: the proven-live SDK request
+  struct (`CSPBQ00200InBlock1`, `crates/ls-sdk/src/account/capacity.rs` — the shape the
+  §16 live smoke certified with `00136`), which is a SUPERSET of the normalized
+  baseline's request block: the baseline under-reports `RecCnt`/`RegCommdaCode` for this
+  TR, so mirror the SDK struct, not the baseline alone, when re-deriving this body.
+
+A run records ONLY the `http` / `rsp_cd` / `body_len` triple plus the gate label in the
+matching row below — never response-body contents or account identifiers. A probe that
+instead returns unexpectedly populated data for its modeled fields is a **re-open
+candidate** that exits this wave's 0-flip scope: hand it to a separate certify-flip
+decision; never flip inline (AE3).
+
+**The 16-TR domestic partition (R4), reconciled to §22's lanes** — §22 Lane B (7) +
+Lane C (6) + Lane E's 3 domestic entries (`t0441`, `CSPBQ00200`, `t1631`) = 16; Lane E's
+other 2 (`o3107`/`o3127`) are overseas-watchlist, outside the domestic slice:
+
+- **Current-probeable account reads (2) — §22 Lane E.**
+  - `t0441` (선물/옵션잔고평가) — **position-gated** (§16/§20/§22). Reachable on the funded
+    `domestic_option` (…51) lane; returns success with an empty balance because the
+    account holds no open F/O position. Probe this wave: not run (operator-gated; see
+    U1 status above). The manufacture path is fully staged
+    (`make live-smoke-fo-position`, §22 Lane E); no order placement this wave (declined).
+  - `CSPBQ00200` (증거금률별주문가능수량) — **funding-gated** (§16/§20/§21/§22). Spot read on
+    the cash-only default lane; every capacity field defaults to zero (`00136`, not a
+    defect). Probe this wave: not run (operator-gated; see U1 status above). No SDK
+    path funds it — a paper deposit is an out-of-band LS-portal action.
+- **After-hours-gated (1) — §22 Lane C.**
+  - `t1109` (시간외체결) — **session-gated** (§19/§20). Needs the 15:30–17:50 KST
+    after-hours session; deliberately NOT probed this wave — a regular-session probe
+    can only re-derive the §19/§20 wrong-window finding and adds no fresh evidence.
+- **Intraday paper-empty (7) — §22 Lane B.** `t1951` `t1973` `t2106` `t2212` `t2407`
+  `t8404` `t8427` — all probed IN-window in the §19 open session and recorded empty;
+  paper carries no data for these intraday F/O/ELW feeds regardless of session, so no
+  re-probe (open or closed) beats an in-window empty. Not re-probed; §19 cited.
+- **Structurally held (5) — §22 Lane C minus `t1109`.** Blockers are structural, not
+  session/funding; not re-probed, §20 (and priors) cited.
+  - `t1852` / `t1856` — required `sFileData` screening blob (~26.8 KB) unsourced; no
+    valid request is constructible.
+  - `t1860` — realtime-registration CONTROL, not a read.
+  - `t1964` — 10 unresolved filter-enum defaults; §19's in-window read found an empty
+    board even once callable.
+  - `t3102` — no off-hours `NWS` news frame; feeder scaffolded
+    (`live_smoke_nws_t3102`), flip awaits a live news event.
+- **Gateway defect (1) — §22 Lane E.**
+  - `t1631` (프로그램매매 종목별) — **permanent PENDING, gateway-side `IGW40014`**
+    (§19/§20/§22): the server fails to serialize its own `bidvolume` response field
+    (environmental; all-String request, NOT a request-shape `IGW40011`). No client-side
+    fix exists; not re-probed.
+
+**Supersession (R5).** For these 16, this section is now the current disposition
+record — the per-TR reasons in §16–§22 are refined in place by the rows above, not
+stacked under a parallel resolution layer. All 16 keep `implemented: false` with their
+gate reason pointing here; no `metadata/trs/*.yaml` facet is edited.
+
+**Reopen triggers (mirrors §22 R6).** The residue moves only on a CONCRETE external
+event, never on another disposition pass: (a) **position manufacture** — operator runs
+the §22 U1 feasibility probe then `make live-smoke-fo-position` in an open KRX F/O
+window → `t0441` flips (metadata + docgen only); (b) an **out-of-band spot-lane
+deposit** + re-smoke (`make live-smoke-cspbq00200`) witnessing a non-default capacity
+field → `CSPBQ00200` flips;
+(c) an **after-hours (15:30–17:50 KST) run** (`make live-smoke-t1109`) → `t1109` flips
+or is re-dispositioned on fresh in-window evidence; (d) a **live `NWS` news event** → `t3102` flips via the
+staged feeder; (e) a **gateway-side `IGW40014` fix** reopens `t1631`; (f) the
+`sFileData`-sourcing / realtime-design / filter-enum levers for `t1852`/`t1856`/
+`t1860`/`t1964` are design-scoped, not session-scoped; (g) an **open overseas window**
+gates the out-of-scope overseas residue (§22 Lanes D/E). Absent one of these, the
+domestic read residue is fully dispositioned and unmovable.
+
+**Count tally (R6).** **0 flips** this pass → nothing moves. `reference.len()` stays
+**283**, `banner_trs` unchanged, `maintained_tr_count` stays **320**, `cli.rs` literals,
+`api_drift`, and `TRACKED_TRS` all unchanged; no `metadata/trs/*.yaml` `implemented`
+facet edited. The only tree change is this section's prose. The 16-TR domestic residue
+(2 + 1 + 7 + 5 + 1) is fully and currently dispositioned against §22's 38 (13 + 7 + 6 +
+7 + 5); the next domestic window should be spent on a reopen trigger above, not on
+another re-probe of this pool.
