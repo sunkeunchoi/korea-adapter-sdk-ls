@@ -39,6 +39,20 @@ pub struct CoverageGap {
     pub reason: GapReason,
 }
 
+/// A durably recorded basis-shift heal (R5): one row per completed re-base, so an
+/// operator can audit how often the gateway rewrites a symbol's adjusted series.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RebaseEvent {
+    /// The instrument id (`{shcode}.XKRX`).
+    pub instrument: String,
+    /// The bar-type label (e.g. `1-DAY`).
+    pub bar_type: String,
+    /// The session date (`YYYYMMDD`) the shift was detected.
+    pub detected: String,
+    /// The session date (`YYYYMMDD`) the heal completed.
+    pub healed: String,
+}
+
 /// The persisted ingest state.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Checkpoint {
@@ -52,6 +66,16 @@ pub struct Checkpoint {
     /// pre-U5 checkpoint files load unchanged (empty map → derive from scratch).
     #[serde(default)]
     watermarks: BTreeMap<String, String>,
+    /// Per-`(instrument, bar type)` basis-shift marks: detection date (`YYYYMMDD`)
+    /// keyed like `watermarks`. A marked triple heals (wipe → re-pull → re-verify)
+    /// before any append; the mark outranks the watermark as authority (KTD-2).
+    /// `#[serde(default)]` so pre-heal checkpoint files load unchanged.
+    #[serde(default)]
+    shifted: BTreeMap<String, String>,
+    /// Completed re-base events, append-only (R5). `#[serde(default)]` for legacy
+    /// files.
+    #[serde(default)]
+    rebase_events: Vec<RebaseEvent>,
     /// Whether daily bars were ingested with adjusted prices (`sujung="Y"`,
     /// KTD5). Recorded as catalog metadata so downstream knows the price basis.
     pub adjusted_prices: bool,
@@ -81,6 +105,64 @@ impl Checkpoint {
             Self::watermark_key(instrument, bar_type),
             date.format("%Y%m%d").to_string(),
         );
+    }
+
+    /// Clear the coverage watermark for a `(instrument, bar type)` — the heal's
+    /// wipe step (KTD-2): a wiped series must re-pull from the floor, so its
+    /// watermark must not survive the wipe.
+    pub fn clear_watermark(&mut self, instrument: &str, bar_type: &str) {
+        self.watermarks
+            .remove(&Self::watermark_key(instrument, bar_type));
+    }
+
+    /// Whether a `(instrument, bar type)` is marked basis-shifted.
+    pub fn is_shifted(&self, instrument: &str, bar_type: &str) -> bool {
+        self.shifted
+            .contains_key(&Self::watermark_key(instrument, bar_type))
+    }
+
+    /// The detection date (`YYYYMMDD`) a `(instrument, bar type)` was marked
+    /// shifted, if it is.
+    pub fn shifted_detected(&self, instrument: &str, bar_type: &str) -> Option<&str> {
+        self.shifted
+            .get(&Self::watermark_key(instrument, bar_type))
+            .map(String::as_str)
+    }
+
+    /// Mark a `(instrument, bar type)` basis-shifted as of `detected` (KTD-2 step
+    /// one — saved durably BEFORE any delete). Marking an already-marked triple
+    /// keeps the original detection date (re-entry must not rewrite history).
+    pub fn mark_shifted(&mut self, instrument: &str, bar_type: &str, detected: NaiveDate) {
+        self.shifted
+            .entry(Self::watermark_key(instrument, bar_type))
+            .or_insert_with(|| detected.format("%Y%m%d").to_string());
+    }
+
+    /// Clear the shifted mark for a `(instrument, bar type)` (heal completion).
+    pub fn clear_shifted(&mut self, instrument: &str, bar_type: &str) {
+        self.shifted
+            .remove(&Self::watermark_key(instrument, bar_type));
+    }
+
+    /// The instruments currently marked shifted for `bar_type`, in key order
+    /// (the lab's runner intersects this with a run's selected symbols, R7).
+    pub fn shifted_instruments(&self, bar_type: &str) -> Vec<String> {
+        let suffix = format!("|{bar_type}");
+        self.shifted
+            .keys()
+            .filter_map(|k| k.strip_suffix(&suffix))
+            .map(str::to_string)
+            .collect()
+    }
+
+    /// Append a completed re-base to the durable event log (R5).
+    pub fn record_rebase_event(&mut self, event: RebaseEvent) {
+        self.rebase_events.push(event);
+    }
+
+    /// The recorded re-base events, in append order.
+    pub fn rebase_events(&self) -> &[RebaseEvent] {
+        &self.rebase_events
     }
 
     /// Prune `completed` keys and `gaps` whose range end date is at or below the
@@ -246,6 +328,83 @@ mod tests {
         cp.mark_done("005930.XKRX", "1-DAY", "20240108..20240115");
         cp.prune_below_watermarks();
         assert!(cp.is_done("005930.XKRX", "1-DAY", "20240108..20240115"), "future range kept");
+    }
+
+    #[test]
+    fn legacy_checkpoint_without_heal_fields_loads() {
+        // A pre-heal checkpoint file has neither `shifted` nor `rebase_events`.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("legacy.json");
+        std::fs::write(
+            &path,
+            r#"{"completed":[],"gaps":[],"watermarks":{"005930.XKRX|1-DAY":"20240105"},"adjusted_prices":true}"#,
+        )
+        .unwrap();
+        let cp = Checkpoint::load(&path).expect("legacy checkpoint loads");
+        assert!(!cp.is_shifted("005930.XKRX", "1-DAY"));
+        assert!(cp.rebase_events().is_empty());
+        assert!(cp.watermark("005930.XKRX", "1-DAY").is_some());
+    }
+
+    #[test]
+    fn shifted_mark_round_trips_and_keeps_original_detection_date() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        let mut cp = Checkpoint::default();
+        cp.mark_shifted("005930.XKRX", "1-DAY", NaiveDate::from_ymd_opt(2024, 1, 5).unwrap());
+        // Re-marking on heal re-entry must not rewrite the detection date.
+        cp.mark_shifted("005930.XKRX", "1-DAY", NaiveDate::from_ymd_opt(2024, 1, 8).unwrap());
+        cp.save(&path).unwrap();
+
+        let mut loaded = Checkpoint::load(&path).unwrap();
+        assert!(loaded.is_shifted("005930.XKRX", "1-DAY"));
+        assert_eq!(loaded.shifted_detected("005930.XKRX", "1-DAY"), Some("20240105"));
+        assert_eq!(loaded.shifted_instruments("1-DAY"), vec!["005930.XKRX".to_string()]);
+        assert!(loaded.shifted_instruments("1-MINUTE").is_empty());
+        loaded.clear_shifted("005930.XKRX", "1-DAY");
+        assert!(!loaded.is_shifted("005930.XKRX", "1-DAY"));
+    }
+
+    #[test]
+    fn clearing_a_watermark_keeps_not_yet_recovered_rows_on_prune() {
+        let mut cp = Checkpoint::default();
+        cp.mark_done("005930.XKRX", "1-DAY", "20240101..20240105");
+        cp.record_gap("005930.XKRX", "1-DAY", "20240102..20240103", GapReason::EmptyHistory);
+        cp.set_watermark("005930.XKRX", "1-DAY", NaiveDate::from_ymd_opt(2024, 1, 10).unwrap());
+        cp.clear_watermark("005930.XKRX", "1-DAY");
+        assert!(cp.watermark("005930.XKRX", "1-DAY").is_none());
+        cp.prune_below_watermarks();
+        // With the watermark cleared, nothing counts as "below" it — the wiped
+        // symbol's rows survive until the re-pull re-covers them.
+        assert!(cp.is_done("005930.XKRX", "1-DAY", "20240101..20240105"));
+        assert_eq!(cp.gaps().len(), 1, "gap row retained");
+    }
+
+    #[test]
+    fn rebase_events_append_in_order_and_round_trip() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        let mut cp = Checkpoint::default();
+        for (i, sym) in ["005930.XKRX", "000660.XKRX"].iter().enumerate() {
+            cp.record_rebase_event(RebaseEvent {
+                instrument: sym.to_string(),
+                bar_type: "1-DAY".to_string(),
+                detected: format!("2024010{}", i + 1),
+                healed: format!("2024010{}", i + 2),
+            });
+        }
+        cp.save(&path).unwrap();
+        let a = std::fs::read_to_string(&path).unwrap();
+        cp.save(&path).unwrap();
+        let b = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(a, b, "serialization is deterministic");
+
+        let loaded = Checkpoint::load(&path).unwrap();
+        assert_eq!(loaded.rebase_events().len(), 2);
+        assert_eq!(loaded.rebase_events()[0].instrument, "005930.XKRX");
+        assert_eq!(loaded.rebase_events()[1].instrument, "000660.XKRX");
+        assert_eq!(loaded.rebase_events()[0].detected, "20240101");
+        assert_eq!(loaded.rebase_events()[0].healed, "20240102");
     }
 
     #[test]
