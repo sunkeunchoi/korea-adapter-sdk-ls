@@ -998,6 +998,38 @@ live-smoke-t8412-negative:
 	echo "$$out"; \
 	echo "$$out" | grep -q "1 passed" || { echo "FAIL: t8412 negative probe did not run (0 tests) or did not pass"; exit 1; }
 
+## Recommended re-certification wave (plan 2026-07-03-003, U2/R1): one differential
+## negative-probe target per re-cert TR. Same shape as `live-smoke-t8412-negative` —
+## lane-guard on `.env.domestic` (no `.env` fallback), run the ONE `#[ignore]` live
+## leg by its exact `module::` name, assert the witness line. Read/token legs need an
+## open session; the ORDER legs (cspat006/007/008-negative) additionally refuse
+## unless `LS_ORDER_SMOKE=1` + a fresh `LS_ORDER_SMOKE_NONCE` are set (the leg's own
+## fail-closed autonomy chain), so a bare `make` invocation of an order target reports
+## "0/failed" and this target exits non-zero — it never places autonomously.
+##   make live-smoke-t1101-negative        (open session)
+##   LS_ORDER_SMOKE=1 LS_ORDER_SMOKE_NONCE=$$(date +%s) make live-smoke-cspat00601-negative
+define NEG_PROBE_TARGET
+live-smoke-$(1)-negative:
+	@lane="$$(LS_SMOKE_LANE)"; [ -n "$$$$lane" ] || lane="domestic"; \
+	lane_file=".env.$$$$lane"; \
+	[ -f "$$$$lane_file" ] || { echo "FAIL: $(1)-negative: lane file $$$$lane_file missing (LS_SMOKE_LANE=$$$$lane); refusing to fall back to .env (wrong-account hazard)"; exit 1; }; \
+	set -a; . "./$$$$lane_file"; set +a; \
+	out=$$$$(cargo test -p ls-sdk --test negative_probe -- --ignored --exact --nocapture $(2) 2>&1); \
+	echo "$$$$out"; \
+	echo "$$$$out" | grep -q "1 passed" || { echo "FAIL: $(1) negative probe did not run (0 tests) or did not pass"; exit 1; }
+endef
+
+$(eval $(call NEG_PROBE_TARGET,t1101,live_smoke_t1101_negative))
+$(eval $(call NEG_PROBE_TARGET,t1102,live_smoke_t1102_negative))
+$(eval $(call NEG_PROBE_TARGET,cspaq12200,live_smoke_cspaq12200_negative))
+$(eval $(call NEG_PROBE_TARGET,t0425,live_smoke_t0425_negative))
+$(eval $(call NEG_PROBE_TARGET,token,live_smoke_token_negative))
+$(eval $(call NEG_PROBE_TARGET,cspat00601,live_smoke_cspat00601_negative))
+$(eval $(call NEG_PROBE_TARGET,cspat00701,live_smoke_cspat00701_negative))
+$(eval $(call NEG_PROBE_TARGET,cspat00801,live_smoke_cspat00801_negative))
+
+.PHONY: live-smoke-t1101-negative live-smoke-t1102-negative live-smoke-cspaq12200-negative live-smoke-t0425-negative live-smoke-token-negative live-smoke-cspat00601-negative live-smoke-cspat00701-negative live-smoke-cspat00801-negative
+
 .PHONY: lane-check
 
 ## Offline regression check for the fail-fast lane guard (plan 2026-07-01-002,
