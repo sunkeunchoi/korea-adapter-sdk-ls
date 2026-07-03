@@ -112,15 +112,7 @@ freshness evaluator. The advisory spec-doc point (2) holds by construction. Only
   `CSPAT00601` submit / `CSPAT00701` modify / `CSPAT00801` cancel + `t0425`
   reconciliation read) back to Implemented, so the **current Recommended count is
   0**: the badge now means "this call fails gracefully," and each TR re-promotes
-  only after passing the new differential-probe gate. The **re-certification wave**
-  (plan 2026-07-03-003, ledger §25) has now authored and armed that gate's per-TR
-  machinery — nine grounded constraint schemas and eight differential negative-probe
-  legs with their Makefile targets and smoke-map rows, all offline gate-green — but
-  landed **0 flips**: it ran unattended just after the KRX close, and each live
-  re-cert leg is HELD pending an attended in-window operator session (the reads and
-  `token` on the next open session, the order quartet on an attended in-window order
-  session). **With 0 Recommended TRs** the freshness evaluator still has nothing to
-  evaluate and the KTD5 one-time re-wirings (`recommended_no_banner`, the count-0
-  freshness assertion) remain in their empty-set form; per-class tightening (e.g. a
-  shorter window for the `orders` class) stays deferred and becomes actionable as the
-  armed legs re-promote each TR.
+  only after passing the new differential-probe gate (U8, operator-run across live
+  windows). Until re-certification the freshness evaluator has no Recommended TR to
+  evaluate; per-class tightening (e.g. a shorter window for the `orders` class)
+  stays deferred and becomes actionable again as TRs re-promote.
