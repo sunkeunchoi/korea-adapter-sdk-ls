@@ -88,16 +88,28 @@ impl DecisionRecorder {
     /// is free-text-targeted), then appended (create-if-missing, never
     /// truncate). Returns the registry file's path.
     ///
+    /// **Scrub boundary:** only the free-text keys are scrubbed — typed
+    /// `AgentIntent` string fields (e.g. `client_order_id`) write verbatim.
+    /// That is safe for this increment's only producer (the Research policy's
+    /// compile-time-constant fields), but before any order-management producer
+    /// records intents here, identifiers must become scrub-safe by type, not
+    /// by key name (see docs/solutions on type-level secret safety).
+    ///
     /// # Errors
     ///
     /// Errors when serialization or the filesystem append fails.
     pub fn append(&self, envelope: &DecisionEnvelope) -> anyhow::Result<PathBuf> {
         let mut value = serde_json::to_value(envelope)?;
         scrub_free_text(&mut value);
-        let line = serde_json::to_string(&value)?;
+        let mut line = serde_json::to_string(&value)?;
+        line.push('\n');
         let path = self.path();
         let mut file = OpenOptions::new().append(true).create(true).open(&path)?;
-        writeln!(file, "{line}")?;
+        // One write_all for record + newline: writeln! issues separate writes
+        // for content and terminator, so a crash between them (or a future
+        // concurrent appender under O_APPEND) could tear a line — and the
+        // all-or-nothing readers would then fail on the whole registry.
+        file.write_all(line.as_bytes())?;
         Ok(path)
     }
 

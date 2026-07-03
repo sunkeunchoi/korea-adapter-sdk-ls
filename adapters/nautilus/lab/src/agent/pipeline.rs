@@ -34,9 +34,13 @@ pub fn lower(intent: &AgentIntent) -> RuntimeAction {
         AgentIntent::ProposeParameterChange {
             strategy_id, parameter, current_value, proposed_value, rationale,
         } => RuntimeAction::ResearchCommand {
+            // {:.4}: raw f64 Display can emit 16-digit runs (3.0 * 0.8 Displays
+            // as 2.4000000000000004) that the write-time free-text scrub masks
+            // as account-like, corrupting the recorded audit text — the same
+            // discipline research.rs applies to the rationale.
             description: format!(
-                "propose {strategy_id} parameter '{parameter}' {current_value} -> \
-                 {proposed_value}: {rationale}"
+                "propose {strategy_id} parameter '{parameter}' {current_value:.4} -> \
+                 {proposed_value:.4}: {rationale}"
             ),
         },
         AgentIntent::ReducePosition { instrument_id, target_quantity, reason } => {
@@ -149,7 +153,17 @@ impl DecisionPipeline {
                         let rejection = self.guardrails.iter().find_map(|g| {
                             match g.evaluate(&planned.intent, &context) {
                                 GuardrailResult::Rejected { reason } => Some(reason),
-                                _ => None,
+                                GuardrailResult::Approved => None,
+                                // Out-of-contract: a guardrail must never
+                                // return NotEvaluated (that representation
+                                // belongs to the pipeline). Treating it as
+                                // approval would be the fake-Approved R5
+                                // forbids — fail closed instead.
+                                GuardrailResult::NotEvaluated => Some(format!(
+                                    "{}: guardrail returned NotEvaluated (out of contract) — \
+                                     failing closed",
+                                    g.name()
+                                )),
                             }
                         });
                         match rejection {
@@ -356,6 +370,126 @@ mod tests {
         assert_eq!(text.lines().count(), 5);
         let back = from_jsonl(&text).unwrap();
         assert_eq!(to_jsonl(&back).unwrap(), text, "round-trip preserves every field");
+    }
+
+    #[test]
+    fn lower_is_total_over_every_intent_variant() {
+        // 8 management arms + 1 research arm: each lowers to the expected
+        // action kind with its identifying fragment in the description.
+        use nautilus_model::identifiers::InstrumentId;
+        use nautilus_model::types::Quantity;
+        let id = InstrumentId::from("005930.XKRX");
+        let cases: Vec<(AgentIntent, bool, &str)> = vec![
+            (proposal(3.0, 4.0), true, "gap_min_pct"),
+            (
+                AgentIntent::ReducePosition {
+                    instrument_id: id,
+                    target_quantity: Quantity::from(5),
+                    reason: "drawdown".to_string(),
+                },
+                false,
+                "reduce",
+            ),
+            (
+                AgentIntent::ClosePosition { instrument_id: id, reason: "eod".to_string() },
+                false,
+                "close",
+            ),
+            (
+                AgentIntent::CancelOrder {
+                    instrument_id: id,
+                    client_order_id: "co-1".to_string(),
+                    reason: "stale".to_string(),
+                },
+                false,
+                "cancel co-1",
+            ),
+            (
+                AgentIntent::CancelAllOrders { instrument_id: id, reason: "halt".to_string() },
+                false,
+                "cancel all",
+            ),
+            (
+                AgentIntent::PauseStrategy {
+                    strategy_id: "orb-v0".to_string(),
+                    reason: "anomaly".to_string(),
+                },
+                false,
+                "pause",
+            ),
+            (
+                AgentIntent::ResumeStrategy {
+                    strategy_id: "orb-v0".to_string(),
+                    reason: "cleared".to_string(),
+                },
+                false,
+                "resume",
+            ),
+            (
+                AgentIntent::AdjustRiskLimits { description: "halve size".to_string() },
+                false,
+                "adjust risk",
+            ),
+            (
+                AgentIntent::EscalateToHuman { reason: "ambiguous".to_string() },
+                false,
+                "escalate",
+            ),
+        ];
+        assert_eq!(cases.len(), 9, "one case per AgentIntent variant");
+        for (intent, is_research, fragment) in cases {
+            match (lower(&intent), is_research) {
+                (RuntimeAction::ResearchCommand { description }, true)
+                | (RuntimeAction::ManagementCommand { description }, false) => {
+                    assert!(
+                        description.contains(fragment),
+                        "{fragment:?} not in {description:?}"
+                    );
+                }
+                (action, _) => panic!("wrong action kind for {intent:?}: {action:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn lowered_research_description_uses_scrub_safe_fixed_precision() {
+        // 3.0 * 0.8 Displays as 2.4000000000000004 under raw f64 formatting —
+        // a 16-digit run the write-time scrub would mask. lower() must emit
+        // fixed precision so the recorded audit text survives the scrub.
+        let action = lower(&proposal(3.0, 3.0 * 0.8));
+        let RuntimeAction::ResearchCommand { description } = action else {
+            panic!("research intent must lower to a ResearchCommand");
+        };
+        assert!(description.contains("2.4000"), "{description}");
+        assert!(!description.contains("2.4000000000000004"), "{description}");
+    }
+
+    #[test]
+    fn out_of_contract_not_evaluated_guardrail_fails_closed() {
+        // A guardrail must never return NotEvaluated; if one does, the
+        // pipeline records a rejection (never a fake approval, R5).
+        struct BrokenGuardrail;
+        impl IntentGuardrail for BrokenGuardrail {
+            fn name(&self) -> &str {
+                "broken"
+            }
+            fn evaluate(&self, _: &AgentIntent, _: &AgentContext) -> GuardrailResult {
+                GuardrailResult::NotEvaluated
+            }
+        }
+        let p = DecisionPipeline::new(research_capabilities(), vec![Box::new(BrokenGuardrail)]);
+        let envelope = p.run(
+            42,
+            trigger(),
+            run_state_context(),
+            PolicyDecision::execute(proposal(3.0, 4.0)),
+        );
+        let GuardrailResult::Rejected { reason } = &envelope.guardrail else {
+            panic!("expected fail-closed rejection, got {:?}", envelope.guardrail);
+        };
+        assert!(reason.contains("out of contract"), "{reason}");
+        assert_eq!(envelope.lowering, LoweringOutcome::NotEvaluated);
+        assert!(envelope.action.is_none());
     }
 
     #[test]

@@ -47,11 +47,15 @@ range-scoped `catalog_fingerprint`, and the `universe_hash`. A backtest run trad
 
 `decisions.jsonl` — each line is one decision envelope
 `{ schema_version, envelope_id, ts_event, trigger, context, policy_decision,
-capability, guardrail, lowering, decision_detail }`. In-run strategy telemetry
-rides `decision_detail` as `{ kind, symbol, decision?, filter?, values }` (the
-pipeline stages of a telemetry envelope are explicitly `NotEvaluated`, and its
-`context` is the minimal `form: Telemetry` snapshot: strategy id/version, numeric
-params, running counts). `decision_detail.values` keys per `kind`:
+capability, guardrail, lowering, action?, decision_detail? }`. In-run strategy
+telemetry rides `decision_detail` as `{ kind, symbol, decision?, filter?, values }`
+(the pipeline stages of a telemetry envelope are explicitly `NotEvaluated`, its
+`action` is absent, and its `context` is the minimal `form: Telemetry` snapshot:
+strategy id/version, numeric params, running counts). The **cross-run registry**
+(`<data>/decisions/decisions.jsonl`) carries the other shape: intent-bearing
+envelopes with a `form: RunState` context (balance_krw, position summaries,
+params, run_summary) and, on approved cycles, a populated
+`action: { type: "ResearchCommand", description }`. `decision_detail.values` keys per `kind`:
 
 | `kind` | `decision` / `filter` | `values` keys |
 |---|---|---|

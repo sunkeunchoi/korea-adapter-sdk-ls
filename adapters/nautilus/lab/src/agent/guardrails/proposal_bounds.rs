@@ -50,11 +50,15 @@ impl IntentGuardrail for ProposalBoundsGuardrail {
         } else {
             ((proposed_value - current_value) / current_value).abs()
         };
-        if relative_change > self.max_relative_change {
+        // Fail closed on non-finite: `NaN > bound` is false, so a plain `>`
+        // check would APPROVE a NaN proposal (reachable via a NaN param in a
+        // manifest or a mis-configured policy factor). Non-finite (NaN or the
+        // zero-current INFINITY) rejects; finite in-bounds approves.
+        if !relative_change.is_finite() || relative_change > self.max_relative_change {
             GuardrailResult::Rejected {
                 reason: format!(
-                    "{}: parameter '{parameter}' relative change {relative_change} exceeds \
-                     bound {} (current {current_value}, proposed {proposed_value})",
+                    "{}: parameter '{parameter}' relative change {relative_change:.4} exceeds \
+                     bound {} (current {current_value:.4}, proposed {proposed_value:.4})",
                     self.name(),
                     self.max_relative_change,
                 ),
@@ -127,5 +131,39 @@ mod tests {
     fn zero_to_zero_proposal_is_approved() {
         let result = guardrail().evaluate(&proposal(0.0, 0.0), &context());
         assert_eq!(result, GuardrailResult::Approved);
+    }
+
+    #[test]
+    fn nan_proposal_is_rejected_fail_closed() {
+        // `NaN > bound` is false — a plain `>` check approves NaN. The
+        // `!(x <= bound)` form must reject a NaN on either side.
+        for (current, proposed) in [(f64::NAN, 4.0), (3.0, f64::NAN), (f64::NAN, f64::NAN)] {
+            let result = guardrail().evaluate(&proposal(current, proposed), &context());
+            assert!(
+                matches!(result, GuardrailResult::Rejected { .. }),
+                "NaN must fail closed, got {result:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejection_reason_uses_fixed_precision_scrub_safe_numbers() {
+        // Raw f64 Display can emit 16-digit runs (2.4000000000000004) that the
+        // write-time scrub masks as account-like; {:.4} keeps digit runs short.
+        let result = guardrail().evaluate(&proposal(3.0, 3.0 * 0.8), &context());
+        let GuardrailResult::Rejected { reason } = guardrail_tight().evaluate(
+            &proposal(3.0, 3.0 * 0.8),
+            &context(),
+        ) else {
+            panic!("tight bound must reject");
+        };
+        assert!(reason.contains("2.4000"), "fixed precision on the wire: {reason}");
+        assert!(!reason.contains("2.4000000000000004"), "no raw f64 runs: {reason}");
+        // The ±50% default approves the same proposal (sanity of the fixture).
+        assert_eq!(result, GuardrailResult::Approved);
+    }
+
+    fn guardrail_tight() -> ProposalBoundsGuardrail {
+        ProposalBoundsGuardrail { max_relative_change: 0.1 }
     }
 }

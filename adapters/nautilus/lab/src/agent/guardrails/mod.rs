@@ -5,5 +5,3 @@
 //! slot in beside it unchanged.
 
 pub mod proposal_bounds;
-
-pub use proposal_bounds::*;

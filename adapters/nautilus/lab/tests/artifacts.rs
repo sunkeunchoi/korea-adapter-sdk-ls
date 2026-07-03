@@ -246,3 +246,27 @@ fn scrub_delegates_to_adapter() {
     assert_eq!(artifacts::scrub("acct=20187511401 ok"), "acct=*** ok");
     assert_eq!(artifacts::scrub("ordno=12345 qty=10"), "ordno=12345 qty=10");
 }
+
+/// write_decisions applies the same free-text scrub the cross-run recorder does:
+/// an account-like token in a free-text field is masked on disk and the line
+/// still parses (UUIDs untouched).
+#[test]
+fn write_decisions_scrubs_free_text_on_disk() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    let id = fixed_run_id(RunSource::Backtest, 7);
+    let w = RunWriter::new(data, &id).unwrap();
+
+    let mut e = telemetry_envelope();
+    e.trigger = DecisionTrigger::Manual {
+        reason: "operator probe on account 20187511401".to_string(),
+    };
+    w.write_decisions(&[e]).unwrap();
+    let run_dir = w.finalize().unwrap();
+
+    let contents = std::fs::read_to_string(run_dir.join(DECISIONS_FILE)).unwrap();
+    assert!(!contents.contains("20187511401"), "account token masked: {contents}");
+    assert!(contents.contains("***"), "redaction present");
+    let back = envelope::from_jsonl(&contents).unwrap();
+    assert_eq!(back.len(), 1, "the scrubbed line still parses");
+}

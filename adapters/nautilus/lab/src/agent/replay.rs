@@ -355,6 +355,42 @@ mod tests {
     }
 
     #[test]
+    fn reason_only_differences_within_the_same_variant_are_not_divergence() {
+        // Record under a tight bound so every proposal is Rejected, then
+        // replay under a different tight bound that also rejects (different
+        // reason text). Same variant, different reason -> zero delta.
+        let pipeline = DecisionPipeline::new(
+            research_capabilities(),
+            vec![Box::new(ProposalBoundsGuardrail { max_relative_change: 0.05 })],
+        );
+        let stream: Vec<DecisionEnvelope> = [(3.0, 3.3), (3.0, 4.2)]
+            .into_iter()
+            .map(|(current, proposed)| {
+                pipeline.run(
+                    0,
+                    trigger(),
+                    context(1_000_000.0),
+                    PolicyDecision::execute(proposal(current, proposed)),
+                )
+            })
+            .collect();
+        assert!(stream
+            .iter()
+            .all(|e| matches!(e.guardrail, GuardrailResult::Rejected { .. })));
+        let also_rejecting = ProposalBoundsGuardrail { max_relative_change: 0.01 };
+        let result = replay(&stream, &also_rejecting);
+        assert_eq!(result.delta_count, 0, "reason-only change is not divergence");
+        assert_eq!(result.first_divergence, None);
+    }
+
+    #[test]
+    fn read_envelopes_on_a_missing_path_is_a_typed_io_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = read_envelopes(&dir.path().join("absent.jsonl")).unwrap_err();
+        assert!(matches!(err, ReplayError::Io { .. }), "got {err:?}");
+    }
+
+    #[test]
     fn read_envelopes_round_trips_a_jsonl_file_with_blank_lines() {
         let stream = approved_stream();
         let dir = tempfile::tempdir().unwrap();

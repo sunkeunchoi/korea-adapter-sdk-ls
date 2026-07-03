@@ -5,5 +5,3 @@
 //! management-tier policies slot in beside it behind the same seam.
 
 pub mod research;
-
-pub use research::*;
