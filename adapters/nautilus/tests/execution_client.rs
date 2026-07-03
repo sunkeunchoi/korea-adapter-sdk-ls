@@ -393,6 +393,41 @@ async fn poll_derived_fill_emits_independently_of_sc() {
     }
 }
 
+/// U2 / AE5: an order whose t0425 fill row carries a `cheprice` differing from the
+/// order limit emits OrderFilled at the execution price, end-to-end through
+/// `poll_once` → ledger → event.
+#[tokio::test]
+async fn poll_fill_emits_at_cheprice() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    mount_order_ok(&server, "CSPAT00601", "1001", "").await;
+    let order = test_order("O-CHEPX", 10, 60_000);
+    client.submit_order(submit_cmd(&order)).unwrap();
+    drain_submit_accept(&mut rx).await;
+
+    // The fill row reports cheprice=60050 (execution price) ≠ limit 60000.
+    let row = serde_json::json!({
+        "ordno": "1001", "expcode": "005930", "medosu": "매수", "qty": "10",
+        "price": "60000", "cheqty": "10", "cheprice": "60050", "ordrem": "0",
+        "status": "체결", "orgordno": "", "ordtime": "0900"
+    });
+    mount_t0425(&server, "", serde_json::json!([row])).await;
+    let outcome = client.poll_once().await;
+    assert_eq!(outcome.deltas.len(), 1);
+    assert!(!outcome.deltas[0].price_approximated, "a first fill at cheprice is exact");
+
+    match next_order_event(&mut rx).await {
+        OrderEventAny::Filled(f) => {
+            assert_eq!(f.last_qty, Quantity::from(10));
+            assert_eq!(f.last_px, Price::from("60050"), "the fill emits at cheprice, not the limit");
+        }
+        other => panic!("expected OrderFilled, got {other:?}"),
+    }
+}
+
 /// DoD round-trip: submit → (partial) fill → cancel, entirely through the client.
 #[tokio::test]
 async fn submit_fill_cancel_round_trip() {

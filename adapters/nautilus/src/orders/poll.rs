@@ -10,13 +10,13 @@
 //! observation applies — without adoption, an ambiguous-path order's fills are
 //! unemittable on both lanes.
 //!
-//! Poll-derived fills emit at the **order's limit price** (KTD5): `T0425OutBlock1`
-//! models `price` (the order price) only — the wire's `cheprice` execution price is
-//! not modeled and SDK edits are out of scope (a named v-next SDK follow-up: add
-//! `cheprice` to `T0425OutBlock1`). The SC lane supplies the true `execprc` once
-//! certified. Each poll fill carries a deterministic synthetic `TradeId`
-//! (`POLL-{ordno}-{watermark}`, minted by the ledger) that cannot collide with a
-//! real SC execno (`SC-{execno}`).
+//! Poll-derived fills emit at the row's **`cheprice`** execution price (KTD4) when
+//! it parses to a positive value, else fall back to the **order's limit price** with
+//! `price_approximated` set so the lab discounts them (R14). A `cheprice` row carries
+//! one price per order, so any beyond-first partial is also flagged approximate. The
+//! SC lane supplies exact per-execution `execprc` once certified. Each poll fill
+//! carries a deterministic synthetic `TradeId` (`POLL-{ordno}-{watermark}`, minted by
+//! the ledger) that cannot collide with a real SC execno (`SC-{execno}`).
 
 use std::sync::Mutex;
 
@@ -135,7 +135,15 @@ fn apply_row(symbol: &str, row: &T0425OutBlock1, ledger: &Mutex<FillLedger>, out
     };
 
     let limit_price = led.limit_price(&client).unwrap_or_else(|| lossy_i64(&row.price));
-    let outcome = led.apply(FillObservation::poll(ordno, cheqty, limit_price));
+    // Prefer the row's execution price (`cheprice`, KTD4); fall back to the limit
+    // price with `price_approximated` set when it is absent/zero/garbage.
+    let cheprice = lossy_i64(&row.cheprice);
+    let (price, price_approximated) = if cheprice > 0 {
+        (cheprice, false)
+    } else {
+        (limit_price, true)
+    };
+    let outcome = led.apply(FillObservation::poll(ordno, cheqty, price, price_approximated));
     out.deltas.extend(outcome.deltas);
     if outcome.reconcile_needed {
         out.reconcile_needed = true;
@@ -216,6 +224,20 @@ mod tests {
     }
 
     fn row(ordno: &str, orgordno: &str, medosu: &str, qty: &str, price: &str, cheqty: &str, ordrem: &str) -> T0425OutBlock1 {
+        row_px(ordno, orgordno, medosu, qty, price, cheqty, ordrem, "")
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn row_px(
+        ordno: &str,
+        orgordno: &str,
+        medosu: &str,
+        qty: &str,
+        price: &str,
+        cheqty: &str,
+        ordrem: &str,
+        cheprice: &str,
+    ) -> T0425OutBlock1 {
         T0425OutBlock1 {
             ordno: ordno.into(),
             expcode: "005930".into(),
@@ -223,6 +245,7 @@ mod tests {
             qty: qty.into(),
             price: price.into(),
             cheqty: cheqty.into(),
+            cheprice: cheprice.into(),
             ordrem: ordrem.into(),
             status: "체결".into(),
             orgordno: orgordno.into(),
@@ -256,10 +279,10 @@ mod tests {
         Mutex::new(led)
     }
 
-    /// AE3: an accepted order later shows cheqty>0 → OrderFilled emits with the
-    /// poll-derived qty at the order's limit price and a synthetic TradeId.
+    /// U2 fallback: a row with no `cheprice` emits the poll fill at the order's limit
+    /// price with `price_approximated` set and a synthetic TradeId.
     #[tokio::test]
-    async fn poll_emits_fill_at_limit_price() {
+    async fn poll_fallback_emits_at_limit_price_flagged() {
         let led = ledger_with_order("O-1", 100, 60_000, "1001");
         let fetcher = FakeFetcher {
             resp: resp("", vec![row("1001", "", "매수", "100", "60000", "40", "60")]),
@@ -267,9 +290,58 @@ mod tests {
         let out = poll_open_orders(&fetcher, &led, &poll_pacer()).await;
         assert_eq!(out.deltas.len(), 1);
         assert_eq!(out.deltas[0].qty, 40);
-        assert_eq!(out.deltas[0].price, 60_000, "poll fills emit at the order limit price");
+        assert_eq!(out.deltas[0].price, 60_000, "a cheprice-less row falls back to the limit price");
+        assert!(out.deltas[0].price_approximated, "the limit-price fallback is flagged approximate");
         assert!(out.deltas[0].trade_id.to_string().starts_with("POLL-1001-"));
         assert!(!out.reconcile_needed);
+    }
+
+    /// U2 happy path (AE5): a first fill whose `cheprice` differs from the order limit
+    /// emits at `cheprice`, unflagged.
+    #[tokio::test]
+    async fn poll_emits_first_fill_at_cheprice_unflagged() {
+        let led = ledger_with_order("O-CP", 100, 60_000, "1001");
+        let fetcher = FakeFetcher {
+            resp: resp("", vec![row_px("1001", "", "매수", "100", "60000", "40", "60", "60050")]),
+        };
+        let out = poll_open_orders(&fetcher, &led, &poll_pacer()).await;
+        assert_eq!(out.deltas.len(), 1);
+        assert_eq!(out.deltas[0].price, 60_050, "the fill emits at the row's cheprice");
+        assert!(!out.deltas[0].price_approximated, "a first fill at cheprice is exact");
+    }
+
+    /// U2 multi-fill: a second delta against the same OrdNo (watermark already
+    /// positive) is flagged approximate even with a positive `cheprice`.
+    #[tokio::test]
+    async fn poll_second_partial_is_flagged_even_with_cheprice() {
+        let led = ledger_with_order("O-MP", 100, 60_000, "1001");
+        let f1 = FakeFetcher {
+            resp: resp("", vec![row_px("1001", "", "매수", "100", "60000", "30", "70", "60050")]),
+        };
+        let out1 = poll_open_orders(&f1, &led, &poll_pacer()).await;
+        assert!(!out1.deltas[0].price_approximated, "first partial exact");
+        let f2 = FakeFetcher {
+            resp: resp("", vec![row_px("1001", "", "매수", "100", "60000", "100", "0", "60070")]),
+        };
+        let out2 = poll_open_orders(&f2, &led, &poll_pacer()).await;
+        assert_eq!(out2.deltas[0].qty, 70);
+        assert!(out2.deltas[0].price_approximated, "beyond-first partial is approximate");
+    }
+
+    /// U2 edge: a modify-chained order's new OrdNo emits at the NEW row's `cheprice`
+    /// (per-OrdNo watermark unchanged, so its first fill is exact).
+    #[tokio::test]
+    async fn poll_modify_chain_new_ordno_uses_new_cheprice() {
+        let led = ledger_with_order("O-MC", 100, 60_000, "1001");
+        // A modify chained OrdNo 1002 (parent 1001) whose row carries its own cheprice.
+        let fetcher = FakeFetcher {
+            resp: resp("", vec![row_px("1002", "1001", "매수", "100", "60000", "50", "50", "60120")]),
+        };
+        let out = poll_open_orders(&fetcher, &led, &poll_pacer()).await;
+        assert_eq!(out.deltas.len(), 1);
+        assert_eq!(out.deltas[0].ord_no, "1002");
+        assert_eq!(out.deltas[0].price, 60_120, "the new OrdNo emits at its own cheprice");
+        assert!(!out.deltas[0].price_approximated, "first fill on the new OrdNo is exact");
     }
 
     /// A RECON--accepted order fills: the unknown-ordno row intent-corroborates

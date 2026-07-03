@@ -271,6 +271,42 @@ async fn reconcile_failed_query_is_unknown_not_safe() {
     assert!(!outcome.safe_to_retry);
 }
 
+/// U1 happy path: a `t0425` row carrying a numeric `cheprice` deserializes it to
+/// the string execution price (the value the wire already carries).
+#[test]
+fn t0425_row_deserializes_numeric_cheprice() {
+    let row = r#"{ "ordno": 32004, "expcode": "005930", "medosu": "매수", "qty": 1,
+        "price": 60000, "cheqty": 1, "cheprice": 60050, "ordrem": 0, "status": "체결",
+        "orgordno": 0, "ordtime": "153257702" }"#;
+    let parsed: ls_sdk::orders::T0425OutBlock1 =
+        serde_json::from_str(row).expect("row with numeric cheprice deserializes");
+    assert_eq!(parsed.cheprice, "60050");
+}
+
+/// U1 edge (server-omission tolerance): a `t0425` row that omits `cheprice`
+/// deserializes to the default empty string (`#[serde(default)]`).
+#[test]
+fn t0425_row_omitting_cheprice_defaults_empty() {
+    let row = r#"{ "ordno": 32004, "expcode": "005930", "medosu": "매수", "qty": 1,
+        "price": 60000, "cheqty": 0, "ordrem": 1, "status": "접수", "orgordno": 0,
+        "ordtime": "153257702" }"#;
+    let parsed: ls_sdk::orders::T0425OutBlock1 =
+        serde_json::from_str(row).expect("row omitting cheprice deserializes");
+    assert_eq!(parsed.cheprice, "");
+}
+
+/// U1 edge (string_or_number tolerance): a `cheprice` served as a JSON string
+/// still parses.
+#[test]
+fn t0425_row_deserializes_string_cheprice() {
+    let row = r#"{ "ordno": 32004, "expcode": "005930", "medosu": "매수", "qty": 1,
+        "price": 60000, "cheqty": 1, "cheprice": "60050.00", "ordrem": 0, "status": "체결",
+        "orgordno": 0, "ordtime": "153257702" }"#;
+    let parsed: ls_sdk::orders::T0425OutBlock1 =
+        serde_json::from_str(row).expect("row with string cheprice deserializes");
+    assert_eq!(parsed.cheprice, "60050.00");
+}
+
 // ===========================================================================
 // CSPAT00701 — 현물정정주문 (modify). Offline, credential-free, no live order.
 // ===========================================================================

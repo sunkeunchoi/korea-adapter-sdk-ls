@@ -1,0 +1,58 @@
+[package]
+name = "nautilus-ls-lab"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.96"
+license = "MIT"
+description = "Strategy-improvement lab for the nautilus-ls adapter: ORB v0, backtest/live runners, and the append-only run registry."
+publish = false
+
+[lib]
+name = "nautilus_ls_lab"
+path = "src/lib.rs"
+
+[[bin]]
+name = "lab-backtest"
+path = "src/bin/lab-backtest.rs"
+
+[[bin]]
+name = "lab-live"
+path = "src/bin/lab-live.rs"
+
+[dependencies]
+# The adapter, consumed by path — the lab reuses its ingest/catalog, execution lane,
+# rules, scrub, and locks. The adapter ships NO strategy; the lab is where strategy
+# code lives (KTD1).
+nautilus-ls = { path = ".." }
+ls-sdk = { path = "../../../crates/ls-sdk" }
+ls-core = { path = "../../../crates/ls-core" }
+
+# nautilus_trader v2 (Rust), same =0.60.0 lockstep as the adapter (KTD1). nautilus
+# types cross the lab↔adapter boundary, so the pins must match exactly.
+nautilus-core = "=0.60.0"
+nautilus-model = "=0.60.0"
+nautilus-common = "=0.60.0"
+nautilus-live = "=0.60.0"
+nautilus-persistence = "=0.60.0"
+nautilus-backtest = "=0.60.0"
+nautilus-analysis = "=0.60.0"
+# Strategy macros (`nautilus_strategy!`, `StrategyCore`) are a REAL dependency of the
+# lab (unlike the adapter, where they stay dev-only) — the lab is the strategy home.
+nautilus-trading = "=0.60.0"
+
+# Runtime + serde, independent of the SDK workspace pins.
+tokio = { version = "1", features = ["full"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+anyhow = "1"
+thiserror = "2"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+chrono = { version = "0.4", features = ["clock", "serde"] }
+chrono-tz = "0.10"
+sha2 = "0.10"
+
+[dev-dependencies]
+tempfile = "3"
+wiremock = "0.6"
+ls-sdk-test-support = { path = "../../../crates/ls-sdk-test-support" }

@@ -811,6 +811,15 @@ pub struct T0425OutBlock1 {
     /// Filled quantity / 체결수량.
     #[serde(rename = "cheqty", deserialize_with = "ls_core::string_or_number")]
     pub cheqty: String,
+    /// Execution price / 체결가격. One value per order row; a multi-price fill
+    /// reports the row's current value (last-vs-average semantics uncharacterized
+    /// until a live multi-fill observation). Empty when the server omits it.
+    #[serde(
+        rename = "cheprice",
+        default,
+        deserialize_with = "ls_core::string_or_number"
+    )]
+    pub cheprice: String,
     /// Unfilled remaining / 미체결잔량.
     #[serde(rename = "ordrem", deserialize_with = "ls_core::string_or_number")]
     pub ordrem: String,
