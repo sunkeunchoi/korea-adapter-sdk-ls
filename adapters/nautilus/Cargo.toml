@@ -11,7 +11,7 @@ publish = false
 # so this adapter can pin nautilus's Rust 1.96 / edition 2024 toolchain with zero
 # edits to the six SDK crates or the root Cargo.toml. See KTD1.
 [workspace]
-members = ["."]
+members = [".", "lab"]
 
 [lib]
 name = "nautilus_ls"

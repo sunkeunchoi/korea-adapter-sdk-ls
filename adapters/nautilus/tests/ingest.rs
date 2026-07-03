@@ -270,3 +270,111 @@ async fn ingest_refuses_to_start_while_live_lock_held() {
         .expect_err("ingest must refuse while a live session is running");
     assert!(err.to_string().contains("mutually exclusive"));
 }
+
+// ---------------------------------------------------------------------------
+// U7 — max-lookback probe (KTD10, R10). A dynamic t8412 responder serves minute
+// rows only for dates at/after a known earliest served date, so the windowed
+// backward search must converge on that date without being derailed by the
+// weekends/holidays inside each ≥7-day window.
+// ---------------------------------------------------------------------------
+
+use chrono::{Datelike, Duration as ChronoDuration};
+use nautilus_ls::ingest::{probes_dir_for, read_minute_lookback, write_minute_lookback, MinuteLookback};
+
+/// Mount a t8412 responder that serves one weekday row per date in
+/// `[max(sdate, earliest), edate]` — an all-empty window means the request range is
+/// entirely before `earliest` (beyond lookback).
+async fn sdk_with_probe(server: &MockServer, earliest: NaiveDate) -> LsSdk {
+    mount_token(server).await;
+    Mock::given(method("POST"))
+        .and(path(CHART_PATH))
+        .and(header("tr_cd", "t8412"))
+        .respond_with(move |req: &wiremock::Request| {
+            let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+            let ib = &body["t8412InBlock"];
+            let s = NaiveDate::parse_from_str(ib["sdate"].as_str().unwrap_or(""), "%Y%m%d").unwrap();
+            let e = NaiveDate::parse_from_str(ib["edate"].as_str().unwrap_or(""), "%Y%m%d").unwrap();
+            let mut rows = Vec::new();
+            let mut d = s.max(earliest);
+            while d <= e {
+                // Weekdays only — weekends inside the window are non-trading gaps.
+                if d.weekday().num_days_from_monday() < 5 {
+                    rows.push(serde_json::json!({
+                        "date": d.format("%Y%m%d").to_string(), "time": "0900",
+                        "open": "1000", "high": "1010", "low": "990", "close": "1005",
+                        "jdiff_vol": "100", "value": "0", "jongchk": "0", "rate": "0", "sign": "0"
+                    }));
+                }
+                d += ChronoDuration::days(1);
+            }
+            json_response(serde_json::json!({ "rsp_cd": "00000", "t8412OutBlock1": rows }))
+        })
+        .mount(server)
+        .await;
+    LsSdk::new(mock_config(&server.uri())).expect("sdk builds")
+}
+
+fn probe_config(catalog: &Path) -> IngestConfig {
+    IngestConfig {
+        catalog_path: catalog.to_path_buf(),
+        bar_kinds: vec![BarKind::Minute(1)],
+        sdate: String::new(),
+        edate: String::new(),
+        adjusted_prices: true,
+    }
+}
+
+#[tokio::test]
+async fn probe_converges_on_earliest_served_date_and_writes_file() {
+    let dir = tempdir().unwrap();
+    let data = dir.path().join("data");
+    let catalog = data.join("catalog");
+    let server = MockServer::start().await;
+    let earliest = ymd(2024, 1, 10);
+    let sdk = sdk_with_probe(&server, earliest).await;
+
+    let ingestor = Ingestor::new(sdk, probe_config(&catalog));
+    let anchor = ymd(2024, 1, 31);
+    let out = ingestor
+        .run_probe_lookback("005930", 1, anchor, "2024-01-31T16:30:00+09:00".into())
+        .await
+        .unwrap()
+        .expect("the pilot serves history");
+    assert_eq!(out.earliest_date, "20240110", "converges on the earliest served date");
+    assert_eq!(out.depth_days, 21, "depth = anchor − earliest");
+
+    // The result was written to <data>/probes/minute-lookback.json and round-trips.
+    let read = read_minute_lookback(&probes_dir_for(&catalog)).unwrap();
+    assert_eq!(read, out);
+}
+
+#[tokio::test]
+async fn probe_reports_nothing_when_pilot_serves_no_history() {
+    let dir = tempdir().unwrap();
+    let catalog = dir.path().join("data").join("catalog");
+    let server = MockServer::start().await;
+    // Earliest is in the far future → every window is empty.
+    let sdk = sdk_with_probe(&server, ymd(2030, 1, 1)).await;
+
+    let ingestor = Ingestor::new(sdk, probe_config(&catalog));
+    let out = ingestor
+        .run_probe_lookback("005930", 1, ymd(2024, 1, 31), "2024-01-31T16:30:00+09:00".into())
+        .await
+        .unwrap();
+    assert!(out.is_none(), "an empty pilot records nothing");
+    // No file was written.
+    assert!(read_minute_lookback(&probes_dir_for(&catalog)).is_err());
+}
+
+#[test]
+fn minute_lookback_file_round_trips() {
+    let dir = tempdir().unwrap();
+    let probes = dir.path().join("probes");
+    let lb = MinuteLookback {
+        earliest_date: "20220103".into(),
+        depth_days: 730,
+        probed_at: "2024-01-31T16:30:00+09:00".into(),
+    };
+    write_minute_lookback(&probes, &lb).unwrap();
+    assert_eq!(read_minute_lookback(&probes).unwrap(), lb);
+}

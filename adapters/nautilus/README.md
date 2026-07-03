@@ -80,6 +80,35 @@ advisory lockfile beside the catalog (`.ls-ingest.lock` / `.ls-live.lock`) and
 **refuse to start while the counterpart lock is held**. A stale lock from a crash
 blocks until cleared manually (`rm <catalog>/.ls-*.lock`) — a deliberate fail-safe.
 
+### Max-lookback probe (run FIRST — sizes the backfill)
+
+Before the first minute backfill, run the staged probe to learn how deep the server
+serves minute history. It walks a single liquid pilot symbol (`005930` by default)
+backward in ≥7-calendar-day windows (each window always spans trading days, so only an
+**all-empty** window reads as beyond-lookback — a single-date probe would converge
+wrongly on KRX weekends/holidays), and writes `<data>/probes/minute-lookback.json`
+recording the earliest served date, the derived depth in calendar days, and the probe
+timestamp. `<data>` is the catalog's parent directory.
+
+```
+LS_TRADING_ENV=paper LS_INGEST_LANE_FILE=.env.domestic \
+LS_INGEST_MODE=probe-lookback LS_INGEST_CATALOG=./data/catalog \
+LS_PROBE_SYMBOL=005930 LS_PROBE_NCNT=1 \
+  cargo run --bin ls-ingest
+# → writes ./data/probes/minute-lookback.json and prints the derived LS_INGEST_LOOKBACK.
+```
+
+Then size the backfill floor from the recorded result — either form works:
+`LS_INGEST_LOOKBACK=<earliest_date>`, or (rolling-window safe if the probe and the
+backfill run days apart) `anchor − depth_days`. Bound it with an explicit operator
+budget floor — don't backfill deeper than you intend to store. If the server allows
+only a shallow history, the loop proceeds on thin data and depth grows via daily
+accumulation. A probe older than a few sessions should be re-run.
+
+**Ordering:** probe → bounded minute backfill (below) → scheduled accumulate-forward.
+Set the **daily** floor at least 5 sessions earlier than the minute floor so the
+universe scan's prior-session daily reads exist from the first backfilled day.
+
 ### Historical backfill
 
 ```

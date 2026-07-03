@@ -29,6 +29,7 @@ use nautilus_model::enums::{AggregationSource, BarAggregation, PriceType};
 use nautilus_model::identifiers::InstrumentId;
 use nautilus_model::types::{Price, Quantity};
 use nautilus_persistence::backend::catalog::ParquetDataCatalog;
+use serde::{Deserialize, Serialize};
 
 use crate::error::{AdapterError, AdapterResult};
 use crate::lock::{AdvisoryLock, LockKind};
@@ -799,7 +800,13 @@ fn last_gap(cp: &Checkpoint) -> checkpoint::CoverageGap {
 /// constructed, used, and dropped entirely inside the closure. Ascending `ts_init`
 /// is guaranteed by the callers; the disjoint check is skipped (re-ingesting a
 /// symbol overwrites its range; dedup is by checkpoint).
-async fn write_bars(catalog_path: &Path, bars: Vec<Bar>) -> AdapterResult<()> {
+///
+/// Public so the lab (and tooling) can stage a fixture catalog symmetrically with
+/// [`read_all_bars`] / [`write_instruments`]. **This is a low-level primitive that
+/// bypasses the ingest checkpoint** — it advances no watermark and records no coverage,
+/// so production coverage growth must go through [`Ingestor`] (which owns the
+/// checkpoint), never this. Reserve direct use for test fixtures / one-off staging.
+pub async fn write_bars(catalog_path: &Path, bars: Vec<Bar>) -> AdapterResult<()> {
     let path = catalog_path.to_path_buf();
     tokio::task::spawn_blocking(move || {
         std::fs::create_dir_all(&path)
@@ -862,6 +869,138 @@ pub async fn read_all_instruments(
     })
     .await
     .map_err(|e| AdapterError::Ingest(format!("catalog read instruments task panicked: {e}")))?
+}
+
+// ---------------------------------------------------------------------------
+// Max-lookback probe (U7, KTD10, R10) — the staged operator mode that locates the
+// earliest served minute date for a pilot symbol and records it so the backfill can
+// be sized. Both the probe and the backfill are operator-gated.
+// ---------------------------------------------------------------------------
+
+/// The recorded result of the minute-lookback probe (KTD10), persisted to
+/// `<data>/probes/minute-lookback.json`. The backfill derives `LS_INGEST_LOOKBACK`
+/// from either form — the explicit `earliest_date` or the rolling `depth_days`
+/// (which keeps a lookback honest when the probe and the backfill run days apart).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MinuteLookback {
+    /// The earliest minute date the server served for the pilot (`YYYYMMDD`).
+    pub earliest_date: String,
+    /// Calendar-day depth from the earliest served date to the probe anchor.
+    pub depth_days: i64,
+    /// When the probe ran (RFC3339 — a stale probe should be re-run).
+    pub probed_at: String,
+}
+
+fn fmt_ymd(d: NaiveDate) -> String {
+    d.format("%Y%m%d").to_string()
+}
+
+/// The probes directory beside the catalog (`<data>/probes/`, KTD2).
+pub fn probes_dir_for(catalog_path: &Path) -> PathBuf {
+    catalog_path
+        .parent()
+        .map(|p| p.join("probes"))
+        .unwrap_or_else(|| catalog_path.join("probes"))
+}
+
+/// Search backward in ≥7-calendar-day windows for the earliest served minute date on
+/// `pilot` (KTD10). Each window spans at least a week so it always contains trading
+/// days; only an **all-empty** window reads as beyond-lookback (a single-date probe
+/// would converge wrongly on KRX weekends/holidays). Returns the earliest served date,
+/// or `None` if the pilot serves nothing at all.
+///
+/// # Errors
+///
+/// Propagates a fetcher error (e.g. a pagination-limit on an over-wide window).
+pub async fn probe_minute_lookback<F: MinuteFetcher>(
+    fetcher: &F,
+    pilot: &str,
+    ncnt: u32,
+    anchor: NaiveDate,
+    window_days: i64,
+    max_windows: usize,
+) -> AdapterResult<Option<NaiveDate>> {
+    let window_days = window_days.max(7);
+    let mut earliest: Option<NaiveDate> = None;
+    let mut wend = anchor;
+    for _ in 0..max_windows.max(1) {
+        let wstart = wend - ChronoDuration::days(window_days - 1);
+        let resp = fetcher
+            .fetch_minute_chunk(pilot, ncnt, &fmt_ymd(wstart), &fmt_ymd(wend))
+            .await?;
+        let mut wmin: Option<NaiveDate> = None;
+        for row in resp.iter().flat_map(|r| &r.outblock1) {
+            if let Ok(d) = NaiveDate::parse_from_str(row.date.trim(), "%Y%m%d") {
+                wmin = Some(wmin.map_or(d, |m| m.min(d)));
+            }
+        }
+        match wmin {
+            // A non-empty window: extend the earliest and step the window back.
+            Some(m) => {
+                earliest = Some(earliest.map_or(m, |e| e.min(m)));
+                wend = wstart - ChronoDuration::days(1);
+            }
+            // An all-empty window is beyond lookback — stop.
+            None => break,
+        }
+    }
+    Ok(earliest)
+}
+
+/// Persist a [`MinuteLookback`] to `<probes_dir>/minute-lookback.json` atomically
+/// (temp file + rename, mirroring the checkpoint save).
+pub fn write_minute_lookback(probes_dir: &Path, lb: &MinuteLookback) -> AdapterResult<()> {
+    std::fs::create_dir_all(probes_dir)
+        .map_err(|e| AdapterError::Ingest(format!("mkdir {}: {e}", probes_dir.display())))?;
+    let json = serde_json::to_string_pretty(lb)
+        .map_err(|e| AdapterError::Ingest(format!("serialize probe: {e}")))?;
+    let path = probes_dir.join("minute-lookback.json");
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json)
+        .map_err(|e| AdapterError::Ingest(format!("write probe tmp {}: {e}", tmp.display())))?;
+    std::fs::rename(&tmp, &path)
+        .map_err(|e| AdapterError::Ingest(format!("commit probe {}: {e}", path.display())))
+}
+
+/// Read the recorded [`MinuteLookback`] from `<probes_dir>/minute-lookback.json`.
+///
+/// # Errors
+///
+/// [`AdapterError::Ingest`] if the file is missing or unparseable.
+pub fn read_minute_lookback(probes_dir: &Path) -> AdapterResult<MinuteLookback> {
+    let path = probes_dir.join("minute-lookback.json");
+    let s = std::fs::read_to_string(&path)
+        .map_err(|e| AdapterError::Ingest(format!("read probe {}: {e}", path.display())))?;
+    serde_json::from_str(&s)
+        .map_err(|e| AdapterError::Ingest(format!("corrupt probe {}: {e}", path.display())))
+}
+
+impl Ingestor {
+    /// Run the staged max-lookback probe for a pilot symbol (KTD10): locate the
+    /// earliest served minute date via a windowed backward search and, on success,
+    /// write `<data>/probes/minute-lookback.json`. Returns the recorded result, or
+    /// `None` when the pilot serves nothing (nothing is written).
+    pub async fn run_probe_lookback(
+        &self,
+        pilot: &str,
+        ncnt: u32,
+        anchor: NaiveDate,
+        probed_at: String,
+    ) -> AdapterResult<Option<MinuteLookback>> {
+        let earliest = probe_minute_lookback(&self.fetcher, pilot, ncnt, anchor, 7, 400).await?;
+        match earliest {
+            Some(d) => {
+                let lb = MinuteLookback {
+                    earliest_date: fmt_ymd(d),
+                    depth_days: anchor.signed_duration_since(d).num_days(),
+                    probed_at,
+                };
+                write_minute_lookback(&probes_dir_for(&self.config.catalog_path), &lb)?;
+                Ok(Some(lb))
+            }
+            None => Ok(None),
+        }
+    }
 }
 
 #[cfg(test)]

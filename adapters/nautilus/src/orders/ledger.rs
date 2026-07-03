@@ -50,27 +50,44 @@ pub struct FillObservation {
     /// The observed filled quantity. **Poll:** cumulative `cheqty` for this OrdNo.
     /// **Sc:** this frame's per-execution `execqty`.
     pub qty: i64,
-    /// Fill price (integer KRW): the order's limit price for [`FillSource::Poll`]
-    /// (t0425 carries no execution price, KTD5), `execprc` for [`FillSource::Sc`].
+    /// Fill price (integer KRW): the t0425 row's `cheprice` execution price for
+    /// [`FillSource::Poll`] (KTD4) when it parsed positive, else the order's limit
+    /// price; `execprc` for [`FillSource::Sc`].
     pub price: i64,
+    /// The price is an approximation, not an exact per-fill execution price (KTD4):
+    /// set by the poll seam when `cheprice` was absent/garbage and the limit price
+    /// was used as a fallback. The ledger additionally flags any beyond-first poll
+    /// partial (a row carries one `cheprice` per order, so a second partial's price
+    /// is the row's current value — approximate). Always `false` for the SC lane,
+    /// whose `execprc` is an exact per-execution price.
+    pub price_approximated: bool,
     /// The SC execution number (the dedup key). `None` for a poll observation
     /// (t0425 carries no execution number).
     pub exec_no: Option<String>,
 }
 
 impl FillObservation {
-    /// A poll (t0425) observation: cumulative `cheqty` at the order's limit price.
-    pub fn poll(ord_no: impl Into<String>, cumulative_qty: i64, limit_price: i64) -> Self {
+    /// A poll (t0425) observation: cumulative `cheqty` at the resolved fill `price`
+    /// (KTD4: the row's `cheprice` when positive, else the limit price with
+    /// `price_approximated` set by the caller).
+    pub fn poll(
+        ord_no: impl Into<String>,
+        cumulative_qty: i64,
+        price: i64,
+        price_approximated: bool,
+    ) -> Self {
         FillObservation {
             source: FillSource::Poll,
             ord_no: ord_no.into(),
             qty: cumulative_qty,
-            price: limit_price,
+            price,
+            price_approximated,
             exec_no: None,
         }
     }
 
     /// An SC1 observation: one execution's `execqty` at `execprc`, keyed by `execno`.
+    /// The SC lane's price is exact per-execution, so it is never approximated.
     pub fn sc(
         ord_no: impl Into<String>,
         exec_qty: i64,
@@ -82,6 +99,7 @@ impl FillObservation {
             ord_no: ord_no.into(),
             qty: exec_qty,
             price: exec_price,
+            price_approximated: false,
             exec_no: Some(exec_no.into()),
         }
     }
@@ -97,8 +115,15 @@ pub struct FillDelta {
     pub ord_no: String,
     /// The incremental filled quantity to emit (always > 0).
     pub qty: i64,
-    /// The fill price (integer KRW).
+    /// The fill price (integer KRW): the row's `cheprice` for a poll fill that
+    /// carried one, else the limit-price fallback; `execprc` for an SC fill.
     pub price: i64,
+    /// The price is an approximation, not an exact per-fill execution price (KTD4).
+    /// True when the poll seam fell back to the limit price, OR this is a
+    /// beyond-first poll partial on the OrdNo (its price is the row's current
+    /// `cheprice`). The lab's data-quality collector counts these so the agent never
+    /// reads an approximated price as exact (R14). Always `false` for SC fills.
+    pub price_approximated: bool,
     /// A globally-unique trade id: real `execno` for an SC fill, a deterministic
     /// synthetic (`POLL-{ordno}-{watermark}`) for a poll-derived fill — the two
     /// schemes cannot collide (KTD5).
@@ -406,6 +431,11 @@ impl FillLedger {
         if delta_qty == 0 {
             return ApplyOutcome::none();
         }
+        // A beyond-first poll partial on this OrdNo is approximate by construction:
+        // the row carries one `cheprice` per order, so a later partial's price is the
+        // row's current value, not this increment's exact fill price (KTD4).
+        let beyond_first_poll_partial = obs.source == FillSource::Poll && state.watermark > 0;
+        let price_approximated = obs.price_approximated || beyond_first_poll_partial;
         state.watermark = source_cumulative;
 
         let chain_total = entry.chain_total();
@@ -423,6 +453,7 @@ impl FillLedger {
             ord_no: obs.ord_no.clone(),
             qty: delta_qty,
             price: obs.price,
+            price_approximated,
             trade_id,
             terminal,
         };
@@ -472,7 +503,7 @@ mod tests {
     fn poll_then_sc_of_same_execution_emits_once() {
         let (mut led, cid) = ledger_with("O-1", 100, 60_000, "1001");
         // Poll sees cheqty=30.
-        let out = led.apply(FillObservation::poll("1001", 30, 60_000));
+        let out = led.apply(FillObservation::poll("1001", 30, 60_000, false));
         assert_eq!(out.deltas.len(), 1);
         assert_eq!(out.deltas[0].qty, 30);
         assert_eq!(out.deltas[0].client_order_id, cid);
@@ -516,11 +547,11 @@ mod tests {
     #[test]
     fn post_modify_poll_uses_per_ordno_watermark() {
         let (mut led, _cid) = ledger_with("O-4", 100, 60_000, "1001");
-        let out = led.apply(FillObservation::poll("1001", 30, 60_000));
+        let out = led.apply(FillObservation::poll("1001", 30, 60_000, false));
         assert_eq!(out.deltas[0].qty, 30);
         // A modify chains a new OrdNo 1002 (cheqty restarts at 0 on it).
         assert!(led.append_child("1001", "1002"));
-        let out = led.apply(FillObservation::poll("1002", 40, 60_000));
+        let out = led.apply(FillObservation::poll("1002", 40, 60_000, false));
         assert_eq!(out.deltas.len(), 1);
         assert_eq!(out.deltas[0].qty, 40, "per-OrdNo watermark emits the full 40");
         assert_eq!(out.deltas[0].ord_no, "1002");
@@ -531,8 +562,8 @@ mod tests {
     #[test]
     fn poll_regression_flags_reconcile() {
         let (mut led, _cid) = ledger_with("O-5", 100, 60_000, "1001");
-        led.apply(FillObservation::poll("1001", 50, 60_000));
-        let out = led.apply(FillObservation::poll("1001", 20, 60_000));
+        led.apply(FillObservation::poll("1001", 50, 60_000, false));
+        let out = led.apply(FillObservation::poll("1001", 20, 60_000, false));
         assert!(out.deltas.is_empty());
         assert!(out.reconcile_needed, "a cheqty regression must flag reconcile");
     }
@@ -552,7 +583,7 @@ mod tests {
     #[test]
     fn unknown_ordno_flags_reconcile_no_emission() {
         let (mut led, _cid) = ledger_with("O-7", 100, 60_000, "1001");
-        let out = led.apply(FillObservation::poll("9999", 10, 60_000));
+        let out = led.apply(FillObservation::poll("9999", 10, 60_000, false));
         assert!(out.deltas.is_empty());
         assert!(out.reconcile_needed);
     }
@@ -561,7 +592,7 @@ mod tests {
     #[test]
     fn poll_and_sc_trade_ids_do_not_collide() {
         let (mut led, _cid) = ledger_with("O-8", 100, 60_000, "1001");
-        let poll = led.apply(FillObservation::poll("1001", 30, 60_000));
+        let poll = led.apply(FillObservation::poll("1001", 30, 60_000, false));
         assert_eq!(poll.deltas[0].trade_id, TradeId::from("POLL-1001-30"));
         let sc = led.apply(FillObservation::sc("1001", 70, 60_050, "E2"));
         assert_eq!(sc.deltas[0].trade_id, TradeId::from("SC-E2"));
@@ -581,10 +612,47 @@ mod tests {
         assert_eq!(cands[0].qty, 100);
         // Adopt the real OrdNo 5001 into the RECON- order's chain.
         assert!(led.adopt("5001", "RECON-O-9"));
-        let out = led.apply(FillObservation::poll("5001", 100, 60_000));
+        let out = led.apply(FillObservation::poll("5001", 100, 60_000, false));
         assert_eq!(out.deltas.len(), 1);
         assert_eq!(out.deltas[0].client_order_id, cid);
         assert!(out.deltas[0].terminal);
+    }
+
+    /// U2: a single full poll fill carrying a positive `cheprice` (approximated=false)
+    /// emits at that price, unflagged.
+    #[test]
+    fn single_poll_fill_with_cheprice_is_exact() {
+        let (mut led, _cid) = ledger_with("O-EX", 100, 60_000, "1001");
+        let out = led.apply(FillObservation::poll("1001", 100, 60_050, false));
+        assert_eq!(out.deltas.len(), 1);
+        assert_eq!(out.deltas[0].price, 60_050);
+        assert!(!out.deltas[0].price_approximated, "a first full fill at cheprice is exact");
+    }
+
+    /// U2: a poll fill whose seam fell back to the limit price (approximated=true)
+    /// carries the flag through to the delta.
+    #[test]
+    fn poll_fallback_price_is_flagged_approximated() {
+        let (mut led, _cid) = ledger_with("O-FB", 100, 60_000, "1001");
+        let out = led.apply(FillObservation::poll("1001", 40, 60_000, true));
+        assert_eq!(out.deltas.len(), 1);
+        assert!(out.deltas[0].price_approximated, "a limit-price fallback is approximate");
+    }
+
+    /// U2: a beyond-first poll partial on the same OrdNo is flagged approximate even
+    /// when its `cheprice` parsed positive — a row carries one price per order (KTD4).
+    #[test]
+    fn beyond_first_poll_partial_is_flagged() {
+        let (mut led, _cid) = ledger_with("O-MP", 100, 60_000, "1001");
+        let first = led.apply(FillObservation::poll("1001", 30, 60_050, false));
+        assert_eq!(first.deltas[0].qty, 30);
+        assert!(!first.deltas[0].price_approximated, "the first partial's cheprice is exact");
+        let second = led.apply(FillObservation::poll("1001", 100, 60_070, false));
+        assert_eq!(second.deltas[0].qty, 70);
+        assert!(
+            second.deltas[0].price_approximated,
+            "a beyond-first partial is approximate — one cheprice per row"
+        );
     }
 
     /// Open-order queries drive the poll loop's idle + poll set.
@@ -594,7 +662,7 @@ mod tests {
         assert!(led.has_open_orders());
         assert_eq!(led.open_symbols(), vec!["005930".to_string()]);
         // Fill it fully → no longer open.
-        led.apply(FillObservation::poll("1001", 100, 60_000));
+        led.apply(FillObservation::poll("1001", 100, 60_000, false));
         assert!(!led.has_open_orders());
         assert!(led.open_symbols().is_empty());
     }

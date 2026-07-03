@@ -54,7 +54,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let accumulate = match mode.as_str() {
         "range" => false,
         "accumulate" => true,
-        other => return Err(format!("unknown LS_INGEST_MODE {other:?} (want range | accumulate)").into()),
+        "probe-lookback" => false, // handled early, below
+        other => {
+            return Err(format!(
+                "unknown LS_INGEST_MODE {other:?} (want range | accumulate | probe-lookback)"
+            )
+            .into())
+        }
     };
     let bar_kinds = parse_kinds(&std::env::var("LS_INGEST_KIND").unwrap_or_else(|_| "daily".into()))?;
 
@@ -68,6 +74,13 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Err(_) => LsAdapterConfig::from_env(),
     };
     let sdk = adapter_cfg.build_sdk()?;
+
+    // Staged max-lookback probe (KTD10, R10): locate the earliest served minute date
+    // for a pilot symbol and write <data>/probes/minute-lookback.json. No universe
+    // load — the probe walks a single pilot symbol. Operator-gated.
+    if mode == "probe-lookback" {
+        return run_probe(&sdk, catalog).await;
+    }
 
     // Load the domestic-equity universe.
     let mut provider = InstrumentProvider::new(sdk.clone());
@@ -130,6 +143,41 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         report.budget.per_sec_cap,
         report.budget.min_seconds()
     );
+    Ok(())
+}
+
+/// Staged max-lookback probe (KTD10). Uses a single liquid pilot symbol (default
+/// `005930`) and a windowed backward search anchored at the last closed session,
+/// writing the result to `<data>/probes/minute-lookback.json`.
+async fn run_probe(sdk: &ls_sdk::LsSdk, catalog: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+    let pilot = std::env::var("LS_PROBE_SYMBOL").unwrap_or_else(|_| "005930".into());
+    let ncnt: u32 = std::env::var("LS_PROBE_NCNT").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
+    let now_kst = (Utc::now() + Duration::hours(9)).naive_utc();
+    let anchor = last_closed_session(now_kst, ACCUMULATE_CLOSE_BUFFER);
+    let probed_at = Utc::now().to_rfc3339();
+
+    // A dummy config carrying the catalog path (the probe uses the fetcher, not the
+    // range fields).
+    let config = IngestConfig {
+        catalog_path: catalog,
+        bar_kinds: vec![BarKind::Minute(ncnt)],
+        sdate: String::new(),
+        edate: String::new(),
+        adjusted_prices: true,
+    };
+    let ingestor = Ingestor::new(sdk.clone(), config);
+    match ingestor.run_probe_lookback(&pilot, ncnt, anchor, probed_at).await? {
+        Some(lb) => {
+            println!(
+                "probe: pilot {pilot} earliest minute date {} (depth {} days) — recorded to <data>/probes/minute-lookback.json",
+                lb.earliest_date, lb.depth_days
+            );
+            println!("derive the backfill floor: LS_INGEST_LOOKBACK={} (or anchor − {} days)", lb.earliest_date, lb.depth_days);
+        }
+        None => {
+            println!("probe: pilot {pilot} served no minute history — nothing recorded");
+        }
+    }
     Ok(())
 }
 
