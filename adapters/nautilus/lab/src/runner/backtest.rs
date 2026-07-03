@@ -347,10 +347,10 @@ fn in_range(b: &Bar, start_ns: u64, end_ns: u64) -> bool {
     ts >= start_ns && ts <= end_ns
 }
 
-/// The KST calendar date of a bar (its UTC `ts_event` shifted to KST, +09:00).
+/// The KST calendar date of a bar (delegates to the adapter's single KST
+/// conversion so session-slicing and ingest agree on date boundaries).
 fn kst_date_of(b: &Bar) -> NaiveDate {
-    let dt = chrono::DateTime::<Utc>::from_timestamp_nanos(b.ts_event.as_u64() as i64);
-    (dt + chrono::Duration::hours(nautilus_ls::rules::KST_UTC_OFFSET_HOURS as i64)).date_naive()
+    nautilus_ls::ingest::kst_date_of(b.ts_event)
 }
 
 fn parse_date(s: &str) -> anyhow::Result<NaiveDate> {

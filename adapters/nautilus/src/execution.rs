@@ -196,7 +196,7 @@ impl LsExecClient {
     pub async fn poll_once(&self) -> DrivenOutcome {
         let pacer = poll_pacer();
         let outcome = drive_poll_pass(&self.sdk, &self.ledger, &pacer).await;
-        emit_fill_deltas(&self.ledger, &self.emitter, self.clock, outcome.deltas.clone());
+        emit_fill_deltas(&self.ledger, &self.emitter, self.clock, &outcome.deltas);
         outcome
     }
 
@@ -270,14 +270,16 @@ fn lock_ledger(ledger: &Mutex<FillLedger>) -> std::sync::MutexGuard<'_, FillLedg
 /// Emit each fill delta through the ledger's retained emission context (the only
 /// component alive to hold an `&OrderAny`, KTD1). Poll-derived fills carry no
 /// execution price (KTD5), so they emit at the delta's `price` (the order limit).
+/// Borrows the deltas (emission only reads them) and holds the ledger lock once
+/// across the loop — the body never mutates the ledger.
 fn emit_fill_deltas(
     ledger: &Mutex<FillLedger>,
     emitter: &ExecutionEventEmitter,
     clock: &'static AtomicTime,
-    deltas: Vec<FillDelta>,
+    deltas: &[FillDelta],
 ) {
+    let led = lock_ledger(ledger);
     for delta in deltas {
-        let led = lock_ledger(ledger);
         if let Some(order) = led.order(&delta.client_order_id) {
             emitter.emit_order_filled(
                 order,
@@ -317,7 +319,7 @@ async fn run_sc_consumer(
                         "SC fill for an unknown order — no emission; the poll drive reconciles"
                     );
                 }
-                emit_fill_deltas(&ledger, &emitter, clock, outcome.deltas);
+                emit_fill_deltas(&ledger, &emitter, clock, &outcome.deltas);
             }
             OrderEventMsg::Accept { ord_no, org_ord_no } => {
                 // A modify/cancel acceptance the REST ack may not have chained yet:
@@ -356,7 +358,7 @@ async fn run_poll_loop(
             if outcome.exhausted() {
                 tracing::warn!("t0425 reconcile drive exhausted still inconclusive — reconcile advised");
             }
-            emit_fill_deltas(&ledger, &emitter, clock, outcome.deltas);
+            emit_fill_deltas(&ledger, &emitter, clock, &outcome.deltas);
         }
         tokio::time::sleep(cadence).await;
     }
@@ -481,21 +483,22 @@ fn snapshot(ledger: &Mutex<FillLedger>, client_order_id: &nautilus_model::identi
     let led = lock_ledger(ledger);
     let order = led.order(client_order_id)?.clone();
     let latest_ord_no = led.latest_ord_no(client_order_id)?;
+    // Read qty/price from the ledger's note_modify-maintained fields, NOT the
+    // retained OrderAny (which is emission-identity only and is never rewritten
+    // on a modify): a price-only re-modify (`cmd.quantity == None`) would
+    // otherwise fall back to the ORIGINAL quantity and silently resurrect a
+    // prior size reduction, increasing live exposure.
+    let qty = led
+        .order_qty(client_order_id)
+        .unwrap_or_else(|| order.quantity().as_f64() as i64);
     Some(OrderSnapshot {
         symbol: order.instrument_id().symbol.as_str().to_string(),
         side: order.order_side(),
-        // Read qty/price from the ledger's note_modify-maintained fields, NOT the
-        // retained OrderAny (which is emission-identity only and is never rewritten
-        // on a modify): a price-only re-modify (`cmd.quantity == None`) would
-        // otherwise fall back to the ORIGINAL quantity and silently resurrect a
-        // prior size reduction, increasing live exposure.
-        qty: led.order_qty(client_order_id).unwrap_or_else(|| order.quantity().as_f64() as i64),
         price: led
             .limit_price(client_order_id)
             .unwrap_or_else(|| order.price().map(|p| p.as_f64() as i64).unwrap_or(0)),
-        remaining: led
-            .remaining_qty(client_order_id)
-            .unwrap_or_else(|| order.quantity().as_f64() as i64),
+        remaining: led.remaining_qty(client_order_id).unwrap_or(qty),
+        qty,
         latest_ord_no,
         order,
     })

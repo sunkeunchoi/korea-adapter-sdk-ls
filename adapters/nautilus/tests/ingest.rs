@@ -358,8 +358,10 @@ mod catalog_primitives {
     #[tokio::test]
     async fn delete_of_an_unstored_series_is_a_noop_ok() {
         let dir = tempdir().unwrap();
+        // Deliberately NOT pre-created: the delete entry point must be
+        // self-sufficient on a fresh path (the catalog-construction gotcha) and
+        // still honor its no-op contract.
         let catalog = dir.path().join("catalog");
-        std::fs::create_dir_all(&catalog).unwrap();
         let bar_type = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
         delete_bar_series(&catalog, bar_type)
             .await
@@ -773,6 +775,46 @@ mod basis_shift_heal {
         assert!(!cp.is_shifted(SAMSUNG, "1-DAY"));
         assert_eq!(cp.rebase_events().len(), 1);
         assert_eq!(stored_closes(&catalog).await, vec![15000, 15450, 15500, 15750]);
+    }
+
+    /// Edge: a zero-bar re-pull for a series that HAD stored bars must NOT
+    /// complete the heal — completing would pin the watermark over the wiped
+    /// store and permanently lose the history to a transient empty gateway
+    /// response. The mark stays; a later run re-pulls when the server recovers.
+    #[tokio::test]
+    async fn empty_repull_of_a_nonempty_series_keeps_the_mark() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let shared = SharedSeries::one(v1());
+        let sdk = sdk_with_series(&server, shared.clone()).await;
+        let universe = [InstrumentId::from(SAMSUNG)];
+        let floor = ymd(2024, 1, 1);
+
+        let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
+        ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+
+        let cp_path = catalog.join("ingest-checkpoint.json");
+        let mut cp = Checkpoint::load(&cp_path).unwrap();
+        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5));
+        cp.save(&cp_path).unwrap();
+        // A transient gateway hiccup: the server serves NOTHING for the symbol.
+        shared.set(series(&[]));
+
+        let mut ing2 = Ingestor::new(sdk.clone(), daily_config(&catalog));
+        let report = ing2.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        let cp = checkpoint_at(&catalog);
+        assert!(cp.is_shifted(SAMSUNG, "1-DAY"), "an empty re-pull must not complete the heal");
+        assert!(cp.rebase_events().is_empty());
+        assert!(cp.watermark(SAMSUNG, "1-DAY").is_none(), "no watermark pinned over the wiped store");
+        assert_eq!(report.gaps.len(), 1, "the incomplete heal is reported");
+
+        // The server recovers → the next run re-pulls and completes.
+        shared.set(v2());
+        let mut ing3 = Ingestor::new(sdk, daily_config(&catalog));
+        ing3.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        assert!(!checkpoint_at(&catalog).is_shifted(SAMSUNG, "1-DAY"));
+        assert_eq!(stored_closes(&catalog).await, vec![30000, 30900, 31000, 31500]);
     }
 
     // --- epoch re-base mode (data-fidelity U4, R6/KTD-4) ---

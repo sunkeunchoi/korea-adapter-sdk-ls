@@ -503,6 +503,17 @@ enum OverlapVerdict {
     Insufficient,
 }
 
+/// The last `n` bars of an ascending series — the overlap tail. Detection and
+/// the heal's re-verify MUST prepare their stored side through this one helper:
+/// the re-verify exists to re-check the invariant detection compared, so the
+/// two tails must be defined identically.
+fn overlap_tail(mut bars: Vec<Bar>, n: usize) -> Vec<Bar> {
+    if bars.len() > n {
+        bars.drain(..bars.len() - n);
+    }
+    bars
+}
+
 fn ohlc_by_ts(bars: &[Bar]) -> BTreeMap<u64, (Price, Price, Price, Price)> {
     bars.iter()
         .map(|b| (b.ts_event.as_u64(), (b.open, b.high, b.low, b.close)))
@@ -807,10 +818,49 @@ impl Ingestor {
             for &kind in &self.config.bar_kinds {
                 let label = kind.label();
                 let bar_type = kind.bar_type(*id)?;
+                // Decide whether this triple heals or appends. Set only on the
+                // normal (append) path.
+                let mut pending_start: Option<NaiveDate> = None;
                 // The shifted mark outranks the watermark as authority (KTD-2): a
                 // marked symbol heals regardless of watermark state, BEFORE the
                 // already-current skip below.
-                if matches!(kind, BarKind::Daily) && checkpoint.is_shifted(&instrument, &label) {
+                let heal_now = if matches!(kind, BarKind::Daily) && checkpoint.is_shifted(&instrument, &label) {
+                    true
+                } else {
+                    // Range = watermark+1 .. last closed session (or floor if unseen).
+                    let start = match checkpoint.watermark(&instrument, &label) {
+                        Some(d) => d.succ_opt().expect("a date always has a successor"),
+                        None => lookback_floor,
+                    };
+                    if start > last_closed {
+                        // Already current — the sole skip authority makes this a no-op
+                        // (no bar fetch), even though the universe re-snapshot still ran.
+                        skipped += 1;
+                        continue;
+                    }
+                    pending_start = Some(start);
+                    // Basis-shift detection (KTD-3): before appending new daily bars,
+                    // re-fetch the overlap window ending at the watermark and compare
+                    // against stored bars. No watermark (first-ever accumulate) or an
+                    // insufficient overlap skips detection entirely.
+                    let mut detected = false;
+                    if matches!(kind, BarKind::Daily) {
+                        if let Some(wm) = checkpoint.watermark(&instrument, &label) {
+                            if self.detect_shift(&shcode, bar_type, wm).await? {
+                                // Save the mark atomically BEFORE any delete (KTD-2:
+                                // mark-before-wipe is load-bearing — the reverse order
+                                // plus a crash would leave a high watermark over an
+                                // empty store and silently truncate history forever).
+                                checkpoint.mark_shifted(&instrument, &label, last_closed);
+                                checkpoint.save(&checkpoint_path)?;
+                                tracing::warn!(instrument = %instrument, "adjustment-basis shift detected; healing");
+                                detected = true;
+                            }
+                        }
+                    }
+                    detected
+                };
+                if heal_now {
                     match self
                         .heal_daily(&mut checkpoint, &checkpoint_path, &shcode, &instrument, &label, bar_type, last_closed, lookback_floor)
                         .await?
@@ -829,51 +879,7 @@ impl Ingestor {
                     }
                     continue;
                 }
-                // Range = watermark+1 .. last closed session (or floor if unseen).
-                let start = match checkpoint.watermark(&instrument, &label) {
-                    Some(d) => d.succ_opt().expect("a date always has a successor"),
-                    None => lookback_floor,
-                };
-                if start > last_closed {
-                    // Already current — the sole skip authority makes this a no-op
-                    // (no bar fetch), even though the universe re-snapshot still ran.
-                    skipped += 1;
-                    continue;
-                }
-                // Basis-shift detection (KTD-3): before appending new daily bars,
-                // re-fetch the overlap window ending at the watermark and compare
-                // against stored bars. No watermark (first-ever accumulate) or an
-                // insufficient overlap skips detection entirely.
-                if matches!(kind, BarKind::Daily) {
-                    if let Some(wm) = checkpoint.watermark(&instrument, &label) {
-                        if self.detect_shift(&shcode, bar_type, wm).await? {
-                            // Save the mark atomically BEFORE any delete (KTD-2:
-                            // mark-before-wipe is load-bearing — the reverse order
-                            // plus a crash would leave a high watermark over an
-                            // empty store and silently truncate history forever).
-                            checkpoint.mark_shifted(&instrument, &label, last_closed);
-                            checkpoint.save(&checkpoint_path)?;
-                            tracing::warn!(instrument = %instrument, "adjustment-basis shift detected; healing");
-                            match self
-                                .heal_daily(&mut checkpoint, &checkpoint_path, &shcode, &instrument, &label, bar_type, last_closed, lookback_floor)
-                                .await?
-                            {
-                                HealOutcome::Healed(n) => {
-                                    bars_written += n;
-                                    ingested += 1;
-                                }
-                                HealOutcome::Refused(r) => heal_refusals.push(r),
-                                HealOutcome::Incomplete => gaps_this_run.push(CoverageGap {
-                                    instrument: instrument.clone(),
-                                    bar_type: label.clone(),
-                                    range: format!("{}..{}", fmt_ymd(lookback_floor), fmt_ymd(last_closed)),
-                                    reason: GapReason::PaperThin,
-                                }),
-                            }
-                            continue;
-                        }
-                    }
-                }
+                let start = pending_start.expect("the append path always computed a start");
                 let sdate = start.format("%Y%m%d").to_string();
                 let edate = last_closed.format("%Y%m%d").to_string();
                 let range = format!("{sdate}..{edate}");
@@ -930,11 +936,20 @@ impl Ingestor {
         checkpoint.prune_below_watermarks();
         checkpoint.save(&checkpoint_path)?;
 
+        // Each pending daily triple now costs a detection overlap fetch ON TOP
+        // of the append fetch (KTD-3/KTD-4) — the printed lower bound must say
+        // so, or the operator sizes the no-live window at half the real cost.
+        let daily_kinds = self
+            .config
+            .bar_kinds
+            .iter()
+            .filter(|k| matches!(k, BarKind::Daily))
+            .count();
         let budget = BudgetEstimate {
             symbols: universe.len(),
             bar_kinds: self.config.bar_kinds.len(),
             per_sec_cap: self.fetcher.daily_pacer_cap(),
-            min_requests: universe.len() * self.config.bar_kinds.len(),
+            min_requests: universe.len() * (self.config.bar_kinds.len() + daily_kinds),
         };
         tracing::info!(
             symbols = budget.symbols,
@@ -998,11 +1013,10 @@ impl Ingestor {
         // Stored side: the last `overlap_days` stored trading days in the window.
         let ws_ns = kst_to_unix_nanos(wstart, NaiveTime::MIN)?;
         let we_ns = kst_to_unix_nanos(watermark, KRX_REGULAR_CLOSE)?;
-        let mut stored =
-            read_bars_scoped(&self.config.catalog_path, bar_type, Some(ws_ns), Some(we_ns)).await?;
-        if stored.len() > self.config.overlap_days {
-            stored.drain(..stored.len() - self.config.overlap_days);
-        }
+        let stored = overlap_tail(
+            read_bars_scoped(&self.config.catalog_path, bar_type, Some(ws_ns), Some(we_ns)).await?,
+            self.config.overlap_days,
+        );
         if stored.len() < MIN_OVERLAP_DATES {
             return Ok(false);
         }
@@ -1070,29 +1084,43 @@ impl Ingestor {
                 tracing::warn!(instrument, "heal re-pull truncated; symbol stays marked");
                 return Ok(HealOutcome::Incomplete);
             }
-            // Cursor completed with zero bars — the server serves nothing for
-            // this symbol anymore; the (empty) series is on a single basis.
-            TripleOutcome::Gap(_) => Vec::new(),
+            // Cursor completed with zero bars. Trust it as completion ONLY for a
+            // series that was already empty before the wipe — for a series that
+            // HAD stored bars, an empty page is far more likely a transient
+            // gateway hiccup than a genuine delisting, and completing here would
+            // pin the watermark over a wiped store: silent, permanent history
+            // loss with no retry path. Keep the mark instead; the next run
+            // re-enters at the (now no-op) wipe and re-pulls.
+            TripleOutcome::Gap(_) => {
+                if !stored.is_empty() {
+                    tracing::warn!(
+                        instrument,
+                        "heal re-pull returned no bars for a previously non-empty series; symbol stays marked"
+                    );
+                    return Ok(HealOutcome::Incomplete);
+                }
+                Vec::new()
+            }
         };
+        // Capture what the re-verify needs BEFORE moving `pulled` into the write
+        // (the tail is a handful of bars; cloning the whole multi-year series
+        // per healed symbol would be pure ownership plumbing).
+        let pulled_len = pulled.len();
+        let wstart = overlap_window_start(last_closed, self.config.overlap_days);
+        let ws_ns = kst_to_unix_nanos(wstart, NaiveTime::MIN)?.as_u64();
+        let tail = overlap_tail(
+            pulled.iter().filter(|b| b.ts_event.as_u64() >= ws_ns).cloned().collect(),
+            self.config.overlap_days,
+        );
         if !pulled.is_empty() {
-            write_bars(&self.config.catalog_path, pulled.clone()).await?;
+            write_bars(&self.config.catalog_path, pulled).await?;
         }
 
         // Re-verify (the gateway may rewrite the series again while the heal is
         // in flight): one more overlap fetch against the just-pulled tail. Only a
         // positive mismatch keeps the mark — an insufficient overlap (shallow
         // history) must not pin a symbol shifted forever.
-        if !pulled.is_empty() {
-            let wstart = overlap_window_start(last_closed, self.config.overlap_days);
-            let ws_ns = kst_to_unix_nanos(wstart, NaiveTime::MIN)?.as_u64();
-            let mut tail: Vec<Bar> = pulled
-                .iter()
-                .filter(|b| b.ts_event.as_u64() >= ws_ns)
-                .cloned()
-                .collect();
-            if tail.len() > self.config.overlap_days {
-                tail.drain(..tail.len() - self.config.overlap_days);
-            }
+        if !tail.is_empty() {
             if let Some(fetched) =
                 fetch_overlap(&self.fetcher, shcode, bar_type, wstart, last_closed).await?
             {
@@ -1118,14 +1146,16 @@ impl Ingestor {
         });
         checkpoint.set_watermark(instrument, label, last_closed);
         checkpoint.save(checkpoint_path)?;
-        tracing::info!(instrument, bars = pulled.len(), "basis-shift heal complete");
-        Ok(HealOutcome::Healed(pulled.len()))
+        tracing::info!(instrument, bars = pulled_len, "basis-shift heal complete");
+        Ok(HealOutcome::Healed(pulled_len))
     }
 }
 
-/// The KST calendar date of a bar timestamp (inverse of [`kst_to_unix_nanos`]'s
-/// date component).
-fn kst_date_of(ts: UnixNanos) -> NaiveDate {
+/// The KST calendar date of a bar timestamp — the inverse of
+/// [`kst_to_unix_nanos`]'s date component. Public so downstream (the lab's
+/// session-slicing) shares ONE KST-date conversion instead of re-deriving the
+/// +9h offset.
+pub fn kst_date_of(ts: UnixNanos) -> NaiveDate {
     let kst = FixedOffset::east_opt(KST_UTC_OFFSET_HOURS * 3600).expect("KST offset is valid");
     chrono::DateTime::<chrono::Utc>::from_timestamp_nanos(ts.as_u64() as i64)
         .with_timezone(&kst)
@@ -1222,6 +1252,11 @@ pub async fn delete_bar_series(catalog_path: &Path, bar_type: BarType) -> Adapte
     let path = catalog_path.to_path_buf();
     let identifier = bar_type.to_string();
     tokio::task::spawn_blocking(move || {
+        // Mutating catalog entry points create the dir themselves (the
+        // block-on-from-async solution doc: `new` canonicalizes and fails on a
+        // missing dir) — this also keeps the no-op contract on a fresh path.
+        std::fs::create_dir_all(&path)
+            .map_err(|e| AdapterError::Ingest(format!("mkdir catalog {}: {e}", path.display())))?;
         let mut catalog = ParquetDataCatalog::new(&path, None, None, None, None);
         catalog
             .delete_data_range("bars", Some(&identifier), None, None)

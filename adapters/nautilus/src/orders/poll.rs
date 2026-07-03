@@ -37,8 +37,10 @@ pub const T0425_POLL_PER_SEC: u32 = 2;
 
 /// One poll pass's result: the fill deltas to emit + whether anything was
 /// inconclusive (truncation / regression / unresolvable row) and needs a reconcile.
+/// Crate-private: external callers go through [`drive_poll_pass`] — a raw
+/// single pass would bypass the bounded reconcile drive (KTD-7).
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct PollOutcome {
+pub(crate) struct PollOutcome {
     /// Executions to emit (already deduped by the ledger).
     pub deltas: Vec<FillDelta>,
     /// A page was truncated, a cumulative regressed, or a row could not be resolved
@@ -76,7 +78,7 @@ fn side_from_medosu(medosu: &str) -> Option<OrderSide> {
 /// (KTD5). Never `collect_all` (page-cap trap): a single page whose `cts_ordno` is
 /// non-empty is treated as truncated and drives a reconcile, never a fill
 /// conclusion.
-pub async fn poll_open_orders<F: T0425Fetcher>(
+pub(crate) async fn poll_open_orders<F: T0425Fetcher>(
     fetcher: &F,
     ledger: &Mutex<FillLedger>,
     pacer: &Pacer,
