@@ -28,6 +28,8 @@
 //! - [`recording`] — the cross-run decisions registry
 //!   [`recording::DecisionRecorder`], append-only + scrubbed at write time
 //!   (KTD5, R9).
+//! - [`replay`] — engine-free guardrail-swap re-evaluation of a recorded
+//!   stream, with the first-divergence audit boundary (R7).
 
 pub mod action;
 pub mod capability;
@@ -40,6 +42,7 @@ pub mod pipeline;
 pub mod policies;
 pub mod policy;
 pub mod recording;
+pub mod replay;
 
 pub use action::*;
 pub use capability::*;
@@ -52,3 +55,4 @@ pub use pipeline::*;
 pub use policies::*;
 pub use policy::*;
 pub use recording::*;
+pub use replay::*;
