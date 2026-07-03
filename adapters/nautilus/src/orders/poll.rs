@@ -204,6 +204,81 @@ pub fn poll_pacer() -> Pacer {
     Pacer::per_sec(T0425_POLL_PER_SEC)
 }
 
+// ---------------------------------------------------------------------------
+// Bounded reconcile drive (data-fidelity U7, R9/KTD-7): transient poll
+// inconclusiveness self-heals inside the pass; only exhaustion reaches the
+// data-quality report.
+// ---------------------------------------------------------------------------
+
+/// Re-polls a drive makes after an inconclusive pass (2-3 attempts total — the
+/// cadence loop re-fires anyway, so the budget stays small).
+pub const DRIVE_MAX_REPOLLS: u32 = 2;
+
+/// Base backoff between drive re-polls. Kept small relative to the 2-second
+/// cadence so a sequential drive does not starve other symbols' fills.
+const DRIVE_BACKOFF: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// The explicit terminal state of a driven poll pass (KTD-7) — without it,
+/// callers would resolve the healed-vs-exhausted distinction inconsistently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DriveTerminal {
+    /// A pass concluded cleanly (possibly after re-polls) — nothing is reported.
+    Resolved,
+    /// The re-poll budget ran out with the pass still inconclusive — the live
+    /// runner records a reconcile-advised condition.
+    Exhausted,
+}
+
+/// A driven poll pass's result: fill deltas accumulated across the pass and its
+/// re-polls (each already exactly-once via the ledger's per-OrdNo watermarks +
+/// execno dedup), plus the terminal state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DrivenOutcome {
+    /// Executions to emit, in observation order across attempts.
+    pub deltas: Vec<FillDelta>,
+    /// How the drive ended.
+    pub terminal: DriveTerminal,
+}
+
+impl DrivenOutcome {
+    /// Whether the drive exhausted its budget still inconclusive.
+    pub fn exhausted(&self) -> bool {
+        self.terminal == DriveTerminal::Exhausted
+    }
+}
+
+/// Run a poll pass and, on `reconcile_needed`, re-poll with bounded backoff
+/// (R9/KTD-7). Shares the caller's single `pacer` — constructing a second pacer
+/// here could jointly exceed t0425's 2/s gateway cap (IGW00201). Any
+/// inconclusive cause (truncation, regression, unresolvable row, request
+/// failure) consumes the same attempt budget — a regression during a re-poll
+/// counts toward exhaustion rather than restarting it.
+pub async fn drive_poll_pass<F: T0425Fetcher>(
+    fetcher: &F,
+    ledger: &Mutex<FillLedger>,
+    pacer: &Pacer,
+) -> DrivenOutcome {
+    let mut pass = poll_open_orders(fetcher, ledger, pacer).await;
+    let mut deltas = std::mem::take(&mut pass.deltas);
+    let mut attempts = 0u32;
+    while pass.reconcile_needed {
+        if attempts >= DRIVE_MAX_REPOLLS {
+            return DrivenOutcome {
+                deltas,
+                terminal: DriveTerminal::Exhausted,
+            };
+        }
+        attempts += 1;
+        tokio::time::sleep(DRIVE_BACKOFF * attempts).await;
+        pass = poll_open_orders(fetcher, ledger, pacer).await;
+        deltas.extend(std::mem::take(&mut pass.deltas));
+    }
+    DrivenOutcome {
+        deltas,
+        terminal: DriveTerminal::Resolved,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -419,6 +494,131 @@ mod tests {
         let out = poll_open_orders(&Never, &led, &poll_pacer()).await;
         assert!(out.deltas.is_empty());
         assert!(!out.reconcile_needed);
+    }
+
+    // --- bounded reconcile drive (data-fidelity U7, R9/KTD-7) ---
+
+    /// Serves a scripted sequence of responses; the last repeats forever. Counts
+    /// calls so tests can assert the drive's attempt budget.
+    struct ScriptedFetcher {
+        responses: Mutex<std::collections::VecDeque<T0425Response>>,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl ScriptedFetcher {
+        fn new(responses: Vec<T0425Response>) -> Self {
+            assert!(!responses.is_empty());
+            ScriptedFetcher {
+                responses: Mutex::new(responses.into()),
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+        fn calls(&self) -> usize {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl T0425Fetcher for ScriptedFetcher {
+        async fn inquiry_symbol(&self, _symbol: &str) -> AdapterResult<T0425Response> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let mut q = self.responses.lock().unwrap();
+            Ok(if q.len() > 1 {
+                q.pop_front().unwrap()
+            } else {
+                q.front().cloned().unwrap()
+            })
+        }
+    }
+
+    /// AE4 (resolved arm): a pass that truncates once then completes on the
+    /// re-poll resolves — the deltas emit and nothing is left to report.
+    #[tokio::test]
+    async fn drive_resolves_a_transient_truncation() {
+        let led = ledger_with_order("O-D1", 100, 60_000, "1001");
+        let fetcher = ScriptedFetcher::new(vec![
+            resp("NEXT", vec![]),
+            resp("", vec![row("1001", "", "매수", "100", "60000", "40", "60")]),
+        ]);
+        let out = drive_poll_pass(&fetcher, &led, &poll_pacer()).await;
+        assert_eq!(out.terminal, DriveTerminal::Resolved);
+        assert_eq!(out.deltas.len(), 1, "the re-poll's fill emits from the drive");
+        assert_eq!(out.deltas[0].qty, 40);
+        assert_eq!(fetcher.calls(), 2, "one re-poll healed it");
+    }
+
+    /// AE4 (exhausted arm): truncation persisting through the whole budget ends
+    /// Exhausted after exactly 1 + DRIVE_MAX_REPOLLS attempts.
+    #[tokio::test]
+    async fn drive_exhausts_on_persistent_truncation() {
+        let led = ledger_with_order("O-D2", 100, 60_000, "1001");
+        let fetcher = ScriptedFetcher::new(vec![resp("NEXT", vec![])]);
+        let out = drive_poll_pass(&fetcher, &led, &poll_pacer()).await;
+        assert_eq!(out.terminal, DriveTerminal::Exhausted);
+        assert!(out.deltas.is_empty());
+        assert_eq!(
+            fetcher.calls() as u32,
+            1 + DRIVE_MAX_REPOLLS,
+            "the budget is bounded and consumed exactly once"
+        );
+    }
+
+    /// A regression row during a re-poll counts toward exhaustion rather than
+    /// restarting the budget: mixed inconclusive causes (truncation, then
+    /// regressions) still end after 1 + DRIVE_MAX_REPOLLS attempts.
+    #[tokio::test]
+    async fn regression_counts_toward_exhaustion_not_a_reset() {
+        let led = ledger_with_order("O-D3", 100, 60_000, "1001");
+        // Pre-establish a watermark of 50 on OrdNo 1001.
+        lock(&led).apply(FillObservation::poll("1001", 50, 60_000, false));
+        let fetcher = ScriptedFetcher::new(vec![
+            resp("NEXT", vec![]), // attempt 1: truncated
+            // Attempts 2..: cheqty 20 < watermark 50 — a cumulative regression.
+            resp("", vec![row("1001", "", "매수", "100", "60000", "20", "80")]),
+        ]);
+        let out = drive_poll_pass(&fetcher, &led, &poll_pacer()).await;
+        assert_eq!(out.terminal, DriveTerminal::Exhausted);
+        assert!(out.deltas.is_empty(), "a regression never emits");
+        assert_eq!(
+            fetcher.calls() as u32,
+            1 + DRIVE_MAX_REPOLLS,
+            "the regression consumed budget instead of resetting it"
+        );
+    }
+
+    /// Exactly-once across a drive: a fill observed on the first pass and
+    /// re-observed (same cumulative) on a re-poll emits once — the per-OrdNo
+    /// watermark + execno dedup cover the drive's re-poll path explicitly.
+    #[tokio::test]
+    async fn fills_reobserved_during_a_drive_emit_once() {
+        let led = ledger_with_order("O-D4", 100, 60_000, "1001");
+        // Every pass carries the SAME cumulative fill (40) plus a garbage-cheqty
+        // row that keeps the pass inconclusive so the drive re-polls.
+        let inconclusive = resp(
+            "",
+            vec![
+                row("1001", "", "매수", "100", "60000", "40", "60"),
+                row("1001", "", "매수", "100", "60000", "N/A", "60"),
+            ],
+        );
+        let fetcher = ScriptedFetcher::new(vec![inconclusive]);
+        let out = drive_poll_pass(&fetcher, &led, &poll_pacer()).await;
+        assert_eq!(out.terminal, DriveTerminal::Exhausted, "the garbage row exhausts the drive");
+        assert_eq!(out.deltas.len(), 1, "the re-observed cumulative emits exactly once");
+        assert_eq!(out.deltas[0].qty, 40);
+    }
+
+    /// A clean pass never re-polls — the drive is free when nothing is wrong.
+    #[tokio::test]
+    async fn clean_pass_makes_no_repolls() {
+        let led = ledger_with_order("O-D5", 100, 60_000, "1001");
+        let fetcher = ScriptedFetcher::new(vec![resp(
+            "",
+            vec![row("1001", "", "매수", "100", "60000", "40", "60")],
+        )]);
+        let out = drive_poll_pass(&fetcher, &led, &poll_pacer()).await;
+        assert_eq!(out.terminal, DriveTerminal::Resolved);
+        assert_eq!(fetcher.calls(), 1, "a conclusive pass is not re-polled");
     }
 
     /// Partial then full fill across two polls → two deltas, second terminal.

@@ -37,7 +37,7 @@ use tokio::sync::mpsc;
 use crate::error::{AdapterError, AdapterResult};
 use crate::orders::ledger::{FillDelta, FillLedger};
 use crate::orders::map::{classify_reconcile, classify_submit_error, ReconcileEvent, SubmitAction};
-use crate::orders::poll::{poll_open_orders, poll_pacer};
+use crate::orders::poll::{drive_poll_pass, poll_pacer, DrivenOutcome};
 use crate::ws::rows::OrderEventMsg;
 use crate::ws::supervisor::{RowKind, SubSpec, WsSupervisor};
 use crate::KRX_VENUE;
@@ -65,6 +65,9 @@ pub struct LsExecClient {
     tasks: Vec<tokio::task::JoinHandle<()>>,
     /// Last observed order-lane WS drop count (AE6 reconcile trigger).
     last_drop_count: Arc<AtomicU64>,
+    /// SC-lane unknown-fill trigger (KTD-7): set by the SC consumer, consumed by
+    /// the poll loop — arms the reconcile drive on the next pass.
+    reconcile_armed: Arc<AtomicBool>,
 }
 
 impl LsExecClient {
@@ -100,6 +103,7 @@ impl LsExecClient {
             sc_supervisor: None,
             tasks: Vec::new(),
             last_drop_count: Arc::new(AtomicU64::new(0)),
+            reconcile_armed: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -183,12 +187,15 @@ impl LsExecClient {
         }
     }
 
-    /// Run a single t0425 poll pass and emit any derived fills (KTD5). A
-    /// deterministic seam for tests + operator diagnostics; the live poll loop (U3)
-    /// calls the same primitives on its cadence. Returns the pass outcome.
-    pub async fn poll_once(&self) -> crate::orders::poll::PollOutcome {
+    /// Run a single DRIVEN t0425 poll pass and emit any derived fills (KTD5,
+    /// KTD-7): an inconclusive pass re-polls with bounded backoff inside the
+    /// shared primitive, so transient flakiness self-heals here too. A
+    /// deterministic seam for tests + operator diagnostics; the live poll loop
+    /// (U3) calls the same primitive on its cadence. Returns the driven outcome
+    /// — the live runner records a reconcile condition only on `Exhausted`.
+    pub async fn poll_once(&self) -> DrivenOutcome {
         let pacer = poll_pacer();
-        let outcome = poll_open_orders(&self.sdk, &self.ledger, &pacer).await;
+        let outcome = drive_poll_pass(&self.sdk, &self.ledger, &pacer).await;
         emit_fill_deltas(&self.ledger, &self.emitter, self.clock, outcome.deltas.clone());
         outcome
     }
@@ -295,14 +302,19 @@ async fn run_sc_consumer(
     ledger: Arc<Mutex<FillLedger>>,
     emitter: ExecutionEventEmitter,
     clock: &'static AtomicTime,
+    reconcile_armed: Arc<AtomicBool>,
 ) {
     while let Some(msg) = rx.recv().await {
         match msg {
             OrderEventMsg::Fill(obs) => {
                 let outcome = lock_ledger(&ledger).apply(obs);
                 if outcome.reconcile_needed {
+                    // Arm the reconcile drive on the poll loop's next pass
+                    // (KTD-7) — the SC lane itself never emits for an unknown
+                    // order.
+                    reconcile_armed.store(true, Ordering::SeqCst);
                     tracing::warn!(
-                        "SC fill for an unknown order — no emission; the poll lane reconciles"
+                        "SC fill for an unknown order — no emission; the poll drive reconciles"
                     );
                 }
                 emit_fill_deltas(&ledger, &emitter, clock, outcome.deltas);
@@ -323,22 +335,26 @@ async fn run_sc_consumer(
     }
 }
 
-/// The authoritative poll loop (U3): while any order is open, run a paced t0425 pass
-/// and emit the derived fills. Idles when flat. Fills emit even when the SC lane is
-/// silent (AE3).
+/// The authoritative poll loop (U3): while any order is open (or the SC lane
+/// armed a reconcile), run a paced, DRIVEN t0425 pass and emit the derived
+/// fills. The drive (KTD-7) self-heals transient inconclusiveness inside the
+/// pass; only exhaustion is left standing for the live runner's report. Idles
+/// when flat. Fills emit even when the SC lane is silent (AE3).
 async fn run_poll_loop(
     sdk: LsSdk,
     ledger: Arc<Mutex<FillLedger>>,
     emitter: ExecutionEventEmitter,
     clock: &'static AtomicTime,
     cadence: Duration,
+    reconcile_armed: Arc<AtomicBool>,
 ) {
     let pacer = poll_pacer();
     loop {
-        if lock_ledger(&ledger).has_open_orders() {
-            let outcome = poll_open_orders(&sdk, &ledger, &pacer).await;
-            if outcome.reconcile_needed {
-                tracing::warn!("t0425 poll pass was inconclusive (truncation/unresolved) — reconcile advised");
+        let armed = reconcile_armed.swap(false, Ordering::SeqCst);
+        if armed || lock_ledger(&ledger).has_open_orders() {
+            let outcome = drive_poll_pass(&sdk, &ledger, &pacer).await;
+            if outcome.exhausted() {
+                tracing::warn!("t0425 reconcile drive exhausted still inconclusive — reconcile advised");
             }
             emit_fill_deltas(&ledger, &emitter, clock, outcome.deltas);
         }
@@ -725,6 +741,7 @@ impl ExecutionClient for LsExecClient {
             Arc::clone(&self.ledger),
             self.emitter.clone(),
             self.clock,
+            Arc::clone(&self.reconcile_armed),
         ));
         let poll = tokio::spawn(run_poll_loop(
             self.sdk.clone(),
@@ -732,6 +749,7 @@ impl ExecutionClient for LsExecClient {
             self.emitter.clone(),
             self.clock,
             self.poll_cadence,
+            Arc::clone(&self.reconcile_armed),
         ));
 
         self.sc_supervisor = Some(sc_sup);

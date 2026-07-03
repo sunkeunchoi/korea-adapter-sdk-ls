@@ -573,6 +573,77 @@ async fn price_only_remodify_keeps_the_reduced_quantity() {
     );
 }
 
+/// Mount a t0425 responder that truncates (non-empty `cts_ordno`) the first
+/// `truncate_n` calls, then serves a complete page with `rows` — the reconcile
+/// drive's transient-flakiness shape (AE4).
+async fn mount_t0425_flaky(server: &MockServer, truncate_n: usize, rows: serde_json::Value) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    let calls = Arc::new(AtomicUsize::new(0));
+    Mock::given(method("POST"))
+        .and(path(ACCNO_PATH))
+        .and(header("tr_cd", "t0425"))
+        .respond_with(move |_req: &wiremock::Request| {
+            let n = calls.fetch_add(1, Ordering::SeqCst);
+            let cts = if n < truncate_n { "NEXT" } else { "" };
+            ok_json(serde_json::json!({
+                "rsp_cd": "00000",
+                "t0425OutBlock": { "tqty": "0", "tcheqty": "0", "tordrem": "0", "cts_ordno": cts },
+                "t0425OutBlock1": if cts.is_empty() { rows.clone() } else { serde_json::json!([]) }
+            }))
+        })
+        .mount(server)
+        .await;
+}
+
+/// AE4 (resolved arm) / R9: a poll pass that truncates once then completes on the
+/// drive's re-poll self-heals — the fill emits and the outcome is Resolved (the
+/// run's report carries no reconcile-advised condition).
+#[tokio::test]
+async fn transient_truncation_self_heals_inside_poll_once() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    mount_order_ok(&server, "CSPAT00601", "1001", "").await;
+    let order = test_order("O-DRV-1", 10, 60_000);
+    client.submit_order(submit_cmd(&order)).unwrap();
+    drain_submit_accept(&mut rx).await;
+
+    mount_t0425_flaky(&server, 1, serde_json::json!([t0425_row("1001", "", "4", "6", "체결")])).await;
+    let outcome = client.poll_once().await;
+    assert!(!outcome.exhausted(), "one re-poll resolves the transient truncation");
+    assert_eq!(outcome.deltas.len(), 1);
+    assert!(matches!(next_order_event(&mut rx).await, OrderEventAny::Filled(_)));
+    assert_eq!(count_requests(&server, "t0425").await, 2, "pass + one re-poll");
+}
+
+/// AE4 (exhausted arm) / R9: truncation persisting through the bounded drive
+/// ends Exhausted — the condition the live runner records.
+#[tokio::test]
+async fn persistent_truncation_exhausts_the_drive() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    mount_order_ok(&server, "CSPAT00601", "1001", "").await;
+    let order = test_order("O-DRV-2", 10, 60_000);
+    client.submit_order(submit_cmd(&order)).unwrap();
+    drain_submit_accept(&mut rx).await;
+
+    mount_t0425_flaky(&server, usize::MAX, serde_json::json!([])).await;
+    let outcome = client.poll_once().await;
+    assert!(outcome.exhausted(), "persistent truncation exhausts the bounded drive");
+    assert!(outcome.deltas.is_empty());
+    assert_eq!(
+        count_requests(&server, "t0425").await,
+        3,
+        "pass + DRIVE_MAX_REPOLLS re-polls, then stop — the budget is bounded"
+    );
+}
+
 fn cancel_cmd(client_id: &str) -> CancelOrder {
     CancelOrder::new(
         TraderId::from("LS-TRADER-001"),
