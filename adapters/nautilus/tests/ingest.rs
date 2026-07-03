@@ -774,6 +774,85 @@ mod basis_shift_heal {
         assert_eq!(cp.rebase_events().len(), 1);
         assert_eq!(stored_closes(&catalog).await, vec![15000, 15450, 15500, 15750]);
     }
+
+    // --- epoch re-base mode (data-fidelity U4, R6/KTD-4) ---
+
+    const HYNIX: &str = "000660.XKRX";
+
+    /// A rebase over a small fixture universe re-pulls every symbol and ends
+    /// with zero marks and one event per symbol.
+    #[tokio::test]
+    async fn epoch_rebase_heals_every_symbol_and_ends_clean() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let shared = SharedSeries::one(v1());
+        let sdk = sdk_with_series(&server, shared.clone()).await;
+        let universe = [InstrumentId::from(SAMSUNG), InstrumentId::from(HYNIX)];
+        let floor = ymd(2024, 1, 1);
+
+        let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
+        ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+
+        // The pre-epoch catalog may hold years of baked-in splices — the server
+        // now sits on a different basis, undetectable forward-only.
+        shared.set(v2());
+
+        let mut ing2 = Ingestor::new(sdk.clone(), daily_config(&catalog));
+        let report = ing2.run_rebase(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        assert_eq!(report.triples_ingested, 2, "every symbol was re-pulled");
+        assert_eq!(report.bars_written, 8);
+
+        let cp = checkpoint_at(&catalog);
+        assert!(!cp.is_shifted(SAMSUNG, "1-DAY"));
+        assert!(!cp.is_shifted(HYNIX, "1-DAY"));
+        assert_eq!(cp.rebase_events().len(), 2, "one event per symbol");
+        assert_eq!(stored_closes(&catalog).await, vec![30000, 30000, 30900, 30900, 31000, 31000, 31500, 31500]);
+
+        // A post-epoch accumulate detects nothing.
+        let calls_before = count_t8410(&server).await;
+        let mut ing3 = Ingestor::new(sdk, daily_config(&catalog));
+        let third = ing3.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        assert_eq!(third.triples_skipped, 2);
+        assert_eq!(count_t8410(&server).await, calls_before);
+    }
+
+    /// An interrupted epoch (marks persist for un-healed symbols) resumes on the
+    /// next accumulate run and heals only the remainder.
+    #[tokio::test]
+    async fn interrupted_epoch_resumes_and_heals_only_the_remainder() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let shared = SharedSeries::one(v1());
+        let sdk = sdk_with_series(&server, shared.clone()).await;
+        let universe = [InstrumentId::from(SAMSUNG), InstrumentId::from(HYNIX)];
+        let floor = ymd(2024, 1, 1);
+
+        let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
+        ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+        shared.set(v2());
+
+        // Simulated interruption: the epoch's atomic mark-all save landed, then
+        // only SAMSUNG healed before the crash (drive it via a one-symbol run).
+        let cp_path = catalog.join("ingest-checkpoint.json");
+        let mut cp = Checkpoint::load(&cp_path).unwrap();
+        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 8));
+        cp.mark_shifted(HYNIX, "1-DAY", ymd(2024, 1, 8));
+        cp.save(&cp_path).unwrap();
+        let mut ing2 = Ingestor::new(sdk.clone(), daily_config(&catalog));
+        ing2.run_accumulate(&universe[..1], ymd(2024, 1, 8), floor).await.unwrap();
+        assert!(checkpoint_at(&catalog).is_shifted(HYNIX, "1-DAY"), "the remainder is still marked");
+
+        // Resume: heals only HYNIX (SAMSUNG is clean and current).
+        let mut ing3 = Ingestor::new(sdk, daily_config(&catalog));
+        let resumed = ing3.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        assert_eq!(resumed.triples_ingested, 1, "only the un-healed symbol is re-pulled");
+        let cp = checkpoint_at(&catalog);
+        assert!(!cp.is_shifted(SAMSUNG, "1-DAY"));
+        assert!(!cp.is_shifted(HYNIX, "1-DAY"));
+        assert_eq!(cp.rebase_events().len(), 2, "one event per symbol, none doubled");
+    }
 }
 
 // ---------------------------------------------------------------------------

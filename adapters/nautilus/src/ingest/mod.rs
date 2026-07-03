@@ -953,6 +953,38 @@ impl Ingestor {
         })
     }
 
+    /// Epoch re-base (KTD-4, R6): mark every daily triple in `universe` shifted
+    /// in ONE atomic checkpoint save, then run the accumulate/heal path. The
+    /// per-symbol marks are the completion state, so the epoch is crash-resumable
+    /// by construction: a resumed run (accumulate mode) heals only what remains.
+    /// Forward-only detection cannot see splices already baked into the catalog;
+    /// this is the one-time rollout that puts the whole catalog on a single
+    /// basis. Minute triples are never marked (KTD-8).
+    pub async fn run_rebase(
+        &mut self,
+        universe: &[InstrumentId],
+        last_closed: NaiveDate,
+        lookback_floor: NaiveDate,
+    ) -> AdapterResult<CoverageReport> {
+        std::fs::create_dir_all(&self.config.catalog_path).map_err(|e| {
+            AdapterError::Ingest(format!("mkdir catalog {}: {e}", self.config.catalog_path.display()))
+        })?;
+        if !self.config.bar_kinds.iter().any(|k| matches!(k, BarKind::Daily)) {
+            return Err(AdapterError::Ingest(
+                "epoch re-base requires the daily bar kind (a mark with no daily lane would never heal)".to_string(),
+            ));
+        }
+        let checkpoint_path = self.config.checkpoint_path();
+        let mut checkpoint = Checkpoint::load(&checkpoint_path)?;
+        let daily_label = BarKind::Daily.label();
+        for id in universe {
+            checkpoint.mark_shifted(&id.to_string(), &daily_label, last_closed);
+        }
+        checkpoint.save(&checkpoint_path)?;
+        tracing::info!(symbols = universe.len(), "epoch re-base: all daily triples marked; healing");
+        self.run_accumulate(universe, last_closed, lookback_floor).await
+    }
+
     /// Detect a basis shift for one daily triple (KTD-3): fetch the overlap
     /// window ending at the watermark, read the stored side through the scoped
     /// read (never `read_all_bars`), exact-compare mutually-present dates.
