@@ -6,7 +6,7 @@
 //! serde tag layout mirrors the upstream wire format exactly (KTD2 — envelopes
 //! written by this lab remain readable by upstream-shaped tooling).
 //!
-//! U1–U3 substrate — later units add pipeline / policy / replay on top of
+//! U1–U4 substrate — later units add the research policy / replay on top of
 //! these types:
 //!
 //! - [`envelope`] — the [`envelope::DecisionEnvelope`] record of one decision
@@ -19,6 +19,10 @@
 //!   each intent (R3).
 //! - [`guardrail`] / [`guardrails`] — the [`guardrail::IntentGuardrail`] seam
 //!   and its concrete implementations (R4).
+//! - [`policy`] — the [`policy::AgentPolicy`] seam and its
+//!   [`policy::PolicyDecision`] outcome (R2).
+//! - [`pipeline`] — the [`pipeline::DecisionPipeline`] running each decision
+//!   through capability → guardrail → lowering, one envelope per cycle (R5).
 
 pub mod action;
 pub mod capability;
@@ -27,6 +31,8 @@ pub mod envelope;
 pub mod guardrail;
 pub mod guardrails;
 pub mod intent;
+pub mod pipeline;
+pub mod policy;
 
 pub use action::*;
 pub use capability::*;
@@ -35,3 +41,5 @@ pub use envelope::*;
 pub use guardrail::*;
 pub use guardrails::*;
 pub use intent::*;
+pub use pipeline::*;
+pub use policy::*;
