@@ -1,0 +1,42 @@
+# Request field-constraint schema for `token` (OAuth access-token issuance).
+#
+# `token` is NOT an InBlock TR: its request is an `application/x-www-form-
+# urlencoded` body (grant_type/appkey/appsecretkey/scope), so the baseline's
+# request block is `request_body`, not `<TR>InBlock`. It is issued by
+# `ls_core::auth`, not the `Inner::post` preflight seam, so this schema never
+# gates a live token call at runtime — it exists to satisfy the error-resilience
+# gate (a recommended TR must carry `constraints_ref`) and to ground the bespoke
+# negative-probe leg (KTD2), which mutates ONLY the two non-credential form
+# fields (`grant_type`, `scope`); the credential fields (`appkey`,
+# `appsecretkey`) are never sent with a mutated value — their required-class is
+# tested by field removal only, recorded `held` if untestable.
+#
+# Grounding: `type` + `required` cross-check against the normalized baseline
+# (crates/ls-trackers/baselines/api-drift/normalized/trs/token.json); all four
+# fields are `String`, `required` on the wire.
+tr_code: token
+fields:
+  - name: grant_type
+    type: string          # baseline: String, required. The value the auth flow
+    required: true         # sends is the fixed literal "client_credentials".
+    enum: { applicable: true, values: ["client_credentials"], confirmed: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: appkey
+    type: string          # baseline: String, required. CREDENTIAL — never
+    required: true         # mutated by the probe; required-class by removal only.
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: appsecretkey
+    type: string          # baseline: String, required. CREDENTIAL — never mutated.
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: scope
+    type: string          # baseline: String, required. The auth flow sends the
+    required: true         # fixed literal "oob"; a non-credential form field.
+    enum: { applicable: true, values: ["oob"], confirmed: false }
+    range: { applicable: false }
+    format: { applicable: false }

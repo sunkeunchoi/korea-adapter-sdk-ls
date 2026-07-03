@@ -1,0 +1,20 @@
+# Request field-constraint schema for `t1102` (주식현재가시세 — snapshot quote).
+# Two caller fields: the symbol and the exchange distinction. Grounded against
+# crates/ls-trackers/baselines/api-drift/normalized/trs/t1102.json (both String,
+# required). `exchgubun` is a closed exchange-distinction toggle, but its full
+# value set is not confirmed here — enum left N/A until the live probe grades it,
+# so preflight stays permissive (R6).
+tr_code: t1102
+fields:
+  - name: shcode
+    type: string          # baseline: String, required (6-digit short code).
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: true, kind: symbol, confirmed: false }
+  - name: exchgubun
+    type: string          # baseline: String, required (거래소 구분).
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }

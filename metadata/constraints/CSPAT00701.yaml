@@ -1,0 +1,49 @@
+# Request field-constraint schema for `CSPAT00701` (정정주문 — domestic cash-equity
+# order modify). Dispatches through the `Inner::post_order` preflight seam;
+# `type`/`required` agree with the certified struct
+# (crates/ls-sdk/src/orders/mod.rs::CSPAT00701InBlock1). The certified `limit()`
+# modify sends every field non-empty (order number, symbol, absolute qty/price,
+# pattern/condition codes), so all six are `required: true`.
+#
+# Per KTD3 the order-TR negative probe fires ONLY type/required variants.
+#
+# Grounded against crates/ls-trackers/baselines/api-drift/normalized/trs/
+# CSPAT00701.json (OrgOrdNo/OrdQty/OrdPrc numeric; the rest String; all required).
+tr_code: CSPAT00701
+fields:
+  - name: OrgOrdNo
+    type: integer         # baseline: Number, required (원주문번호, JSON number).
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: IsuNo
+    type: string          # baseline: String, required (종목번호).
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: true, kind: symbol, confirmed: false }
+  - name: OrdQty
+    type: integer         # baseline: Number, required (주문수량 absolute, JSON number).
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: OrdprcPtnCode
+    type: string          # baseline: String, required (호가유형코드, e.g. "00" limit).
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: OrdCndiTpCode
+    type: string          # baseline: String, required (주문조건구분, e.g. "0").
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: OrdPrc
+    type: number          # baseline: Number, required (주문가 absolute, JSON number).
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }

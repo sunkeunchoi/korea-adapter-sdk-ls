@@ -1,0 +1,16 @@
+# Request field-constraint schema for `CSPAQ12200` (예수금/주문가능금액 —
+# deposit / order-capacity balance inquiry). Single caller field, `BalCreTp`
+# (잔고생성구분, length 1); the account is identified by the bearer token, never a
+# caller field. Grounded against
+# crates/ls-trackers/baselines/api-drift/normalized/trs/CSPAQ12200.json
+# (BalCreTp: String, required). `BalCreTp` is a closed 1-char distinction but its
+# full value set is not confirmed here — enum left N/A until the live probe
+# grades it (R6).
+tr_code: CSPAQ12200
+fields:
+  - name: BalCreTp
+    type: string          # baseline: String, required (balance-creation distinction).
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }

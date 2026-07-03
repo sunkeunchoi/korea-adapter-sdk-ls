@@ -1200,7 +1200,15 @@ mod tests {
     /// A minimal `is_order: true` policy for the order dispatch tests.
     fn order_policy() -> EndpointPolicy {
         EndpointPolicy {
-            tr_code: "CSPAT00601",
+            // A schema-less synthetic order code: these tests exercise
+            // tr_code-agnostic order mechanics (ack classification, dedup,
+            // retry, ambiguity) with deliberately minimal synthetic bodies, so
+            // they must reach the mock server rather than be rejected at the
+            // preflight seam. The real order codes (CSPAT00601/00701/00801) now
+            // carry constraint schemas whose valid-flow certification is
+            // exercised by the ls-sdk order-smoke tests against the certified
+            // request structs — not by these empty-body classification tests.
+            tr_code: "ORDER_TEST",
             path: "/order/path",
             is_order: true,
             category: RateLimitCategory::Orders,

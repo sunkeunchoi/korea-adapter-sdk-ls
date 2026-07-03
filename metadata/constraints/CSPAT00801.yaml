@@ -1,0 +1,30 @@
+# Request field-constraint schema for `CSPAT00801` (취소주문 — domestic cash-equity
+# order cancel). Dispatches through the `Inner::post_order` preflight seam;
+# `type`/`required` agree with the certified struct
+# (crates/ls-sdk/src/orders/mod.rs::CSPAT00801InBlock1). The certified `new()`
+# cancel sends all three fields non-empty, so all are `required: true`.
+#
+# Per KTD3 the order-TR negative probe fires ONLY type/required variants.
+#
+# Grounded against crates/ls-trackers/baselines/api-drift/normalized/trs/
+# CSPAT00801.json (OrgOrdNo/OrdQty numeric; IsuNo String; all required).
+tr_code: CSPAT00801
+fields:
+  - name: OrgOrdNo
+    type: integer         # baseline: Number, required (원주문번호, JSON number).
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: IsuNo
+    type: string          # baseline: String, required (종목번호).
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: true, kind: symbol, confirmed: false }
+  - name: OrdQty
+    type: integer         # baseline: Number, required (주문수량 cancel qty, JSON number).
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }
