@@ -25,6 +25,7 @@ use chrono::{Duration, NaiveDate, Utc};
 use nautilus_ls::config::LsAdapterConfig;
 use nautilus_ls::ingest::{
     last_closed_session, BarKind, IngestConfig, Ingestor, ACCUMULATE_CLOSE_BUFFER,
+    DEFAULT_OVERLAP_DAYS,
 };
 use nautilus_ls::instruments::{InstrumentDomain, InstrumentProvider};
 use nautilus_ls::lock::{AdvisoryLock, LockKind};
@@ -118,6 +119,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         sdate: sdate.clone(),
         edate: edate.clone(),
         adjusted_prices: true,
+        overlap_days: DEFAULT_OVERLAP_DAYS,
     };
     // The ingest lock is already held (`_lock`), so run without re-acquiring it.
     let mut ingestor = Ingestor::new(sdk, config);
@@ -164,6 +166,7 @@ async fn run_probe(sdk: &ls_sdk::LsSdk, catalog: PathBuf) -> Result<(), Box<dyn 
         sdate: String::new(),
         edate: String::new(),
         adjusted_prices: true,
+        overlap_days: DEFAULT_OVERLAP_DAYS,
     };
     let ingestor = Ingestor::new(sdk.clone(), config);
     match ingestor.run_probe_lookback(&pilot, ncnt, anchor, probed_at).await? {

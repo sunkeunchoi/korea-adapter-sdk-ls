@@ -12,7 +12,7 @@
 pub mod checkpoint;
 pub mod pacer;
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
@@ -35,7 +35,7 @@ use crate::error::{AdapterError, AdapterResult};
 use crate::lock::{AdvisoryLock, LockKind};
 use crate::parse::strict_i64;
 use crate::rules::{KRX_REGULAR_CLOSE, KST_UTC_OFFSET_HOURS};
-use self::checkpoint::{Checkpoint, CoverageGap, GapReason};
+use self::checkpoint::{Checkpoint, CoverageGap, GapReason, RebaseEvent};
 use self::pacer::{Pacer, MARKET_DATA_CATEGORY_PER_SEC};
 
 /// A defensive upper bound on daily-cursor pages per symbol (guards a gateway that
@@ -468,6 +468,119 @@ fn split_range(s: NaiveDate, e: NaiveDate) -> Option<((NaiveDate, NaiveDate), (N
     }
 }
 
+// ---------------------------------------------------------------------------
+// Basis-shift detection (KTD-3) — the adjusted daily series is rewritten
+// server-side by every split/dividend, so accumulate-forward re-fetches a bounded
+// overlap window and exact-compares it against stored bars before appending.
+// ---------------------------------------------------------------------------
+
+/// Default overlap-window size: the last N stored trading days ending at the
+/// watermark (the `IngestConfig::overlap_days` knob).
+pub const DEFAULT_OVERLAP_DAYS: usize = 5;
+
+/// Minimum mutually-present dates for an overlap comparison to be meaningful
+/// (KTD-3): fewer — including the no-watermark first-ever accumulate — skips
+/// detection entirely rather than marking.
+const MIN_OVERLAP_DATES: usize = 3;
+
+/// The calendar start of the overlap window: wide enough that `overlap_days`
+/// *trading* days ending at the watermark fit despite weekends/holiday clusters
+/// (Seollal/Chuseok). A symbol suspended longer than this simply yields an
+/// insufficient overlap and skips detection.
+fn overlap_window_start(watermark: NaiveDate, overlap_days: usize) -> NaiveDate {
+    watermark - ChronoDuration::days(overlap_days as i64 * 3 + 10)
+}
+
+/// The verdict of an overlap comparison (KTD-3).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum OverlapVerdict {
+    /// Enough mutually-present dates and every OHLC matches exactly.
+    Match,
+    /// At least one mutually-present date differs — the basis shifted.
+    Shifted,
+    /// Fewer than [`MIN_OVERLAP_DATES`] mutually-present dates (short history,
+    /// long suspension, truncated fetch) — detection is skipped, never marked.
+    Insufficient,
+}
+
+fn ohlc_by_ts(bars: &[Bar]) -> BTreeMap<u64, (Price, Price, Price, Price)> {
+    bars.iter()
+        .map(|b| (b.ts_event.as_u64(), (b.open, b.high, b.low, b.close)))
+        .collect()
+}
+
+/// Exact-compare stored vs freshly-fetched bars on mutually-present dates only
+/// (KTD-3). One-sided dates — gap/holiday days with no stored bar, a server-side
+/// gap-fill, a dropped bar — are excluded: they are not a basis shift, and
+/// including them would re-detect forever. Daily closes are integer KRW on the
+/// wire, so the comparison is exact-match, not tolerance-based.
+fn compare_overlap(stored: &[Bar], fetched: &[Bar]) -> OverlapVerdict {
+    let stored = ohlc_by_ts(stored);
+    let fetched = ohlc_by_ts(fetched);
+    let mut mutual = 0usize;
+    let mut shifted = false;
+    for (ts, s) in &stored {
+        if let Some(f) = fetched.get(ts) {
+            mutual += 1;
+            if s != f {
+                shifted = true;
+            }
+        }
+    }
+    if mutual < MIN_OVERLAP_DATES {
+        OverlapVerdict::Insufficient
+    } else if shifted {
+        OverlapVerdict::Shifted
+    } else {
+        OverlapVerdict::Match
+    }
+}
+
+/// Fetch the server's overlap window `[wstart, wend]` for comparison. A gap
+/// outcome (empty history, non-trading range, truncated fetch) yields `None` —
+/// nothing trustworthy to compare, so detection is skipped (KTD-3).
+async fn fetch_overlap<F: DailyFetcher>(
+    fetcher: &F,
+    shcode: &str,
+    bar_type: BarType,
+    wstart: NaiveDate,
+    wend: NaiveDate,
+) -> AdapterResult<Option<Vec<Bar>>> {
+    let sdate = fmt_ymd(wstart);
+    let edate = fmt_ymd(wend);
+    match collect_daily(fetcher, shcode, bar_type, &sdate, &edate).await? {
+        TripleOutcome::Bars(bars) => Ok(Some(bars)),
+        TripleOutcome::Gap(_) => Ok(None),
+    }
+}
+
+/// A refused heal wipe (KTD-2 precondition): the run's backfill floor is later
+/// than the symbol's earliest stored bar, so wiping would silently truncate
+/// stored history. The symbol stays marked until a run with an adequate floor.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HealRefusal {
+    /// The instrument id (`{shcode}.XKRX`).
+    pub instrument: String,
+    /// The bar-type label (e.g. `1-DAY`).
+    pub bar_type: String,
+    /// The run's backfill floor (`YYYYMMDD`).
+    pub floor: String,
+    /// The symbol's earliest stored bar date (`YYYYMMDD`).
+    pub earliest_stored: String,
+}
+
+/// The outcome of one per-symbol heal attempt.
+enum HealOutcome {
+    /// Wipe → re-pull → re-verify completed; the mark is cleared and the event
+    /// recorded. Carries the number of bars re-written.
+    Healed(usize),
+    /// The wipe precondition refused (floor later than earliest stored bar).
+    Refused(HealRefusal),
+    /// The re-pull was truncated or the re-verify mismatched — the mark stays
+    /// and the next run re-enters at the wipe.
+    Incomplete,
+}
+
 /// A per-run request-budget estimate (R4/KTD5).
 #[derive(Debug, Clone)]
 pub struct BudgetEstimate {
@@ -502,6 +615,8 @@ pub struct CoverageReport {
     pub triples_skipped: usize,
     /// Coverage gaps recorded this run.
     pub gaps: Vec<checkpoint::CoverageGap>,
+    /// Heal wipes refused this run (KTD-2 precondition) — surfaced, never silent.
+    pub heal_refusals: Vec<HealRefusal>,
     /// The request-budget estimate for the run.
     pub budget: BudgetEstimate,
 }
@@ -520,6 +635,10 @@ pub struct IngestConfig {
     /// Whether daily bars used adjusted prices (`sujung="Y"`, recorded in the
     /// checkpoint as the catalog price basis).
     pub adjusted_prices: bool,
+    /// Basis-shift detection overlap: the last N stored trading days ending at
+    /// the watermark are re-fetched and exact-compared before appending (KTD-3).
+    /// Use [`DEFAULT_OVERLAP_DAYS`] unless a test needs otherwise.
+    pub overlap_days: usize,
 }
 
 impl IngestConfig {
@@ -637,6 +756,7 @@ impl Ingestor {
             triples_ingested: ingested,
             triples_skipped: skipped,
             gaps: gaps_this_run,
+            heal_refusals: Vec::new(),
             budget,
         })
     }
@@ -679,12 +799,36 @@ impl Ingestor {
         let mut ingested = 0usize;
         let mut skipped = 0usize;
         let mut gaps_this_run: Vec<CoverageGap> = Vec::new();
+        let mut heal_refusals: Vec<HealRefusal> = Vec::new();
 
         for id in universe {
             let shcode = id.symbol.as_str().to_string();
             let instrument = id.to_string();
             for &kind in &self.config.bar_kinds {
                 let label = kind.label();
+                let bar_type = kind.bar_type(*id)?;
+                // The shifted mark outranks the watermark as authority (KTD-2): a
+                // marked symbol heals regardless of watermark state, BEFORE the
+                // already-current skip below.
+                if matches!(kind, BarKind::Daily) && checkpoint.is_shifted(&instrument, &label) {
+                    match self
+                        .heal_daily(&mut checkpoint, &checkpoint_path, &shcode, &instrument, &label, bar_type, last_closed, lookback_floor)
+                        .await?
+                    {
+                        HealOutcome::Healed(n) => {
+                            bars_written += n;
+                            ingested += 1;
+                        }
+                        HealOutcome::Refused(r) => heal_refusals.push(r),
+                        HealOutcome::Incomplete => gaps_this_run.push(CoverageGap {
+                            instrument: instrument.clone(),
+                            bar_type: label.clone(),
+                            range: format!("{}..{}", fmt_ymd(lookback_floor), fmt_ymd(last_closed)),
+                            reason: GapReason::PaperThin,
+                        }),
+                    }
+                    continue;
+                }
                 // Range = watermark+1 .. last closed session (or floor if unseen).
                 let start = match checkpoint.watermark(&instrument, &label) {
                     Some(d) => d.succ_opt().expect("a date always has a successor"),
@@ -696,10 +840,43 @@ impl Ingestor {
                     skipped += 1;
                     continue;
                 }
+                // Basis-shift detection (KTD-3): before appending new daily bars,
+                // re-fetch the overlap window ending at the watermark and compare
+                // against stored bars. No watermark (first-ever accumulate) or an
+                // insufficient overlap skips detection entirely.
+                if matches!(kind, BarKind::Daily) {
+                    if let Some(wm) = checkpoint.watermark(&instrument, &label) {
+                        if self.detect_shift(&shcode, bar_type, wm).await? {
+                            // Save the mark atomically BEFORE any delete (KTD-2:
+                            // mark-before-wipe is load-bearing — the reverse order
+                            // plus a crash would leave a high watermark over an
+                            // empty store and silently truncate history forever).
+                            checkpoint.mark_shifted(&instrument, &label, last_closed);
+                            checkpoint.save(&checkpoint_path)?;
+                            tracing::warn!(instrument = %instrument, "adjustment-basis shift detected; healing");
+                            match self
+                                .heal_daily(&mut checkpoint, &checkpoint_path, &shcode, &instrument, &label, bar_type, last_closed, lookback_floor)
+                                .await?
+                            {
+                                HealOutcome::Healed(n) => {
+                                    bars_written += n;
+                                    ingested += 1;
+                                }
+                                HealOutcome::Refused(r) => heal_refusals.push(r),
+                                HealOutcome::Incomplete => gaps_this_run.push(CoverageGap {
+                                    instrument: instrument.clone(),
+                                    bar_type: label.clone(),
+                                    range: format!("{}..{}", fmt_ymd(lookback_floor), fmt_ymd(last_closed)),
+                                    reason: GapReason::PaperThin,
+                                }),
+                            }
+                            continue;
+                        }
+                    }
+                }
                 let sdate = start.format("%Y%m%d").to_string();
                 let edate = last_closed.format("%Y%m%d").to_string();
                 let range = format!("{sdate}..{edate}");
-                let bar_type = kind.bar_type(*id)?;
                 let outcome = match kind {
                     BarKind::Daily => {
                         collect_daily(&self.fetcher, &shcode, bar_type, &sdate, &edate).await?
@@ -771,9 +948,156 @@ impl Ingestor {
             triples_ingested: ingested,
             triples_skipped: skipped,
             gaps: gaps_this_run,
+            heal_refusals,
             budget,
         })
     }
+
+    /// Detect a basis shift for one daily triple (KTD-3): fetch the overlap
+    /// window ending at the watermark, read the stored side through the scoped
+    /// read (never `read_all_bars`), exact-compare mutually-present dates.
+    async fn detect_shift(
+        &self,
+        shcode: &str,
+        bar_type: BarType,
+        watermark: NaiveDate,
+    ) -> AdapterResult<bool> {
+        let wstart = overlap_window_start(watermark, self.config.overlap_days);
+        // Stored side: the last `overlap_days` stored trading days in the window.
+        let ws_ns = kst_to_unix_nanos(wstart, NaiveTime::MIN)?;
+        let we_ns = kst_to_unix_nanos(watermark, KRX_REGULAR_CLOSE)?;
+        let mut stored =
+            read_bars_scoped(&self.config.catalog_path, bar_type, Some(ws_ns), Some(we_ns)).await?;
+        if stored.len() > self.config.overlap_days {
+            stored.drain(..stored.len() - self.config.overlap_days);
+        }
+        if stored.len() < MIN_OVERLAP_DATES {
+            return Ok(false);
+        }
+        let fetched = match fetch_overlap(&self.fetcher, shcode, bar_type, wstart, watermark).await? {
+            Some(bars) => bars,
+            None => return Ok(false),
+        };
+        Ok(compare_overlap(&stored, &fetched) == OverlapVerdict::Shifted)
+    }
+
+    /// Heal one marked daily triple (KTD-2): one idempotent re-entrant sequence
+    /// that always restarts at the wipe. The caller has already durably saved the
+    /// shifted mark. Wipe precondition first: refuse (and stay marked) if the
+    /// run's floor is later than the earliest stored bar — a heal must never
+    /// silently shrink stored history.
+    #[allow(clippy::too_many_arguments)]
+    async fn heal_daily(
+        &self,
+        checkpoint: &mut Checkpoint,
+        checkpoint_path: &Path,
+        shcode: &str,
+        instrument: &str,
+        label: &str,
+        bar_type: BarType,
+        last_closed: NaiveDate,
+        floor: NaiveDate,
+    ) -> AdapterResult<HealOutcome> {
+        // Wipe precondition (KTD-2). An already-wiped re-entry has no stored bars
+        // and passes trivially (there is no history left to truncate).
+        let stored = read_bars_scoped(&self.config.catalog_path, bar_type, None, None).await?;
+        if let Some(earliest) = stored.first() {
+            let earliest_date = kst_date_of(earliest.ts_event);
+            if floor > earliest_date {
+                tracing::warn!(
+                    instrument,
+                    floor = %fmt_ymd(floor),
+                    earliest = %fmt_ymd(earliest_date),
+                    "heal refused: run floor is later than the earliest stored bar; symbol stays marked"
+                );
+                return Ok(HealOutcome::Refused(HealRefusal {
+                    instrument: instrument.to_string(),
+                    bar_type: label.to_string(),
+                    floor: fmt_ymd(floor),
+                    earliest_stored: fmt_ymd(earliest_date),
+                }));
+            }
+        }
+
+        // Wipe: true-delete the series, then drop the watermark so the accumulate
+        // arithmetic re-pulls from the floor. Persist the wiped state — the mark
+        // (already saved) makes any crash from here converge back to this wipe.
+        delete_bar_series(&self.config.catalog_path, bar_type).await?;
+        checkpoint.clear_watermark(instrument, label);
+        checkpoint.save(checkpoint_path)?;
+
+        // Re-pull the full history from the floor. Completion keys on the fetch
+        // cursor completing, never on bar count (KTD-3) — a shallow-history
+        // symbol (listed after the floor) still clears its mark. A truncated
+        // fetch (page cap) is NOT complete: keep the mark for the next run.
+        let sdate = fmt_ymd(floor);
+        let edate = fmt_ymd(last_closed);
+        let pulled = match collect_daily(&self.fetcher, shcode, bar_type, &sdate, &edate).await? {
+            TripleOutcome::Bars(bars) => bars,
+            TripleOutcome::Gap(GapReason::PaperThin) => {
+                tracing::warn!(instrument, "heal re-pull truncated; symbol stays marked");
+                return Ok(HealOutcome::Incomplete);
+            }
+            // Cursor completed with zero bars — the server serves nothing for
+            // this symbol anymore; the (empty) series is on a single basis.
+            TripleOutcome::Gap(_) => Vec::new(),
+        };
+        if !pulled.is_empty() {
+            write_bars(&self.config.catalog_path, pulled.clone()).await?;
+        }
+
+        // Re-verify (the gateway may rewrite the series again while the heal is
+        // in flight): one more overlap fetch against the just-pulled tail. Only a
+        // positive mismatch keeps the mark — an insufficient overlap (shallow
+        // history) must not pin a symbol shifted forever.
+        if !pulled.is_empty() {
+            let wstart = overlap_window_start(last_closed, self.config.overlap_days);
+            let ws_ns = kst_to_unix_nanos(wstart, NaiveTime::MIN)?.as_u64();
+            let mut tail: Vec<Bar> = pulled
+                .iter()
+                .filter(|b| b.ts_event.as_u64() >= ws_ns)
+                .cloned()
+                .collect();
+            if tail.len() > self.config.overlap_days {
+                tail.drain(..tail.len() - self.config.overlap_days);
+            }
+            if let Some(fetched) =
+                fetch_overlap(&self.fetcher, shcode, bar_type, wstart, last_closed).await?
+            {
+                if compare_overlap(&tail, &fetched) == OverlapVerdict::Shifted {
+                    tracing::warn!(instrument, "heal re-verify mismatched; symbol stays marked");
+                    return Ok(HealOutcome::Incomplete);
+                }
+            }
+        }
+
+        // Completion: clear the mark, record the re-base event, and set the
+        // watermark in one save (KTD-2).
+        let detected = checkpoint
+            .shifted_detected(instrument, label)
+            .unwrap_or(&fmt_ymd(last_closed))
+            .to_string();
+        checkpoint.clear_shifted(instrument, label);
+        checkpoint.record_rebase_event(RebaseEvent {
+            instrument: instrument.to_string(),
+            bar_type: label.to_string(),
+            detected,
+            healed: fmt_ymd(last_closed),
+        });
+        checkpoint.set_watermark(instrument, label, last_closed);
+        checkpoint.save(checkpoint_path)?;
+        tracing::info!(instrument, bars = pulled.len(), "basis-shift heal complete");
+        Ok(HealOutcome::Healed(pulled.len()))
+    }
+}
+
+/// The KST calendar date of a bar timestamp (inverse of [`kst_to_unix_nanos`]'s
+/// date component).
+fn kst_date_of(ts: UnixNanos) -> NaiveDate {
+    let kst = FixedOffset::east_opt(KST_UTC_OFFSET_HOURS * 3600).expect("KST offset is valid");
+    chrono::DateTime::<chrono::Utc>::from_timestamp_nanos(ts.as_u64() as i64)
+        .with_timezone(&kst)
+        .date_naive()
 }
 
 impl SdkFetcher {
@@ -1314,6 +1638,77 @@ mod tests {
         ) -> AdapterResult<Vec<T8412Response>> {
             Ok(vec![]) // empty history
         }
+    }
+
+    // --- basis-shift overlap compare (KTD-3) — pure compare semantics ---
+
+    fn ohlc_bar(date: &str, close: i64) -> Bar {
+        let bar_type = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        let row = T8410OutBlock1 {
+            date: date.to_string(),
+            open: (close - 5).to_string(),
+            high: (close + 10).to_string(),
+            low: (close - 10).to_string(),
+            close: close.to_string(),
+            jdiff_vol: "1000".to_string(),
+            ..Default::default()
+        };
+        build_daily_bar(bar_type, &row).unwrap().unwrap()
+    }
+
+    #[test]
+    fn overlap_matches_when_mutual_dates_agree() {
+        let stored = vec![ohlc_bar("20240103", 100), ohlc_bar("20240104", 110), ohlc_bar("20240105", 120)];
+        assert_eq!(compare_overlap(&stored, &stored.clone()), OverlapVerdict::Match);
+    }
+
+    #[test]
+    fn overlap_shifts_on_any_mutual_date_mismatch() {
+        let stored = vec![ohlc_bar("20240103", 100), ohlc_bar("20240104", 110), ohlc_bar("20240105", 120)];
+        // A post-split basis rewrites the whole series; one differing close is enough.
+        let fetched = vec![ohlc_bar("20240103", 100), ohlc_bar("20240104", 110), ohlc_bar("20240105", 60)];
+        assert_eq!(compare_overlap(&stored, &fetched), OverlapVerdict::Shifted);
+    }
+
+    #[test]
+    fn overlap_excludes_one_sided_dates() {
+        // Stored has a bar the server dropped; the server gap-filled a day with no
+        // stored bar. Neither is a basis shift (KTD-3) — mutual dates agree.
+        let stored = vec![
+            ohlc_bar("20240102", 90),
+            ohlc_bar("20240103", 100),
+            ohlc_bar("20240105", 120),
+            ohlc_bar("20240108", 130),
+        ];
+        let fetched = vec![
+            ohlc_bar("20240102", 90),
+            ohlc_bar("20240103", 100),
+            ohlc_bar("20240104", 999), // server-side gap-fill, no stored counterpart
+            ohlc_bar("20240105", 120),
+            ohlc_bar("20240108", 130),
+        ];
+        assert_eq!(compare_overlap(&stored, &fetched), OverlapVerdict::Match);
+    }
+
+    #[test]
+    fn overlap_insufficient_below_minimum_mutual_dates() {
+        // Two mutual dates (< MIN_OVERLAP_DATES) — even a disagreement must skip
+        // detection rather than mark.
+        let stored = vec![ohlc_bar("20240104", 110), ohlc_bar("20240105", 120)];
+        let fetched = vec![ohlc_bar("20240104", 55), ohlc_bar("20240105", 60)];
+        assert_eq!(compare_overlap(&stored, &fetched), OverlapVerdict::Insufficient);
+        // Disjoint dates: zero mutual.
+        let other = vec![ohlc_bar("20240110", 1), ohlc_bar("20240111", 2), ohlc_bar("20240112", 3)];
+        assert_eq!(compare_overlap(&stored, &other), OverlapVerdict::Insufficient);
+    }
+
+    #[test]
+    fn overlap_window_start_spans_holiday_clusters() {
+        let wm = NaiveDate::from_ymd_opt(2024, 10, 2).unwrap();
+        let start = overlap_window_start(wm, DEFAULT_OVERLAP_DAYS);
+        // 5 trading days ending at the watermark must fit even across a Chuseok
+        // cluster + weekends (25 calendar days for the default knob).
+        assert_eq!((wm - start).num_days(), 25);
     }
 
     #[tokio::test]

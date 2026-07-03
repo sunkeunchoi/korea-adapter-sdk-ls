@@ -8,7 +8,7 @@ use chrono::NaiveDate;
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::{mock_config, mount_token};
 use nautilus_ls::ingest::checkpoint::Checkpoint;
-use nautilus_ls::ingest::{BarKind, IngestConfig, Ingestor};
+use nautilus_ls::ingest::{BarKind, IngestConfig, Ingestor, DEFAULT_OVERLAP_DAYS};
 use nautilus_ls::lock::{AdvisoryLock, LockKind};
 use nautilus_model::identifiers::InstrumentId;
 use tempfile::tempdir;
@@ -68,6 +68,7 @@ fn daily_config(catalog: &Path) -> IngestConfig {
         sdate: "20240101".to_string(),
         edate: "20240105".to_string(),
         adjusted_prices: true,
+        overlap_days: DEFAULT_OVERLAP_DAYS,
     }
 }
 
@@ -399,6 +400,383 @@ mod catalog_primitives {
 }
 
 // ---------------------------------------------------------------------------
+// Basis-shift detection + heal (data-fidelity U3, AE1/AE2). A dynamic t8410
+// responder serves a mutable daily series — pre-shift, then rewritten to a
+// post-split basis — so one server exercises detect → wipe → re-pull →
+// re-verify → clear without re-mounting.
+// ---------------------------------------------------------------------------
+
+mod basis_shift_heal {
+    use super::*;
+    use std::collections::{BTreeMap, VecDeque};
+    use std::sync::{Arc, Mutex};
+
+    use nautilus_ls::ingest::{delete_bar_series, read_all_bars};
+
+    /// A daily close series: date (`YYYYMMDD`) → close. OHLC derives from the
+    /// close, so rewriting a close rewrites the whole candle.
+    type Series = BTreeMap<String, i64>;
+
+    fn series(pairs: &[(&str, i64)]) -> Series {
+        pairs.iter().map(|(d, c)| (d.to_string(), *c)).collect()
+    }
+
+    /// The server's series over time: each t8410 call consumes the front entry,
+    /// and the last entry serves forever. `one()`/`set()` model a series the
+    /// test rewrites between runs; `scripted()` models a gateway that rewrites
+    /// the series again WHILE a heal is in flight (re-pull sees one basis, the
+    /// re-verify another).
+    #[derive(Clone)]
+    struct SharedSeries(Arc<Mutex<VecDeque<Series>>>);
+
+    impl SharedSeries {
+        fn one(s: Series) -> Self {
+            SharedSeries(Arc::new(Mutex::new(VecDeque::from([s]))))
+        }
+        fn scripted(list: Vec<Series>) -> Self {
+            assert!(!list.is_empty());
+            SharedSeries(Arc::new(Mutex::new(VecDeque::from(list))))
+        }
+        fn set(&self, s: Series) {
+            let mut q = self.0.lock().unwrap();
+            q.clear();
+            q.push_back(s);
+        }
+        fn next(&self) -> Series {
+            let mut q = self.0.lock().unwrap();
+            if q.len() > 1 {
+                q.pop_front().unwrap()
+            } else {
+                q.front().cloned().unwrap()
+            }
+        }
+    }
+
+    async fn sdk_with_series(server: &MockServer, shared: SharedSeries) -> LsSdk {
+        mount_token(server).await;
+        Mock::given(method("POST"))
+            .and(path(CHART_PATH))
+            .and(header("tr_cd", "t8410"))
+            .respond_with(move |req: &wiremock::Request| {
+                let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+                let ib = &body["t8410InBlock"];
+                let s = ib["sdate"].as_str().unwrap_or("").to_string();
+                let e = ib["edate"].as_str().unwrap_or("").to_string();
+                let rows: Vec<serde_json::Value> = shared
+                    .next()
+                    .range(s..=e)
+                    .map(|(d, c)| {
+                        serde_json::json!({
+                            "date": d, "open": (c - 5).to_string(), "high": (c + 10).to_string(),
+                            "low": (c - 10).to_string(), "close": c.to_string(), "jdiff_vol": "1000"
+                        })
+                    })
+                    .collect();
+                json_response(serde_json::json!({
+                    "rsp_cd": "00000", "rsp_msg": "정상",
+                    "t8410OutBlock": { "shcode": "005930", "cts_date": "", "rec_count": rows.len().to_string() },
+                    "t8410OutBlock1": rows
+                }))
+            })
+            .mount(server)
+            .await;
+        LsSdk::new(mock_config(&server.uri())).expect("sdk builds")
+    }
+
+    const SAMSUNG: &str = "005930.XKRX";
+
+    fn checkpoint_at(catalog: &Path) -> Checkpoint {
+        Checkpoint::load(&catalog.join("ingest-checkpoint.json")).unwrap()
+    }
+
+    /// The stored closes, ascending by date, as plain integers.
+    async fn stored_closes(catalog: &Path) -> Vec<i64> {
+        let mut bars = read_all_bars(catalog).await.unwrap();
+        bars.sort_by_key(|b| b.ts_event.as_u64());
+        bars.iter().map(|b| b.close.to_string().parse().unwrap()).collect()
+    }
+
+    fn v1() -> Series {
+        series(&[("20240103", 60000), ("20240104", 61800), ("20240105", 62000)])
+    }
+
+    /// v1 rewritten to a post-split basis (halved-ish) plus a new session.
+    fn v2() -> Series {
+        series(&[("20240103", 30000), ("20240104", 30900), ("20240105", 31000), ("20240108", 31500)])
+    }
+
+    /// Covers AE1: detect the rewritten basis, re-pull wholesale, record the
+    /// re-base; a subsequent run detects nothing and is a no-op.
+    #[tokio::test]
+    async fn ae1_shift_is_detected_healed_and_recorded() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let shared = SharedSeries::one(v1());
+        let sdk = sdk_with_series(&server, shared.clone()).await;
+        let universe = [InstrumentId::from(SAMSUNG)];
+        let floor = ymd(2024, 1, 1);
+
+        let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
+        let first = ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+        assert_eq!(first.bars_written, 3);
+
+        // The gateway rewrites S's whole history (post-split basis) for both the
+        // overlap and the new dates.
+        shared.set(v2());
+
+        let mut ing2 = Ingestor::new(sdk.clone(), daily_config(&catalog));
+        let report = ing2.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        assert_eq!(report.bars_written, 4, "wholesale re-pull replaced the series, not an append");
+        assert!(report.heal_refusals.is_empty());
+
+        // Final read-back: EVERY stored bar equals the v2 series — single basis.
+        assert_eq!(stored_closes(&catalog).await, vec![30000, 30900, 31000, 31500]);
+
+        let cp = checkpoint_at(&catalog);
+        assert!(!cp.is_shifted(SAMSUNG, "1-DAY"), "mark cleared on completion");
+        assert_eq!(cp.rebase_events().len(), 1, "the re-base is durably recorded (R5)");
+        assert_eq!(cp.rebase_events()[0].instrument, SAMSUNG);
+        assert_eq!(cp.rebase_events()[0].healed, "20240108");
+
+        // A post-heal accumulate detects nothing and is a no-op.
+        let calls_before = count_t8410(&server).await;
+        let mut ing3 = Ingestor::new(sdk, daily_config(&catalog));
+        let third = ing3.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        assert_eq!(third.triples_skipped, 1);
+        assert_eq!(count_t8410(&server).await, calls_before, "no fetch when current post-heal");
+    }
+
+    /// Covers AE2: the mark is saved but the re-pull never ran (crash after
+    /// detection) — the next accumulate re-enters at the wipe and heals; the
+    /// mark outranks a current watermark.
+    #[tokio::test]
+    async fn ae2_interrupted_heal_resumes_at_the_wipe() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let shared = SharedSeries::one(v1());
+        let sdk = sdk_with_series(&server, shared.clone()).await;
+        let universe = [InstrumentId::from(SAMSUNG)];
+        let floor = ymd(2024, 1, 1);
+
+        let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
+        ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+
+        // Simulated interruption: the shifted mark was durably saved, then the
+        // process died before the wipe/re-pull.
+        let cp_path = catalog.join("ingest-checkpoint.json");
+        let mut cp = Checkpoint::load(&cp_path).unwrap();
+        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5));
+        cp.save(&cp_path).unwrap();
+        shared.set(v2());
+
+        // Between the runs the symbol is still marked — no backtest consumes it
+        // as clean.
+        assert!(checkpoint_at(&catalog).is_shifted(SAMSUNG, "1-DAY"));
+
+        // The watermark is CURRENT (20240105 == last_closed) — the mark must
+        // still heal (it outranks the watermark as authority, KTD-2).
+        let mut ing2 = Ingestor::new(sdk.clone(), daily_config(&catalog));
+        let report = ing2.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+        assert_eq!(report.triples_skipped, 0, "a marked symbol is never skipped as current");
+        assert_eq!(stored_closes(&catalog).await, vec![30000, 30900, 31000], "healed onto the served basis");
+        let cp = checkpoint_at(&catalog);
+        assert!(!cp.is_shifted(SAMSUNG, "1-DAY"));
+        assert_eq!(cp.rebase_events().len(), 1);
+    }
+
+    /// Edge: a wiped-but-not-pulled interruption (bars already deleted, no
+    /// watermark) also converges — re-entry restarts at the (no-op) wipe.
+    #[tokio::test]
+    async fn wiped_not_pulled_interruption_converges() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let shared = SharedSeries::one(v1());
+        let sdk = sdk_with_series(&server, shared.clone()).await;
+        let universe = [InstrumentId::from(SAMSUNG)];
+        let floor = ymd(2024, 1, 1);
+
+        let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
+        ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+
+        // Simulate: marked, wiped, watermark cleared — then crash.
+        let cp_path = catalog.join("ingest-checkpoint.json");
+        let mut cp = Checkpoint::load(&cp_path).unwrap();
+        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5));
+        cp.clear_watermark(SAMSUNG, "1-DAY");
+        cp.save(&cp_path).unwrap();
+        let bar_type = BarKind::Daily.bar_type(InstrumentId::from(SAMSUNG)).unwrap();
+        delete_bar_series(&catalog, bar_type).await.unwrap();
+        shared.set(v2());
+
+        let mut ing2 = Ingestor::new(sdk, daily_config(&catalog));
+        ing2.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        assert_eq!(stored_closes(&catalog).await, vec![30000, 30900, 31000, 31500]);
+        assert!(!checkpoint_at(&catalog).is_shifted(SAMSUNG, "1-DAY"));
+    }
+
+    /// Edge: one-sided dates (a server-side gap-fill and a gap/holiday day with
+    /// no stored bar) do not detect a shift.
+    #[tokio::test]
+    async fn gap_days_and_gap_fills_do_not_detect() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        // Jan 4 has no bar historically (gap day).
+        let holey = series(&[("20240102", 59000), ("20240103", 60000), ("20240105", 62000)]);
+        let shared = SharedSeries::one(holey.clone());
+        let sdk = sdk_with_series(&server, shared.clone()).await;
+        let universe = [InstrumentId::from(SAMSUNG)];
+        let floor = ymd(2024, 1, 1);
+
+        let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
+        ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+
+        // The server now gap-fills Jan 4 and serves a new session — same basis.
+        let mut filled = holey;
+        filled.insert("20240104".to_string(), 61000);
+        filled.insert("20240108".to_string(), 63000);
+        shared.set(filled);
+
+        let mut ing2 = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing2.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        let cp = checkpoint_at(&catalog);
+        assert!(!cp.is_shifted(SAMSUNG, "1-DAY"), "one-sided dates are not a shift");
+        assert!(cp.rebase_events().is_empty());
+        assert_eq!(report.bars_written, 1, "normal append of the new session only");
+        assert_eq!(stored_closes(&catalog).await, vec![59000, 60000, 62000, 63000]);
+    }
+
+    /// Edge: a symbol with too short an overlap (fewer than the minimum mutual
+    /// dates) skips detection and never marks — even when values differ.
+    #[tokio::test]
+    async fn short_overlap_skips_detection_and_never_marks() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let short = series(&[("20240104", 61800), ("20240105", 62000)]);
+        let shared = SharedSeries::one(short);
+        let sdk = sdk_with_series(&server, shared.clone()).await;
+        let universe = [InstrumentId::from(SAMSUNG)];
+        let floor = ymd(2024, 1, 1);
+
+        let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
+        ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+
+        // Rewritten values on only two mutual dates — below the minimum.
+        shared.set(series(&[("20240104", 30900), ("20240105", 31000), ("20240108", 31500)]));
+
+        let mut ing2 = Ingestor::new(sdk, daily_config(&catalog));
+        ing2.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        let cp = checkpoint_at(&catalog);
+        assert!(!cp.is_shifted(SAMSUNG, "1-DAY"), "insufficient overlap never marks");
+        assert!(cp.rebase_events().is_empty());
+    }
+
+    /// Edge (KTD-2 wipe precondition): a marked symbol whose run floor is later
+    /// than its earliest stored bar refuses the wipe, stays marked, surfaces the
+    /// refusal, and deletes nothing.
+    #[tokio::test]
+    async fn heal_refuses_a_floor_that_would_truncate_history() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let shared = SharedSeries::one(v1());
+        let sdk = sdk_with_series(&server, shared.clone()).await;
+        let universe = [InstrumentId::from(SAMSUNG)];
+
+        let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
+        ing.run_accumulate(&universe, ymd(2024, 1, 5), ymd(2024, 1, 1)).await.unwrap();
+
+        let cp_path = catalog.join("ingest-checkpoint.json");
+        let mut cp = Checkpoint::load(&cp_path).unwrap();
+        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5));
+        cp.save(&cp_path).unwrap();
+
+        // Run floor Jan 4 > earliest stored bar Jan 3 — the wipe must refuse.
+        let mut ing2 = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing2.run_accumulate(&universe, ymd(2024, 1, 8), ymd(2024, 1, 4)).await.unwrap();
+        assert_eq!(report.heal_refusals.len(), 1, "the refusal is surfaced, never silent");
+        assert_eq!(report.heal_refusals[0].floor, "20240104");
+        assert_eq!(report.heal_refusals[0].earliest_stored, "20240103");
+        assert!(checkpoint_at(&catalog).is_shifted(SAMSUNG, "1-DAY"), "stays marked");
+        assert_eq!(stored_closes(&catalog).await, vec![60000, 61800, 62000], "no bars deleted");
+    }
+
+    /// Edge: a shallow-history shifted symbol (server serves fewer bars than the
+    /// floor depth) still clears its mark — completion keys on the fetch cursor
+    /// completing, never on bar count (KTD-3).
+    #[tokio::test]
+    async fn shallow_history_heal_clears_the_mark() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let shared = SharedSeries::one(v1());
+        let sdk = sdk_with_series(&server, shared.clone()).await;
+        let universe = [InstrumentId::from(SAMSUNG)];
+        let floor = ymd(2024, 1, 1);
+
+        let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
+        ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+
+        let cp_path = catalog.join("ingest-checkpoint.json");
+        let mut cp = Checkpoint::load(&cp_path).unwrap();
+        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5));
+        cp.save(&cp_path).unwrap();
+        // The rewritten symbol now serves only two sessions (listed-late shape).
+        shared.set(series(&[("20240105", 31000), ("20240108", 31500)]));
+
+        let mut ing2 = Ingestor::new(sdk, daily_config(&catalog));
+        ing2.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        let cp = checkpoint_at(&catalog);
+        assert!(!cp.is_shifted(SAMSUNG, "1-DAY"), "cursor completed → mark cleared despite short history");
+        assert_eq!(cp.rebase_events().len(), 1);
+        assert_eq!(stored_closes(&catalog).await, vec![31000, 31500]);
+    }
+
+    /// Edge: the gateway rewrites the series AGAIN while the heal is in flight —
+    /// the re-verify mismatches, the mark stays, and the next run heals again.
+    #[tokio::test]
+    async fn failed_reverify_keeps_the_mark_and_the_next_run_heals() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let v3 = series(&[("20240103", 15000), ("20240104", 15450), ("20240105", 15500), ("20240108", 15750)]);
+        // Call order: run1 initial pull sees v1; the heal's re-pull sees v2; its
+        // re-verify sees v3 (mismatch); every later call serves v3.
+        let shared = SharedSeries::scripted(vec![v1(), v2(), v3.clone()]);
+        let sdk = sdk_with_series(&server, shared).await;
+        let universe = [InstrumentId::from(SAMSUNG)];
+        let floor = ymd(2024, 1, 1);
+
+        let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
+        ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+
+        let cp_path = catalog.join("ingest-checkpoint.json");
+        let mut cp = Checkpoint::load(&cp_path).unwrap();
+        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5));
+        cp.save(&cp_path).unwrap();
+
+        // Heal attempt: re-pull v2, re-verify v3 → mismatch → stays marked.
+        let mut ing2 = Ingestor::new(sdk.clone(), daily_config(&catalog));
+        let report = ing2.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        assert!(checkpoint_at(&catalog).is_shifted(SAMSUNG, "1-DAY"), "failed re-verify keeps the mark");
+        assert!(checkpoint_at(&catalog).rebase_events().is_empty());
+        assert_eq!(report.gaps.len(), 1, "the incomplete heal is reported");
+
+        // Next run re-enters at the wipe against the now-stable v3 and completes.
+        let mut ing3 = Ingestor::new(sdk, daily_config(&catalog));
+        ing3.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        let cp = checkpoint_at(&catalog);
+        assert!(!cp.is_shifted(SAMSUNG, "1-DAY"));
+        assert_eq!(cp.rebase_events().len(), 1);
+        assert_eq!(stored_closes(&catalog).await, vec![15000, 15450, 15500, 15750]);
+    }
+}
+
+// ---------------------------------------------------------------------------
 // U7 — max-lookback probe (KTD10, R10). A dynamic t8412 responder serves minute
 // rows only for dates at/after a known earliest served date, so the windowed
 // backward search must converge on that date without being derailed by the
@@ -448,6 +826,7 @@ fn probe_config(catalog: &Path) -> IngestConfig {
         sdate: String::new(),
         edate: String::new(),
         adjusted_prices: true,
+        overlap_days: DEFAULT_OVERLAP_DAYS,
     }
 }
 
