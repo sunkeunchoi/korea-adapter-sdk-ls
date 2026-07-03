@@ -573,6 +573,161 @@ async fn price_only_remodify_keeps_the_reduced_quantity() {
     );
 }
 
+fn cancel_cmd(client_id: &str) -> CancelOrder {
+    CancelOrder::new(
+        TraderId::from("LS-TRADER-001"),
+        None,
+        StrategyId::from("S-ORB-1"),
+        InstrumentId::from("005930.XKRX"),
+        ClientOrderId::from(client_id),
+        None,
+        UUID4::new(),
+        UnixNanos::default(),
+        None,
+        None,
+    )
+}
+
+/// AE3 / R8: an order of quantity 10 with 4 filled per the ledger cancels with
+/// quantity 6 — the remaining, never the original.
+#[tokio::test]
+async fn cancel_sends_the_remaining_quantity() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    mount_order_ok(&server, "CSPAT00601", "1001", "").await;
+    let order = test_order("O-REM-1", 10, 60_000);
+    client.submit_order(submit_cmd(&order)).unwrap();
+    drain_submit_accept(&mut rx).await;
+
+    // 4 of 10 fill via the poll lane.
+    mount_t0425(&server, "", serde_json::json!([t0425_row("1001", "", "4", "6", "체결")])).await;
+    client.poll_once().await;
+    assert!(matches!(next_order_event(&mut rx).await, OrderEventAny::Filled(_)));
+
+    mount_order_ok(&server, "CSPAT00801", "1002", "1001").await;
+    client.cancel_order(cancel_cmd("O-REM-1")).unwrap();
+    assert!(matches!(next_order_event(&mut rx).await, OrderEventAny::Canceled(_)));
+
+    let body = last_request_body(&server, "CSPAT00801").await;
+    assert_eq!(
+        body["CSPAT00801InBlock1"]["OrdQty"].as_i64(),
+        Some(6),
+        "the cancel carries the remaining 6, not the original 10"
+    );
+}
+
+/// R8 second-mutation coverage: modify quantity down, then a partial fill, then
+/// cancel — remaining reads the ledger-MAINTAINED quantity, not the retained
+/// order (this ordering is what exposes a stale-read regression: the retained
+/// OrderAny still says 10 → 10 − 2 = 8, the maintained state says 5 − 2 = 3).
+#[tokio::test]
+async fn cancel_after_modify_down_and_fill_uses_maintained_qty() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    mount_order_ok(&server, "CSPAT00601", "1001", "").await;
+    let order = test_order("O-REM-2", 10, 60_000);
+    client.submit_order(submit_cmd(&order)).unwrap();
+    drain_submit_accept(&mut rx).await;
+
+    // Modify quantity 10 → 5 (chains OrdNo 1002).
+    mount_order_ok(&server, "CSPAT00701", "1002", "1001").await;
+    client
+        .modify_order(ModifyOrder::new(
+            TraderId::from("LS-TRADER-001"), None, StrategyId::from("S-ORB-1"),
+            InstrumentId::from("005930.XKRX"), ClientOrderId::from("O-REM-2"), None,
+            Some(Quantity::from(5)), Some(Price::from("60000")), None,
+            UUID4::new(), UnixNanos::default(), None, None,
+        ))
+        .unwrap();
+    assert!(matches!(next_order_event(&mut rx).await, OrderEventAny::Updated(_)));
+
+    // 2 fill on the new OrdNo.
+    mount_t0425(&server, "", serde_json::json!([t0425_row("1002", "1001", "2", "3", "체결")])).await;
+    client.poll_once().await;
+    assert!(matches!(next_order_event(&mut rx).await, OrderEventAny::Filled(_)));
+
+    mount_order_ok(&server, "CSPAT00801", "1003", "1002").await;
+    client.cancel_order(cancel_cmd("O-REM-2")).unwrap();
+    assert!(matches!(next_order_event(&mut rx).await, OrderEventAny::Canceled(_)));
+
+    let body = last_request_body(&server, "CSPAT00801").await;
+    assert_eq!(
+        body["CSPAT00801InBlock1"]["OrdQty"].as_i64(),
+        Some(3),
+        "remaining = maintained 5 − 2 filled = 3 (a stale retained-order read would say 8)"
+    );
+}
+
+/// R8: remaining 0 (a modify dropped quantity to the filled total) skips the
+/// cancel send entirely — no request reaches the venue and no event is emitted
+/// (nothing synthetic; terminal detection owns the order's end).
+#[tokio::test]
+async fn cancel_with_zero_remaining_sends_nothing() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    mount_order_ok(&server, "CSPAT00601", "1001", "").await;
+    let order = test_order("O-REM-0", 10, 60_000);
+    client.submit_order(submit_cmd(&order)).unwrap();
+    drain_submit_accept(&mut rx).await;
+
+    // 4 fill, then a modify down to exactly the filled total (4) → remaining 0.
+    mount_t0425(&server, "", serde_json::json!([t0425_row("1001", "", "4", "6", "체결")])).await;
+    client.poll_once().await;
+    assert!(matches!(next_order_event(&mut rx).await, OrderEventAny::Filled(_)));
+    mount_order_ok(&server, "CSPAT00701", "1002", "1001").await;
+    client
+        .modify_order(ModifyOrder::new(
+            TraderId::from("LS-TRADER-001"), None, StrategyId::from("S-ORB-1"),
+            InstrumentId::from("005930.XKRX"), ClientOrderId::from("O-REM-0"), None,
+            Some(Quantity::from(4)), Some(Price::from("60000")), None,
+            UUID4::new(), UnixNanos::default(), None, None,
+        ))
+        .unwrap();
+    assert!(matches!(next_order_event(&mut rx).await, OrderEventAny::Updated(_)));
+
+    let cancels_before = count_requests(&server, "CSPAT00801").await;
+    client.cancel_order(cancel_cmd("O-REM-0")).unwrap();
+    // No cancel request reaches the mock and no cancel event is emitted.
+    let got = timeout(Duration::from_millis(500), rx.recv()).await;
+    assert!(got.is_err(), "remaining-0 cancel must emit nothing");
+    assert_eq!(
+        count_requests(&server, "CSPAT00801").await,
+        cancels_before,
+        "no CSPAT00801 request was sent"
+    );
+}
+
+/// R8: an order with no fill info cancels at full quantity (the fallback —
+/// refusing to cancel is the one unacceptable failure mode).
+#[tokio::test]
+async fn cancel_with_no_fill_info_sends_full_quantity() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    mount_order_ok(&server, "CSPAT00601", "1001", "").await;
+    let order = test_order("O-REM-F", 10, 60_000);
+    client.submit_order(submit_cmd(&order)).unwrap();
+    drain_submit_accept(&mut rx).await;
+
+    mount_order_ok(&server, "CSPAT00801", "1002", "1001").await;
+    client.cancel_order(cancel_cmd("O-REM-F")).unwrap();
+    assert!(matches!(next_order_event(&mut rx).await, OrderEventAny::Canceled(_)));
+
+    let body = last_request_body(&server, "CSPAT00801").await;
+    assert_eq!(body["CSPAT00801InBlock1"]["OrdQty"].as_i64(), Some(10), "unfilled → full quantity");
+}
+
 /// U4 / KTD6: a cleanly-rejected cancel emits **cancel-rejected**, not canceled —
 /// the order stays open.
 #[tokio::test]

@@ -360,6 +360,19 @@ impl FillLedger {
         self.entries.get(client_order_id).map(|e| e.order_qty)
     }
 
+    /// The order's remaining (unfilled) quantity: the maintained `order_qty`
+    /// minus the per-OrdNo fill-watermark sum (the chain total), clamped at zero
+    /// (a modify can reduce quantity below the already-filled total). Reads only
+    /// ledger-maintained fields — never the retained `OrderAny`, which is frozen
+    /// emission identity. `None` for an untracked order; the cancel path then
+    /// falls back to full quantity, because refusing to cancel is the one
+    /// unacceptable failure mode.
+    pub fn remaining_qty(&self, client_order_id: &ClientOrderId) -> Option<i64> {
+        self.entries
+            .get(client_order_id)
+            .map(|e| (e.order_qty - e.chain_total()).max(0))
+    }
+
     /// Open orders known only by a `RECON-` venue id — U3 intent-corroboration
     /// candidates. An order qualifies when every OrdNo in its chain is a `RECON-`
     /// placeholder (its real OrdNo was never learned).
@@ -653,6 +666,26 @@ mod tests {
             second.deltas[0].price_approximated,
             "a beyond-first partial is approximate — one cheprice per row"
         );
+    }
+
+    /// Remaining quantity reads ledger-maintained fields: order_qty − chain
+    /// total, tracking fills across chained OrdNos and note_modify reductions,
+    /// clamped at zero when a modify drops quantity below the filled total.
+    #[test]
+    fn remaining_qty_tracks_fills_modifies_and_clamps() {
+        let (mut led, cid) = ledger_with("O-REM", 10, 60_000, "1001");
+        assert_eq!(led.remaining_qty(&cid), Some(10), "unfilled → full quantity");
+        led.apply(FillObservation::poll("1001", 4, 60_000, false));
+        assert_eq!(led.remaining_qty(&cid), Some(6), "10 − 4 filled");
+        // Fills on a chained OrdNo count toward the chain total.
+        assert!(led.append_child("1001", "1002"));
+        led.apply(FillObservation::poll("1002", 2, 60_000, false));
+        assert_eq!(led.remaining_qty(&cid), Some(4), "per-OrdNo watermarks sum");
+        // A modify below the filled total clamps at zero, never negative.
+        led.note_modify(&cid, 3, 60_000);
+        assert_eq!(led.remaining_qty(&cid), Some(0), "qty 3 < 6 filled → clamp at 0");
+        // Untracked order → None (the caller falls back to full quantity).
+        assert_eq!(led.remaining_qty(&ClientOrderId::from("O-NOPE")), None);
     }
 
     /// Open-order queries drive the poll loop's idle + poll set.

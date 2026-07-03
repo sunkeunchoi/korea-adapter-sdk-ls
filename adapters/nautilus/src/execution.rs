@@ -455,6 +455,10 @@ struct OrderSnapshot {
     side: OrderSide,
     qty: i64,
     price: i64,
+    /// The unfilled remainder from the ledger's maintained accounting (R8): what
+    /// a cancel sends. Falls back to `qty` when the ledger has no fill info —
+    /// refusing to cancel is the one unacceptable failure mode.
+    remaining: i64,
 }
 
 fn snapshot(ledger: &Mutex<FillLedger>, client_order_id: &nautilus_model::identifiers::ClientOrderId) -> Option<OrderSnapshot> {
@@ -473,6 +477,9 @@ fn snapshot(ledger: &Mutex<FillLedger>, client_order_id: &nautilus_model::identi
         price: led
             .limit_price(client_order_id)
             .unwrap_or_else(|| order.price().map(|p| p.as_f64() as i64).unwrap_or(0)),
+        remaining: led
+            .remaining_qty(client_order_id)
+            .unwrap_or_else(|| order.quantity().as_f64() as i64),
         latest_ord_no,
         order,
     })
@@ -522,9 +529,10 @@ async fn run_modify(
     }
 }
 
-/// The spawned cancel worker (U4): target the order's latest OrdNo; on ack emit
-/// OrderCanceled + forget the chain; a business rejection emits cancel-rejected
-/// (order stays open, KTD6).
+/// The spawned cancel worker (U4): target the order's latest OrdNo with the
+/// ledger-derived REMAINING quantity (R8 — never the original order quantity);
+/// on ack emit OrderCanceled + forget the chain; a business rejection emits
+/// cancel-rejected (order stays open, KTD6).
 async fn run_cancel(
     sdk: LsSdk,
     emitter: ExecutionEventEmitter,
@@ -537,8 +545,15 @@ async fn run_cancel(
         tracing::warn!(%client_order_id, "cancel of an unknown order — ignored (nothing resting)");
         return;
     };
+    if snap.remaining == 0 {
+        // Fully filled (or modified below the filled total) just before the
+        // cancel: nothing rests, so skip the send and emit nothing synthetic —
+        // the in-flight fill terminates the order through terminal detection.
+        tracing::info!(%client_order_id, "cancel skipped: remaining quantity is 0 (nothing resting)");
+        return;
+    }
     let isuno = format!("A{}", snap.symbol);
-    let req = CSPAT00801Request::new(&snap.latest_ord_no, &isuno, snap.qty.to_string());
+    let req = CSPAT00801Request::new(&snap.latest_ord_no, &isuno, snap.remaining.to_string());
 
     match sdk.orders().cancel(&req).await {
         Ok(resp) => {
@@ -551,7 +566,9 @@ async fn run_cancel(
             );
         }
         Err(err) => {
-            handle_action_error(OrderAction::Cancel, &sdk, &emitter, &ledger, clock, &snap, snap.qty, snap.price, &err).await;
+            // The ambiguous-action reconcile intent carries the same remaining
+            // quantity the cancel sent.
+            handle_action_error(OrderAction::Cancel, &sdk, &emitter, &ledger, clock, &snap, snap.remaining, snap.price, &err).await;
         }
     }
 }
