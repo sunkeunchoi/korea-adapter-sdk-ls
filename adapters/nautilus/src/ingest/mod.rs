@@ -855,6 +855,49 @@ pub async fn read_all_bars(catalog_path: &Path) -> AdapterResult<Vec<Bar>> {
     .map_err(|e| AdapterError::Ingest(format!("catalog read task panicked: {e}")))?
 }
 
+/// True-delete one bar-type series (e.g. one symbol's daily bars) from the
+/// catalog, on a blocking thread (same `spawn_blocking` rationale as
+/// [`write_bars`]). The heal's wipe step (KTD-2): overwrite-and-tolerate is not
+/// enough — `write_to_parquet` with the disjoint check skipped leaves stale
+/// old-basis files readable wherever date ranges don't exactly coincide, so the
+/// wipe must remove the files. Deleting a series with no stored bars is a no-op
+/// `Ok`. Scoped to ONE bar type: a daily wipe never touches minute bars (KTD-8).
+pub async fn delete_bar_series(catalog_path: &Path, bar_type: BarType) -> AdapterResult<()> {
+    let path = catalog_path.to_path_buf();
+    let identifier = bar_type.to_string();
+    tokio::task::spawn_blocking(move || {
+        let mut catalog = ParquetDataCatalog::new(&path, None, None, None, None);
+        catalog
+            .delete_data_range("bars", Some(&identifier), None, None)
+            .map_err(|e| AdapterError::Ingest(format!("catalog delete {identifier}: {e}")))
+    })
+    .await
+    .map_err(|e| AdapterError::Ingest(format!("catalog delete task panicked: {e}")))?
+}
+
+/// Read one bar-type series over a bounded `[start, end]` window, on a blocking
+/// thread. This is the per-triple read primitive: [`read_all_bars`] loads the
+/// entire catalog and must not be used per symbol (an accumulate run would
+/// re-read the full multi-year catalog once per symbol — a cost small offline
+/// fixtures never expose).
+pub async fn read_bars_scoped(
+    catalog_path: &Path,
+    bar_type: BarType,
+    start: Option<UnixNanos>,
+    end: Option<UnixNanos>,
+) -> AdapterResult<Vec<Bar>> {
+    let path = catalog_path.to_path_buf();
+    let identifier = bar_type.to_string();
+    tokio::task::spawn_blocking(move || {
+        let mut catalog = ParquetDataCatalog::new(&path, None, None, None, None);
+        catalog
+            .bars(Some(vec![identifier.clone()]), start, end)
+            .map_err(|e| AdapterError::Ingest(format!("catalog scoped read {identifier}: {e}")))
+    })
+    .await
+    .map_err(|e| AdapterError::Ingest(format!("catalog scoped read task panicked: {e}")))?
+}
+
 /// Read instrument definitions back from the catalog on a blocking thread (the
 /// backtest loader, which loads instruments + bars from the catalog per F1).
 pub async fn read_all_instruments(

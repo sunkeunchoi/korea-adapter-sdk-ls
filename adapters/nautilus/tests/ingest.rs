@@ -272,6 +272,133 @@ async fn ingest_refuses_to_start_while_live_lock_held() {
 }
 
 // ---------------------------------------------------------------------------
+// Per-symbol delete + scoped read (data-fidelity U2) — the heal's wipe and
+// overlap-compare primitives. The wipe must TRUE-delete (files gone, not
+// overwritten) and stay scoped to one bar type / one symbol.
+// ---------------------------------------------------------------------------
+
+mod catalog_primitives {
+    use super::*;
+    use nautilus_core::UnixNanos;
+    use nautilus_ls::ingest::{
+        delete_bar_series, kst_to_unix_nanos, read_all_bars, read_bars_scoped, write_bars,
+    };
+    use nautilus_ls::rules::KRX_REGULAR_CLOSE;
+    use nautilus_model::data::{Bar, BarType};
+    use nautilus_model::types::{Price, Quantity};
+
+    fn daily_bar(bar_type: BarType, date: NaiveDate, close: i64) -> Bar {
+        let ts = kst_to_unix_nanos(date, KRX_REGULAR_CLOSE).unwrap();
+        Bar::new(
+            bar_type,
+            Price::from((close - 5).to_string().as_str()),
+            Price::from((close + 10).to_string().as_str()),
+            Price::from((close - 10).to_string().as_str()),
+            Price::from(close.to_string().as_str()),
+            Quantity::from(1000),
+            ts,
+            ts,
+        )
+    }
+
+    fn minute_bar(bar_type: BarType, date: NaiveDate, hh: u32, mm: u32, close: i64) -> Bar {
+        let ts =
+            kst_to_unix_nanos(date, chrono::NaiveTime::from_hms_opt(hh, mm, 0).unwrap()).unwrap();
+        Bar::new(
+            bar_type,
+            Price::from(close.to_string().as_str()),
+            Price::from((close + 1).to_string().as_str()),
+            Price::from((close - 1).to_string().as_str()),
+            Price::from(close.to_string().as_str()),
+            Quantity::from(10),
+            ts,
+            ts,
+        )
+    }
+
+    #[tokio::test]
+    async fn delete_wipes_one_symbols_daily_series_and_nothing_else() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let samsung = InstrumentId::from("005930.XKRX");
+        let hynix = InstrumentId::from("000660.XKRX");
+        let samsung_daily = BarKind::Daily.bar_type(samsung).unwrap();
+        let samsung_minute = BarKind::Minute(1).bar_type(samsung).unwrap();
+        let hynix_daily = BarKind::Daily.bar_type(hynix).unwrap();
+
+        write_bars(
+            &catalog,
+            vec![
+                daily_bar(samsung_daily, ymd(2024, 1, 3), 60000),
+                daily_bar(samsung_daily, ymd(2024, 1, 4), 60500),
+            ],
+        )
+        .await
+        .unwrap();
+        write_bars(&catalog, vec![minute_bar(samsung_minute, ymd(2024, 1, 3), 9, 1, 60100)])
+            .await
+            .unwrap();
+        write_bars(&catalog, vec![daily_bar(hynix_daily, ymd(2024, 1, 3), 130000)])
+            .await
+            .unwrap();
+
+        delete_bar_series(&catalog, samsung_daily).await.unwrap();
+
+        let remaining = read_all_bars(&catalog).await.unwrap();
+        assert_eq!(remaining.len(), 2, "only the wiped series is gone");
+        assert!(
+            remaining.iter().all(|b| b.bar_type != samsung_daily),
+            "no samsung daily bar survives the wipe"
+        );
+        assert!(remaining.iter().any(|b| b.bar_type == samsung_minute), "minute bars intact (KTD-8)");
+        assert!(remaining.iter().any(|b| b.bar_type == hynix_daily), "other symbols intact");
+    }
+
+    #[tokio::test]
+    async fn delete_of_an_unstored_series_is_a_noop_ok() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        std::fs::create_dir_all(&catalog).unwrap();
+        let bar_type = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        delete_bar_series(&catalog, bar_type)
+            .await
+            .expect("deleting a series with no stored bars is Ok");
+    }
+
+    #[tokio::test]
+    async fn scoped_read_returns_only_the_window_of_one_series() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let samsung = InstrumentId::from("005930.XKRX");
+        let samsung_daily = BarKind::Daily.bar_type(samsung).unwrap();
+        let hynix_daily = BarKind::Daily.bar_type(InstrumentId::from("000660.XKRX")).unwrap();
+
+        write_bars(
+            &catalog,
+            vec![
+                daily_bar(samsung_daily, ymd(2024, 1, 3), 60000),
+                daily_bar(samsung_daily, ymd(2024, 1, 4), 60500),
+                daily_bar(samsung_daily, ymd(2024, 1, 5), 62000),
+            ],
+        )
+        .await
+        .unwrap();
+        write_bars(&catalog, vec![daily_bar(hynix_daily, ymd(2024, 1, 4), 130000)])
+            .await
+            .unwrap();
+
+        // Window covering only Jan 4–5.
+        let start = kst_to_unix_nanos(ymd(2024, 1, 4), chrono::NaiveTime::MIN).unwrap();
+        let bars = read_bars_scoped(&catalog, samsung_daily, Some(start), Some(UnixNanos::from(u64::MAX)))
+            .await
+            .unwrap();
+        assert_eq!(bars.len(), 2, "only the windowed samsung dailies");
+        assert!(bars.iter().all(|b| b.bar_type == samsung_daily));
+        assert!(bars.iter().all(|b| b.ts_event >= start));
+    }
+}
+
+// ---------------------------------------------------------------------------
 // U7 — max-lookback probe (KTD10, R10). A dynamic t8412 responder serves minute
 // rows only for dates at/after a known earliest served date, so the windowed
 // backward search must converge on that date without being derailed by the
