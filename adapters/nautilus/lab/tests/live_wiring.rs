@@ -116,7 +116,7 @@ async fn scripted_fill_flows_into_a_live_run() {
     };
     writer.write_performance(&PerformanceReport::assemble(vec![trade], 1_000_000.0)).unwrap();
 
-    let mut dq = DataQualityReport::backtest(vec!["005930.XKRX".into()], false);
+    let mut dq = DataQualityReport::backtest(vec!["005930.XKRX".into()], Vec::new());
     dq.price_approximated_fills = approx;
     writer.write_data_quality(&dq).unwrap();
 
@@ -148,7 +148,7 @@ async fn scripted_fill_flows_into_a_live_run() {
 /// data-quality report, so the agent treats the run's accounting as suspect.
 #[test]
 fn inconclusive_poll_records_reconcile_advised() {
-    let mut dq = DataQualityReport::backtest(vec!["005930.XKRX".into()], false);
+    let mut dq = DataQualityReport::backtest(vec!["005930.XKRX".into()], Vec::new());
     let inconclusive = PollOutcome { reconcile_needed: true, ..Default::default() };
     record_reconcile(&mut dq, &inconclusive, "005930");
     assert_eq!(dq.reconcile_advised.len(), 1, "the reconcile-advised condition is recorded");

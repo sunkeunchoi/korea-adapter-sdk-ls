@@ -181,10 +181,19 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
     // Assemble artifacts.
     let checkpoint = load_checkpoint(&catalog_path);
     let performance = PerformanceReport::from_positions(&positions, cfg.starting_balance);
-    let mut data_quality = DataQualityReport::backtest(
-        selected_symbols.clone(),
-        checkpoint.as_ref().map(|c| c.adjusted_prices).unwrap_or(false),
-    );
+    // R7: report DETECTED per-symbol shifts — the checkpoint's unhealed shifted
+    // marks intersected with this run's selected universe. A clean catalog
+    // reports an empty list; the agent discounts only affected runs.
+    let shift_symbols: Vec<String> = checkpoint
+        .as_ref()
+        .map(|c| {
+            c.shifted_instruments("1-DAY")
+                .into_iter()
+                .filter(|s| selected_symbols.contains(s))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut data_quality = DataQualityReport::backtest(selected_symbols.clone(), shift_symbols);
     data_quality.coverage_gaps = collect_gaps(checkpoint.as_ref(), &missing);
 
     let rid = run_id(start, RunSource::Backtest, &cfg.params.strategy_id, cfg.params.strategy_version);
