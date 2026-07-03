@@ -23,6 +23,11 @@
 //!   [`policy::PolicyDecision`] outcome (R2).
 //! - [`pipeline`] — the [`pipeline::DecisionPipeline`] running each decision
 //!   through capability → guardrail → lowering, one envelope per cycle (R5).
+//! - [`policies`] — concrete policies: the deterministic Research-tier
+//!   demonstrator [`policies::ResearchPolicy`] (R8).
+//! - [`recording`] — the cross-run decisions registry
+//!   [`recording::DecisionRecorder`], append-only + scrubbed at write time
+//!   (KTD5, R9).
 
 pub mod action;
 pub mod capability;
@@ -32,7 +37,9 @@ pub mod guardrail;
 pub mod guardrails;
 pub mod intent;
 pub mod pipeline;
+pub mod policies;
 pub mod policy;
+pub mod recording;
 
 pub use action::*;
 pub use capability::*;
@@ -42,4 +49,6 @@ pub use guardrail::*;
 pub use guardrails::*;
 pub use intent::*;
 pub use pipeline::*;
+pub use policies::*;
 pub use policy::*;
+pub use recording::*;
