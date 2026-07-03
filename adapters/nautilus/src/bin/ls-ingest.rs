@@ -7,13 +7,16 @@
 //!
 //! Configuration (env vars):
 //! - `LS_INGEST_CATALOG`: catalog directory (required).
-//! - `LS_INGEST_MODE`: `range` (default) | `accumulate` (U5). In `accumulate` mode,
-//!   `SDATE`/`EDATE` are ignored; coverage grows from each instrument's watermark to
-//!   the last closed session.
+//! - `LS_INGEST_MODE`: `range` (default) | `accumulate` (U5) | `rebase` (epoch
+//!   re-base — see the README runbook) | `probe-lookback`. In `accumulate`/`rebase`
+//!   modes, `SDATE`/`EDATE` are ignored; coverage grows from each instrument's
+//!   watermark to the last closed session. `rebase` first marks every daily triple
+//!   shifted (one atomic checkpoint save), then heals each through the same path.
 //! - `LS_INGEST_SDATE` / `LS_INGEST_EDATE`: range bounds `YYYYMMDD` (required in
 //!   `range` mode).
-//! - `LS_INGEST_LOOKBACK`: accumulate-mode floor `YYYYMMDD` for an unseen/newly
-//!   listed instrument (required in `accumulate` mode).
+//! - `LS_INGEST_LOOKBACK`: accumulate/rebase-mode floor `YYYYMMDD` for an
+//!   unseen/newly listed instrument — and, in `rebase` mode, the re-pull floor
+//!   for every symbol (required; pin at or before the original backfill start).
 //! - `LS_INGEST_LANE_FILE`: optional lane env-file (else the process env is used).
 //! - `LS_INGEST_SYMBOLS`: optional comma-separated shcodes to bound the universe
 //!   (else the whole loaded universe; minute backfills MUST be bounded).
@@ -25,6 +28,7 @@ use chrono::{Duration, NaiveDate, Utc};
 use nautilus_ls::config::LsAdapterConfig;
 use nautilus_ls::ingest::{
     last_closed_session, BarKind, IngestConfig, Ingestor, ACCUMULATE_CLOSE_BUFFER,
+    DEFAULT_OVERLAP_DAYS,
 };
 use nautilus_ls::instruments::{InstrumentDomain, InstrumentProvider};
 use nautilus_ls::lock::{AdvisoryLock, LockKind};
@@ -51,13 +55,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let catalog: PathBuf = env_required("LS_INGEST_CATALOG")?.into();
     let mode = std::env::var("LS_INGEST_MODE").unwrap_or_else(|_| "range".into());
+    // `accumulate` and `rebase` share the watermark/floor arithmetic; rebase
+    // additionally marks every daily triple shifted first (the epoch re-base,
+    // KTD-4 — see the README runbook before running it).
     let accumulate = match mode.as_str() {
         "range" => false,
-        "accumulate" => true,
+        "accumulate" | "rebase" => true,
         "probe-lookback" => false, // handled early, below
         other => {
             return Err(format!(
-                "unknown LS_INGEST_MODE {other:?} (want range | accumulate | probe-lookback)"
+                "unknown LS_INGEST_MODE {other:?} (want range | accumulate | rebase | probe-lookback)"
             )
             .into())
         }
@@ -118,13 +125,18 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         sdate: sdate.clone(),
         edate: edate.clone(),
         adjusted_prices: true,
+        overlap_days: DEFAULT_OVERLAP_DAYS,
     };
     // The ingest lock is already held (`_lock`), so run without re-acquiring it.
     let mut ingestor = Ingestor::new(sdk, config);
     let report = if accumulate {
         let floor = parse_yyyymmdd(&sdate)?;
         let last_closed = parse_yyyymmdd(&edate)?;
-        ingestor.run_accumulate(&universe, last_closed, floor).await?
+        if mode == "rebase" {
+            ingestor.run_rebase(&universe, last_closed, floor).await?
+        } else {
+            ingestor.run_accumulate(&universe, last_closed, floor).await?
+        }
     } else {
         ingestor.run(&universe).await?
     };
@@ -136,6 +148,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         report.triples_skipped,
         report.gaps.len()
     );
+    if !report.heal_refusals.is_empty() {
+        for r in &report.heal_refusals {
+            println!(
+                "HEAL REFUSED: {} {} — run floor {} is later than earliest stored bar {}; re-run with LS_INGEST_LOOKBACK at or before it (symbol stays marked)",
+                r.instrument, r.bar_type, r.floor, r.earliest_stored
+            );
+        }
+    }
     println!(
         "budget: {} symbols x {} bar-kinds, paced to {}/s (>= {:.0}s wall clock)",
         report.budget.symbols,
@@ -164,6 +184,7 @@ async fn run_probe(sdk: &ls_sdk::LsSdk, catalog: PathBuf) -> Result<(), Box<dyn 
         sdate: String::new(),
         edate: String::new(),
         adjusted_prices: true,
+        overlap_days: DEFAULT_OVERLAP_DAYS,
     };
     let ingestor = Ingestor::new(sdk.clone(), config);
     match ingestor.run_probe_lookback(&pilot, ncnt, anchor, probed_at).await? {
