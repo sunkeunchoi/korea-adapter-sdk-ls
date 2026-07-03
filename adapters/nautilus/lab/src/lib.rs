@@ -4,6 +4,8 @@
 //! runners, and the artifact writer live here so strategy churn never destabilizes
 //! the adapter, whose contract is translation only. This crate carries:
 //!
+//! - [`agent`] — the agent decision layer's core types: decision envelope,
+//!   intent, runtime action, context (R1, R5, R9).
 //! - [`params`] — ORB v0's parameter set (all manifest-recorded, KTD6).
 //! - [`strategy`] — the ORB v0 payload: universe scan + range/entry/exit machine (R2).
 //! - [`signals`] — the per-decision signal log types + JSONL sink (KTD9, R6).
@@ -14,6 +16,7 @@
 //! manifest) into an append-only registry so an agent can analyze any run — backtest
 //! or live — and propose the next strategy change.
 
+pub mod agent;
 pub mod artifacts;
 pub mod params;
 pub mod runner;
