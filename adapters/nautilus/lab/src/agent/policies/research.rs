@@ -15,9 +15,8 @@
 //! registry: it reads a finalized run's `manifest.json` + `performance.json`
 //! and builds the credential-free `RunState` context (R9 — positions are empty
 //! because a finalized backtest is flat, and the params map carries only
-//! numeric [`OrbParams`] fields).
+//! numeric [`crate::params::OrbParams`] fields).
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::Context as _;
@@ -28,13 +27,13 @@ use crate::agent::policy::{AgentPolicy, PolicyDecision, PolicyError};
 use crate::artifacts::manifest::Manifest;
 use crate::artifacts::performance::PerformanceReport;
 use crate::artifacts::{MANIFEST_FILE, PERFORMANCE_FILE};
-use crate::params::OrbParams;
 
 /// The `run_summary` key the policy reads: the closed-trade count, written by
 /// [`PerformanceReport::assemble`] into every performance summary.
 pub const KEY_NUM_TRADES: &str = "num_trades";
 
-/// The parameter the policy proposes changing: [`OrbParams::gap_min_pct`], the
+/// The parameter the policy proposes changing:
+/// [`crate::params::OrbParams::gap_min_pct`], the
 /// universe gap filter. The string must match the real `OrbParams` field name
 /// (its serde key) — [`ResearchPolicy::context_from_run`] builds the context's
 /// params map from the manifest's serialized `OrbParams`.
@@ -72,7 +71,7 @@ impl ResearchPolicy {
     ///   point), `0.0` when the curve is empty;
     /// - `positions` — empty (a finalized backtest is flat);
     /// - `params` — the numeric (f64-able) fields of the manifest's
-    ///   [`OrbParams`], keyed by their serde field names (so
+    ///   [`crate::params::OrbParams`], keyed by their serde field names (so
     ///   [`PARAM_GAP_MIN_PCT`] is present);
     /// - `run_summary` — the performance report's `summary` map, with
     ///   [`KEY_NUM_TRADES`] backfilled from the closed-trade ledger if a
@@ -87,7 +86,7 @@ impl ResearchPolicy {
         let manifest: Manifest = read_json(&run_dir.join(MANIFEST_FILE))?;
         let performance: PerformanceReport = read_json(&run_dir.join(PERFORMANCE_FILE))?;
 
-        let params = numeric_params(&manifest.params)?;
+        let params = manifest.params.numeric_summary();
         let mut run_summary = performance.summary.clone();
         run_summary.entry(KEY_NUM_TRADES.to_string()).or_insert_with(|| {
             performance.trades.iter().filter(|t| t.ts_closed.is_some()).count() as f64
@@ -146,20 +145,6 @@ impl AgentPolicy for ResearchPolicy {
     }
 }
 
-/// The numeric (f64-able) fields of an [`OrbParams`], keyed by serde field
-/// name. String-typed fields (strategy id, `HH:MM:SS` times) are omitted —
-/// the context's params map is `f64`-valued.
-fn numeric_params(params: &OrbParams) -> anyhow::Result<BTreeMap<String, f64>> {
-    let value = serde_json::to_value(params)?;
-    let serde_json::Value::Object(map) = value else {
-        anyhow::bail!("OrbParams serialized to a non-object JSON value");
-    };
-    Ok(map
-        .into_iter()
-        .filter_map(|(k, v)| v.as_f64().map(|n| (k, n)))
-        .collect())
-}
-
 fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
     let text = std::fs::read_to_string(path)
         .with_context(|| format!("reading {}", path.display()))?;
@@ -168,7 +153,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeSet;
+    use std::collections::{BTreeMap, BTreeSet};
 
     use tempfile::TempDir;
 
@@ -182,6 +167,7 @@ mod tests {
     use crate::artifacts::manifest::DataRange;
     use crate::artifacts::performance::TradeRecord;
     use crate::artifacts::{RunSource, RunWriter};
+    use crate::params::OrbParams;
 
     fn fixture_context(num_trades: f64) -> AgentContext {
         AgentContext::run_state(

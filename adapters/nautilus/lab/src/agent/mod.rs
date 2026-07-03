@@ -30,6 +30,9 @@
 //!   (KTD5, R9).
 //! - [`replay`] — engine-free guardrail-swap re-evaluation of a recorded
 //!   stream, with the first-divergence audit boundary (R7).
+//! - [`sink`] — the in-run [`sink::DecisionSink`] the strategy emits its
+//!   per-decision telemetry envelopes into, drained by the runner to write
+//!   each run's `decisions.jsonl` (R6).
 
 pub mod action;
 pub mod capability;
@@ -43,6 +46,7 @@ pub mod policies;
 pub mod policy;
 pub mod recording;
 pub mod replay;
+pub mod sink;
 
 pub use action::*;
 pub use capability::*;
@@ -56,3 +60,4 @@ pub use policies::*;
 pub use policy::*;
 pub use recording::*;
 pub use replay::*;
+pub use sink::*;

@@ -27,8 +27,8 @@ use crate::artifacts::data_quality::{CoverageGapRecord, DataQualityReport, GapRe
 use crate::artifacts::manifest::{hash_bytes, range_fingerprint, universe_hash, DataRange, Manifest};
 use crate::artifacts::performance::PerformanceReport;
 use crate::artifacts::{run_id, RunSource, RunWriter};
+use crate::agent::sink::DecisionSink;
 use crate::params::OrbParams;
-use crate::signals::SignalSink;
 use crate::strategy::orb::{
     select_universe, OrbStrategy, SelectedSymbol, UniverseCandidate,
 };
@@ -111,7 +111,7 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
     // scan must key only on data inside the fingerprinted window, or accumulate-forward
     // growth outside the range would silently change the selected universe while the
     // range-scoped fingerprint stayed identical — breaking run comparability.
-    let sink = SignalSink::new();
+    let sink = DecisionSink::new();
     let (candidates, missing) = build_candidates(&instruments, &all_bars, start_ns, end_ns);
     let selected_symbols = select_universe(&candidates, &cfg.params, &sink, start_ns);
 
@@ -206,7 +206,7 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
     writer.write_manifest(&manifest)?;
     writer.write_performance(&performance)?;
     writer.write_data_quality(&data_quality)?;
-    writer.write_signals(&sink.snapshot())?;
+    writer.write_decisions(&sink.snapshot())?;
     let run_dir = writer.finalize()?;
 
     Ok(RunOutcome { run_dir, run_id: rid })
@@ -254,7 +254,7 @@ fn run_engine(
     bars: Vec<Bar>,
     params: OrbParams,
     selected: Vec<SelectedSymbol>,
-    sink: SignalSink,
+    sink: DecisionSink,
     starting_balance: f64,
 ) -> anyhow::Result<Vec<Position>> {
     let mut engine = BacktestEngine::new(BacktestEngineConfig {

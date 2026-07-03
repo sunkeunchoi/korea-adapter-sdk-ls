@@ -19,7 +19,34 @@ use serde::{Deserialize, Serialize};
 use crate::agent::action::RuntimeAction;
 use crate::agent::context::AgentContext;
 use crate::agent::intent::AgentIntent;
-use crate::signals::{Decision, SignalKind};
+
+/// The decision taken on a universe candidate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Decision {
+    Accept,
+    Reject,
+}
+
+/// The kind of decision an event records (KTD9).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SignalKind {
+    /// A universe candidate was accepted or rejected at selection time.
+    Universe,
+    /// A selected symbol's price broke above the opening-range high.
+    Breakout,
+    /// An entry order was placed after a breakout.
+    OrderPlaced,
+    /// An entry was suppressed by the sizing / concurrency gate.
+    OrderRejectedSizing,
+    /// A held position hit its stop (range low).
+    StopHit,
+    /// A held position was flattened at the time-flat deadline.
+    TimeExit,
+    /// End-of-session summary for a selected symbol (extreme values observed).
+    SessionSummary,
+}
 
 /// The committed envelope schema version, bumped on any wire-shape change.
 pub const ENVELOPE_SCHEMA_VERSION: u32 = 1;
@@ -127,10 +154,11 @@ pub enum PolicyDecisionRecord {
     },
 }
 
-/// The in-run strategy telemetry payload, subsuming the shape of
-/// [`crate::signals::SignalEvent`] so per-decision strategy telemetry can ride
-/// the envelope stream. `kind` reuses [`SignalKind`] (snake_case wire tags) so
-/// the two logs stay variant-for-variant identical.
+/// The in-run strategy telemetry payload — the per-decision strategy log
+/// (KTD9, R6), one detail per *decision*, never per bar, riding the envelope
+/// stream as `decision_detail`. `kind` uses [`SignalKind`]'s snake_case wire
+/// tags, preserving the retired per-decision signal-log event shape
+/// variant-for-variant.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct DecisionDetail {
     /// What kind of strategy decision this is (snake_case on the wire).
@@ -145,6 +173,33 @@ pub struct DecisionDetail {
     pub filter: Option<String>,
     /// The signal values at decision time (sorted keys → deterministic output).
     pub values: BTreeMap<String, f64>,
+}
+
+impl DecisionDetail {
+    /// A universe accept/reject decision's detail.
+    pub fn universe(
+        symbol: impl Into<String>,
+        decision: Decision,
+        filter: Option<String>,
+        values: BTreeMap<String, f64>,
+    ) -> Self {
+        DecisionDetail {
+            kind: SignalKind::Universe,
+            symbol: symbol.into(),
+            decision: Some(decision),
+            filter,
+            values,
+        }
+    }
+
+    /// A state-transition decision's detail on a selected symbol.
+    pub fn transition(
+        symbol: impl Into<String>,
+        kind: SignalKind,
+        values: BTreeMap<String, f64>,
+    ) -> Self {
+        DecisionDetail { kind, symbol: symbol.into(), decision: None, filter: None, values }
+    }
 }
 
 /// The append-only record of one decision cycle (R1). Every stage field is
@@ -359,6 +414,35 @@ mod tests {
         assert_eq!(e.lowering, LoweringOutcome::NotEvaluated);
         assert!(e.action.is_none());
         assert!(e.decision_detail.is_some());
+    }
+
+    #[test]
+    fn universe_reject_detail_names_filter_and_values() {
+        // Ported from the retired signal log: a rejection carries the rejecting
+        // filter's name and the signal values at decision time, snake_case tags.
+        let line = serde_json::to_string(&detail()).unwrap();
+        assert!(line.contains("\"reject\""), "{line}");
+        assert!(line.contains("\"gap\""), "{line}");
+        assert!(line.contains("\"gap_pct\":1.2"), "{line}");
+    }
+
+    #[test]
+    fn accept_detail_omits_filter() {
+        // Ported from the retired signal log: an accept has no rejecting filter,
+        // and the optional fields stay off the wire.
+        let d = DecisionDetail::universe("A.XKRX", Decision::Accept, None, BTreeMap::new());
+        let line = serde_json::to_string(&d).unwrap();
+        assert!(!line.contains("filter"), "an accept has no rejecting filter: {line}");
+        assert!(line.contains("\"accept\""), "{line}");
+    }
+
+    #[test]
+    fn signal_kind_tags_stay_snake_case_on_the_wire() {
+        // The relocated enums preserve the retired log's exact wire shape.
+        let kind = serde_json::to_string(&SignalKind::OrderRejectedSizing).unwrap();
+        assert_eq!(kind, "\"order_rejected_sizing\"");
+        let decision = serde_json::to_string(&Decision::Reject).unwrap();
+        assert_eq!(decision, "\"reject\"");
     }
 
     #[test]

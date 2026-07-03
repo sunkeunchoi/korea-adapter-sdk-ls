@@ -19,7 +19,7 @@ Runs live beside the catalog under one data home:
   manifest.json                     # strategy id/version, full params, pinned range,
                                     #   range-scoped catalog fingerprint, universe hash
   performance.json                  # trade/fill ledger, per-trade P&L, equity curve, stats
-  signals.jsonl                     # one per-decision event per line (universe + transitions)
+  decisions.jsonl                   # one decision envelope per decision (universe + transitions)
   data_quality.json                 # coverage gaps, adjustment-basis flag, approximated-fill
                                     #   count, reconcile-advised conditions (live), universe
   analysis.md                       # YOU write this (see below) — it co-locates here
@@ -42,8 +42,13 @@ range-scoped `catalog_fingerprint`, and the `universe_hash`. A backtest run trad
 
 ### Artifact key reference (read artifacts without reading source)
 
-`signals.jsonl` — each line is `{ ts_event, symbol, kind, decision?, filter?, values }`.
-`values` keys per `kind`:
+`decisions.jsonl` — each line is one decision envelope
+`{ schema_version, envelope_id, ts_event, trigger, context, policy_decision,
+capability, guardrail, lowering, decision_detail }`. In-run strategy telemetry
+rides `decision_detail` as `{ kind, symbol, decision?, filter?, values }` (the
+pipeline stages of a telemetry envelope are explicitly `NotEvaluated`, and its
+`context` is the minimal `form: Telemetry` snapshot: strategy id/version, numeric
+params, running counts). `decision_detail.values` keys per `kind`:
 
 | `kind` | `decision` / `filter` | `values` keys |
 |---|---|---|

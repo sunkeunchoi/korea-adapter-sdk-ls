@@ -21,8 +21,8 @@ use nautilus_ls_lab::artifacts::performance::{FillRecord, PerformanceReport, Tra
 use nautilus_ls_lab::artifacts::{run_id, RunSource, RunWriter, DATA_QUALITY_FILE, MANIFEST_FILE, PERFORMANCE_FILE};
 use nautilus_ls_lab::params::OrbParams;
 use nautilus_ls_lab::runner::live::{count_approximated, live_guard, record_reconcile};
+use nautilus_ls_lab::agent::sink::DecisionSink;
 use nautilus_ls_lab::strategy::orb::{OrbStrategy, SelectedSymbol};
-use nautilus_ls_lab::signals::SignalSink;
 use nautilus_model::identifiers::{ClientOrderId, InstrumentId, TraderId, TradeId};
 use tempfile::tempdir;
 
@@ -74,7 +74,7 @@ async fn strategy_mounts_in_a_built_live_node() {
 
     let id = InstrumentId::from("005930.XKRX");
     let selected = vec![SelectedSymbol { instrument_id: id, bar_type: BarKind::Minute(1).bar_type(id).unwrap() }];
-    let strategy = OrbStrategy::new(OrbParams::default(), selected, SignalSink::new());
+    let strategy = OrbStrategy::new(OrbParams::default(), selected, DecisionSink::new());
     node.add_strategy(strategy).expect("the ORB strategy mounts in the live node");
 }
 

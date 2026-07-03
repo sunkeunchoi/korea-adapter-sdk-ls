@@ -17,7 +17,8 @@ use nautilus_ls::lock::{AdvisoryLock, LockKind};
 use nautilus_ls_lab::artifacts::data_quality::{DataQualityReport, GapReasonKind};
 use nautilus_ls_lab::artifacts::manifest::Manifest;
 use nautilus_ls_lab::artifacts::performance::PerformanceReport;
-use nautilus_ls_lab::artifacts::{aborted_runs, list_runs, MANIFEST_FILE, PERFORMANCE_FILE, SIGNALS_FILE, DATA_QUALITY_FILE};
+use nautilus_ls_lab::agent::replay::read_envelopes;
+use nautilus_ls_lab::artifacts::{aborted_runs, list_runs, MANIFEST_FILE, PERFORMANCE_FILE, DECISIONS_FILE, DATA_QUALITY_FILE};
 use nautilus_ls_lab::runner::backtest::{run, run_inner, BacktestConfig};
 use nautilus_model::data::Bar;
 use nautilus_model::identifiers::InstrumentId;
@@ -133,8 +134,8 @@ fn read_perf(run_dir: &Path) -> PerformanceReport {
     serde_json::from_str(&std::fs::read_to_string(run_dir.join(PERFORMANCE_FILE)).unwrap()).unwrap()
 }
 
-/// Happy path: fixture catalog → full run → finalized run with non-empty signals and
-/// a performance report showing the completed ORB trade.
+/// Happy path: fixture catalog → full run → finalized run with a non-empty decision
+/// stream and a performance report showing the completed ORB trade.
 #[tokio::test]
 async fn full_backtest_lands_a_registry_run() {
     let dir = tempdir().unwrap();
@@ -143,12 +144,28 @@ async fn full_backtest_lands_a_registry_run() {
     let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
     let outcome = run(cfg(dir.path()), start).await.unwrap();
 
-    for f in [MANIFEST_FILE, PERFORMANCE_FILE, SIGNALS_FILE, DATA_QUALITY_FILE] {
+    for f in [MANIFEST_FILE, PERFORMANCE_FILE, DECISIONS_FILE, DATA_QUALITY_FILE] {
         assert!(outcome.run_dir.join(f).exists(), "{f} present");
     }
-    let signals = std::fs::read_to_string(outcome.run_dir.join(SIGNALS_FILE)).unwrap();
-    assert!(signals.lines().count() >= 3, "non-empty signal log");
-    assert!(signals.contains("order_placed"), "an entry was signalled");
+    let decisions_path = outcome.run_dir.join(DECISIONS_FILE);
+    let decisions = std::fs::read_to_string(&decisions_path).unwrap();
+    assert!(decisions.lines().count() >= 3, "non-empty decision stream");
+    assert!(decisions.contains("order_placed"), "an entry was recorded");
+
+    // AE3: exactly one envelope per decision cycle — every line parses through the
+    // replay loader, and every in-run envelope carries its telemetry detail.
+    let envelopes = read_envelopes(&decisions_path).unwrap();
+    assert_eq!(
+        envelopes.len(),
+        decisions.lines().count(),
+        "one parseable envelope per decision-log line"
+    );
+    assert!(
+        envelopes.iter().all(|e| e.decision_detail.is_some()),
+        "every in-run envelope carries a decision detail"
+    );
+    // AE3: the signal log is subsumed by decisions.jsonl — no signals.jsonl remains.
+    assert!(!outcome.run_dir.join("signals.jsonl").exists(), "subsumed by decisions.jsonl");
 
     let perf = read_perf(&outcome.run_dir);
     assert_eq!(perf.summary["num_trades"], 1.0, "one completed ORB trade");
@@ -307,10 +324,10 @@ async fn out_of_range_ingest_keeps_range_fingerprint() {
 }
 
 /// The sizing/concurrency veto: when the fixed notional cannot afford a single share,
-/// the entry is rejected (force_done + an OrderRejectedSizing signal) and no trade is
-/// placed — exercising handle_actions' veto branch end-to-end through the engine.
+/// the entry is rejected (force_done + an OrderRejectedSizing envelope) and no trade
+/// is placed — exercising handle_actions' veto branch end-to-end through the engine.
 #[tokio::test]
-async fn sizing_veto_rejects_and_signals() {
+async fn sizing_veto_rejects_and_records_the_decision() {
     let dir = tempdir().unwrap();
     build_fixture(dir.path(), false).await;
 
@@ -319,10 +336,10 @@ async fn sizing_veto_rejects_and_signals() {
     let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
     let outcome = run(c, start).await.unwrap();
 
-    let signals = std::fs::read_to_string(outcome.run_dir.join(SIGNALS_FILE)).unwrap();
-    assert!(signals.contains("order_rejected_sizing"), "the entry was vetoed by sizing");
-    assert!(signals.contains("notional_too_small"), "the veto names the notional filter");
-    assert!(!signals.contains("order_placed"), "no order was placed");
+    let decisions = std::fs::read_to_string(outcome.run_dir.join(DECISIONS_FILE)).unwrap();
+    assert!(decisions.contains("order_rejected_sizing"), "the entry was vetoed by sizing");
+    assert!(decisions.contains("notional_too_small"), "the veto names the notional filter");
+    assert!(!decisions.contains("order_placed"), "no order was placed");
     let perf = read_perf(&outcome.run_dir);
     assert_eq!(perf.summary["num_trades"], 0.0, "no trade on a vetoed entry");
 }

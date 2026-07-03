@@ -33,8 +33,10 @@ pub const DECISIONS_FILE: &str = "decisions.jsonl";
 const FREE_TEXT_KEYS: [&str; 4] = ["reason", "rationale", "description", "message"];
 
 /// Scrub the free-text string values (by [`FREE_TEXT_KEYS`]) anywhere in the
-/// serialized envelope tree, delegating to [`crate::artifacts::scrub`].
-fn scrub_free_text(value: &mut serde_json::Value) {
+/// serialized envelope tree, delegating to [`crate::artifacts::scrub`]. Shared
+/// with [`crate::artifacts::RunWriter::write_decisions`] so the in-run stream
+/// and the cross-run registry apply one scrub discipline (R9).
+pub(crate) fn scrub_free_text(value: &mut serde_json::Value) {
     match value {
         serde_json::Value::Object(map) => {
             for (key, val) in map.iter_mut() {
