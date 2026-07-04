@@ -44,10 +44,14 @@ fn sc_spec(tr_cd: &str, kind: RowKind) -> SubSpec {
 }
 
 fn sc1_fill_frame(ordno: &str, execno: &str, execqty: &str, execprc: &str) -> String {
+    sc1_fill_frame_sym(ordno, execno, execqty, execprc, "005930")
+}
+
+fn sc1_fill_frame_sym(ordno: &str, execno: &str, execqty: &str, execprc: &str, shtn_isuno: &str) -> String {
     serde_json::json!({
         "header": { "tr_cd": "SC1", "tr_key": "" },
         "body": { "ordno": ordno, "execno": execno, "ordqty": "100", "ordprc": "60000",
-                  "execqty": execqty, "execprc": execprc }
+                  "execqty": execqty, "execprc": execprc, "shtnIsuno": shtn_isuno }
     })
     .to_string()
 }
@@ -172,13 +176,19 @@ async fn sc1_unknown_ordno_no_delta_flags_reconcile() {
     sup.subscribe(sc_spec("SC1", RowKind::OrderFill));
     assert!(wait_subscribe(&ws, "SC1", "1", Duration::from_secs(3)).await);
 
-    ws.push_frame(sc1_fill_frame("9999", "E9", "10", "60000"));
+    // The unknown fill names symbol 000660 (distinct from the ledger's open 005930).
+    ws.push_frame(sc1_fill_frame_sym("9999", "E9", "10", "60000", "000660"));
     let msg = timeout(Duration::from_secs(2), rx.recv()).await.unwrap().unwrap();
     match msg {
         OrderEventMsg::Fill(obs) => {
+            // U1: the observation carries the bare symbol through the ToEvent seam.
+            assert_eq!(obs.symbol.as_deref(), Some("000660"), "the traded symbol survives to the observation");
             let out = ledger.apply(obs);
             assert!(out.deltas.is_empty(), "an unknown OrdNo emits no fill");
             assert!(out.reconcile_needed, "an unknown OrdNo flags a reconcile");
+            // R1: the ledger recorded that symbol pending so the drive scans it.
+            assert!(ledger.has_pending());
+            assert_eq!(ledger.take_pending_symbols(), vec!["000660".to_string()]);
         }
         other => panic!("expected a fill, got {other:?}"),
     }

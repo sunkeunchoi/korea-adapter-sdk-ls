@@ -35,7 +35,7 @@ use crate::error::{AdapterError, AdapterResult};
 use crate::lock::{AdvisoryLock, LockKind};
 use crate::parse::strict_i64;
 use crate::rules::{KRX_REGULAR_CLOSE, KST_UTC_OFFSET_HOURS};
-use self::checkpoint::{Checkpoint, CoverageGap, GapReason, RebaseEvent};
+use self::checkpoint::{Checkpoint, CoverageGap, GapReason, RebaseEvent, RebaseOrigin};
 use self::pacer::{Pacer, MARKET_DATA_CATEGORY_PER_SEC};
 
 /// A defensive upper bound on daily-cursor pages per symbol (guards a gateway that
@@ -615,6 +615,20 @@ impl BudgetEstimate {
     }
 }
 
+/// A range-mode series refused because it carries an unhealed basis-shift mark
+/// (U4/KTD8): serving or completing it in range mode would put bars on a stale
+/// adjustment basis — the exact corruption the heal machinery prevents. Range
+/// mode does not heal; it refuses and directs the operator to accumulate/rebase.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RangeRefusal {
+    /// The instrument id (`{shcode}.XKRX`).
+    pub instrument: String,
+    /// The bar-type label (e.g. `1-DAY`).
+    pub bar_type: String,
+    /// The session date (`YYYYMMDD`) the shift was detected.
+    pub detected: String,
+}
+
 /// The result of an ingest run.
 #[derive(Debug, Clone)]
 pub struct CoverageReport {
@@ -628,6 +642,9 @@ pub struct CoverageReport {
     pub gaps: Vec<checkpoint::CoverageGap>,
     /// Heal wipes refused this run (KTD-2 precondition) — surfaced, never silent.
     pub heal_refusals: Vec<HealRefusal>,
+    /// Range-mode series refused pending heal (U4/KTD8) — a marked series is
+    /// refused, never served or completed on a stale basis, and never silent.
+    pub range_refusals: Vec<RangeRefusal>,
     /// The request-budget estimate for the run.
     pub budget: BudgetEstimate,
 }
@@ -696,11 +713,29 @@ impl Ingestor {
         let mut ingested = 0usize;
         let mut skipped = 0usize;
         let mut gaps_this_run = Vec::new();
+        let mut range_refusals: Vec<RangeRefusal> = Vec::new();
 
         for id in universe {
             let shcode = id.symbol.as_str().to_string();
             for &kind in &self.config.bar_kinds {
                 let label = kind.label();
+                // The shifted mark outranks the completion check (KTD8): a marked
+                // series is refused pending heal BEFORE `is_done`, so a series
+                // already recorded complete for this range is still not served on a
+                // stale adjustment basis. Range mode never heals — it refuses and
+                // directs the operator to accumulate/rebase mode. Unmarked series
+                // in the same run are unaffected.
+                if checkpoint.is_shifted(&id.to_string(), &label) {
+                    range_refusals.push(RangeRefusal {
+                        instrument: id.to_string(),
+                        bar_type: label.clone(),
+                        detected: checkpoint
+                            .shifted_detected(&id.to_string(), &label)
+                            .unwrap_or("")
+                            .to_string(),
+                    });
+                    continue;
+                }
                 if checkpoint.is_done(&id.to_string(), &label, &range) {
                     skipped += 1;
                     continue;
@@ -768,6 +803,7 @@ impl Ingestor {
             triples_skipped: skipped,
             gaps: gaps_this_run,
             heal_refusals: Vec::new(),
+            range_refusals,
             budget,
         })
     }
@@ -851,7 +887,7 @@ impl Ingestor {
                                 // mark-before-wipe is load-bearing — the reverse order
                                 // plus a crash would leave a high watermark over an
                                 // empty store and silently truncate history forever).
-                                checkpoint.mark_shifted(&instrument, &label, last_closed);
+                                checkpoint.mark_shifted(&instrument, &label, last_closed, RebaseOrigin::Heal);
                                 checkpoint.save(&checkpoint_path)?;
                                 tracing::warn!(instrument = %instrument, "adjustment-basis shift detected; healing");
                                 detected = true;
@@ -964,6 +1000,9 @@ impl Ingestor {
             triples_skipped: skipped,
             gaps: gaps_this_run,
             heal_refusals,
+            // Accumulate mode heals marked series in place; range-mode refusal is a
+            // range-only concept (KTD8).
+            range_refusals: Vec::new(),
             budget,
         })
     }
@@ -993,7 +1032,10 @@ impl Ingestor {
         let mut checkpoint = Checkpoint::load(&checkpoint_path)?;
         let daily_label = BarKind::Daily.label();
         for id in universe {
-            checkpoint.mark_shifted(&id.to_string(), &daily_label, last_closed);
+            // Epoch origin — the one-time rollout, kept out of the organic audit
+            // metric (KTD5/R8). A series already heal-marked keeps its heal origin
+            // (keep-original-on-re-mark).
+            checkpoint.mark_shifted(&id.to_string(), &daily_label, last_closed, RebaseOrigin::Epoch);
         }
         checkpoint.save(&checkpoint_path)?;
         tracing::info!(symbols = universe.len(), "epoch re-base: all daily triples marked; healing");
@@ -1137,12 +1179,16 @@ impl Ingestor {
             .shifted_detected(instrument, label)
             .unwrap_or(&fmt_ymd(last_closed))
             .to_string();
+        // Read the origin stamped at mark time (survives crash-resume under a
+        // different running mode, KTD5) BEFORE clearing the mark.
+        let origin = checkpoint.shifted_origin(instrument, label);
         checkpoint.clear_shifted(instrument, label);
         checkpoint.record_rebase_event(RebaseEvent {
             instrument: instrument.to_string(),
             bar_type: label.to_string(),
             detected,
             healed: fmt_ymd(last_closed),
+            origin,
         });
         checkpoint.set_watermark(instrument, label, last_closed);
         checkpoint.save(checkpoint_path)?;

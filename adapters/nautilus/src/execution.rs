@@ -353,7 +353,14 @@ async fn run_poll_loop(
     let pacer = poll_pacer();
     loop {
         let armed = reconcile_armed.swap(false, Ordering::SeqCst);
-        if armed || lock_ledger(&ledger).has_open_orders() {
+        // Run when the SC lane armed a wakeup, an order is open, OR a symbol is
+        // pending a reconcile scan (U2, KTD2) — a flat ledger with a consumed arm
+        // would otherwise sleep on pending symbols forever.
+        let has_work = {
+            let led = lock_ledger(&ledger);
+            led.has_open_orders() || led.has_pending()
+        };
+        if armed || has_work {
             let outcome = drive_poll_pass(&sdk, &ledger, &pacer).await;
             if outcome.exhausted() {
                 tracing::warn!("t0425 reconcile drive exhausted still inconclusive — reconcile advised");
@@ -561,14 +568,51 @@ async fn run_cancel(
 ) {
     let client_order_id = cmd.client_order_id;
     let Some(snap) = snapshot(&ledger, &client_order_id) else {
-        tracing::warn!(%client_order_id, "cancel of an unknown order — ignored (nothing resting)");
+        // The ledger never tracked this order — the adapter sent no cancel, so a
+        // truthful non-terminal cancel-rejection returns nautilus-core's FSM from
+        // PENDING_CANCEL (never a synthetic terminal event, KTD4). We have no
+        // retained `OrderAny`, so emit from the command's ids, and arm a reconcile
+        // for the command's instrument so venue truth is re-verified (R4).
+        tracing::warn!(%client_order_id, "cancel of an unknown order — nothing resting; emitting cancel-rejection + arming reconcile");
+        // Arm the reconcile before emitting so an observer that keys off the event
+        // sees the pending symbol already recorded.
+        if let Some(sym) = crate::ws::rows::normalize_symbol(cmd.instrument_id.symbol.as_str()) {
+            lock_ledger(&ledger).record_pending_symbol(&sym);
+        }
+        emitter.emit_order_cancel_rejected_event(
+            cmd.strategy_id,
+            cmd.instrument_id,
+            client_order_id,
+            None,
+            "cancel skipped: order unknown to the ledger (nothing resting)",
+            clock.get_time_ns(),
+        );
         return;
     };
     if snap.remaining == 0 {
-        // Fully filled (or modified below the filled total) just before the
-        // cancel: nothing rests, so skip the send and emit nothing synthetic —
-        // the in-flight fill terminates the order through terminal detection.
-        tracing::info!(%client_order_id, "cancel skipped: remaining quantity is 0 (nothing resting)");
+        // Fully filled (or modified below the filled total) just before the cancel:
+        // nothing rests, so skip the send. A synthetic terminal event could mask a
+        // still-resting order (inverted-cancel risk), so emit a truthful
+        // non-terminal cancel-rejection instead — it returns the FSM from
+        // PENDING_CANCEL (the `handle_action_error` pattern) — then close the ledger
+        // entry (its venue-done state follows from the acked modify plus observed
+        // fills, reusing the terminal condition) so the open set clears and the poll
+        // loop can idle, and arm a reconcile for the symbol (R4, KTD4).
+        tracing::info!(%client_order_id, "cancel skipped: remaining quantity is 0 (nothing resting); emitting cancel-rejection + closing ledger entry");
+        // Close the venue-done entry + arm the reconcile before emitting, so an
+        // observer that keys off the event sees a flat open set and the pending
+        // symbol already recorded.
+        {
+            let mut led = lock_ledger(&ledger);
+            led.close(&client_order_id);
+            led.record_pending_symbol(&snap.symbol);
+        }
+        emitter.emit_order_cancel_rejected(
+            &snap.order,
+            Some(VenueOrderId::from(snap.latest_ord_no.as_str())),
+            "cancel skipped: remaining quantity is 0 (nothing resting)",
+            clock.get_time_ns(),
+        );
         return;
     }
     let isuno = format!("A{}", snap.symbol);

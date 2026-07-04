@@ -142,12 +142,21 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     println!(
-        "ingest complete: {} bars across {} triples ({} skipped), {} coverage gaps",
+        "ingest complete: {} bars across {} triples ({} skipped), {} coverage gaps, {} refused pending heal",
         report.bars_written,
         report.triples_ingested,
         report.triples_skipped,
-        report.gaps.len()
+        report.gaps.len(),
+        report.range_refusals.len()
     );
+    if !report.range_refusals.is_empty() {
+        for r in &report.range_refusals {
+            println!(
+                "REFUSED PENDING HEAL: {} {} carries an unhealed basis-shift mark (detected {}); range mode will not serve it on a stale basis — run accumulate/rebase to heal",
+                r.instrument, r.bar_type, r.detected
+            );
+        }
+    }
     if !report.heal_refusals.is_empty() {
         for r in &report.heal_refusals {
             println!(

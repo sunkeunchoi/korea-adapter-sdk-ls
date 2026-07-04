@@ -7,7 +7,7 @@ use std::path::Path;
 use chrono::NaiveDate;
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::{mock_config, mount_token};
-use nautilus_ls::ingest::checkpoint::Checkpoint;
+use nautilus_ls::ingest::checkpoint::{Checkpoint, RebaseOrigin};
 use nautilus_ls::ingest::{BarKind, IngestConfig, Ingestor, DEFAULT_OVERLAP_DAYS};
 use nautilus_ls::lock::{AdvisoryLock, LockKind};
 use nautilus_model::identifiers::InstrumentId;
@@ -540,6 +540,9 @@ mod basis_shift_heal {
         assert_eq!(cp.rebase_events().len(), 1, "the re-base is durably recorded (R5)");
         assert_eq!(cp.rebase_events()[0].instrument, SAMSUNG);
         assert_eq!(cp.rebase_events()[0].healed, "20240108");
+        // AE4: an organic detection stamps heal origin and increments organic by 1.
+        assert_eq!(cp.rebase_events()[0].origin, RebaseOrigin::Heal, "organic detection is heal-origin");
+        assert_eq!(cp.rebase_origin_totals().organic(), 1);
 
         // A post-heal accumulate detects nothing and is a no-op.
         let calls_before = count_t8410(&server).await;
@@ -569,7 +572,7 @@ mod basis_shift_heal {
         // process died before the wipe/re-pull.
         let cp_path = catalog.join("ingest-checkpoint.json");
         let mut cp = Checkpoint::load(&cp_path).unwrap();
-        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5));
+        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5), RebaseOrigin::Heal);
         cp.save(&cp_path).unwrap();
         shared.set(v2());
 
@@ -606,7 +609,7 @@ mod basis_shift_heal {
         // Simulate: marked, wiped, watermark cleared — then crash.
         let cp_path = catalog.join("ingest-checkpoint.json");
         let mut cp = Checkpoint::load(&cp_path).unwrap();
-        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5));
+        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5), RebaseOrigin::Heal);
         cp.clear_watermark(SAMSUNG, "1-DAY");
         cp.save(&cp_path).unwrap();
         let bar_type = BarKind::Daily.bar_type(InstrumentId::from(SAMSUNG)).unwrap();
@@ -694,7 +697,7 @@ mod basis_shift_heal {
 
         let cp_path = catalog.join("ingest-checkpoint.json");
         let mut cp = Checkpoint::load(&cp_path).unwrap();
-        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5));
+        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5), RebaseOrigin::Heal);
         cp.save(&cp_path).unwrap();
 
         // Run floor Jan 4 > earliest stored bar Jan 3 — the wipe must refuse.
@@ -725,7 +728,7 @@ mod basis_shift_heal {
 
         let cp_path = catalog.join("ingest-checkpoint.json");
         let mut cp = Checkpoint::load(&cp_path).unwrap();
-        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5));
+        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5), RebaseOrigin::Heal);
         cp.save(&cp_path).unwrap();
         // The rewritten symbol now serves only two sessions (listed-late shape).
         shared.set(series(&[("20240105", 31000), ("20240108", 31500)]));
@@ -758,7 +761,7 @@ mod basis_shift_heal {
 
         let cp_path = catalog.join("ingest-checkpoint.json");
         let mut cp = Checkpoint::load(&cp_path).unwrap();
-        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5));
+        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5), RebaseOrigin::Heal);
         cp.save(&cp_path).unwrap();
 
         // Heal attempt: re-pull v2, re-verify v3 → mismatch → stays marked.
@@ -796,7 +799,7 @@ mod basis_shift_heal {
 
         let cp_path = catalog.join("ingest-checkpoint.json");
         let mut cp = Checkpoint::load(&cp_path).unwrap();
-        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5));
+        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5), RebaseOrigin::Heal);
         cp.save(&cp_path).unwrap();
         // A transient gateway hiccup: the server serves NOTHING for the symbol.
         shared.set(series(&[]));
@@ -849,6 +852,11 @@ mod basis_shift_heal {
         assert!(!cp.is_shifted(SAMSUNG, "1-DAY"));
         assert!(!cp.is_shifted(HYNIX, "1-DAY"));
         assert_eq!(cp.rebase_events().len(), 2, "one event per symbol");
+        // AE4: every epoch event carries epoch origin and the organic bucket is 0.
+        assert!(cp.rebase_events().iter().all(|e| e.origin == RebaseOrigin::Epoch), "all events are epoch-origin");
+        let totals = cp.rebase_origin_totals();
+        assert_eq!(totals.epoch, 2);
+        assert_eq!(totals.organic(), 0, "an epoch re-base leaves the organic metric unchanged");
         assert_eq!(stored_closes(&catalog).await, vec![30000, 30000, 30900, 30900, 31000, 31000, 31500, 31500]);
 
         // A post-epoch accumulate detects nothing.
@@ -879,8 +887,8 @@ mod basis_shift_heal {
         // only SAMSUNG healed before the crash (drive it via a one-symbol run).
         let cp_path = catalog.join("ingest-checkpoint.json");
         let mut cp = Checkpoint::load(&cp_path).unwrap();
-        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 8));
-        cp.mark_shifted(HYNIX, "1-DAY", ymd(2024, 1, 8));
+        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 8), RebaseOrigin::Heal);
+        cp.mark_shifted(HYNIX, "1-DAY", ymd(2024, 1, 8), RebaseOrigin::Heal);
         cp.save(&cp_path).unwrap();
         let mut ing2 = Ingestor::new(sdk.clone(), daily_config(&catalog));
         ing2.run_accumulate(&universe[..1], ymd(2024, 1, 8), floor).await.unwrap();
@@ -894,6 +902,74 @@ mod basis_shift_heal {
         assert!(!cp.is_shifted(SAMSUNG, "1-DAY"));
         assert!(!cp.is_shifted(HYNIX, "1-DAY"));
         assert_eq!(cp.rebase_events().len(), 2, "one event per symbol, none doubled");
+    }
+
+    /// AE4: an epoch re-base that crashes after the atomic mark-all and is resumed
+    /// under ACCUMULATE mode still stamps epoch origin on every event — origin is
+    /// recorded at mark time, so the running mode at heal time is irrelevant. A
+    /// mode-derived origin would (wrongly) stamp heal here (red-then-green).
+    #[tokio::test]
+    async fn epoch_crash_resume_under_accumulate_keeps_epoch_origin() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let shared = SharedSeries::one(v1());
+        let sdk = sdk_with_series(&server, shared.clone()).await;
+        let universe = [InstrumentId::from(SAMSUNG), InstrumentId::from(HYNIX)];
+        let floor = ymd(2024, 1, 1);
+
+        let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
+        ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+        shared.set(v2());
+
+        // Simulate the epoch's atomic mark-all landing (epoch origin) then a crash
+        // before any heal — exactly what `run_rebase` writes before healing.
+        let cp_path = catalog.join("ingest-checkpoint.json");
+        let mut cp = Checkpoint::load(&cp_path).unwrap();
+        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 8), RebaseOrigin::Epoch);
+        cp.mark_shifted(HYNIX, "1-DAY", ymd(2024, 1, 8), RebaseOrigin::Epoch);
+        cp.save(&cp_path).unwrap();
+
+        // Resume under ACCUMULATE mode (not run_rebase) — the mode cannot tell why
+        // the mark exists; only the stored origin can.
+        let mut ing2 = Ingestor::new(sdk, daily_config(&catalog));
+        ing2.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        let cp = checkpoint_at(&catalog);
+        assert_eq!(cp.rebase_events().len(), 2);
+        assert!(cp.rebase_events().iter().all(|e| e.origin == RebaseOrigin::Epoch), "crash-resumed events keep epoch origin");
+        assert_eq!(cp.rebase_origin_totals().organic(), 0, "the organic metric stays clean across crash-resume");
+    }
+
+    /// AE4: a series already organically heal-marked at epoch time keeps its heal
+    /// origin through the epoch re-base (keep-original-on-re-mark) and still counts
+    /// organic; a subsequent independent organic heal increments organic by one.
+    #[tokio::test]
+    async fn already_heal_marked_series_keeps_heal_origin_through_epoch() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let shared = SharedSeries::one(v1());
+        let sdk = sdk_with_series(&server, shared.clone()).await;
+        let universe = [InstrumentId::from(SAMSUNG)];
+        let floor = ymd(2024, 1, 1);
+
+        let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
+        ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+        shared.set(v2());
+
+        // The symbol was organically heal-marked before the epoch runs.
+        let cp_path = catalog.join("ingest-checkpoint.json");
+        let mut cp = Checkpoint::load(&cp_path).unwrap();
+        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 6), RebaseOrigin::Heal);
+        cp.save(&cp_path).unwrap();
+
+        // The epoch re-base marks-all (epoch), but keep-original leaves this series heal.
+        let mut ing2 = Ingestor::new(sdk, daily_config(&catalog));
+        ing2.run_rebase(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        let cp = checkpoint_at(&catalog);
+        assert_eq!(cp.rebase_events().len(), 1);
+        assert_eq!(cp.rebase_events()[0].origin, RebaseOrigin::Heal, "the pre-existing heal origin is kept");
+        assert_eq!(cp.rebase_origin_totals().organic(), 1, "the heal-origin event counts organic");
     }
 }
 
@@ -1004,4 +1080,98 @@ fn minute_lookback_file_round_trips() {
     };
     write_minute_lookback(&probes, &lb).unwrap();
     assert_eq!(read_minute_lookback(&probes).unwrap(), lb);
+}
+
+// ---------------------------------------------------------------------------
+// U4: range-mode per-series refusal (R5/R6, AE3). A daily series carrying an
+// unhealed basis-shift mark must be refused pending heal — never served or
+// completed on a stale adjustment basis — while unmarked series proceed and the
+// run still exits successfully.
+// ---------------------------------------------------------------------------
+
+/// Seed a shifted mark for one series into the run's checkpoint on disk.
+fn mark_series_shifted(catalog: &Path, instrument: &str, label: &str, detected: NaiveDate) {
+    let cp_path = catalog.join("ingest-checkpoint.json");
+    let mut cp = Checkpoint::load(&cp_path).unwrap();
+    cp.mark_shifted(instrument, label, detected, RebaseOrigin::Heal);
+    cp.save(&cp_path).unwrap();
+}
+
+/// AE3: a marked daily series is refused — no fetch, not marked done, and the
+/// report carries its instrument/bar-type/detection date.
+#[tokio::test]
+async fn range_mode_refuses_a_marked_series() {
+    let dir = tempdir().unwrap();
+    let catalog = dir.path().join("catalog");
+    let server = MockServer::start().await;
+    let sdk = sdk_over(&server, daily_body_three_rows()).await;
+
+    mark_series_shifted(&catalog, "005930.XKRX", "1-DAY", ymd(2024, 1, 5));
+
+    let mut ingestor = Ingestor::new(sdk, daily_config(&catalog));
+    let report = ingestor.run(&[InstrumentId::from("005930.XKRX")]).await.unwrap();
+
+    assert_eq!(report.bars_written, 0, "a refused series writes nothing");
+    assert_eq!(report.triples_ingested, 0);
+    assert_eq!(report.range_refusals.len(), 1, "the marked series is refused pending heal");
+    assert_eq!(report.range_refusals[0].instrument, "005930.XKRX");
+    assert_eq!(report.range_refusals[0].bar_type, "1-DAY");
+    assert_eq!(report.range_refusals[0].detected, "20240105");
+    assert_eq!(count_t8410(&server).await, 0, "a refused series makes no gateway call");
+
+    let cp = Checkpoint::load(&catalog.join("ingest-checkpoint.json")).unwrap();
+    assert!(!cp.is_done("005930.XKRX", "1-DAY", "20240101..20240105"), "a refused series is not marked done");
+    assert!(cp.is_shifted("005930.XKRX", "1-DAY"), "the mark stays until an accumulate/rebase heal");
+}
+
+/// AE3 (ordering, red-then-green): a series both marked AND already recorded done
+/// for the range is still refused — the shifted check outranks `is_done`. A naive
+/// `is_done`-first would wrongly skip it (and serve stale bars on the next read).
+#[tokio::test]
+async fn range_mode_refuses_a_marked_series_even_when_already_done() {
+    let dir = tempdir().unwrap();
+    let catalog = dir.path().join("catalog");
+    let server = MockServer::start().await;
+    let sdk = sdk_over(&server, daily_body_three_rows()).await;
+
+    let cp_path = catalog.join("ingest-checkpoint.json");
+    let mut cp = Checkpoint::default();
+    cp.mark_done("005930.XKRX", "1-DAY", "20240101..20240105");
+    cp.mark_shifted("005930.XKRX", "1-DAY", ymd(2024, 1, 5), RebaseOrigin::Heal);
+    cp.save(&cp_path).unwrap();
+
+    let mut ingestor = Ingestor::new(sdk, daily_config(&catalog));
+    let report = ingestor.run(&[InstrumentId::from("005930.XKRX")]).await.unwrap();
+
+    assert_eq!(report.range_refusals.len(), 1, "shifted outranks done — refused, not skipped");
+    assert_eq!(report.triples_skipped, 0, "an is_done-first bug would have skipped it here");
+    assert_eq!(count_t8410(&server).await, 0);
+}
+
+/// R6: an unmarked sibling in the same universe is pulled normally, and a run
+/// containing refusals still exits successfully.
+#[tokio::test]
+async fn range_mode_pulls_unmarked_sibling_and_exits_ok() {
+    let dir = tempdir().unwrap();
+    let catalog = dir.path().join("catalog");
+    let server = MockServer::start().await;
+    let sdk = sdk_over(&server, daily_body_three_rows()).await;
+
+    // 005930 marked (refused); 000660 unmarked (pulled).
+    mark_series_shifted(&catalog, "005930.XKRX", "1-DAY", ymd(2024, 1, 5));
+
+    let mut ingestor = Ingestor::new(sdk, daily_config(&catalog));
+    let report = ingestor
+        .run(&[InstrumentId::from("005930.XKRX"), InstrumentId::from("000660.XKRX")])
+        .await
+        .expect("a run with refusals still exits Ok");
+
+    assert_eq!(report.range_refusals.len(), 1, "only the marked series is refused");
+    assert_eq!(report.range_refusals[0].instrument, "005930.XKRX");
+    assert_eq!(report.triples_ingested, 1, "the unmarked sibling is pulled");
+    assert_eq!(report.bars_written, 3);
+    assert_eq!(count_t8410(&server).await, 1, "only the unmarked sibling hits the gateway");
+
+    let cp = Checkpoint::load(&catalog.join("ingest-checkpoint.json")).unwrap();
+    assert!(cp.is_done("000660.XKRX", "1-DAY", "20240101..20240105"), "the sibling is completed");
 }
