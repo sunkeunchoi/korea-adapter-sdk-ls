@@ -22,6 +22,9 @@ The projected, committed record of a TR's wire shape — field names, types, and
 
 It is a snapshot, not a runtime oracle: it can under-report a request block (omit fields the gateway accepts or requires). Once a TR's request struct has been certified against the live gateway, that certified shape is the stronger witness and wins any disagreement with the baseline — the baseline alone is the floor for an unimplemented TR, not the ceiling for an implemented one.
 
+### Body-cursor continuation
+How LS chart TRs actually paginate on the live gateway: the response out-block echoes a body cursor (continuation date/time fields), and the next page request must thread that cursor back **and** set the `tr_cont: Y` transport header — either alone re-serves the newest page. The `tr_cont`/`tr_cont_key` transport headers terminate after the first page even while in-range rows remain, so a header-driven walk silently truncates a multi-page range to its newest page. Every page dispatch must individually pass the TR's own per-TR rate cap (the runtime limiter enforces only the category bucket).
+
 ## Support lifecycle
 
 A TR climbs a three-rung support ladder; each rung is a deliberate, separately-gated promotion.
@@ -45,7 +48,7 @@ The blocking condition, layered on top of the happy-path [[Paper Live Smoke]] + 
 Rejecting an invalid request *before any network call* with a typed `LsError::Invalid { field, reason }`, from a per-TR [[Constraint schema]]. Runs at the single `dispatch_once` seam (so it covers every owner_class, including orders). Deliberately **permissive by default**: only `type`/`required` (grounded against the normalized baseline) always block; value-class bounds (enum/range/format) stay permissive until a live probe confirms them, because a false-reject silently breaks a caller's valid request with no detector.
 
 ### Constraint schema
-A declarative per-TR sidecar (`metadata/constraints/<tr>.yaml`) describing each request field's type, required-ness, and per-input-class markers (enum/range/format, each explicitly N/A when inapplicable). The single source from which preflight validation, the negative probe, and the Reference "Errors & validation" section are all derived. Grounded offline against the TR's normalized baseline.
+A declarative per-TR sidecar (`metadata/constraints/<tr>.yaml`) describing each request field's type, required-ness, and per-input-class markers (enum/range/format, each explicitly N/A when inapplicable). The single source from which preflight validation, the negative probe, and the Reference "Errors & validation" section are all derived. Grounded offline against the TR's normalized baseline — but required-ness must also agree with **every** in-repo caller of the TR's request struct, not just the certified smoke chain (the struct wins on disagreement, permissive direction): a second caller may legitimately send empty a field the smoke chain fills, and an over-strict `required: true` surfaces only as a runtime false-reject, never at authoring time.
 
 ### Differential negative probe
 The operator-run probe that certifies a [[Constraint schema]] against paper: a valid control request plus each mechanically-generated invalid variant run in the *same session*, so the injected violation — not an environment condition — is what a rejection reflects. Outcomes per variant: CLEAN (control ok, variant rejected), DIVERGENT (control ok, variant accepted — blocks promotion), or HELD (control failed → inconclusive, distinct from a divergence). Gates re-promotion, never the offline CI gate.
@@ -110,6 +113,9 @@ Rewriting catalog bar history wholesale to restore a single price basis (after a
 ### Basis-shift heal
 The per-symbol [[Catalog re-base]] triggered when accumulate-forward's overlap re-fetch disagrees with stored daily bars: durably mark the symbol shifted, true-delete its daily series, clear its watermark, re-pull from the bounded floor, re-verify, then clear the mark and record a re-base event. The mark outranks the watermark as authority and re-entry always restarts at the wipe, so an interruption at any step converges to the same path. Detection compares only mutually-present non-gap dates (exact integer match) and skips symbols with insufficient overlap. A re-pull that completes with zero rows counts as completion only for a series that was already empty before the wipe — for a previously non-empty series the heal stays incomplete and the mark is kept, because an empty page from the gateway is a transient-source signal, never proof of absence.
 
+### Suspect partial
+A page-walk termination that is not proof of completion: a zero-row page whose echoed body cursor is still live, or a re-served (echoed) page. Either fails closed — the chunk surfaces as incomplete, splits, and bottoms out as a recorded coverage gap that withholds completion — because reporting it clean would mark a silently truncated range done with zero gaps. Only an exhausted [[Body-cursor continuation]] cursor completes a walk cleanly; the echoed duplicate page's rows are never ingested. Kin to [[Basis-shift heal]]'s rule that an empty gateway page is a transient-source signal, never proof of absence.
+
 ## Order safety
 
 The order class is the one place where a bug is a real, irreversible market action rather than a stale read, so it carries its own machinery and vocabulary.
@@ -142,3 +148,6 @@ The append-only store of strategy-run records. Every run — backtest or live pa
 
 ### Strategy lab
 The crate that houses strategy code, the backtest and live-paper runners, and the artifact writer — deliberately separate from the certified adapter crate, whose contract is translation only. The [[Strategy-improvement loop]] exists to generate strategy churn, and the lab boundary keeps that churn from destabilizing the adapter.
+
+### Paper-cut log
+The committed friction log the [[Strategy-improvement loop]]'s operator or agent maintains: each entry is an observed workflow friction framed as a candidate requirement for the deferred research CLI, with enough context to act on without re-running the cycle. Credential-free by construction and linked from the lab recipe so an agent discovers it before turning the loop; defects fixed in-flight stay in the log with their residual owner named.
