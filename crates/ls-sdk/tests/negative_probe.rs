@@ -30,6 +30,10 @@ use ls_sdk::orders::{
     CSPAT00601Request, CSPAT00801Request, T0425InBlock, T0425OutBlock1, T0425Request,
 };
 use ls_sdk::LsSdk;
+// The credential scrubber is the canonical shared one (masks 6+-digit runs and
+// 20+-alnum tokens) — reused, not re-implemented, so a future scrub hardening
+// lands in one place for every smoke/probe leg (mirrors `live_smoke.rs`).
+use ls_sdk_test_support::scrub_secrets;
 
 /// Pre-flight production guard — requires `LS_TRADING_ENV` explicitly `paper`.
 fn paper_guard() -> LsResult<()> {
@@ -361,7 +365,10 @@ async fn live_smoke_t1102_negative() {
         "t1102",
         "/stock/market-data",
         "t1102InBlock",
-        serde_json::json!({ "shcode": "005930", "exchgubun": "1" }),
+        // exchgubun "K" matches the certified `T1102Request::new(symbol, "K")`
+        // call (the order-leg band fetch uses it); an unverified "1" risks a
+        // persistent HELD control that certifies nothing.
+        serde_json::json!({ "shcode": "005930", "exchgubun": "K" }),
     )
     .await;
 }
@@ -679,49 +686,6 @@ fn install_dispatch_log_suppressor() -> LsResult<()> {
     })
 }
 
-/// Widened secret scrubbing for autonomous-run output (R5): masks any maximal
-/// `[A-Za-z0-9-]` token that contains a 6+ consecutive-digit substring (account
-/// number, with or without a `-NN` suffix) or is 20+ alphanumeric chars (bearer
-/// token / appkey). Short numbers and order numbers survive.
-fn scrub_secrets(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut run = String::new();
-    let flush = |out: &mut String, run: &mut String| {
-        if run_is_sensitive(run) {
-            out.push_str("***");
-        } else {
-            out.push_str(run);
-        }
-        run.clear();
-    };
-    for c in s.chars() {
-        if c.is_ascii_alphanumeric() || c == '-' {
-            run.push(c);
-        } else {
-            flush(&mut out, &mut run);
-            out.push(c);
-        }
-    }
-    flush(&mut out, &mut run);
-    out
-}
-
-/// `true` if a `[A-Za-z0-9-]` token is account- or secret-like.
-fn run_is_sensitive(run: &str) -> bool {
-    let mut digits = 0usize;
-    for c in run.chars() {
-        if c.is_ascii_digit() {
-            digits += 1;
-            if digits >= 6 {
-                return true;
-            }
-        } else {
-            digits = 0;
-        }
-    }
-    run.chars().filter(|c| c.is_ascii_alphanumeric()).count() >= 20
-}
-
 /// A validated daily price band from `t1102`.
 #[derive(Debug, Clone, Copy)]
 struct Band {
@@ -838,16 +802,46 @@ async fn scan_symbol_working_orders(
         }
         Err(e) => Err(format!(
             "traded-symbol t0425 scan did not complete ({}) — cannot positively confirm flat",
-            scrub_secrets(&e.to_string())
+            safe_err(&e)
         )),
     }
 }
 
-/// `true` if a raw order response is a confirmed placement (an ack code on a 2xx).
-/// Narrow by design — a malformed type/required variant must be REJECTED, so any
-/// ack here is the "WAVE BLOCKED" tripwire, not a probe result (KTD3).
+/// `true` if a raw order response is a confirmed placement/acceptance (an ack
+/// code on a 2xx). The "WAVE BLOCKED" tripwire (KTD3): any accepted malformed
+/// variant must trip it, not be classified as a probe result. The code set is the
+/// full order-acceptance set ls-core recognizes in `rsp_cd_is_order_success`
+/// (submit `00039`/`00040`, **modify `00462`, cancel `00463`/`00156`, F/O modify
+/// `00132`**) — the modify/cancel legs return those, so the submit-only set would
+/// let an accepted modify/cancel variant slip through as "Clean". `00000` (the
+/// ambiguous generic-success) is additionally treated as may-have-placed so the
+/// tripwire fails toward blocked. Kept in sync with ls-core by
+/// `is_order_placement_success_recognizes_the_ls_core_ack_set` below.
 fn is_order_placement_success(http: u16, rsp_cd: &str) -> bool {
-    (200..300).contains(&http) && matches!(rsp_cd, "00000" | "00039" | "00040")
+    (200..300).contains(&http)
+        && matches!(
+            rsp_cd,
+            "00000" | "00039" | "00040" | "00462" | "00463" | "00156" | "00132"
+        )
+}
+
+/// Render an `LsError` credential-free for a probe log line. For an `ApiError` /
+/// `AmbiguousOrder` the `Display` is `"API error {code}: {message}"` where
+/// `message` is the raw broker `rsp_msg` — localized text that can echo account
+/// data — so this NEVER renders the Display for those variants; it prints only the
+/// business `code` plus the offline error-catalog explanation (`LsError::explain`,
+/// code-only by construction). `scrub_secrets` is a token masker, not an rsp_msg
+/// filter, so it cannot be relied on to strip that message. Other variants
+/// (transport / config; no broker message) are scrubbed as before. This upholds
+/// the module's "never rsp_msg" contract on the error/HELD paths, not just the
+/// happy path.
+fn safe_err(e: &LsError) -> String {
+    match e {
+        LsError::ApiError { code, .. } | LsError::AmbiguousOrder { code, .. } => {
+            format!("code={code} ({})", e.explain().unwrap_or("gateway error"))
+        }
+        other => scrub_secrets(&other.to_string()),
+    }
 }
 
 /// The order-TR negative-probe class filter (KTD3): fire ONLY type/required
@@ -858,7 +852,11 @@ fn order_probe_classes(v: &InvalidVariant) -> bool {
 }
 
 /// Best-effort symbol-scoped reconcile + cancel of any resting residue (KTD3): the
-/// may-rest / final teardown. Never leaves a resting order behind.
+/// may-rest / final teardown. Cancels every resting row the single-page symbol
+/// scan returns; a scan that fails or paginates is surfaced loudly
+/// (`reconcile-scan failed`) rather than silently trusted, so teardown is
+/// best-effort — an operator must confirm the book is flat on a scan failure, and
+/// an unexpected fill is reported as unrecoverable (reset the paper book).
 async fn order_reconcile_teardown(sdk: &LsSdk, symbol: &str) {
     match scan_symbol_working_orders(sdk, symbol).await {
         Ok(rows) => {
@@ -875,7 +873,7 @@ async fn order_reconcile_teardown(sdk: &LsSdk, symbol: &str) {
                     Err(e) => println!(
                         "NEG-PROBE reconcile ordno={} result=[{}]",
                         r.ordno.trim(),
-                        scrub_secrets(&e.to_string())
+                        safe_err(&e)
                     ),
                 }
             }
@@ -976,7 +974,7 @@ async fn run_order_negative_probe(
         Err(e) => {
             println!(
                 "NEG-PROBE target={tr_cd}-negative HELD: band fetch failed [{}] — no placement",
-                scrub_secrets(&e.to_string())
+                safe_err(&e)
             );
             return;
         }
@@ -1003,7 +1001,7 @@ async fn run_order_negative_probe(
             println!(
                 "NEG-PROBE target={tr_cd}-negative HELD: control submit failed/ambiguous [{}] — \
                  reconciling, no variants",
-                scrub_secrets(&e.to_string())
+                safe_err(&e)
             );
             order_reconcile_teardown(&sdk, symbol).await;
             return;
@@ -1022,7 +1020,7 @@ async fn run_order_negative_probe(
     if let Err(e) = sdk.orders().cancel(&cancel).await {
         println!(
             "NEG-PROBE target={tr_cd}-negative control-cancel error [{}] — flat-verify decides",
-            scrub_secrets(&e.to_string())
+            safe_err(&e)
         );
     }
     match scan_symbol_working_orders(&sdk, symbol).await {
@@ -1158,7 +1156,7 @@ fn new_schema_offline_twins() {
     // valid control seed (mirrors `negative_probe_offline_twin`). No network.
     let cases: Vec<(&str, serde_json::Value)> = vec![
         ("t1101", serde_json::json!({ "shcode": "005930" })),
-        ("t1102", serde_json::json!({ "shcode": "005930", "exchgubun": "1" })),
+        ("t1102", serde_json::json!({ "shcode": "005930", "exchgubun": "K" })),
         ("CSPAQ12200", serde_json::json!({ "BalCreTp": "0" })),
         (
             "t0425",
@@ -1219,4 +1217,139 @@ fn order_tr_variants_are_type_and_required_only() {
             "{tr}: at least one type-class variant must survive the filter"
         );
     }
+}
+
+// ===========================================================================
+// E. Pure-logic unit tests (RUN in CI) — the fail-closed autonomy gate, the
+// credential-free contract, and the order-safety classifiers are the leg's
+// safety spine; without these their first exercise would be a live attended run
+// against real credentials.
+// ===========================================================================
+
+#[test]
+fn validate_nonce_accepts_fresh_and_rejects_empty_nonnumeric_stale_and_future() {
+    let now = 1_000_000i64;
+    // A fresh unix-seconds nonce within TTL.
+    assert!(validate_nonce("999950", now).is_ok(), "fresh nonce accepted");
+    // Inclusive boundaries: exactly TTL old and exactly max forward skew.
+    assert!(validate_nonce(&(now - NONCE_TTL_SECS).to_string(), now).is_ok(), "TTL edge ok");
+    assert!(validate_nonce(&(now + NONCE_MAX_SKEW_SECS).to_string(), now).is_ok(), "skew edge ok");
+    // Rejections: empty, non-numeric, stale past TTL, implausible future.
+    assert!(validate_nonce("   ", now).is_err(), "empty");
+    assert!(validate_nonce("not-a-timestamp", now).is_err(), "non-numeric");
+    assert!(validate_nonce(&(now - NONCE_TTL_SECS - 1).to_string(), now).is_err(), "stale");
+    assert!(validate_nonce(&(now + NONCE_MAX_SKEW_SECS + 1).to_string(), now).is_err(), "future");
+}
+
+#[test]
+fn check_autonomy_refuses_unattended_or_missing_nonce_and_passes_when_clear() {
+    let now = 1_000_000i64;
+    // Unattended marker present → refuse regardless of nonce.
+    assert!(check_autonomy(&AutonomyContext {
+        unattended_marker: Some("CI env set".into()),
+        nonce: Some(now.to_string()),
+        now_unix: now,
+    })
+    .is_err());
+    // Attended but no nonce → refuse.
+    assert!(check_autonomy(&AutonomyContext {
+        unattended_marker: None,
+        nonce: None,
+        now_unix: now,
+    })
+    .is_err());
+    // Attended + fresh nonce → pass.
+    assert!(check_autonomy(&AutonomyContext {
+        unattended_marker: None,
+        nonce: Some(now.to_string()),
+        now_unix: now,
+    })
+    .is_ok());
+}
+
+#[test]
+fn scrub_secrets_masks_credentials_and_keeps_short_order_numbers() {
+    // The credential-free contract the probe depends on (shared scrubber): an
+    // account number (with or without -NN suffix) and a long token mask; a short
+    // order number survives so the agent can still read it.
+    assert_eq!(scrub_secrets("acct=20187511401 ok"), "acct=*** ok");
+    assert_eq!(scrub_secrets("acct=20187511401-01 ok"), "acct=*** ok");
+    assert_eq!(scrub_secrets("ordno=12345 qty=10"), "ordno=12345 qty=10");
+}
+
+#[test]
+fn validate_band_rejects_degenerate_and_accepts_up_over_dn() {
+    assert!(validate_band("60000", "50000").is_ok(), "up>dn ok");
+    assert!(validate_band("50000", "50000").is_err(), "up==dn degenerate");
+    assert!(validate_band("40000", "50000").is_err(), "up<dn degenerate");
+    assert!(validate_band("0", "0").is_err(), "zero degenerate");
+    assert!(validate_band("abc", "50000").is_err(), "unparseable");
+}
+
+#[test]
+fn tick_follows_the_krx_ladder_at_the_boundaries() {
+    assert_eq!(tick(1_999), 1);
+    assert_eq!(tick(2_000), 5);
+    assert_eq!(tick(4_999), 5);
+    assert_eq!(tick(5_000), 10);
+    assert_eq!(tick(19_999), 10);
+    assert_eq!(tick(20_000), 50);
+    assert_eq!(tick(49_999), 50);
+    assert_eq!(tick(50_000), 100);
+    assert_eq!(tick(200_000), 500);
+    assert_eq!(tick(500_000), 1_000);
+}
+
+#[test]
+fn flat_verdict_keys_on_quantities_and_a_fill_outranks_a_resting_remainder() {
+    let row = |ordno: &str, cheqty: &str, ordrem: &str| T0425OutBlock1 {
+        ordno: ordno.into(),
+        cheqty: cheqty.into(),
+        ordrem: ordrem.into(),
+        ..Default::default()
+    };
+    assert_eq!(flat_verdict(&[]), FlatVerdict::Flat);
+    assert_eq!(flat_verdict(&[row("1", "0", "0")]), FlatVerdict::Flat);
+    assert_eq!(flat_verdict(&[row("1", "0", "5")]), FlatVerdict::Resting(vec!["1".into()]));
+    // A fill (cheqty>0) outranks a resting remainder, even in the same set.
+    assert_eq!(
+        flat_verdict(&[row("1", "0", "5"), row("2", "3", "0")]),
+        FlatVerdict::Fill(vec!["2".into()])
+    );
+}
+
+#[test]
+fn form_with_replaces_a_field_or_removes_it() {
+    let base = vec![("a".to_string(), "1".to_string()), ("b".to_string(), "2".to_string())];
+    let replaced = form_with(&base, "a", Some("9"));
+    assert!(replaced.contains(&("a".to_string(), "9".to_string())), "value replaced");
+    assert_eq!(replaced.iter().filter(|(k, _)| k == "a").count(), 1, "no duplicate key");
+    let removed = form_with(&base, "a", None);
+    assert!(!removed.iter().any(|(k, _)| k == "a"), "field removed");
+    assert!(removed.iter().any(|(k, _)| k == "b"), "other field kept");
+}
+
+#[test]
+fn is_order_placement_success_recognizes_the_ls_core_ack_set() {
+    // Locks the WAVE-BLOCKED tripwire against the full order-acceptance set
+    // ls-core recognizes: submit 00039/00040, modify 00462, cancel 00463/00156,
+    // F/O modify 00132 — plus the ambiguous 00000 (fail toward blocked). A
+    // submit-only set would let an accepted malformed modify/cancel variant pass
+    // as Clean.
+    for code in ["00000", "00039", "00040", "00462", "00463", "00156", "00132"] {
+        assert!(is_order_placement_success(200, code), "{code} must trip WAVE-BLOCKED");
+    }
+    // A business-rejection code is not a placement (the normal Clean path); a
+    // non-2xx is never a placement regardless of code.
+    assert!(!is_order_placement_success(200, "40510"), "a rejection is not a placement");
+    assert!(!is_order_placement_success(500, "00040"), "a 5xx is never a placement");
+}
+
+#[test]
+fn order_no_json_renders_numeric_ordno_as_a_json_number() {
+    // OrgOrdNo must serialize as a JSON number (IGW40011 rule); a numeric order
+    // number renders as a number, a non-numeric one falls back to a string seed.
+    assert!(order_no_json("12345").is_number());
+    assert!(order_no_json(" 12345 ").is_number(), "trimmed then numeric");
+    assert!(order_no_json("O-1").is_string(), "non-numeric falls back to string");
 }
