@@ -2,14 +2,14 @@
 //! test-first cores plus the nautilus wrapper that mounts them:
 //!
 //! - [`select_universe`] — the stocks-in-play scan over prior-session daily bars
-//!   (gap filter + turnover rank + top-N cap), emitting a universe signal per
-//!   candidate (AE2).
+//!   (gap filter + turnover rank + top-N cap), emitting a universe decision
+//!   envelope per candidate (AE2).
 //! - [`OrbState`] — the per-symbol range/entry/exit state machine (the unit most
 //!   likely to hide off-by-one session-time bugs, so it is built and tested in
 //!   isolation of the engine).
 //! - [`OrbStrategy`] — the nautilus `Strategy` that feeds bars into per-symbol
-//!   [`OrbState`]s, translates actions into marketable-limit orders, and emits the
-//!   per-decision signal log.
+//!   [`OrbState`]s, translates actions into marketable-limit orders, and emits one
+//!   telemetry [`DecisionEnvelope`] per decision (R5, R6).
 
 use std::collections::BTreeMap;
 use std::collections::HashMap;
@@ -26,8 +26,11 @@ use nautilus_trading::nautilus_strategy;
 use nautilus_trading::strategy::{Strategy, StrategyConfig, StrategyCore};
 use nautilus_common::actor::DataActor;
 
+use crate::agent::envelope::{
+    Decision, DecisionDetail, DecisionEnvelope, DecisionTrigger, SignalKind,
+};
+use crate::agent::sink::DecisionSink;
 use crate::params::OrbParams;
-use crate::signals::{Decision, SignalEvent, SignalKind, SignalSink};
 
 /// Convert a UTC unix-nanosecond timestamp to a KST wall-clock time (KST is a fixed
 /// UTC+09:00 with no DST — the adapter's `KST_UTC_OFFSET_HOURS`).
@@ -66,13 +69,13 @@ impl UniverseCandidate {
 
 /// Run the stocks-in-play scan (KTD6): keep candidates whose gap ≥ `gap_min_pct`,
 /// rank the survivors by prior-session turnover, and cap at `universe_top_n`. Emits
-/// one universe signal per candidate — accept for a selected symbol, reject naming
-/// the filter (`gap` or `turnover_rank`) for the rest (R6, AE2). Returns the selected
-/// symbols in rank order.
+/// one universe decision envelope per candidate — accept for a selected symbol,
+/// reject naming the filter (`gap` or `turnover_rank`) for the rest (R6, AE2).
+/// Returns the selected symbols in rank order.
 pub fn select_universe(
     candidates: &[UniverseCandidate],
     params: &OrbParams,
-    sink: &SignalSink,
+    sink: &DecisionSink,
     ts_event: u64,
 ) -> Vec<String> {
     // Partition on the gap filter first.
@@ -80,13 +83,18 @@ pub fn select_universe(
     for c in candidates {
         let gap = c.gap_pct();
         if gap < params.gap_min_pct {
-            sink.emit(SignalEvent::universe(
+            emit_telemetry(
+                sink,
+                params,
                 ts_event,
-                c.symbol.clone(),
-                Decision::Reject,
-                Some("gap".to_string()),
-                vals(&[("gap_pct", gap), ("prior_close", c.prior_close), ("today_open", c.today_open)]),
-            ));
+                universe_trigger(),
+                DecisionDetail::universe(
+                    c.symbol.clone(),
+                    Decision::Reject,
+                    Some("gap".to_string()),
+                    vals(&[("gap_pct", gap), ("prior_close", c.prior_close), ("today_open", c.today_open)]),
+                ),
+            );
         } else {
             passed.push(c);
         }
@@ -103,22 +111,32 @@ pub fn select_universe(
     let mut selected = Vec::new();
     for (rank, c) in passed.iter().enumerate() {
         if rank < params.universe_top_n {
-            sink.emit(SignalEvent::universe(
+            emit_telemetry(
+                sink,
+                params,
                 ts_event,
-                c.symbol.clone(),
-                Decision::Accept,
-                None,
-                vals(&[("gap_pct", c.gap_pct()), ("prior_turnover", c.prior_turnover), ("rank", rank as f64)]),
-            ));
+                universe_trigger(),
+                DecisionDetail::universe(
+                    c.symbol.clone(),
+                    Decision::Accept,
+                    None,
+                    vals(&[("gap_pct", c.gap_pct()), ("prior_turnover", c.prior_turnover), ("rank", rank as f64)]),
+                ),
+            );
             selected.push(c.symbol.clone());
         } else {
-            sink.emit(SignalEvent::universe(
+            emit_telemetry(
+                sink,
+                params,
                 ts_event,
-                c.symbol.clone(),
-                Decision::Reject,
-                Some("turnover_rank".to_string()),
-                vals(&[("prior_turnover", c.prior_turnover), ("rank", rank as f64)]),
-            ));
+                universe_trigger(),
+                DecisionDetail::universe(
+                    c.symbol.clone(),
+                    Decision::Reject,
+                    Some("turnover_rank".to_string()),
+                    vals(&[("prior_turnover", c.prior_turnover), ("rank", rank as f64)]),
+                ),
+            );
         }
     }
     selected
@@ -126,6 +144,32 @@ pub fn select_universe(
 
 fn vals(pairs: &[(&str, f64)]) -> BTreeMap<String, f64> {
     pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+}
+
+/// The universe scan's decision trigger: universe selection happens at session
+/// open, keyed to the scan — an internal state change, not a bar (R5).
+fn universe_trigger() -> DecisionTrigger {
+    DecisionTrigger::StateChange { description: "universe selection scan".to_string() }
+}
+
+/// Emit one pure-telemetry [`DecisionEnvelope`] carrying `detail` (R5, R6): the
+/// trigger, the strategy decision detail, and the minimal telemetry context —
+/// `params`' numeric summary plus a running `decisions` count from the sink.
+/// The single emission seam for the scan and the engine-thread strategy.
+fn emit_telemetry(
+    sink: &DecisionSink,
+    params: &OrbParams,
+    ts_event: u64,
+    trigger: DecisionTrigger,
+    detail: DecisionDetail,
+) {
+    let counts = BTreeMap::from([("decisions".to_string(), sink.len() as u64)]);
+    sink.emit(DecisionEnvelope::telemetry(
+        ts_event,
+        trigger,
+        detail,
+        params.telemetry_context(counts),
+    ));
 }
 
 // ---------------------------------------------------------------------------
@@ -331,22 +375,22 @@ pub struct SelectedSymbol {
 
 /// The ORB v0 nautilus strategy. Mounts one [`OrbState`] per selected symbol, feeds
 /// each incoming bar to its state, and translates actions into marketable-limit
-/// orders while emitting the per-decision signal log (KTD9). Runnable unchanged in
-/// both the backtest engine and a live node (R2).
+/// orders while emitting one telemetry decision envelope per decision (KTD9, R6).
+/// Runnable unchanged in both the backtest engine and a live node (R2).
 pub struct OrbStrategy {
     core: StrategyCore,
     params: OrbParams,
     selected: Vec<SelectedSymbol>,
     states: HashMap<InstrumentId, OrbState>,
     entered_qty: HashMap<InstrumentId, i64>,
-    signals: SignalSink,
+    decisions: DecisionSink,
     emission: EmissionGate,
 }
 
 impl OrbStrategy {
     /// Build the strategy for a resolved universe + parameter set, writing its
-    /// per-decision signals into `signals`.
-    pub fn new(params: OrbParams, selected: Vec<SelectedSymbol>, signals: SignalSink) -> Self {
+    /// per-decision telemetry envelopes into `decisions`.
+    pub fn new(params: OrbParams, selected: Vec<SelectedSymbol>, decisions: DecisionSink) -> Self {
         let base = StrategyConfig {
             strategy_id: Some(StrategyId::from(strategy_id_str(&params).as_str())),
             ..Default::default()
@@ -358,7 +402,7 @@ impl OrbStrategy {
             selected,
             states,
             entered_qty: HashMap::new(),
-            signals,
+            decisions,
             emission: EmissionGate::open(),
         }
     }
@@ -402,7 +446,19 @@ impl OrbStrategy {
         self.submit_order(order, None, None, None)
     }
 
-    /// Translate one bar's state-machine actions into orders + signals.
+    /// Emit one intraday telemetry envelope for a bar-driven decision on `id`
+    /// (the [`DecisionTrigger::MarketData`] trigger, R5).
+    fn emit_market_data(&self, id: InstrumentId, ts: u64, detail: DecisionDetail) {
+        emit_telemetry(
+            &self.decisions,
+            &self.params,
+            ts,
+            DecisionTrigger::MarketData { instrument_id: id },
+            detail,
+        );
+    }
+
+    /// Translate one bar's state-machine actions into orders + telemetry envelopes.
     fn handle_actions(
         &mut self,
         id: InstrumentId,
@@ -416,8 +472,7 @@ impl OrbStrategy {
                     let open = self.open_positions_excluding(&id);
                     let qty = self.params.position_qty(limit_price as f64);
                     let range = self.states.get(&id).and_then(|s| s.range()).unwrap_or((0, 0));
-                    self.signals.emit(SignalEvent::transition(
-                        ts,
+                    self.emit_market_data(id, ts, DecisionDetail::transition(
                         symbol.clone(),
                         SignalKind::Breakout,
                         vals(&[("range_high", range.0 as f64), ("range_low", range.1 as f64), ("breakout_price", limit_price as f64)]),
@@ -436,10 +491,9 @@ impl OrbStrategy {
                         } else {
                             "max_concurrent"
                         };
-                        self.signals.emit(SignalEvent {
-                            ts_event: ts,
-                            symbol: symbol.clone(),
+                        self.emit_market_data(id, ts, DecisionDetail {
                             kind: SignalKind::OrderRejectedSizing,
+                            symbol: symbol.clone(),
                             decision: None,
                             filter: Some(filter.to_string()),
                             values: vals(&[("open_positions", open as f64), ("qty", qty as f64)]),
@@ -448,8 +502,7 @@ impl OrbStrategy {
                     }
                     self.entered_qty.insert(id, qty);
                     self.place(id, OrderSide::Buy, limit_price, qty, false)?;
-                    self.signals.emit(SignalEvent::transition(
-                        ts,
+                    self.emit_market_data(id, ts, DecisionDetail::transition(
                         symbol.clone(),
                         SignalKind::OrderPlaced,
                         vals(&[("qty", qty as f64), ("price", limit_price as f64)]),
@@ -467,8 +520,7 @@ impl OrbStrategy {
                         ExitReason::Stop => SignalKind::StopHit,
                         ExitReason::TimeFlat => SignalKind::TimeExit,
                     };
-                    self.signals.emit(SignalEvent::transition(
-                        ts,
+                    self.emit_market_data(id, ts, DecisionDetail::transition(
                         symbol.clone(),
                         kind,
                         vals(&[("qty", qty as f64), ("price", limit_price as f64)]),
@@ -525,23 +577,31 @@ impl DataActor for OrbStrategy {
     fn on_stop(&mut self) -> anyhow::Result<()> {
         // End-of-session summary per selected symbol (KTD9): the extreme signal
         // values observed over the session.
-        let summaries: Vec<(String, (i64, i64))> = self
+        let summaries: Vec<(InstrumentId, (i64, i64))> = self
             .selected
             .iter()
             .filter_map(|s| {
                 self.states
                     .get(&s.instrument_id)
                     .and_then(|st| st.session_extremes())
-                    .map(|ex| (s.instrument_id.to_string(), ex))
+                    .map(|ex| (s.instrument_id, ex))
             })
             .collect();
-        for (symbol, (hi, lo)) in summaries {
-            self.signals.emit(SignalEvent::transition(
+        for (id, (hi, lo)) in summaries {
+            // Session summaries fire at strategy stop, not on a bar — the
+            // trigger is the stop-time state change (R5), mirroring
+            // `universe_trigger()`'s pattern for non-bar-driven cycles.
+            emit_telemetry(
+                &self.decisions,
+                &self.params,
                 0,
-                symbol,
-                SignalKind::SessionSummary,
-                vals(&[("session_high", hi as f64), ("session_low", lo as f64)]),
-            ));
+                DecisionTrigger::StateChange { description: "session end summary".to_string() },
+                DecisionDetail::transition(
+                    id.to_string(),
+                    SignalKind::SessionSummary,
+                    vals(&[("session_high", hi as f64), ("session_low", lo as f64)]),
+                ),
+            );
         }
         Ok(())
     }

@@ -2,17 +2,30 @@
 //! stages the four artifacts and finalizes atomically into an append-only registry.
 
 use chrono::{TimeZone, Utc};
+use nautilus_ls_lab::agent::envelope::{
+    self as envelope, Decision, DecisionDetail, DecisionEnvelope, DecisionTrigger,
+};
 use nautilus_ls_lab::artifacts::data_quality::DataQualityReport;
 use nautilus_ls_lab::artifacts::manifest::{range_fingerprint, universe_hash, DataRange, Manifest};
 use nautilus_ls_lab::artifacts::performance::{FillRecord, PerformanceReport, TradeRecord};
 use nautilus_ls_lab::artifacts::{
-    self, aborted_runs, list_runs, run_id, RunSource, RunWriter, DATA_QUALITY_FILE, MANIFEST_FILE,
-    PERFORMANCE_FILE, SIGNALS_FILE,
+    self, aborted_runs, list_runs, run_id, RunSource, RunWriter, DATA_QUALITY_FILE, DECISIONS_FILE,
+    MANIFEST_FILE, PERFORMANCE_FILE,
 };
 use nautilus_ls_lab::params::OrbParams;
-use nautilus_ls_lab::signals::{Decision, SignalEvent};
 use std::collections::BTreeMap;
 use tempfile::tempdir;
+
+/// One telemetry decision envelope (the universe-accept decision the retired signal
+/// log used to record).
+fn telemetry_envelope() -> DecisionEnvelope {
+    DecisionEnvelope::telemetry(
+        1,
+        DecisionTrigger::StateChange { description: "universe selection scan".to_string() },
+        DecisionDetail::universe("005930.XKRX", Decision::Accept, None, BTreeMap::new()),
+        OrbParams::default().telemetry_context(BTreeMap::new()),
+    )
+}
 
 fn fixed_run_id(source: RunSource, version: u32) -> String {
     let start = Utc.with_ymd_and_hms(2024, 1, 5, 9, 0, 0).unwrap();
@@ -69,10 +82,10 @@ fn writes_four_artifacts_and_finalizes() {
     writer.write_manifest(&manifest(&id, RunSource::Backtest, params.clone())).unwrap();
     writer.write_performance(&PerformanceReport::assemble(vec![trade("005930.XKRX", 100.0, 60_000.0)], 1_000_000.0)).unwrap();
     writer.write_data_quality(&DataQualityReport::backtest(vec!["005930.XKRX".into()], vec!["005930.XKRX".into()])).unwrap();
-    writer.write_signals(&[SignalEvent::universe(1, "005930.XKRX", Decision::Accept, None, BTreeMap::new())]).unwrap();
+    writer.write_decisions(&[telemetry_envelope()]).unwrap();
     let run_dir = writer.finalize().unwrap();
 
-    for f in [MANIFEST_FILE, PERFORMANCE_FILE, DATA_QUALITY_FILE, SIGNALS_FILE] {
+    for f in [MANIFEST_FILE, PERFORMANCE_FILE, DATA_QUALITY_FILE, DECISIONS_FILE] {
         assert!(run_dir.join(f).exists(), "{f} written");
     }
     // Each JSON artifact round-trips through its serde type.
@@ -80,6 +93,10 @@ fn writes_four_artifacts_and_finalizes() {
     assert_eq!(m.run_id, id);
     let _p: PerformanceReport = serde_json::from_str(&std::fs::read_to_string(run_dir.join(PERFORMANCE_FILE)).unwrap()).unwrap();
     let _d: DataQualityReport = serde_json::from_str(&std::fs::read_to_string(run_dir.join(DATA_QUALITY_FILE)).unwrap()).unwrap();
+    // The decision stream parses back envelope-for-envelope.
+    let back = envelope::from_jsonl(&std::fs::read_to_string(run_dir.join(DECISIONS_FILE)).unwrap()).unwrap();
+    assert_eq!(back.len(), 1);
+    assert!(back[0].decision_detail.is_some(), "the telemetry detail round-trips");
 
     // Exactly one finalized run, and no staging directory remains.
     assert_eq!(list_runs(data), vec![id]);
@@ -230,4 +247,28 @@ fn free_text_observations_are_scrubbed() {
 fn scrub_delegates_to_adapter() {
     assert_eq!(artifacts::scrub("acct=20187511401 ok"), "acct=*** ok");
     assert_eq!(artifacts::scrub("ordno=12345 qty=10"), "ordno=12345 qty=10");
+}
+
+/// write_decisions applies the same free-text scrub the cross-run recorder does:
+/// an account-like token in a free-text field is masked on disk and the line
+/// still parses (UUIDs untouched).
+#[test]
+fn write_decisions_scrubs_free_text_on_disk() {
+    let dir = tempdir().unwrap();
+    let data = dir.path();
+    let id = fixed_run_id(RunSource::Backtest, 7);
+    let w = RunWriter::new(data, &id).unwrap();
+
+    let mut e = telemetry_envelope();
+    e.trigger = DecisionTrigger::Manual {
+        reason: "operator probe on account 20187511401".to_string(),
+    };
+    w.write_decisions(&[e]).unwrap();
+    let run_dir = w.finalize().unwrap();
+
+    let contents = std::fs::read_to_string(run_dir.join(DECISIONS_FILE)).unwrap();
+    assert!(!contents.contains("20187511401"), "account token masked: {contents}");
+    assert!(contents.contains("***"), "redaction present");
+    let back = envelope::from_jsonl(&contents).unwrap();
+    assert_eq!(back.len(), 1, "the scrubbed line still parses");
 }

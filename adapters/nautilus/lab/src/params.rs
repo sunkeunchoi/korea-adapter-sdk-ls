@@ -2,9 +2,13 @@
 //! so the whole set lands in the run manifest (R3, R8). These are *starter defaults*
 //! the loop exists to revise, never tuned claims.
 
+use std::collections::BTreeMap;
+
 use chrono::NaiveTime;
 use nautilus_ls::rules::KRX_REGULAR_OPEN;
 use serde::{Deserialize, Serialize};
+
+use crate::agent::context::AgentContext;
 
 /// The strategy identifier recorded in every run id + manifest.
 pub const STRATEGY_ID: &str = "orb";
@@ -75,6 +79,33 @@ impl OrbParams {
     pub fn sizing_allows(&self, open_positions: usize) -> bool {
         open_positions < self.max_concurrent
     }
+
+    /// The numeric (f64-able) fields of this parameter set, keyed by serde
+    /// field name. String-typed fields (strategy id, `HH:MM:SS` times) are
+    /// omitted — context params maps are `f64`-valued.
+    pub fn numeric_summary(&self) -> BTreeMap<String, f64> {
+        match serde_json::to_value(self) {
+            Ok(serde_json::Value::Object(map)) => map
+                .into_iter()
+                .filter_map(|(k, v)| v.as_f64().map(|n| (k, n)))
+                .collect(),
+            _ => BTreeMap::new(),
+        }
+    }
+
+    /// The minimal in-run telemetry context (R5) for a decision made under this
+    /// parameter set: strategy id + version, the [`OrbParams::numeric_summary`]
+    /// as the params summary, and the caller's running counts. Constructible at
+    /// the universe scan (before the engine) and inside the engine thread — no
+    /// account or position state (R9).
+    pub fn telemetry_context(&self, counts: BTreeMap<String, u64>) -> AgentContext {
+        AgentContext::telemetry(
+            self.strategy_id.clone(),
+            self.strategy_version,
+            self.numeric_summary(),
+            counts,
+        )
+    }
 }
 
 /// Serialize/deserialize a `NaiveTime` as `"HH:MM:SS"` so the manifest is readable
@@ -131,6 +162,29 @@ mod tests {
         assert_eq!(p.position_qty(0.0), 0);
         p.notional_per_position = 100.0;
         assert_eq!(p.position_qty(60_000.0), 0, "price above notional → zero shares");
+    }
+
+    #[test]
+    fn telemetry_context_carries_numeric_params_only() {
+        let p = OrbParams::default();
+        let summary = p.numeric_summary();
+        assert_eq!(summary.get("gap_min_pct"), Some(&3.0));
+        assert!(summary.contains_key("notional_per_position"));
+        assert!(!summary.contains_key("strategy_id"), "string fields omitted");
+        assert!(!summary.contains_key("range_open"), "HH:MM:SS fields omitted");
+
+        let counts = BTreeMap::from([("decisions".to_string(), 7u64)]);
+        let ctx = p.telemetry_context(counts.clone());
+        let AgentContext::Telemetry {
+            strategy_id, strategy_version, params_hash_or_summary, counts: got,
+        } = ctx
+        else {
+            panic!("expected the Telemetry form");
+        };
+        assert_eq!(strategy_id, "orb");
+        assert_eq!(strategy_version, 0);
+        assert_eq!(params_hash_or_summary, summary);
+        assert_eq!(got, counts);
     }
 
     #[test]

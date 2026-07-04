@@ -4,8 +4,9 @@
 //! so it is built and tested test-first).
 
 use chrono::NaiveTime;
+use nautilus_ls_lab::agent::envelope::{Decision, DecisionTrigger, SignalKind};
+use nautilus_ls_lab::agent::sink::DecisionSink;
 use nautilus_ls_lab::params::OrbParams;
-use nautilus_ls_lab::signals::{Decision, SignalKind, SignalSink};
 use nautilus_ls_lab::strategy::orb::{
     select_universe, ExitReason, OrbAction, OrbState, Phase, UniverseCandidate,
 };
@@ -127,24 +128,32 @@ fn candidate(sym: &str, prior_close: f64, today_open: f64, turnover: f64) -> Uni
     }
 }
 
-/// AE2: a candidate failing the gap filter produces a rejection signal naming the
+/// AE2: a candidate failing the gap filter produces a rejection envelope naming the
 /// filter and carrying the signal values at decision time.
 #[test]
 fn gap_reject_names_filter_and_values() {
     let p = OrbParams::default(); // gap_min_pct 3.0
-    let sink = SignalSink::new();
+    let sink = DecisionSink::new();
     // 60000 → 60500 is +0.83%, below the 3% gap floor.
     let cands = vec![candidate("005930.XKRX", 60_000.0, 60_500.0, 1_000.0)];
     let selected = select_universe(&cands, &p, &sink, 42);
     assert!(selected.is_empty(), "a sub-gap candidate is not selected");
 
-    let events = sink.snapshot();
-    assert_eq!(events.len(), 1);
-    let e = &events[0];
-    assert_eq!(e.kind, SignalKind::Universe);
-    assert_eq!(e.decision, Some(Decision::Reject));
-    assert_eq!(e.filter.as_deref(), Some("gap"));
-    let gap = e.values.get("gap_pct").copied().unwrap();
+    let envelopes = sink.snapshot();
+    assert_eq!(envelopes.len(), 1, "one envelope per decision");
+    let e = &envelopes[0];
+    assert_eq!(e.ts_event, 42);
+    assert!(
+        matches!(e.trigger, DecisionTrigger::StateChange { .. }),
+        "universe decisions trigger on the scan state change: {:?}",
+        e.trigger
+    );
+    let d = e.decision_detail.as_ref().expect("telemetry envelope carries the detail");
+    assert_eq!(d.kind, SignalKind::Universe);
+    assert_eq!(d.symbol, "005930.XKRX");
+    assert_eq!(d.decision, Some(Decision::Reject));
+    assert_eq!(d.filter.as_deref(), Some("gap"));
+    let gap = d.values.get("gap_pct").copied().unwrap();
     assert!((gap - 0.8333).abs() < 0.01, "gap_pct recorded: {gap}");
 }
 
@@ -153,7 +162,7 @@ fn gap_reject_names_filter_and_values() {
 #[test]
 fn universe_caps_top_n_by_turnover() {
     let p = OrbParams::default(); // universe_top_n defaults to 20
-    let sink = SignalSink::new();
+    let sink = DecisionSink::new();
     // 25 candidates all clearing the gap (+5%), with turnover = index so ranking is
     // unambiguous.
     let cands: Vec<UniverseCandidate> = (0..25)
@@ -169,7 +178,9 @@ fn universe_caps_top_n_by_turnover() {
     let rank_rejects = sink
         .snapshot()
         .into_iter()
-        .filter(|e| e.filter.as_deref() == Some("turnover_rank"))
+        .filter(|e| {
+            e.decision_detail.as_ref().and_then(|d| d.filter.as_deref()) == Some("turnover_rank")
+        })
         .count();
     assert_eq!(rank_rejects, 5);
 }

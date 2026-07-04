@@ -1,7 +1,7 @@
 //! Run artifacts + the append-only run registry (U4, KTD2, R4–R9).
 //!
 //! Every run — backtest or live — emits the same four artifacts (`manifest.json`,
-//! `performance.json`, `signals.jsonl`, `data_quality.json`) into a per-run directory
+//! `performance.json`, `decisions.jsonl`, `data_quality.json`) into a per-run directory
 //! under `<data>/runs/<run_id>/`. A run writes into `<data>/runs/.tmp-<run_id>/` and
 //! finalizes by atomic rename (mirroring the ingest checkpoint's atomic-save pattern);
 //! a leftover `.tmp-` directory marks an aborted run and is reported, never silently
@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::signals::{self, SignalEvent};
+use crate::agent::envelope::{to_scrubbed_jsonl_line, DecisionEnvelope};
 use data_quality::DataQualityReport;
 use manifest::Manifest;
 use performance::PerformanceReport;
@@ -55,7 +55,8 @@ pub fn run_id(start: DateTime<Utc>, source: RunSource, strategy_id: &str, versio
 /// The four artifact file names.
 pub const MANIFEST_FILE: &str = "manifest.json";
 pub const PERFORMANCE_FILE: &str = "performance.json";
-pub const SIGNALS_FILE: &str = "signals.jsonl";
+/// The per-run decision-envelope stream (one telemetry envelope per decision, R6).
+pub const DECISIONS_FILE: &str = "decisions.jsonl";
 pub const DATA_QUALITY_FILE: &str = "data_quality.json";
 /// The agent-written analysis file (co-located into a finalized run dir, R15).
 pub const ANALYSIS_FILE: &str = "analysis.md";
@@ -136,10 +137,19 @@ impl RunWriter {
         self.write_json(DATA_QUALITY_FILE, &scrubbed)
     }
 
-    /// Write the per-decision signal log as JSONL.
-    pub fn write_signals(&self, events: &[SignalEvent]) -> anyhow::Result<()> {
-        let text = signals::to_jsonl(events)?;
-        std::fs::write(self.tmp_dir.join(SIGNALS_FILE), text)?;
+    /// Write the per-decision envelope stream as JSONL (`decisions.jsonl`),
+    /// scrubbing each envelope's free-text fields at write time via the shared
+    /// [`to_scrubbed_jsonl_line`] seam (R9 — the same free-text-only
+    /// discipline as the cross-run recorder, so UUIDs stay intact and every
+    /// line parses back). The telemetry free text here (filter names, trigger
+    /// descriptions) is compile-time literals from our own code, scrubbed
+    /// anyway for consistency.
+    pub fn write_decisions(&self, envelopes: &[DecisionEnvelope]) -> anyhow::Result<()> {
+        let mut text = String::new();
+        for e in envelopes {
+            text.push_str(&to_scrubbed_jsonl_line(e)?);
+        }
+        std::fs::write(self.tmp_dir.join(DECISIONS_FILE), text)?;
         Ok(())
     }
 
