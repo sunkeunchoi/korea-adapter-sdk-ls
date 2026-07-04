@@ -1506,3 +1506,89 @@ facet edited. The only tree changes this wave are the three Makefile target fixe
 one Makefile gating-comment amendment, and this section's prose. The 16-TR domestic
 residue remains fully and currently dispositioned; the next domestic window should still
 be spent on an armed reopen trigger, now that the targets that run them are un-broken.
+
+## 25. Recommended re-certification wave — gate-mechanism armed, all 10 HELD (2026-07-03)
+
+Plan `docs/plans/2026-07-03-003-feat-recommended-recert-wave-plan.md`. Goal: re-certify the
+ten TRs the error-resilience gate (§24 context / PR #83, plan 2026-07-01-004 R12) demoted
+to Implemented and restore the Recommended tier from its current count of **0**. Each TR
+re-promotes only after the full gate — grounded `metadata/constraints/<tr>.yaml`, a live
+differential negative probe (or the realtime error-coverage substitute, KTD2), captured
+error-coverage evidence, and the gate-extended promote-tr recipe.
+
+**Outcome: 0 flips this pass; the gate MECHANISM is now fully authored and armed.** The
+offline units (U1, U2) landed gate-green; every live leg (U3–U5, U7) is HELD because its
+session/attendance prerequisite was unavailable in this autonomous run. The Recommended
+count stays **0**; the KTD5 one-time re-wirings deliberately did NOT land (they land "with
+the first flip", and there was none) — `recommended_no_banner` stays `[&str; 0]`
+(`crates/ls-docgen/src/lib.rs`) and `freshness_check_over_empty_recommended_set_exits_zero`
+(`crates/ls-trackers/src/cli.rs`) stays asserting count 0. No `metadata/trs/*.yaml`,
+`banner_trs`, `reference.len()`, or freshness-count site was edited.
+
+**What landed (U1 + U2, offline, gate-green — DoD-complete regardless of live outcomes):**
+- **U1 — 9 grounded constraint schemas** (`metadata/constraints/{token,t1101,t1102,S3_,CSPAQ12200,CSPAT00601,CSPAT00701,CSPAT00801,t0425}.yaml`),
+  joining the pre-existing `t8412.yaml`. Every field carries `type` + `required` +
+  explicit `enum`/`range`/`format` applicability; each grounds against its normalized
+  baseline (`cargo test -p ls-core` green). **Order-TR grounding caveat (the struct wins):**
+  `CSPAT00601.LoanDt`, `t0425.expcode`, and `t0425.cts_ordno` are declared caller-optional
+  (`required: false`) even though the wire marks them required — the certified request
+  structs send them empty (cash-order `LoanDt`, all-symbols `expcode`, first-page
+  `cts_ordno`), and preflight runs at the single `Inner` dispatch seam for orders too, so
+  a `required: true` there would false-reject every certified order. An ls-core order-mechanics
+  unit helper (`inner.rs::order_policy`) was repointed off the literal `"CSPAT00601"` to a
+  schema-less `"ORDER_TEST"` so its deliberately-empty synthetic bodies still exercise
+  post-preflight classification rather than tripping the new schema.
+- **U2 — 8 negative-probe legs + Makefile targets + smoke-map rows** (`crates/ls-sdk/tests/negative_probe.rs`,
+  `Makefile`, `.agents/skills/promote-tr/references/smoke-map.md`). Four read legs
+  (`t1101`/`t1102`/`CSPAQ12200`/`t0425`) mirror the `t8412` differential leg; the `token`
+  leg is a bespoke `/oauth2/token` FORM probe mutating only the non-credential `grant_type`/`scope`
+  fields (credential class by removal only, KTD2); the three order legs (`CSPAT00601`/`00701`/`00801`)
+  place a real band-safe resting control, cancel + flat-verify it before any variant, fire
+  only type/required variants (KTD3), and halt-may-rest on any order-endpoint transport
+  failure — behind the full fail-closed autonomy chain copied from `order_smoke.rs`
+  (`LS_TRADING_ENV=paper` + `LS_ORDER_SMOKE=1` + no CI/TTY + fresh `LS_ORDER_SMOKE_NONCE`).
+  Offline twins assert variant-generation determinism for all 8 schemas and that the order
+  legs fire type/required only; all live legs stay `#[ignore]`
+  (`cargo test -p ls-sdk --test negative_probe` green, `make lane-check` green).
+
+**Why every live leg is HELD (session/attendance, KTD4/KTD6).** This wave executed
+autonomously at **2026-07-03 15:48 KST** — 18 minutes after the KRX regular close (15:30),
+with no attended TTY. Promotion to `recommended: true` is an outward-facing support-tier
+claim the wave gates on an operator witnessing the control + differential-probe terminal
+table in-session; an unattended post-close run cannot supply that witness (and for the
+order quartet, the autonomy chain refuses by construction). Per-TR terminal state +
+armed reopen trigger:
+
+- **`t8412`** — HELD. Its control (`live-smoke-chart`, historical `LS_LIVE_SMOKE_T8412_DATE`)
+  is closure-safe, but its differential probe (`make live-smoke-t8412-negative`) is
+  smoke-map-gated "open session + valid seed", which the closed window blocks. *Reopen:*
+  next open KRX session — run the chart control + the negative probe, then promote.
+- **`CSPAQ12200`** — HELD. Closure-viable read; not run autonomously (outward-facing flip
+  needs an attended witness). *Reopen:* attended session — `make live-smoke-account` control
+  + `make live-smoke-cspaq12200-negative`, then promote.
+- **`S3_`** — HELD. Closure-viable WS-lifecycle reachability; not run autonomously (same
+  reason). No live negative probe (KTD2: realtime excludes — trade-data correctness,
+  in-session delivery, reconnection — recorded in its error-coverage file at promotion).
+  *Reopen:* attended session — `make live-smoke-ws` lifecycle, then promote.
+- **`token`, `t1102`** — HELD (session-closed). One open-session `make live-smoke` run issues
+  the shared control for both; the `token` bespoke negative leg runs LAST among live legs
+  (a token-flow probe can disturb the session token, KTD2). *Reopen:* next open KRX session.
+- **`t1101`** — HELD (session-closed). Control is `make live-smoke-book`. *Reopen:* next open
+  KRX session.
+- **`CSPAT00601`, `CSPAT00701`, `CSPAT00801`, `t0425`** — HELD (window closed + unattended).
+  The order quartet needs an open KRX window (09:00–15:30 KST) AND the order legs' fail-closed
+  autonomy chain refuses without an attended TTY + a fresh human `LS_ORDER_SMOKE_NONCE`
+  (covers plan AE2: a window miss leaves the TR Implemented with a HELD record and the wave
+  still closes). *Reopen:* attended in-window session with the order-capable account —
+  `LS_ORDER_SMOKE=1 LS_ORDER_SMOKE_NONCE=$(date +%s)` then the order-chain / matrix control
+  smokes + the three `make live-smoke-cspat00{6,7,8}01-negative` probes, then promote the
+  quartet from the clean chain.
+- **`t1109`** (U7, opportunistic, NOT one of the ten) — skipped; the after-hours window was
+  not entered this pass. Skipping does not affect the DoD. *Reopen:* run the §23/§24-recorded
+  after-hours `t1109` command; flip to Implemented only on a non-empty typed witness.
+
+**Supersession (R5).** For the ten re-cert TRs this section is the current disposition
+record; §24's "current Recommended count is 0" holds, now with the re-cert gate mechanism
+authored and armed rather than merely staged in plan. The tier restores on the operator's
+next attended open KRX window (reads + token) and attended in-window order session (the
+quartet); every harness is on-branch and reachable via the Makefile targets above.

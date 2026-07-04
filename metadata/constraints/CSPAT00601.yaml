@@ -1,0 +1,71 @@
+# Request field-constraint schema for `CSPAT00601` (현금주문 — domestic cash-equity
+# order submit). Dispatches through the `Inner::post_order` preflight seam, so
+# `type`/`required` here MUST agree with the live-certified request struct
+# (crates/ls-sdk/src/orders/mod.rs::CSPAT00601InBlock1) or preflight false-rejects
+# a valid order: the certified `limit()` constructor sends `LoanDt` EMPTY for a
+# cash order, so `LoanDt` is declared caller-optional (`required: false`) even
+# though the wire marks it required — the struct wins on disagreement (permissive
+# direction, allowed by grounding).
+#
+# Per KTD3 the order-TR negative probe fires ONLY type- and required-class
+# variants (a wire-shape break the gateway rejects before placement); enum/range/
+# format variants are recorded `held`, never fired against a live order endpoint.
+#
+# Grounded against crates/ls-trackers/baselines/api-drift/normalized/trs/
+# CSPAT00601.json (nine fields, all required on the wire; numeric OrdQty/OrdPrc).
+tr_code: CSPAT00601
+fields:
+  - name: IsuNo
+    type: string          # baseline: String, required (종목번호).
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: true, kind: symbol, confirmed: false }
+  - name: OrdQty
+    type: integer         # baseline: Number, required (주문수량, JSON number).
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: OrdPrc
+    type: number          # baseline: Number, required (주문가, JSON number).
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: BnsTpCode
+    type: string          # baseline: String, required (매매구분: "1" sell / "2" buy).
+    required: true
+    enum: { applicable: true, values: ["1", "2"], confirmed: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: OrdprcPtnCode
+    type: string          # baseline: String, required (호가유형코드, e.g. "00" limit).
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: MgntrnCode
+    type: string          # baseline: String, required (신용거래코드, e.g. "000" cash).
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: LoanDt
+    type: string          # baseline: String, required on the wire — but the
+    required: false        # certified cash-order flow sends it EMPTY, so declared
+    enum: { applicable: false }   # caller-optional (the struct wins, permissive).
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: OrdCndiTpCode
+    type: string          # baseline: String, required (주문조건구분, e.g. "0").
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: MbrNo
+    type: string          # baseline: String, required (회원사번호, e.g. "NXT").
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }

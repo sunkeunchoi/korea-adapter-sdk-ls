@@ -1,0 +1,25 @@
+# Request field-constraint schema for `S3_` (KRX 체결 real-time trade feed —
+# a WebSocket subscribe frame, owner_class: realtime). Its subscribe body is a
+# `{tr_cd, tr_key}` frame, not a `<TR>InBlock`, and it never reaches the
+# `Inner::post` preflight seam (that seam is REST-only), so this schema does not
+# gate a runtime call. Per KTD2 `S3_` gets NO live negative-probe leg — a WS
+# subscribe has no REST error differential; its error-coverage file records the
+# realtime excludes as per-class `n_a`/`held`. This schema exists so the
+# error-resilience gate's `constraints_ref` resolves and grounds.
+#
+# Grounded against crates/ls-trackers/baselines/api-drift/normalized/trs/S3_.json
+# (tr_cd: String, required; tr_key: String, optional).
+tr_code: S3_
+fields:
+  - name: tr_cd
+    type: string          # baseline: String, required (the TR code being subscribed).
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: tr_key
+    type: string          # baseline: String, optional (the subscription key /
+    required: false        # symbol; empty subscribes the unkeyed stream).
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }

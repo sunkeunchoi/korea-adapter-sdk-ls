@@ -1,0 +1,12 @@
+# Request field-constraint schema for `t1101` (주식현재가호가 — current price +
+# 10-level order book). Single caller field: the symbol. Grounded against
+# crates/ls-trackers/baselines/api-drift/normalized/trs/t1101.json (shcode:
+# String, required).
+tr_code: t1101
+fields:
+  - name: shcode
+    type: string          # baseline: String, required (6-digit short code).
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: true, kind: symbol, confirmed: false }

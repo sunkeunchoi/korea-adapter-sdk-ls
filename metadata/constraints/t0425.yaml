@@ -1,0 +1,46 @@
+# Request field-constraint schema for `t0425` (주식체결/미체결 — order fill/unfilled
+# inquiry). A READ (owner_class read, `is_order: false`); it dispatches through
+# `post_paginated` but the preflight seam is shared, so `type`/`required` must
+# agree with the certified struct
+# (crates/ls-sdk/src/orders/mod.rs::T0425InBlock). The certified `for_symbol`
+# query documents `expcode` empty as "all symbols" and threads `cts_ordno` as the
+# continuation cursor (`" "` on the first page), so both are declared caller-
+# optional (the struct wins on disagreement, permissive direction).
+#
+# `t0425` is a read, so its negative probe fires every applicable class (like the
+# t8412 exemplar), not the restricted order-TR set — nothing here places an order.
+#
+# Grounded against crates/ls-trackers/baselines/api-drift/normalized/trs/t0425.json
+# (five String fields, all required on the wire).
+tr_code: t0425
+fields:
+  - name: expcode
+    type: string          # baseline: String, required — but empty queries all
+    required: false        # symbols in the certified flow (permissive direction).
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: chegb
+    type: string          # baseline: String, required (체결구분: "0" all/"1" filled/"2" unfilled).
+    required: true
+    enum: { applicable: true, values: ["0", "1", "2"], confirmed: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: medosu
+    type: string          # baseline: String, required (매매구분: "0" all/"1" sell/"2" buy).
+    required: true
+    enum: { applicable: true, values: ["0", "1", "2"], confirmed: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: sortgb
+    type: string          # baseline: String, required (정렬순서).
+    required: true
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }
+  - name: cts_ordno
+    type: string          # baseline: String, required on the wire — but the
+    required: false        # continuation cursor (" " first page), caller-optional.
+    enum: { applicable: false }
+    range: { applicable: false }
+    format: { applicable: false }
