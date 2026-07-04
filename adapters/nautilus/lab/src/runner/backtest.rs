@@ -27,8 +27,8 @@ use crate::artifacts::data_quality::{CoverageGapRecord, DataQualityReport, GapRe
 use crate::artifacts::manifest::{hash_bytes, range_fingerprint, universe_hash, DataRange, Manifest};
 use crate::artifacts::performance::PerformanceReport;
 use crate::artifacts::{run_id, RunSource, RunWriter};
+use crate::agent::sink::DecisionSink;
 use crate::params::OrbParams;
-use crate::signals::SignalSink;
 use crate::strategy::orb::{
     select_universe, OrbStrategy, SelectedSymbol, UniverseCandidate,
 };
@@ -111,7 +111,7 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
     // scan must key only on data inside the fingerprinted window, or accumulate-forward
     // growth outside the range would silently change the selected universe while the
     // range-scoped fingerprint stayed identical — breaking run comparability.
-    let sink = SignalSink::new();
+    let sink = DecisionSink::new();
     let (candidates, missing) = build_candidates(&instruments, &all_bars, start_ns, end_ns);
     let selected_symbols = select_universe(&candidates, &cfg.params, &sink, start_ns);
 
@@ -181,10 +181,19 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
     // Assemble artifacts.
     let checkpoint = load_checkpoint(&catalog_path);
     let performance = PerformanceReport::from_positions(&positions, cfg.starting_balance);
-    let mut data_quality = DataQualityReport::backtest(
-        selected_symbols.clone(),
-        checkpoint.as_ref().map(|c| c.adjusted_prices).unwrap_or(false),
-    );
+    // R7: report DETECTED per-symbol shifts — the checkpoint's unhealed shifted
+    // marks intersected with this run's selected universe. A clean catalog
+    // reports an empty list; the agent discounts only affected runs.
+    let shift_symbols: Vec<String> = checkpoint
+        .as_ref()
+        .map(|c| {
+            c.shifted_instruments("1-DAY")
+                .into_iter()
+                .filter(|s| selected_symbols.contains(s))
+                .collect()
+        })
+        .unwrap_or_default();
+    let mut data_quality = DataQualityReport::backtest(selected_symbols.clone(), shift_symbols);
     data_quality.coverage_gaps = collect_gaps(checkpoint.as_ref(), &missing);
 
     let rid = run_id(start, RunSource::Backtest, &cfg.params.strategy_id, cfg.params.strategy_version);
@@ -206,7 +215,7 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
     writer.write_manifest(&manifest)?;
     writer.write_performance(&performance)?;
     writer.write_data_quality(&data_quality)?;
-    writer.write_signals(&sink.snapshot())?;
+    writer.write_decisions(&sink.snapshot())?;
     let run_dir = writer.finalize()?;
 
     Ok(RunOutcome { run_dir, run_id: rid })
@@ -254,7 +263,7 @@ fn run_engine(
     bars: Vec<Bar>,
     params: OrbParams,
     selected: Vec<SelectedSymbol>,
-    sink: SignalSink,
+    sink: DecisionSink,
     starting_balance: f64,
 ) -> anyhow::Result<Vec<Position>> {
     let mut engine = BacktestEngine::new(BacktestEngineConfig {
@@ -338,10 +347,10 @@ fn in_range(b: &Bar, start_ns: u64, end_ns: u64) -> bool {
     ts >= start_ns && ts <= end_ns
 }
 
-/// The KST calendar date of a bar (its UTC `ts_event` shifted to KST, +09:00).
+/// The KST calendar date of a bar (delegates to the adapter's single KST
+/// conversion so session-slicing and ingest agree on date boundaries).
 fn kst_date_of(b: &Bar) -> NaiveDate {
-    let dt = chrono::DateTime::<Utc>::from_timestamp_nanos(b.ts_event.as_u64() as i64);
-    (dt + chrono::Duration::hours(nautilus_ls::rules::KST_UTC_OFFSET_HOURS as i64)).date_naive()
+    nautilus_ls::ingest::kst_date_of(b.ts_event)
 }
 
 fn parse_date(s: &str) -> anyhow::Result<NaiveDate> {

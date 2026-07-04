@@ -8,7 +8,7 @@ use std::path::Path;
 use chrono::{TimeZone, Utc};
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::{mock_config, mount_token};
-use nautilus_ls::ingest::checkpoint::{Checkpoint, GapReason};
+use nautilus_ls::ingest::checkpoint::{Checkpoint, GapReason, RebaseOrigin};
 use nautilus_ls::ingest::{
     build_daily_bar, build_minute_bar, write_bars, write_instruments, BarKind,
 };
@@ -17,7 +17,9 @@ use nautilus_ls::lock::{AdvisoryLock, LockKind};
 use nautilus_ls_lab::artifacts::data_quality::{DataQualityReport, GapReasonKind};
 use nautilus_ls_lab::artifacts::manifest::Manifest;
 use nautilus_ls_lab::artifacts::performance::PerformanceReport;
-use nautilus_ls_lab::artifacts::{aborted_runs, list_runs, MANIFEST_FILE, PERFORMANCE_FILE, SIGNALS_FILE, DATA_QUALITY_FILE};
+use nautilus_ls_lab::agent::envelope::{DecisionTrigger, SignalKind};
+use nautilus_ls_lab::agent::replay::read_envelopes;
+use nautilus_ls_lab::artifacts::{aborted_runs, list_runs, MANIFEST_FILE, PERFORMANCE_FILE, DECISIONS_FILE, DATA_QUALITY_FILE};
 use nautilus_ls_lab::runner::backtest::{run, run_inner, BacktestConfig};
 use nautilus_model::data::Bar;
 use nautilus_model::identifiers::InstrumentId;
@@ -133,8 +135,8 @@ fn read_perf(run_dir: &Path) -> PerformanceReport {
     serde_json::from_str(&std::fs::read_to_string(run_dir.join(PERFORMANCE_FILE)).unwrap()).unwrap()
 }
 
-/// Happy path: fixture catalog → full run → finalized run with non-empty signals and
-/// a performance report showing the completed ORB trade.
+/// Happy path: fixture catalog → full run → finalized run with a non-empty decision
+/// stream and a performance report showing the completed ORB trade.
 #[tokio::test]
 async fn full_backtest_lands_a_registry_run() {
     let dir = tempdir().unwrap();
@@ -143,12 +145,41 @@ async fn full_backtest_lands_a_registry_run() {
     let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
     let outcome = run(cfg(dir.path()), start).await.unwrap();
 
-    for f in [MANIFEST_FILE, PERFORMANCE_FILE, SIGNALS_FILE, DATA_QUALITY_FILE] {
+    for f in [MANIFEST_FILE, PERFORMANCE_FILE, DECISIONS_FILE, DATA_QUALITY_FILE] {
         assert!(outcome.run_dir.join(f).exists(), "{f} present");
     }
-    let signals = std::fs::read_to_string(outcome.run_dir.join(SIGNALS_FILE)).unwrap();
-    assert!(signals.lines().count() >= 3, "non-empty signal log");
-    assert!(signals.contains("order_placed"), "an entry was signalled");
+    let decisions_path = outcome.run_dir.join(DECISIONS_FILE);
+    let decisions = std::fs::read_to_string(&decisions_path).unwrap();
+    assert!(decisions.lines().count() >= 3, "non-empty decision stream");
+    assert!(decisions.contains("order_placed"), "an entry was recorded");
+
+    // AE3: exactly one envelope per decision cycle — every line parses through the
+    // replay loader, and every in-run envelope carries its telemetry detail.
+    let envelopes = read_envelopes(&decisions_path).unwrap();
+    assert_eq!(
+        envelopes.len(),
+        decisions.lines().count(),
+        "one parseable envelope per decision-log line"
+    );
+    assert!(
+        envelopes.iter().all(|e| e.decision_detail.is_some()),
+        "every in-run envelope carries a decision detail"
+    );
+    // Session summaries fire at strategy stop, not on a bar — their trigger
+    // records the stop-time state change (R5).
+    let summaries: Vec<_> = envelopes
+        .iter()
+        .filter(|e| {
+            e.decision_detail.as_ref().is_some_and(|d| d.kind == SignalKind::SessionSummary)
+        })
+        .collect();
+    assert!(!summaries.is_empty(), "a session summary was recorded");
+    assert!(
+        summaries.iter().all(|e| matches!(e.trigger, DecisionTrigger::StateChange { .. })),
+        "session summaries trigger on the stop-time state change, not a bar"
+    );
+    // AE3: the signal log is subsumed by decisions.jsonl — no signals.jsonl remains.
+    assert!(!outcome.run_dir.join("signals.jsonl").exists(), "subsumed by decisions.jsonl");
 
     let perf = read_perf(&outcome.run_dir);
     assert_eq!(perf.summary["num_trades"], 1.0, "one completed ORB trade");
@@ -194,7 +225,32 @@ async fn coverage_gap_is_recorded() {
     let dq: DataQualityReport = serde_json::from_str(&std::fs::read_to_string(outcome.run_dir.join(DATA_QUALITY_FILE)).unwrap()).unwrap();
     assert!(!dq.coverage_gaps.is_empty(), "the checkpoint gap is recorded");
     assert_eq!(dq.coverage_gaps[0].reason, GapReasonKind::EmptyFeed);
-    assert!(dq.adjustment_basis_splice, "adjusted-price basis surfaced from the checkpoint");
+    // R7 inverted assertion: a clean catalog (no detected shift marks) reports an
+    // EMPTY shift-symbol list — the blanket-discount era is over.
+    assert!(dq.adjustment_basis_shift_symbols.is_empty(), "clean catalog → no shift symbols");
+}
+
+/// R7: a checkpoint shift mark on a symbol INSIDE the run's selected universe is
+/// reported; a mark on a symbol outside it is not.
+#[tokio::test]
+async fn shift_marks_are_reported_per_symbol_intersected_with_the_universe() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path(), false).await;
+    let cp_path = dir.path().join("catalog").join("ingest-checkpoint.json");
+    let mut cp = Checkpoint::load(&cp_path).unwrap();
+    // In-universe (the fixture selects 005930) + out-of-universe marks.
+    cp.mark_shifted("005930.XKRX", "1-DAY", chrono::NaiveDate::from_ymd_opt(2024, 1, 5).unwrap(), RebaseOrigin::Heal);
+    cp.mark_shifted("000660.XKRX", "1-DAY", chrono::NaiveDate::from_ymd_opt(2024, 1, 5).unwrap(), RebaseOrigin::Heal);
+    cp.save(&cp_path).unwrap();
+
+    let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
+    let outcome = run(cfg(dir.path()), start).await.unwrap();
+    let dq: DataQualityReport = serde_json::from_str(&std::fs::read_to_string(outcome.run_dir.join(DATA_QUALITY_FILE)).unwrap()).unwrap();
+    assert_eq!(
+        dq.adjustment_basis_shift_symbols,
+        vec!["005930.XKRX".to_string()],
+        "in-universe mark listed; out-of-universe mark not"
+    );
 }
 
 /// Error path: a missing catalog exits with a clear error and no registry residue.
@@ -307,10 +363,10 @@ async fn out_of_range_ingest_keeps_range_fingerprint() {
 }
 
 /// The sizing/concurrency veto: when the fixed notional cannot afford a single share,
-/// the entry is rejected (force_done + an OrderRejectedSizing signal) and no trade is
-/// placed — exercising handle_actions' veto branch end-to-end through the engine.
+/// the entry is rejected (force_done + an OrderRejectedSizing envelope) and no trade
+/// is placed — exercising handle_actions' veto branch end-to-end through the engine.
 #[tokio::test]
-async fn sizing_veto_rejects_and_signals() {
+async fn sizing_veto_rejects_and_records_the_decision() {
     let dir = tempdir().unwrap();
     build_fixture(dir.path(), false).await;
 
@@ -319,10 +375,10 @@ async fn sizing_veto_rejects_and_signals() {
     let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
     let outcome = run(c, start).await.unwrap();
 
-    let signals = std::fs::read_to_string(outcome.run_dir.join(SIGNALS_FILE)).unwrap();
-    assert!(signals.contains("order_rejected_sizing"), "the entry was vetoed by sizing");
-    assert!(signals.contains("notional_too_small"), "the veto names the notional filter");
-    assert!(!signals.contains("order_placed"), "no order was placed");
+    let decisions = std::fs::read_to_string(outcome.run_dir.join(DECISIONS_FILE)).unwrap();
+    assert!(decisions.contains("order_rejected_sizing"), "the entry was vetoed by sizing");
+    assert!(decisions.contains("notional_too_small"), "the veto names the notional filter");
+    assert!(!decisions.contains("order_placed"), "no order was placed");
     let perf = read_perf(&outcome.run_dir);
     assert_eq!(perf.summary["num_trades"], 0.0, "no trade on a vetoed entry");
 }

@@ -13,7 +13,7 @@ use nautilus_ls::factories::{LsDataClientFactory, LsExecutionClientFactory};
 use nautilus_ls::ingest::BarKind;
 use nautilus_ls::lock::{AdvisoryLock, LockKind};
 use nautilus_ls::orders::ledger::FillDelta;
-use nautilus_ls::orders::poll::PollOutcome;
+use nautilus_ls::orders::poll::{DriveTerminal, DrivenOutcome};
 use nautilus_live::node::LiveNode;
 use nautilus_ls_lab::artifacts::data_quality::DataQualityReport;
 use nautilus_ls_lab::artifacts::manifest::{universe_hash, DataRange, Manifest};
@@ -21,8 +21,8 @@ use nautilus_ls_lab::artifacts::performance::{FillRecord, PerformanceReport, Tra
 use nautilus_ls_lab::artifacts::{run_id, RunSource, RunWriter, DATA_QUALITY_FILE, MANIFEST_FILE, PERFORMANCE_FILE};
 use nautilus_ls_lab::params::OrbParams;
 use nautilus_ls_lab::runner::live::{count_approximated, live_guard, record_reconcile};
+use nautilus_ls_lab::agent::sink::DecisionSink;
 use nautilus_ls_lab::strategy::orb::{OrbStrategy, SelectedSymbol};
-use nautilus_ls_lab::signals::SignalSink;
 use nautilus_model::identifiers::{ClientOrderId, InstrumentId, TraderId, TradeId};
 use tempfile::tempdir;
 
@@ -74,7 +74,7 @@ async fn strategy_mounts_in_a_built_live_node() {
 
     let id = InstrumentId::from("005930.XKRX");
     let selected = vec![SelectedSymbol { instrument_id: id, bar_type: BarKind::Minute(1).bar_type(id).unwrap() }];
-    let strategy = OrbStrategy::new(OrbParams::default(), selected, SignalSink::new());
+    let strategy = OrbStrategy::new(OrbParams::default(), selected, DecisionSink::new());
     node.add_strategy(strategy).expect("the ORB strategy mounts in the live node");
 }
 
@@ -116,7 +116,7 @@ async fn scripted_fill_flows_into_a_live_run() {
     };
     writer.write_performance(&PerformanceReport::assemble(vec![trade], 1_000_000.0)).unwrap();
 
-    let mut dq = DataQualityReport::backtest(vec!["005930.XKRX".into()], false);
+    let mut dq = DataQualityReport::backtest(vec!["005930.XKRX".into()], Vec::new());
     dq.price_approximated_fills = approx;
     writer.write_data_quality(&dq).unwrap();
 
@@ -144,19 +144,20 @@ async fn scripted_fill_flows_into_a_live_run() {
     assert_eq!(d.price_approximated_fills, 1, "the approximated fill is counted (R14)");
 }
 
-/// Covers AE3: a scripted inconclusive poll pass lands a reconcile-advised flag in the
-/// data-quality report, so the agent treats the run's accounting as suspect.
+/// Covers AE3/AE4: only an EXHAUSTED reconcile drive lands a reconcile-advised
+/// flag in the data-quality report — a drive that resolved (even after re-polls)
+/// records nothing, so transient poll flakiness no longer discounts a run.
 #[test]
-fn inconclusive_poll_records_reconcile_advised() {
-    let mut dq = DataQualityReport::backtest(vec!["005930.XKRX".into()], false);
-    let inconclusive = PollOutcome { reconcile_needed: true, ..Default::default() };
-    record_reconcile(&mut dq, &inconclusive, "005930");
-    assert_eq!(dq.reconcile_advised.len(), 1, "the reconcile-advised condition is recorded");
+fn only_an_exhausted_drive_records_reconcile_advised() {
+    let mut dq = DataQualityReport::backtest(vec!["005930.XKRX".into()], Vec::new());
+    let exhausted = DrivenOutcome { deltas: Vec::new(), terminal: DriveTerminal::Exhausted };
+    record_reconcile(&mut dq, &exhausted, "005930");
+    assert_eq!(dq.reconcile_advised.len(), 1, "an exhausted drive is recorded");
 
-    // A clean pass records nothing.
-    let clean = PollOutcome::default();
-    record_reconcile(&mut dq, &clean, "005930");
-    assert_eq!(dq.reconcile_advised.len(), 1, "a clean poll adds no condition");
+    // A resolved drive (transient flakiness self-healed) records nothing.
+    let resolved = DrivenOutcome { deltas: Vec::new(), terminal: DriveTerminal::Resolved };
+    record_reconcile(&mut dq, &resolved, "005930");
+    assert_eq!(dq.reconcile_advised.len(), 1, "a resolved drive adds no condition");
 }
 
 /// Error path: startup is refused while the ingest advisory lock is held (a backfill

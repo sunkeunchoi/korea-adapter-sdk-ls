@@ -161,16 +161,74 @@ staged max-lookback probe (see the v1 plan). Minute accumulate over the whole
 universe is still large per run — bound the first few runs with `LS_INGEST_SYMBOLS`
 until the shallow minute history deepens.
 
-**Known limitation — adjustment-basis bias (decided at U5 kickoff).** Daily bars are
-ingested on an **adjusted-price** basis (`adjusted_prices` recorded in the
-checkpoint), and adjusted series are rewritten server-side by every split/dividend.
-Because accumulate-forward *appends* bars, bars accrued before a corporate action sit
-on a different price basis than bars appended after it — a spliced series can show an
-overnight discontinuity a gap/stocks-in-play scanner would misread as signal. This
-increment **keeps adjusted accumulation** (recorded, not silently mixed) and defers
-re-basing; the follow-on strategy plan must price this in (options: unadjusted
-accumulation with read-time adjustment, or a per-symbol re-pull on a detected basis
-shift).
+**Adjustment-basis shifts are self-healing (daily bars).** Daily bars are ingested
+on an **adjusted-price** basis (`adjusted_prices` recorded in the checkpoint), and
+adjusted series are rewritten server-side by every split/dividend. Accumulate-forward
+now *detects* a per-symbol basis shift before appending — it re-fetches a bounded
+overlap window (the last `overlap_days` stored trading days ending at the watermark)
+and exact-compares OHLC on mutually-present dates — and *heals* it: durably mark the
+symbol shifted, true-delete its daily series, clear its watermark, re-pull from the
+`LS_INGEST_LOOKBACK` floor, re-verify, then clear the mark and record a re-base event
+in the checkpoint (the operator audit trail for how often the gateway rewrites
+series). Each re-base event carries an **origin** — `heal` (organic forward
+detection) or `epoch` (the one-time rollout), stamped at mark time so it survives a
+crash-resumed heal running under a different mode — plus `unknown` for rows written
+before origin tracking (presumed organic). The audit metric is
+`Checkpoint::rebase_origin_totals()`, whose `.organic()` counts heal + unknown and
+**excludes** epoch, so the operator's "how often does the gateway rewrite series"
+signal is not inflated by the one-time epoch. The per-series event log is bounded
+(cap 4, oldest-dropped); evicted rows are folded into origin-split counters so the
+per-origin totals stay whole across eviction. The mark outranks the watermark, so an
+interrupted heal resumes at the wipe on the next run; a run whose floor is later than
+the symbol's earliest stored bar **refuses** the wipe (printed as `HEAL REFUSED`)
+rather than silently truncating history — re-run with an adequate floor.
+**Range mode never heals:** a `LS_INGEST_MODE` range run refuses a marked daily
+series pending heal (printed as `REFUSED PENDING HEAL`, a distinct counted line in
+the summary) rather than serving or completing it on a stale basis — run
+`accumulate`/`rebase` to heal. Backtests over a still-marked symbol report
+it in `adjustment_basis_shift_symbols`. **Minute-basis residual:** t8412 exposes no
+adjusted-price request flag, so minute bars keep whatever basis the server serves; a
+daily re-base never touches minute bars, and minute-basis fidelity remains a
+documented residual.
+
+### Epoch re-base (one-time rollout runbook)
+
+Forward-only detection cannot see splices already baked into an accumulated catalog.
+`LS_INGEST_MODE=rebase` performs the one-time whole-catalog re-base: it marks every
+daily triple shifted in one atomic checkpoint save, then heals each through the same
+per-symbol path — after it, the catalog sits on a single basis and detection
+maintains that invariant.
+
+```
+LS_TRADING_ENV=paper LS_INGEST_LANE_FILE=.env.domestic \
+LS_INGEST_MODE=rebase LS_INGEST_CATALOG=./catalog \
+LS_INGEST_LOOKBACK=20240101 LS_INGEST_KIND=daily \
+  cargo run --release --bin ls-ingest
+```
+
+- **Size the window from observed wall time, not the budget lower bound.** The
+  ~2,700-request ≈ 45-minute full-universe figure above is a one-page,
+  one-fetch-per-triple lower bound; the heal costs at least two fetches per symbol
+  (re-pull + re-verify) and a full-depth re-pull is multi-page per symbol, so a
+  realistic epoch is ≥ 5,400 requests ≈ 90 minutes and scales with floor depth. Run
+  it inside a no-live window sized from the original range-mode backfill's observed
+  wall time. (Steady-state accumulate runs also gain one overlap request per daily
+  triple.)
+- **Pin `LS_INGEST_LOOKBACK` at or before the original backfill start.** The wipe
+  precondition refuses a shallower floor per symbol (`HEAL REFUSED`), leaving those
+  symbols marked until a run with an adequate floor.
+- **The ingest↔live advisory lock is held for the duration** — a live node cannot
+  start mid-epoch, and the epoch refuses to start while a live session runs.
+- **Crash/resume:** the per-symbol marks are the completion state. A crash leaves a
+  stale `.ls-ingest.lock` in the catalog dir — remove it manually, then resume with
+  `LS_INGEST_MODE=accumulate` (heals only the still-marked remainder; re-running
+  `rebase` re-marks and re-pulls everything). Origin is stamped `epoch` at mark time,
+  so a resumed heal under `accumulate` still records epoch origin and the organic
+  audit metric stays clean. A series already `heal`-marked when the epoch runs keeps
+  its heal origin (keep-original-on-re-mark). **Sequencing:** run the epoch only
+  after landing origin tracking — pre-tracking rows read as `unknown` and are
+  presumed organic, so an epoch run before this would mix unlabeled epoch rows into
+  the organic metric.
 
 ### Data smoke
 

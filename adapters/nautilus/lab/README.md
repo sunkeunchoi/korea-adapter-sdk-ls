@@ -19,10 +19,13 @@ Runs live beside the catalog under one data home:
   manifest.json                     # strategy id/version, full params, pinned range,
                                     #   range-scoped catalog fingerprint, universe hash
   performance.json                  # trade/fill ledger, per-trade P&L, equity curve, stats
-  signals.jsonl                     # one per-decision event per line (universe + transitions)
+  decisions.jsonl                   # one decision envelope per decision (universe + transitions)
   data_quality.json                 # coverage gaps, adjustment-basis flag, approximated-fill
                                     #   count, reconcile-advised conditions (live), universe
   analysis.md                       # YOU write this (see below) — it co-locates here
+<data>/decisions/decisions.jsonl    # cross-run agent-decision registry (append-only;
+                                    #   intent-bearing Research-policy envelopes — never
+                                    #   inside a finalized run dir)
 <data>/probes/minute-lookback.json  # the max-lookback probe result (adapter README)
 ```
 
@@ -42,8 +45,21 @@ range-scoped `catalog_fingerprint`, and the `universe_hash`. A backtest run trad
 
 ### Artifact key reference (read artifacts without reading source)
 
-`signals.jsonl` — each line is `{ ts_event, symbol, kind, decision?, filter?, values }`.
-`values` keys per `kind`:
+`decisions.jsonl` — each line is one decision envelope
+`{ schema_version, envelope_id, ts_event, trigger, context, policy_decision,
+capability, guardrail, lowering, action?, decision_detail? }`. In-run strategy
+telemetry rides `decision_detail` as `{ kind, symbol, decision?, filter?, values }`
+(the pipeline stages of a telemetry envelope are explicitly `NotEvaluated`, its
+`action` is absent, and its `context` is the minimal `form: Telemetry` snapshot:
+strategy id/version, numeric params, running counts). The **cross-run registry**
+(`<data>/decisions/decisions.jsonl`) carries the other shape: intent-bearing
+envelopes with a `form: RunState` context (balance_krw, position summaries,
+params, run_summary) and, on approved cycles, a populated
+`action: { type: "ResearchCommand", description }`. Two unrelated fields share the
+bare name `decision`: `policy_decision` tags on the JSON key `"decision"`
+(PascalCase `Execute`/`NoAction`/`Failed`) while `decision_detail.decision` is
+snake_case `accept`/`reject` — filter on the full path, never a bare `"decision"`
+key. `decision_detail.values` keys per `kind`:
 
 | `kind` | `decision` / `filter` | `values` keys |
 |---|---|---|
@@ -92,6 +108,48 @@ domestic KRX).
 The permanent proof of a turn is the test
 `loop_turn_manifest_comparison_isolates_param_delta` in `tests/backtest_run.rs`, plus
 the committed fixture analysis.
+
+## The agent-decision layer (envelopes, guardrails, replay)
+
+The `agent/` module is a native reimplementation of the *shape* of
+[`nautechsystems/nautilus_agents`](https://github.com/nautechsystems/nautilus_agents)
+(an early-alpha upstream protocol pinned to nautilus 0.55, which our 0.60 pin cannot
+depend on): `AgentIntent` → deny-by-default `CapabilitySet` → `IntentGuardrail` →
+lowering → one `DecisionEnvelope` per cycle. Shared fields mirror the upstream serde
+tags so tracking it stays cheap; the lab's envelope is a **superset** (it adds the
+`context` snapshot and `decision_detail`), shape-mirrored but not cross-validated
+against 0.55 — a convenience optionality, relaxable if upstream churns.
+
+Two envelope destinations:
+
+- **In-run telemetry** — ORB's per-decision telemetry rides `DecisionEnvelope`s into
+  the run dir's `decisions.jsonl` (above). These cycles carry `NotEvaluated`
+  governance stages: ORB's entry/exit decisions are *recorded*, not routed through
+  capability/guardrail as intents — that is the deferred live risk-monitor.
+- **Cross-run registry** — the deterministic Research-tier `ResearchPolicy` reads a
+  finalized run's artifacts, proposes a parameter change (`ProposeParameterChange`),
+  and its **intent-bearing** envelope flows through the pipeline (`Research`
+  capability + `ProposalBoundsGuardrail`) into `<data>/decisions/decisions.jsonl`.
+
+**Replay (engine-free, guardrail-swap only).** `agent::replay::read_envelopes` loads
+a recorded stream (typed per-line errors, per-line schema check);
+`agent::replay::replay(envelopes, &guardrail)` re-evaluates each intent-bearing,
+capability-granted cycle under the new guardrail against the envelope's captured
+`context` — the recorded capability outcome is reused verbatim, so the delta is the
+guardrail-stage delta. `ReplayResult.first_divergence` marks the audit boundary: on
+causally-chained streams the per-envelope delta is trustworthy only up to the first
+divergence. Guardrails must be pure per-cycle functions of `(intent, context)` —
+stateful guardrails are out of contract until replay handles cross-cycle state.
+Policy-level replay is deferred; the captured context is what unlocks it (a committed
+test proves the shipped policy's decision is reconstructible from a recorded
+envelope's context alone).
+
+**Invocation status.** This increment ships the decision layer as a **library
+substrate proven by the offline gate**: no bin invokes `ResearchPolicy`,
+`DecisionPipeline`, or `replay` yet — the committed tests are their only callers.
+Reading either `decisions.jsonl` works from this README alone; *driving* a proposal
+or a replay today means writing a scratch `cargo` example over the `agent::` API. A
+`lab-research` CLI is deferred alongside the live risk-monitor.
 
 ## Live paper session (operator-gated)
 
