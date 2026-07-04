@@ -7,7 +7,7 @@ use std::path::Path;
 use chrono::NaiveDate;
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::{mock_config, mount_token};
-use nautilus_ls::ingest::checkpoint::{Checkpoint, RebaseOrigin};
+use nautilus_ls::ingest::checkpoint::{Checkpoint, GapReason, RebaseOrigin};
 use nautilus_ls::ingest::{BarKind, IngestConfig, Ingestor, DEFAULT_OVERLAP_DAYS};
 use nautilus_ls::lock::{AdvisoryLock, LockKind};
 use nautilus_model::identifiers::InstrumentId;
@@ -1214,10 +1214,11 @@ async fn minute_chunk_drives_continuation_page_by_page() {
     let server = MockServer::start().await;
     mount_token(&server).await;
 
-    // Page 2 is served ONLY to a request whose body carries the page-1 cts
-    // cursor; a drive that fails to thread it re-receives page 1 and the
-    // seen-cursor guard terminates after writing only page 1's bar, failing the
-    // assertions below. Page 1's out-block echoes a non-empty cursor exactly as
+    // Page 2 is served ONLY to a request whose body carries the FULL page-1 cts
+    // cursor (date AND time) plus the tr_cont: Y header; a drive that fails to
+    // thread any of the three re-receives page 1, trips the cursor-echo guard,
+    // and fail-closes to a PaperThin gap (zero bars written) — failing every
+    // assertion below. Page 1's out-block echoes a non-empty cursor exactly as
     // the live gateway does (its tr_cont HTTP header stays terminal — the header
     // walk this test guards against would stop after one page).
     Mock::given(method("POST"))
@@ -1226,8 +1227,9 @@ async fn minute_chunk_drives_continuation_page_by_page() {
         .respond_with(move |req: &wiremock::Request| {
             let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
             let cts = body["t8412InBlock"]["cts_date"].as_str().unwrap_or("");
+            let cts_t = body["t8412InBlock"]["cts_time"].as_str().unwrap_or("");
             let hdr = req.headers.get("tr_cont").and_then(|v| v.to_str().ok()).unwrap_or("");
-            if cts == "20240103" && hdr == "Y" {
+            if cts == "20240103" && cts_t == "090200" && hdr == "Y" {
                 json_response(serde_json::json!({
                     "rsp_cd": "00000",
                     "t8412OutBlock": { "cts_date": "", "cts_time": "" },
@@ -1261,4 +1263,124 @@ async fn minute_chunk_drives_continuation_page_by_page() {
 
     assert_eq!(report.bars_written, 2, "both pages' bars are persisted");
     assert_eq!(count_t8412(&server).await, 2, "exactly one dispatch per page");
+    // Content, not just counts: a broken drive that re-received page 1 would
+    // produce two DUPLICATE bars (same close, same ts) — assert the two bars
+    // are the two DISTINCT pages' rows.
+    let bars = nautilus_ls::ingest::read_all_bars(&catalog).await.expect("read back");
+    assert_eq!(bars.len(), 2);
+    assert_ne!(bars[0].ts_init, bars[1].ts_init, "two distinct minutes, not a duplicated page");
+    let mut closes: Vec<String> = bars.iter().map(|b| b.close.to_string()).collect();
+    closes.sort();
+    assert_eq!(closes, vec!["60100", "60200"], "both pages' distinct rows persisted");
+}
+
+/// A zero-row page whose echoed cursor is still live is a SUSPECT PARTIAL, not a
+/// clean completion: the chunk fail-closes (PaginationLimit -> split -> PaperThin
+/// on a single day), the triple is recorded as a gap, and the range is NOT marked
+/// done — the silent-truncation guard.
+#[tokio::test]
+async fn minute_empty_page_with_live_cursor_fails_closed_as_gap() {
+    let dir = tempdir().unwrap();
+    let catalog = dir.path().join("catalog");
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+
+    Mock::given(method("POST"))
+        .and(path(CHART_PATH))
+        .and(header("tr_cd", "t8412"))
+        .respond_with(move |req: &wiremock::Request| {
+            let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
+            let cts = body["t8412InBlock"]["cts_date"].as_str().unwrap_or("");
+            if cts.is_empty() {
+                // First page: one row, live cursor.
+                json_response(serde_json::json!({
+                    "rsp_cd": "00000",
+                    "t8412OutBlock": { "cts_date": "20240103", "cts_time": "090200" },
+                    "t8412OutBlock1": [t8412_row("20240103", "0902", "60200")]
+                }))
+            } else {
+                // Continuation: ZERO rows but the cursor still claims more.
+                json_response(serde_json::json!({
+                    "rsp_cd": "00000",
+                    "t8412OutBlock": { "cts_date": "20240102", "cts_time": "150000" },
+                    "t8412OutBlock1": []
+                }))
+            }
+        })
+        .mount(&server)
+        .await;
+    let sdk = LsSdk::new(mock_config(&server.uri())).expect("sdk builds");
+
+    let config = IngestConfig {
+        catalog_path: catalog.clone(),
+        bar_kinds: vec![BarKind::Minute(1)],
+        sdate: "20240103".to_string(),
+        edate: "20240103".to_string(),
+        adjusted_prices: true,
+        overlap_days: DEFAULT_OVERLAP_DAYS,
+    };
+    let mut ingestor = Ingestor::new(sdk, config);
+    let report = ingestor
+        .run(&[InstrumentId::from("005930.XKRX")])
+        .await
+        .expect("a suspect-partial chunk exits Ok with a recorded gap");
+
+    assert_eq!(report.bars_written, 0, "no partial bars persisted as complete");
+    assert_eq!(report.gaps.len(), 1, "the truncated triple is a recorded gap");
+    // Range-mode bookkeeping: the gap IS the signal (recorded in the report and
+    // checkpoint, never silent); record_gap marks the triple done so re-runs
+    // skip the known-bad feed — the documented retry is a catalog wipe.
+    assert!(
+        matches!(report.gaps[0].reason, GapReason::PaperThin),
+        "recorded as a suspect-partial (PaperThin) gap, got {:?}",
+        report.gaps[0].reason
+    );
+}
+
+/// A re-served page (cursor echo) is dropped, never double-ingested: the chunk
+/// fail-closes as a gap instead of persisting duplicate bars as a completion.
+#[tokio::test]
+async fn minute_cursor_echo_drops_duplicate_page_and_fails_closed() {
+    let dir = tempdir().unwrap();
+    let catalog = dir.path().join("catalog");
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+
+    // Every page: same row, same echoed cursor — a gateway stuck re-serving.
+    Mock::given(method("POST"))
+        .and(path(CHART_PATH))
+        .and(header("tr_cd", "t8412"))
+        .respond_with(json_response(serde_json::json!({
+            "rsp_cd": "00000",
+            "t8412OutBlock": { "cts_date": "20240103", "cts_time": "090200" },
+            "t8412OutBlock1": [t8412_row("20240103", "0902", "60200")]
+        })))
+        .mount(&server)
+        .await;
+    let sdk = LsSdk::new(mock_config(&server.uri())).expect("sdk builds");
+
+    let config = IngestConfig {
+        catalog_path: catalog.clone(),
+        bar_kinds: vec![BarKind::Minute(1)],
+        sdate: "20240103".to_string(),
+        edate: "20240103".to_string(),
+        adjusted_prices: true,
+        overlap_days: DEFAULT_OVERLAP_DAYS,
+    };
+    let mut ingestor = Ingestor::new(sdk, config);
+    let report = ingestor
+        .run(&[InstrumentId::from("005930.XKRX")])
+        .await
+        .expect("a cursor-echo chunk exits Ok with a recorded gap");
+
+    assert_eq!(report.bars_written, 0, "the re-served page's rows are never persisted");
+    assert_eq!(count_t8412(&server).await, 2, "echo detected on the second dispatch");
+    // Range-mode bookkeeping: the recorded PaperThin gap is the signal; the
+    // triple is done-marked so re-runs skip it (retry = catalog wipe).
+    assert_eq!(report.gaps.len(), 1, "the echoed triple is a recorded gap");
+    assert!(
+        matches!(report.gaps[0].reason, GapReason::PaperThin),
+        "recorded as a suspect-partial (PaperThin) gap, got {:?}",
+        report.gaps[0].reason
+    );
 }

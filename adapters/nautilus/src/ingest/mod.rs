@@ -3,9 +3,13 @@
 //! Per KTD4/KTD5/KTD9: an adapter-side per-TR [`pacer`] meters t8410/t8412 to the
 //! stricter of their per-TR and category caps; **daily** bars (t8410) are walked on
 //! the body `cts_date` cursor (which is exactly the checkpointing seam R5 needs);
-//! **minute** bars (t8412) are pulled with `chart_all` per conservative date chunk,
-//! halving the chunk and requeueing on `PaginationLimit` (the SDK discards fetched
-//! pages on that error, so chunk sizing is the cost control). LS returns KST
+//! **minute** bars (t8412) are driven page-by-page on the body `cts_date`/`cts_time`
+//! cursor plus the `tr_cont: Y` request header (one `chart_page` dispatch per pacer
+//! acquire — the SDK's `chart_all` bursts pages and walks headers the live gateway
+//! terminates early), halving the chunk and requeueing on `PaginationLimit`, which
+//! also fail-closes suspect partials (empty page with a live cursor, cursor echo).
+//! Fetched pages are discarded on that error, so chunk sizing is the cost control.
+//! LS returns KST
 //! wall-clock strings; the adapter converts to UTC `UnixNanos` with `ts_event` =
 //! **bar close** (Nautilus convention). Runs are resumable via [`checkpoint`].
 
@@ -349,10 +353,26 @@ impl MinuteFetcher for SdkFetcher {
             let next_time = page.outblock.cts_time.trim().to_string();
             let next_key = page.tr_cont_key().to_string();
             let empty_rows = page.outblock1.is_empty();
-            pages.push(page);
-            if next_date.is_empty() || empty_rows || !seen.insert((next_date.clone(), next_time.clone())) {
+            if next_date.is_empty() {
+                // A genuinely exhausted cursor is the ONLY clean completion
+                // (live-verified: the working full-range walk ends this way).
+                pages.push(page);
                 return Ok(pages);
             }
+            if empty_rows || !seen.insert((next_date.clone(), next_time.clone())) {
+                // Suspect partial, fail closed: a zero-row page with a live
+                // cursor (the gateway serves transiently empty pages off-hours)
+                // or a re-served page (cursor echo — its rows would duplicate
+                // ones already collected, so it is NOT pushed). Returning Ok
+                // here would let collect_minute report complete Bars and the
+                // checkpoint mark the truncated range done — the silent-
+                // truncation class this drive exists to prevent. Surfacing
+                // PaginationLimit instead sends collect_minute down its
+                // split-and-requeue path; a range that stays broken narrows to
+                // a single-day PaperThin gap, which withholds the watermark.
+                return Err(AdapterError::Sdk(LsError::PaginationLimit(MINUTE_MAX_PAGES)));
+            }
+            pages.push(page);
             // A continuation needs BOTH the body cursor and the `tr_cont: Y`
             // request header — live, the gateway re-serves the newest page when
             // the header is absent, even with the cts cursor threaded.

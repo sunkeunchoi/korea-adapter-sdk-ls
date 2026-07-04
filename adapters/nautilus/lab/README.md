@@ -7,7 +7,9 @@ destabilizes the adapter.
 
 The lab exists to turn one loop: **backtest → an agent analyzes the artifacts →
 change the strategy → re-backtest → compare**. This README is the recipe an agent
-follows to turn it, without reading source.
+follows to turn it, without reading source. Known frictions in the recipe — and the
+requirements seed for the deferred `lab-research` CLI — live in
+[PAPER-CUTS.md](PAPER-CUTS.md); read it before turning the loop.
 
 ## What a run produces (the append-only registry)
 
