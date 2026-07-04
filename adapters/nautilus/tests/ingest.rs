@@ -1175,3 +1175,90 @@ async fn range_mode_pulls_unmarked_sibling_and_exits_ok() {
     let cp = Checkpoint::load(&catalog.join("ingest-checkpoint.json")).unwrap();
     assert!(cp.is_done("000660.XKRX", "1-DAY", "20240101..20240105"), "the sibling is completed");
 }
+
+// ---------------------------------------------------------------------------
+// Minute-chunk continuation drive: pages are fetched one dispatch at a time
+// (each passing the 1/s pacer) and the BODY cts_date/cts_time cursor is carried
+// onto the next page request, mirroring the daily walk. Regression guard for two
+// live-observed defects in the old `chart_all` delegation: back-to-back pages
+// tripped t8412's 1/s gateway cap (IGW00201), and walking the tr_cont HTTP
+// headers (which the live gateway terminates after page 1) silently truncated
+// the range to its newest page.
+// ---------------------------------------------------------------------------
+
+async fn count_t8412(server: &MockServer) -> usize {
+    server
+        .received_requests()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .filter(|r| {
+            r.url.path() == CHART_PATH
+                && r.headers.get("tr_cd").and_then(|v| v.to_str().ok()) == Some("t8412")
+        })
+        .count()
+}
+
+fn t8412_row(date: &str, time: &str, close: &str) -> serde_json::Value {
+    serde_json::json!({
+        "date": date, "time": time, "open": close, "high": close, "low": close,
+        "close": close, "jdiff_vol": "100", "value": "0", "jongchk": "0",
+        "rate": "0", "sign": "0"
+    })
+}
+
+#[tokio::test]
+async fn minute_chunk_drives_continuation_page_by_page() {
+    let dir = tempdir().unwrap();
+    let catalog = dir.path().join("catalog");
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+
+    // Page 2 is served ONLY to a request whose body carries the page-1 cts
+    // cursor; a drive that fails to thread it re-receives page 1 and the
+    // seen-cursor guard terminates after writing only page 1's bar, failing the
+    // assertions below. Page 1's out-block echoes a non-empty cursor exactly as
+    // the live gateway does (its tr_cont HTTP header stays terminal — the header
+    // walk this test guards against would stop after one page).
+    Mock::given(method("POST"))
+        .and(path(CHART_PATH))
+        .and(header("tr_cd", "t8412"))
+        .respond_with(move |req: &wiremock::Request| {
+            let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
+            let cts = body["t8412InBlock"]["cts_date"].as_str().unwrap_or("");
+            let hdr = req.headers.get("tr_cont").and_then(|v| v.to_str().ok()).unwrap_or("");
+            if cts == "20240103" && hdr == "Y" {
+                json_response(serde_json::json!({
+                    "rsp_cd": "00000",
+                    "t8412OutBlock": { "cts_date": "", "cts_time": "" },
+                    "t8412OutBlock1": [t8412_row("20240103", "0901", "60100")]
+                }))
+            } else {
+                json_response(serde_json::json!({
+                    "rsp_cd": "00000",
+                    "t8412OutBlock": { "cts_date": "20240103", "cts_time": "090200" },
+                    "t8412OutBlock1": [t8412_row("20240103", "0902", "60200")]
+                }))
+            }
+        })
+        .mount(&server)
+        .await;
+    let sdk = LsSdk::new(mock_config(&server.uri())).expect("sdk builds");
+
+    let config = IngestConfig {
+        catalog_path: catalog.clone(),
+        bar_kinds: vec![BarKind::Minute(1)],
+        sdate: "20240103".to_string(),
+        edate: "20240103".to_string(),
+        adjusted_prices: true,
+        overlap_days: DEFAULT_OVERLAP_DAYS,
+    };
+    let mut ingestor = Ingestor::new(sdk, config);
+    let report = ingestor
+        .run(&[InstrumentId::from("005930.XKRX")])
+        .await
+        .expect("ingest runs");
+
+    assert_eq!(report.bars_written, 2, "both pages' bars are persisted");
+    assert_eq!(count_t8412(&server).await, 2, "exactly one dispatch per page");
+}

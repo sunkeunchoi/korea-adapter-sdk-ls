@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use async_trait::async_trait;
 use chrono::{Duration as ChronoDuration, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
 use ls_core::endpoint_policy::{T8410_POLICY, T8412_POLICY};
-use ls_core::LsError;
+use ls_core::{HasPagination, LsError};
 use ls_sdk::paginated::{
     T8410OutBlock1, T8410Request, T8410Response, T8412OutBlock1, T8412Request, T8412Response,
 };
@@ -41,6 +41,11 @@ use self::pacer::{Pacer, MARKET_DATA_CATEGORY_PER_SEC};
 /// A defensive upper bound on daily-cursor pages per symbol (guards a gateway that
 /// never terminates the cursor).
 const MAX_DAILY_PAGES: usize = 500;
+
+/// Continuation-page cap for one minute chunk (mirrors ls-core's
+/// `DEFAULT_MAX_PAGES` so the `PaginationLimit` split-and-requeue semantics in
+/// `collect_minute` are unchanged by the page-by-page drive).
+const MINUTE_MAX_PAGES: usize = 100;
 
 /// The default post-close safety buffer for the accumulate session-clock rule
 /// (16:30 KST): today counts as a *closed* session only after this time, so a
@@ -317,8 +322,16 @@ impl MinuteFetcher for SdkFetcher {
         sdate: &str,
         edate: &str,
     ) -> AdapterResult<Vec<T8412Response>> {
-        self.minute_pacer.acquire().await;
-        let req = T8412Request::new(
+        // Drive the continuation page-by-page on the BODY `cts_date`/`cts_time`
+        // cursor, mirroring `collect_daily` — with a pacer acquire per dispatch.
+        // Two live-observed defects in the `chart_all` delegation this replaces:
+        // (1) `collect_all` fires continuation pages back-to-back, tripping
+        // t8412's 1/s gateway cap (IGW00201) — the runtime limiter is
+        // per-category (5/s); (2) it walks the `tr_cont` HTTP headers, but the
+        // live gateway terminates them after page 1 while more in-range rows
+        // exist — t8412 self-paginates on the body cursor like t8410, so the
+        // header walk silently truncated the range to its newest page.
+        let mut req = T8412Request::new(
             shcode,
             ncnt.to_string(),
             self.minute_qrycnt.to_string(),
@@ -327,7 +340,28 @@ impl MinuteFetcher for SdkFetcher {
             edate,
             "N",
         );
-        Ok(self.sdk.paginated().chart_all(req).await?)
+        let mut pages: Vec<T8412Response> = Vec::new();
+        let mut seen = HashSet::new();
+        for _ in 0..MINUTE_MAX_PAGES {
+            self.minute_pacer.acquire().await;
+            let page = self.sdk.paginated().chart_page(&req).await?;
+            let next_date = page.outblock.cts_date.trim().to_string();
+            let next_time = page.outblock.cts_time.trim().to_string();
+            let next_key = page.tr_cont_key().to_string();
+            let empty_rows = page.outblock1.is_empty();
+            pages.push(page);
+            if next_date.is_empty() || empty_rows || !seen.insert((next_date.clone(), next_time.clone())) {
+                return Ok(pages);
+            }
+            // A continuation needs BOTH the body cursor and the `tr_cont: Y`
+            // request header — live, the gateway re-serves the newest page when
+            // the header is absent, even with the cts cursor threaded.
+            req.inblock.cts_date = next_date;
+            req.inblock.cts_time = next_time;
+            req.set_tr_cont("Y".to_string());
+            req.set_tr_cont_key(next_key);
+        }
+        Err(AdapterError::Sdk(LsError::PaginationLimit(MINUTE_MAX_PAGES)))
     }
 }
 
