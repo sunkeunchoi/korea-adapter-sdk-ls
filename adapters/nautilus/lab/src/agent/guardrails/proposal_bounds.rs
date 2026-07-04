@@ -11,8 +11,22 @@ use crate::agent::envelope::GuardrailResult;
 use crate::agent::guardrail::IntentGuardrail;
 use crate::agent::intent::AgentIntent;
 
+/// A comparison tolerance so float dust at the bound does not deny an intended
+/// on-bound step (KTD3/AE2). A loop turn accumulates rounding — e.g. `3.0 * 0.8`
+/// stores `2.4000000000000004`, so a subsequent clean half-step to `1.2`
+/// computes a relative change of `0.5000000000000001`, which a bare `<=` would
+/// reject by 1e-16 while the guardrail's own `{:.4}` reason prints
+/// "0.5000 exceeds bound 0.5000". The tolerance enforces the bound at the
+/// precision it is displayed and specified in (the 0.5 policy is not a
+/// 0.5000000000000000-exact policy); it is far smaller than any intentional
+/// proposal delta, so a genuinely over-bound change still rejects. NaN and the
+/// zero-current INFINITY still fail closed (they are not within
+/// `bound + epsilon` either).
+const BOUND_EPSILON: f64 = 1e-9;
+
 /// Rejects [`AgentIntent::ProposeParameterChange`] intents whose relative
-/// change exceeds `max_relative_change`; approves every other intent.
+/// change exceeds `max_relative_change` (within [`BOUND_EPSILON`]); approves
+/// every other intent.
 ///
 /// Pure per-cycle function of the intent alone (the context is unused) — see
 /// the [`IntentGuardrail`] pure-function contract.
@@ -57,7 +71,7 @@ impl IntentGuardrail for ProposalBoundsGuardrail {
         // mis-configured NaN bound all fall outside `Less | Equal` and
         // reject; a plain `>` check would silently APPROVE the NaN cases.
         let within_bound = matches!(
-            relative_change.partial_cmp(&self.max_relative_change),
+            relative_change.partial_cmp(&(self.max_relative_change + BOUND_EPSILON)),
             Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
         );
         if !within_bound {
@@ -118,6 +132,21 @@ mod tests {
         // run the write-time scrub masks to `0.***`.
         assert!(reason.contains("bound 0.5000"), "names the bound, scrub-safe: {reason}");
         assert!(reason.contains("relative change 1"), "names the offending change: {reason}");
+    }
+
+    #[test]
+    fn float_dust_at_the_bound_is_approved_not_denied_by_1e16() {
+        // A loop turn accumulates rounding: turn 1's 3.0 * 0.8 stores
+        // 2.4000000000000004, so the intended clean half-step to 1.2 computes a
+        // relative change of 0.5000000000000001 — a bare `<=` would reject it
+        // (and print the absurd "0.5000 exceeds bound 0.5000"). The bound
+        // tolerance approves it; the 0.5 policy is not a 0.5-exact policy.
+        let noisy_current = 3.0 * 0.8; // == 2.4000000000000004
+        let result = guardrail().evaluate(&proposal(noisy_current, 1.2), &context());
+        assert_eq!(result, GuardrailResult::Approved, "on-bound half-step must not be denied by float dust");
+        // A genuinely over-bound change is still rejected (the tolerance is dust-sized).
+        let over = guardrail().evaluate(&proposal(2.4, 1.0), &context()); // rel change 0.5833
+        assert!(matches!(over, GuardrailResult::Rejected { .. }), "genuine over-bound still rejects: {over:?}");
     }
 
     #[test]

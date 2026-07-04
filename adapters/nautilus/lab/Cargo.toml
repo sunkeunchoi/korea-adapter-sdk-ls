@@ -19,6 +19,10 @@ path = "src/bin/lab-backtest.rs"
 name = "lab-live"
 path = "src/bin/lab-live.rs"
 
+[[bin]]
+name = "lab-research"
+path = "src/bin/lab-research.rs"
+
 [dependencies]
 # The adapter, consumed by path — the lab reuses its ingest/catalog, execution lane,
 # rules, scrub, and locks. The adapter ships NO strategy; the lab is where strategy

@@ -405,6 +405,115 @@ async fn analysis_md_co_locates_in_run_dir() {
     assert!(list_runs(dir.path()).contains(&outcome.run_id));
 }
 
+// ---------------------------------------------------------------------------
+// U7 — gap-report noise filter (R8, AE6, KTD5). Ingest writes the whole
+// instrument universe while bars are bounded to the ingested few, so a
+// never-ingested symbol must not flood the data-quality report with spurious
+// missing-prior-daily gaps — while a symbol that HAS bars but lacks the prior
+// session's daily still reports.
+// ---------------------------------------------------------------------------
+
+fn t8430_body_three_symbols() -> serde_json::Value {
+    let sym = |hname: &str, shcode: &str, expcode: &str| {
+        json!({ "hname": hname, "shcode": shcode, "expcode": expcode,
+            "etfgubun": "0", "uplmtprice": "82000", "dnlmtprice": "44000",
+            "jnilclose": "63000", "memedan": "1", "recprice": "63000", "gubun": "1" })
+    };
+    json!({
+        "rsp_cd": "00000",
+        "t8430OutBlock": [
+            sym("삼성전자", "005930", "KR7005930003"),   // fully ingested (2 daily + minute)
+            sym("에스케이하이닉스", "000660", "KR7000660001"), // never ingested (no bars)
+            sym("기아", "000810", "KR7000810002"),        // has bars but lacks a prior daily
+        ]
+    })
+}
+
+/// Build a fixture whose instrument master carries three symbols but writes bars
+/// for only two: 005930 (2 daily + a minute session) and 000810 (a single daily
+/// bar, no prior-session daily). 000660 is never ingested.
+async fn build_gap_noise_fixture(data_home: &Path) {
+    let catalog = data_home.join("catalog");
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    for (p, tr, body) in [
+        ("/stock/etc", "t8430", t8430_body_three_symbols()),
+        ("/stock/market-data", "t9945", t9945_body()),
+    ] {
+        Mock::given(method("POST"))
+            .and(path(p))
+            .and(header("tr_cd", tr))
+            .respond_with(json_response(body))
+            .mount(&server)
+            .await;
+    }
+    let sdk = LsSdk::new(mock_config(&server.uri())).unwrap();
+    let mut provider = InstrumentProvider::new(sdk.clone());
+    provider.load_domain(InstrumentDomain::DomesticEquity).await.unwrap();
+    write_instruments(&catalog, provider.all_any()).await.unwrap();
+
+    // 005930: two daily bars (a +5% gap) + a clean-breakout minute session.
+    let id = InstrumentId::from("005930.XKRX");
+    let daily_bt = BarKind::Daily.bar_type(id).unwrap();
+    let daily: Vec<Bar> = [
+        daily_json("20240104", "59000", "60500", "58500", "60000", "1000000"),
+        daily_json("20240105", "63000", "64500", "62000", "64000", "1200000"),
+    ]
+    .iter()
+    .map(|r| build_daily_bar(daily_bt, &serde_json::from_value(r.clone()).unwrap()).unwrap().unwrap())
+    .collect();
+    write_bars(&catalog, daily).await.unwrap();
+    let minute_bt = BarKind::Minute(1).bar_type(id).unwrap();
+    let minute: Vec<Bar> = [
+        minute_json("20240105", "090000", "63000", "63500", "62500", "63200", "1000"),
+        minute_json("20240105", "092000", "63300", "64000", "63300", "63900", "1000"),
+        minute_json("20240105", "150000", "65000", "65300", "64900", "65100", "1000"),
+        minute_json("20240105", "150100", "65100", "65300", "65000", "65200", "1000"),
+    ]
+    .iter()
+    .map(|r| build_minute_bar(minute_bt, &serde_json::from_value(r.clone()).unwrap()).unwrap().unwrap())
+    .collect();
+    write_bars(&catalog, minute).await.unwrap();
+
+    // 000810: a SINGLE in-range daily bar — has bars, but no prior-session daily.
+    let kia = InstrumentId::from("000810.XKRX");
+    let kia_bt = BarKind::Daily.bar_type(kia).unwrap();
+    let kia_daily = build_daily_bar(
+        kia_bt,
+        &serde_json::from_value(daily_json("20240105", "10000", "10500", "9800", "10200", "500000")).unwrap(),
+    )
+    .unwrap()
+    .unwrap();
+    write_bars(&catalog, vec![kia_daily]).await.unwrap();
+
+    let mut cp = Checkpoint::default();
+    cp.adjusted_prices = true;
+    cp.save(&catalog.join("ingest-checkpoint.json")).unwrap();
+}
+
+/// AE6: never-ingested symbols (no daily bars anywhere) contribute no gap
+/// entries; a symbol that has bars but lacks its prior-session daily still does.
+#[tokio::test]
+async fn never_ingested_symbols_produce_no_gap_noise() {
+    let dir = tempdir().unwrap();
+    build_gap_noise_fixture(dir.path()).await;
+    let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
+    let outcome = run(cfg(dir.path()), start).await.unwrap();
+
+    let dq: DataQualityReport =
+        serde_json::from_str(&std::fs::read_to_string(outcome.run_dir.join(DATA_QUALITY_FILE)).unwrap())
+            .unwrap();
+    let missing: Vec<&str> = dq
+        .coverage_gaps
+        .iter()
+        .filter(|g| g.reason == GapReasonKind::MissingPriorDaily)
+        .map(|g| g.instrument.as_str())
+        .collect();
+    // 000660 is never ingested → filtered; 000810 has a bar but no prior daily → reported.
+    assert!(!missing.contains(&"000660.XKRX"), "never-ingested symbol filtered: {missing:?}");
+    assert!(missing.contains(&"000810.XKRX"), "has-bars-but-missing-prior-daily still reports: {missing:?}");
+}
+
 /// Error path: startup is refused while the ingest advisory lock is held.
 #[tokio::test]
 async fn refused_while_ingest_lock_held() {

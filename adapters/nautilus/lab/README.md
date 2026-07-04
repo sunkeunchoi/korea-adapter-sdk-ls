@@ -146,12 +146,35 @@ Policy-level replay is deferred; the captured context is what unlocks it (a comm
 test proves the shipped policy's decision is reconstructible from a recorded
 envelope's context alone).
 
-**Invocation status.** This increment ships the decision layer as a **library
-substrate proven by the offline gate**: no bin invokes `ResearchPolicy`,
-`DecisionPipeline`, or `replay` yet — the committed tests are their only callers.
-Reading either `decisions.jsonl` works from this README alone; *driving* a proposal
-or a replay today means writing a scratch `cargo` example over the `agent::` API. A
-`lab-research` CLI is deferred alongside the live risk-monitor.
+## The `lab-research` CLI (turning the loop scratch-free)
+
+The `lab-research` bin is the production caller of the decision pipeline: it wires
+`DecisionPipeline` with the proposal-bounds cap pinned at **0.5** relative change and
+drives a loop turn end-to-end without scratch code. Five subcommands, each over one
+data home (`LS_DATA_HOME`); a governance refusal / verdict FAIL / replay refusal /
+catalog no-go is a non-zero exit, a genuine error is scrubbed and non-zero too.
+
+| Subcommand | What it does | Key env |
+|---|---|---|
+| `turn` | A governed parameter turn: resolve current params from the latest finalized manifest, govern the proposal (deny-by-default + bounds 0.5), append the envelope, run the backtest with the override + version bump. No override → a rerun (same params, no governance, no version bump). | `LS_TURN_PARAM`, `LS_TURN_VALUE`, `LS_TURN_SDATE`/`LS_TURN_EDATE` (optional; inherited otherwise, required on a fresh home) |
+| `runs compare` | The manifest verdict: `param` mode (exactly-two-key param diff, code/fingerprint/range equal, universe equal-or-explained) or `data` mode (zero-key param diff + code equal; fingerprint/range/universe deltas require an explanation). PASS/FAIL. | `LS_COMPARE_MODE` (`param`\|`data`), `LS_COMPARE_A`/`LS_COMPARE_B` (default two newest), `LS_COMPARE_EXPLANATION` |
+| `replay` | Guardrail-swap replay over a recorded stream (default the cross-run registry). Refuses a telemetry-only stream (zero evaluated cycles) instead of reporting "no divergence". | `LS_REPLAY_STREAM` (default `<data>/decisions/decisions.jsonl`), `LS_REPLAY_CAP` |
+| `catalog status` | The ingest→backtest go/no-go: per-(instrument, bar-kind) counts + spans; flags a span that undershoots the checkpoint watermark (and, with an expected range, front truncation). | `LS_STATUS_SDATE`/`LS_STATUS_EDATE` (optional expected range) |
+| `analyze --scaffold` | Pre-fills a run's `analysis.md` with run facts (params, trade count, gap-noise summary) + the keep / revert / insufficient-evidence verdict skeleton. Refuses to overwrite. | `LS_ANALYZE_RUN` |
+
+A governed param turn, then the payoff compare:
+
+```
+# turn: gap_min_pct 2.4 -> 1.2 on the existing catalog (range inherited)
+LS_DATA_HOME=./data LS_TURN_PARAM=gap_min_pct LS_TURN_VALUE=1.2 \
+  cargo run --bin lab-research turn
+# scaffold the analysis, fill the verdict, then assert the param-only delta:
+LS_DATA_HOME=./data LS_ANALYZE_RUN=<new run id> cargo run --bin lab-research analyze --scaffold
+LS_DATA_HOME=./data cargo run --bin lab-research runs compare   # two newest, param verdict
+```
+
+The deferred live risk-monitor is the other consumer of the decision layer; it is not
+wired yet.
 
 ## Live paper session (operator-gated)
 

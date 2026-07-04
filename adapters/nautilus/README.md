@@ -113,7 +113,7 @@ universe scan's prior-session daily reads exist from the first backfilled day.
 
 ```
 LS_TRADING_ENV=paper LS_INGEST_LANE_FILE=.env.domestic \
-LS_INGEST_CATALOG=./catalog LS_INGEST_SDATE=20240102 LS_INGEST_EDATE=20240105 \
+LS_INGEST_CATALOG=./data/catalog LS_INGEST_SDATE=20240102 LS_INGEST_EDATE=20240105 \
 LS_INGEST_KIND=daily LS_INGEST_SYMBOLS=005930,000660 \
   cargo run --bin ls-ingest
 ```
@@ -138,22 +138,22 @@ rather than lagging a day; the watermark never advances into an in-session day.
 
 ```
 LS_TRADING_ENV=paper LS_INGEST_LANE_FILE=.env.domestic \
-LS_INGEST_MODE=accumulate LS_INGEST_CATALOG=./catalog \
+LS_INGEST_MODE=accumulate LS_INGEST_CATALOG=./data/catalog \
 LS_INGEST_LOOKBACK=20240101 LS_INGEST_KIND=daily,minute:1 \
   cargo run --bin ls-ingest
 ```
 
 Scheduling is a documented recipe, not a daemon — a post-close cron (the adapter
 owns no scheduler). The lock dir MUST be the catalog directory so the R15 exclusion
-actually contends with a live node / tester (`LS_NODE_LOCK_DIR=./catalog`):
+actually contends with a live node / tester (`LS_NODE_LOCK_DIR=./data/catalog`):
 
 ```cron
 # 17:00 KST every weekday, after the 16:30 close buffer. Adjust TZ/path.
 0 17 * * 1-5  cd /path/to/adapters/nautilus && \
   LS_TRADING_ENV=paper LS_INGEST_LANE_FILE=.env.domestic \
-  LS_INGEST_MODE=accumulate LS_INGEST_CATALOG=./catalog \
+  LS_INGEST_MODE=accumulate LS_INGEST_CATALOG=./data/catalog \
   LS_INGEST_LOOKBACK=20240101 LS_INGEST_KIND=daily,minute:1 \
-  cargo run --release --bin ls-ingest >> ./catalog/ingest.log 2>&1
+  cargo run --release --bin ls-ingest >> ./data/catalog/ingest.log 2>&1
 ```
 
 The server-side minute lookback cap is unknown; size `LS_INGEST_LOOKBACK` after the
@@ -201,7 +201,7 @@ maintains that invariant.
 
 ```
 LS_TRADING_ENV=paper LS_INGEST_LANE_FILE=.env.domestic \
-LS_INGEST_MODE=rebase LS_INGEST_CATALOG=./catalog \
+LS_INGEST_MODE=rebase LS_INGEST_CATALOG=./data/catalog \
 LS_INGEST_LOOKBACK=20240101 LS_INGEST_KIND=daily \
   cargo run --release --bin ls-ingest
 ```

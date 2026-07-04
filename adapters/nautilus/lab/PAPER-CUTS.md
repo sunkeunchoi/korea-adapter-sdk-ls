@@ -1,82 +1,91 @@
 # Paper cuts — first real loop cycle
 
 Frictions observed while turning the strategy-improvement loop once on real
-recorded data (plan `docs/plans/2026-07-04-001`). Each entry is framed as a
-candidate requirement for the deferred `lab-research` CLI (or the named owner).
+recorded data (plan `docs/plans/2026-07-04-001`). Each entry was a candidate
+requirement for the deferred `lab-research` CLI (or a named owner).
+
+**Status:** items 1–6 and 9–11 shipped in the `lab-research` CLI wave (plan
+`docs/plans/2026-07-04-002`) — retired below with a pointer to the command that
+addresses each. Items 7–8 stay open with their named residual owners.
 Credential-free by construction: no run ids, dates, account or symbol-embedded
 values appear here.
 
-## Candidate `lab-research` CLI requirements
+## Retired — shipped in the `lab-research` CLI
 
-1. **No parameter-override surface on `lab-backtest`.** The bin hardcodes
-   `OrbParams::default()`; landing a param turn requires scratch code calling
-   `runner::backtest::run` with an edited config. The CLI's turn command should
-   accept parameter overrides plus a strategy-version bump and refuse when the
-   override set differs from the proposal envelope it executes.
+1. **No parameter-override surface on `lab-backtest`.** → `lab-research turn`
+   (`src/runner/research.rs`): resolves current params from the latest finalized
+   manifest, governs the proposal through the pinned pipeline, applies the
+   override + a version bump, and refuses when the executed override set differs
+   from the envelope it governs.
 
-2. **No catalog inspector.** The only go/no-go between ingest and backtest is
-   the ingest report; confirming what a catalog actually holds (bar counts per
-   symbol/kind, span, basis) needed scratch code over `read_all_bars`. A
-   `catalog status` command should print per-triple counts and spans and flag a
-   span that undershoots the checkpoint's completed range (the truncation bug
-   below produced exactly that silent state).
+2. **No catalog inspector.** → `lab-research catalog status`: per-(instrument,
+   bar-kind) counts + spans, flags a span that undershoots the checkpoint's
+   completed range (and, with an expected range, front truncation).
 
-3. **No manifest-comparison command.** The loop's payoff step — assert a
-   param-only turn isolates its delta — was hand-rolled JSON diffing in scratch
-   code. A `runs compare` command should implement the corrected AE4 verdict:
-   exactly-two-key param diff, code hash / fingerprint / range equality, and
-   the universe-hash equal-or-explained clause.
+3. **No manifest-comparison command.** → `lab-research runs compare`: the
+   corrected AE4 param-turn verdict (exactly-two-key diff, code/fingerprint/range
+   equal, universe equal-or-explained) plus a data-turn verdict for the wider
+   slice (zero-key diff, code equal, explained deltas).
 
-4. **Replay-target guard.** A guardrail-swap replay against a run dir's
-   telemetry stream evaluates zero cycles (`NotEvaluated` stages) and reads as
-   a false "no divergence". The CLI's replay command should refuse (or loudly
-   warn on) a stream whose evaluated count is zero.
+4. **Replay-target guard.** → `lab-research replay`: refuses a stream whose
+   evaluated count is zero (telemetry-only) instead of reporting "no divergence".
 
-5. **No analysis scaffold.** Authoring `analysis.md` starts from a blank file;
-   the committed exemplar is the only template. An `analyze --scaffold` command
-   pre-filling run facts (params, trade count, gap-noise summary) would keep
-   analyses uniform and scrub-safe.
+5. **No analysis scaffold.** → `lab-research analyze --scaffold`: pre-fills
+   `analysis.md` with run facts (params, trade count, gap-noise summary) and the
+   keep / revert / insufficient-evidence verdict skeleton; refuses to overwrite.
 
-6. **`data_quality.json` gap noise.** Ingest writes the whole instrument
-   universe while bars are bounded to the requested symbols, so every
-   never-ingested instrument lands as a spurious `MissingPriorDaily` gap
-   (thousands of entries drowning real signal). Bound instrument writes to the
-   ingested universe, or filter never-ingested symbols from the gap report.
+6. **`data_quality.json` gap noise.** → the backtest runner's candidate scan now
+   skips instruments with no daily bars anywhere in the catalog (never-ingested)
+   before the missing-prior-daily path (`src/runner/backtest.rs`, KTD5). A symbol
+   that has bars but lacks the prior session's daily still reports; the universe
+   snapshot still documents the full instrument count.
 
-## Fixed during this cycle (recorded for the record)
+## Fixed during the first cycle — residual owners remain (7–8)
 
 7. **t8412 minute pagination was doubly broken** (fixed in the adapter's
    `SdkFetcher`): the SDK's `chart_all` fires continuation pages back-to-back —
    tripping the 1/s per-TR gateway cap (`IGW00201`) because the runtime limiter
    is per-category — and walks the `tr_cont` HTTP headers, which the live
-   gateway terminates after page one while in-range rows remain. Any window
-   wider than one page silently truncated to its newest slice AND the
-   checkpoint marked the triple done with zero gaps. Residual owner: the SDK —
-   `chart_all` remains unsafe for multi-page t8412 use, and the chart module
-   docs still describe header-driven continuation; port the body-cursor +
-   `tr_cont: Y` drive (or document `chart_page` as the only safe primitive).
+   gateway terminates after page one while in-range rows remain. **Residual
+   owner: the SDK** — `chart_all` remains unsafe for multi-page t8412 use, and
+   the chart module docs still describe header-driven continuation; port the
+   body-cursor + `tr_cont: Y` drive (or document `chart_page` as the only safe
+   primitive).
 
 8. **Constraint-schema preflight false-rejected the adapter's order path**
    (fixed in metadata): the order-submit schema required a member-number field
-   the adapter's KRX submit legitimately sends empty — same class as the
-   documented loan-date precedent, struct wins. Residual owner: repo process —
-   the adapter workspace sits outside the root gate, so an SDK-side preflight
-   change can redden the adapter invisibly; add the adapter's `cargo test
-   --workspace` to the gate or CI.
+   the adapter's KRX submit legitimately sends empty — struct wins. **Residual
+   owner: repo process** — the adapter workspace sits outside the root gate, so
+   an SDK-side preflight change can redden the adapter invisibly; add the
+   adapter's `cargo test --workspace` to the gate or CI.
 
-## Minor
+## Found + fixed during turn-2 certification
 
-9. **Ingest gateway errors carry no context.** The first `IGW00201` surfaced as
-   a bare one-line error with no TR/page/pacing context; localizing it needed a
-   raw-probe A/B. Ingest should wrap gateway errors with the TR code, page
-   index, and pacer state.
+12. **Float dust denied an on-bound governed step.** Turning the loop surfaced
+    that a stored param carries rounding from the prior turn (turn 1's
+    `3.0 * 0.8` stores `2.4000000000000004`), so the intended clean half-step to
+    `1.2` computes a relative change of `0.5000000000000001` — a bare `<=`
+    rejected it by 1e-16 while the guardrail's own `{:.4}` reason printed the
+    absurd "relative change 0.5000 exceeds bound 0.5000". Fixed with a dust-sized
+    bound tolerance (`BOUND_EPSILON = 1e-9`) in
+    `agent/guardrails/proposal_bounds.rs` so the 0.5 policy is enforced at the
+    precision it is displayed and specified in; NaN and the zero-current
+    `INFINITY` still fail closed, and a genuinely over-bound change still rejects.
+    This is the CLI's first real governance decision on live-derived state, and
+    the tolerance keeps the chained-turn path (2.4 → 1.2 → 0.6) usable without
+    weakening the guardrail.
 
-10. **`lab-backtest` buries its result line.** Engine INFO logs flood stdout;
-    the finalize line (the only operator-relevant output) scrolls away. Quiet
-    the engine by default or print a trailing summary block.
+## Retired — shipped (operability minors)
 
-11. **README catalog-path inconsistency.** The adapter README's backfill
-    example uses `./catalog` while the probe example and the lab README use
-    `./data/catalog`; following the backfill example verbatim then running
-    `lab-backtest` with the data home fails its catalog lookup. Standardize on
-    `<data home>/catalog` (this cycle used the `data/` layout, now gitignored).
+9. **Ingest gateway errors carry no context.** → gateway fetch failures are now
+   wrapped with the TR code, page/chunk index, and pacer cap
+   (`AdapterError::IngestGateway`, `src/ingest/mod.rs`), so a first `IGW00201`
+   localizes without a raw-probe A/B. No raw request body is included.
+
+10. **`lab-backtest` buries its result line.** → a trailing summary block (run
+    id, trade count, run dir) is printed after all engine logs
+    (`runner::backtest::summary_block`).
+
+11. **README catalog-path inconsistency.** → the adapter README's backfill,
+    accumulate, and rebase examples standardize on `<data home>/catalog`
+    (`./data/catalog`), matching the probe example and the lab README.

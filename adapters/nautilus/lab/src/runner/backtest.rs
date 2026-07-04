@@ -235,6 +235,19 @@ fn build_candidates(
     let mut missing = Vec::new();
     for inst in instruments {
         let id = inst.id();
+        // Gap-report noise filter (KTD5, R8): skip instruments with NO daily bars
+        // anywhere in the catalog — the whole-universe instrument write records
+        // ~2,600 symbols while bars are bounded to the ingested few, so a
+        // never-ingested symbol must not land as a spurious missing-prior-daily
+        // gap. An instrument that HAS daily bars but lacks the prior session's
+        // in-range daily still reports (a real gap). This filters the report only;
+        // the universe snapshot still documents the full instrument count.
+        let has_any_daily = all_bars
+            .iter()
+            .any(|b| is_daily(b) && b.bar_type.instrument_id() == id);
+        if !has_any_daily {
+            continue;
+        }
         // Only daily bars INSIDE the pinned range drive the scan (KTD8 comparability).
         let mut daily: Vec<&Bar> = all_bars
             .iter()
@@ -380,6 +393,47 @@ pub fn main_cli() -> anyhow::Result<()> {
     }
     let rt = tokio::runtime::Runtime::new()?;
     let outcome = rt.block_on(run(cfg, Utc::now()))?;
-    println!("finalized run {} at {}", outcome.run_id, outcome.run_dir.display());
+    // R10: a trailing summary block printed AFTER all engine logs, so the only
+    // operator-relevant output never scrolls away under the engine's INFO noise.
+    print!("{}", summary_block(&outcome.run_id, &outcome.run_dir));
     Ok(())
+}
+
+/// The `lab-backtest` trailing summary block (R10): run id, trade count, and the
+/// finalized run dir, read from the run's `performance.json`. A missing/parse
+/// failure degrades to a `?` trade count rather than hiding the block.
+pub fn summary_block(run_id: &str, run_dir: &Path) -> String {
+    let trades = std::fs::read_to_string(run_dir.join(crate::artifacts::PERFORMANCE_FILE))
+        .ok()
+        .and_then(|t| serde_json::from_str::<PerformanceReport>(&t).ok())
+        .and_then(|p| p.summary.get("num_trades").copied())
+        .map(|n| format!("{n:.0}"))
+        .unwrap_or_else(|| "?".to_string());
+    format!(
+        "\n=== lab-backtest summary ===\nrun:    {run_id}\ntrades: {trades}\ndir:    {}\n",
+        run_dir.display()
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn summary_block_names_run_trades_and_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let run_dir = dir.path().join("runs").join("r1");
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let perf = PerformanceReport::assemble(Vec::new(), 1_000_000.0);
+        std::fs::write(
+            run_dir.join(crate::artifacts::PERFORMANCE_FILE),
+            serde_json::to_string(&perf).unwrap(),
+        )
+        .unwrap();
+        let block = summary_block("r1", &run_dir);
+        assert!(block.contains("lab-backtest summary"));
+        assert!(block.contains("run:    r1"));
+        assert!(block.contains("trades: 0"), "trade count present: {block}");
+        assert!(block.contains("dir:"));
+    }
 }
