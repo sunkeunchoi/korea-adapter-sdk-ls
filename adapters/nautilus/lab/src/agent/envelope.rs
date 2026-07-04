@@ -260,7 +260,10 @@ impl DecisionEnvelope {
 }
 
 /// Render a slice of envelopes as JSONL (one compact JSON object per line,
-/// trailing newline). Used by the artifact writer to produce `decisions.jsonl`.
+/// trailing newline). **Round-trip/test helper only — performs no scrubbing.**
+/// Disk writers must go through `RunWriter::write_decisions` or
+/// `DecisionRecorder::append`, which serialize via [`to_scrubbed_jsonl_line`]
+/// so free-text fields are masked before the line hits disk (R9).
 pub fn to_jsonl(envelopes: &[DecisionEnvelope]) -> serde_json::Result<String> {
     let mut out = String::new();
     for e in envelopes {
@@ -268,6 +271,49 @@ pub fn to_jsonl(envelopes: &[DecisionEnvelope]) -> serde_json::Result<String> {
         out.push('\n');
     }
     Ok(out)
+}
+
+/// The envelope's free-text JSON keys, scrubbed at write time (R9). Everything
+/// else in an envelope is typed (ids, numbers, tags) and stays intact so the
+/// line parses back via [`from_jsonl`].
+const FREE_TEXT_KEYS: [&str; 4] = ["reason", "rationale", "description", "message"];
+
+/// Scrub the free-text string values (by [`FREE_TEXT_KEYS`]) anywhere in the
+/// serialized envelope tree, delegating to [`crate::artifacts::scrub`].
+pub(crate) fn scrub_free_text(value: &mut serde_json::Value) {
+    match value {
+        serde_json::Value::Object(map) => {
+            for (key, val) in map.iter_mut() {
+                match val {
+                    serde_json::Value::String(s) if FREE_TEXT_KEYS.contains(&key.as_str()) => {
+                        *s = crate::artifacts::scrub(s);
+                    }
+                    _ => scrub_free_text(val),
+                }
+            }
+        }
+        serde_json::Value::Array(items) => {
+            for item in items.iter_mut() {
+                scrub_free_text(item);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Serialize one envelope as a compact, scrubbed JSONL line (trailing
+/// newline): free-text fields are masked via [`scrub_free_text`] **before**
+/// the line is produced, typed fields (UUIDs, numbers, tags) stay intact so
+/// the line parses back. The single write seam shared by the in-run artifact
+/// writer (`RunWriter::write_decisions`) and the cross-run recorder
+/// (`DecisionRecorder::append`) — one scrub discipline for both destinations
+/// (R9).
+pub(crate) fn to_scrubbed_jsonl_line(envelope: &DecisionEnvelope) -> serde_json::Result<String> {
+    let mut value = serde_json::to_value(envelope)?;
+    scrub_free_text(&mut value);
+    let mut line = serde_json::to_string(&value)?;
+    line.push('\n');
+    Ok(line)
 }
 
 /// Parse a JSONL decision log back into envelopes (round-trip helper for tests

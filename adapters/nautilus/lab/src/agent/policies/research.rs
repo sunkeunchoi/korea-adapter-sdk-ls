@@ -386,4 +386,24 @@ mod tests {
             "fixture run yields a visible proposal: {decision:?}"
         );
     }
+
+    #[test]
+    fn context_from_run_on_a_missing_run_dir_is_an_error() {
+        // The documented error path a typo'd run_id (or an aborted run) hits:
+        // an Err naming the unreadable artifact, never a panic.
+        let tmp = TempDir::new().unwrap();
+        let err = ResearchPolicy::context_from_run(tmp.path(), "no-such-run").unwrap_err();
+        assert!(err.to_string().contains("manifest.json"), "names the missing artifact: {err}");
+    }
+
+    #[test]
+    fn context_from_run_on_a_malformed_manifest_is_an_error() {
+        let tmp = TempDir::new().unwrap();
+        let run_id = "20260703T000000Z-backtest-orb-v0";
+        let run_dir = tmp.path().join("runs").join(run_id);
+        std::fs::create_dir_all(&run_dir).unwrap();
+        std::fs::write(run_dir.join(MANIFEST_FILE), "{not json").unwrap();
+        let err = ResearchPolicy::context_from_run(tmp.path(), run_id).unwrap_err();
+        assert!(err.to_string().contains("parsing"), "surfaces the parse failure: {err}");
+    }
 }

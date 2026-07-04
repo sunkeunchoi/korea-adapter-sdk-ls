@@ -11,51 +11,24 @@
 //!
 //! The scrub targets the envelope's **free-text fields** (`reason`,
 //! `rationale`, `description`, `message`) rather than the whole serialized
-//! line: the adapter's scrub masks every 20+ alphanumeric token, which would
-//! mangle the envelope/intent UUIDs and make the recorded line unparseable —
-//! the same free-text-only discipline
+//! line: the adapter's scrub masks any token carrying a 6+ consecutive-digit
+//! run or a 20+-character alphanumeric run, which would mangle the
+//! envelope/intent UUIDs (and any embedded 6-digit shcode) and make the
+//! recorded line unparseable — the same free-text-only discipline
 //! [`crate::artifacts::RunWriter::write_data_quality`] applies to its
-//! observations.
+//! observations. The scrub itself lives beside the envelope
+//! ([`crate::agent::envelope::to_scrubbed_jsonl_line`]) and is shared with
+//! [`crate::artifacts::RunWriter::write_decisions`] — one discipline for both
+//! destinations.
 
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-use crate::agent::envelope::{from_jsonl, DecisionEnvelope};
-use crate::artifacts::scrub;
+use crate::agent::envelope::{to_scrubbed_jsonl_line, DecisionEnvelope};
 
 /// The cross-run decisions file name under `<data>/decisions/`.
 pub const DECISIONS_FILE: &str = "decisions.jsonl";
-
-/// The envelope's free-text JSON keys, scrubbed at write time (R9). Everything
-/// else in an envelope is typed (ids, numbers, tags) and stays intact so the
-/// line parses back via [`from_jsonl`].
-const FREE_TEXT_KEYS: [&str; 4] = ["reason", "rationale", "description", "message"];
-
-/// Scrub the free-text string values (by [`FREE_TEXT_KEYS`]) anywhere in the
-/// serialized envelope tree, delegating to [`crate::artifacts::scrub`]. Shared
-/// with [`crate::artifacts::RunWriter::write_decisions`] so the in-run stream
-/// and the cross-run registry apply one scrub discipline (R9).
-pub(crate) fn scrub_free_text(value: &mut serde_json::Value) {
-    match value {
-        serde_json::Value::Object(map) => {
-            for (key, val) in map.iter_mut() {
-                match val {
-                    serde_json::Value::String(s) if FREE_TEXT_KEYS.contains(&key.as_str()) => {
-                        *s = scrub(s);
-                    }
-                    _ => scrub_free_text(val),
-                }
-            }
-        }
-        serde_json::Value::Array(items) => {
-            for item in items.iter_mut() {
-                scrub_free_text(item);
-            }
-        }
-        _ => {}
-    }
-}
 
 /// The append-only cross-run decisions recorder (KTD5). Owns
 /// `<data>/decisions/` and appends one scrubbed envelope line per decision.
@@ -99,10 +72,7 @@ impl DecisionRecorder {
     ///
     /// Errors when serialization or the filesystem append fails.
     pub fn append(&self, envelope: &DecisionEnvelope) -> anyhow::Result<PathBuf> {
-        let mut value = serde_json::to_value(envelope)?;
-        scrub_free_text(&mut value);
-        let mut line = serde_json::to_string(&value)?;
-        line.push('\n');
+        let line = to_scrubbed_jsonl_line(envelope)?;
         let path = self.path();
         let mut file = OpenOptions::new().append(true).create(true).open(&path)?;
         // One write_all for record + newline: writeln! issues separate writes
@@ -113,19 +83,23 @@ impl DecisionRecorder {
         Ok(path)
     }
 
-    /// Read every recorded envelope back, in append order (tests + replay).
+    /// Read every recorded envelope back, in append order (tests + replay),
+    /// through the replay loader — so the cross-run registry gets the same
+    /// typed per-line errors and per-line schema-version gate as any other
+    /// envelope stream (R7): a torn or hand-mangled line, or a line written
+    /// by a newer-schema producer, is a named error, never a silent admit.
     /// An absent registry file reads as empty.
     ///
     /// # Errors
     ///
-    /// Errors when the file cannot be read or a line fails to parse.
+    /// Errors when the file cannot be read, a line fails to parse, or a line
+    /// carries an unsupported schema version.
     pub fn read_all(&self) -> anyhow::Result<Vec<DecisionEnvelope>> {
         let path = self.path();
         if !path.exists() {
             return Ok(Vec::new());
         }
-        let text = std::fs::read_to_string(&path)?;
-        Ok(from_jsonl(&text)?)
+        Ok(crate::agent::replay::read_envelopes(&path)?)
     }
 }
 
@@ -137,6 +111,7 @@ mod tests {
 
     use super::*;
     use crate::agent::capability::{ActionCapability, CapabilitySet};
+    use crate::agent::envelope::from_jsonl;
     use crate::agent::context::AgentContext;
     use crate::agent::envelope::{CapabilityOutcome, DecisionTrigger, PolicyDecisionRecord};
     use crate::agent::guardrails::proposal_bounds::ProposalBoundsGuardrail;
@@ -254,5 +229,39 @@ mod tests {
             &planned.intent, recorded_intent,
             "captured context is policy-sufficient"
         );
+    }
+
+    #[test]
+    fn malformed_registry_line_is_a_typed_error_naming_the_line() {
+        // The exact state a crash mid-append produces: a partial, newline-less
+        // final line. read_all (via the replay loader) names the line instead
+        // of silently dropping or admitting it.
+        let tmp = TempDir::new().unwrap();
+        let recorder = DecisionRecorder::new(tmp.path()).unwrap();
+        recorder.append(&research_envelope(1)).unwrap();
+        use std::io::Write as _;
+        let mut file = std::fs::OpenOptions::new().append(true).open(recorder.path()).unwrap();
+        write!(file, "{{\"schema_version\":1,\"envelope").unwrap();
+        drop(file);
+        let err = recorder.read_all().unwrap_err();
+        assert!(err.to_string().contains("line 2"), "typed per-line error: {err}");
+    }
+
+    #[test]
+    fn unsupported_schema_version_in_the_registry_is_rejected() {
+        // The registry read path shares the replay loader's per-line schema
+        // gate (R7): a newer-producer line is a named error, never a silent
+        // admit into replay.
+        let tmp = TempDir::new().unwrap();
+        let recorder = DecisionRecorder::new(tmp.path()).unwrap();
+        recorder.append(&research_envelope(1)).unwrap();
+        let mut bumped = serde_json::to_value(research_envelope(2)).unwrap();
+        bumped["schema_version"] = serde_json::json!(999);
+        use std::io::Write as _;
+        let mut file = std::fs::OpenOptions::new().append(true).open(recorder.path()).unwrap();
+        writeln!(file, "{bumped}").unwrap();
+        drop(file);
+        let err = recorder.read_all().unwrap_err();
+        assert!(err.to_string().contains("schema version 999"), "{err}");
     }
 }

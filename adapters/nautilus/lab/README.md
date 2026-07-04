@@ -55,7 +55,11 @@ strategy id/version, numeric params, running counts). The **cross-run registry**
 (`<data>/decisions/decisions.jsonl`) carries the other shape: intent-bearing
 envelopes with a `form: RunState` context (balance_krw, position summaries,
 params, run_summary) and, on approved cycles, a populated
-`action: { type: "ResearchCommand", description }`. `decision_detail.values` keys per `kind`:
+`action: { type: "ResearchCommand", description }`. Two unrelated fields share the
+bare name `decision`: `policy_decision` tags on the JSON key `"decision"`
+(PascalCase `Execute`/`NoAction`/`Failed`) while `decision_detail.decision` is
+snake_case `accept`/`reject` — filter on the full path, never a bare `"decision"`
+key. `decision_detail.values` keys per `kind`:
 
 | `kind` | `decision` / `filter` | `values` keys |
 |---|---|---|
@@ -139,6 +143,13 @@ stateful guardrails are out of contract until replay handles cross-cycle state.
 Policy-level replay is deferred; the captured context is what unlocks it (a committed
 test proves the shipped policy's decision is reconstructible from a recorded
 envelope's context alone).
+
+**Invocation status.** This increment ships the decision layer as a **library
+substrate proven by the offline gate**: no bin invokes `ResearchPolicy`,
+`DecisionPipeline`, or `replay` yet — the committed tests are their only callers.
+Reading either `decisions.jsonl` works from this README alone; *driving* a proposal
+or a replay today means writing a scratch `cargo` example over the `agent::` API. A
+`lab-research` CLI is deferred alongside the live risk-monitor.
 
 ## Live paper session (operator-gated)
 

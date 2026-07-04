@@ -95,6 +95,9 @@ pub struct ReplayedDecision {
     /// Rejected vs NotEvaluated). Reason-only differences within the same
     /// variant do not count as divergence.
     pub diverged: bool,
+    /// Whether this cycle was actually re-evaluated (an `Execute` decision
+    /// with a `Granted` capability outcome) rather than reproduced verbatim.
+    pub evaluated: bool,
 }
 
 /// The outcome of replaying a stream under a new guardrail.
@@ -104,6 +107,12 @@ pub struct ReplayResult {
     pub decisions: Vec<ReplayedDecision>,
     /// How many cycles diverged.
     pub delta_count: usize,
+    /// How many cycles were actually re-evaluated under the new guardrail.
+    /// `delta_count` is meaningful only against this: an all-telemetry stream
+    /// (e.g. a run dir's `decisions.jsonl`) replays with `delta_count == 0`
+    /// AND `evaluated_count == 0` — no guardrail agreement was tested — which
+    /// must not be read as "the new guardrail changes nothing".
+    pub evaluated_count: usize,
     /// The index (into [`ReplayResult::decisions`]) of the first divergence —
     /// the boundary beyond which the counterfactual caveat applies.
     pub first_divergence: Option<usize>,
@@ -118,9 +127,13 @@ pub struct ReplayResult {
 pub fn replay(envelopes: &[DecisionEnvelope], guardrail: &dyn IntentGuardrail) -> ReplayResult {
     let mut decisions = Vec::with_capacity(envelopes.len());
     let mut delta_count = 0;
+    let mut evaluated_count = 0;
     let mut first_divergence = None;
     for (idx, original) in envelopes.iter().enumerate() {
         let replayed_cycle = replay_one(original, guardrail);
+        if replayed_cycle.evaluated {
+            evaluated_count += 1;
+        }
         if replayed_cycle.diverged {
             delta_count += 1;
             if first_divergence.is_none() {
@@ -129,7 +142,7 @@ pub fn replay(envelopes: &[DecisionEnvelope], guardrail: &dyn IntentGuardrail) -
         }
         decisions.push(replayed_cycle);
     }
-    ReplayResult { decisions, delta_count, first_divergence }
+    ReplayResult { decisions, delta_count, evaluated_count, first_divergence }
 }
 
 /// Re-evaluate one cycle. See [`replay`] for the eligibility rule.
@@ -145,10 +158,23 @@ fn replay_one(original: &DecisionEnvelope, guardrail: &dyn IntentGuardrail) -> R
             original: original.clone(),
             replayed: original.clone(),
             diverged: false,
+            evaluated: false,
         };
     };
 
-    let new_guardrail = guardrail.evaluate(&intent, &original.context);
+    // Mirror the pipeline's fail-closed handling: a guardrail must never
+    // return NotEvaluated (that representation belongs to the pipeline for
+    // stages that did not run), so an out-of-contract return replays as a
+    // rejection — never as "the stage did not run" (R5).
+    let new_guardrail = match guardrail.evaluate(&intent, &original.context) {
+        GuardrailResult::NotEvaluated => GuardrailResult::Rejected {
+            reason: format!(
+                "{}: guardrail returned NotEvaluated (out of contract) — failing closed",
+                guardrail.name()
+            ),
+        },
+        verdict => verdict,
+    };
     let mut replayed = original.clone();
     match &new_guardrail {
         GuardrailResult::Approved => {
@@ -162,7 +188,7 @@ fn replay_one(original: &DecisionEnvelope, guardrail: &dyn IntentGuardrail) -> R
     }
     let diverged = discriminant(&new_guardrail) != discriminant(&original.guardrail);
     replayed.guardrail = new_guardrail;
-    ReplayedDecision { original: original.clone(), replayed, diverged }
+    ReplayedDecision { original: original.clone(), replayed, diverged, evaluated: true }
 }
 
 #[cfg(test)]
@@ -173,7 +199,7 @@ mod tests {
     use super::*;
     use crate::agent::capability::{ActionCapability, CapabilitySet};
     use crate::agent::context::{AgentContext, PositionSummary};
-    use crate::agent::envelope::{to_jsonl, DecisionTrigger};
+    use crate::agent::envelope::{to_jsonl, Decision, DecisionDetail, DecisionTrigger};
     use crate::agent::guardrails::proposal_bounds::ProposalBoundsGuardrail;
     use crate::agent::intent::AgentIntent;
     use crate::agent::pipeline::DecisionPipeline;
@@ -273,6 +299,7 @@ mod tests {
         let stricter = ProposalBoundsGuardrail { max_relative_change: 0.25 };
         let result = replay(&stream, &stricter);
         assert_eq!(result.delta_count, 2);
+        assert_eq!(result.evaluated_count, 3, "every recorded cycle was re-evaluated");
         assert!(!result.decisions[0].diverged);
         assert!(result.decisions[1].diverged);
         assert!(result.decisions[2].diverged);
@@ -346,6 +373,7 @@ mod tests {
         let reject_all = ProposalBoundsGuardrail { max_relative_change: 0.0 };
         let result = replay(&[denied], &reject_all);
         assert_eq!(result.delta_count, 0);
+        assert_eq!(result.evaluated_count, 0, "a denied cycle is reproduced, not re-evaluated");
         assert_eq!(result.first_divergence, None);
         assert!(matches!(
             result.decisions[0].replayed.capability,
@@ -434,5 +462,52 @@ mod tests {
             panic!("expected MalformedLine, got {err:?}");
         };
         assert_eq!(line, 3);
+    }
+
+    #[test]
+    fn out_of_contract_not_evaluated_guardrail_fails_closed_on_replay() {
+        // Mirrors the pipeline's out-of-contract handling: a guardrail
+        // returning NotEvaluated replays as a fail-closed rejection, never as
+        // "the stage did not run" (R5).
+        struct BrokenGuardrail;
+        impl IntentGuardrail for BrokenGuardrail {
+            fn name(&self) -> &str {
+                "broken"
+            }
+            fn evaluate(&self, _: &AgentIntent, _: &AgentContext) -> GuardrailResult {
+                GuardrailResult::NotEvaluated
+            }
+        }
+        let stream = approved_stream();
+        let result = replay(&stream, &BrokenGuardrail);
+        assert_eq!(result.delta_count, 3, "fail-closed rejection diverges from every approval");
+        let replayed = &result.decisions[0].replayed;
+        let GuardrailResult::Rejected { reason } = &replayed.guardrail else {
+            panic!("expected fail-closed rejection, got {:?}", replayed.guardrail);
+        };
+        assert!(reason.contains("out of contract"), "{reason}");
+        assert_eq!(replayed.lowering, LoweringOutcome::NotEvaluated);
+        assert!(replayed.action.is_none());
+    }
+
+    #[test]
+    fn telemetry_only_stream_reports_zero_evaluated_not_agreement() {
+        // Replaying a run dir's all-telemetry decisions.jsonl yields delta 0
+        // — evaluated_count 0 is what distinguishes "nothing was tested" from
+        // "the stricter guardrail agrees with every recorded approval".
+        let telemetry = DecisionEnvelope::telemetry(
+            7,
+            DecisionTrigger::StateChange { description: "universe selection scan".to_string() },
+            DecisionDetail::universe("005930.XKRX", Decision::Accept, None, BTreeMap::new()),
+            context(1_000_000.0),
+        );
+        let reject_all = ProposalBoundsGuardrail { max_relative_change: 0.0 };
+        let result = replay(&[telemetry], &reject_all);
+        assert_eq!(result.delta_count, 0);
+        assert_eq!(
+            result.evaluated_count, 0,
+            "zero delta over zero evaluated cycles is not guardrail agreement"
+        );
+        assert!(!result.decisions[0].evaluated);
     }
 }

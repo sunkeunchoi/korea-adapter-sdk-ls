@@ -17,6 +17,7 @@ use nautilus_ls::lock::{AdvisoryLock, LockKind};
 use nautilus_ls_lab::artifacts::data_quality::{DataQualityReport, GapReasonKind};
 use nautilus_ls_lab::artifacts::manifest::Manifest;
 use nautilus_ls_lab::artifacts::performance::PerformanceReport;
+use nautilus_ls_lab::agent::envelope::{DecisionTrigger, SignalKind};
 use nautilus_ls_lab::agent::replay::read_envelopes;
 use nautilus_ls_lab::artifacts::{aborted_runs, list_runs, MANIFEST_FILE, PERFORMANCE_FILE, DECISIONS_FILE, DATA_QUALITY_FILE};
 use nautilus_ls_lab::runner::backtest::{run, run_inner, BacktestConfig};
@@ -163,6 +164,19 @@ async fn full_backtest_lands_a_registry_run() {
     assert!(
         envelopes.iter().all(|e| e.decision_detail.is_some()),
         "every in-run envelope carries a decision detail"
+    );
+    // Session summaries fire at strategy stop, not on a bar — their trigger
+    // records the stop-time state change (R5).
+    let summaries: Vec<_> = envelopes
+        .iter()
+        .filter(|e| {
+            e.decision_detail.as_ref().is_some_and(|d| d.kind == SignalKind::SessionSummary)
+        })
+        .collect();
+    assert!(!summaries.is_empty(), "a session summary was recorded");
+    assert!(
+        summaries.iter().all(|e| matches!(e.trigger, DecisionTrigger::StateChange { .. })),
+        "session summaries trigger on the stop-time state change, not a bar"
     );
     // AE3: the signal log is subsumed by decisions.jsonl — no signals.jsonl remains.
     assert!(!outcome.run_dir.join("signals.jsonl").exists(), "subsumed by decisions.jsonl");

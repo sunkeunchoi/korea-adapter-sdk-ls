@@ -17,8 +17,7 @@ use std::path::{Path, PathBuf};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
-use crate::agent::envelope::DecisionEnvelope;
-use crate::agent::recording::scrub_free_text;
+use crate::agent::envelope::{to_scrubbed_jsonl_line, DecisionEnvelope};
 use data_quality::DataQualityReport;
 use manifest::Manifest;
 use performance::PerformanceReport;
@@ -139,18 +138,16 @@ impl RunWriter {
     }
 
     /// Write the per-decision envelope stream as JSONL (`decisions.jsonl`),
-    /// scrubbing each envelope's free-text fields at write time via the
-    /// cross-run recorder's [`scrub_free_text`] (R9 — the same free-text-only
-    /// discipline, so UUIDs stay intact and every line parses back). The
-    /// telemetry free text here (filter names, trigger descriptions) is
-    /// compile-time literals from our own code, scrubbed anyway for consistency.
+    /// scrubbing each envelope's free-text fields at write time via the shared
+    /// [`to_scrubbed_jsonl_line`] seam (R9 — the same free-text-only
+    /// discipline as the cross-run recorder, so UUIDs stay intact and every
+    /// line parses back). The telemetry free text here (filter names, trigger
+    /// descriptions) is compile-time literals from our own code, scrubbed
+    /// anyway for consistency.
     pub fn write_decisions(&self, envelopes: &[DecisionEnvelope]) -> anyhow::Result<()> {
         let mut text = String::new();
         for e in envelopes {
-            let mut value = serde_json::to_value(e)?;
-            scrub_free_text(&mut value);
-            text.push_str(&serde_json::to_string(&value)?);
-            text.push('\n');
+            text.push_str(&to_scrubbed_jsonl_line(e)?);
         }
         std::fs::write(self.tmp_dir.join(DECISIONS_FILE), text)?;
         Ok(())

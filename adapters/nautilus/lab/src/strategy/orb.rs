@@ -588,11 +588,20 @@ impl DataActor for OrbStrategy {
             })
             .collect();
         for (id, (hi, lo)) in summaries {
-            self.emit_market_data(id, 0, DecisionDetail::transition(
-                id.to_string(),
-                SignalKind::SessionSummary,
-                vals(&[("session_high", hi as f64), ("session_low", lo as f64)]),
-            ));
+            // Session summaries fire at strategy stop, not on a bar — the
+            // trigger is the stop-time state change (R5), mirroring
+            // `universe_trigger()`'s pattern for non-bar-driven cycles.
+            emit_telemetry(
+                &self.decisions,
+                &self.params,
+                0,
+                DecisionTrigger::StateChange { description: "session end summary".to_string() },
+                DecisionDetail::transition(
+                    id.to_string(),
+                    SignalKind::SessionSummary,
+                    vals(&[("session_high", hi as f64), ("session_low", lo as f64)]),
+                ),
+            );
         }
         Ok(())
     }

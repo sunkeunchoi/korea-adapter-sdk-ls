@@ -50,15 +50,21 @@ impl IntentGuardrail for ProposalBoundsGuardrail {
         } else {
             ((proposed_value - current_value) / current_value).abs()
         };
-        // Fail closed on non-finite: `NaN > bound` is false, so a plain `>`
-        // check would APPROVE a NaN proposal (reachable via a NaN param in a
-        // manifest or a mis-configured policy factor). Non-finite (NaN or the
-        // zero-current INFINITY) rejects; finite in-bounds approves.
-        if !relative_change.is_finite() || relative_change > self.max_relative_change {
+        // Fail closed on non-finite — on EITHER side of the comparison:
+        // `partial_cmp` is `None` when either operand is NaN, so a NaN
+        // proposal (reachable via a NaN param in a manifest or a
+        // mis-configured policy factor), the zero-current INFINITY, and a
+        // mis-configured NaN bound all fall outside `Less | Equal` and
+        // reject; a plain `>` check would silently APPROVE the NaN cases.
+        let within_bound = matches!(
+            relative_change.partial_cmp(&self.max_relative_change),
+            Some(std::cmp::Ordering::Less | std::cmp::Ordering::Equal)
+        );
+        if !within_bound {
             GuardrailResult::Rejected {
                 reason: format!(
                     "{}: parameter '{parameter}' relative change {relative_change:.4} exceeds \
-                     bound {} (current {current_value:.4}, proposed {proposed_value:.4})",
+                     bound {:.4} (current {current_value:.4}, proposed {proposed_value:.4})",
                     self.name(),
                     self.max_relative_change,
                 ),
@@ -107,7 +113,10 @@ mod tests {
         };
         assert!(reason.contains("proposal_bounds"), "names the guardrail: {reason}");
         assert!(reason.contains("gap_min_pct"), "names the parameter: {reason}");
-        assert!(reason.contains("bound 0.5"), "names the bound: {reason}");
+        // The bound is {:.4}-formatted like every other f64 in the reason —
+        // a raw Display of a non-round bound (1.0/3.0) would emit a 16-digit
+        // run the write-time scrub masks to `0.***`.
+        assert!(reason.contains("bound 0.5000"), "names the bound, scrub-safe: {reason}");
         assert!(reason.contains("relative change 1"), "names the offending change: {reason}");
     }
 
@@ -131,6 +140,16 @@ mod tests {
     fn zero_to_zero_proposal_is_approved() {
         let result = guardrail().evaluate(&proposal(0.0, 0.0), &context());
         assert_eq!(result, GuardrailResult::Approved);
+    }
+
+    #[test]
+    fn nan_bound_is_rejected_fail_closed() {
+        // A mis-configured NaN BOUND must not fail open: `x <= NaN` is false,
+        // so the `!(x <= bound)` form rejects every proposal under it (a
+        // plain `x > NaN` comparison would approve them all).
+        let broken = ProposalBoundsGuardrail { max_relative_change: f64::NAN };
+        let result = broken.evaluate(&proposal(3.0, 3.1), &context());
+        assert!(matches!(result, GuardrailResult::Rejected { .. }), "got {result:?}");
     }
 
     #[test]
