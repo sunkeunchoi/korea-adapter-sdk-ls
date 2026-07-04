@@ -256,6 +256,18 @@ pub trait DailyFetcher {
         edate: &str,
         cts_date: &str,
     ) -> AdapterResult<T8410Response>;
+
+    /// The TR label used in ingest gateway-error context (R9). Defaults to the
+    /// daily TR; test fakes inherit it.
+    fn tr_label(&self) -> &'static str {
+        "t8410"
+    }
+
+    /// The pacer's per-second cap for gateway-error context (R9). `0` = a fake
+    /// with no pacer.
+    fn pace_per_sec(&self) -> u32 {
+        0
+    }
 }
 
 /// Fetches all minute-chart pages for a symbol over a date chunk.
@@ -270,6 +282,18 @@ pub trait MinuteFetcher {
         sdate: &str,
         edate: &str,
     ) -> AdapterResult<Vec<T8412Response>>;
+
+    /// The TR label used in ingest gateway-error context (R9). Defaults to the
+    /// minute TR; test fakes inherit it.
+    fn tr_label(&self) -> &'static str {
+        "t8412"
+    }
+
+    /// The pacer's per-second cap for gateway-error context (R9). `0` = a fake
+    /// with no pacer.
+    fn pace_per_sec(&self) -> u32 {
+        0
+    }
 }
 
 /// Production fetcher over the SDK, paced per-TR (KTD4). Dates ride per call (U5),
@@ -314,6 +338,10 @@ impl DailyFetcher for SdkFetcher {
         );
         req.inblock.cts_date = cts_date.to_string();
         Ok(self.sdk.paginated().stock_chart_period(&req).await?)
+    }
+
+    fn pace_per_sec(&self) -> u32 {
+        self.daily_pacer.per_sec_cap()
     }
 }
 
@@ -383,6 +411,10 @@ impl MinuteFetcher for SdkFetcher {
         }
         Err(AdapterError::Sdk(LsError::PaginationLimit(MINUTE_MAX_PAGES)))
     }
+
+    fn pace_per_sec(&self) -> u32 {
+        self.minute_pacer.per_sec_cap()
+    }
 }
 
 /// The outcome of ingesting one `(instrument, bar-kind)` triple.
@@ -406,13 +438,18 @@ async fn collect_daily<F: DailyFetcher>(
     let mut seen = HashSet::new();
     let mut hit_cap = true;
 
-    for _ in 0..MAX_DAILY_PAGES {
+    for page in 0..MAX_DAILY_PAGES {
         let resp = match fetcher.fetch_daily_page(shcode, sdate, edate, &cts_date).await {
             Ok(r) => r,
             Err(AdapterError::Sdk(LsError::ApiError { code, .. })) if code == "01715" => {
                 return Ok(TripleOutcome::Gap(GapReason::NonTradingDay));
             }
-            Err(e) => return Err(e),
+            // R9: wrap a genuine gateway failure with locating context (TR code,
+            // page index, pacer cap) — the control-flow codes above are handled
+            // first, so anything here is a real failure worth localizing.
+            Err(e) => {
+                return Err(with_gateway_context(e, fetcher.tr_label(), page + 1, fetcher.pace_per_sec()))
+            }
         };
         for row in &resp.outblock1 {
             if let Some(b) = build_daily_bar(bar_type, row)? {
@@ -460,10 +497,12 @@ async fn collect_minute<F: MinuteFetcher>(
     let end = parse_yyyymmdd("edate", edate)?;
     let mut bars = Vec::new();
     let mut overflowed_single_day = false;
+    let mut chunk = 0usize;
     let mut queue: VecDeque<(NaiveDate, NaiveDate)> = VecDeque::new();
     queue.push_back((start, end));
 
     while let Some((s, e)) = queue.pop_front() {
+        chunk += 1;
         let s_str = s.format("%Y%m%d").to_string();
         let e_str = e.format("%Y%m%d").to_string();
         match fetcher.fetch_minute_chunk(shcode, ncnt, &s_str, &e_str).await {
@@ -490,7 +529,11 @@ async fn collect_minute<F: MinuteFetcher>(
             Err(AdapterError::Sdk(LsError::ApiError { code, .. })) if code == "01715" => {
                 // Non-trading sub-range — skip it, keep the rest.
             }
-            Err(e) => return Err(e),
+            // R9: wrap a genuine gateway failure with locating context (the
+            // pagination/non-trading control-flow codes above are handled first).
+            Err(e) => {
+                return Err(with_gateway_context(e, fetcher.tr_label(), chunk, fetcher.pace_per_sec()))
+            }
         }
     }
 
@@ -503,6 +546,29 @@ async fn collect_minute<F: MinuteFetcher>(
         Ok(TripleOutcome::Gap(GapReason::PaperThin))
     } else {
         Ok(TripleOutcome::Gap(GapReason::EmptyHistory))
+    }
+}
+
+/// Wrap a propagating gateway error with ingest context (R9): the TR code, the
+/// page/chunk index, and the pacer's per-second cap. Only an SDK gateway error
+/// is wrapped — the ingest control-flow codes (`01715`, `PaginationLimit`) are
+/// handled by the caller before reaching a propagation seam, so anything here
+/// is a real failure; a non-SDK error (e.g. a field-parse) passes through
+/// unchanged. The wrapped [`LsError`] stays reachable via `Error::source`.
+fn with_gateway_context(
+    e: AdapterError,
+    tr: &'static str,
+    page: usize,
+    per_sec: u32,
+) -> AdapterError {
+    match e {
+        AdapterError::Sdk(inner) => AdapterError::IngestGateway {
+            tr,
+            page,
+            per_sec,
+            source: Box::new(inner),
+        },
+        other => other,
     }
 }
 
@@ -1723,6 +1789,50 @@ mod tests {
         let fetcher = ErrDaily { code: "01715".to_string() };
         let outcome = collect_daily(&fetcher, "005930", bar_type, "20240101", "20240131").await.unwrap();
         assert!(matches!(outcome, TripleOutcome::Gap(GapReason::NonTradingDay)));
+    }
+
+    /// A pacer-carrying fake so the gateway-context wrap (R9) reports a non-zero
+    /// per-second cap like the production `SdkFetcher` does.
+    struct PacedErrDaily {
+        code: String,
+    }
+    #[async_trait]
+    impl DailyFetcher for PacedErrDaily {
+        async fn fetch_daily_page(&self, _shcode: &str, _sd: &str, _ed: &str, _cts: &str) -> AdapterResult<T8410Response> {
+            Err(AdapterError::Sdk(LsError::ApiError {
+                code: self.code.clone(),
+                message: "rate limit exceeded".to_string(),
+            }))
+        }
+        fn pace_per_sec(&self) -> u32 {
+            1
+        }
+    }
+
+    #[tokio::test]
+    async fn daily_gateway_error_is_wrapped_with_tr_page_and_pacer_context() {
+        // R9: a non-control-flow gateway error (e.g. IGW00201) propagates wrapped
+        // with the TR code, the page index, and the pacer cap — the raw LsError
+        // stays reachable via Error::source for classification, and the message
+        // localizes the failure without a raw-probe A/B.
+        let bar_type = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        let fetcher = PacedErrDaily { code: "IGW00201".to_string() };
+        let err = match collect_daily(&fetcher, "005930", bar_type, "20240101", "20240131").await {
+            Ok(_) => panic!("expected a propagated gateway error"),
+            Err(e) => e,
+        };
+        let AdapterError::IngestGateway { tr, page, per_sec, source } = &err else {
+            panic!("expected an IngestGateway error, got {err:?}");
+        };
+        assert_eq!(*tr, "t8410", "TR code present");
+        assert_eq!(*page, 1, "page index present");
+        assert_eq!(*per_sec, 1, "pacer cap present");
+        assert!(matches!(source.as_ref(), LsError::ApiError { code, .. } if code == "IGW00201"));
+        let text = err.to_string();
+        assert!(text.contains("t8410") && text.contains("page 1"), "context in Display: {text}");
+        // The wrapped display carries no raw request body — only the TR/page/pace
+        // and the gateway's own message.
+        assert!(text.contains("rate limit exceeded"));
     }
 
     fn minute_row(date: &str, time: &str) -> T8412OutBlock1 {

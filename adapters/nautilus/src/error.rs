@@ -63,6 +63,25 @@ pub enum AdapterError {
     #[error("ingest error: {0}")]
     Ingest(String),
 
+    /// A gateway fetch failure during ingest, wrapped with locating context
+    /// (R9): the TR code, the page/chunk index, and the pacer's per-second cap,
+    /// so a first `IGW00201` names where it happened without a raw-probe A/B.
+    /// Carries no raw request body (credential hygiene); the wrapped
+    /// [`ls_core::LsError`] stays reachable via [`std::error::Error::source`] so
+    /// the ingest control-flow classification is unaffected.
+    #[error("ingest gateway error (tr {tr}, page {page}, paced {per_sec}/s): {source}")]
+    IngestGateway {
+        /// The TR code the fetch was for (`t8410` / `t8412`).
+        tr: &'static str,
+        /// The 1-indexed page/chunk the failure hit.
+        page: usize,
+        /// The pacer's per-second cap in force (0 = a test fake).
+        per_sec: u32,
+        /// The underlying gateway error, boxed to keep the enum small.
+        #[source]
+        source: Box<ls_core::LsError>,
+    },
+
     /// A wrapped `anyhow` error from a nautilus API boundary.
     #[error(transparent)]
     Other(#[from] anyhow::Error),

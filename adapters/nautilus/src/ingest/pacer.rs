@@ -49,6 +49,17 @@ impl Pacer {
         self.min_interval
     }
 
+    /// The effective per-second cap this pacer enforces (the inverse of
+    /// [`Pacer::min_interval`], rounded) — surfaced as ingest error context (R9).
+    pub fn per_sec_cap(&self) -> u32 {
+        let secs = self.min_interval.as_secs_f64();
+        if secs > 0.0 {
+            (1.0 / secs).round() as u32
+        } else {
+            0
+        }
+    }
+
     /// Wait until this TR is next allowed to fire, then reserve the slot.
     pub async fn acquire(&self) {
         let mut next = self.next_allowed.lock().await;
