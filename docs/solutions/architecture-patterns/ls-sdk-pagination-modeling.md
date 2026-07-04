@@ -1,7 +1,7 @@
 ---
 title: "LS SDK pagination modeling: has_pagination is a metadata mirror (one-way implication with self_paginated), and the single-page body-idx sub-pattern"
 date: 2026-06-21
-last_updated: 2026-06-25
+last_updated: 2026-07-04
 category: architecture-patterns
 module: crates/ls-core, crates/ls-sdk
 problem_type: architecture_pattern
@@ -172,6 +172,16 @@ cursor. That is almost always more machinery than the wave needs — and it is m
 surface to get wrong (the response-side `HasPagination`, the `collect_all`
 closure, the `max_pages` cap).
 
+**Live update (2026-07-04): the header walk itself is falsified for multi-page
+use.** Against the real gateway, `tr_cont` response-header continuation
+terminates after page 1 while in-range rows remain — `chart_all` silently
+truncates any multi-page window to its newest page — and `collect_all` fires
+continuation pages back-to-back, tripping t8412's 1/s per-TR cap (`IGW00201`;
+the runtime limiter enforces only the category bucket). The real multi-page
+driver is the body `cts_date`/`cts_time` cursor **plus** the `tr_cont: Y`
+request header, one paced dispatch per page. Full writeup:
+`../integration-issues/ls-gateway-t8412-chart-all-pagination-burst-and-silent-truncation.md`.
+
 The breadth wave -004 charts (`t8410`/`t8451`/`t8419`/`t4203`) and the
 investment-opinion read (`t3401`) are all header-summary + `cts_*`-cursor reads,
 and all were modeled on **`t1514`**, not `t8412`.
@@ -195,8 +205,13 @@ collection is an actual requirement:
   `collect_all`. The smoke validates a single page; multi-page correctness is out
   of scope (mirroring `t8412`'s own recommendation, which excludes multi-page).
 
-Reach for the full `t8412` shape (response `HasPagination` + `collect_all` + a
-`*_all` facade) only when a caller genuinely needs every page concatenated.
+When a caller genuinely needs every page concatenated, do **not** reach for the
+full `t8412` shape (`chart_all`/`collect_all` header walk) — live, it silently
+truncates and bursts past the per-TR cap (see the Context note above). Drive
+`chart_page` manually instead: thread the body `cts_date`/`cts_time` cursor plus
+the `tr_cont: Y` request header, one paced dispatch per page, with fail-closed
+handling for suspect partials. Reference implementation:
+`SdkFetcher::fetch_minute_chunk` in `adapters/nautilus/src/ingest/mod.rs`.
 
 ### When to Apply
 
@@ -231,4 +246,7 @@ pub async fn stock_chart_period(&self, req: &T8410Request) -> LsResult<T8410Resp
 ```
 
 `t8412` is the contrast: `impl_has_pagination!(T8412Response)` too, plus a
-`chart_all` facade driving `collect_all` over the response `tr_cont` headers.
+`chart_all` facade driving `collect_all` over the response `tr_cont` headers —
+a walk that is now known-unsafe for multi-page pulls (silent truncation +
+per-TR cap burst; see the Context note above). `chart_page` driven manually on
+the body cursor is the only live-verified multi-page path.
