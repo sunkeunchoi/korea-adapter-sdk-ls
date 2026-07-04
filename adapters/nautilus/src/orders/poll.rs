@@ -111,17 +111,20 @@ pub(crate) async fn poll_open_orders<F: T0425Fetcher>(
                 continue;
             }
         };
-        // A completed fetch (even a truncated page) counts as scanning the symbol
-        // for the pending set; the truncation still drives a re-poll via
-        // `reconcile_needed`, but it does not leave the symbol owed a scan (R2).
-        scanned.insert(symbol.clone());
         // Fail-closed on truncation: a non-empty next-cursor means this page did not
-        // show every order for the symbol — do not conclude anything (R4).
+        // show every order for the symbol — do not conclude anything (R4), and do
+        // NOT count the symbol as scanned. A pending-only symbol whose page truncates
+        // must stay owed a scan (re-inserted below) or its later pages — possibly
+        // carrying the very order that armed it — would never be reconciled on a
+        // flat ledger, where the drive's re-poll has no open symbol to re-fetch it.
         if !resp.outblock.cts_ordno.trim().is_empty() {
             tracing::warn!(symbol, "t0425 poll page truncated; will reconcile (not concluding)");
             out.reconcile_needed = true;
             continue;
         }
+        // A complete (non-error, non-truncated) fetch conclusively scans the symbol,
+        // clearing it from the pending set (R2/KTD2).
+        scanned.insert(symbol.clone());
         for row in &resp.outblock1 {
             apply_row(symbol, row, ledger, &mut out);
         }
@@ -740,6 +743,21 @@ mod tests {
             !lock(&led).has_pending(),
             "the completed scan clears the symbol; a foreign order must not self-sustain the pending set"
         );
+    }
+
+    /// R4/R2: a pending-only symbol whose page truncates is NOT cleared — it stays
+    /// owed a scan so the next pass retries it (a truncated page concludes nothing,
+    /// and on a flat ledger the drive's re-poll has no open symbol to re-fetch it).
+    #[tokio::test]
+    async fn truncated_pending_symbol_stays_pending() {
+        let led = Mutex::new(FillLedger::new());
+        lock(&led).record_pending_symbol("000660");
+        // A truncated page (non-empty cts_ordno) for the pending symbol.
+        let fetcher = RecordingFetcher::new(resp("NEXT", vec![]));
+        let out = poll_open_orders(&fetcher, &led, &poll_pacer()).await;
+        assert!(out.reconcile_needed, "truncation flags reconcile");
+        assert!(lock(&led).has_pending(), "a truncated pending symbol stays owed a scan");
+        assert_eq!(lock(&led).take_pending_symbols(), vec!["000660".to_string()]);
     }
 
     /// Partial then full fill across two polls → two deltas, second terminal.

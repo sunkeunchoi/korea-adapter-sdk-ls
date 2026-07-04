@@ -575,10 +575,11 @@ async fn run_cancel(
         // for the command's instrument so venue truth is re-verified (R4).
         tracing::warn!(%client_order_id, "cancel of an unknown order — nothing resting; emitting cancel-rejection + arming reconcile");
         // Arm the reconcile before emitting so an observer that keys off the event
-        // sees the pending symbol already recorded.
-        if let Some(sym) = crate::ws::rows::normalize_symbol(cmd.instrument_id.symbol.as_str()) {
-            lock_ledger(&ledger).record_pending_symbol(&sym);
-        }
+        // sees the pending symbol already recorded. The command's instrument symbol
+        // is already the bare short code (no `A` prefix to invert, unlike the SC
+        // issue-code seam), so record it directly — `record_pending_symbol` trims
+        // and drops a blank (the KTD3 empty-symbol guard).
+        lock_ledger(&ledger).record_pending_symbol(cmd.instrument_id.symbol.as_str());
         emitter.emit_order_cancel_rejected_event(
             cmd.strategy_id,
             cmd.instrument_id,

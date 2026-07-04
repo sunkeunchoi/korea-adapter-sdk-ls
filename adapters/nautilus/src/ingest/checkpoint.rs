@@ -266,22 +266,28 @@ impl Checkpoint {
         let instrument = event.instrument.clone();
         let bar_type = event.bar_type.clone();
         self.rebase_events.push(event);
-        loop {
-            let series_indices: Vec<usize> = self
+        // One event is appended per call, so this series can exceed the cap by at
+        // most one. If it does, evict its oldest event (first matching index =
+        // earliest recorded, regardless of origin) and fold it into the origin-split
+        // counters so the audit totals stay whole across eviction (R9).
+        let over_cap = self
+            .rebase_events
+            .iter()
+            .filter(|e| e.instrument == instrument && e.bar_type == bar_type)
+            .count()
+            > REBASE_EVENTS_PER_SERIES_CAP;
+        if over_cap {
+            if let Some(oldest) = self
                 .rebase_events
                 .iter()
-                .enumerate()
-                .filter(|(_, e)| e.instrument == instrument && e.bar_type == bar_type)
-                .map(|(i, _)| i)
-                .collect();
-            if series_indices.len() <= REBASE_EVENTS_PER_SERIES_CAP {
-                break;
+                .position(|e| e.instrument == instrument && e.bar_type == bar_type)
+            {
+                let evicted = self.rebase_events.remove(oldest);
+                *self
+                    .rebase_evicted
+                    .entry(evicted.origin.as_key().to_string())
+                    .or_insert(0) += 1;
             }
-            let evicted = self.rebase_events.remove(series_indices[0]);
-            *self
-                .rebase_evicted
-                .entry(evicted.origin.as_key().to_string())
-                .or_insert(0) += 1;
         }
     }
 
