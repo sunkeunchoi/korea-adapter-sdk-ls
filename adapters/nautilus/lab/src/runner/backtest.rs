@@ -225,6 +225,20 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
 /// in-catalog daily bars, `prior_close` = the second-to-last close, `today_open` =
 /// the last open, `prior_turnover` = the prior bar's close × volume. Instruments
 /// without a prior daily bar are returned as `missing` (a data-quality gap).
+/// Select `(prior, today)` as the last two DISTINCT sessions from a `ts_event`-sorted
+/// daily slice, or `None` when fewer than two distinct sessions exist. Keying on
+/// distinct `ts_event` (not raw index) keeps the gap scan robust to a same-session
+/// duplicate a re-ingest overlap can leave in the catalog: `read_all_bars` drops
+/// byte-identical duplicates but deliberately keeps a value-divergent same-session
+/// bar (an un-healed adjustment-basis overlap), and taking `prior`/`today` by index
+/// could draw both from ONE session — reproducing the nonsensical intraday self-gap
+/// (open vs its own close) the read-side dedup set out to eliminate.
+fn select_prior_today<'a>(daily_sorted: &[&'a Bar]) -> Option<(&'a Bar, &'a Bar)> {
+    let today = *daily_sorted.last()?;
+    let prior = *daily_sorted.iter().rev().find(|b| b.ts_event != today.ts_event)?;
+    Some((prior, today))
+}
+
 fn build_candidates(
     instruments: &[InstrumentAny],
     all_bars: &[Bar],
@@ -254,12 +268,10 @@ fn build_candidates(
             .filter(|b| is_daily(b) && b.bar_type.instrument_id() == id && in_range(b, start_ns, end_ns))
             .collect();
         daily.sort_by_key(|b| b.ts_event.as_u64());
-        if daily.len() < 2 {
+        let Some((prior, today)) = select_prior_today(&daily) else {
             missing.push(id.to_string());
             continue;
-        }
-        let prior = daily[daily.len() - 2];
-        let today = daily[daily.len() - 1];
+        };
         candidates.push(UniverseCandidate {
             symbol: id.to_string(),
             prior_close: prior.close.as_f64(),
@@ -418,6 +430,55 @@ pub fn summary_block(run_id: &str, run_dir: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nautilus_ls::rules::KRX_REGULAR_CLOSE;
+    use nautilus_model::data::BarType;
+    use nautilus_model::identifiers::InstrumentId;
+    use nautilus_model::types::{Price, Quantity};
+
+    fn day(bt: BarType, ymd: (i32, u32, u32), open: i64, close: i64) -> Bar {
+        let ts = kst_to_unix_nanos(
+            NaiveDate::from_ymd_opt(ymd.0, ymd.1, ymd.2).unwrap(),
+            KRX_REGULAR_CLOSE,
+        )
+        .unwrap();
+        Bar::new(
+            bt,
+            Price::from(open.to_string().as_str()),
+            Price::from((close + 10).to_string().as_str()),
+            Price::from((open - 10).to_string().as_str()),
+            Price::from(close.to_string().as_str()),
+            Quantity::from(1000),
+            ts,
+            ts,
+        )
+    }
+
+    #[test]
+    fn select_prior_today_skips_a_same_session_duplicate() {
+        let bt = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        // A value-divergent duplicate of the final session (an un-healed overlap the
+        // read dedup keeps) sits last after the ts sort. prior/today must resolve to
+        // two DISTINCT sessions (Jan4 -> Jan5), never both copies of Jan5 — which
+        // would compute a self-gap.
+        let jan4 = day(bt, (2024, 1, 4), 100, 110);
+        let jan5_a = day(bt, (2024, 1, 5), 110, 120);
+        let jan5_b = day(bt, (2024, 1, 5), 60, 65); // divergent same-session copy
+        let daily = vec![&jan4, &jan5_a, &jan5_b];
+        let (prior, today) = select_prior_today(&daily).expect("two distinct sessions");
+        assert_eq!(prior.ts_event, jan4.ts_event, "prior is the earlier distinct session");
+        assert_ne!(prior.ts_event, today.ts_event, "prior and today are never the same session");
+    }
+
+    #[test]
+    fn select_prior_today_needs_two_distinct_sessions() {
+        let bt = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        // Only one real session (plus a divergent duplicate of it) is not enough for
+        // a gap — no prior session exists.
+        let a = day(bt, (2024, 1, 5), 110, 120);
+        let b = day(bt, (2024, 1, 5), 60, 65);
+        assert!(select_prior_today(&vec![&a, &b]).is_none(), "one session is not a gap");
+        assert!(select_prior_today(&[]).is_none(), "empty is not a gap");
+    }
 
     #[test]
     fn summary_block_names_run_trades_and_dir() {

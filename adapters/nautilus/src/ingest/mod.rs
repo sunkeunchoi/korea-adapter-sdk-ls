@@ -1426,8 +1426,11 @@ pub async fn read_all_bars(catalog_path: &Path) -> AdapterResult<Vec<Bar>> {
 /// wall clock), so a redundant re-pull is exactly equal and collapses cleanly.
 /// Dedup is on the WHOLE bar, not a `(series, ts)` key: a same-timestamp bar whose
 /// OHLCV differs is a genuine conflict — an adjustment-basis shift (the heal path's
-/// concern, [`delete_bar_series`]) or an in-range mutation the finalize
-/// fingerprint re-check must still catch — and must NOT be silently dropped.
+/// concern, [`delete_bar_series`]) or a mid-run mutation the finalize fingerprint
+/// re-check catches — and must NOT be silently dropped. The finalize re-check only
+/// compares a run's start vs end, so it does not catch a *pre-existing* divergent
+/// same-session overlap; the universe scan defends against that independently by
+/// selecting prior/today on distinct sessions (`runner::backtest::build_candidates`).
 fn dedup_bars(bars: &mut Vec<Bar>) {
     let mut seen = std::collections::HashSet::new();
     bars.retain(|b| seen.insert(*b));

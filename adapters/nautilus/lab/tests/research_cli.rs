@@ -670,6 +670,36 @@ async fn weekend_watermark_does_not_false_flag_a_friday_closed_catalog() {
 }
 
 #[tokio::test]
+async fn genuine_undershoot_across_a_weekend_still_flags() {
+    // The walk-back must not OVER-suppress: a Monday watermark (20240108) with the
+    // last bar on the prior Friday (20240105) is a real tail undershoot — Monday is
+    // a weekday, so last_weekday_on_or_before(Mon) = Mon, and Fri < Mon flags. This
+    // guards against the walk-back ever being widened to skip a session day.
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    let cp_path = dir.path().join("catalog").join("ingest-checkpoint.json");
+    let mut cp = Checkpoint::load(&cp_path).unwrap();
+    cp.set_watermark(
+        "005930.XKRX",
+        "1-DAY",
+        chrono::NaiveDate::from_ymd_opt(2024, 1, 8).unwrap(), // Monday
+    );
+    cp.save(&cp_path).unwrap();
+    let out = catalog_status(&StatusConfig {
+        data_home: dir.path().to_path_buf(),
+        expected_range: None,
+    })
+    .await
+    .unwrap();
+    assert!(!out.go, "a Friday last bar under a Monday watermark is a genuine undershoot");
+    assert!(
+        out.triples.iter().any(|t| t.bar_kind == "1-DAY" && !t.flags.is_empty()),
+        "the daily triple is flagged: {:?}",
+        out.triples
+    );
+}
+
+#[tokio::test]
 async fn front_truncation_is_flagged_only_with_an_expected_range() {
     let dir = tempdir().unwrap();
     build_fixture(dir.path()).await;
