@@ -18,6 +18,7 @@
 //! carries a deterministic synthetic `TradeId` (`POLL-{ordno}-{watermark}`, minted by
 //! the ledger) that cannot collide with a real SC execno (`SC-{execno}`).
 
+use std::collections::{BTreeSet, HashSet};
 use std::sync::Mutex;
 
 use async_trait::async_trait;
@@ -37,8 +38,10 @@ pub const T0425_POLL_PER_SEC: u32 = 2;
 
 /// One poll pass's result: the fill deltas to emit + whether anything was
 /// inconclusive (truncation / regression / unresolvable row) and needs a reconcile.
+/// Crate-private: external callers go through [`drive_poll_pass`] — a raw
+/// single pass would bypass the bounded reconcile drive (KTD-7).
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-pub struct PollOutcome {
+pub(crate) struct PollOutcome {
     /// Executions to emit (already deduped by the ledger).
     pub deltas: Vec<FillDelta>,
     /// A page was truncated, a cumulative regressed, or a row could not be resolved
@@ -76,34 +79,62 @@ fn side_from_medosu(medosu: &str) -> Option<OrderSide> {
 /// (KTD5). Never `collect_all` (page-cap trap): a single page whose `cts_ordno` is
 /// non-empty is treated as truncated and drives a reconcile, never a fill
 /// conclusion.
-pub async fn poll_open_orders<F: T0425Fetcher>(
+pub(crate) async fn poll_open_orders<F: T0425Fetcher>(
     fetcher: &F,
     ledger: &Mutex<FillLedger>,
     pacer: &Pacer,
 ) -> PollOutcome {
-    let symbols = lock(ledger).open_symbols();
+    // Under one lock: the open symbols, plus a drained snapshot of the pending
+    // reconcile set (U2, KTD2). The drive polls their union so an unknown order's
+    // symbol is scanned even on an otherwise-flat ledger (R1). A pending symbol is
+    // cleared only by a completed (non-error) fetch; errored / un-scanned pending
+    // symbols re-insert when the pass ends (R2).
+    let (open_symbols, pending) = {
+        let mut led = lock(ledger);
+        (led.open_symbols(), led.take_pending_symbols())
+    };
+    let poll_set: BTreeSet<String> = open_symbols
+        .into_iter()
+        .chain(pending.iter().cloned())
+        .collect();
     let mut out = PollOutcome::default();
+    let mut scanned: HashSet<String> = HashSet::new();
 
-    for symbol in symbols {
+    for symbol in &poll_set {
         pacer.acquire().await;
-        let resp = match fetcher.inquiry_symbol(&symbol).await {
+        let resp = match fetcher.inquiry_symbol(symbol).await {
             Ok(r) => r,
             Err(e) => {
+                // An errored fetch is NOT a scan — a pending symbol here re-inserts.
                 tracing::warn!(symbol, error = %e, "t0425 poll failed; will reconcile");
                 out.reconcile_needed = true;
                 continue;
             }
         };
         // Fail-closed on truncation: a non-empty next-cursor means this page did not
-        // show every order for the symbol — do not conclude anything (R4).
+        // show every order for the symbol — do not conclude anything (R4), and do
+        // NOT count the symbol as scanned. A pending-only symbol whose page truncates
+        // must stay owed a scan (re-inserted below) or its later pages — possibly
+        // carrying the very order that armed it — would never be reconciled on a
+        // flat ledger, where the drive's re-poll has no open symbol to re-fetch it.
         if !resp.outblock.cts_ordno.trim().is_empty() {
             tracing::warn!(symbol, "t0425 poll page truncated; will reconcile (not concluding)");
             out.reconcile_needed = true;
             continue;
         }
+        // A complete (non-error, non-truncated) fetch conclusively scans the symbol,
+        // clearing it from the pending set (R2/KTD2).
+        scanned.insert(symbol.clone());
         for row in &resp.outblock1 {
-            apply_row(&symbol, row, ledger, &mut out);
+            apply_row(symbol, row, ledger, &mut out);
         }
+    }
+
+    // Re-record any pending symbol this pass did not conclusively scan (errored)
+    // so the next pass retries it (R2/KTD2).
+    let unscanned: Vec<String> = pending.into_iter().filter(|s| !scanned.contains(s)).collect();
+    if !unscanned.is_empty() {
+        lock(ledger).reinsert_pending_symbols(unscanned);
     }
     out
 }
@@ -143,7 +174,12 @@ fn apply_row(symbol: &str, row: &T0425OutBlock1, ledger: &Mutex<FillLedger>, out
     } else {
         (limit_price, true)
     };
-    let outcome = led.apply(FillObservation::poll(ordno, cheqty, price, price_approximated));
+    // Carry the in-scope symbol on the observation (U1) for parity with the SC
+    // lane; the poll path never inserts pending itself (KTD1), so this is
+    // informational only.
+    let symbol_opt = (!symbol.trim().is_empty()).then(|| symbol.trim().to_string());
+    let outcome =
+        led.apply(FillObservation::poll(ordno, cheqty, price, price_approximated).with_symbol(symbol_opt));
     out.deltas.extend(outcome.deltas);
     if outcome.reconcile_needed {
         out.reconcile_needed = true;
@@ -202,6 +238,81 @@ fn lock(ledger: &Mutex<FillLedger>) -> std::sync::MutexGuard<'_, FillLedger> {
 /// A poll pacer at the t0425 gateway cap (KTD5).
 pub fn poll_pacer() -> Pacer {
     Pacer::per_sec(T0425_POLL_PER_SEC)
+}
+
+// ---------------------------------------------------------------------------
+// Bounded reconcile drive (data-fidelity U7, R9/KTD-7): transient poll
+// inconclusiveness self-heals inside the pass; only exhaustion reaches the
+// data-quality report.
+// ---------------------------------------------------------------------------
+
+/// Re-polls a drive makes after an inconclusive pass (2-3 attempts total — the
+/// cadence loop re-fires anyway, so the budget stays small).
+pub const DRIVE_MAX_REPOLLS: u32 = 2;
+
+/// Base backoff between drive re-polls. Kept small relative to the 2-second
+/// cadence so a sequential drive does not starve other symbols' fills.
+const DRIVE_BACKOFF: std::time::Duration = std::time::Duration::from_millis(150);
+
+/// The explicit terminal state of a driven poll pass (KTD-7) — without it,
+/// callers would resolve the healed-vs-exhausted distinction inconsistently.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DriveTerminal {
+    /// A pass concluded cleanly (possibly after re-polls) — nothing is reported.
+    Resolved,
+    /// The re-poll budget ran out with the pass still inconclusive — the live
+    /// runner records a reconcile-advised condition.
+    Exhausted,
+}
+
+/// A driven poll pass's result: fill deltas accumulated across the pass and its
+/// re-polls (each already exactly-once via the ledger's per-OrdNo watermarks +
+/// execno dedup), plus the terminal state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DrivenOutcome {
+    /// Executions to emit, in observation order across attempts.
+    pub deltas: Vec<FillDelta>,
+    /// How the drive ended.
+    pub terminal: DriveTerminal,
+}
+
+impl DrivenOutcome {
+    /// Whether the drive exhausted its budget still inconclusive.
+    pub fn exhausted(&self) -> bool {
+        self.terminal == DriveTerminal::Exhausted
+    }
+}
+
+/// Run a poll pass and, on `reconcile_needed`, re-poll with bounded backoff
+/// (R9/KTD-7). Shares the caller's single `pacer` — constructing a second pacer
+/// here could jointly exceed t0425's 2/s gateway cap (IGW00201). Any
+/// inconclusive cause (truncation, regression, unresolvable row, request
+/// failure) consumes the same attempt budget — a regression during a re-poll
+/// counts toward exhaustion rather than restarting it.
+pub async fn drive_poll_pass<F: T0425Fetcher>(
+    fetcher: &F,
+    ledger: &Mutex<FillLedger>,
+    pacer: &Pacer,
+) -> DrivenOutcome {
+    let mut pass = poll_open_orders(fetcher, ledger, pacer).await;
+    let mut deltas = std::mem::take(&mut pass.deltas);
+    let mut attempts = 0u32;
+    while pass.reconcile_needed {
+        if attempts >= DRIVE_MAX_REPOLLS {
+            return DrivenOutcome {
+                deltas,
+                terminal: DriveTerminal::Exhausted,
+            };
+        }
+        attempts += 1;
+        tokio::time::sleep(DRIVE_BACKOFF * attempts).await;
+        pass = poll_open_orders(fetcher, ledger, pacer).await;
+        deltas.extend(std::mem::take(&mut pass.deltas));
+    }
+    DrivenOutcome {
+        deltas,
+        terminal: DriveTerminal::Resolved,
+    }
 }
 
 #[cfg(test)]
@@ -419,6 +530,234 @@ mod tests {
         let out = poll_open_orders(&Never, &led, &poll_pacer()).await;
         assert!(out.deltas.is_empty());
         assert!(!out.reconcile_needed);
+    }
+
+    // --- bounded reconcile drive (data-fidelity U7, R9/KTD-7) ---
+
+    /// Serves a scripted sequence of responses; the last repeats forever. Counts
+    /// calls so tests can assert the drive's attempt budget.
+    struct ScriptedFetcher {
+        responses: Mutex<std::collections::VecDeque<T0425Response>>,
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl ScriptedFetcher {
+        fn new(responses: Vec<T0425Response>) -> Self {
+            assert!(!responses.is_empty());
+            ScriptedFetcher {
+                responses: Mutex::new(responses.into()),
+                calls: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+        fn calls(&self) -> usize {
+            self.calls.load(std::sync::atomic::Ordering::SeqCst)
+        }
+    }
+
+    #[async_trait]
+    impl T0425Fetcher for ScriptedFetcher {
+        async fn inquiry_symbol(&self, _symbol: &str) -> AdapterResult<T0425Response> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let mut q = self.responses.lock().unwrap();
+            Ok(if q.len() > 1 {
+                q.pop_front().unwrap()
+            } else {
+                q.front().cloned().unwrap()
+            })
+        }
+    }
+
+    /// AE4 (resolved arm): a pass that truncates once then completes on the
+    /// re-poll resolves — the deltas emit and nothing is left to report.
+    #[tokio::test]
+    async fn drive_resolves_a_transient_truncation() {
+        let led = ledger_with_order("O-D1", 100, 60_000, "1001");
+        let fetcher = ScriptedFetcher::new(vec![
+            resp("NEXT", vec![]),
+            resp("", vec![row("1001", "", "매수", "100", "60000", "40", "60")]),
+        ]);
+        let out = drive_poll_pass(&fetcher, &led, &poll_pacer()).await;
+        assert_eq!(out.terminal, DriveTerminal::Resolved);
+        assert_eq!(out.deltas.len(), 1, "the re-poll's fill emits from the drive");
+        assert_eq!(out.deltas[0].qty, 40);
+        assert_eq!(fetcher.calls(), 2, "one re-poll healed it");
+    }
+
+    /// AE4 (exhausted arm): truncation persisting through the whole budget ends
+    /// Exhausted after exactly 1 + DRIVE_MAX_REPOLLS attempts.
+    #[tokio::test]
+    async fn drive_exhausts_on_persistent_truncation() {
+        let led = ledger_with_order("O-D2", 100, 60_000, "1001");
+        let fetcher = ScriptedFetcher::new(vec![resp("NEXT", vec![])]);
+        let out = drive_poll_pass(&fetcher, &led, &poll_pacer()).await;
+        assert_eq!(out.terminal, DriveTerminal::Exhausted);
+        assert!(out.deltas.is_empty());
+        assert_eq!(
+            fetcher.calls() as u32,
+            1 + DRIVE_MAX_REPOLLS,
+            "the budget is bounded and consumed exactly once"
+        );
+    }
+
+    /// A regression row during a re-poll counts toward exhaustion rather than
+    /// restarting the budget: mixed inconclusive causes (truncation, then
+    /// regressions) still end after 1 + DRIVE_MAX_REPOLLS attempts.
+    #[tokio::test]
+    async fn regression_counts_toward_exhaustion_not_a_reset() {
+        let led = ledger_with_order("O-D3", 100, 60_000, "1001");
+        // Pre-establish a watermark of 50 on OrdNo 1001.
+        lock(&led).apply(FillObservation::poll("1001", 50, 60_000, false));
+        let fetcher = ScriptedFetcher::new(vec![
+            resp("NEXT", vec![]), // attempt 1: truncated
+            // Attempts 2..: cheqty 20 < watermark 50 — a cumulative regression.
+            resp("", vec![row("1001", "", "매수", "100", "60000", "20", "80")]),
+        ]);
+        let out = drive_poll_pass(&fetcher, &led, &poll_pacer()).await;
+        assert_eq!(out.terminal, DriveTerminal::Exhausted);
+        assert!(out.deltas.is_empty(), "a regression never emits");
+        assert_eq!(
+            fetcher.calls() as u32,
+            1 + DRIVE_MAX_REPOLLS,
+            "the regression consumed budget instead of resetting it"
+        );
+    }
+
+    /// Exactly-once across a drive: a fill observed on the first pass and
+    /// re-observed (same cumulative) on a re-poll emits once — the per-OrdNo
+    /// watermark + execno dedup cover the drive's re-poll path explicitly.
+    #[tokio::test]
+    async fn fills_reobserved_during_a_drive_emit_once() {
+        let led = ledger_with_order("O-D4", 100, 60_000, "1001");
+        // Every pass carries the SAME cumulative fill (40) plus a garbage-cheqty
+        // row that keeps the pass inconclusive so the drive re-polls.
+        let inconclusive = resp(
+            "",
+            vec![
+                row("1001", "", "매수", "100", "60000", "40", "60"),
+                row("1001", "", "매수", "100", "60000", "N/A", "60"),
+            ],
+        );
+        let fetcher = ScriptedFetcher::new(vec![inconclusive]);
+        let out = drive_poll_pass(&fetcher, &led, &poll_pacer()).await;
+        assert_eq!(out.terminal, DriveTerminal::Exhausted, "the garbage row exhausts the drive");
+        assert_eq!(out.deltas.len(), 1, "the re-observed cumulative emits exactly once");
+        assert_eq!(out.deltas[0].qty, 40);
+    }
+
+    /// A clean pass never re-polls — the drive is free when nothing is wrong.
+    #[tokio::test]
+    async fn clean_pass_makes_no_repolls() {
+        let led = ledger_with_order("O-D5", 100, 60_000, "1001");
+        let fetcher = ScriptedFetcher::new(vec![resp(
+            "",
+            vec![row("1001", "", "매수", "100", "60000", "40", "60")],
+        )]);
+        let out = drive_poll_pass(&fetcher, &led, &poll_pacer()).await;
+        assert_eq!(out.terminal, DriveTerminal::Resolved);
+        assert_eq!(fetcher.calls(), 1, "a conclusive pass is not re-polled");
+    }
+
+    // --- U2: pending-reconcile set drive union (R1/R2/R3, AE1) ---
+
+    /// Records every symbol it is asked to poll, and serves one scripted response
+    /// per call (last repeats). Lets the union/scan-tracking be asserted directly.
+    struct RecordingFetcher {
+        symbols: Mutex<Vec<String>>,
+        resp: T0425Response,
+    }
+    impl RecordingFetcher {
+        fn new(resp: T0425Response) -> Self {
+            RecordingFetcher { symbols: Mutex::new(Vec::new()), resp }
+        }
+        fn polled(&self) -> Vec<String> {
+            self.symbols.lock().unwrap().clone()
+        }
+    }
+    #[async_trait]
+    impl T0425Fetcher for RecordingFetcher {
+        async fn inquiry_symbol(&self, symbol: &str) -> AdapterResult<T0425Response> {
+            self.symbols.lock().unwrap().push(symbol.to_string());
+            Ok(self.resp.clone())
+        }
+    }
+
+    /// AE1: an unknown fill left a symbol pending on an otherwise-flat ledger; the
+    /// next drive pass polls exactly that symbol, and a completed (empty) fetch
+    /// clears it so it is not re-polled.
+    #[tokio::test]
+    async fn pending_symbol_is_polled_on_a_flat_ledger_then_cleared() {
+        let led = Mutex::new(FillLedger::new());
+        lock(&led).record_pending_symbol("000660");
+        let fetcher = RecordingFetcher::new(resp("", vec![]));
+        let out = poll_open_orders(&fetcher, &led, &poll_pacer()).await;
+        assert_eq!(fetcher.polled(), vec!["000660".to_string()], "the drive polls the pending symbol");
+        assert!(!out.reconcile_needed);
+        assert!(!lock(&led).has_pending(), "a completed fetch clears the pending symbol");
+    }
+
+    /// The pending symbol unions with (and dedups against) the open symbols.
+    #[tokio::test]
+    async fn pending_unions_with_open_symbols() {
+        // Open order on 005930; pending on 000660 → both polled once, no dup.
+        let led = ledger_with_order("O-U", 100, 60_000, "1001");
+        lock(&led).record_pending_symbol("000660");
+        lock(&led).record_pending_symbol("005930"); // already open → dedup in the union
+        let fetcher = RecordingFetcher::new(resp("", vec![]));
+        poll_open_orders(&fetcher, &led, &poll_pacer()).await;
+        let mut polled = fetcher.polled();
+        polled.sort();
+        assert_eq!(polled, vec!["000660".to_string(), "005930".to_string()], "union polls each symbol once");
+    }
+
+    /// R2: a pending symbol whose fetch errors is re-inserted (pending again next
+    /// pass); an open order is unaffected.
+    #[tokio::test]
+    async fn errored_pending_symbol_reinserts() {
+        struct ErrFetcher;
+        #[async_trait]
+        impl T0425Fetcher for ErrFetcher {
+            async fn inquiry_symbol(&self, _s: &str) -> AdapterResult<T0425Response> {
+                Err(crate::error::AdapterError::Ingest("boom".into()))
+            }
+        }
+        let led = Mutex::new(FillLedger::new());
+        lock(&led).record_pending_symbol("000660");
+        let out = poll_open_orders(&ErrFetcher, &led, &poll_pacer()).await;
+        assert!(out.reconcile_needed);
+        assert!(lock(&led).has_pending(), "an errored pending symbol re-inserts for the next pass");
+        assert_eq!(lock(&led).take_pending_symbols(), vec!["000660".to_string()]);
+    }
+
+    /// KTD1 no-self-sustain: a pending symbol whose poll response contains only a
+    /// FOREIGN (unknown) order clears — the completed scan is the reconcile, and the
+    /// poll path never re-inserts, so the loop idles next pass.
+    #[tokio::test]
+    async fn pending_symbol_with_only_a_foreign_order_clears_no_reinsert() {
+        let led = Mutex::new(FillLedger::new()); // flat: no tracked orders
+        lock(&led).record_pending_symbol("000660");
+        // A foreign resting order (ordno 7777 unknown to the ledger, no recon match).
+        let fetcher = RecordingFetcher::new(resp("", vec![row("7777", "", "매수", "100", "60000", "0", "100")]));
+        let out = poll_open_orders(&fetcher, &led, &poll_pacer()).await;
+        assert!(out.reconcile_needed, "an unknown order flags reconcile");
+        assert!(
+            !lock(&led).has_pending(),
+            "the completed scan clears the symbol; a foreign order must not self-sustain the pending set"
+        );
+    }
+
+    /// R4/R2: a pending-only symbol whose page truncates is NOT cleared — it stays
+    /// owed a scan so the next pass retries it (a truncated page concludes nothing,
+    /// and on a flat ledger the drive's re-poll has no open symbol to re-fetch it).
+    #[tokio::test]
+    async fn truncated_pending_symbol_stays_pending() {
+        let led = Mutex::new(FillLedger::new());
+        lock(&led).record_pending_symbol("000660");
+        // A truncated page (non-empty cts_ordno) for the pending symbol.
+        let fetcher = RecordingFetcher::new(resp("NEXT", vec![]));
+        let out = poll_open_orders(&fetcher, &led, &poll_pacer()).await;
+        assert!(out.reconcile_needed, "truncation flags reconcile");
+        assert!(lock(&led).has_pending(), "a truncated pending symbol stays owed a scan");
+        assert_eq!(lock(&led).take_pending_symbols(), vec!["000660".to_string()]);
     }
 
     /// Partial then full fill across two polls → two deltas, second terminal.

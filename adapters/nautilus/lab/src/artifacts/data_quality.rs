@@ -1,6 +1,7 @@
 //! The data-quality report (KTD2/KTD4, R7, R14, AE3, AE4) — coverage gaps,
-//! shallow-history symbols, the adjustment-basis splice flag, approximated-fill
-//! counts, reconcile-advised conditions (live), and the resolved universe snapshot.
+//! shallow-history symbols, the detected per-symbol adjustment-basis shifts,
+//! approximated-fill counts, reconcile-advised conditions (live), and the resolved
+//! universe snapshot.
 //! Every field is typed (enums + counts); the one free-text carrier (`observations`)
 //! is scrubbed at write time (KTD2).
 
@@ -68,9 +69,12 @@ pub struct DataQualityReport {
     pub coverage_gaps: Vec<CoverageGapRecord>,
     /// Symbols whose minute history is shallower than the requested range (AE4).
     pub shallow_history_symbols: Vec<String>,
-    /// Whether the daily catalog used adjusted prices — a documented adjustment-basis
-    /// splice limitation the agent should discount (flag-only this increment).
-    pub adjustment_basis_splice: bool,
+    /// Symbols in the run's selected universe with a DETECTED, unhealed
+    /// adjustment-basis shift (the ingest checkpoint's shifted marks intersected
+    /// with the run's selection). A clean catalog reports none — the agent
+    /// discounts only runs whose universe intersects this list, never blanket.
+    /// Replaces the old catalog-wide `adjustment_basis_splice` bool.
+    pub adjustment_basis_shift_symbols: Vec<String>,
     /// The number of fills emitted at an approximated price (KTD4/R14): limit-price
     /// fallbacks plus beyond-first poll partials. The agent never reads these as exact.
     pub price_approximated_fills: u64,
@@ -87,11 +91,14 @@ pub struct DataQualityReport {
 
 impl DataQualityReport {
     /// A backtest data-quality report: no live-only fields.
-    pub fn backtest(universe_snapshot: Vec<String>, adjustment_basis_splice: bool) -> Self {
+    pub fn backtest(
+        universe_snapshot: Vec<String>,
+        adjustment_basis_shift_symbols: Vec<String>,
+    ) -> Self {
         DataQualityReport {
             coverage_gaps: Vec::new(),
             shallow_history_symbols: Vec::new(),
-            adjustment_basis_splice,
+            adjustment_basis_shift_symbols,
             price_approximated_fills: 0,
             reconcile_advised: Vec::new(),
             universe_snapshot,

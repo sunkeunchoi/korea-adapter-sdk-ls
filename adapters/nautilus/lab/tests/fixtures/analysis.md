@@ -24,10 +24,15 @@ restarting. It analyzes the baseline backtest fixture run._
   emitted `breakout → order_placed → time_exit`, then an end-of-session summary. No
   candidate was rejected in this fixture, so the gap filter's selectivity is untested
   here.
-- **Data quality (`data_quality.json`):** `adjustment_basis_splice = true` — the
-  daily catalog is on an adjusted-price basis, a documented limitation to discount if
-  a splice falls in-range. `price_approximated_fills = 0` (a backtest emits exact
-  fills). No reconcile-advised conditions (backtest).
+- **Data quality (`data_quality.json`):** `adjustment_basis_shift_symbols = []` —
+  no symbol in this run's universe has a detected, unhealed adjustment-basis shift,
+  so no discounting applies. Discount **only** runs whose universe intersects a
+  non-empty list (those symbols' in-range daily history mixes two price bases until
+  the next accumulate run heals them); never discount blanket-style on this field.
+  Runs whose manifest `catalog_fingerprint` predates a checkpoint re-base event
+  reference a superseded catalog — treat them as non-comparable with post-re-base
+  runs rather than re-analyzing them. `price_approximated_fills = 0` (a backtest
+  emits exact fills). No reconcile-advised conditions (backtest).
 
 ## Proposed change for turn 2
 

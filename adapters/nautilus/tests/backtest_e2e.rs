@@ -15,7 +15,7 @@ use nautilus_backtest::config::{BacktestEngineConfig, SimulatedVenueConfig};
 use nautilus_backtest::engine::BacktestEngine;
 use nautilus_backtest::result::BacktestResult;
 use nautilus_common::actor::DataActor;
-use nautilus_ls::ingest::{BarKind, IngestConfig, Ingestor};
+use nautilus_ls::ingest::{BarKind, IngestConfig, Ingestor, DEFAULT_OVERLAP_DAYS};
 use nautilus_ls::instruments::{InstrumentDomain, InstrumentProvider};
 use nautilus_model::data::{Bar, BarType, Data};
 use nautilus_model::enums::{AccountType, BookType, OmsType, OrderSide};
@@ -182,6 +182,7 @@ async fn build_catalog() -> (tempfile::TempDir, std::path::PathBuf) {
         sdate: "20240102".to_string(),
         edate: "20240105".to_string(),
         adjusted_prices: true,
+        overlap_days: DEFAULT_OVERLAP_DAYS,
     };
     let mut ingestor = Ingestor::new(sdk, config);
     ingestor

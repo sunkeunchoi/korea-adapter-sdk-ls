@@ -573,6 +573,282 @@ async fn price_only_remodify_keeps_the_reduced_quantity() {
     );
 }
 
+/// Mount a t0425 responder that truncates (non-empty `cts_ordno`) the first
+/// `truncate_n` calls, then serves a complete page with `rows` — the reconcile
+/// drive's transient-flakiness shape (AE4).
+async fn mount_t0425_flaky(server: &MockServer, truncate_n: usize, rows: serde_json::Value) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+    let calls = Arc::new(AtomicUsize::new(0));
+    Mock::given(method("POST"))
+        .and(path(ACCNO_PATH))
+        .and(header("tr_cd", "t0425"))
+        .respond_with(move |_req: &wiremock::Request| {
+            let n = calls.fetch_add(1, Ordering::SeqCst);
+            let cts = if n < truncate_n { "NEXT" } else { "" };
+            ok_json(serde_json::json!({
+                "rsp_cd": "00000",
+                "t0425OutBlock": { "tqty": "0", "tcheqty": "0", "tordrem": "0", "cts_ordno": cts },
+                "t0425OutBlock1": if cts.is_empty() { rows.clone() } else { serde_json::json!([]) }
+            }))
+        })
+        .mount(server)
+        .await;
+}
+
+/// AE4 (resolved arm) / R9: a poll pass that truncates once then completes on the
+/// drive's re-poll self-heals — the fill emits and the outcome is Resolved (the
+/// run's report carries no reconcile-advised condition).
+#[tokio::test]
+async fn transient_truncation_self_heals_inside_poll_once() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    mount_order_ok(&server, "CSPAT00601", "1001", "").await;
+    let order = test_order("O-DRV-1", 10, 60_000);
+    client.submit_order(submit_cmd(&order)).unwrap();
+    drain_submit_accept(&mut rx).await;
+
+    mount_t0425_flaky(&server, 1, serde_json::json!([t0425_row("1001", "", "4", "6", "체결")])).await;
+    let outcome = client.poll_once().await;
+    assert!(!outcome.exhausted(), "one re-poll resolves the transient truncation");
+    assert_eq!(outcome.deltas.len(), 1);
+    assert!(matches!(next_order_event(&mut rx).await, OrderEventAny::Filled(_)));
+    assert_eq!(count_requests(&server, "t0425").await, 2, "pass + one re-poll");
+}
+
+/// AE4 (exhausted arm) / R9: truncation persisting through the bounded drive
+/// ends Exhausted — the condition the live runner records.
+#[tokio::test]
+async fn persistent_truncation_exhausts_the_drive() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    mount_order_ok(&server, "CSPAT00601", "1001", "").await;
+    let order = test_order("O-DRV-2", 10, 60_000);
+    client.submit_order(submit_cmd(&order)).unwrap();
+    drain_submit_accept(&mut rx).await;
+
+    mount_t0425_flaky(&server, usize::MAX, serde_json::json!([])).await;
+    let outcome = client.poll_once().await;
+    assert!(outcome.exhausted(), "persistent truncation exhausts the bounded drive");
+    assert!(outcome.deltas.is_empty());
+    assert_eq!(
+        count_requests(&server, "t0425").await,
+        3,
+        "pass + DRIVE_MAX_REPOLLS re-polls, then stop — the budget is bounded"
+    );
+}
+
+fn cancel_cmd(client_id: &str) -> CancelOrder {
+    CancelOrder::new(
+        TraderId::from("LS-TRADER-001"),
+        None,
+        StrategyId::from("S-ORB-1"),
+        InstrumentId::from("005930.XKRX"),
+        ClientOrderId::from(client_id),
+        None,
+        UUID4::new(),
+        UnixNanos::default(),
+        None,
+        None,
+    )
+}
+
+/// AE3 / R8: an order of quantity 10 with 4 filled per the ledger cancels with
+/// quantity 6 — the remaining, never the original.
+#[tokio::test]
+async fn cancel_sends_the_remaining_quantity() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    mount_order_ok(&server, "CSPAT00601", "1001", "").await;
+    let order = test_order("O-REM-1", 10, 60_000);
+    client.submit_order(submit_cmd(&order)).unwrap();
+    drain_submit_accept(&mut rx).await;
+
+    // 4 of 10 fill via the poll lane.
+    mount_t0425(&server, "", serde_json::json!([t0425_row("1001", "", "4", "6", "체결")])).await;
+    client.poll_once().await;
+    assert!(matches!(next_order_event(&mut rx).await, OrderEventAny::Filled(_)));
+
+    mount_order_ok(&server, "CSPAT00801", "1002", "1001").await;
+    client.cancel_order(cancel_cmd("O-REM-1")).unwrap();
+    assert!(matches!(next_order_event(&mut rx).await, OrderEventAny::Canceled(_)));
+
+    let body = last_request_body(&server, "CSPAT00801").await;
+    assert_eq!(
+        body["CSPAT00801InBlock1"]["OrdQty"].as_i64(),
+        Some(6),
+        "the cancel carries the remaining 6, not the original 10"
+    );
+}
+
+/// R8 second-mutation coverage: modify quantity down, then a partial fill, then
+/// cancel — remaining reads the ledger-MAINTAINED quantity, not the retained
+/// order (this ordering is what exposes a stale-read regression: the retained
+/// OrderAny still says 10 → 10 − 2 = 8, the maintained state says 5 − 2 = 3).
+#[tokio::test]
+async fn cancel_after_modify_down_and_fill_uses_maintained_qty() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    mount_order_ok(&server, "CSPAT00601", "1001", "").await;
+    let order = test_order("O-REM-2", 10, 60_000);
+    client.submit_order(submit_cmd(&order)).unwrap();
+    drain_submit_accept(&mut rx).await;
+
+    // Modify quantity 10 → 5 (chains OrdNo 1002).
+    mount_order_ok(&server, "CSPAT00701", "1002", "1001").await;
+    client
+        .modify_order(ModifyOrder::new(
+            TraderId::from("LS-TRADER-001"), None, StrategyId::from("S-ORB-1"),
+            InstrumentId::from("005930.XKRX"), ClientOrderId::from("O-REM-2"), None,
+            Some(Quantity::from(5)), Some(Price::from("60000")), None,
+            UUID4::new(), UnixNanos::default(), None, None,
+        ))
+        .unwrap();
+    assert!(matches!(next_order_event(&mut rx).await, OrderEventAny::Updated(_)));
+
+    // 2 fill on the new OrdNo.
+    mount_t0425(&server, "", serde_json::json!([t0425_row("1002", "1001", "2", "3", "체결")])).await;
+    client.poll_once().await;
+    assert!(matches!(next_order_event(&mut rx).await, OrderEventAny::Filled(_)));
+
+    mount_order_ok(&server, "CSPAT00801", "1003", "1002").await;
+    client.cancel_order(cancel_cmd("O-REM-2")).unwrap();
+    assert!(matches!(next_order_event(&mut rx).await, OrderEventAny::Canceled(_)));
+
+    let body = last_request_body(&server, "CSPAT00801").await;
+    assert_eq!(
+        body["CSPAT00801InBlock1"]["OrdQty"].as_i64(),
+        Some(3),
+        "remaining = maintained 5 − 2 filled = 3 (a stale retained-order read would say 8)"
+    );
+}
+
+/// AE2 / R4: remaining 0 (a modify dropped quantity to the filled total) skips the
+/// cancel send, but is NOT stranded — a non-terminal cancel-rejection is emitted
+/// (the FSM exits PENDING_CANCEL), the ledger entry closes (open set clears so the
+/// loop idles), and reconciliation is armed for the symbol. No synthetic terminal
+/// event, no CSPAT00801 request.
+#[tokio::test]
+async fn cancel_with_zero_remaining_rejects_and_arms_reconcile() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    mount_order_ok(&server, "CSPAT00601", "1001", "").await;
+    let order = test_order("O-REM-0", 10, 60_000);
+    client.submit_order(submit_cmd(&order)).unwrap();
+    drain_submit_accept(&mut rx).await;
+
+    // 4 fill, then a modify down to exactly the filled total (4) → remaining 0.
+    mount_t0425(&server, "", serde_json::json!([t0425_row("1001", "", "4", "6", "체결")])).await;
+    client.poll_once().await;
+    assert!(matches!(next_order_event(&mut rx).await, OrderEventAny::Filled(_)));
+    mount_order_ok(&server, "CSPAT00701", "1002", "1001").await;
+    client
+        .modify_order(ModifyOrder::new(
+            TraderId::from("LS-TRADER-001"), None, StrategyId::from("S-ORB-1"),
+            InstrumentId::from("005930.XKRX"), ClientOrderId::from("O-REM-0"), None,
+            Some(Quantity::from(4)), Some(Price::from("60000")), None,
+            UUID4::new(), UnixNanos::default(), None, None,
+        ))
+        .unwrap();
+    assert!(matches!(next_order_event(&mut rx).await, OrderEventAny::Updated(_)));
+
+    let cancels_before = count_requests(&server, "CSPAT00801").await;
+    let t0425_before = count_requests(&server, "t0425").await;
+    client.cancel_order(cancel_cmd("O-REM-0")).unwrap();
+    // A non-terminal cancel-rejection is emitted (never a synthetic Canceled).
+    match next_order_event(&mut rx).await {
+        OrderEventAny::CancelRejected(_) => {}
+        other => panic!("remaining-0 cancel must emit CancelRejected (not stranded), got {other:?}"),
+    }
+    // No CSPAT00801 request reached the venue.
+    assert_eq!(
+        count_requests(&server, "CSPAT00801").await,
+        cancels_before,
+        "no CSPAT00801 request was sent"
+    );
+    // Reconciliation is armed for the symbol: the next drive scans it exactly once...
+    client.poll_once().await;
+    let after_first = count_requests(&server, "t0425").await;
+    assert_eq!(after_first, t0425_before + 1, "the pending symbol is scanned once");
+    // ...then the ledger is flat (entry closed) and the loop idles — no further poll.
+    client.poll_once().await;
+    assert_eq!(
+        count_requests(&server, "t0425").await,
+        after_first,
+        "the closed entry clears the open set → the loop idles"
+    );
+}
+
+/// AE2 / R4: a cancel naming an order the ledger never tracked emits an ids-based
+/// non-terminal cancel-rejection (built from the command, no fabricated OrderAny)
+/// and arms reconciliation for the command's symbol. No CSPAT00801 request.
+#[tokio::test]
+async fn cancel_of_unknown_order_rejects_and_arms_reconcile() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    let cancels_before = count_requests(&server, "CSPAT00801").await;
+    let t0425_before = count_requests(&server, "t0425").await;
+    // O-GHOST was never submitted — the ledger does not know it.
+    client.cancel_order(cancel_cmd("O-GHOST")).unwrap();
+    match next_order_event(&mut rx).await {
+        OrderEventAny::CancelRejected(_) => {}
+        other => panic!("an unknown-order cancel must emit CancelRejected, got {other:?}"),
+    }
+    assert_eq!(
+        count_requests(&server, "CSPAT00801").await,
+        cancels_before,
+        "no CSPAT00801 request was sent for an unknown order"
+    );
+    // The command's symbol (005930) is armed pending: the next drive scans it once.
+    mount_t0425(&server, "", serde_json::json!([])).await;
+    client.poll_once().await;
+    assert_eq!(
+        count_requests(&server, "t0425").await,
+        t0425_before + 1,
+        "the command's symbol is scanned once from the pending set"
+    );
+}
+
+/// R8: an order with no fill info cancels at full quantity (the fallback —
+/// refusing to cancel is the one unacceptable failure mode).
+#[tokio::test]
+async fn cancel_with_no_fill_info_sends_full_quantity() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    mount_order_ok(&server, "CSPAT00601", "1001", "").await;
+    let order = test_order("O-REM-F", 10, 60_000);
+    client.submit_order(submit_cmd(&order)).unwrap();
+    drain_submit_accept(&mut rx).await;
+
+    mount_order_ok(&server, "CSPAT00801", "1002", "1001").await;
+    client.cancel_order(cancel_cmd("O-REM-F")).unwrap();
+    assert!(matches!(next_order_event(&mut rx).await, OrderEventAny::Canceled(_)));
+
+    let body = last_request_body(&server, "CSPAT00801").await;
+    assert_eq!(body["CSPAT00801InBlock1"]["OrdQty"].as_i64(), Some(10), "unfilled → full quantity");
+}
+
 /// U4 / KTD6: a cleanly-rejected cancel emits **cancel-rejected**, not canceled —
 /// the order stays open.
 #[tokio::test]

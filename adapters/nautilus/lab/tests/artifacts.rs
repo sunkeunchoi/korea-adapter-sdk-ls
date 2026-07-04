@@ -81,7 +81,7 @@ fn writes_four_artifacts_and_finalizes() {
     let params = OrbParams::default();
     writer.write_manifest(&manifest(&id, RunSource::Backtest, params.clone())).unwrap();
     writer.write_performance(&PerformanceReport::assemble(vec![trade("005930.XKRX", 100.0, 60_000.0)], 1_000_000.0)).unwrap();
-    writer.write_data_quality(&DataQualityReport::backtest(vec!["005930.XKRX".into()], true)).unwrap();
+    writer.write_data_quality(&DataQualityReport::backtest(vec!["005930.XKRX".into()], vec!["005930.XKRX".into()])).unwrap();
     writer.write_decisions(&[telemetry_envelope()]).unwrap();
     let run_dir = writer.finalize().unwrap();
 
@@ -211,11 +211,13 @@ fn universe_snapshot_round_trips() {
     let id = fixed_run_id(RunSource::Backtest, 0);
     let w = RunWriter::new(data, &id).unwrap();
     let snapshot = vec!["005930.XKRX".to_string(), "000660.XKRX".to_string()];
-    w.write_data_quality(&DataQualityReport::backtest(snapshot.clone(), false)).unwrap();
+    let shifted = vec!["000660.XKRX".to_string()];
+    w.write_data_quality(&DataQualityReport::backtest(snapshot.clone(), shifted.clone())).unwrap();
     let run_dir = w.finalize().unwrap();
 
     let d: DataQualityReport = serde_json::from_str(&std::fs::read_to_string(run_dir.join(DATA_QUALITY_FILE)).unwrap()).unwrap();
     assert_eq!(d.universe_snapshot, snapshot);
+    assert_eq!(d.adjustment_basis_shift_symbols, shifted, "per-symbol shift list round-trips (R7)");
 }
 
 /// Security: a run seeded with an account-number-bearing error string yields
@@ -228,7 +230,7 @@ fn free_text_observations_are_scrubbed() {
     let id = fixed_run_id(RunSource::Live, 0);
     let w = RunWriter::new(data, &id).unwrap();
 
-    let mut report = DataQualityReport::backtest(vec!["005930.XKRX".into()], false);
+    let mut report = DataQualityReport::backtest(vec!["005930.XKRX".into()], Vec::new());
     report.observations = vec!["poll error on account 20187511401: rejected".to_string()];
     w.write_data_quality(&report).unwrap();
     let run_dir = w.finalize().unwrap();

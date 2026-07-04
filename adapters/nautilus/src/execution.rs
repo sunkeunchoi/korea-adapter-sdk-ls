@@ -37,7 +37,7 @@ use tokio::sync::mpsc;
 use crate::error::{AdapterError, AdapterResult};
 use crate::orders::ledger::{FillDelta, FillLedger};
 use crate::orders::map::{classify_reconcile, classify_submit_error, ReconcileEvent, SubmitAction};
-use crate::orders::poll::{poll_open_orders, poll_pacer};
+use crate::orders::poll::{drive_poll_pass, poll_pacer, DrivenOutcome};
 use crate::ws::rows::OrderEventMsg;
 use crate::ws::supervisor::{RowKind, SubSpec, WsSupervisor};
 use crate::KRX_VENUE;
@@ -65,6 +65,9 @@ pub struct LsExecClient {
     tasks: Vec<tokio::task::JoinHandle<()>>,
     /// Last observed order-lane WS drop count (AE6 reconcile trigger).
     last_drop_count: Arc<AtomicU64>,
+    /// SC-lane unknown-fill trigger (KTD-7): set by the SC consumer, consumed by
+    /// the poll loop — arms the reconcile drive on the next pass.
+    reconcile_armed: Arc<AtomicBool>,
 }
 
 impl LsExecClient {
@@ -100,6 +103,7 @@ impl LsExecClient {
             sc_supervisor: None,
             tasks: Vec::new(),
             last_drop_count: Arc::new(AtomicU64::new(0)),
+            reconcile_armed: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -183,13 +187,16 @@ impl LsExecClient {
         }
     }
 
-    /// Run a single t0425 poll pass and emit any derived fills (KTD5). A
-    /// deterministic seam for tests + operator diagnostics; the live poll loop (U3)
-    /// calls the same primitives on its cadence. Returns the pass outcome.
-    pub async fn poll_once(&self) -> crate::orders::poll::PollOutcome {
+    /// Run a single DRIVEN t0425 poll pass and emit any derived fills (KTD5,
+    /// KTD-7): an inconclusive pass re-polls with bounded backoff inside the
+    /// shared primitive, so transient flakiness self-heals here too. A
+    /// deterministic seam for tests + operator diagnostics; the live poll loop
+    /// (U3) calls the same primitive on its cadence. Returns the driven outcome
+    /// — the live runner records a reconcile condition only on `Exhausted`.
+    pub async fn poll_once(&self) -> DrivenOutcome {
         let pacer = poll_pacer();
-        let outcome = poll_open_orders(&self.sdk, &self.ledger, &pacer).await;
-        emit_fill_deltas(&self.ledger, &self.emitter, self.clock, outcome.deltas.clone());
+        let outcome = drive_poll_pass(&self.sdk, &self.ledger, &pacer).await;
+        emit_fill_deltas(&self.ledger, &self.emitter, self.clock, &outcome.deltas);
         outcome
     }
 
@@ -263,14 +270,16 @@ fn lock_ledger(ledger: &Mutex<FillLedger>) -> std::sync::MutexGuard<'_, FillLedg
 /// Emit each fill delta through the ledger's retained emission context (the only
 /// component alive to hold an `&OrderAny`, KTD1). Poll-derived fills carry no
 /// execution price (KTD5), so they emit at the delta's `price` (the order limit).
+/// Borrows the deltas (emission only reads them) and holds the ledger lock once
+/// across the loop — the body never mutates the ledger.
 fn emit_fill_deltas(
     ledger: &Mutex<FillLedger>,
     emitter: &ExecutionEventEmitter,
     clock: &'static AtomicTime,
-    deltas: Vec<FillDelta>,
+    deltas: &[FillDelta],
 ) {
+    let led = lock_ledger(ledger);
     for delta in deltas {
-        let led = lock_ledger(ledger);
         if let Some(order) = led.order(&delta.client_order_id) {
             emitter.emit_order_filled(
                 order,
@@ -295,17 +304,22 @@ async fn run_sc_consumer(
     ledger: Arc<Mutex<FillLedger>>,
     emitter: ExecutionEventEmitter,
     clock: &'static AtomicTime,
+    reconcile_armed: Arc<AtomicBool>,
 ) {
     while let Some(msg) = rx.recv().await {
         match msg {
             OrderEventMsg::Fill(obs) => {
                 let outcome = lock_ledger(&ledger).apply(obs);
                 if outcome.reconcile_needed {
+                    // Arm the reconcile drive on the poll loop's next pass
+                    // (KTD-7) — the SC lane itself never emits for an unknown
+                    // order.
+                    reconcile_armed.store(true, Ordering::SeqCst);
                     tracing::warn!(
-                        "SC fill for an unknown order — no emission; the poll lane reconciles"
+                        "SC fill for an unknown order — no emission; the poll drive reconciles"
                     );
                 }
-                emit_fill_deltas(&ledger, &emitter, clock, outcome.deltas);
+                emit_fill_deltas(&ledger, &emitter, clock, &outcome.deltas);
             }
             OrderEventMsg::Accept { ord_no, org_ord_no } => {
                 // A modify/cancel acceptance the REST ack may not have chained yet:
@@ -323,24 +337,35 @@ async fn run_sc_consumer(
     }
 }
 
-/// The authoritative poll loop (U3): while any order is open, run a paced t0425 pass
-/// and emit the derived fills. Idles when flat. Fills emit even when the SC lane is
-/// silent (AE3).
+/// The authoritative poll loop (U3): while any order is open (or the SC lane
+/// armed a reconcile), run a paced, DRIVEN t0425 pass and emit the derived
+/// fills. The drive (KTD-7) self-heals transient inconclusiveness inside the
+/// pass; only exhaustion is left standing for the live runner's report. Idles
+/// when flat. Fills emit even when the SC lane is silent (AE3).
 async fn run_poll_loop(
     sdk: LsSdk,
     ledger: Arc<Mutex<FillLedger>>,
     emitter: ExecutionEventEmitter,
     clock: &'static AtomicTime,
     cadence: Duration,
+    reconcile_armed: Arc<AtomicBool>,
 ) {
     let pacer = poll_pacer();
     loop {
-        if lock_ledger(&ledger).has_open_orders() {
-            let outcome = poll_open_orders(&sdk, &ledger, &pacer).await;
-            if outcome.reconcile_needed {
-                tracing::warn!("t0425 poll pass was inconclusive (truncation/unresolved) — reconcile advised");
+        let armed = reconcile_armed.swap(false, Ordering::SeqCst);
+        // Run when the SC lane armed a wakeup, an order is open, OR a symbol is
+        // pending a reconcile scan (U2, KTD2) — a flat ledger with a consumed arm
+        // would otherwise sleep on pending symbols forever.
+        let has_work = {
+            let led = lock_ledger(&ledger);
+            led.has_open_orders() || led.has_pending()
+        };
+        if armed || has_work {
+            let outcome = drive_poll_pass(&sdk, &ledger, &pacer).await;
+            if outcome.exhausted() {
+                tracing::warn!("t0425 reconcile drive exhausted still inconclusive — reconcile advised");
             }
-            emit_fill_deltas(&ledger, &emitter, clock, outcome.deltas);
+            emit_fill_deltas(&ledger, &emitter, clock, &outcome.deltas);
         }
         tokio::time::sleep(cadence).await;
     }
@@ -455,24 +480,32 @@ struct OrderSnapshot {
     side: OrderSide,
     qty: i64,
     price: i64,
+    /// The unfilled remainder from the ledger's maintained accounting (R8): what
+    /// a cancel sends. Falls back to `qty` when the ledger has no fill info —
+    /// refusing to cancel is the one unacceptable failure mode.
+    remaining: i64,
 }
 
 fn snapshot(ledger: &Mutex<FillLedger>, client_order_id: &nautilus_model::identifiers::ClientOrderId) -> Option<OrderSnapshot> {
     let led = lock_ledger(ledger);
     let order = led.order(client_order_id)?.clone();
     let latest_ord_no = led.latest_ord_no(client_order_id)?;
+    // Read qty/price from the ledger's note_modify-maintained fields, NOT the
+    // retained OrderAny (which is emission-identity only and is never rewritten
+    // on a modify): a price-only re-modify (`cmd.quantity == None`) would
+    // otherwise fall back to the ORIGINAL quantity and silently resurrect a
+    // prior size reduction, increasing live exposure.
+    let qty = led
+        .order_qty(client_order_id)
+        .unwrap_or_else(|| order.quantity().as_f64() as i64);
     Some(OrderSnapshot {
         symbol: order.instrument_id().symbol.as_str().to_string(),
         side: order.order_side(),
-        // Read qty/price from the ledger's note_modify-maintained fields, NOT the
-        // retained OrderAny (which is emission-identity only and is never rewritten
-        // on a modify): a price-only re-modify (`cmd.quantity == None`) would
-        // otherwise fall back to the ORIGINAL quantity and silently resurrect a
-        // prior size reduction, increasing live exposure.
-        qty: led.order_qty(client_order_id).unwrap_or_else(|| order.quantity().as_f64() as i64),
         price: led
             .limit_price(client_order_id)
             .unwrap_or_else(|| order.price().map(|p| p.as_f64() as i64).unwrap_or(0)),
+        remaining: led.remaining_qty(client_order_id).unwrap_or(qty),
+        qty,
         latest_ord_no,
         order,
     })
@@ -522,9 +555,10 @@ async fn run_modify(
     }
 }
 
-/// The spawned cancel worker (U4): target the order's latest OrdNo; on ack emit
-/// OrderCanceled + forget the chain; a business rejection emits cancel-rejected
-/// (order stays open, KTD6).
+/// The spawned cancel worker (U4): target the order's latest OrdNo with the
+/// ledger-derived REMAINING quantity (R8 — never the original order quantity);
+/// on ack emit OrderCanceled + forget the chain; a business rejection emits
+/// cancel-rejected (order stays open, KTD6).
 async fn run_cancel(
     sdk: LsSdk,
     emitter: ExecutionEventEmitter,
@@ -534,11 +568,56 @@ async fn run_cancel(
 ) {
     let client_order_id = cmd.client_order_id;
     let Some(snap) = snapshot(&ledger, &client_order_id) else {
-        tracing::warn!(%client_order_id, "cancel of an unknown order — ignored (nothing resting)");
+        // The ledger never tracked this order — the adapter sent no cancel, so a
+        // truthful non-terminal cancel-rejection returns nautilus-core's FSM from
+        // PENDING_CANCEL (never a synthetic terminal event, KTD4). We have no
+        // retained `OrderAny`, so emit from the command's ids, and arm a reconcile
+        // for the command's instrument so venue truth is re-verified (R4).
+        tracing::warn!(%client_order_id, "cancel of an unknown order — nothing resting; emitting cancel-rejection + arming reconcile");
+        // Arm the reconcile before emitting so an observer that keys off the event
+        // sees the pending symbol already recorded. The command's instrument symbol
+        // is already the bare short code (no `A` prefix to invert, unlike the SC
+        // issue-code seam), so record it directly — `record_pending_symbol` trims
+        // and drops a blank (the KTD3 empty-symbol guard).
+        lock_ledger(&ledger).record_pending_symbol(cmd.instrument_id.symbol.as_str());
+        emitter.emit_order_cancel_rejected_event(
+            cmd.strategy_id,
+            cmd.instrument_id,
+            client_order_id,
+            None,
+            "cancel skipped: order unknown to the ledger (nothing resting)",
+            clock.get_time_ns(),
+        );
         return;
     };
+    if snap.remaining == 0 {
+        // Fully filled (or modified below the filled total) just before the cancel:
+        // nothing rests, so skip the send. A synthetic terminal event could mask a
+        // still-resting order (inverted-cancel risk), so emit a truthful
+        // non-terminal cancel-rejection instead — it returns the FSM from
+        // PENDING_CANCEL (the `handle_action_error` pattern) — then close the ledger
+        // entry (its venue-done state follows from the acked modify plus observed
+        // fills, reusing the terminal condition) so the open set clears and the poll
+        // loop can idle, and arm a reconcile for the symbol (R4, KTD4).
+        tracing::info!(%client_order_id, "cancel skipped: remaining quantity is 0 (nothing resting); emitting cancel-rejection + closing ledger entry");
+        // Close the venue-done entry + arm the reconcile before emitting, so an
+        // observer that keys off the event sees a flat open set and the pending
+        // symbol already recorded.
+        {
+            let mut led = lock_ledger(&ledger);
+            led.close(&client_order_id);
+            led.record_pending_symbol(&snap.symbol);
+        }
+        emitter.emit_order_cancel_rejected(
+            &snap.order,
+            Some(VenueOrderId::from(snap.latest_ord_no.as_str())),
+            "cancel skipped: remaining quantity is 0 (nothing resting)",
+            clock.get_time_ns(),
+        );
+        return;
+    }
     let isuno = format!("A{}", snap.symbol);
-    let req = CSPAT00801Request::new(&snap.latest_ord_no, &isuno, snap.qty.to_string());
+    let req = CSPAT00801Request::new(&snap.latest_ord_no, &isuno, snap.remaining.to_string());
 
     match sdk.orders().cancel(&req).await {
         Ok(resp) => {
@@ -551,7 +630,9 @@ async fn run_cancel(
             );
         }
         Err(err) => {
-            handle_action_error(OrderAction::Cancel, &sdk, &emitter, &ledger, clock, &snap, snap.qty, snap.price, &err).await;
+            // The ambiguous-action reconcile intent carries the same remaining
+            // quantity the cancel sent.
+            handle_action_error(OrderAction::Cancel, &sdk, &emitter, &ledger, clock, &snap, snap.remaining, snap.price, &err).await;
         }
     }
 }
@@ -708,6 +789,7 @@ impl ExecutionClient for LsExecClient {
             Arc::clone(&self.ledger),
             self.emitter.clone(),
             self.clock,
+            Arc::clone(&self.reconcile_armed),
         ));
         let poll = tokio::spawn(run_poll_loop(
             self.sdk.clone(),
@@ -715,6 +797,7 @@ impl ExecutionClient for LsExecClient {
             self.emitter.clone(),
             self.clock,
             self.poll_cadence,
+            Arc::clone(&self.reconcile_armed),
         ));
 
         self.sc_supervisor = Some(sc_sup);

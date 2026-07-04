@@ -23,7 +23,7 @@
 //! context** registered at submit, because every nautilus-live emit method takes
 //! `&OrderAny` and nothing else in the adapter holds one after the submit task ends.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use nautilus_model::enums::OrderSide;
 use nautilus_model::identifiers::{ClientOrderId, TradeId};
@@ -64,6 +64,10 @@ pub struct FillObservation {
     /// The SC execution number (the dedup key). `None` for a poll observation
     /// (t0425 carries no execution number).
     pub exec_no: Option<String>,
+    /// The traded symbol (bare short code, U1/KTD3), if the source carried one.
+    /// `None` for a blank/absent symbol at the `ToEvent` seam — the ledger then
+    /// records nothing pending for an unknown order (the KTD3 empty-symbol guard).
+    pub symbol: Option<String>,
 }
 
 impl FillObservation {
@@ -83,6 +87,7 @@ impl FillObservation {
             price,
             price_approximated,
             exec_no: None,
+            symbol: None,
         }
     }
 
@@ -101,7 +106,15 @@ impl FillObservation {
             price: exec_price,
             price_approximated: false,
             exec_no: Some(exec_no.into()),
+            symbol: None,
         }
+    }
+
+    /// Attach the traded symbol (U1, KTD3). A blank/absent symbol stays `None` so
+    /// the ledger's pending-reconcile set never admits an empty string.
+    pub fn with_symbol(mut self, symbol: Option<String>) -> Self {
+        self.symbol = symbol;
+        self
     }
 }
 
@@ -205,6 +218,16 @@ pub struct ReconCandidate {
 pub struct FillLedger {
     chain: OrderChain,
     entries: HashMap<ClientOrderId, Entry>,
+    /// Symbols the ledger owes a reconcile scan (U2, KTD1/KTD2): recorded when an
+    /// SC-sourced fill names an order the ledger does not know, or a cancel is
+    /// skipped ("nothing resting" / unknown order). The poll drive unions this
+    /// (drained under the lock at pass start) with [`Self::open_symbols`] so a
+    /// flat ledger still scans the affected symbol. Sorted + deduped; never admits
+    /// an empty string (KTD3). Insertion is deliberately restricted to those
+    /// sources — a poll-sourced unknown row must NOT insert, or a foreign resting
+    /// order (an operator's manual HTS order on the same account) would make the
+    /// drive self-sustaining forever.
+    pending_reconcile: BTreeSet<String>,
 }
 
 impl FillLedger {
@@ -346,6 +369,49 @@ impl FillLedger {
         syms
     }
 
+    /// Record a symbol the ledger owes a reconcile scan (U2, KTD1/KTD2). A blank
+    /// or whitespace symbol is dropped (the KTD3 empty-symbol guard — an empty
+    /// `expcode` would be the banned flat scan).
+    pub fn record_pending_symbol(&mut self, symbol: &str) {
+        let s = symbol.trim();
+        if !s.is_empty() {
+            self.pending_reconcile.insert(s.to_string());
+        }
+    }
+
+    /// Whether any symbol is pending a reconcile scan (the poll loop's cadence
+    /// gate consults this so a flat ledger with a consumed arm still wakes, KTD2).
+    pub fn has_pending(&self) -> bool {
+        !self.pending_reconcile.is_empty()
+    }
+
+    /// Drain (take) the pending-reconcile set as a snapshot under the ledger lock
+    /// at a poll pass's start (KTD2). Symbols the pass does not conclusively scan
+    /// are re-inserted via [`Self::reinsert_pending_symbols`].
+    pub fn take_pending_symbols(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pending_reconcile).into_iter().collect()
+    }
+
+    /// Re-insert pending symbols an exhausted/errored drive did not conclusively
+    /// scan (R2). Blank entries are still guarded (KTD3).
+    pub fn reinsert_pending_symbols(&mut self, symbols: impl IntoIterator<Item = String>) {
+        for s in symbols {
+            self.record_pending_symbol(&s);
+        }
+    }
+
+    /// Record the symbol of an SC-sourced observation for an order the ledger does
+    /// not know (KTD1). Poll-sourced unknown rows do NOT insert — the poll scanning
+    /// the symbol is itself the reconcile, and re-inserting from the scan would make
+    /// the set self-sustaining under a foreign resting order.
+    fn note_unknown_symbol(&mut self, obs: &FillObservation) {
+        if obs.source == FillSource::Sc {
+            if let Some(sym) = obs.symbol.as_deref() {
+                self.record_pending_symbol(sym);
+            }
+        }
+    }
+
     /// The order's limit price (the poll-derived fill basis, KTD5), if tracked.
     /// Maintained by [`Self::note_modify`], so it reflects the *current* order state
     /// after a modify — unlike the retained `OrderAny`, which is emission-identity
@@ -358,6 +424,19 @@ impl FillLedger {
     /// tracked. Reflects a modify's new quantity; the retained `OrderAny` does not.
     pub fn order_qty(&self, client_order_id: &ClientOrderId) -> Option<i64> {
         self.entries.get(client_order_id).map(|e| e.order_qty)
+    }
+
+    /// The order's remaining (unfilled) quantity: the maintained `order_qty`
+    /// minus the per-OrdNo fill-watermark sum (the chain total), clamped at zero
+    /// (a modify can reduce quantity below the already-filled total). Reads only
+    /// ledger-maintained fields — never the retained `OrderAny`, which is frozen
+    /// emission identity. `None` for an untracked order; the cancel path then
+    /// falls back to full quantity, because refusing to cancel is the one
+    /// unacceptable failure mode.
+    pub fn remaining_qty(&self, client_order_id: &ClientOrderId) -> Option<i64> {
+        self.entries
+            .get(client_order_id)
+            .map(|e| (e.order_qty - e.chain_total()).max(0))
     }
 
     /// Open orders known only by a `RECON-` venue id — U3 intent-corroboration
@@ -390,9 +469,13 @@ impl FillLedger {
         // Resolve the OrdNo to an order. An unknown OrdNo never emits — it signals a
         // reconcile (adoption is the poll loop's job, U3).
         let Some(client) = self.chain.resolve(&obs.ord_no) else {
+            // Unknown OrdNo: record the symbol pending (SC-sourced only, KTD1) so
+            // the next armed drive scans it even on a flat ledger (R1).
+            self.note_unknown_symbol(&obs);
             return ApplyOutcome::reconcile();
         };
         let Some(entry) = self.entries.get_mut(&client) else {
+            self.note_unknown_symbol(&obs);
             return ApplyOutcome::reconcile();
         };
         if entry.terminal {
@@ -653,6 +736,73 @@ mod tests {
             second.deltas[0].price_approximated,
             "a beyond-first partial is approximate — one cheprice per row"
         );
+    }
+
+    /// Remaining quantity reads ledger-maintained fields: order_qty − chain
+    /// total, tracking fills across chained OrdNos and note_modify reductions,
+    /// clamped at zero when a modify drops quantity below the filled total.
+    #[test]
+    fn remaining_qty_tracks_fills_modifies_and_clamps() {
+        let (mut led, cid) = ledger_with("O-REM", 10, 60_000, "1001");
+        assert_eq!(led.remaining_qty(&cid), Some(10), "unfilled → full quantity");
+        led.apply(FillObservation::poll("1001", 4, 60_000, false));
+        assert_eq!(led.remaining_qty(&cid), Some(6), "10 − 4 filled");
+        // Fills on a chained OrdNo count toward the chain total.
+        assert!(led.append_child("1001", "1002"));
+        led.apply(FillObservation::poll("1002", 2, 60_000, false));
+        assert_eq!(led.remaining_qty(&cid), Some(4), "per-OrdNo watermarks sum");
+        // A modify below the filled total clamps at zero, never negative.
+        led.note_modify(&cid, 3, 60_000);
+        assert_eq!(led.remaining_qty(&cid), Some(0), "qty 3 < 6 filled → clamp at 0");
+        // Untracked order → None (the caller falls back to full quantity).
+        assert_eq!(led.remaining_qty(&ClientOrderId::from("O-NOPE")), None);
+    }
+
+    /// U2/AE1: an SC-sourced fill for an unknown OrdNo records the observation's
+    /// symbol pending (so a flat ledger's next drive scans it); a poll-sourced
+    /// unknown row records NOTHING pending (KTD1 — the scan is itself the reconcile).
+    #[test]
+    fn sc_unknown_fill_records_pending_poll_does_not() {
+        let (mut led, _cid) = ledger_with("O-P1", 100, 60_000, "1001");
+        assert!(!led.has_pending());
+        // SC unknown OrdNo with a symbol → pending recorded, reconcile flagged.
+        let out = led.apply(FillObservation::sc("9999", 10, 60_000, "E9").with_symbol(Some("000660".to_string())));
+        assert!(out.reconcile_needed);
+        assert!(led.has_pending());
+        assert_eq!(led.take_pending_symbols(), vec!["000660".to_string()]);
+        assert!(!led.has_pending(), "take drains the set");
+        // Poll unknown OrdNo carrying a symbol → reconcile flagged but NOTHING pending.
+        let out = led.apply(FillObservation::poll("8888", 10, 60_000, false).with_symbol(Some("000660".to_string())));
+        assert!(out.reconcile_needed);
+        assert!(!led.has_pending(), "a poll-sourced unknown row must not self-sustain the pending set");
+    }
+
+    /// U2 (KTD3 guard): an SC unknown fill with no symbol records nothing pending.
+    #[test]
+    fn sc_unknown_fill_with_blank_symbol_records_nothing() {
+        let mut led = FillLedger::new();
+        let out = led.apply(FillObservation::sc("9999", 10, 60_000, "E9").with_symbol(None));
+        assert!(out.reconcile_needed);
+        assert!(!led.has_pending(), "a blank symbol never admits to the pending set");
+        // An empty string is also refused at the record seam.
+        led.record_pending_symbol("   ");
+        assert!(!led.has_pending());
+    }
+
+    /// U2/R2: take drains a snapshot; reinsert restores un-scanned symbols; the set
+    /// dedups repeated records for one symbol.
+    #[test]
+    fn pending_set_dedups_and_reinserts() {
+        let mut led = FillLedger::new();
+        led.record_pending_symbol("005930");
+        led.record_pending_symbol("005930"); // duplicate → deduped
+        led.record_pending_symbol("000660");
+        assert_eq!(led.take_pending_symbols(), vec!["000660".to_string(), "005930".to_string()]);
+        assert!(!led.has_pending());
+        // Reinsert un-scanned symbols (e.g. an errored fetch).
+        led.reinsert_pending_symbols(vec!["005930".to_string()]);
+        assert!(led.has_pending());
+        assert_eq!(led.take_pending_symbols(), vec!["005930".to_string()]);
     }
 
     /// Open-order queries drive the poll loop's idle + poll set.

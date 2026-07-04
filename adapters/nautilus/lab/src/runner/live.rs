@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 
 use nautilus_ls::lock::{AdvisoryLock, LockKind};
 use nautilus_ls::orders::ledger::FillDelta;
-use nautilus_ls::orders::poll::PollOutcome;
+use nautilus_ls::orders::poll::DrivenOutcome;
 
 use crate::artifacts::data_quality::{DataQualityReport, ReconcileCondition, ReconcileConditionKind};
 use crate::params::OrbParams;
@@ -111,14 +111,16 @@ pub fn count_approximated(deltas: &[FillDelta]) -> u64 {
     deltas.iter().filter(|d| d.price_approximated).count() as u64
 }
 
-/// Record a poll pass's reconcile-advised condition into the data-quality report
-/// (R7, AE3). The poll lane collapses its specific inconclusive reasons (truncation,
-/// unresolved row, cumulative regression, request failure) into a single
-/// `reconcile_needed` flag, so this records the honest
-/// [`ReconcileConditionKind::PollInconclusive`] rather than mislabeling a specific
-/// cause — the agent treats the run's accounting as suspect either way.
-pub fn record_reconcile(dq: &mut DataQualityReport, outcome: &PollOutcome, symbol: &str) {
-    if outcome.reconcile_needed {
+/// Record a DRIVEN poll pass's reconcile-advised condition into the data-quality
+/// report (R7/R9, AE3/AE4). The drive already self-heals transient
+/// inconclusiveness with bounded re-polls, so only an **exhausted** drive — still
+/// inconclusive after its budget — reaches the report. The drive collapses its
+/// specific inconclusive reasons (truncation, unresolved row, cumulative
+/// regression, request failure) into one terminal state, so this records the
+/// honest [`ReconcileConditionKind::PollInconclusive`] rather than mislabeling a
+/// specific cause — the agent treats the run's accounting as suspect either way.
+pub fn record_reconcile(dq: &mut DataQualityReport, outcome: &DrivenOutcome, symbol: &str) {
+    if outcome.exhausted() {
         dq.reconcile_advised.push(ReconcileCondition {
             kind: ReconcileConditionKind::PollInconclusive,
             symbol: symbol.to_string(),

@@ -94,6 +94,22 @@ A TR the paper gateway will never serve, so it is recorded as a permanent non-fl
 
 Three terminals reach this status, distinguished by the gateway signal: a hard *service-rejection* (the gateway rejects the read outright in any window), an *account-incapable* rejection (the operation needs a paper account the current one is not provisioned for — per-account, not per-service, so it recovers once such an account exists), and an in-window *feed-unprovisioned* empty (a clean success with no data even inside the correct session window — the disambiguating test against an off-window empty, which is a session-clock timing miss and merely [[Pending]]). The `paper_incompatible` facet is a documentation/routing flag meaning "won't flip on paper"; it does **not** imply the runtime paper-incompatible classifier fires — that classifier is bound to the service-rejection code only, and stays silent for the feed-unprovisioned terminal.
 
+## Adapter data
+
+Vocabulary for the standalone Nautilus adapter's market-data catalog (`adapters/nautilus/`).
+
+### Accumulate-forward
+The adapter's checkpoint-driven ingest mode: per `(instrument, bar type)`, a watermark records the last closed session date whose bars are covered, and each run grows coverage from watermark+1 to the last closed session (or from the bounded backfill floor for an unseen instrument). The watermark is the sole skip authority and advances even over a gap day, so an empty history is reported once and never retried forever. Idempotent by construction — re-running covers nothing twice.
+
+### Adjustment-basis splice
+The corruption an appending catalog accrues on an adjusted-price basis: the gateway rewrites the entire adjusted series at every split/dividend, so bars accumulated before a corporate action sit on a different price basis than bars appended after it. The spliced series shows an overnight discontinuity that a gap/stocks-in-play scanner misreads as signal. Detected per symbol by [[Accumulate-forward]]'s overlap re-fetch and reported per run as the set of affected symbols — never as a catalog-wide flag.
+
+### Catalog re-base
+Rewriting catalog bar history wholesale to restore a single price basis (after an [[Adjustment-basis splice]]). By design it may rewrite the catalog tree entirely but must never touch `runs/` — run history lives outside the catalog tree precisely to survive a re-base — and an in-flight backtest is protected by its in-range catalog-fingerprint abort. The one-time whole-catalog form is an **epoch re-base**: mark every symbol shifted, then heal each through the same per-symbol path, making the epoch crash-resumable by construction.
+
+### Basis-shift heal
+The per-symbol [[Catalog re-base]] triggered when accumulate-forward's overlap re-fetch disagrees with stored daily bars: durably mark the symbol shifted, true-delete its daily series, clear its watermark, re-pull from the bounded floor, re-verify, then clear the mark and record a re-base event. The mark outranks the watermark as authority and re-entry always restarts at the wipe, so an interruption at any step converges to the same path. Detection compares only mutually-present non-gap dates (exact integer match) and skips symbols with insufficient overlap. A re-pull that completes with zero rows counts as completion only for a series that was already empty before the wipe — for a previously non-empty series the heal stays incomplete and the mark is kept, because an empty page from the gateway is a transient-source signal, never proof of absence.
+
 ## Order safety
 
 The order class is the one place where a bug is a real, irreversible market action rather than a stale read, so it carries its own machinery and vocabulary.

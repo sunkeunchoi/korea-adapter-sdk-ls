@@ -8,7 +8,7 @@ use std::path::Path;
 use chrono::{TimeZone, Utc};
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::{mock_config, mount_token};
-use nautilus_ls::ingest::checkpoint::{Checkpoint, GapReason};
+use nautilus_ls::ingest::checkpoint::{Checkpoint, GapReason, RebaseOrigin};
 use nautilus_ls::ingest::{
     build_daily_bar, build_minute_bar, write_bars, write_instruments, BarKind,
 };
@@ -211,7 +211,32 @@ async fn coverage_gap_is_recorded() {
     let dq: DataQualityReport = serde_json::from_str(&std::fs::read_to_string(outcome.run_dir.join(DATA_QUALITY_FILE)).unwrap()).unwrap();
     assert!(!dq.coverage_gaps.is_empty(), "the checkpoint gap is recorded");
     assert_eq!(dq.coverage_gaps[0].reason, GapReasonKind::EmptyFeed);
-    assert!(dq.adjustment_basis_splice, "adjusted-price basis surfaced from the checkpoint");
+    // R7 inverted assertion: a clean catalog (no detected shift marks) reports an
+    // EMPTY shift-symbol list — the blanket-discount era is over.
+    assert!(dq.adjustment_basis_shift_symbols.is_empty(), "clean catalog → no shift symbols");
+}
+
+/// R7: a checkpoint shift mark on a symbol INSIDE the run's selected universe is
+/// reported; a mark on a symbol outside it is not.
+#[tokio::test]
+async fn shift_marks_are_reported_per_symbol_intersected_with_the_universe() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path(), false).await;
+    let cp_path = dir.path().join("catalog").join("ingest-checkpoint.json");
+    let mut cp = Checkpoint::load(&cp_path).unwrap();
+    // In-universe (the fixture selects 005930) + out-of-universe marks.
+    cp.mark_shifted("005930.XKRX", "1-DAY", chrono::NaiveDate::from_ymd_opt(2024, 1, 5).unwrap(), RebaseOrigin::Heal);
+    cp.mark_shifted("000660.XKRX", "1-DAY", chrono::NaiveDate::from_ymd_opt(2024, 1, 5).unwrap(), RebaseOrigin::Heal);
+    cp.save(&cp_path).unwrap();
+
+    let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
+    let outcome = run(cfg(dir.path()), start).await.unwrap();
+    let dq: DataQualityReport = serde_json::from_str(&std::fs::read_to_string(outcome.run_dir.join(DATA_QUALITY_FILE)).unwrap()).unwrap();
+    assert_eq!(
+        dq.adjustment_basis_shift_symbols,
+        vec!["005930.XKRX".to_string()],
+        "in-universe mark listed; out-of-universe mark not"
+    );
 }
 
 /// Error path: a missing catalog exits with a clear error and no registry residue.
