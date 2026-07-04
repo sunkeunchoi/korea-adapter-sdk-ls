@@ -21,7 +21,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use chrono::{DateTime, NaiveDate, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, Utc, Weekday};
 
 use nautilus_ls::ingest::checkpoint::Checkpoint;
 use nautilus_ls::ingest::{kst_date_of, read_all_bars};
@@ -115,6 +115,22 @@ fn bar_label(bar: &Bar) -> String {
         BarAggregation::Minute => format!("{}-MINUTE", spec.step),
         other => format!("{}-{other:?}", spec.step),
     }
+}
+
+/// The last weekday on or before `date`, walking back over Saturdays and
+/// Sundays. The accumulate ingest advances the checkpoint watermark to the
+/// calendar last-closed session even when that lands on a weekend (documented
+/// `last_closed_session` behavior: a weekend "yields no new bars while the
+/// watermark still advances"). A tail check comparing the last bar against the
+/// raw watermark therefore false-flags a healthy Friday-closed catalog whenever
+/// the most recent ingest ran over a weekend — comparing against the last
+/// weekday instead flags only a genuine undershoot. (Holidays remain
+/// undetectable: the repo carries no trading calendar.)
+fn last_weekday_on_or_before(mut date: NaiveDate) -> NaiveDate {
+    while matches!(date.weekday(), Weekday::Sat | Weekday::Sun) {
+        date = date.pred_opt().expect("a date always has a predecessor");
+    }
+    date
 }
 
 // ===========================================================================
@@ -748,10 +764,17 @@ pub async fn catalog_status(cfg: &StatusConfig) -> anyhow::Result<StatusOutcome>
         let mut flags = Vec::new();
 
         // Tail check vs the checkpoint watermark (always). A span ending before
-        // the covered watermark undershoots the completed range (AE5).
+        // the covered watermark undershoots the completed range (AE5). The
+        // watermark is compared at its last *session* (weekday), not the raw
+        // date: accumulate advances the watermark onto weekends with no session,
+        // so a healthy Friday-closed catalog must not false-flag when the last
+        // ingest ran over a weekend.
         if let Some(wm) = checkpoint.watermark(&instrument, &bar_kind) {
-            if last < wm {
-                flags.push(format!("tail undershoot: last {last} < watermark {wm}"));
+            let last_session = last_weekday_on_or_before(wm);
+            if last < last_session {
+                flags.push(format!(
+                    "tail undershoot: last {last} < last session {last_session} (watermark {wm})"
+                ));
             }
         }
         // Both-direction checks vs an operator-supplied expected range.

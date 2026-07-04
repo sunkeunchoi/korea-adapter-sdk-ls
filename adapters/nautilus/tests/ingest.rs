@@ -356,6 +356,44 @@ mod catalog_primitives {
     }
 
     #[tokio::test]
+    async fn read_all_bars_dedups_an_overlapping_reingest() {
+        // End-to-end proof of the dedup premise: an overlapping re-ingest writes a
+        // SECOND parquet file for the overlap window (write_to_parquet skips the
+        // disjoint check), so the aggregate read surfaces the overlap twice. Range
+        // [Jan3,Jan4,Jan5] then an overlapping-forward [Jan4,Jan5,Jan8] must
+        // round-trip to 4 unique daily bars, not 6 — without dedup this is 6.
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let bt = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        write_bars(
+            &catalog,
+            vec![
+                daily_bar(bt, ymd(2024, 1, 3), 60000),
+                daily_bar(bt, ymd(2024, 1, 4), 60500),
+                daily_bar(bt, ymd(2024, 1, 5), 61000),
+            ],
+        )
+        .await
+        .unwrap();
+        write_bars(
+            &catalog,
+            vec![
+                daily_bar(bt, ymd(2024, 1, 4), 60500), // overlap — byte-identical re-pull
+                daily_bar(bt, ymd(2024, 1, 5), 61000), // overlap
+                daily_bar(bt, ymd(2024, 1, 8), 61500), // new forward bar
+            ],
+        )
+        .await
+        .unwrap();
+
+        let bars = read_all_bars(&catalog).await.unwrap();
+        assert_eq!(bars.len(), 4, "overlap (Jan4/Jan5) deduped: 4 unique sessions, not 6");
+        let distinct: std::collections::BTreeSet<u64> =
+            bars.iter().map(|b| b.ts_event.as_u64()).collect();
+        assert_eq!(distinct.len(), 4, "one bar per distinct session after dedup");
+    }
+
+    #[tokio::test]
     async fn delete_of_an_unstored_series_is_a_noop_ok() {
         let dir = tempdir().unwrap();
         // Deliberately NOT pre-created: the delete entry point must be

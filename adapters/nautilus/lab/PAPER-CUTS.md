@@ -75,6 +75,30 @@ values appear here.
     the tolerance keeps the chained-turn path (2.4 → 1.2 → 0.6) usable without
     weakening the guardrail.
 
+13. **Re-ingesting an overlapping range silently duplicated bars — corrupting
+    the backtest universe scan and the catalog-status counts.** Turn 2b widened
+    the slice with an earlier accumulate floor. The prior catalog's checkpoint
+    predated the watermark format (it carried legacy `completed` ranges, empty
+    `watermarks`), so accumulate saw every triple as never-seen and re-fetched
+    from the floor — writing a second parquet file for the whole range beside the
+    original. `write_to_parquet` skips the disjoint check and the accumulate
+    *append* path (unlike the heal path) never wipes, so the overlap stayed
+    readable twice. Two consequences: `lab-research catalog status` counted the
+    overlap doubled, and the runner's universe scan — which reads the last two
+    in-range daily bars as prior→today — picked two copies of the final session,
+    computing a nonsensical intraday self-gap (open vs its own close, always
+    negative) that rejected every symbol and emptied the universe. Fixed with
+    read-side dedup in `read_all_bars` (`src/ingest/mod.rs`, `dedup_bars`): a bar
+    is unique by `(series, ts_event)`; the overlap re-pull is value-identical so
+    the first copy wins, while a value-DIVERGENT duplicate stays the heal path's
+    adjustment-shift wipe, not this. Also fixed a second turn-2b blocker: a
+    weekend accumulate advances the checkpoint watermark onto a non-session day,
+    and `catalog status`'s tail check compared the last bar against the raw
+    watermark — false-flagging a healthy Friday-closed catalog as a NO-GO. The
+    tail check now compares against the last weekday on-or-before the watermark
+    (`last_weekday_on_or_before`); holidays remain undetectable (no trading
+    calendar in the repo).
+
 ## Retired — shipped (operability minors)
 
 9. **Ingest gateway errors carry no context.** → gateway fetch failures are now
