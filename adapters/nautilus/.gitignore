@@ -2,5 +2,7 @@
 *.log
 # Local catalog + ingest/live state written by ls-ingest and the tester binaries.
 /catalog
+# Local data home (catalog, runs/, decisions/, probes/) used by the README recipes.
+/data
 /*.lock
 !Cargo.lock
