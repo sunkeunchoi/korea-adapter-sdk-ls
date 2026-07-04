@@ -8,7 +8,7 @@ use std::path::Path;
 use chrono::{TimeZone, Utc};
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::{mock_config, mount_token};
-use nautilus_ls::ingest::checkpoint::{Checkpoint, GapReason};
+use nautilus_ls::ingest::checkpoint::{Checkpoint, GapReason, RebaseOrigin};
 use nautilus_ls::ingest::{
     build_daily_bar, build_minute_bar, write_bars, write_instruments, BarKind,
 };
@@ -208,8 +208,8 @@ async fn shift_marks_are_reported_per_symbol_intersected_with_the_universe() {
     let cp_path = dir.path().join("catalog").join("ingest-checkpoint.json");
     let mut cp = Checkpoint::load(&cp_path).unwrap();
     // In-universe (the fixture selects 005930) + out-of-universe marks.
-    cp.mark_shifted("005930.XKRX", "1-DAY", chrono::NaiveDate::from_ymd_opt(2024, 1, 5).unwrap());
-    cp.mark_shifted("000660.XKRX", "1-DAY", chrono::NaiveDate::from_ymd_opt(2024, 1, 5).unwrap());
+    cp.mark_shifted("005930.XKRX", "1-DAY", chrono::NaiveDate::from_ymd_opt(2024, 1, 5).unwrap(), RebaseOrigin::Heal);
+    cp.mark_shifted("000660.XKRX", "1-DAY", chrono::NaiveDate::from_ymd_opt(2024, 1, 5).unwrap(), RebaseOrigin::Heal);
     cp.save(&cp_path).unwrap();
 
     let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();

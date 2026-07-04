@@ -227,6 +227,21 @@ impl ToEvent<OrderEventMsg> for Sc0Row {
     }
 }
 
+/// Normalize an SC issue-code field to the bare short code the ledger keys on
+/// (U1, KTD3): trim, drop a leading `A` exchange prefix (the inverse of the form
+/// the cancel path builds with `format!("A{shcode}")`), and treat a
+/// blank/whitespace value as **absent** — an empty symbol must never seed a
+/// pending-reconcile t0425 call (the flat-scan/IGW00201 class R3 bans).
+pub(crate) fn normalize_symbol(raw: &str) -> Option<String> {
+    let t = raw.trim();
+    let t = t.strip_prefix('A').unwrap_or(t);
+    if t.is_empty() {
+        None
+    } else {
+        Some(t.to_string())
+    }
+}
+
 /// SC1 — order-fill (주식 주문체결) row on the OrderEvent lane. Wired in this
 /// increment (U2): a fill becomes a [`FillObservation`] fed to the ledger.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -244,6 +259,11 @@ pub struct Sc1Row {
     pub execqty: String,
     /// Executed (fill) price / 체결가격.
     pub execprc: String,
+    /// Short issue code / 단축종목번호 — the traded symbol (U1, KTD3). May carry
+    /// an `A` prefix; normalized to the bare short code the ledger keys on, so an
+    /// unknown-order fill can record its symbol as pending reconciliation (R1).
+    #[serde(rename = "shtnIsuno")]
+    pub shtn_isuno: String,
 }
 
 impl Sc1Row {
@@ -273,12 +293,19 @@ impl ToEvent<OrderEventMsg> for Sc1Row {
         if self.is_ack() || self.execno.trim().is_empty() || self.exec_qty() == 0 {
             return None;
         }
-        Some(OrderEventMsg::Fill(FillObservation::sc(
-            self.ordno.trim(),
-            self.exec_qty(),
-            self.exec_price(),
-            self.execno.trim(),
-        )))
+        Some(OrderEventMsg::Fill(
+            FillObservation::sc(
+                self.ordno.trim(),
+                self.exec_qty(),
+                self.exec_price(),
+                self.execno.trim(),
+            )
+            // Carry the traded symbol (U1, KTD3) so the ledger can record an
+            // unknown order's symbol as pending reconciliation. A blank/whitespace
+            // issue code degrades to no symbol (the unknown-order arm falls back to
+            // today's bare armed wakeup).
+            .with_symbol(normalize_symbol(&self.shtn_isuno)),
+        ))
     }
 }
 
@@ -298,6 +325,64 @@ mod tests {
         assert_eq!(row.exec_qty(), 5);
         assert_eq!(row.exec_price(), 60500);
         assert!(Sc1Row::default().is_ack());
+    }
+
+    /// U1: an SC1 fill frame carrying the baseline `shtnIsuno` symbol key
+    /// deserializes and the observation exposes the bare symbol.
+    #[test]
+    fn sc1_frame_with_shtn_isuno_carries_bare_symbol() {
+        let row: Sc1Row = serde_json::from_value(serde_json::json!({
+            "ordno": "1001", "execno": "E1", "execqty": "5", "execprc": "60500",
+            "shtnIsuno": "005930"
+        }))
+        .unwrap();
+        assert_eq!(row.shtn_isuno, "005930");
+        let ev = row.to_event(InstrumentId::from("SC.XKRX"), UnixNanos::default()).unwrap();
+        match ev {
+            OrderEventMsg::Fill(obs) => assert_eq!(obs.symbol.as_deref(), Some("005930")),
+            other => panic!("expected a fill, got {other:?}"),
+        }
+    }
+
+    /// U1: an `A`-prefixed issue code normalizes to the bare short code (the
+    /// inverse of the form the cancel path builds).
+    #[test]
+    fn sc1_a_prefixed_issue_code_normalizes() {
+        assert_eq!(normalize_symbol("A005930").as_deref(), Some("005930"));
+        assert_eq!(normalize_symbol("  A005930 ").as_deref(), Some("005930"));
+        let row = Sc1Row {
+            ordno: "1001".to_string(),
+            execno: "E1".to_string(),
+            execqty: "5".to_string(),
+            execprc: "60500".to_string(),
+            shtn_isuno: "A005930".to_string(),
+            ..Default::default()
+        };
+        match row.to_event(InstrumentId::from("SC.XKRX"), UnixNanos::default()).unwrap() {
+            OrderEventMsg::Fill(obs) => assert_eq!(obs.symbol.as_deref(), Some("005930")),
+            other => panic!("expected a fill, got {other:?}"),
+        }
+    }
+
+    /// U1 (KTD3 guard): a blank/whitespace symbol yields an observation carrying
+    /// no symbol — the ledger then records nothing pending and no empty-expcode
+    /// t0425 call can occur.
+    #[test]
+    fn sc1_blank_symbol_yields_no_observation_symbol() {
+        assert_eq!(normalize_symbol("   "), None);
+        assert_eq!(normalize_symbol(""), None);
+        let row = Sc1Row {
+            ordno: "1001".to_string(),
+            execno: "E1".to_string(),
+            execqty: "5".to_string(),
+            execprc: "60500".to_string(),
+            shtn_isuno: "   ".to_string(),
+            ..Default::default()
+        };
+        match row.to_event(InstrumentId::from("SC.XKRX"), UnixNanos::default()).unwrap() {
+            OrderEventMsg::Fill(obs) => assert!(obs.symbol.is_none(), "a blank symbol is absent"),
+            other => panic!("expected a fill, got {other:?}"),
+        }
     }
 
     #[test]

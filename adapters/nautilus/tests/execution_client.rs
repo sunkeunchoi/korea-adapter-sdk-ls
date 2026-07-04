@@ -735,11 +735,13 @@ async fn cancel_after_modify_down_and_fill_uses_maintained_qty() {
     );
 }
 
-/// R8: remaining 0 (a modify dropped quantity to the filled total) skips the
-/// cancel send entirely — no request reaches the venue and no event is emitted
-/// (nothing synthetic; terminal detection owns the order's end).
+/// AE2 / R4: remaining 0 (a modify dropped quantity to the filled total) skips the
+/// cancel send, but is NOT stranded — a non-terminal cancel-rejection is emitted
+/// (the FSM exits PENDING_CANCEL), the ledger entry closes (open set clears so the
+/// loop idles), and reconciliation is armed for the symbol. No synthetic terminal
+/// event, no CSPAT00801 request.
 #[tokio::test]
-async fn cancel_with_zero_remaining_sends_nothing() {
+async fn cancel_with_zero_remaining_rejects_and_arms_reconcile() {
     let server = MockServer::start().await;
     let mut rx = capture_exec_events();
     let (mut client, _sdk) = client_and_sdk(&server).await;
@@ -766,14 +768,62 @@ async fn cancel_with_zero_remaining_sends_nothing() {
     assert!(matches!(next_order_event(&mut rx).await, OrderEventAny::Updated(_)));
 
     let cancels_before = count_requests(&server, "CSPAT00801").await;
+    let t0425_before = count_requests(&server, "t0425").await;
     client.cancel_order(cancel_cmd("O-REM-0")).unwrap();
-    // No cancel request reaches the mock and no cancel event is emitted.
-    let got = timeout(Duration::from_millis(500), rx.recv()).await;
-    assert!(got.is_err(), "remaining-0 cancel must emit nothing");
+    // A non-terminal cancel-rejection is emitted (never a synthetic Canceled).
+    match next_order_event(&mut rx).await {
+        OrderEventAny::CancelRejected(_) => {}
+        other => panic!("remaining-0 cancel must emit CancelRejected (not stranded), got {other:?}"),
+    }
+    // No CSPAT00801 request reached the venue.
     assert_eq!(
         count_requests(&server, "CSPAT00801").await,
         cancels_before,
         "no CSPAT00801 request was sent"
+    );
+    // Reconciliation is armed for the symbol: the next drive scans it exactly once...
+    client.poll_once().await;
+    let after_first = count_requests(&server, "t0425").await;
+    assert_eq!(after_first, t0425_before + 1, "the pending symbol is scanned once");
+    // ...then the ledger is flat (entry closed) and the loop idles — no further poll.
+    client.poll_once().await;
+    assert_eq!(
+        count_requests(&server, "t0425").await,
+        after_first,
+        "the closed entry clears the open set → the loop idles"
+    );
+}
+
+/// AE2 / R4: a cancel naming an order the ledger never tracked emits an ids-based
+/// non-terminal cancel-rejection (built from the command, no fabricated OrderAny)
+/// and arms reconciliation for the command's symbol. No CSPAT00801 request.
+#[tokio::test]
+async fn cancel_of_unknown_order_rejects_and_arms_reconcile() {
+    let server = MockServer::start().await;
+    let mut rx = capture_exec_events();
+    let (mut client, _sdk) = client_and_sdk(&server).await;
+    client.start().unwrap();
+
+    let cancels_before = count_requests(&server, "CSPAT00801").await;
+    let t0425_before = count_requests(&server, "t0425").await;
+    // O-GHOST was never submitted — the ledger does not know it.
+    client.cancel_order(cancel_cmd("O-GHOST")).unwrap();
+    match next_order_event(&mut rx).await {
+        OrderEventAny::CancelRejected(_) => {}
+        other => panic!("an unknown-order cancel must emit CancelRejected, got {other:?}"),
+    }
+    assert_eq!(
+        count_requests(&server, "CSPAT00801").await,
+        cancels_before,
+        "no CSPAT00801 request was sent for an unknown order"
+    );
+    // The command's symbol (005930) is armed pending: the next drive scans it once.
+    mount_t0425(&server, "", serde_json::json!([])).await;
+    client.poll_once().await;
+    assert_eq!(
+        count_requests(&server, "t0425").await,
+        t0425_before + 1,
+        "the command's symbol is scanned once from the pending set"
     );
 }
 

@@ -170,10 +170,22 @@ and exact-compares OHLC on mutually-present dates — and *heals* it: durably ma
 symbol shifted, true-delete its daily series, clear its watermark, re-pull from the
 `LS_INGEST_LOOKBACK` floor, re-verify, then clear the mark and record a re-base event
 in the checkpoint (the operator audit trail for how often the gateway rewrites
-series). The mark outranks the watermark, so an interrupted heal resumes at the wipe
-on the next run; a run whose floor is later than the symbol's earliest stored bar
-**refuses** the wipe (printed as `HEAL REFUSED`) rather than silently truncating
-history — re-run with an adequate floor. Backtests over a still-marked symbol report
+series). Each re-base event carries an **origin** — `heal` (organic forward
+detection) or `epoch` (the one-time rollout), stamped at mark time so it survives a
+crash-resumed heal running under a different mode — plus `unknown` for rows written
+before origin tracking (presumed organic). The audit metric is
+`Checkpoint::rebase_origin_totals()`, whose `.organic()` counts heal + unknown and
+**excludes** epoch, so the operator's "how often does the gateway rewrite series"
+signal is not inflated by the one-time epoch. The per-series event log is bounded
+(cap 4, oldest-dropped); evicted rows are folded into origin-split counters so the
+per-origin totals stay whole across eviction. The mark outranks the watermark, so an
+interrupted heal resumes at the wipe on the next run; a run whose floor is later than
+the symbol's earliest stored bar **refuses** the wipe (printed as `HEAL REFUSED`)
+rather than silently truncating history — re-run with an adequate floor.
+**Range mode never heals:** a `LS_INGEST_MODE` range run refuses a marked daily
+series pending heal (printed as `REFUSED PENDING HEAL`, a distinct counted line in
+the summary) rather than serving or completing it on a stale basis — run
+`accumulate`/`rebase` to heal. Backtests over a still-marked symbol report
 it in `adjustment_basis_shift_symbols`. **Minute-basis residual:** t8412 exposes no
 adjusted-price request flag, so minute bars keep whatever basis the server serves; a
 daily re-base never touches minute bars, and minute-basis fidelity remains a
@@ -210,7 +222,13 @@ LS_INGEST_LOOKBACK=20240101 LS_INGEST_KIND=daily \
 - **Crash/resume:** the per-symbol marks are the completion state. A crash leaves a
   stale `.ls-ingest.lock` in the catalog dir — remove it manually, then resume with
   `LS_INGEST_MODE=accumulate` (heals only the still-marked remainder; re-running
-  `rebase` re-marks and re-pulls everything).
+  `rebase` re-marks and re-pulls everything). Origin is stamped `epoch` at mark time,
+  so a resumed heal under `accumulate` still records epoch origin and the organic
+  audit metric stays clean. A series already `heal`-marked when the epoch runs keeps
+  its heal origin (keep-original-on-re-mark). **Sequencing:** run the epoch only
+  after landing origin tracking — pre-tracking rows read as `unknown` and are
+  presumed organic, so an epoch run before this would mix unlabeled epoch rows into
+  the organic metric.
 
 ### Data smoke
 
