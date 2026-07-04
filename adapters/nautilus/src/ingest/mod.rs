@@ -1394,17 +1394,43 @@ pub async fn write_instruments(
 }
 
 /// Read all bars back from the catalog on a blocking thread (round-trip helper for
-/// tests + the backtest loader).
+/// tests + the backtest loader). Duplicate bars are deduplicated (see
+/// [`dedup_bars`]): re-ingesting a range that overlaps already-stored bars writes a
+/// second parquet file for the overlapping window, and the aggregate read would
+/// otherwise double-count it.
 pub async fn read_all_bars(catalog_path: &Path) -> AdapterResult<Vec<Bar>> {
     let path = catalog_path.to_path_buf();
-    tokio::task::spawn_blocking(move || {
+    let mut bars = tokio::task::spawn_blocking(move || {
         let mut catalog = ParquetDataCatalog::new(&path, None, None, None, None);
         catalog
             .bars(None, None, None)
             .map_err(|e| AdapterError::Ingest(format!("catalog read: {e}")))
     })
     .await
-    .map_err(|e| AdapterError::Ingest(format!("catalog read task panicked: {e}")))?
+    .map_err(|e| AdapterError::Ingest(format!("catalog read task panicked: {e}")))??;
+    dedup_bars(&mut bars);
+    Ok(bars)
+}
+
+/// Remove bars that are *byte-identical* to one already seen, keeping the first
+/// occurrence. The aggregate catalog read can surface the same bar twice when a
+/// re-ingest wrote an overlapping-range parquet file: `write_to_parquet` skips the
+/// disjoint check (see [`write_bars`]) and the normal accumulate *append* path
+/// assumes each write is a disjoint forward range (`watermark+1 ..`), so it never
+/// wipes — an overlap (e.g. a re-fetch from the floor when a watermark is absent)
+/// leaves both files readable and the overlap double-counted. That corrupts the
+/// backtest's universe scan, which reads the last two in-range daily bars as
+/// prior→today and would otherwise pick two copies of the same session (a
+/// nonsensical intraday self-gap). Bars are built with deterministic timestamps
+/// (`ts_event == ts_init`, derived from the candle's own KST date/time, never a
+/// wall clock), so a redundant re-pull is exactly equal and collapses cleanly.
+/// Dedup is on the WHOLE bar, not a `(series, ts)` key: a same-timestamp bar whose
+/// OHLCV differs is a genuine conflict — an adjustment-basis shift (the heal path's
+/// concern, [`delete_bar_series`]) or an in-range mutation the finalize
+/// fingerprint re-check must still catch — and must NOT be silently dropped.
+fn dedup_bars(bars: &mut Vec<Bar>) {
+    let mut seen = std::collections::HashSet::new();
+    bars.retain(|b| seen.insert(*b));
 }
 
 /// True-delete one bar-type series (e.g. one symbol's daily bars) from the
@@ -1937,6 +1963,34 @@ mod tests {
     fn overlap_matches_when_mutual_dates_agree() {
         let stored = vec![ohlc_bar("20240103", 100), ohlc_bar("20240104", 110), ohlc_bar("20240105", 120)];
         assert_eq!(compare_overlap(&stored, &stored.clone()), OverlapVerdict::Match);
+    }
+
+    #[test]
+    fn read_dedup_drops_overlapping_duplicate_bars() {
+        // Re-ingesting a range that overlaps stored bars writes a second parquet
+        // file for the overlap window; the aggregate read then surfaces the same
+        // (series, ts_event) twice. dedup_bars collapses them so the backtest's
+        // prior→today universe scan never reads two copies of one session as a
+        // nonsensical intraday self-gap (turn-2b certification catch).
+        let mut bars = vec![
+            ohlc_bar("20240103", 100),
+            ohlc_bar("20240104", 110),
+            ohlc_bar("20240104", 110), // byte-identical duplicate from the overlapping file
+            ohlc_bar("20240105", 120),
+            ohlc_bar("20240105", 120), // byte-identical duplicate
+        ];
+        dedup_bars(&mut bars);
+        assert_eq!(bars.len(), 3, "byte-identical duplicates collapse to one each");
+    }
+
+    #[test]
+    fn read_dedup_keeps_same_timestamp_bars_whose_values_differ() {
+        // A same-(series, ts) bar with DIFFERENT OHLCV is a conflict, not a
+        // redundant re-pull — an adjustment-basis shift or an in-range mutation the
+        // finalize fingerprint re-check must catch. It must survive dedup.
+        let mut bars = vec![ohlc_bar("20240104", 110), ohlc_bar("20240104", 60)];
+        dedup_bars(&mut bars);
+        assert_eq!(bars.len(), 2, "a value-divergent same-timestamp bar is not dropped");
     }
 
     #[test]

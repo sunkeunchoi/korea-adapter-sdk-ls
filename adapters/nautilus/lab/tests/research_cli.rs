@@ -631,6 +631,45 @@ async fn ae5_tail_undershoot_vs_the_watermark_is_flagged() {
 }
 
 #[tokio::test]
+async fn weekend_watermark_does_not_false_flag_a_friday_closed_catalog() {
+    // Accumulate advances the checkpoint watermark to the calendar last-closed
+    // session even when that lands on a weekend (documented `last_closed_session`
+    // behavior). A catalog whose last bar is the immediately preceding Friday is
+    // healthy — the raw watermark comparison used to false-flag it as a tail
+    // undershoot, turning a fine catalog into a NO-GO. (Turn-2b certification.)
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    let cp_path = dir.path().join("catalog").join("ingest-checkpoint.json");
+    let mut cp = Checkpoint::load(&cp_path).unwrap();
+    // Last bar in the fixture is 20240105 (Friday); watermark advances to
+    // 20240106 (Saturday) and 20240107 (Sunday) — both non-sessions.
+    for wm in ["20240106", "20240107"] {
+        cp.set_watermark(
+            "005930.XKRX",
+            "1-DAY",
+            chrono::NaiveDate::parse_from_str(wm, "%Y%m%d").unwrap(),
+        );
+        cp.save(&cp_path).unwrap();
+        let out = catalog_status(&StatusConfig {
+            data_home: dir.path().to_path_buf(),
+            expected_range: None,
+        })
+        .await
+        .unwrap();
+        assert!(
+            out.go,
+            "a Friday-closed catalog under a {wm} watermark is a go, not a false undershoot: {:?}",
+            out.lines
+        );
+        assert!(
+            out.triples.iter().all(|t| t.flags.is_empty()),
+            "no tail flag when the watermark is a weekend ({wm}): {:?}",
+            out.triples
+        );
+    }
+}
+
+#[tokio::test]
 async fn front_truncation_is_flagged_only_with_an_expected_range() {
     let dir = tempdir().unwrap();
     build_fixture(dir.path()).await;
