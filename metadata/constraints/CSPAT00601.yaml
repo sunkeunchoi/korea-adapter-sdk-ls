@@ -64,8 +64,9 @@ fields:
     range: { applicable: false }
     format: { applicable: false }
   - name: MbrNo
-    type: string          # baseline: String, required (회원사번호, e.g. "NXT").
-    required: true
-    enum: { applicable: false }
-    range: { applicable: false }
-    format: { applicable: false }
+    type: string          # baseline: String, required on the wire (회원사번호,
+    required: false        # e.g. "NXT" = Nextrade routing) — but a plain KRX
+    enum: { applicable: false }   # order sends it EMPTY (the nautilus adapter's
+    range: { applicable: false }  # submit path does; default-venue routing), so
+    format: { applicable: false } # caller-optional like LoanDt: the struct wins
+                                  # on disagreement (permissive direction).
