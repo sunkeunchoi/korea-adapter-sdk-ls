@@ -76,12 +76,30 @@ fn read_manifest(data_home: &Path, run_id: &str) -> anyhow::Result<Manifest> {
     serde_json::from_str(&text).map_err(|e| anyhow::anyhow!("parsing {}: {e}", path.display()))
 }
 
+/// The chronological sort key for a run id (KTD1). The fixed-width UTC stamp
+/// prefix orders chronologically, but the trailing `-v<N>` version must compare
+/// **numerically**, not lexically — otherwise two runs that tie on the
+/// second-granularity stamp (a fast rerun + a governance bump) sort `-v10`
+/// before `-v2`, and [`latest_finalized_run`] would read a stale manifest.
+fn run_order_key(run_id: &str) -> (String, u32) {
+    match run_id.rsplit_once("-v") {
+        Some((head, ver)) => (head.to_string(), ver.parse().unwrap_or(0)),
+        None => (run_id.to_string(), 0),
+    }
+}
+
+/// The finalized run ids, ordered oldest → newest by [`run_order_key`] (numeric
+/// version tiebreak, not the lexical order [`list_runs`] returns).
+fn ordered_runs(data_home: &Path) -> Vec<String> {
+    let mut runs = list_runs(data_home);
+    runs.sort_by(|a, b| run_order_key(a).cmp(&run_order_key(b)));
+    runs
+}
+
 /// The newest finalized run's id + manifest, or `None` on a fresh registry
-/// (KTD1: current-params authority is the latest finalized manifest). The run
-/// id's fixed-width UTC stamp prefix makes lexical order chronological, so the
-/// last of [`list_runs`]'s sorted output is the newest.
+/// (KTD1: current-params authority is the latest finalized manifest).
 pub fn latest_finalized_run(data_home: &Path) -> anyhow::Result<Option<(String, Manifest)>> {
-    match list_runs(data_home).last() {
+    match ordered_runs(data_home).last() {
         None => Ok(None),
         Some(run_id) => Ok(Some((run_id.clone(), read_manifest(data_home, run_id)?))),
     }
@@ -221,6 +239,15 @@ pub async fn turn(cfg: TurnConfig) -> anyhow::Result<TurnOutcome> {
     let current_value = *current_numeric.get(&param).ok_or_else(|| {
         anyhow::anyhow!("'{param}' is not a numeric OrbParams field — cannot turn it")
     })?;
+    // A proposal that does not move the value is a no-op — govern nothing and give
+    // a clear message rather than approving, bumping the version, then refusing
+    // with the confusing "applied change touches {strategy_version}" mismatch.
+    if target == current_value {
+        anyhow::bail!(
+            "'{param}' is already {current_value:.4} — proposing the same value is a no-op; \
+             run with no LS_TURN_PARAM for a rerun (no version bump)"
+        );
+    }
 
     // Lower the operator's request into a manual-trigger envelope through the
     // pinned pipeline (KTD3): CapabilitySet limited to Research + the
@@ -441,8 +468,9 @@ pub fn param_diff(a: &OrbParams, b: &OrbParams) -> Vec<String> {
 fn resolve_pair(cfg: &CompareConfig) -> anyhow::Result<(String, Manifest, String, Manifest)> {
     let (a_id, b_id) = match (&cfg.run_a, &cfg.run_b) {
         (Some(a), Some(b)) => (a.clone(), b.clone()),
-        _ => {
-            let runs = list_runs(&cfg.data_home);
+        (None, None) => {
+            // Default: the two newest finalized runs (numeric-version ordered).
+            let runs = ordered_runs(&cfg.data_home);
             if runs.len() < 2 {
                 anyhow::bail!(
                     "runs compare needs two runs; the registry holds {} (pass LS_COMPARE_A / LS_COMPARE_B)",
@@ -451,6 +479,11 @@ fn resolve_pair(cfg: &CompareConfig) -> anyhow::Result<(String, Manifest, String
             }
             (runs[runs.len() - 2].clone(), runs[runs.len() - 1].clone())
         }
+        // Refuse a single-sided selection rather than silently defaulting to the
+        // two newest — an operator who named one run must name both.
+        _ => anyhow::bail!(
+            "runs compare: set both LS_COMPARE_A and LS_COMPARE_B, or neither (defaults to the two newest)"
+        ),
     };
     let a = read_manifest(&cfg.data_home, &a_id)?;
     let b = read_manifest(&cfg.data_home, &b_id)?;
@@ -893,7 +926,16 @@ const USAGE: &str = "usage: lab-research <turn | runs compare | replay | catalog
 /// when neither is set and erroring when only one is.
 fn env_range(start_key: &str, end_key: &str) -> anyhow::Result<Option<DataRange>> {
     match (std::env::var(start_key).ok(), std::env::var(end_key).ok()) {
-        (Some(start), Some(end)) => Ok(Some(DataRange { start, end })),
+        (Some(start), Some(end)) => {
+            // Validate the format here (not deep in a consumer): an unparseable
+            // date must be a hard error, never a silently-skipped span check on a
+            // go/no-go gate.
+            for (key, val) in [(start_key, &start), (end_key, &end)] {
+                NaiveDate::parse_from_str(val.trim(), "%Y%m%d")
+                    .map_err(|_| anyhow::anyhow!("{key} must be YYYYMMDD, got {val:?}"))?;
+            }
+            Ok(Some(DataRange { start, end }))
+        }
         (None, None) => Ok(None),
         _ => anyhow::bail!("{start_key} and {end_key} must be set together"),
     }
@@ -996,8 +1038,12 @@ fn turn_config_from_env() -> anyhow::Result<TurnConfig> {
         anyhow::bail!("LS_TURN_VALUE is required when LS_TURN_PARAM is set");
     }
     cfg.range = env_range("LS_TURN_SDATE", "LS_TURN_EDATE")?;
-    if let Some(step) = std::env::var("LS_TURN_MINUTE_STEP").ok().and_then(|s| s.parse().ok()) {
-        cfg.minute_step = step;
+    if let Ok(step) = std::env::var("LS_TURN_MINUTE_STEP") {
+        // Error loudly on a typo rather than silently defaulting to step 1 (the
+        // same discipline as env_f64) — a wrong bar-kind run is worse than a stop.
+        cfg.minute_step = step
+            .parse()
+            .map_err(|_| anyhow::anyhow!("LS_TURN_MINUTE_STEP must be an integer, got {step:?}"))?;
     }
     if let Some(bal) = env_f64("LS_TURN_BALANCE")? {
         cfg.starting_balance = bal;
@@ -1045,4 +1091,25 @@ fn scaffold_config_from_env() -> anyhow::Result<ScaffoldConfig> {
         run_id: std::env::var("LS_ANALYZE_RUN")
             .map_err(|_| anyhow::anyhow!("LS_ANALYZE_RUN is required (the run id to scaffold)"))?,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn run_order_key_sorts_the_version_suffix_numerically() {
+        // Same second-granularity stamp, different versions: lexical order would
+        // put -v10 before -v2; the numeric key must order it last.
+        let mut ids = vec![
+            "20260101T000000Z-backtest-orb-v2".to_string(),
+            "20260101T000000Z-backtest-orb-v10".to_string(),
+            "20260101T000000Z-backtest-orb-v9".to_string(),
+        ];
+        ids.sort_by(|a, b| run_order_key(a).cmp(&run_order_key(b)));
+        assert_eq!(ids.last().unwrap(), "20260101T000000Z-backtest-orb-v10", "v10 is newest");
+        assert_eq!(ids.first().unwrap(), "20260101T000000Z-backtest-orb-v2", "v2 is oldest");
+        // A run id with no -v suffix degrades to version 0, never panics.
+        assert_eq!(run_order_key("no-version-here").1, 0);
+    }
 }

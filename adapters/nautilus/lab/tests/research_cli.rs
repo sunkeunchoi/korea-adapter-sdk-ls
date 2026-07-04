@@ -210,6 +210,40 @@ async fn structured_stdout_prints_symbols_unmasked() {
     assert!(!stdout.contains("***"), "structured output is not masked: {stdout}");
 }
 
+#[tokio::test]
+async fn malformed_expected_range_is_a_hard_error_not_a_silent_go() {
+    // A bad LS_STATUS_SDATE must error, never silently skip the span check and
+    // report GO (fail-open on a go/no-go gate).
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    let out = bin()
+        .args(["catalog", "status"])
+        .env("LS_DATA_HOME", dir.path())
+        .env("LS_STATUS_SDATE", "2024-01-01") // dashes, not YYYYMMDD
+        .env("LS_STATUS_EDATE", "20240105")
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "malformed date is a hard error");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("LS_STATUS_SDATE") && stderr.contains("YYYYMMDD"), "{stderr}");
+}
+
+#[tokio::test]
+async fn malformed_minute_step_errors_rather_than_defaulting() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    seed_run(dir.path(), 2.4, 0, stamp(0)).await;
+    let out = bin()
+        .args(["turn"])
+        .env("LS_DATA_HOME", dir.path())
+        .env("LS_TURN_MINUTE_STEP", "5m") // typo
+        .output()
+        .unwrap();
+    assert!(!out.status.success(), "a bad minute step is a hard error, not a silent step-1 run");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("LS_TURN_MINUTE_STEP"), "names the variable: {stderr}");
+}
+
 #[test]
 fn no_args_prints_usage_and_exits_non_zero() {
     let out = bin().output().unwrap();
@@ -277,6 +311,20 @@ async fn fresh_home_without_a_range_errors() {
     build_fixture(dir.path()).await;
     let err = turn(turn_cfg(dir.path(), "gap_min_pct", 1.5, stamp(10))).await.unwrap_err();
     assert!(err.to_string().contains("range is required"), "{err}");
+}
+
+#[tokio::test]
+async fn a_no_op_target_errors_clearly_not_with_a_mismatch_message() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    seed_run(dir.path(), 2.4, 0, stamp(0)).await;
+    // Propose the current value (2.4) — a no-op. It must error with a clear
+    // message, not approve-bump-then-refuse with a confusing mismatch.
+    let err = turn(turn_cfg(dir.path(), "gap_min_pct", 2.4, stamp(10))).await.unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("no-op"), "clear no-op message: {msg}");
+    assert!(!msg.contains("touches"), "not the mismatch message: {msg}");
+    assert_eq!(list_runs(dir.path()).len(), 1, "no new run");
 }
 
 #[tokio::test]
@@ -458,6 +506,23 @@ async fn data_verdict_requires_an_explanation_for_deltas() {
     let verdict = compare(&explained).unwrap();
     assert!(verdict.pass, "explained data delta PASSes: {:?}", verdict.lines);
     assert!(verdict.lines.iter().any(|l| l.contains("widened the ingest slice")));
+}
+
+#[tokio::test]
+async fn compare_refuses_a_single_sided_run_selection() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    let seed = seed_run(dir.path(), 2.4, 0, stamp(0)).await;
+    // Only run_a set → refuse rather than silently defaulting to the two newest.
+    let err = compare(&CompareConfig {
+        data_home: dir.path().to_path_buf(),
+        run_a: Some(seed),
+        run_b: None,
+        mode: CompareMode::Param,
+        explanation: None,
+    })
+    .unwrap_err();
+    assert!(err.to_string().contains("both LS_COMPARE_A and LS_COMPARE_B"), "{err}");
 }
 
 #[tokio::test]
