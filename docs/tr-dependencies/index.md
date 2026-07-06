@@ -105,7 +105,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `OX0` | KOSPI200옵션가격제한폭확대 | `realtime` | implemented | [OX0](./OX0.md) |
 | `PH_` | KOSPI프로그램매매종목별 | `realtime` | implemented | [PH_](./PH_.md) |
 | `S2_` | KOSPI 우선호가 실시간 시세 | `realtime` | implemented | [S2_](./S2_.md) |
-| `S3_` | KOSPI 체결 실시간 시세 | `realtime` | implemented | [S3_](./S3_.md) |
+| `S3_` | KOSPI 체결 실시간 시세 | `realtime` | recommended | [S3_](./S3_.md) |
 | `SC0` | 주식 주문접수 실시간 | `realtime` | implemented | [SC0](./SC0.md) |
 | `SC1` | 주식 주문체결 실시간 | `realtime` | implemented | [SC1](./SC1.md) |
 | `SC2` | 주식 주문정정 실시간 | `realtime` | implemented | [SC2](./SC2.md) |
@@ -166,7 +166,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t0424` | 주식잔고2 | `account` | implemented | [t0424](./t0424.md) |
 | `t0425` | 주식체결/미체결 (stock filled/unfilled order inquiry) | `paginated` | implemented | [t0425](./t0425.md) |
 | `t0441` | 선물/옵션잔고평가(이동평균) | `account` | tracked | [t0441](./t0441.md) |
-| `t1101` | 주식 현재가호가 조회 | `market_session` | implemented | [t1101](./t1101.md) |
+| `t1101` | 주식 현재가호가 조회 | `market_session` | recommended | [t1101](./t1101.md) |
 | `t1102` | 주식 현재가(시세) 조회 | `market_session` | implemented | [t1102](./t1102.md) |
 | `t1104` | 주식현재가시세메모 | `market_session` | implemented | [t1104](./t1104.md) |
 | `t1105` | 주식피봇/디마크조회 | `market_session` | implemented | [t1105](./t1105.md) |
@@ -325,4 +325,4 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t9943` | 지수선물마스터조회API용 | `market_session` | implemented | [t9943](./t9943.md) |
 | `t9944` | 지수옵션마스터조회API용 | `market_session` | implemented | [t9944](./t9944.md) |
 | `t9945` | 주식마스터조회API용 | `market_session` | implemented | [t9945](./t9945.md) |
-| `token` | 접근토큰 발급 (OAuth2 token issue) | `standalone` | implemented | [token](./token.md) |
+| `token` | 접근토큰 발급 (OAuth2 token issue) | `standalone` | recommended | [token](./token.md) |

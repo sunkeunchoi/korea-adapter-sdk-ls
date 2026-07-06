@@ -769,25 +769,65 @@ fn flat_verdict(rows: &[T0425OutBlock1]) -> FlatVerdict {
     }
 }
 
-/// Run the `t0425` working-orders scan for the traded symbol (KTD2), unfilled-only
-/// (`chegb="2"`), single page, with a 1500ms pre-pace so the per-TR budget refills.
-/// Returns `Err` on any failure (treated as NOT flat — positive confirmation only).
-async fn scan_symbol_working_orders(
-    sdk: &LsSdk,
-    symbol: &str,
-) -> Result<Vec<T0425OutBlock1>, String> {
-    use ls_core::HasPagination;
-    let req = T0425Request {
+/// Why a scanned book is not clear-to-proceed. Shared by the three fill-inclusive
+/// scan consumers (KTD2/KTD3): pre-assert-flat, post-cancel flat-verify, teardown.
+#[derive(Debug, PartialEq, Eq)]
+enum NotClear {
+    /// Cancelable resting probe rows remain.
+    Resting(Vec<String>),
+    /// An uncancelable fill surfaced — unrecoverable (reset the paper book).
+    Fill(Vec<String>),
+}
+
+/// Require the scanned book to be **Flat and fill-free** (KTD3). `Ok(())` = clear;
+/// `Err(NotClear::Resting)` = cancelable resting rows; `Err(NotClear::Fill)` = an
+/// uncancelable fill. Pure over a scanned row set (reuses `flat_verdict`) so every
+/// consumer's guard — pre-assert-flat (refuse to place), post-cancel flat-verify
+/// (HELD), teardown (UNEXPECTED-FILL alarm) — is unit-testable without a live scan.
+/// The `Fill` arm is the one KTD2's fill-inclusive `chegb="0"` newly surfaces.
+fn require_flat_and_fill_free(rows: &[T0425OutBlock1]) -> Result<(), NotClear> {
+    match flat_verdict(rows) {
+        FlatVerdict::Flat => Ok(()),
+        FlatVerdict::Resting(o) => Err(NotClear::Resting(o)),
+        FlatVerdict::Fill(f) => Err(NotClear::Fill(f)),
+    }
+}
+
+/// Build the single-symbol working-orders request, **fill-inclusive** (`chegb="0"`
+/// = all states, KTD2). `chegb="0"` returns still-resting orders, partial fills, AND
+/// fully-filled rows (`ordrem==0`, `cheqty>0`) — the last of which `chegb="2"`
+/// (unfilled-only) hid, blinding `flat_verdict`'s `Fill` branch. Symbol-scoped so the
+/// account-wide `chegb="0"` history-walk that overran the page cap is avoided; the
+/// single-page `tr_cont` guard (below) still fails closed. `chegb` value semantics
+/// per `docs/solutions/integration-issues/ls-gateway-t0425-rate-limit-and-pagination-flat-scan.md`
+/// (the LS API-doc reference; the normalized baseline records `chegb` only as a
+/// 1-char String with no value meanings). Pure so the offline twin can assert the
+/// fill-inclusive class without a live call.
+fn working_orders_request(symbol: &str) -> T0425Request {
+    T0425Request {
         inblock: T0425InBlock {
             expcode: symbol.into(),
-            chegb: "2".into(),
+            chegb: "0".into(),
             medosu: "0".into(),
             sortgb: "2".into(),
             cts_ordno: " ".into(),
         },
         tr_cont: String::new(),
         tr_cont_key: String::new(),
-    };
+    }
+}
+
+/// Run the `t0425` working-orders scan for the traded symbol (KTD2), **fill-inclusive**
+/// (`chegb="0"`, see `working_orders_request`), single page, with a 1500ms pre-pace so
+/// the per-TR budget refills. Returns `Err` on any failure (treated as NOT flat —
+/// positive confirmation only). Sound only paired with U3's pre-assert-flat, which
+/// proves no foreign/historical fill is present to misattribute.
+async fn scan_symbol_working_orders(
+    sdk: &LsSdk,
+    symbol: &str,
+) -> Result<Vec<T0425OutBlock1>, String> {
+    use ls_core::HasPagination;
+    let req = working_orders_request(symbol);
     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
     match sdk.orders().inquiry(&req).await {
         Ok(resp) => {
@@ -877,7 +917,9 @@ async fn order_reconcile_teardown(sdk: &LsSdk, symbol: &str) {
                     ),
                 }
             }
-            if let FlatVerdict::Fill(f) = flat_verdict(&rows) {
+            // Teardown consumer of the fill-inclusive scan (KTD2): a fill the
+            // fill-inclusive `chegb="0"` now surfaces is uncancelable → alarm.
+            if let Err(NotClear::Fill(f)) = require_flat_and_fill_free(&rows) {
                 println!(
                     "NEG-PROBE reconcile UNEXPECTED-FILL ordnos=[{}] — a fill cannot be canceled; \
                      reset the paper book",
@@ -991,8 +1033,48 @@ async fn run_order_negative_probe(
     let url = format!("{base}/stock/order");
     let client = probe_client();
 
-    // Place the VALID CONTROL: a non-marketable resting buy at the band floor. An
-    // ambiguous/failed submit may have rested — reconcile before returning (R3).
+    // PRE-ASSERT-FLAT (KTD3): the symbol must be Flat AND fill-free BEFORE we place
+    // the control. Scan fill-inclusive (KTD2); if any resting OR filled `005930` row
+    // exists, HELD — refuse to place. Do NOT teardown here: a non-flat pre-state means
+    // a FOREIGN row is present (or a stranded control from a prior leg — the operator
+    // clears it between legs, KTD3), which the probe must not cancel. This proven
+    // flat+fill-free baseline is what makes the later teardown's UNCONDITIONAL
+    // cancel-every-resting-row sound: every resting row at teardown is then the probe's
+    // by construction, so no ownership set is needed.
+    match scan_symbol_working_orders(&sdk, symbol).await {
+        Ok(rows) => match require_flat_and_fill_free(&rows) {
+            Ok(()) => {}
+            Err(NotClear::Resting(o)) => {
+                println!(
+                    "NEG-PROBE target={tr_cd}-negative HELD: pre-assert-flat refused — symbol not \
+                     flat (resting ordnos=[{}]; a prior leg's stranded control? clear it) — no \
+                     placement, no variants",
+                    o.join(",")
+                );
+                return;
+            }
+            Err(NotClear::Fill(f)) => {
+                println!(
+                    "NEG-PROBE target={tr_cd}-negative HELD: pre-assert-flat refused — symbol has a \
+                     fill (ordnos=[{}]); reset the paper book — no placement, no variants",
+                    f.join(",")
+                );
+                return;
+            }
+        },
+        Err(e) => {
+            println!(
+                "NEG-PROBE target={tr_cd}-negative HELD: pre-assert-flat scan failed [{e}] — no \
+                 placement, no variants"
+            );
+            return;
+        }
+    }
+
+    // Place the VALID CONTROL: a non-marketable resting buy at the band floor. It
+    // stays RESTING while the variants fire (KTD1), so the referencing modify/cancel
+    // legs exercise a LIVE control OrgOrdNo. An ambiguous/failed submit may have rested
+    // — reconcile before returning (R3).
     let control_req =
         CSPAT00601Request::limit(symbol, "1", band.resting_buy_price().to_string(), "2", member);
     let placed_ordno = match sdk.orders().submit(&control_req).await {
@@ -1014,41 +1096,21 @@ async fn run_order_negative_probe(
         order_reconcile_teardown(&sdk, symbol).await;
         return;
     }
-
-    // Cancel the control and FLAT-VERIFY before any variant fires.
-    let cancel = CSPAT00801Request::new(placed_ordno.trim(), symbol, "1");
-    if let Err(e) = sdk.orders().cancel(&cancel).await {
-        println!(
-            "NEG-PROBE target={tr_cd}-negative control-cancel error [{}] — flat-verify decides",
-            safe_err(&e)
-        );
-    }
-    match scan_symbol_working_orders(&sdk, symbol).await {
-        Ok(rows) => match flat_verdict(&rows) {
-            FlatVerdict::Flat => println!(
-                "NEG-PROBE target={tr_cd}-negative control=[placed+canceled ok=true flat=confirmed]"
-            ),
-            _ => {
-                println!(
-                    "NEG-PROBE target={tr_cd}-negative HELD: control not positively flat after \
-                     cancel — reconciling, no variants"
-                );
-                order_reconcile_teardown(&sdk, symbol).await;
-                return;
-            }
-        },
-        Err(e) => {
-            println!(
-                "NEG-PROBE target={tr_cd}-negative HELD: control flat-verify failed [{e}] — \
-                 reconciling, no variants"
-            );
-            order_reconcile_teardown(&sdk, symbol).await;
-            return;
-        }
-    }
-    // The control positively placed and the book is flat.
+    // The valid control came back a success and is RESTING. `control_ok` is
+    // `classify_probe`'s precondition (the valid control succeeded) — satisfied by the
+    // successful placement; the cancel + flat-verify "cancel works" proof happens AFTER
+    // the variants (KTD1).
     let control_ok = true;
+    println!(
+        "NEG-PROBE target={tr_cd}-negative control=[placed ok=true resting] — firing variants \
+         against the live control"
+    );
 
+    // Build the variant seed off the RESTING control ordno (KTD1): the referencing
+    // modify/cancel legs now exercise a live OrgOrdNo. Fill-vector bound (KTD1): only
+    // type/required variants fire (a removed/wrong-typed OrdPrc is rejected, not coerced
+    // to a marketable price), the modify seed is band-floor+1 tick, and the fill-inclusive
+    // post-variant flat-verify (KTD2) catches any fill post-hoc.
     let schema = ls_core::schema_for(tr_cd)
         .unwrap_or_else(|| panic!("{tr_cd} carries an embedded constraint schema"))
         .clone();
@@ -1108,11 +1170,61 @@ async fn run_order_negative_probe(
         }
     }
 
-    // Final flat-verify + cancel any residue — never leave a resting order.
+    // Variants fired against the LIVE control. Now CANCEL the control and FLAT-VERIFY
+    // (fill-inclusive, KTD2) — the "cancel works + no residue" proof, moved AFTER the
+    // variants (KTD1). A fill surfaced here (the fill-vector KTD1 bounds) routes to the
+    // unrecoverable UNEXPECTED-FILL HELD path, not a plain not-flat.
+    let cancel = CSPAT00801Request::new(placed_ordno.trim(), symbol, "1");
+    if let Err(e) = sdk.orders().cancel(&cancel).await {
+        println!(
+            "NEG-PROBE target={tr_cd}-negative control-cancel error [{}] — flat-verify decides",
+            safe_err(&e)
+        );
+    }
+    match scan_symbol_working_orders(&sdk, symbol).await {
+        Ok(rows) => match require_flat_and_fill_free(&rows) {
+            Ok(()) => println!(
+                "NEG-PROBE target={tr_cd}-negative \
+                 control=[placed+variants-fired+canceled ok=true flat=confirmed]"
+            ),
+            Err(NotClear::Fill(f)) => {
+                println!(
+                    "NEG-PROBE target={tr_cd}-negative HELD: UNEXPECTED-FILL ordnos=[{}] after \
+                     variants — a fill cannot be canceled; reset the paper book — reconciling",
+                    f.join(",")
+                );
+                order_reconcile_teardown(&sdk, symbol).await;
+                return;
+            }
+            Err(NotClear::Resting(_)) => {
+                println!(
+                    "NEG-PROBE target={tr_cd}-negative HELD: control not positively flat after \
+                     cancel — reconciling"
+                );
+                order_reconcile_teardown(&sdk, symbol).await;
+                return;
+            }
+        },
+        Err(e) => {
+            println!(
+                "NEG-PROBE target={tr_cd}-negative HELD: control flat-verify failed [{e}] — \
+                 reconciling"
+            );
+            order_reconcile_teardown(&sdk, symbol).await;
+            return;
+        }
+    }
+
+    // Final flat-verify + cancel any residue — never leave a resting order. The
+    // teardown cancel is UNCONDITIONAL (every resting row, no ownership set): sound
+    // because pre-assert-flat proved the book clean at start, so every resting row is
+    // the probe's — including an accepted WAVE-BLOCKED submit variant whose OrdNo
+    // `fire_inblock` never surfaces (an owned-only teardown would strand it).
     order_reconcile_teardown(&sdk, symbol).await;
     println!(
         "NEG-PROBE target={tr_cd}-negative teardown=done \
-         note=[control canceled pre-variants; residue reconciled]"
+         note=[variants fired against live control; control canceled+flat-verified post-variants; \
+         residue reconciled]"
     );
 }
 
@@ -1315,6 +1427,52 @@ fn flat_verdict_keys_on_quantities_and_a_fill_outranks_a_resting_remainder() {
     assert_eq!(
         flat_verdict(&[row("1", "0", "5"), row("2", "3", "0")]),
         FlatVerdict::Fill(vec!["2".into()])
+    );
+}
+
+#[test]
+fn working_orders_scan_request_is_fill_inclusive() {
+    // Gap (b)/KTD2: the shared flat-verify scan request must carry the fill-inclusive
+    // `chegb="0"` (all states incl. fully-filled), not the old unfilled-only `"2"` that
+    // hid a fill from `flat_verdict`. Asserted on the request builder — no live call.
+    let req = working_orders_request("005930");
+    assert_eq!(req.inblock.chegb, "0", "scan must be fill-inclusive (chegb=0), not unfilled-only");
+    assert_eq!(req.inblock.expcode, "005930", "scan stays symbol-scoped");
+}
+
+#[test]
+fn require_flat_and_fill_free_gates_all_three_scan_consumers() {
+    // Gap (b)+(c)/KTD2/KTD3: the SAME pure decision feeds all three fill-inclusive scan
+    // consumers — pre-assert-flat (refuse to place), post-cancel flat-verify (HELD), and
+    // teardown (UNEXPECTED-FILL alarm). A synthesized fill drives the unrecoverable
+    // outcome, not just `flat_verdict` in isolation.
+    let row = |ordno: &str, cheqty: &str, ordrem: &str| T0425OutBlock1 {
+        ordno: ordno.into(),
+        cheqty: cheqty.into(),
+        ordrem: ordrem.into(),
+        ..Default::default()
+    };
+    // Clear book → proceed (pre-assert places; post-cancel confirms flat; teardown quiet).
+    assert_eq!(require_flat_and_fill_free(&[]), Ok(()));
+    assert_eq!(require_flat_and_fill_free(&[row("1", "0", "0")]), Ok(()));
+    // A resting probe row → NotClear::Resting (cancelable): pre-assert refuses, post-cancel
+    // HELDs, teardown cancels it.
+    assert_eq!(
+        require_flat_and_fill_free(&[row("7", "0", "5")]),
+        Err(NotClear::Resting(vec!["7".into()]))
+    );
+    // A FILL (cheqty>0), newly visible under chegb="0" → NotClear::Fill (uncancelable):
+    // pre-assert refuses ("reset the paper book"), post-cancel routes to UNEXPECTED-FILL
+    // HELD, teardown raises the UNEXPECTED-FILL alarm. This is the branch the old
+    // unfilled-only scan could never reach.
+    assert_eq!(
+        require_flat_and_fill_free(&[row("9", "2", "0")]),
+        Err(NotClear::Fill(vec!["9".into()]))
+    );
+    // A fill outranks a resting remainder in the same set → unrecoverable Fill.
+    assert_eq!(
+        require_flat_and_fill_free(&[row("1", "0", "5"), row("9", "2", "0")]),
+        Err(NotClear::Fill(vec!["9".into()]))
     );
 }
 

@@ -18,7 +18,18 @@ dependencies:
 support:
   tracked: true
   implemented: true
-  recommended: false
+  recommended: true
 maintenance:
   source_spec_hash: e5f6a1b2c3d4
-  last_reviewed: 2026-06-17
+  last_reviewed: 2026-07-06
+recommendation:
+  behavior: Paper WebSocket subscribe-lifecycle reachability for the KOSPI trade feed
+  evidence_ref: evidence/S3_.yaml
+  excludes:
+    - Trade-data correctness (a lifecycle smoke, not a live-data recommendation)
+    - In-session row delivery guarantees
+    - Reconnection / resubscribe semantics
+    - Production-credential streams (evidence is paper only)
+    - Auto-revoking the recommendation on a change-driven structural change — detection ships (advisory); auto-revoke of support.recommended stays deferred
+constraints_ref: constraints/S3_.yaml
+error_coverage_ref: error-coverage/S3_.yaml

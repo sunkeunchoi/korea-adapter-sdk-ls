@@ -1,0 +1,48 @@
+# Error-coverage evidence for token (OAuth2 access-token issuance).
+#
+# `token` is NOT an InBlock TR — its request is an `application/x-www-form-
+# urlencoded` body issued by `ls_core::auth`, never the `Inner::post` preflight
+# seam. Its differential leg is the bespoke `/oauth2/token` FORM probe (KTD2) that
+# mutates ONLY the two non-credential fields (`grant_type`, `scope`); the credential
+# fields (`appkey`, `appsecretkey`) are tested by field REMOVAL only, never with a
+# mutated value.
+#
+# PROBED: backed by a live differential negative probe (`make live-smoke-token-negative`,
+# R10) run LAST among the live legs (a token-flow probe can disturb the session token)
+# in an attended open-KRX session on 2026-07-06 (re-cert wave, plan 2026-07-06-001 U4).
+# The valid control succeeded and every fired invalid variant was rejected with
+# `http=403` — a CLEAN chain (grant_type enum/required, scope enum/required,
+# content-type format, appkey/appsecretkey required-by-removal).
+#
+# `status` legend: declared / confirmed / held / divergent / n_a (see t8412 exemplar).
+tr_code: token
+probe_status: clean
+seed: "grant_type=client_credentials scope=oob (credential fields from the lane env)"
+input_classes:
+  - { field: grant_type, class: type, status: n_a }        # string field
+  - { field: grant_type, class: required, status: confirmed }
+  - { field: grant_type, class: enum, status: confirmed }
+  - { field: grant_type, class: range, status: n_a }
+  - { field: grant_type, class: format, status: n_a }
+  - { field: scope, class: type, status: n_a }
+  - { field: scope, class: required, status: confirmed }
+  - { field: scope, class: enum, status: confirmed }
+  - { field: scope, class: range, status: n_a }
+  - { field: scope, class: format, status: n_a }
+  - { field: appkey, class: type, status: n_a }            # CREDENTIAL — never value-mutated
+  - { field: appkey, class: required, status: confirmed }  # required-class by removal only
+  - { field: appkey, class: enum, status: n_a }
+  - { field: appkey, class: range, status: n_a }
+  - { field: appkey, class: format, status: n_a }
+  - { field: appsecretkey, class: type, status: n_a }      # CREDENTIAL — never value-mutated
+  - { field: appsecretkey, class: required, status: confirmed }
+  - { field: appsecretkey, class: enum, status: n_a }
+  - { field: appsecretkey, class: range, status: n_a }
+  - { field: appsecretkey, class: format, status: n_a }
+  - { field: content-type, class: format, status: confirmed }  # form content-type mutation → rejected
+# Reachable codes: OAuth success carries an empty rsp_cd; malformed forms reject at
+# the HTTP layer (403). The rsp_cd-keyed catalog entries below are the environment
+# codes that point at the shared catalog.
+gateway_codes:
+  - "00000"
+  - "01900"

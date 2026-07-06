@@ -110,9 +110,14 @@ freshness evaluator. The advisory spec-doc point (2) holds by construction. Only
   2026-07-01-004, R12) demoted the ten TRs promoted under the old happy-path gate
   (`token`, `t1101`, `t1102`, `t8412`, `S3_`, `CSPAQ12200`, and the four order TRs
   `CSPAT00601` submit / `CSPAT00701` modify / `CSPAT00801` cancel + `t0425`
-  reconciliation read) back to Implemented, so the **current Recommended count is
-  0**: the badge now means "this call fails gracefully," and each TR re-promotes
-  only after passing the new differential-probe gate (U8, operator-run across live
-  windows). Until re-certification the freshness evaluator has no Recommended TR to
-  evaluate; per-class tightening (e.g. a shorter window for the `orders` class)
-  stays deferred and becomes actionable again as TRs re-promote.
+  reconciliation read) back to Implemented. The badge now means "this call fails
+  gracefully," and each TR re-promotes only after passing the differential-probe
+  gate (operator-run across live windows). The re-cert wave (plan 2026-07-06-001 U4,
+  attended open-KRX session 2026-07-06) restored **3 Recommended TRs** — `token`
+  (auth), `t1101` (market_session), and `S3_` (realtime) — spanning 3 owner classes,
+  each on a clean live differential chain (except `S3_`, whose realtime subscribe has
+  no differential and rests on the lifecycle-scoped substitute). `t1102` + `t8412`
+  stayed HELD (Divergent probe: the gateway accepts a removed-required / malformed
+  field), `CSPAQ12200` HELD (its sole variant only throttled), and the order quartet
+  HELD. Per-class tightening (e.g. a shorter window for the `orders` class) stays
+  deferred and becomes actionable as more TRs re-promote.

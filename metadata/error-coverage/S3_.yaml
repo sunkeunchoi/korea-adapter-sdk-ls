@@ -1,0 +1,33 @@
+# Error-coverage evidence for S3_ (KOSPI 체결 real-time trade feed — a WebSocket
+# subscribe frame, owner_class: realtime).
+#
+# NO LIVE DIFFERENTIAL PROBE (KTD2, plan 2026-07-06-001 U4). A WS subscribe frame
+# never reaches the REST `Inner::post` preflight seam and has no REST error
+# differential: the realtime gateway signals rejection by NOT delivering rows, never
+# by an observable rejection code (KTD6 RESOLVED = NOT-OBSERVABLE). So there is no
+# differential leg to fire; this artifact is the realtime error-coverage SUBSTITUTE
+# the recipe records at promotion. Its recommendation therefore EXCLUDES trade-data
+# correctness, in-session row delivery, and reconnection — the substitute certifies
+# the subscribe lifecycle reachability only (`make live-smoke-ws`, control run
+# 2026-07-06: `row received (lifecycle bonus)`), not the differential contract.
+#
+# Per-class coverage is recorded `held` (untestable via a REST differential) or `n_a`.
+#
+# `status` legend: declared / confirmed / held / divergent / n_a (see t8412 exemplar).
+tr_code: S3_
+probe_status: not_probed
+seed: "tr_cd=S3_ tr_key=005930 (WS subscribe frame; no REST differential)"
+input_classes:
+  - { field: tr_cd, class: type, status: n_a }         # string field
+  - { field: tr_cd, class: required, status: held }     # no REST differential — realtime non-observable
+  - { field: tr_cd, class: enum, status: n_a }
+  - { field: tr_cd, class: range, status: n_a }
+  - { field: tr_cd, class: format, status: n_a }
+  - { field: tr_key, class: type, status: n_a }
+  - { field: tr_key, class: required, status: n_a }     # optional on the wire
+  - { field: tr_key, class: enum, status: n_a }
+  - { field: tr_key, class: range, status: n_a }
+  - { field: tr_key, class: format, status: n_a }
+# A realtime subscribe has no rejection-code contract (NOT-OBSERVABLE) — no reachable
+# gateway rsp_cd set to project.
+gateway_codes: []
