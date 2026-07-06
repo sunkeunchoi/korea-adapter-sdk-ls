@@ -24,7 +24,7 @@ use std::process::ExitCode;
 use chrono::{DateTime, Datelike, NaiveDate, Utc, Weekday};
 
 use nautilus_ls::ingest::checkpoint::Checkpoint;
-use nautilus_ls::ingest::{kst_date_of, read_all_bars};
+use nautilus_ls::ingest::{compact_catalog, kst_date_of, read_all_bars, CompactOutcome};
 use nautilus_model::data::Bar;
 use nautilus_model::enums::BarAggregation;
 
@@ -812,6 +812,61 @@ pub async fn catalog_status(cfg: &StatusConfig) -> anyhow::Result<StatusOutcome>
 }
 
 // ===========================================================================
+// catalog compact (U5 — write-side remediation)
+// ===========================================================================
+
+/// `catalog compact` config.
+#[derive(Debug, Clone)]
+pub struct CompactConfig {
+    /// The data home.
+    pub data_home: PathBuf,
+}
+
+/// A `catalog compact` outcome.
+#[derive(Debug, Clone)]
+pub struct CompactCliOutcome {
+    /// Whether any series was refused for value divergence (drives a non-zero exit).
+    pub refused: bool,
+    /// The report lines (before/after file + bar counts, per-series outcome).
+    pub lines: Vec<String>,
+}
+
+/// Collapse byte-identical duplicate bars per series into a clean file set,
+/// reporting before/after file and bar counts (R8). A value-divergent series is
+/// refused and left untouched (R9); the checkpoint is never touched (R10). Wraps
+/// the adapter's [`compact_catalog`], which holds the ingest advisory lock.
+pub async fn catalog_compact(cfg: &CompactConfig) -> anyhow::Result<CompactCliOutcome> {
+    let catalog_path = cfg.data_home.join("catalog");
+    if !catalog_path.exists() {
+        anyhow::bail!("no catalog at {} — ingest first", catalog_path.display());
+    }
+    let report = compact_catalog(&catalog_path)
+        .await
+        .map_err(|e| anyhow::anyhow!("compact: {e}"))?;
+
+    let mut lines = Vec::new();
+    for s in &report.series {
+        let outcome = match s.outcome {
+            CompactOutcome::Compacted => "compacted",
+            CompactOutcome::Clean => "clean",
+            CompactOutcome::RefusedDivergent => {
+                "REFUSED (value-divergent same-timestamp rows — left untouched, owned by the heal path)"
+            }
+        };
+        lines.push(format!(
+            "{}: {} files -> {} files, {} bars -> {} bars [{outcome}]",
+            s.bar_type, s.files_before, s.files_after, s.bars_before, s.bars_after
+        ));
+    }
+    let refused = report.any_refused();
+    lines.push(format!(
+        "compact: {}",
+        if refused { "REFUSED (some series left untouched — see above)" } else { "OK" }
+    ));
+    Ok(CompactCliOutcome { refused, lines })
+}
+
+// ===========================================================================
 // U6 — analyze --scaffold
 // ===========================================================================
 
@@ -943,7 +998,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
 // ===========================================================================
 
 /// A usage string enumerating the valid subcommands (KTD2).
-const USAGE: &str = "usage: lab-research <turn | runs compare | replay | catalog status | analyze --scaffold>";
+const USAGE: &str = "usage: lab-research <turn | runs compare | replay | catalog status | catalog compact | analyze --scaffold>";
 
 /// Parse an optional `YYYYMMDD` range from a pair of env vars, returning `None`
 /// when neither is set and erroring when only one is.
@@ -1038,7 +1093,13 @@ fn dispatch() -> anyhow::Result<ExitCode> {
                 print_lines(&out.lines);
                 Ok(ok_fail(out.go))
             }
-            other => anyhow::bail!("unknown `catalog` subcommand {other:?} — want `catalog status`\n{USAGE}"),
+            Some("compact") => {
+                let rt = tokio::runtime::Runtime::new()?;
+                let out = rt.block_on(catalog_compact(&compact_config_from_env()?))?;
+                print_lines(&out.lines);
+                Ok(ok_fail(!out.refused))
+            }
+            other => anyhow::bail!("unknown `catalog` subcommand {other:?} — want `catalog status` | `catalog compact`\n{USAGE}"),
         },
         Some("analyze") => match std::env::args().nth(2).as_deref() {
             Some("--scaffold") => {
@@ -1106,6 +1167,10 @@ fn status_config_from_env() -> anyhow::Result<StatusConfig> {
         data_home: data_home_from_env()?,
         expected_range: env_range("LS_STATUS_SDATE", "LS_STATUS_EDATE")?,
     })
+}
+
+fn compact_config_from_env() -> anyhow::Result<CompactConfig> {
+    Ok(CompactConfig { data_home: data_home_from_env()? })
 }
 
 fn scaffold_config_from_env() -> anyhow::Result<ScaffoldConfig> {

@@ -82,6 +82,29 @@ pub enum AdapterError {
         source: Box<ls_core::LsError>,
     },
 
+    /// A checked-append write refused fail-closed because the new bars' date
+    /// range overlaps coverage already stored for the same series (R5/KTD-1). The
+    /// message names the offending series, the attempted and stored ranges, and
+    /// both remediations (compaction for duplicate pollution, wipe + full re-pull
+    /// or a fresh catalog for a genuinely disjoint stored coverage). A distinct
+    /// variant so `run`/`run_accumulate` can route it into a per-triple refusal
+    /// report and continue, while direct callers can match it as the typed refusal.
+    #[error(
+        "refusing to write {bar_type} bars spanning {attempted}: they overlap stored coverage \
+         [{stored}]. This is duplicate pollution or a disjointness violation — run \
+         `lab-research catalog compact` to collapse byte-identical duplicates, or wipe + full \
+         re-pull (or start a fresh catalog) if the stored coverage is genuinely disjoint from \
+         the intended write."
+    )]
+    OverlapRefused {
+        /// The bar-type identifier of the refused series.
+        bar_type: String,
+        /// The attempted write's KST date range (`sdate..edate`).
+        attempted: String,
+        /// The overlapping stored coverage range(s) (`sdate..edate`, comma-joined).
+        stored: String,
+    },
+
     /// A wrapped `anyhow` error from a nautilus API boundary.
     #[error(transparent)]
     Other(#[from] anyhow::Error),

@@ -165,6 +165,22 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             );
         }
     }
+    if !report.append_refusals.is_empty() {
+        for r in &report.append_refusals {
+            println!(
+                "APPEND REFUSED (overlap): {} {} — attempted {} overlaps stored coverage [{}]; run `lab-research catalog compact` (duplicate pollution) or wipe + full re-pull / fresh catalog (disjoint coverage). Watermark not advanced.",
+                r.instrument, r.bar_type, r.attempted, r.stored
+            );
+        }
+    }
+    if !report.backward_widen_warnings.is_empty() {
+        for w in &report.backward_widen_warnings {
+            println!(
+                "BACKWARD WIDEN NO-OP: {} {} — lookback floor {} precedes earliest stored coverage {}; accumulate never fetches below the watermark. Recover the pre-coverage region with a fresh catalog at the wider lookback, or wipe + full re-pull.",
+                w.instrument, w.bar_type, w.floor, w.earliest_stored
+            );
+        }
+    }
     println!(
         "budget: {} symbols x {} bar-kinds, paced to {}/s (>= {:.0}s wall clock)",
         report.budget.symbols,

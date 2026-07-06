@@ -623,15 +623,61 @@ enum OverlapVerdict {
     Insufficient,
 }
 
-/// The last `n` bars of an ascending series — the overlap tail. Detection and
-/// the heal's re-verify MUST prepare their stored side through this one helper:
-/// the re-verify exists to re-check the invariant detection compared, so the
-/// two tails must be defined identically.
-fn overlap_tail(mut bars: Vec<Bar>, n: usize) -> Vec<Bar> {
-    if bars.len() > n {
-        bars.drain(..bars.len() - n);
+/// The rows belonging to the last `n` **distinct** `ts_event` values of a series
+/// — the overlap tail (KTD-4). Detection and the heal's re-verify MUST prepare
+/// their stored side through this one helper: the re-verify exists to re-check the
+/// invariant detection compared, so the two tails must be defined identically.
+///
+/// Keying on distinct sessions rather than raw `Vec` length is load-bearing: a
+/// duplicate-polluted catalog (byte-identical re-pull rows for the same session)
+/// would otherwise crowd distinct earlier sessions out of a length-based window,
+/// diluting `compare_overlap`'s mutual-date count below `MIN_OVERLAP_DATES` and
+/// silently suppressing a genuine basis shift. All rows of a kept session are
+/// retained (including any same-`ts_event` divergent copy), so the caller can
+/// still see an intra-session divergence.
+fn overlap_tail(bars: Vec<Bar>, n: usize) -> Vec<Bar> {
+    let mut distinct: Vec<u64> = bars.iter().map(|b| b.ts_event.as_u64()).collect();
+    distinct.sort_unstable();
+    distinct.dedup();
+    if distinct.len() <= n {
+        return bars;
     }
-    bars
+    // The first `ts_event` to keep = the start of the last `n` distinct sessions.
+    let cutoff = distinct[distinct.len() - n];
+    bars.into_iter().filter(|b| b.ts_event.as_u64() >= cutoff).collect()
+}
+
+/// The stored-side sufficiency decision for [`Ingestor::detect_shift`] (KTD-4).
+enum TailGate {
+    /// The tail carries value-divergent same-`ts_event` rows (surviving
+    /// byte-identical dedup) — a basis-shift/mutation signal directly.
+    ForceShift,
+    /// Fewer than [`MIN_OVERLAP_DATES`] distinct sessions — skip detection.
+    Insufficient,
+    /// Enough distinct, non-divergent sessions — proceed to the overlap compare.
+    Compare,
+}
+
+/// Gate an overlap tail on DISTINCT sessions, not raw rows (KTD-4). Byte-identical
+/// duplicates are collapsed first (a redundant re-pull is not divergence); a
+/// timestamp that still carries more than one row is value-divergent and forces a
+/// shift verdict, because `compare_overlap`'s per-timestamp map would keep only the
+/// last-inserted copy and hide it (read-order dependent). Otherwise sufficiency is
+/// the count of distinct sessions.
+fn stored_overlap_gate(tail: &[Bar]) -> TailGate {
+    let mut deduped = tail.to_vec();
+    dedup_bars(&mut deduped);
+    let mut per_ts: BTreeMap<u64, usize> = BTreeMap::new();
+    for b in &deduped {
+        *per_ts.entry(b.ts_event.as_u64()).or_default() += 1;
+    }
+    if per_ts.values().any(|&c| c > 1) {
+        TailGate::ForceShift
+    } else if per_ts.len() < MIN_OVERLAP_DATES {
+        TailGate::Insufficient
+    } else {
+        TailGate::Compare
+    }
 }
 
 fn ohlc_by_ts(bars: &[Bar]) -> BTreeMap<u64, (Price, Price, Price, Price)> {
@@ -749,6 +795,40 @@ pub struct RangeRefusal {
     pub detected: String,
 }
 
+/// A production append refused fail-closed because its date range overlaps
+/// coverage already stored for the same `(instrument, bar-kind)` series (R5/KTD-1).
+/// The refusal is per-triple, not run-fatal: the watermark does not advance, the
+/// run continues, and the entry is surfaced (never silent) — the `ls-ingest` bin
+/// prints it beside the other refusal vecs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AppendRefusal {
+    /// The instrument id (`{shcode}.XKRX`).
+    pub instrument: String,
+    /// The bar-type label (e.g. `1-DAY`).
+    pub bar_type: String,
+    /// The attempted write's KST date range (`sdate..edate`).
+    pub attempted: String,
+    /// The overlapping stored coverage range(s) that triggered the refusal.
+    pub stored: String,
+}
+
+/// A backward-widen loud no-op (R4/KTD-6): a triple whose configured lookback
+/// floor precedes its earliest stored coverage, so the pre-coverage region will
+/// not be fetched. The watermark carries no coverage start, so this is the
+/// operator's signal to use the escape hatch (a fresh catalog at the wider
+/// lookback, or wipe + full re-pull) — surfaced, never silent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackwardWidenWarning {
+    /// The instrument id (`{shcode}.XKRX`).
+    pub instrument: String,
+    /// The bar-type label (e.g. `1-DAY`).
+    pub bar_type: String,
+    /// The configured lookback floor (`YYYYMMDD`).
+    pub floor: String,
+    /// The earliest stored coverage date (`YYYYMMDD`) the floor precedes.
+    pub earliest_stored: String,
+}
+
 /// The result of an ingest run.
 #[derive(Debug, Clone)]
 pub struct CoverageReport {
@@ -765,6 +845,12 @@ pub struct CoverageReport {
     /// Range-mode series refused pending heal (U4/KTD8) — a marked series is
     /// refused, never served or completed on a stale basis, and never silent.
     pub range_refusals: Vec<RangeRefusal>,
+    /// Appends refused fail-closed for interval overlap (R5/KTD-1) — a per-triple
+    /// refusal that does not advance the watermark or abort the run.
+    pub append_refusals: Vec<AppendRefusal>,
+    /// Backward-widen loud no-ops (R4/KTD-6): triples whose lookback floor precedes
+    /// their earliest stored coverage, so the pre-coverage region is unreachable.
+    pub backward_widen_warnings: Vec<BackwardWidenWarning>,
     /// The request-budget estimate for the run.
     pub budget: BudgetEstimate,
 }
@@ -834,6 +920,7 @@ impl Ingestor {
         let mut skipped = 0usize;
         let mut gaps_this_run = Vec::new();
         let mut range_refusals: Vec<RangeRefusal> = Vec::new();
+        let mut append_refusals: Vec<AppendRefusal> = Vec::new();
 
         for id in universe {
             let shcode = id.symbol.as_str().to_string();
@@ -883,10 +970,25 @@ impl Ingestor {
                     // relying on that with an unreachable arm.
                     TripleOutcome::Bars(bars) if !bars.is_empty() => {
                         let n = bars.len();
-                        write_bars(&self.config.catalog_path, bars).await?;
-                        bars_written += n;
-                        ingested += 1;
-                        checkpoint.mark_done(&id.to_string(), &label, &range);
+                        match append_bars_checked(&self.config.catalog_path, bar_type, bars).await {
+                            Ok(()) => {
+                                bars_written += n;
+                                ingested += 1;
+                                checkpoint.mark_done(&id.to_string(), &label, &range);
+                            }
+                            // An interval overlap is a fail-closed per-triple refusal
+                            // (R5): the triple is NOT marked done (so a re-run re-surfaces
+                            // it until the operator compacts/wipes), and the run continues.
+                            Err(AdapterError::OverlapRefused { attempted, stored, .. }) => {
+                                append_refusals.push(AppendRefusal {
+                                    instrument: id.to_string(),
+                                    bar_type: label.clone(),
+                                    attempted,
+                                    stored,
+                                });
+                            }
+                            Err(e) => return Err(e),
+                        }
                     }
                     TripleOutcome::Bars(_) => {
                         checkpoint.record_gap(&id.to_string(), &label, &range, GapReason::EmptyHistory);
@@ -924,6 +1026,8 @@ impl Ingestor {
             gaps: gaps_this_run,
             heal_refusals: Vec::new(),
             range_refusals,
+            append_refusals,
+            backward_widen_warnings: Vec::new(),
             budget,
         })
     }
@@ -967,6 +1071,8 @@ impl Ingestor {
         let mut skipped = 0usize;
         let mut gaps_this_run: Vec<CoverageGap> = Vec::new();
         let mut heal_refusals: Vec<HealRefusal> = Vec::new();
+        let mut append_refusals: Vec<AppendRefusal> = Vec::new();
+        let mut backward_widen_warnings: Vec<BackwardWidenWarning> = Vec::new();
 
         for id in universe {
             let shcode = id.symbol.as_str().to_string();
@@ -983,8 +1089,41 @@ impl Ingestor {
                 let heal_now = if matches!(kind, BarKind::Daily) && checkpoint.is_shifted(&instrument, &label) {
                     true
                 } else {
+                    let wm = checkpoint.watermark(&instrument, &label);
+                    // R4/KTD-6 backward-widen loud no-op: accumulate fetches from
+                    // watermark+1, never below it, so a floor earlier than the
+                    // earliest stored coverage cannot be reached. Warn and name the
+                    // escape hatch (fresh catalog at the wider lookback, or wipe +
+                    // full re-pull) instead of silently not fetching. Only meaningful
+                    // once a watermark exists — an unseen instrument's floor fetch is
+                    // the normal path, not a backward widen.
+                    if wm.is_some() {
+                        if let Some(earliest_ns) =
+                            stored_bar_intervals(&self.config.catalog_path, bar_type)
+                                .await?
+                                .into_iter()
+                                .map(|(s, _)| s)
+                                .min()
+                        {
+                            let earliest_stored = kst_date_of(UnixNanos::from(earliest_ns));
+                            if lookback_floor < earliest_stored {
+                                tracing::warn!(
+                                    instrument = %instrument,
+                                    floor = %fmt_ymd(lookback_floor),
+                                    earliest = %fmt_ymd(earliest_stored),
+                                    "backward widen is a no-op: the lookback floor precedes the earliest stored coverage and accumulate never fetches below the watermark; recover the pre-coverage region with a fresh catalog at the wider lookback, or wipe + full re-pull"
+                                );
+                                backward_widen_warnings.push(BackwardWidenWarning {
+                                    instrument: instrument.clone(),
+                                    bar_type: label.clone(),
+                                    floor: fmt_ymd(lookback_floor),
+                                    earliest_stored: fmt_ymd(earliest_stored),
+                                });
+                            }
+                        }
+                    }
                     // Range = watermark+1 .. last closed session (or floor if unseen).
-                    let start = match checkpoint.watermark(&instrument, &label) {
+                    let start = match wm {
                         Some(d) => d.succ_opt().expect("a date always has a successor"),
                         None => lookback_floor,
                     };
@@ -1057,9 +1196,26 @@ impl Ingestor {
                 match outcome {
                     TripleOutcome::Bars(bars) if !bars.is_empty() => {
                         let n = bars.len();
-                        write_bars(&self.config.catalog_path, bars).await?;
-                        bars_written += n;
-                        ingested += 1;
+                        match append_bars_checked(&self.config.catalog_path, bar_type, bars).await {
+                            Ok(()) => {
+                                bars_written += n;
+                                ingested += 1;
+                            }
+                            // A fail-closed interval-overlap refusal (R5): the
+                            // watermark must NOT advance (a re-run re-surfaces it
+                            // until the operator compacts/wipes), and the run
+                            // continues with the other triples.
+                            Err(AdapterError::OverlapRefused { attempted, stored, .. }) => {
+                                advance = false;
+                                append_refusals.push(AppendRefusal {
+                                    instrument: instrument.clone(),
+                                    bar_type: label.clone(),
+                                    attempted,
+                                    stored,
+                                });
+                            }
+                            Err(e) => return Err(e),
+                        }
                     }
                     TripleOutcome::Bars(_) => gaps_this_run.push(CoverageGap {
                         instrument: instrument.clone(),
@@ -1123,6 +1279,8 @@ impl Ingestor {
             // Accumulate mode heals marked series in place; range-mode refusal is a
             // range-only concept (KTD8).
             range_refusals: Vec::new(),
+            append_refusals,
+            backward_widen_warnings,
             budget,
         })
     }
@@ -1175,13 +1333,21 @@ impl Ingestor {
         // Stored side: the last `overlap_days` stored trading days in the window.
         let ws_ns = kst_to_unix_nanos(wstart, NaiveTime::MIN)?;
         let we_ns = kst_to_unix_nanos(watermark, KRX_REGULAR_CLOSE)?;
-        let stored = overlap_tail(
+        let mut stored = overlap_tail(
             read_bars_scoped(&self.config.catalog_path, bar_type, Some(ws_ns), Some(we_ns)).await?,
             self.config.overlap_days,
         );
-        if stored.len() < MIN_OVERLAP_DATES {
-            return Ok(false);
+        // Distinct-session gate (KTD-4): duplicates can neither fake sufficiency
+        // nor dilute the count, and a value-divergent same-session pair forces the
+        // shift verdict directly.
+        match stored_overlap_gate(&stored) {
+            TailGate::ForceShift => return Ok(true),
+            TailGate::Insufficient => return Ok(false),
+            TailGate::Compare => {}
         }
+        // Feed a byte-identical-deduped tail to the compare so a redundant re-pull
+        // row can't perturb the per-timestamp map.
+        dedup_bars(&mut stored);
         let fetched = match fetch_overlap(&self.fetcher, shcode, bar_type, wstart, watermark).await? {
             Some(bars) => bars,
             None => return Ok(false),
@@ -1275,7 +1441,11 @@ impl Ingestor {
             self.config.overlap_days,
         );
         if !pulled.is_empty() {
-            write_bars(&self.config.catalog_path, pulled).await?;
+            // The wipe (delete_bar_series above) left the series empty, so this
+            // re-pull is disjoint by construction and passes the checked guard
+            // (R6) — routing it through the same wrapper keeps raw `write_bars`
+            // out of every production path (KTD-2).
+            append_bars_checked(&self.config.catalog_path, bar_type, pulled).await?;
         }
 
         // Re-verify (the gateway may rewrite the series again while the heal is
@@ -1344,20 +1514,24 @@ fn last_gap(cp: &Checkpoint) -> checkpoint::CoverageGap {
     cp.gaps().last().cloned().expect("a gap was just recorded")
 }
 
-/// Write bars to the catalog on a blocking thread.
+/// Write bars to the catalog on a blocking thread — a **fixture-only primitive**
+/// (KTD-2). No production caller may use it directly: it skips the interval-overlap
+/// guard, so a re-ingest that overlaps stored coverage writes a second overlapping
+/// parquet file (the duplicate-pollution root cause). Every production writer goes
+/// through [`append_bars_checked`], which refuses an overlap fail-closed.
 ///
 /// `ParquetDataCatalog` drives an internal runtime via `block_on`, which panics if
 /// called on a thread already running a tokio reactor — so every catalog
 /// interaction is moved to the blocking pool (`spawn_blocking`). The catalog is
 /// constructed, used, and dropped entirely inside the closure. Ascending `ts_init`
-/// is guaranteed by the callers; the disjoint check is skipped (re-ingesting a
-/// symbol overwrites its range; dedup is by checkpoint).
+/// is guaranteed by the callers; the parquet disjoint check is skipped (via the
+/// `Some(true)` argument) so tests can deliberately stage overlaps.
 ///
 /// Public so the lab (and tooling) can stage a fixture catalog symmetrically with
-/// [`read_all_bars`] / [`write_instruments`]. **This is a low-level primitive that
-/// bypasses the ingest checkpoint** — it advances no watermark and records no coverage,
-/// so production coverage growth must go through [`Ingestor`] (which owns the
-/// checkpoint), never this. Reserve direct use for test fixtures / one-off staging.
+/// [`read_all_bars`] / [`write_instruments`]. **This bypasses the ingest checkpoint**
+/// — it advances no watermark and records no coverage, so production coverage growth
+/// must go through [`Ingestor`] (which owns the checkpoint), never this. Reserve
+/// direct use for test fixtures / one-off staging.
 pub async fn write_bars(catalog_path: &Path, bars: Vec<Bar>) -> AdapterResult<()> {
     let path = catalog_path.to_path_buf();
     tokio::task::spawn_blocking(move || {
@@ -1371,6 +1545,79 @@ pub async fn write_bars(catalog_path: &Path, bars: Vec<Bar>) -> AdapterResult<()
     })
     .await
     .map_err(|e| AdapterError::Ingest(format!("catalog write task panicked: {e}")))?
+}
+
+/// The stored coverage intervals `[start_ns, end_ns]` for one bar-type series,
+/// read from the catalog's parquet filenames (no row reads), on the blocking pool
+/// (KTD-1). An unwritten series returns an empty vec — the `create_dir_all`
+/// envelope keeps a never-written catalog path from erroring (the
+/// block-on-from-async construction gotcha).
+pub async fn stored_bar_intervals(
+    catalog_path: &Path,
+    bar_type: BarType,
+) -> AdapterResult<Vec<(u64, u64)>> {
+    let path = catalog_path.to_path_buf();
+    let identifier = bar_type.to_string();
+    tokio::task::spawn_blocking(move || {
+        std::fs::create_dir_all(&path)
+            .map_err(|e| AdapterError::Ingest(format!("mkdir catalog {}: {e}", path.display())))?;
+        let catalog = ParquetDataCatalog::new(&path, None, None, None, None);
+        catalog
+            .get_intervals("bars", Some(&identifier))
+            .map_err(|e| AdapterError::Ingest(format!("catalog intervals {identifier}: {e}")))
+    })
+    .await
+    .map_err(|e| AdapterError::Ingest(format!("catalog intervals task panicked: {e}")))?
+}
+
+/// Format a `[min_ts, max_ts]` nanosecond interval as a KST `sdate..edate` string.
+fn fmt_ts_range(min_ts: u64, max_ts: u64) -> String {
+    format!(
+        "{}..{}",
+        fmt_ymd(kst_date_of(UnixNanos::from(min_ts))),
+        fmt_ymd(kst_date_of(UnixNanos::from(max_ts)))
+    )
+}
+
+/// Append bars to the catalog **only if** their `[min_ts, max_ts]` range is
+/// disjoint from every stored interval for the same series (R5/R6/KTD-1). The
+/// fail-closed write guard: a re-fetch-from-floor (legacy widen) or any unforeseen
+/// overlap source is refused with a typed [`AdapterError::OverlapRefused`] that
+/// names both remediations, instead of silently writing a second overlapping
+/// parquet file. Disjoint writes on either side of existing coverage stay legal
+/// (a backward-widen escape hatch), and the heal path's wipe-then-re-pull is
+/// overlap-free by construction, so it passes the guard. Bounds are inclusive: a
+/// write sharing a single boundary timestamp with stored coverage is refused. An
+/// empty write is a no-op `Ok`. All production writers route through this;
+/// [`write_bars`] stays a fixture-only primitive (KTD-2).
+pub async fn append_bars_checked(
+    catalog_path: &Path,
+    bar_type: BarType,
+    bars: Vec<Bar>,
+) -> AdapterResult<()> {
+    if bars.is_empty() {
+        return Ok(());
+    }
+    let min_ts = bars.iter().map(|b| b.ts_init.as_u64()).min().expect("non-empty");
+    let max_ts = bars.iter().map(|b| b.ts_init.as_u64()).max().expect("non-empty");
+    let intervals = stored_bar_intervals(catalog_path, bar_type).await?;
+    // Inclusive-bounds intersection: [min,max] overlaps [s,e] iff min<=e && s<=max.
+    let overlapping: Vec<(u64, u64)> = intervals
+        .into_iter()
+        .filter(|(s, e)| min_ts <= *e && *s <= max_ts)
+        .collect();
+    if !overlapping.is_empty() {
+        return Err(AdapterError::OverlapRefused {
+            bar_type: bar_type.to_string(),
+            attempted: fmt_ts_range(min_ts, max_ts),
+            stored: overlapping
+                .iter()
+                .map(|(s, e)| fmt_ts_range(*s, *e))
+                .collect::<Vec<_>>()
+                .join(", "),
+        });
+    }
+    write_bars(catalog_path, bars).await
 }
 
 /// Write instrument definitions to the catalog (so a backtest can load them). Runs
@@ -1399,17 +1646,25 @@ pub async fn write_instruments(
 /// second parquet file for the overlapping window, and the aggregate read would
 /// otherwise double-count it.
 pub async fn read_all_bars(catalog_path: &Path) -> AdapterResult<Vec<Bar>> {
+    let mut bars = read_all_bars_raw(catalog_path).await?;
+    dedup_bars(&mut bars);
+    Ok(bars)
+}
+
+/// Read every bar back from the catalog WITHOUT deduplication, on a blocking
+/// thread. The raw aggregate read surfaces overlap-duplicate rows (the pollution
+/// [`read_all_bars`] masks) — compaction needs those raw rows to count the true
+/// stored total and to detect value-divergent same-timestamp rows.
+async fn read_all_bars_raw(catalog_path: &Path) -> AdapterResult<Vec<Bar>> {
     let path = catalog_path.to_path_buf();
-    let mut bars = tokio::task::spawn_blocking(move || {
+    tokio::task::spawn_blocking(move || {
         let mut catalog = ParquetDataCatalog::new(&path, None, None, None, None);
         catalog
             .bars(None, None, None)
             .map_err(|e| AdapterError::Ingest(format!("catalog read: {e}")))
     })
     .await
-    .map_err(|e| AdapterError::Ingest(format!("catalog read task panicked: {e}")))??;
-    dedup_bars(&mut bars);
-    Ok(bars)
+    .map_err(|e| AdapterError::Ingest(format!("catalog read task panicked: {e}")))?
 }
 
 /// Remove bars that are *byte-identical* to one already seen, keeping the first
@@ -1498,6 +1753,238 @@ pub async fn read_all_instruments(
     })
     .await
     .map_err(|e| AdapterError::Ingest(format!("catalog read instruments task panicked: {e}")))?
+}
+
+// ---------------------------------------------------------------------------
+// Catalog compaction (U5, KTD-5, R8/R9/R10) — the operator-run remediation that
+// collapses byte-identical duplicate rows per series into a clean file set. It
+// mutates only parquet files (never the checkpoint), holds the ingest advisory
+// lock for the run, and is crash-recoverable via a per-series sidecar.
+// ---------------------------------------------------------------------------
+
+/// What compaction did to one series.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CompactOutcome {
+    /// Byte-identical duplicates were removed and the series rewritten.
+    Compacted,
+    /// No duplicates — the series was already clean, nothing written.
+    Clean,
+    /// The series carries value-divergent same-timestamp rows — refused and left
+    /// untouched (the heal path owns divergence, R9).
+    RefusedDivergent,
+}
+
+/// Per-series compaction facts (R8): file and bar counts before/after + outcome.
+#[derive(Debug, Clone)]
+pub struct CompactSeriesReport {
+    /// The bar-type identifier of the series.
+    pub bar_type: String,
+    /// Parquet file count before compaction.
+    pub files_before: usize,
+    /// Parquet file count after compaction.
+    pub files_after: usize,
+    /// Bar (row) count before compaction (raw, duplicate-inclusive).
+    pub bars_before: usize,
+    /// Bar (row) count after compaction.
+    pub bars_after: usize,
+    /// What compaction did.
+    pub outcome: CompactOutcome,
+}
+
+/// A catalog compaction report, one entry per series.
+#[derive(Debug, Clone)]
+pub struct CompactReport {
+    /// Per-series facts, in bar-type order.
+    pub series: Vec<CompactSeriesReport>,
+}
+
+impl CompactReport {
+    /// Whether any series was refused for value divergence (drives the CLI's
+    /// non-zero exit).
+    pub fn any_refused(&self) -> bool {
+        self.series.iter().any(|s| s.outcome == CompactOutcome::RefusedDivergent)
+    }
+}
+
+/// The sidecar directory beside the catalog (crash-recovery staging, KTD-5).
+fn sidecars_dir(catalog_path: &Path) -> PathBuf {
+    catalog_path.join("compact-sidecars")
+}
+
+/// The per-series sidecar path (`<catalog>/compact-sidecars/{bar_type}.json`).
+fn sidecar_path(catalog_path: &Path, bar_type: BarType) -> PathBuf {
+    sidecars_dir(catalog_path).join(format!("{}.json", bar_type))
+}
+
+/// Serialize the deduped bars to a series sidecar, atomically (temp + rename).
+fn write_sidecar(path: &Path, bars: &[Bar]) -> AdapterResult<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| AdapterError::Ingest(format!("mkdir {}: {e}", parent.display())))?;
+    }
+    let json = serde_json::to_string(bars)
+        .map_err(|e| AdapterError::Ingest(format!("serialize sidecar: {e}")))?;
+    let tmp = path.with_extension("json.tmp");
+    std::fs::write(&tmp, json)
+        .map_err(|e| AdapterError::Ingest(format!("write sidecar tmp {}: {e}", tmp.display())))?;
+    std::fs::rename(&tmp, path)
+        .map_err(|e| AdapterError::Ingest(format!("commit sidecar {}: {e}", path.display())))
+}
+
+/// Read a series sidecar's bars.
+fn read_sidecar(path: &Path) -> AdapterResult<Vec<Bar>> {
+    let s = std::fs::read_to_string(path)
+        .map_err(|e| AdapterError::Ingest(format!("read sidecar {}: {e}", path.display())))?;
+    serde_json::from_str(&s)
+        .map_err(|e| AdapterError::Ingest(format!("corrupt sidecar {}: {e}", path.display())))
+}
+
+/// Remove a series sidecar; a missing sidecar is a no-op `Ok`.
+fn remove_sidecar(path: &Path) -> AdapterResult<()> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(e) => Err(AdapterError::Ingest(format!("remove sidecar {}: {e}", path.display()))),
+    }
+}
+
+/// List the committed (`.json`) series sidecars, parsing each stem back to a
+/// [`BarType`]. Partial `.json.tmp` sidecars (an interrupted write) are skipped —
+/// the atomic rename guarantees a `.json` sidecar is complete.
+fn list_sidecars(catalog_path: &Path) -> AdapterResult<Vec<(BarType, PathBuf)>> {
+    let dir = sidecars_dir(catalog_path);
+    let mut out = Vec::new();
+    match std::fs::read_dir(&dir) {
+        Ok(entries) => {
+            for e in entries {
+                let e = e.map_err(|e| AdapterError::Ingest(format!("read sidecar dir: {e}")))?;
+                let path = e.path();
+                if path.extension().and_then(|x| x.to_str()) != Some("json") {
+                    continue;
+                }
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    if let Ok(bt) = stem.parse::<BarType>() {
+                        out.push((bt, path));
+                    }
+                }
+            }
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return Err(AdapterError::Ingest(format!("list sidecars: {e}"))),
+    }
+    // Deterministic order.
+    out.sort_by_key(|(bt, _)| bt.to_string());
+    Ok(out)
+}
+
+/// Rewrite one series from `bars` (already deduped + sorted) via the sidecar
+/// sequence: stage the sidecar, `delete_bar_series`, re-append through the checked
+/// wrapper (trivially disjoint after the delete, keeping raw `write_bars` out of
+/// every production path), then drop the sidecar. A crash at any point leaves a
+/// recoverable sidecar (KTD-5).
+async fn rewrite_series(catalog_path: &Path, bar_type: BarType, bars: &[Bar]) -> AdapterResult<()> {
+    let sidecar = sidecar_path(catalog_path, bar_type);
+    write_sidecar(&sidecar, bars)?;
+    delete_bar_series(catalog_path, bar_type).await?;
+    append_bars_checked(catalog_path, bar_type, bars.to_vec()).await?;
+    remove_sidecar(&sidecar)?;
+    Ok(())
+}
+
+/// Fold a leftover sidecar back into its series (crash recovery, KTD-5): union the
+/// sidecar rows with whatever the series currently holds (which may include bars
+/// appended after the crash), collapse byte-identical duplicates, and rewrite —
+/// idempotent across every crash point, losing no bar from either source.
+async fn recover_sidecar(catalog_path: &Path, bar_type: BarType, sidecar: &Path) -> AdapterResult<()> {
+    let mut union = read_sidecar(sidecar)?;
+    union.extend(read_bars_scoped(catalog_path, bar_type, None, None).await?);
+    dedup_bars(&mut union);
+    union.sort_by_key(|b| b.ts_init.as_u64());
+    rewrite_series(catalog_path, bar_type, &union).await
+}
+
+/// Compact one series' raw (duplicate-inclusive) rows.
+async fn compact_one_series(
+    catalog_path: &Path,
+    bar_type: BarType,
+    rows: Vec<Bar>,
+) -> AdapterResult<CompactSeriesReport> {
+    let files_before = stored_bar_intervals(catalog_path, bar_type).await?.len();
+    let bars_before = rows.len();
+    let mut deduped = rows;
+    dedup_bars(&mut deduped);
+    // A timestamp still carrying more than one row after byte-identical dedup is
+    // value-divergent — refuse and leave the series untouched (R9).
+    let mut per_ts: BTreeMap<u64, usize> = BTreeMap::new();
+    for b in &deduped {
+        *per_ts.entry(b.ts_event.as_u64()).or_default() += 1;
+    }
+    if per_ts.values().any(|&c| c > 1) {
+        return Ok(CompactSeriesReport {
+            bar_type: bar_type.to_string(),
+            files_before,
+            files_after: files_before,
+            bars_before,
+            bars_after: bars_before,
+            outcome: CompactOutcome::RefusedDivergent,
+        });
+    }
+    if deduped.len() == bars_before {
+        return Ok(CompactSeriesReport {
+            bar_type: bar_type.to_string(),
+            files_before,
+            files_after: files_before,
+            bars_before,
+            bars_after: bars_before,
+            outcome: CompactOutcome::Clean,
+        });
+    }
+    deduped.sort_by_key(|b| b.ts_init.as_u64());
+    let bars_after = deduped.len();
+    rewrite_series(catalog_path, bar_type, &deduped).await?;
+    let files_after = stored_bar_intervals(catalog_path, bar_type).await?.len();
+    Ok(CompactSeriesReport {
+        bar_type: bar_type.to_string(),
+        files_before,
+        files_after,
+        bars_before,
+        bars_after,
+        outcome: CompactOutcome::Compacted,
+    })
+}
+
+/// Compact a catalog: collapse byte-identical duplicate bars per series into a
+/// clean file set, refusing (and leaving untouched) any value-divergent series
+/// (U5, R8/R9/R10). Holds the ingest advisory lock for the whole run (refuses
+/// loudly if held), so no concurrent accumulate can write into the delete-rewrite
+/// window. The checkpoint is never read or written (R10). Any leftover sidecar
+/// from a prior crashed run is folded back first (KTD-5).
+///
+/// # Errors
+///
+/// [`AdapterError::Ingest`] if the lock is held or a catalog/sidecar I/O fails.
+pub async fn compact_catalog(catalog_path: &Path) -> AdapterResult<CompactReport> {
+    let _lock = AdvisoryLock::acquire(catalog_path, LockKind::Ingest)?;
+
+    // Crash recovery first: fold any leftover sidecar back before enumerating, so
+    // the raw read below reflects a consistent series set.
+    for (bar_type, sidecar) in list_sidecars(catalog_path)? {
+        recover_sidecar(catalog_path, bar_type, &sidecar).await?;
+    }
+
+    // Enumerate series from the raw (un-deduped) read so bars_before is the true
+    // stored total and same-timestamp divergence is visible.
+    let raw = read_all_bars_raw(catalog_path).await?;
+    let mut groups: BTreeMap<BarType, Vec<Bar>> = BTreeMap::new();
+    for b in raw {
+        groups.entry(b.bar_type).or_default().push(b);
+    }
+
+    let mut series = Vec::new();
+    for (bar_type, rows) in groups {
+        series.push(compact_one_series(catalog_path, bar_type, rows).await?);
+    }
+    Ok(CompactReport { series })
 }
 
 // ---------------------------------------------------------------------------
@@ -1994,6 +2481,60 @@ mod tests {
         let mut bars = vec![ohlc_bar("20240104", 110), ohlc_bar("20240104", 60)];
         dedup_bars(&mut bars);
         assert_eq!(bars.len(), 2, "a value-divergent same-timestamp bar is not dropped");
+    }
+
+    // --- U4/KTD-4: distinct-session overlap tail ---
+
+    #[test]
+    fn overlap_tail_keeps_last_n_distinct_sessions_not_rows() {
+        // Duplicates crowd the raw tail: a length-based window would keep the last 3
+        // ROWS (three copies of one session → one distinct). The distinct-session
+        // tail keeps the last 3 SESSIONS and all their rows — the dilution fix
+        // (fails on the old row-length `overlap_tail`).
+        let bars = vec![
+            ohlc_bar("20240101", 1),
+            ohlc_bar("20240102", 2),
+            ohlc_bar("20240103", 3),
+            ohlc_bar("20240104", 4),
+            ohlc_bar("20240104", 4),
+            ohlc_bar("20240104", 4),
+            ohlc_bar("20240105", 5),
+            ohlc_bar("20240105", 5),
+            ohlc_bar("20240105", 5),
+        ];
+        let tail = overlap_tail(bars, 3);
+        let distinct: std::collections::BTreeSet<u64> =
+            tail.iter().map(|b| b.ts_event.as_u64()).collect();
+        assert_eq!(distinct.len(), 3, "the last 3 DISTINCT sessions, not the last 3 rows");
+        let oldest = ohlc_bar("20240103", 3).ts_event.as_u64();
+        assert!(tail.iter().all(|b| b.ts_event.as_u64() >= oldest), "sessions before Jan3 dropped");
+    }
+
+    #[test]
+    fn stored_overlap_gate_forces_shift_on_value_divergence() {
+        // Two rows sharing a ts_event with different OHLC (survive byte-identical
+        // dedup) → force the shift verdict directly (compare_overlap would hide it).
+        let tail = vec![ohlc_bar("20240103", 100), ohlc_bar("20240103", 60)];
+        assert!(matches!(stored_overlap_gate(&tail), TailGate::ForceShift));
+    }
+
+    #[test]
+    fn stored_overlap_gate_counts_distinct_sessions_after_dedup() {
+        // 4 rows, 2 distinct sessions (byte-identical dups) → Insufficient (< 3):
+        // duplicates cannot fake sufficiency (AE5).
+        let two = vec![
+            ohlc_bar("20240104", 110),
+            ohlc_bar("20240104", 110),
+            ohlc_bar("20240105", 120),
+            ohlc_bar("20240105", 120),
+        ];
+        assert!(matches!(stored_overlap_gate(&two), TailGate::Insufficient));
+        // 5 byte-identical copies of ONE shifted session → 1 distinct → Insufficient.
+        let five = vec![ohlc_bar("20240105", 120); 5];
+        assert!(matches!(stored_overlap_gate(&five), TailGate::Insufficient));
+        // 3 clean distinct sessions → proceed to the compare.
+        let three = vec![ohlc_bar("20240103", 100), ohlc_bar("20240104", 110), ohlc_bar("20240105", 120)];
+        assert!(matches!(stored_overlap_gate(&three), TailGate::Compare));
     }
 
     #[test]
