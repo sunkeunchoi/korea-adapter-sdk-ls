@@ -21,8 +21,8 @@ use nautilus_ls_lab::artifacts::manifest::{DataRange, Manifest};
 use nautilus_ls_lab::artifacts::{list_runs, MANIFEST_FILE};
 use nautilus_ls_lab::runner::backtest::{run as backtest_run, BacktestConfig};
 use nautilus_ls_lab::runner::research::{
-    analyze_scaffold, catalog_status, compare, replay_guard, turn, CompareConfig, CompareMode,
-    ReplayConfig, ScaffoldConfig, StatusConfig, TurnConfig,
+    analyze_scaffold, catalog_compact, catalog_status, compare, replay_guard, turn, CompactConfig,
+    CompareConfig, CompareMode, ReplayConfig, ScaffoldConfig, StatusConfig, TurnConfig,
 };
 use nautilus_model::data::Bar;
 use nautilus_model::identifiers::InstrumentId;
@@ -803,4 +803,67 @@ async fn scaffold_masks_an_account_like_token_in_free_text() {
     assert!(content.contains("***"), "masking marker present");
     // The structured symbol is still unmasked.
     assert!(content.contains("005930.XKRX"), "structured symbol survives");
+}
+
+// ===========================================================================
+// catalog compact (U5 — write-side remediation CLI)
+// ===========================================================================
+
+#[test]
+fn unknown_catalog_subcommand_lists_compact() {
+    let out = bin().args(["catalog", "bogus"]).output().unwrap();
+    assert!(!out.status.success(), "unknown catalog subcommand is a non-zero exit");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("compact"), "the catalog usage lists compact: {stderr}");
+}
+
+#[tokio::test]
+async fn compact_cli_exits_zero_on_a_clean_catalog_and_status_stays_go() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    let out = bin().args(["catalog", "compact"]).env("LS_DATA_HOME", dir.path()).output().unwrap();
+    assert!(
+        out.status.success(),
+        "a clean catalog compacts with exit 0: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(String::from_utf8_lossy(&out.stdout).contains("compact: OK"), "reports OK");
+    // The compacted fixture is still a go.
+    let status = catalog_status(&StatusConfig {
+        data_home: dir.path().to_path_buf(),
+        expected_range: None,
+    })
+    .await
+    .unwrap();
+    assert!(status.go, "the compacted fixture is still a go: {:?}", status.lines);
+}
+
+#[tokio::test]
+async fn compact_cli_exits_nonzero_on_a_value_divergent_series() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    // Inject a value-divergent same-timestamp daily row (Jan 4, close 999 vs the
+    // fixture's 60000) into 005930's series as a second file.
+    let catalog = dir.path().join("catalog");
+    let bt = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+    let divergent = build_daily_bar(
+        bt,
+        &serde_json::from_value(daily_json("20240104", "999", "1000", "998", "999", "1")).unwrap(),
+    )
+    .unwrap()
+    .unwrap();
+    write_bars(&catalog, vec![divergent]).await.unwrap();
+
+    let out = bin().args(["catalog", "compact"]).env("LS_DATA_HOME", dir.path()).output().unwrap();
+    assert!(!out.status.success(), "a refused divergent series exits non-zero");
+    assert!(String::from_utf8_lossy(&out.stdout).contains("REFUSED"), "{}", String::from_utf8_lossy(&out.stdout));
+}
+
+#[tokio::test]
+async fn catalog_compact_library_reports_clean_on_the_fixture() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    let out = catalog_compact(&CompactConfig { data_home: dir.path().to_path_buf() }).await.unwrap();
+    assert!(!out.refused, "the clean fixture is not refused");
+    assert!(out.lines.iter().any(|l| l.contains("compact: OK")));
 }

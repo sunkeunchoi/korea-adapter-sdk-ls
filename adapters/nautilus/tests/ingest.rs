@@ -1422,3 +1422,446 @@ async fn minute_cursor_echo_drops_duplicate_page_and_fails_closed() {
         report.gaps[0].reason
     );
 }
+
+// ---------------------------------------------------------------------------
+// U1 — interval-metadata wrapper + checked-append overlap guard (R5/R6, AE3/AE4).
+// U3 — backward-widen loud no-op (R4, AE2). U5 — catalog compaction (R8/R9/R10,
+// AE6). All offline; no gateway beyond the wiremock chart bodies.
+// ---------------------------------------------------------------------------
+
+mod checked_append_and_compact {
+    use super::*;
+    use nautilus_ls::ingest::{
+        append_bars_checked, compact_catalog, kst_to_unix_nanos, read_all_bars,
+        stored_bar_intervals, write_bars, CompactOutcome,
+    };
+    use nautilus_ls::rules::KRX_REGULAR_CLOSE;
+    use nautilus_model::data::{Bar, BarType};
+    use nautilus_model::types::{Price, Quantity};
+
+    fn daily_bar(bar_type: BarType, date: NaiveDate, close: i64) -> Bar {
+        let ts = kst_to_unix_nanos(date, KRX_REGULAR_CLOSE).unwrap();
+        Bar::new(
+            bar_type,
+            Price::from((close - 5).to_string().as_str()),
+            Price::from((close + 10).to_string().as_str()),
+            Price::from((close - 10).to_string().as_str()),
+            Price::from(close.to_string().as_str()),
+            Quantity::from(1000),
+            ts,
+            ts,
+        )
+    }
+
+    fn series(bt: BarType, dates: &[(NaiveDate, i64)]) -> Vec<Bar> {
+        dates.iter().map(|(d, c)| daily_bar(bt, *d, *c)).collect()
+    }
+
+    fn closes(bars: &[Bar], bt: BarType) -> Vec<i64> {
+        let mut v: Vec<i64> = bars
+            .iter()
+            .filter(|b| b.bar_type == bt)
+            .map(|b| b.close.to_string().parse().unwrap())
+            .collect();
+        v.sort();
+        v
+    }
+
+    // --- U1: the checked append guard ---
+
+    /// AE3: an overlapping checked append is refused with an error naming both
+    /// remediations, and no file is written (assert content, not counts).
+    #[tokio::test]
+    async fn ae3_overlapping_checked_append_is_refused_naming_both_remediations() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let bt = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        write_bars(
+            &catalog,
+            series(bt, &[(ymd(2024, 6, 18), 100), (ymd(2024, 6, 25), 101), (ymd(2024, 7, 3), 102)]),
+        )
+        .await
+        .unwrap();
+        let intervals_before = stored_bar_intervals(&catalog, bt).await.unwrap();
+
+        let overlap = series(bt, &[(ymd(2024, 6, 1), 90), (ymd(2024, 6, 18), 100), (ymd(2024, 7, 3), 102)]);
+        let err = append_bars_checked(&catalog, bt, overlap)
+            .await
+            .expect_err("an overlapping append is refused");
+        let msg = err.to_string();
+        assert!(msg.contains("compact"), "names the compaction remediation: {msg}");
+        assert!(msg.contains("re-pull"), "names the wipe + full re-pull remediation: {msg}");
+
+        assert_eq!(
+            stored_bar_intervals(&catalog, bt).await.unwrap(),
+            intervals_before,
+            "no new parquet file was written"
+        );
+        assert_eq!(
+            closes(&read_all_bars(&catalog).await.unwrap(), bt),
+            vec![100, 101, 102],
+            "stored content is unchanged"
+        );
+    }
+
+    /// Inclusive-bounds: a write sharing a single boundary timestamp with stored
+    /// coverage is refused.
+    #[tokio::test]
+    async fn checked_append_refuses_a_single_shared_boundary_timestamp() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let bt = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        write_bars(&catalog, series(bt, &[(ymd(2024, 6, 18), 100), (ymd(2024, 6, 20), 101)]))
+            .await
+            .unwrap();
+        // New bars whose earliest ts == the stored interval's latest boundary.
+        let touching = series(bt, &[(ymd(2024, 6, 20), 101), (ymd(2024, 6, 21), 102)]);
+        let err = append_bars_checked(&catalog, bt, touching)
+            .await
+            .expect_err("a shared boundary timestamp is an inclusive-bounds overlap");
+        assert!(err.to_string().contains("compact"));
+    }
+
+    /// Disjoint prefix, disjoint forward append, and an empty write all succeed.
+    #[tokio::test]
+    async fn checked_append_allows_disjoint_prefix_forward_and_empty() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let bt = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        write_bars(&catalog, series(bt, &[(ymd(2024, 6, 18), 100), (ymd(2024, 7, 3), 102)]))
+            .await
+            .unwrap();
+        // Disjoint prefix (a valid backward-widen escape hatch).
+        append_bars_checked(&catalog, bt, series(bt, &[(ymd(2024, 6, 1), 90), (ymd(2024, 6, 17), 91)]))
+            .await
+            .expect("a disjoint prefix append is legal");
+        // Disjoint forward append.
+        append_bars_checked(&catalog, bt, series(bt, &[(ymd(2024, 7, 10), 110)]))
+            .await
+            .expect("a disjoint forward append is legal");
+        // Empty write is a no-op Ok.
+        append_bars_checked(&catalog, bt, vec![]).await.expect("an empty write is a no-op");
+        assert_eq!(read_all_bars(&catalog).await.unwrap().len(), 5, "prefix + stored + forward all present");
+    }
+
+    /// `stored_bar_intervals` on a never-written path returns empty without error.
+    #[tokio::test]
+    async fn stored_bar_intervals_on_missing_series_is_empty() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog"); // never created
+        let bt = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        assert!(stored_bar_intervals(&catalog, bt).await.unwrap().is_empty());
+    }
+
+    /// A refused triple does not abort the run: the clean triple ingests, the
+    /// refusal lands in the report vec, and the refused triple's watermark is
+    /// unchanged.
+    #[tokio::test]
+    async fn accumulate_refused_triple_does_not_abort_the_run() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        let samsung = InstrumentId::from("005930.XKRX");
+        let hynix = InstrumentId::from("000660.XKRX");
+        let sbt = BarKind::Daily.bar_type(samsung).unwrap();
+        // Legacy-pollution shape: samsung has stored bars but NO checkpoint
+        // watermark, so accumulate re-fetches from the floor and overlaps them.
+        write_bars(&catalog, series(sbt, &[(ymd(2024, 1, 3), 60000), (ymd(2024, 1, 4), 61000), (ymd(2024, 1, 5), 62000)]))
+            .await
+            .unwrap();
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing
+            .run_accumulate(&[samsung, hynix], ymd(2024, 1, 5), ymd(2024, 1, 1))
+            .await
+            .unwrap();
+
+        assert_eq!(report.append_refusals.len(), 1, "the overlapping triple is refused, not fatal");
+        assert_eq!(report.append_refusals[0].instrument, "005930.XKRX");
+        assert_eq!(report.triples_ingested, 1, "the clean sibling still ingests");
+        let cp = Checkpoint::load(&catalog.join("ingest-checkpoint.json")).unwrap();
+        assert!(cp.watermark("005930.XKRX", "1-DAY").is_none(), "refused triple's watermark unchanged");
+        assert!(cp.watermark("000660.XKRX", "1-DAY").is_some(), "clean triple advanced");
+    }
+
+    // --- U2 integration: migration makes accumulate skip a covered range ---
+
+    /// A legacy `completed`-only checkpoint migrates on load; a subsequent
+    /// accumulate skips the covered range instead of re-fetching from the floor.
+    #[tokio::test]
+    async fn legacy_checkpoint_migrates_and_accumulate_skips_covered_range() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        let samsung = InstrumentId::from("005930.XKRX");
+        let bt = BarKind::Daily.bar_type(samsung).unwrap();
+        std::fs::create_dir_all(&catalog).unwrap();
+        write_bars(&catalog, series(bt, &[(ymd(2024, 1, 3), 60000), (ymd(2024, 1, 4), 61000), (ymd(2024, 1, 5), 62000)]))
+            .await
+            .unwrap();
+        std::fs::write(
+            catalog.join("ingest-checkpoint.json"),
+            r#"{"completed":["005930.XKRX|1-DAY|20240101..20240105"],"gaps":[],"adjusted_prices":true}"#,
+        )
+        .unwrap();
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        // Floor at the earliest stored session so no backward-widen warning fires.
+        let report = ing.run_accumulate(&[samsung], ymd(2024, 1, 5), ymd(2024, 1, 3)).await.unwrap();
+        assert_eq!(report.triples_skipped, 1, "the migrated watermark skips the covered range");
+        assert_eq!(count_t8410(&server).await, 0, "no re-fetch from the floor");
+        assert!(report.append_refusals.is_empty(), "no overlapping write attempted");
+    }
+
+    // --- U3: backward-widen loud no-op ---
+
+    /// AE2: a migrated catalog covering 0618..0703, accumulate with an earlier
+    /// floor (0601): no fetch below the watermark, and the report names the
+    /// unreachable region + the escape hatch.
+    #[tokio::test]
+    async fn ae2_backward_widen_floor_warns_and_names_escape_hatch() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        let samsung = InstrumentId::from("005930.XKRX");
+        let bt = BarKind::Daily.bar_type(samsung).unwrap();
+        std::fs::create_dir_all(&catalog).unwrap();
+        write_bars(&catalog, series(bt, &[(ymd(2024, 6, 18), 100), (ymd(2024, 6, 25), 101), (ymd(2024, 7, 3), 102)]))
+            .await
+            .unwrap();
+        std::fs::write(
+            catalog.join("ingest-checkpoint.json"),
+            r#"{"completed":["005930.XKRX|1-DAY|20240618..20240703"],"gaps":[],"adjusted_prices":true}"#,
+        )
+        .unwrap();
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing.run_accumulate(&[samsung], ymd(2024, 7, 3), ymd(2024, 6, 1)).await.unwrap();
+        assert_eq!(report.backward_widen_warnings.len(), 1, "the unreachable region is surfaced");
+        let w = &report.backward_widen_warnings[0];
+        assert_eq!(w.instrument, "005930.XKRX");
+        assert_eq!(w.floor, "20240601");
+        assert_eq!(w.earliest_stored, "20240618");
+        assert_eq!(count_t8410(&server).await, 0, "no fetch below the watermark");
+    }
+
+    /// A floor within existing coverage does not warn.
+    #[tokio::test]
+    async fn backward_widen_floor_within_coverage_does_not_warn() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        let samsung = InstrumentId::from("005930.XKRX");
+        let bt = BarKind::Daily.bar_type(samsung).unwrap();
+        std::fs::create_dir_all(&catalog).unwrap();
+        write_bars(&catalog, series(bt, &[(ymd(2024, 6, 18), 100), (ymd(2024, 7, 3), 102)]))
+            .await
+            .unwrap();
+        std::fs::write(
+            catalog.join("ingest-checkpoint.json"),
+            r#"{"completed":["005930.XKRX|1-DAY|20240618..20240703"],"gaps":[],"adjusted_prices":true}"#,
+        )
+        .unwrap();
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing.run_accumulate(&[samsung], ymd(2024, 7, 3), ymd(2024, 6, 18)).await.unwrap();
+        assert!(report.backward_widen_warnings.is_empty(), "floor at earliest coverage does not warn");
+    }
+
+    /// A fresh instrument (no watermark) does not warn — its floor fetch is normal.
+    #[tokio::test]
+    async fn backward_widen_fresh_instrument_does_not_warn() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing
+            .run_accumulate(&[InstrumentId::from("005930.XKRX")], ymd(2024, 1, 5), ymd(2024, 1, 1))
+            .await
+            .unwrap();
+        assert!(report.backward_widen_warnings.is_empty(), "an unseen instrument is not a backward widen");
+    }
+
+    // --- U5: catalog compaction core ---
+
+    /// AE6: one byte-identical-duplicated series is rewritten clean; a second
+    /// value-divergent series is refused with its files untouched.
+    #[tokio::test]
+    async fn ae6_compact_collapses_duplicates_and_refuses_divergent() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let dup_bt = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        let div_bt = BarKind::Daily.bar_type(InstrumentId::from("000660.XKRX")).unwrap();
+        // Two OVERLAPPING (not identical) ranges → distinct parquet filenames → the
+        // Jan4/Jan5 rows land in both files (the real re-ingest pollution shape; an
+        // identical range would overwrite the same file, not duplicate rows).
+        write_bars(&catalog, series(dup_bt, &[(ymd(2024, 1, 3), 100), (ymd(2024, 1, 4), 101), (ymd(2024, 1, 5), 102)]))
+            .await
+            .unwrap();
+        write_bars(&catalog, series(dup_bt, &[(ymd(2024, 1, 4), 101), (ymd(2024, 1, 5), 102), (ymd(2024, 1, 8), 103)]))
+            .await
+            .unwrap();
+        // A value-divergent series: two overlapping files disagree on Jan 3's close.
+        write_bars(&catalog, series(div_bt, &[(ymd(2024, 1, 3), 200), (ymd(2024, 1, 4), 201)])).await.unwrap();
+        write_bars(&catalog, series(div_bt, &[(ymd(2024, 1, 3), 999), (ymd(2024, 1, 6), 203)])).await.unwrap();
+
+        let div_files_before = stored_bar_intervals(&catalog, div_bt).await.unwrap();
+        let report = compact_catalog(&catalog).await.unwrap();
+
+        let dup = report.series.iter().find(|s| s.bar_type == dup_bt.to_string()).unwrap();
+        assert_eq!(dup.outcome, CompactOutcome::Compacted);
+        assert_eq!(dup.bars_before, 6);
+        assert_eq!(dup.bars_after, 4);
+        assert_eq!(dup.files_after, 1, "duplicates collapse to one file");
+
+        let div = report.series.iter().find(|s| s.bar_type == div_bt.to_string()).unwrap();
+        assert_eq!(div.outcome, CompactOutcome::RefusedDivergent);
+        assert_eq!(
+            stored_bar_intervals(&catalog, div_bt).await.unwrap(),
+            div_files_before,
+            "the divergent series is left untouched"
+        );
+
+        // Content: the duplicated series is the 4 distinct sessions.
+        let back = read_all_bars(&catalog).await.unwrap();
+        assert_eq!(closes(&back, dup_bt), vec![100, 101, 102, 103], "deduped content preserved");
+    }
+
+    /// A second compact run reports the series clean and changes nothing.
+    #[tokio::test]
+    async fn compact_is_idempotent() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let bt = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        // Overlapping (not identical) ranges → genuine duplicate rows.
+        write_bars(&catalog, series(bt, &[(ymd(2024, 1, 3), 100), (ymd(2024, 1, 4), 101)])).await.unwrap();
+        write_bars(&catalog, series(bt, &[(ymd(2024, 1, 4), 101), (ymd(2024, 1, 5), 102)])).await.unwrap();
+        let first = compact_catalog(&catalog).await.unwrap();
+        assert_eq!(first.series[0].outcome, CompactOutcome::Compacted);
+        let second = compact_catalog(&catalog).await.unwrap();
+        assert_eq!(second.series[0].outcome, CompactOutcome::Clean);
+        assert_eq!(second.series[0].bars_before, second.series[0].bars_after);
+    }
+
+    /// Compaction against a catalog whose ingest advisory lock is held refuses
+    /// loudly without touching files.
+    #[tokio::test]
+    async fn compact_refuses_while_ingest_lock_held() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let bt = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        write_bars(&catalog, series(bt, &[(ymd(2024, 1, 3), 100)])).await.unwrap();
+        let _held = AdvisoryLock::acquire(&catalog, LockKind::Ingest).unwrap();
+        let err = compact_catalog(&catalog).await.expect_err("a held ingest lock refuses compaction");
+        assert!(err.to_string().contains("in progress") || err.to_string().contains("lock"), "{err}");
+    }
+
+    /// R10: the checkpoint file bytes are identical before and after compaction.
+    #[tokio::test]
+    async fn compact_never_touches_the_checkpoint() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let bt = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        // Overlapping ranges → a real rewrite, so R10 is tested against actual work.
+        write_bars(&catalog, series(bt, &[(ymd(2024, 1, 3), 100), (ymd(2024, 1, 4), 101)])).await.unwrap();
+        write_bars(&catalog, series(bt, &[(ymd(2024, 1, 4), 101), (ymd(2024, 1, 5), 102)])).await.unwrap();
+        let cp_path = catalog.join("ingest-checkpoint.json");
+        let mut cp = Checkpoint::default();
+        cp.set_watermark("005930.XKRX", "1-DAY", ymd(2024, 1, 4));
+        cp.save(&cp_path).unwrap();
+        let before = std::fs::read(&cp_path).unwrap();
+        compact_catalog(&catalog).await.unwrap();
+        assert_eq!(std::fs::read(&cp_path).unwrap(), before, "R10: checkpoint bytes unchanged");
+    }
+
+    /// Derived-value stability: a backtest-level read returns the same bar set
+    /// before (deduped view) and after compaction.
+    #[tokio::test]
+    async fn compact_preserves_the_backtest_read() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let bt = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        // Overlapping ranges → duplicate rows the read deduplicates; compaction must
+        // leave that deduped view identical.
+        write_bars(&catalog, series(bt, &[(ymd(2024, 1, 3), 100), (ymd(2024, 1, 4), 101), (ymd(2024, 1, 5), 102)]))
+            .await
+            .unwrap();
+        write_bars(&catalog, series(bt, &[(ymd(2024, 1, 4), 101), (ymd(2024, 1, 5), 102), (ymd(2024, 1, 8), 103)]))
+            .await
+            .unwrap();
+        let before = closes(&read_all_bars(&catalog).await.unwrap(), bt);
+        compact_catalog(&catalog).await.unwrap();
+        let after = closes(&read_all_bars(&catalog).await.unwrap(), bt);
+        assert_eq!(before, after, "the deduped backtest read is unchanged by compaction");
+        assert_eq!(after, vec![100, 101, 102, 103]);
+    }
+
+    // --- U5: crash-recovery windows (leftover sidecar) ---
+
+    fn stage_sidecar(catalog: &Path, bt: BarType, bars: &[Bar]) {
+        let dir = catalog.join("compact-sidecars");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(format!("{}.json", bt)), serde_json::to_string(bars).unwrap()).unwrap();
+    }
+
+    fn sidecar_exists(catalog: &Path, bt: BarType) -> bool {
+        catalog.join("compact-sidecars").join(format!("{}.json", bt)).exists()
+    }
+
+    /// Window (b): a leftover sidecar with no series files — the sidecar bars are
+    /// restored and the sidecar removed.
+    #[tokio::test]
+    async fn compact_recovers_a_sidecar_with_no_series_files() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let bt = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        std::fs::create_dir_all(&catalog).unwrap();
+        let bars = series(bt, &[(ymd(2024, 1, 3), 100), (ymd(2024, 1, 4), 101)]);
+        stage_sidecar(&catalog, bt, &bars);
+
+        compact_catalog(&catalog).await.unwrap();
+        assert_eq!(closes(&read_all_bars(&catalog).await.unwrap(), bt), vec![100, 101], "no bar lost");
+        assert!(!sidecar_exists(&catalog, bt), "sidecar removed on success");
+    }
+
+    /// Window (a): a sidecar beside an intact series — union + dedup + rewrite,
+    /// nothing lost.
+    #[tokio::test]
+    async fn compact_recovers_a_sidecar_beside_an_intact_series() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let bt = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        let bars = series(bt, &[(ymd(2024, 1, 3), 100), (ymd(2024, 1, 4), 101), (ymd(2024, 1, 5), 102)]);
+        write_bars(&catalog, bars.clone()).await.unwrap();
+        stage_sidecar(&catalog, bt, &bars);
+
+        compact_catalog(&catalog).await.unwrap();
+        assert_eq!(closes(&read_all_bars(&catalog).await.unwrap(), bt), vec![100, 101, 102]);
+        assert!(!sidecar_exists(&catalog, bt), "sidecar removed on success");
+    }
+
+    /// Window (d): a sidecar plus bars appended after the crash — the union
+    /// preserves both the sidecar rows and the newly-appended forward bar.
+    #[tokio::test]
+    async fn compact_recovery_preserves_bars_appended_after_the_crash() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let bt = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        let old = series(bt, &[(ymd(2024, 1, 3), 100), (ymd(2024, 1, 4), 101)]);
+        write_bars(&catalog, old.clone()).await.unwrap(); // post-crash rewritten series
+        write_bars(&catalog, series(bt, &[(ymd(2024, 1, 5), 102)])).await.unwrap(); // appended after crash
+        stage_sidecar(&catalog, bt, &old); // leftover sidecar holds the old data
+
+        compact_catalog(&catalog).await.unwrap();
+        assert_eq!(
+            closes(&read_all_bars(&catalog).await.unwrap(), bt),
+            vec![100, 101, 102],
+            "sidecar rows AND the appended forward bar both survive"
+        );
+        assert!(!sidecar_exists(&catalog, bt), "sidecar removed on success");
+    }
+}

@@ -6,10 +6,10 @@
 //! reports** rather than refetching. The checkpoint is written after each triple
 //! completes, so a crash loses at most the in-flight triple.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 
-use chrono::NaiveDate;
+use chrono::{Datelike, NaiveDate};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AdapterError, AdapterResult};
@@ -44,6 +44,44 @@ pub struct CoverageGap {
     pub range: String,
     /// Why the gap was recorded.
     pub reason: GapReason,
+}
+
+/// A `(instrument, bar type)` left with non-contiguous `completed` ranges after
+/// the legacy `completed`→`watermarks` migration (U2/KTD-3): ranges beyond a
+/// coverage hole (a weekday gap, or a `PaperThin` truncated fetch) are NOT folded
+/// into the derived watermark — deriving past them would skip un-fetched history
+/// forever (R2). They stay in `completed`, and this report entry names the escape
+/// hatch so the operator can recover them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MigrationRemainder {
+    /// The instrument id (`{shcode}.XKRX`).
+    pub instrument: String,
+    /// The bar-type label (e.g. `1-DAY`).
+    pub bar_type: String,
+    /// The `completed` range keys left beyond the coverage hole.
+    pub ranges: Vec<String>,
+}
+
+/// Whether a trading weekday lies strictly between `after` and `before`
+/// (exclusive) — the coverage-hole test for the migration chain (KTD-3). A
+/// weekend-only or empty gap is contiguous (no weekday between), so ranges either
+/// side of it chain; a weekday in the gap is un-attested history and breaks the
+/// chain.
+fn weekday_strictly_between(after: NaiveDate, before: NaiveDate) -> bool {
+    let mut d = match after.succ_opt() {
+        Some(d) => d,
+        None => return false,
+    };
+    while d < before {
+        if d.weekday().num_days_from_monday() < 5 {
+            return true;
+        }
+        d = match d.succ_opt() {
+            Some(d) => d,
+            None => return false,
+        };
+    }
+    false
 }
 
 /// The origin of a basis-shift mark / re-base event (KTD6): an organic forward
@@ -347,16 +385,130 @@ impl Checkpoint {
         }
     }
 
+    /// Migrate legacy `completed` ranges to `watermarks` (U2/KTD-3, R1/R2/R3), a
+    /// pure in-memory transform run on load. For each `(instrument, bar type)` with
+    /// **no existing watermark**, its `completed` range keys are sorted by start
+    /// date and chained while no trading weekday lies strictly between the chain's
+    /// running-maximum `edate` and the next range's start (the running-max
+    /// comparison, so a contained range chains trivially). A `PaperThin`-gapped
+    /// range terminates the chain before it (a truncated fetch left un-fetched
+    /// history — deriving past it would silently gap, R2). The derived watermark is
+    /// the chain's max `edate`, trusted as attested (the same trust
+    /// [`Self::prune_below_watermarks`] applies). Ranges beyond the hole stay in
+    /// `completed` and surface as a [`MigrationRemainder`]. Existing watermarks are
+    /// never overridden, so a double-load derives nothing new (R3). Returns the
+    /// per-triple remainders for the caller to warn about.
+    pub fn migrate_completed_watermarks(&mut self) -> Vec<MigrationRemainder> {
+        // Ranges keyed by (instrument, bar type), only for triples lacking a
+        // watermark (derive into absent keys only, R3). Each range is
+        // (start date, end date, raw range key).
+        type Range = (NaiveDate, NaiveDate, String);
+        let mut groups: BTreeMap<(String, String), Vec<Range>> = BTreeMap::new();
+        for key in &self.completed {
+            let parts: Vec<&str> = key.splitn(3, '|').collect();
+            if parts.len() != 3 {
+                continue;
+            }
+            let (instrument, bar_type, range) = (parts[0], parts[1], parts[2]);
+            if self.watermarks.contains_key(&Self::watermark_key(instrument, bar_type)) {
+                continue;
+            }
+            let mut it = range.split("..");
+            let (s, e) = (it.next().unwrap_or("").trim(), it.next().unwrap_or("").trim());
+            if let (Ok(sd), Ok(ed)) = (
+                NaiveDate::parse_from_str(s, "%Y%m%d"),
+                NaiveDate::parse_from_str(e, "%Y%m%d"),
+            ) {
+                groups
+                    .entry((instrument.to_string(), bar_type.to_string()))
+                    .or_default()
+                    .push((sd, ed, range.to_string()));
+            }
+        }
+        // A `PaperThin` gap records a truncated fetch: its range terminates the
+        // chain before it. `EmptyHistory`/`NonTradingDay` gaps attest coverage
+        // (`record_gap` also marks done) and never block derivation.
+        let paper_thin: HashSet<(String, String, String)> = self
+            .gaps
+            .iter()
+            .filter(|g| g.reason == GapReason::PaperThin)
+            .map(|g| (g.instrument.clone(), g.bar_type.clone(), g.range.clone()))
+            .collect();
+
+        let mut remainders: Vec<MigrationRemainder> = Vec::new();
+        let mut derived: Vec<(String, String, NaiveDate)> = Vec::new();
+        for ((instrument, bar_type), mut ranges) in groups {
+            ranges.sort_by_key(|(s, _, _)| *s);
+            let mut chain_max: Option<NaiveDate> = None;
+            let mut remainder_ranges: Vec<String> = Vec::new();
+            let mut broke = false;
+            for (sd, ed, raw) in &ranges {
+                if broke {
+                    remainder_ranges.push(raw.clone());
+                    continue;
+                }
+                if paper_thin.contains(&(instrument.clone(), bar_type.clone(), raw.clone())) {
+                    broke = true;
+                    remainder_ranges.push(raw.clone());
+                    continue;
+                }
+                match chain_max {
+                    None => chain_max = Some(*ed),
+                    Some(cm) => {
+                        if weekday_strictly_between(cm, *sd) {
+                            broke = true;
+                            remainder_ranges.push(raw.clone());
+                        } else {
+                            chain_max = Some(cm.max(*ed));
+                        }
+                    }
+                }
+            }
+            if let Some(cm) = chain_max {
+                derived.push((instrument.clone(), bar_type.clone(), cm));
+            }
+            if !remainder_ranges.is_empty() {
+                remainders.push(MigrationRemainder {
+                    instrument,
+                    bar_type,
+                    ranges: remainder_ranges,
+                });
+            }
+        }
+        for (instrument, bar_type, wm) in derived {
+            // Never override an existing watermark (already filtered above; the
+            // entry API keeps that invariant explicit and load-order independent).
+            self.watermarks
+                .entry(Self::watermark_key(&instrument, &bar_type))
+                .or_insert_with(|| wm.format("%Y%m%d").to_string());
+        }
+        remainders
+    }
+
     /// Load a checkpoint from `path`, returning an empty checkpoint if the file
-    /// does not exist.
+    /// does not exist. A legacy `completed`-only checkpoint is migrated to
+    /// `watermarks` on load (U2/KTD-3); non-contiguous remainder ranges are logged
+    /// per triple, naming the escape hatch.
     ///
     /// # Errors
     ///
     /// [`AdapterError::Ingest`] if the file exists but cannot be read/parsed.
     pub fn load(path: &Path) -> AdapterResult<Self> {
         match std::fs::read_to_string(path) {
-            Ok(s) => serde_json::from_str(&s)
-                .map_err(|e| AdapterError::Ingest(format!("corrupt checkpoint {}: {e}", path.display()))),
+            Ok(s) => {
+                let mut cp: Self = serde_json::from_str(&s).map_err(|e| {
+                    AdapterError::Ingest(format!("corrupt checkpoint {}: {e}", path.display()))
+                })?;
+                for rem in cp.migrate_completed_watermarks() {
+                    tracing::warn!(
+                        instrument = %rem.instrument,
+                        bar_type = %rem.bar_type,
+                        ranges = ?rem.ranges,
+                        "legacy checkpoint migration left non-contiguous `completed` ranges beyond a coverage hole; they were NOT folded into the watermark — recover them with a fresh catalog at the wider lookback, or wipe + full re-pull"
+                    );
+                }
+                Ok(cp)
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Checkpoint::default()),
             Err(e) => Err(AdapterError::Ingest(format!(
                 "cannot read checkpoint {}: {e}",
@@ -448,8 +600,11 @@ mod tests {
     }
 
     #[test]
-    fn legacy_checkpoint_without_watermarks_loads() {
-        // A pre-U5 checkpoint file has no `watermarks` field.
+    fn legacy_checkpoint_without_watermarks_migrates_on_load() {
+        // A pre-U5 checkpoint file has no `watermarks` field. On load, the U2/KTD-3
+        // migration derives the watermark from the covered `completed` range — the
+        // deliberate behavior change this package ships (the assertion below flipped
+        // from the pre-migration "no watermark derived yet").
         let dir = tempdir().unwrap();
         let path = dir.path().join("legacy.json");
         std::fs::write(
@@ -459,7 +614,11 @@ mod tests {
         .unwrap();
         let cp = Checkpoint::load(&path).expect("legacy checkpoint loads");
         assert!(cp.is_done("005930.XKRX", "1-DAY", "20240101..20240105"));
-        assert!(cp.watermark("005930.XKRX", "1-DAY").is_none(), "no watermark derived yet");
+        assert_eq!(
+            cp.watermark("005930.XKRX", "1-DAY"),
+            Some(NaiveDate::from_ymd_opt(2024, 1, 5).unwrap()),
+            "the covered completed range migrates to a watermark on load"
+        );
         assert!(cp.adjusted_prices);
     }
 
@@ -673,6 +832,154 @@ mod tests {
         let cp = Checkpoint::load(&path).unwrap();
         let totals = cp.rebase_origin_totals();
         assert_eq!(totals, RebaseOriginTotals::default(), "no events, no evicted counters");
+    }
+
+    // --- U2/KTD-3: completed→watermarks migration ---
+
+    fn ymd(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    #[test]
+    fn migration_derives_watermark_from_a_covered_range() {
+        let mut cp = Checkpoint::default();
+        cp.mark_done("005930.XKRX", "1-DAY", "20240101..20240105");
+        let rem = cp.migrate_completed_watermarks();
+        assert!(rem.is_empty(), "a single covered range has no remainder");
+        assert_eq!(cp.watermark("005930.XKRX", "1-DAY"), Some(ymd(2024, 1, 5)));
+    }
+
+    #[test]
+    fn migration_gap_reasons_discriminate_coverage() {
+        // EmptyHistory + NonTradingDay attest coverage (chain like a bars range); a
+        // PaperThin range terminates the chain BEFORE it (un-fetched history).
+        let mut cp = Checkpoint::default();
+        // A bars-attested range then an EmptyHistory-gapped contiguous range.
+        cp.mark_done("A.XKRX", "1-DAY", "20240101..20240103");
+        cp.record_gap("A.XKRX", "1-DAY", "20240104..20240105", GapReason::EmptyHistory);
+        // A separate triple with a NonTradingDay gap only.
+        cp.record_gap("B.XKRX", "1-DAY", "20240101..20240105", GapReason::NonTradingDay);
+        // A triple whose second range is a PaperThin (truncated) fetch.
+        cp.mark_done("C.XKRX", "1-DAY", "20240101..20240105");
+        cp.record_gap("C.XKRX", "1-DAY", "20240108..20240112", GapReason::PaperThin);
+
+        let rem = cp.migrate_completed_watermarks();
+        assert_eq!(cp.watermark("A.XKRX", "1-DAY"), Some(ymd(2024, 1, 5)), "EmptyHistory attests");
+        assert_eq!(cp.watermark("B.XKRX", "1-DAY"), Some(ymd(2024, 1, 5)), "NonTradingDay attests");
+        assert_eq!(
+            cp.watermark("C.XKRX", "1-DAY"),
+            Some(ymd(2024, 1, 5)),
+            "the chain stops BEFORE the PaperThin range — never at or past it"
+        );
+        let c_rem = rem.iter().find(|r| r.instrument == "C.XKRX").expect("C has a remainder");
+        assert_eq!(c_rem.ranges, vec!["20240108..20240112".to_string()], "the PaperThin range stays in completed");
+    }
+
+    #[test]
+    fn migration_chains_across_a_weekend_but_breaks_on_a_weekday_hole() {
+        // Two ranges separated only by a weekend chain into one watermark.
+        let mut weekend = Checkpoint::default();
+        weekend.mark_done("005930.XKRX", "1-DAY", "20240101..20240105"); // Mon..Fri
+        weekend.mark_done("005930.XKRX", "1-DAY", "20240108..20240112"); // next Mon..Fri
+        let rem = weekend.migrate_completed_watermarks();
+        assert!(rem.is_empty(), "a weekend-only gap is contiguous");
+        assert_eq!(weekend.watermark("005930.XKRX", "1-DAY"), Some(ymd(2024, 1, 12)));
+
+        // A range straddling an intervening weekday (Jan 8/9) derives the prefix only.
+        let mut hole = Checkpoint::default();
+        hole.mark_done("005930.XKRX", "1-DAY", "20240101..20240105"); // Mon..Fri
+        hole.mark_done("005930.XKRX", "1-DAY", "20240110..20240112"); // Wed..Fri (Mon/Tue un-covered)
+        let rem = hole.migrate_completed_watermarks();
+        assert_eq!(hole.watermark("005930.XKRX", "1-DAY"), Some(ymd(2024, 1, 5)), "prefix watermark only");
+        assert_eq!(rem.len(), 1);
+        assert_eq!(rem[0].ranges, vec!["20240110..20240112".to_string()]);
+        // The remainder key stays in `completed`.
+        assert!(hole.is_done("005930.XKRX", "1-DAY", "20240110..20240112"));
+    }
+
+    #[test]
+    fn migration_report_entry_names_the_escape_hatch_via_load() {
+        // The load-time warning path: a hole-straddling checkpoint file surfaces the
+        // remainder (the load logs it; here we assert the derivation result directly).
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("legacy.json");
+        std::fs::write(
+            &path,
+            r#"{"completed":["005930.XKRX|1-DAY|20240101..20240105","005930.XKRX|1-DAY|20240110..20240112"],"gaps":[],"adjusted_prices":true}"#,
+        )
+        .unwrap();
+        let cp = Checkpoint::load(&path).unwrap();
+        assert_eq!(cp.watermark("005930.XKRX", "1-DAY"), Some(ymd(2024, 1, 5)));
+        assert!(cp.is_done("005930.XKRX", "1-DAY", "20240110..20240112"), "remainder kept in completed");
+    }
+
+    #[test]
+    fn migration_contained_range_chains_via_running_maximum() {
+        // A contained range (0618..0703 inside 0601..0703) chains — the hole test
+        // compares the next start against the running chain MAX edate, not the
+        // adjacent sorted pair.
+        let mut cp = Checkpoint::default();
+        cp.mark_done("005930.XKRX", "1-DAY", "20240601..20240703");
+        cp.mark_done("005930.XKRX", "1-DAY", "20240618..20240703");
+        let rem = cp.migrate_completed_watermarks();
+        assert!(rem.is_empty(), "a contained range never breaks the chain");
+        assert_eq!(cp.watermark("005930.XKRX", "1-DAY"), Some(ymd(2024, 7, 3)));
+    }
+
+    #[test]
+    fn migration_never_overrides_an_existing_watermark() {
+        let mut cp = Checkpoint::default();
+        cp.set_watermark("005930.XKRX", "1-DAY", ymd(2024, 1, 10));
+        // A completed range that would derive a LATER or EARLIER watermark must not win.
+        cp.mark_done("005930.XKRX", "1-DAY", "20240101..20240131");
+        cp.migrate_completed_watermarks();
+        assert_eq!(cp.watermark("005930.XKRX", "1-DAY"), Some(ymd(2024, 1, 10)), "existing watermark preserved");
+    }
+
+    #[test]
+    fn migration_is_idempotent_across_double_load() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("legacy.json");
+        std::fs::write(
+            &path,
+            r#"{"completed":["005930.XKRX|1-DAY|20240101..20240105"],"gaps":[],"adjusted_prices":true}"#,
+        )
+        .unwrap();
+        let cp1 = Checkpoint::load(&path).unwrap();
+        cp1.save(&path).unwrap();
+        let a = std::fs::read_to_string(&path).unwrap();
+        let cp2 = Checkpoint::load(&path).unwrap();
+        cp2.save(&path).unwrap();
+        let b = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(a, b, "double load→save is byte-identical (R3)");
+        assert_eq!(cp2.watermark("005930.XKRX", "1-DAY"), Some(ymd(2024, 1, 5)));
+    }
+
+    #[test]
+    fn migrated_completed_is_pruned_below_the_derived_watermark() {
+        // The next accumulate's prune cleans migrated completed/gap keys at or below
+        // the derived watermark.
+        let mut cp = Checkpoint::default();
+        cp.mark_done("005930.XKRX", "1-DAY", "20240101..20240105");
+        cp.record_gap("005930.XKRX", "1-DAY", "20240102..20240103", GapReason::EmptyHistory);
+        cp.migrate_completed_watermarks();
+        assert_eq!(cp.watermark("005930.XKRX", "1-DAY"), Some(ymd(2024, 1, 5)));
+        cp.prune_below_watermarks();
+        assert!(!cp.is_done("005930.XKRX", "1-DAY", "20240101..20240105"), "migrated completed pruned");
+        assert!(cp.gaps().is_empty(), "migrated gap pruned");
+    }
+
+    #[test]
+    fn migration_failure_inversion_never_derives_past_a_hole() {
+        // Failure-inversion (Success Criteria): a non-contiguous fixture must NOT
+        // derive a watermark at or past the hole — an over-derivation bug fails HERE
+        // rather than silently gapping un-fetched history.
+        let mut cp = Checkpoint::default();
+        cp.mark_done("005930.XKRX", "1-DAY", "20240101..20240105"); // Mon..Fri
+        cp.mark_done("005930.XKRX", "1-DAY", "20240110..20240112"); // hole: Mon/Tue un-covered
+        cp.migrate_completed_watermarks();
+        let wm = cp.watermark("005930.XKRX", "1-DAY").unwrap();
+        assert!(wm < ymd(2024, 1, 10), "watermark stays before the hole, got {wm}");
     }
 
     #[test]
