@@ -756,6 +756,13 @@ enum HealOutcome {
     /// The re-pull was truncated or the re-verify mismatched — the mark stays
     /// and the next run re-enters at the wipe.
     Incomplete,
+    /// The re-pull append hit a fail-closed interval-overlap refusal (#104/R7).
+    /// The wipe guarantees the re-pull is disjoint by construction, so this is a
+    /// defensive catch for an unforeseen overlap (a delete that failed to clear,
+    /// residual pollution): route it to the append-refusal vec per-triple, keep
+    /// the mark, and let the run continue instead of aborting via a propagated
+    /// fatal error.
+    AppendRefused(AppendRefusal),
 }
 
 /// A per-run request-budget estimate (R4/KTD5).
@@ -1097,7 +1104,18 @@ impl Ingestor {
                     // full re-pull) instead of silently not fetching. Only meaningful
                     // once a watermark exists — an unseen instrument's floor fetch is
                     // the normal path, not a backward widen.
-                    if wm.is_some() {
+                    // R4/R6 (#103): warn at most once per triple per floor, and
+                    // skip the per-triple `stored_bar_intervals` read once a floor
+                    // is established. The read + warning run only when this floor is
+                    // NEW information — no marker yet, or a floor deeper than the one
+                    // last warned about (a deeper floor is genuinely new, R5). A
+                    // repeat run at the same-or-higher floor short-circuits here: no
+                    // parquet read, no warning.
+                    let needs_check = wm.is_some()
+                        && checkpoint
+                            .history_floor(&instrument, &label)
+                            .map_or(true, |recorded| lookback_floor < recorded);
+                    if needs_check {
                         if let Some(earliest_ns) =
                             stored_bar_intervals(&self.config.catalog_path, bar_type)
                                 .await?
@@ -1119,6 +1137,14 @@ impl Ingestor {
                                     floor: fmt_ymd(lookback_floor),
                                     earliest_stored: fmt_ymd(earliest_stored),
                                 });
+                                // Record the warned floor and persist it now: an
+                                // already-current late-listed triple is skipped
+                                // below (a bare `continue`, no save), so relying on
+                                // the per-triple save would lose the marker and the
+                                // symbol would re-warn every run — the exact noise
+                                // this closes.
+                                checkpoint.set_history_floor(&instrument, &label, lookback_floor);
+                                checkpoint.save(&checkpoint_path)?;
                             }
                         }
                     }
@@ -1165,6 +1191,10 @@ impl Ingestor {
                             ingested += 1;
                         }
                         HealOutcome::Refused(r) => heal_refusals.push(r),
+                        // #104/R7: a heal re-pull append that hit an overlap
+                        // refusal is per-triple, not run-fatal — record it and
+                        // move on to the remaining triples (the mark stays).
+                        HealOutcome::AppendRefused(r) => append_refusals.push(r),
                         HealOutcome::Incomplete => gaps_this_run.push(CoverageGap {
                             instrument: instrument.clone(),
                             bar_type: label.clone(),
@@ -1175,68 +1205,126 @@ impl Ingestor {
                     continue;
                 }
                 let start = pending_start.expect("the append path always computed a start");
-                let sdate = start.format("%Y%m%d").to_string();
-                let edate = last_closed.format("%Y%m%d").to_string();
-                let range = format!("{sdate}..{edate}");
-                let outcome = match kind {
-                    BarKind::Daily => {
-                        collect_daily(&self.fetcher, &shcode, bar_type, &sdate, &edate).await?
-                    }
-                    BarKind::Minute(n) => {
-                        collect_minute(&self.fetcher, &shcode, n, bar_type, &sdate, &edate).await?
-                    }
+                // #102/KTD-1: trim the fetch window [start, last_closed] against the
+                // coverage the checkpoint already records above the watermark, using
+                // the in-memory checkpoint — never parquet, never a calendar (R3). In
+                // steady state (no far coverage) this yields the single segment
+                // [start, last_closed], identical to before. For a legacy multi-range
+                // checkpoint whose far ranges survive above a prefix watermark, it
+                // yields only the un-covered gaps: we fetch/write those disjointly
+                // (R2 — a genuine trading day in the gap is still fetched) and never
+                // re-overlap or re-fetch a recorded range, so the stall never forms
+                // (R1). `wm` is recomputed here — the append path never mutates the
+                // checkpoint, so it equals the value that derived `start`.
+                let wm = checkpoint.watermark(&instrument, &label);
+                let covered = match wm {
+                    Some(w) => checkpoint.completed_intervals_above(&instrument, &label, w),
+                    None => Vec::new(),
                 };
-                // A PaperThin outcome means the fetch was TRUNCATED (page cap hit /
-                // single-day chunk still overflowed) — the range is only partially
-                // retrieved, so the watermark must NOT advance past it or the
-                // un-fetched older history is skipped forever. Every other outcome
-                // (bars, empty history, non-trading day) is complete-for-the-range
-                // and advances (R10 — a gap day is covered-but-empty, never retried).
-                let mut advance = true;
-                match outcome {
-                    TripleOutcome::Bars(bars) if !bars.is_empty() => {
-                        let n = bars.len();
-                        match append_bars_checked(&self.config.catalog_path, bar_type, bars).await {
-                            Ok(()) => {
-                                bars_written += n;
-                                ingested += 1;
-                            }
-                            // A fail-closed interval-overlap refusal (R5): the
-                            // watermark must NOT advance (a re-run re-surfaces it
-                            // until the operator compacts/wipes), and the run
-                            // continues with the other triples.
-                            Err(AdapterError::OverlapRefused { attempted, stored, .. }) => {
-                                advance = false;
-                                append_refusals.push(AppendRefusal {
-                                    instrument: instrument.clone(),
-                                    bar_type: label.clone(),
-                                    attempted,
-                                    stored,
-                                });
-                            }
-                            Err(e) => return Err(e),
+                // The advance target when no sub-range truncates: the coverage is now
+                // contiguous through the highest recorded far edate within reach — so
+                // the next run does not re-derive (and re-overlap) a fully-covered far
+                // range even when `last_closed` sits at or below its edate.
+                let highest_covered = covered
+                    .iter()
+                    .filter(|(cs, _)| *cs <= last_closed)
+                    .map(|(_, e)| *e)
+                    .max();
+                let sub_ranges = subtract_covered(start, last_closed, &covered);
+
+                let mut wrote_any = false;
+                // The start of the first sub-range that halts the loop — a PaperThin
+                // truncation (un-fetched older history) or an unforeseen overlap. The
+                // watermark pins just BEFORE it: everything lower is contiguous and
+                // attested, and no higher (disjoint) sub-range is fetched or written,
+                // so no bars are orphaned above a low-pinned watermark (KTD-1).
+                let mut halt_before: Option<NaiveDate> = None;
+                for (s, e) in &sub_ranges {
+                    let sdate = s.format("%Y%m%d").to_string();
+                    let edate = e.format("%Y%m%d").to_string();
+                    let range = format!("{sdate}..{edate}");
+                    let outcome = match kind {
+                        BarKind::Daily => {
+                            collect_daily(&self.fetcher, &shcode, bar_type, &sdate, &edate).await?
                         }
-                    }
-                    TripleOutcome::Bars(_) => gaps_this_run.push(CoverageGap {
-                        instrument: instrument.clone(),
-                        bar_type: label.clone(),
-                        range: range.clone(),
-                        reason: GapReason::EmptyHistory,
-                    }),
-                    TripleOutcome::Gap(reason) => {
-                        if reason == GapReason::PaperThin {
-                            advance = false;
+                        BarKind::Minute(n) => {
+                            collect_minute(&self.fetcher, &shcode, n, bar_type, &sdate, &edate).await?
                         }
-                        gaps_this_run.push(CoverageGap {
+                    };
+                    match outcome {
+                        TripleOutcome::Bars(bars) if !bars.is_empty() => {
+                            let n = bars.len();
+                            match append_bars_checked(&self.config.catalog_path, bar_type, bars).await {
+                                Ok(()) => {
+                                    bars_written += n;
+                                    wrote_any = true;
+                                }
+                                // Fail-closed net (R5) for an overlap the trim did not
+                                // anticipate: record it, halt before this sub-range
+                                // (do not advance past it, do not fetch a higher one),
+                                // and let the run continue — the next run re-surfaces
+                                // it until the operator compacts/wipes.
+                                Err(AdapterError::OverlapRefused { attempted, stored, .. }) => {
+                                    append_refusals.push(AppendRefusal {
+                                        instrument: instrument.clone(),
+                                        bar_type: label.clone(),
+                                        attempted,
+                                        stored,
+                                    });
+                                    halt_before = Some(*s);
+                                    break;
+                                }
+                                Err(e) => return Err(e),
+                            }
+                        }
+                        TripleOutcome::Bars(_) => gaps_this_run.push(CoverageGap {
                             instrument: instrument.clone(),
                             bar_type: label.clone(),
-                            range: range.clone(),
-                            reason,
-                        });
+                            range,
+                            reason: GapReason::EmptyHistory,
+                        }),
+                        TripleOutcome::Gap(reason) => {
+                            let paper_thin = reason == GapReason::PaperThin;
+                            gaps_this_run.push(CoverageGap {
+                                instrument: instrument.clone(),
+                                bar_type: label.clone(),
+                                range,
+                                reason,
+                            });
+                            // A truncated fetch means the sub-range is only partially
+                            // retrieved: pin before it and stop, or the un-fetched
+                            // older history is skipped forever (R2/R10).
+                            if paper_thin {
+                                halt_before = Some(*s);
+                                break;
+                            }
+                        }
                     }
                 }
-                if advance {
-                    checkpoint.set_watermark(&instrument, &label, last_closed);
+                if wrote_any {
+                    ingested += 1;
+                }
+                match halt_before {
+                    // Pin the watermark just before the halting sub-range — only when
+                    // that is genuine forward progress over the existing watermark
+                    // (earlier sub-ranges + recorded coverage were written/attested).
+                    // A first-sub-range halt, or no prior watermark, advances nothing,
+                    // so the triple re-surfaces next run (matching the pre-trim
+                    // fail-closed refusal semantics).
+                    Some(s) => {
+                        if let (Some(w), Some(pin)) = (wm, s.pred_opt()) {
+                            if pin > w {
+                                checkpoint.set_watermark(&instrument, &label, pin);
+                            }
+                        }
+                    }
+                    // No truncation: coverage is contiguous through
+                    // max(last_closed, highest recorded far edate). Advance there so
+                    // the next run is a steady-state single-segment fetch (R1).
+                    None => {
+                        let target = highest_covered.map_or(last_closed, |hc| last_closed.max(hc));
+                        checkpoint.set_watermark(&instrument, &label, target);
+                    }
                 }
                 // Persist after each triple for crash safety.
                 checkpoint.save(&checkpoint_path)?;
@@ -1444,8 +1532,30 @@ impl Ingestor {
             // The wipe (delete_bar_series above) left the series empty, so this
             // re-pull is disjoint by construction and passes the checked guard
             // (R6) — routing it through the same wrapper keeps raw `write_bars`
-            // out of every production path (KTD-2).
-            append_bars_checked(&self.config.catalog_path, bar_type, pulled).await?;
+            // out of every production path (KTD-2). #104/R7: if an overlap ever
+            // DOES survive the wipe (a delete that failed to clear, residual
+            // pollution), catch it per-triple and route it to the append-refusal
+            // vec — the mark stays and the run continues, instead of a propagated
+            // fatal error aborting every remaining triple. Any other append error
+            // still propagates (the arm is scoped to `OverlapRefused` only).
+            match append_bars_checked(&self.config.catalog_path, bar_type, pulled).await {
+                Ok(()) => {}
+                Err(AdapterError::OverlapRefused { attempted, stored, .. }) => {
+                    tracing::warn!(
+                        instrument,
+                        %attempted,
+                        %stored,
+                        "heal re-pull append refused (overlap survived the wipe); symbol stays marked, run continues"
+                    );
+                    return Ok(HealOutcome::AppendRefused(AppendRefusal {
+                        instrument: instrument.to_string(),
+                        bar_type: label.to_string(),
+                        attempted,
+                        stored,
+                    }));
+                }
+                Err(e) => return Err(e),
+            }
         }
 
         // Re-verify (the gateway may rewrite the series again while the heal is
@@ -1568,6 +1678,48 @@ pub async fn stored_bar_intervals(
     })
     .await
     .map_err(|e| AdapterError::Ingest(format!("catalog intervals task panicked: {e}")))?
+}
+
+/// Subtract the `covered` coverage spans (sorted, merged; each with `edate` above
+/// the window's watermark) from the fetch window `[start, last_closed]`, yielding
+/// the un-covered sub-ranges in date order (U4/KTD-1). A span reaching at/above
+/// `last_closed` truncates the tail; a fully-covered window yields no sub-ranges.
+/// Each returned sub-range is disjoint from every covered span, so appending it
+/// passes the checked-write guard without refusing.
+fn subtract_covered(
+    start: NaiveDate,
+    last_closed: NaiveDate,
+    covered: &[(NaiveDate, NaiveDate)],
+) -> Vec<(NaiveDate, NaiveDate)> {
+    let mut out = Vec::new();
+    let mut cursor = start;
+    for (cs, ce) in covered {
+        if *cs > last_closed {
+            // The span starts beyond the window (future coverage) — leave the
+            // remaining window as one trailing sub-range below it.
+            break;
+        }
+        if *cs > cursor {
+            // A gap before this span: [cursor, cs-1], clamped to the window.
+            let end = cs.pred_opt().unwrap_or(*cs).min(last_closed);
+            if cursor <= end {
+                out.push((cursor, end));
+            }
+        }
+        // Jump the cursor past the covered span.
+        if let Some(next) = ce.succ_opt() {
+            if next > cursor {
+                cursor = next;
+            }
+        }
+        if cursor > last_closed {
+            break;
+        }
+    }
+    if cursor <= last_closed {
+        out.push((cursor, last_closed));
+    }
+    out
 }
 
 /// Format a `[min_ts, max_ts]` nanosecond interval as a KST `sdate..edate` string.
@@ -2593,5 +2745,67 @@ mod tests {
             .await
             .unwrap();
         assert!(matches!(outcome, TripleOutcome::Gap(GapReason::EmptyHistory)));
+    }
+
+    // --- U4/KTD-1: subtract_covered range arithmetic ---
+
+    fn d(y: i32, m: u32, day: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, day).unwrap()
+    }
+
+    #[test]
+    fn subtract_no_coverage_yields_the_whole_window() {
+        // Steady state: no far coverage → exactly the single window segment.
+        let out = subtract_covered(d(2024, 1, 6), d(2024, 1, 8), &[]);
+        assert_eq!(out, vec![(d(2024, 1, 6), d(2024, 1, 8))]);
+    }
+
+    #[test]
+    fn subtract_one_span_yields_gap_before_it() {
+        // A far range [10..12] separated from the window start by a gap [6..9].
+        let out = subtract_covered(d(2024, 1, 6), d(2024, 1, 12), &[(d(2024, 1, 10), d(2024, 1, 12))]);
+        assert_eq!(out, vec![(d(2024, 1, 6), d(2024, 1, 9))], "only the un-covered gap remains");
+    }
+
+    #[test]
+    fn subtract_span_across_last_closed_absorbs_the_tail() {
+        // The far range's edate is at/above last_closed: the gap before it is the
+        // only sub-range, and nothing trails (the far range covers the rest).
+        let out = subtract_covered(d(2024, 1, 6), d(2024, 1, 11), &[(d(2024, 1, 10), d(2024, 1, 12))]);
+        assert_eq!(out, vec![(d(2024, 1, 6), d(2024, 1, 9))]);
+    }
+
+    #[test]
+    fn subtract_multiple_spans_yields_each_gap_and_the_forward_tail() {
+        // Two far ranges → three un-covered sub-ranges (two interior gaps + tail).
+        let out = subtract_covered(
+            d(2024, 1, 6),
+            d(2024, 1, 19),
+            &[(d(2024, 1, 10), d(2024, 1, 11)), (d(2024, 1, 16), d(2024, 1, 17))],
+        );
+        assert_eq!(
+            out,
+            vec![
+                (d(2024, 1, 6), d(2024, 1, 9)),
+                (d(2024, 1, 12), d(2024, 1, 15)),
+                (d(2024, 1, 18), d(2024, 1, 19)),
+            ]
+        );
+    }
+
+    #[test]
+    fn subtract_fully_covered_window_yields_nothing() {
+        // A span covering the whole window → no sub-ranges (nothing to fetch).
+        let out = subtract_covered(d(2024, 1, 6), d(2024, 1, 12), &[(d(2024, 1, 6), d(2024, 1, 12))]);
+        assert!(out.is_empty());
+    }
+
+    #[test]
+    fn subtract_future_span_beyond_window_keeps_the_window() {
+        // A far range entirely beyond last_closed does not truncate the window —
+        // the whole window is un-covered and fetched (the future span is not
+        // reachable yet and must not be skipped).
+        let out = subtract_covered(d(2024, 1, 6), d(2024, 1, 8), &[(d(2024, 1, 15), d(2024, 1, 16))]);
+        assert_eq!(out, vec![(d(2024, 1, 6), d(2024, 1, 8))]);
     }
 }

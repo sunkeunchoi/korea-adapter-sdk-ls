@@ -161,6 +161,20 @@ staged max-lookback probe (see the v1 plan). Minute accumulate over the whole
 universe is still large per run — bound the first few runs with `LS_INGEST_SYMBOLS`
 until the shallow minute history deepens.
 
+**Write-side hardening (exit codes + coverage trust).** An accumulate run trusts the
+coverage its own checkpoint already records: when a legacy checkpoint's `completed`
+ranges are separated only by a non-trading gap (a holiday cluster), the run fetches
+only the un-covered gap and never re-fetches — and thus never overlap-refuses — a
+range it already holds, with no trading-day calendar (a genuine trading day still in
+the gap *is* fetched). The backward-widen no-op warning (`BACKWARD WIDEN NO-OP`, a
+late-listed symbol whose floor precedes its earliest stored coverage) fires at most
+once per symbol per floor and is **informational** — a deeper floor re-warns. The
+process **exit code** distinguishes outcomes: `0` = clean (backward-widen warnings do
+not redden it), `2` = the run completed but one or more triples were **refused**
+(`HEAL REFUSED` / `REFUSED PENDING HEAL` / `APPEND REFUSED`) and need an operator
+(re-run with an adequate floor, or `lab-research catalog compact` / wipe + re-pull),
+`1` = the run itself errored. A cron can gate on nonzero to page only on real stalls.
+
 **Adjustment-basis shifts are self-healing (daily bars).** Daily bars are ingested
 on an **adjusted-price** basis (`adjusted_prices` recorded in the checkpoint), and
 adjusted series are rewritten server-side by every split/dividend. Accumulate-forward

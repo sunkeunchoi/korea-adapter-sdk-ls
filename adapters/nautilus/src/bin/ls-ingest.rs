@@ -27,13 +27,35 @@ use std::path::PathBuf;
 use chrono::{Duration, NaiveDate, Utc};
 use nautilus_ls::config::LsAdapterConfig;
 use nautilus_ls::ingest::{
-    last_closed_session, BarKind, IngestConfig, Ingestor, ACCUMULATE_CLOSE_BUFFER,
+    last_closed_session, BarKind, CoverageReport, IngestConfig, Ingestor, ACCUMULATE_CLOSE_BUFFER,
     DEFAULT_OVERLAP_DAYS,
 };
 use nautilus_ls::instruments::{InstrumentDomain, InstrumentProvider};
 use nautilus_ls::lock::{AdvisoryLock, LockKind};
 use nautilus_ls::scrub;
 use nautilus_model::identifiers::{InstrumentId, Symbol, Venue};
+
+/// The exit code for a run that carried a genuine per-triple refusal (#104): a
+/// range/heal/append refusal means a triple stalled and an operator must act.
+/// Distinct from the hard-error `1` the `Err` path returns (`ExitCode::FAILURE`),
+/// so CI can tell "the run itself failed" from "the run completed but N triples
+/// were refused".
+const EXIT_REFUSALS: u8 = 2;
+
+/// The process exit code implied by a completed run's [`CoverageReport`] (#104,
+/// R8/R9): nonzero when any *genuine refusal* vec (range, heal, or append overlap)
+/// is non-empty, zero otherwise. Backward-widen warnings are informational and
+/// never consulted (R9) — a late-listed symbol warns forever without reddening CI.
+fn exit_code_for(report: &CoverageReport) -> u8 {
+    let refused = !report.range_refusals.is_empty()
+        || !report.heal_refusals.is_empty()
+        || !report.append_refusals.is_empty();
+    if refused {
+        EXIT_REFUSALS
+    } else {
+        0
+    }
+}
 
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
@@ -42,7 +64,10 @@ async fn main() -> std::process::ExitCode {
     // Scrub the terminal error too — a `?`-propagated SDK error would otherwise be
     // printed unscrubbed by the runtime, leaking a raw broker message.
     match run().await {
-        Ok(()) => std::process::ExitCode::SUCCESS,
+        // Probe mode carries no coverage report — nothing to refuse, exit 0.
+        Ok(None) => std::process::ExitCode::SUCCESS,
+        // A completed run: exit nonzero iff it carried a genuine refusal (#104).
+        Ok(Some(report)) => std::process::ExitCode::from(exit_code_for(&report)),
         Err(e) => {
             eprintln!("error: {}", scrub::scrub_secrets(&e.to_string()));
             std::process::ExitCode::FAILURE
@@ -50,7 +75,7 @@ async fn main() -> std::process::ExitCode {
     }
 }
 
-async fn run() -> Result<(), Box<dyn std::error::Error>> {
+async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
     require_paper()?;
 
     let catalog: PathBuf = env_required("LS_INGEST_CATALOG")?.into();
@@ -86,7 +111,8 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // for a pilot symbol and write <data>/probes/minute-lookback.json. No universe
     // load — the probe walks a single pilot symbol. Operator-gated.
     if mode == "probe-lookback" {
-        return run_probe(&sdk, catalog).await;
+        run_probe(&sdk, catalog).await?;
+        return Ok(None);
     }
 
     // Load the domestic-equity universe.
@@ -188,7 +214,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         report.budget.per_sec_cap,
         report.budget.min_seconds()
     );
-    Ok(())
+    Ok(Some(report))
 }
 
 /// Staged max-lookback probe (KTD10). Uses a single liquid pilot symbol (default
@@ -258,4 +284,77 @@ fn parse_kinds(spec: &str) -> Result<Vec<BarKind>, String> {
         kinds.push(BarKind::Daily);
     }
     Ok(kinds)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use nautilus_ls::ingest::{AppendRefusal, BackwardWidenWarning, BudgetEstimate, HealRefusal, RangeRefusal};
+
+    /// A zero-refusal, zero-warning coverage report — the base each case mutates.
+    fn empty_report() -> CoverageReport {
+        CoverageReport {
+            bars_written: 0,
+            triples_ingested: 0,
+            triples_skipped: 0,
+            gaps: Vec::new(),
+            heal_refusals: Vec::new(),
+            range_refusals: Vec::new(),
+            append_refusals: Vec::new(),
+            backward_widen_warnings: Vec::new(),
+            budget: BudgetEstimate { symbols: 0, bar_kinds: 0, per_sec_cap: 1, min_requests: 0 },
+        }
+    }
+
+    #[test]
+    fn exit_zero_for_empty_report() {
+        assert_eq!(exit_code_for(&empty_report()), 0);
+    }
+
+    /// R9: a report carrying only backward-widen warnings is still exit 0 —
+    /// warnings never redden CI (a late-listed symbol warns every run forever).
+    #[test]
+    fn exit_zero_for_warning_only_report() {
+        let mut report = empty_report();
+        report.backward_widen_warnings.push(BackwardWidenWarning {
+            instrument: "005930.XKRX".to_string(),
+            bar_type: "1-DAY".to_string(),
+            floor: "20240101".to_string(),
+            earliest_stored: "20240618".to_string(),
+        });
+        assert_eq!(exit_code_for(&report), 0, "backward-widen warnings never affect the exit code");
+    }
+
+    /// R8: each genuine refusal vec independently forces a nonzero exit — and it is
+    /// the distinct refusal code (2), separate from the hard-error FAILURE (1).
+    #[test]
+    fn exit_nonzero_for_each_genuine_refusal() {
+        let mut append = empty_report();
+        append.append_refusals.push(AppendRefusal {
+            instrument: "005930.XKRX".to_string(),
+            bar_type: "1-DAY".to_string(),
+            attempted: "20240103..20240105".to_string(),
+            stored: "20240103..20240105".to_string(),
+        });
+        assert_eq!(exit_code_for(&append), EXIT_REFUSALS, "append refusal → nonzero");
+
+        let mut heal = empty_report();
+        heal.heal_refusals.push(HealRefusal {
+            instrument: "005930.XKRX".to_string(),
+            bar_type: "1-DAY".to_string(),
+            floor: "20240104".to_string(),
+            earliest_stored: "20240103".to_string(),
+        });
+        assert_eq!(exit_code_for(&heal), EXIT_REFUSALS, "heal refusal → nonzero");
+
+        let mut range = empty_report();
+        range.range_refusals.push(RangeRefusal {
+            instrument: "005930.XKRX".to_string(),
+            bar_type: "1-DAY".to_string(),
+            detected: "20240105".to_string(),
+        });
+        assert_eq!(exit_code_for(&range), EXIT_REFUSALS, "range refusal → nonzero");
+
+        assert_ne!(EXIT_REFUSALS, 1, "the refusal code stays distinct from the hard-error FAILURE");
+    }
 }
