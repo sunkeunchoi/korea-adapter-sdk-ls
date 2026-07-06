@@ -165,6 +165,15 @@ pub struct Checkpoint {
     /// pre-U5 checkpoint files load unchanged (empty map → derive from scratch).
     #[serde(default)]
     watermarks: BTreeMap<String, String>,
+    /// Per-`(instrument, bar type)` recorded backward-widen history floor
+    /// (`YYYYMMDD`), keyed like `watermarks` (U3/KTD-2, R4/R6). The deepest
+    /// configured lookback floor for which a backward-widen no-op warning has
+    /// already fired, so a repeat run at the same-or-higher floor stays silent and
+    /// skips the per-triple `stored_bar_intervals` read done solely for that check.
+    /// A deeper floor (below the recorded one) re-warns and updates this. Absent =
+    /// never warned. `#[serde(default)]` so legacy files load with an empty map.
+    #[serde(default)]
+    history_floors: BTreeMap<String, String>,
     /// Per-`(instrument, bar type)` basis-shift marks: detection date (`YYYYMMDD`)
     /// keyed like `watermarks`. A marked triple heals (wipe → re-pull → re-verify)
     /// before any append; the mark outranks the watermark as authority (KTD-2).
@@ -220,12 +229,82 @@ impl Checkpoint {
         );
     }
 
+    /// The recorded backward-widen history floor for a `(instrument, bar type)`,
+    /// if a no-op warning has already fired for it (U3/KTD-2). Parsed from the
+    /// stored `YYYYMMDD`.
+    pub fn history_floor(&self, instrument: &str, bar_type: &str) -> Option<NaiveDate> {
+        self.history_floors
+            .get(&Self::watermark_key(instrument, bar_type))
+            .and_then(|s| NaiveDate::parse_from_str(s.trim(), "%Y%m%d").ok())
+    }
+
+    /// Record the backward-widen history floor for a `(instrument, bar type)` to
+    /// `floor` (U3/KTD-2) — set when a no-op warning fires, so a later run at the
+    /// same-or-higher floor stays silent and skips the interval read.
+    pub fn set_history_floor(&mut self, instrument: &str, bar_type: &str, floor: NaiveDate) {
+        self.history_floors.insert(
+            Self::watermark_key(instrument, bar_type),
+            floor.format("%Y%m%d").to_string(),
+        );
+    }
+
     /// Clear the coverage watermark for a `(instrument, bar type)` — the heal's
     /// wipe step (KTD-2): a wiped series must re-pull from the floor, so its
     /// watermark must not survive the wipe.
     pub fn clear_watermark(&mut self, instrument: &str, bar_type: &str) {
         self.watermarks
             .remove(&Self::watermark_key(instrument, bar_type));
+    }
+
+    /// The `completed` coverage intervals for a `(instrument, bar type)` whose end
+    /// date lies strictly above `watermark` (U4/KTD-1, R1/R2/R3) — parsed to
+    /// `(sdate, edate)` date pairs, sorted by start, and adjacent/overlapping spans
+    /// merged into one. This is the in-memory record of coverage that survives
+    /// above the (prefix) watermark after a legacy multi-range migration: the
+    /// prune keeps ranges with `edate > watermark` and the migration keeps far
+    /// ranges in `completed`, so the accumulate fetch can trim against these spans
+    /// (skip re-fetching a range the checkpoint already records) without reading
+    /// parquet or consulting a calendar. Ranges with `edate <= watermark` (already
+    /// attested by the watermark, e.g. the prefix range that derived it) are
+    /// excluded.
+    pub fn completed_intervals_above(
+        &self,
+        instrument: &str,
+        bar_type: &str,
+        watermark: NaiveDate,
+    ) -> Vec<(NaiveDate, NaiveDate)> {
+        let prefix = format!("{instrument}|{bar_type}|");
+        let mut spans: Vec<(NaiveDate, NaiveDate)> = self
+            .completed
+            .iter()
+            .filter_map(|k| k.strip_prefix(&prefix))
+            .filter_map(|range| {
+                let mut it = range.split("..");
+                let (s, e) = (it.next()?.trim(), it.next()?.trim());
+                match (
+                    NaiveDate::parse_from_str(s, "%Y%m%d"),
+                    NaiveDate::parse_from_str(e, "%Y%m%d"),
+                ) {
+                    (Ok(sd), Ok(ed)) if ed > watermark => Some((sd, ed)),
+                    _ => None,
+                }
+            })
+            .collect();
+        spans.sort_by_key(|(s, _)| *s);
+        // Merge adjacent (end + 1 day == next start) or overlapping spans so the
+        // caller subtracts one contiguous block, never a sliver-fragmented set.
+        let mut merged: Vec<(NaiveDate, NaiveDate)> = Vec::new();
+        for (s, e) in spans {
+            match merged.last_mut() {
+                Some((_, prev_end)) if s <= prev_end.succ_opt().unwrap_or(*prev_end) => {
+                    if e > *prev_end {
+                        *prev_end = e;
+                    }
+                }
+                _ => merged.push((s, e)),
+            }
+        }
+        merged
     }
 
     /// Whether a `(instrument, bar type)` is marked basis-shifted.
@@ -620,6 +699,47 @@ mod tests {
             "the covered completed range migrates to a watermark on load"
         );
         assert!(cp.adjusted_prices);
+    }
+
+    #[test]
+    fn history_floor_set_get_and_round_trips() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        let mut cp = Checkpoint::default();
+        assert!(cp.history_floor("005930.XKRX", "1-DAY").is_none(), "unset floor reads none");
+        cp.set_history_floor("005930.XKRX", "1-DAY", ymd(2024, 6, 1));
+        assert_eq!(cp.history_floor("005930.XKRX", "1-DAY"), Some(ymd(2024, 6, 1)));
+        // A deeper floor overwrites; a distinct series is independent.
+        cp.set_history_floor("005930.XKRX", "1-DAY", ymd(2024, 5, 25));
+        assert_eq!(cp.history_floor("005930.XKRX", "1-DAY"), Some(ymd(2024, 5, 25)));
+        assert!(cp.history_floor("005930.XKRX", "1-MINUTE").is_none(), "distinct bar kind is a distinct floor");
+
+        cp.save(&path).unwrap();
+        let a = std::fs::read_to_string(&path).unwrap();
+        cp.save(&path).unwrap();
+        let b = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(a, b, "the marker serializes deterministically (byte-identical double-save)");
+        let loaded = Checkpoint::load(&path).unwrap();
+        assert_eq!(
+            loaded.history_floor("005930.XKRX", "1-DAY"),
+            Some(ymd(2024, 5, 25)),
+            "the marker round-trips through save/load"
+        );
+    }
+
+    #[test]
+    fn legacy_checkpoint_without_history_floors_loads_as_first_seen() {
+        // A pre-U3 checkpoint file has no `history_floors` field: it loads with an
+        // empty map, so every triple reads as never-warned (first-seen).
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("legacy.json");
+        std::fs::write(
+            &path,
+            r#"{"completed":[],"gaps":[],"watermarks":{"005930.XKRX|1-DAY":"20240703"},"adjusted_prices":true}"#,
+        )
+        .unwrap();
+        let cp = Checkpoint::load(&path).expect("legacy checkpoint loads");
+        assert!(cp.history_floor("005930.XKRX", "1-DAY").is_none(), "absent field → first-seen");
     }
 
     #[test]

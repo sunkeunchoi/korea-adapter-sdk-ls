@@ -449,9 +449,13 @@ mod catalog_primitives {
 mod basis_shift_heal {
     use super::*;
     use std::collections::{BTreeMap, VecDeque};
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
 
-    use nautilus_ls::ingest::{delete_bar_series, read_all_bars};
+    use nautilus_ls::ingest::{delete_bar_series, kst_to_unix_nanos, read_all_bars, write_bars};
+    use nautilus_ls::rules::KRX_REGULAR_CLOSE;
+    use nautilus_model::data::{Bar, BarType};
+    use nautilus_model::types::{Price, Quantity};
 
     /// A daily close series: date (`YYYYMMDD`) → close. OHLC derives from the
     /// close, so rewriting a close rewrites the whole candle.
@@ -1008,6 +1012,136 @@ mod basis_shift_heal {
         assert_eq!(cp.rebase_events().len(), 1);
         assert_eq!(cp.rebase_events()[0].origin, RebaseOrigin::Heal, "the pre-existing heal origin is kept");
         assert_eq!(cp.rebase_origin_totals().organic(), 1, "the heal-origin event counts organic");
+    }
+
+    // --- U1 (#104/R7): heal re-pull append overlap is caught per-triple ---
+
+    fn daily_bar(bar_type: BarType, date: NaiveDate, close: i64) -> Bar {
+        let ts = kst_to_unix_nanos(date, KRX_REGULAR_CLOSE).unwrap();
+        Bar::new(
+            bar_type,
+            Price::from((close - 5).to_string().as_str()),
+            Price::from((close + 10).to_string().as_str()),
+            Price::from((close - 10).to_string().as_str()),
+            Price::from(close.to_string().as_str()),
+            Quantity::from(1000),
+            ts,
+            ts,
+        )
+    }
+
+    /// An sdk whose t8410 responder serves the shared series AND, on the first
+    /// *armed* `005930` call, injects an overlapping stored daily leaf just before
+    /// responding. The heal wipe guarantees the re-pull is disjoint by
+    /// construction, so this simulates the one anomaly #104 defends against — an
+    /// overlap that survives the wipe (a delete that failed to clear, residual
+    /// pollution) — by writing a leaf *after* the wipe (during the post-wipe
+    /// re-pull) so the subsequent heal append is refused. The write runs on a
+    /// dedicated OS thread with a fresh runtime: the catalog's internal `block_on`
+    /// panics if called from within the mock's async worker.
+    async fn sdk_with_injecting_series(
+        server: &MockServer,
+        shared: SharedSeries,
+        catalog: &Path,
+        inject_armed: Arc<AtomicBool>,
+    ) -> LsSdk {
+        mount_token(server).await;
+        let catalog = catalog.to_path_buf();
+        Mock::given(method("POST"))
+            .and(path(CHART_PATH))
+            .and(header("tr_cd", "t8410"))
+            .respond_with(move |req: &wiremock::Request| {
+                let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+                let ib = &body["t8410InBlock"];
+                let shcode = ib["shcode"].as_str().unwrap_or("").to_string();
+                let s = ib["sdate"].as_str().unwrap_or("").to_string();
+                let e = ib["edate"].as_str().unwrap_or("").to_string();
+                if shcode == "005930" && inject_armed.swap(false, Ordering::SeqCst) {
+                    let cat = catalog.clone();
+                    std::thread::spawn(move || {
+                        let bt = BarKind::Daily
+                            .bar_type(InstrumentId::from(SAMSUNG))
+                            .unwrap();
+                        let leaf = vec![
+                            daily_bar(bt, ymd(2024, 1, 3), 100),
+                            daily_bar(bt, ymd(2024, 1, 5), 102),
+                        ];
+                        tokio::runtime::Runtime::new()
+                            .unwrap()
+                            .block_on(write_bars(&cat, leaf))
+                            .unwrap();
+                    })
+                    .join()
+                    .unwrap();
+                }
+                let rows: Vec<serde_json::Value> = shared
+                    .next()
+                    .range(s..=e)
+                    .map(|(d, c)| {
+                        serde_json::json!({
+                            "date": d, "open": (c - 5).to_string(), "high": (c + 10).to_string(),
+                            "low": (c - 10).to_string(), "close": c.to_string(), "jdiff_vol": "1000"
+                        })
+                    })
+                    .collect();
+                json_response(serde_json::json!({
+                    "rsp_cd": "00000", "rsp_msg": "정상",
+                    "t8410OutBlock": { "shcode": shcode, "cts_date": "", "rec_count": rows.len().to_string() },
+                    "t8410OutBlock1": rows
+                }))
+            })
+            .mount(server)
+            .await;
+        LsSdk::new(mock_config(&server.uri())).expect("sdk builds")
+    }
+
+    /// Covers AE3 (heal half) / R7: a heal re-pull whose append overlaps stored
+    /// coverage records an `AppendRefusal` and lets the run continue — the clean
+    /// sibling still ingests, the marked symbol stays marked, and its watermark is
+    /// not advanced (so the next run re-heals). No propagated fatal error.
+    #[tokio::test]
+    async fn heal_append_overlap_is_recorded_and_run_continues() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let shared = SharedSeries::one(v1());
+        let inject_armed = Arc::new(AtomicBool::new(false));
+        let sdk =
+            sdk_with_injecting_series(&server, shared.clone(), &catalog, inject_armed.clone()).await;
+        let samsung = InstrumentId::from(SAMSUNG);
+        let hynix = InstrumentId::from("000660.XKRX");
+        let floor = ymd(2024, 1, 1);
+
+        // Run 1: samsung gets stored bars + a watermark (a normal accumulate).
+        let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
+        ing.run_accumulate(&[samsung], ymd(2024, 1, 5), floor).await.unwrap();
+
+        // The gateway rewrites the basis, and we mark samsung shifted (a detected
+        // shift, saved before the wipe). Arm the overlap injection for run 2.
+        shared.set(v2());
+        let cp_path = catalog.join("ingest-checkpoint.json");
+        let mut cp = Checkpoint::load(&cp_path).unwrap();
+        cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5), RebaseOrigin::Heal);
+        cp.save(&cp_path).unwrap();
+        inject_armed.store(true, Ordering::SeqCst);
+
+        // Run 2: samsung heals → wipe → re-pull (injects overlap) → append refused;
+        // hynix appends cleanly. The refused triple does not abort the run.
+        let mut ing2 = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing2
+            .run_accumulate(&[samsung, hynix], ymd(2024, 1, 8), floor)
+            .await
+            .unwrap();
+
+        assert_eq!(report.append_refusals.len(), 1, "the heal overlap is recorded, not fatal");
+        assert_eq!(report.append_refusals[0].instrument, SAMSUNG);
+        assert_eq!(report.triples_ingested, 1, "the clean sibling still ingests");
+        assert!(report.heal_refusals.is_empty(), "not a wipe-precondition refusal");
+
+        let cp = checkpoint_at(&catalog);
+        assert!(cp.is_shifted(SAMSUNG, "1-DAY"), "the marked symbol stays marked → next run re-heals");
+        assert!(cp.watermark(SAMSUNG, "1-DAY").is_none(), "the refused heal did not advance the watermark");
+        assert!(cp.watermark("000660.XKRX", "1-DAY").is_some(), "the clean sibling advanced");
     }
 }
 
@@ -1648,6 +1782,59 @@ mod checked_append_and_compact {
         assert_eq!(count_t8410(&server).await, 0, "no fetch below the watermark");
     }
 
+    /// AE2 (R4/R5/R6): the backward-widen warning fires at most once per triple
+    /// per floor. Run 1 warns and records the marker; run 2 at the same floor is
+    /// silent — and because the warning fires *only* as part of the gated
+    /// `stored_bar_intervals` read, a silent run 2 proves that read was skipped
+    /// (the floor still precedes coverage, so the read WOULD warn if it ran). Run 3
+    /// at a deeper floor re-warns and updates the marker.
+    #[tokio::test]
+    async fn ae2_backward_widen_warns_once_per_floor_and_skips_the_read() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        let samsung = InstrumentId::from("005930.XKRX");
+        let bt = BarKind::Daily.bar_type(samsung).unwrap();
+        std::fs::create_dir_all(&catalog).unwrap();
+        write_bars(&catalog, series(bt, &[(ymd(2024, 6, 18), 100), (ymd(2024, 6, 25), 101), (ymd(2024, 7, 3), 102)]))
+            .await
+            .unwrap();
+        std::fs::write(
+            catalog.join("ingest-checkpoint.json"),
+            r#"{"completed":["005930.XKRX|1-DAY|20240618..20240703"],"gaps":[],"adjusted_prices":true}"#,
+        )
+        .unwrap();
+        let cp_path = catalog.join("ingest-checkpoint.json");
+
+        // Run 1: floor 0601 precedes earliest coverage 0618 → warns once, records marker.
+        let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
+        let r1 = ing.run_accumulate(&[samsung], ymd(2024, 7, 3), ymd(2024, 6, 1)).await.unwrap();
+        assert_eq!(r1.backward_widen_warnings.len(), 1, "run 1 warns once");
+        assert_eq!(
+            Checkpoint::load(&cp_path).unwrap().history_floor("005930.XKRX", "1-DAY"),
+            Some(ymd(2024, 6, 1)),
+            "the warned floor is recorded and persisted (survives the already-current skip)"
+        );
+
+        // Run 2: SAME floor → silent. No warning ⟹ needs_check was false ⟹ the
+        // per-triple interval read was skipped (else the still-below floor re-warns).
+        let mut ing2 = Ingestor::new(sdk.clone(), daily_config(&catalog));
+        let r2 = ing2.run_accumulate(&[samsung], ymd(2024, 7, 3), ymd(2024, 6, 1)).await.unwrap();
+        assert!(r2.backward_widen_warnings.is_empty(), "run 2 at the same floor is silent (read skipped)");
+
+        // Run 3: DEEPER floor (0525 < recorded 0601) → new information, re-warns.
+        let mut ing3 = Ingestor::new(sdk, daily_config(&catalog));
+        let r3 = ing3.run_accumulate(&[samsung], ymd(2024, 7, 3), ymd(2024, 5, 25)).await.unwrap();
+        assert_eq!(r3.backward_widen_warnings.len(), 1, "a deeper floor re-warns (R5)");
+        assert_eq!(
+            Checkpoint::load(&cp_path).unwrap().history_floor("005930.XKRX", "1-DAY"),
+            Some(ymd(2024, 5, 25)),
+            "the marker updates to the deeper floor"
+        );
+        assert_eq!(count_t8410(&server).await, 0, "already-current: no bar fetch across any run");
+    }
+
     /// A floor within existing coverage does not warn.
     #[tokio::test]
     async fn backward_widen_floor_within_coverage_does_not_warn() {
@@ -1863,5 +2050,304 @@ mod checked_append_and_compact {
             "sidecar rows AND the appended forward bar both survive"
         );
         assert!(!sidecar_exists(&catalog, bt), "sidecar removed on success");
+    }
+}
+
+// ---------------------------------------------------------------------------
+// U4 (#102/KTD-1) — accumulate fetch trim against recorded coverage. A legacy
+// multi-range checkpoint whose far ranges survive above a prefix watermark must
+// accumulate to a stable state without re-fetching (and re-overlapping) a range
+// it already records — no calendar, and never skipping a genuine trading-day hole.
+// A date-aware t8410 responder serves rows only for the dates in a fixed map, so a
+// holiday/weekend gap returns empty while a far range returns its bars.
+// ---------------------------------------------------------------------------
+mod reingest_trim {
+    use super::*;
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    use nautilus_ls::ingest::{kst_to_unix_nanos, read_all_bars, write_bars};
+    use nautilus_ls::rules::KRX_REGULAR_CLOSE;
+    use nautilus_model::data::{Bar, BarType};
+    use nautilus_model::types::{Price, Quantity};
+
+    const SAMSUNG: &str = "005930.XKRX";
+
+    fn daily_bar(bt: BarType, date: NaiveDate, close: i64) -> Bar {
+        let ts = kst_to_unix_nanos(date, KRX_REGULAR_CLOSE).unwrap();
+        Bar::new(
+            bt,
+            Price::from((close - 5).to_string().as_str()),
+            Price::from((close + 10).to_string().as_str()),
+            Price::from((close - 10).to_string().as_str()),
+            Price::from(close.to_string().as_str()),
+            Quantity::from(1000),
+            ts,
+            ts,
+        )
+    }
+
+    fn bars(bt: BarType, dates: &[(NaiveDate, i64)]) -> Vec<Bar> {
+        dates.iter().map(|(d, c)| daily_bar(bt, *d, *c)).collect()
+    }
+
+    fn map(pairs: &[(&str, i64)]) -> BTreeMap<String, i64> {
+        pairs.iter().map(|(d, c)| (d.to_string(), *c)).collect()
+    }
+
+    async fn closes(catalog: &Path) -> Vec<i64> {
+        let mut b = read_all_bars(catalog).await.unwrap();
+        b.sort_by_key(|x| x.ts_event.as_u64());
+        b.iter().map(|x| x.close.to_string().parse().unwrap()).collect()
+    }
+
+    fn cp_path(catalog: &Path) -> PathBuf {
+        catalog.join("ingest-checkpoint.json")
+    }
+
+    /// A date-aware t8410 responder: one ascending candle per date in `served`
+    /// that falls inside the requested `[sdate, edate]`. A window covering no
+    /// served date returns an empty page (a holiday/weekend gap).
+    async fn sdk_daily_map(server: &MockServer, served: BTreeMap<String, i64>) -> LsSdk {
+        mount_token(server).await;
+        Mock::given(method("POST"))
+            .and(path(CHART_PATH))
+            .and(header("tr_cd", "t8410"))
+            .respond_with(move |req: &wiremock::Request| {
+                let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+                let ib = &body["t8410InBlock"];
+                let s = ib["sdate"].as_str().unwrap_or("").to_string();
+                let e = ib["edate"].as_str().unwrap_or("").to_string();
+                let rows: Vec<serde_json::Value> = served
+                    .range(s..=e)
+                    .map(|(d, c)| {
+                        serde_json::json!({
+                            "date": d, "open": (c - 5).to_string(), "high": (c + 10).to_string(),
+                            "low": (c - 10).to_string(), "close": c.to_string(), "jdiff_vol": "1000"
+                        })
+                    })
+                    .collect();
+                json_response(serde_json::json!({
+                    "rsp_cd": "00000", "rsp_msg": "정상",
+                    "t8410OutBlock": { "shcode": "005930", "cts_date": "", "rec_count": rows.len().to_string() },
+                    "t8410OutBlock1": rows
+                }))
+            })
+            .mount(server)
+            .await;
+        LsSdk::new(mock_config(&server.uri())).expect("sdk builds")
+    }
+
+    /// Stage the prefix + far coverage as stored parquet and a checkpoint whose
+    /// watermark sits at the prefix edate while the far range stays in `completed`
+    /// (the exact post-migration shape a holiday cluster leaves behind).
+    async fn stage(catalog: &Path, bt: BarType, prefix: &[(NaiveDate, i64)], far: &[(NaiveDate, i64)], completed: &str, watermark: &str) {
+        std::fs::create_dir_all(catalog).unwrap();
+        write_bars(catalog, bars(bt, prefix)).await.unwrap();
+        write_bars(catalog, bars(bt, far)).await.unwrap();
+        std::fs::write(
+            cp_path(catalog),
+            format!(
+                r#"{{"completed":[{completed}],"gaps":[],"watermarks":{{"005930.XKRX|1-DAY":"{watermark}"}},"adjusted_prices":true}}"#
+            ),
+        )
+        .unwrap();
+    }
+
+    /// Covers AE1 (holiday half) + the stall-flip: a prefix watermark and one far
+    /// `completed` range separated by a non-trading gap. The far range is trimmed
+    /// out (never re-fetched), the empty gap is probed once, no overlap is refused,
+    /// and the watermark advances past the far range — the fixture that stalled the
+    /// pre-trim code now stabilizes.
+    #[tokio::test]
+    async fn legacy_multi_range_stall_flips_to_stable_and_advanced() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        // Gap 0106..0109 is a weekend + holiday cluster → no served dates.
+        let sdk = sdk_daily_map(&server, map(&[("20240103", 103), ("20240104", 104), ("20240105", 105), ("20240110", 110), ("20240111", 111), ("20240112", 112)])).await;
+        let bt = BarKind::Daily.bar_type(InstrumentId::from(SAMSUNG)).unwrap();
+        stage(&catalog, bt, &[(ymd(2024, 1, 3), 103), (ymd(2024, 1, 4), 104), (ymd(2024, 1, 5), 105)], &[(ymd(2024, 1, 10), 110), (ymd(2024, 1, 11), 111), (ymd(2024, 1, 12), 112)], r#""005930.XKRX|1-DAY|20240110..20240112""#, "20240105").await;
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing.run_accumulate(&[InstrumentId::from(SAMSUNG)], ymd(2024, 1, 12), ymd(2024, 1, 3)).await.unwrap();
+
+        assert!(report.append_refusals.is_empty(), "no overlap is refused — the far range is trimmed, not re-fetched");
+        assert!(report.backward_widen_warnings.is_empty(), "floor at earliest coverage → no widen warning");
+        // 1 basis-shift detection overlap fetch (KTD-3) + 1 empty-gap probe; the
+        // far range is never re-fetched (that would be a 3rd call and an overlap).
+        assert_eq!(count_t8410(&server).await, 2, "detect + gap probe only; far range not re-fetched");
+        assert_eq!(
+            Checkpoint::load(&cp_path(&catalog)).unwrap().watermark(SAMSUNG, "1-DAY"),
+            Some(ymd(2024, 1, 12)),
+            "the watermark advances past the far range (max(last_closed, far edate))"
+        );
+        assert_eq!(closes(&catalog).await, vec![103, 104, 105, 110, 111, 112], "stored content unchanged — no duplicate, no gap bars");
+    }
+
+    /// Covers AE1 (real-hole half): the same shape but with a genuine trading day
+    /// in the gap — that day is fetched and written (the un-covered sub-range), the
+    /// far range is not re-fetched, and coverage becomes contiguous. Failure
+    /// inversion: a trim that skipped the gap fetch drops 0108 here.
+    #[tokio::test]
+    async fn genuine_gap_day_is_fetched_far_range_is_not() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        // 0108 is a genuine trading day inside the gap.
+        let sdk = sdk_daily_map(&server, map(&[("20240103", 103), ("20240104", 104), ("20240105", 105), ("20240108", 108), ("20240110", 110), ("20240111", 111), ("20240112", 112)])).await;
+        let bt = BarKind::Daily.bar_type(InstrumentId::from(SAMSUNG)).unwrap();
+        stage(&catalog, bt, &[(ymd(2024, 1, 3), 103), (ymd(2024, 1, 4), 104), (ymd(2024, 1, 5), 105)], &[(ymd(2024, 1, 10), 110), (ymd(2024, 1, 11), 111), (ymd(2024, 1, 12), 112)], r#""005930.XKRX|1-DAY|20240110..20240112""#, "20240105").await;
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing.run_accumulate(&[InstrumentId::from(SAMSUNG)], ymd(2024, 1, 12), ymd(2024, 1, 3)).await.unwrap();
+
+        assert!(report.append_refusals.is_empty());
+        // 1 detect-overlap fetch + 1 gap sub-range fetch (0106..0109); far untouched.
+        assert_eq!(count_t8410(&server).await, 2, "detect + the gap sub-range only");
+        assert_eq!(
+            closes(&catalog).await,
+            vec![103, 104, 105, 108, 110, 111, 112],
+            "the genuine gap day 0108 is written; the far range is not re-fetched"
+        );
+        assert_eq!(Checkpoint::load(&cp_path(&catalog)).unwrap().watermark(SAMSUNG, "1-DAY"), Some(ymd(2024, 1, 12)));
+    }
+
+    /// Steady state: a single contiguous coverage block ending at the watermark
+    /// yields exactly one fetch of [watermark+1, last_closed] — behavior identical
+    /// to pre-change (one fetch, appended content is exactly what was served).
+    #[tokio::test]
+    async fn steady_state_is_a_single_unchanged_fetch() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_daily_map(&server, map(&[("20240108", 108), ("20240109", 109), ("20240110", 110)])).await;
+        let bt = BarKind::Daily.bar_type(InstrumentId::from(SAMSUNG)).unwrap();
+        // No far `completed` range — just a prefix watermark at 0105.
+        std::fs::create_dir_all(&catalog).unwrap();
+        write_bars(&catalog, bars(bt, &[(ymd(2024, 1, 3), 103), (ymd(2024, 1, 4), 104), (ymd(2024, 1, 5), 105)])).await.unwrap();
+        std::fs::write(cp_path(&catalog), r#"{"completed":[],"gaps":[],"watermarks":{"005930.XKRX|1-DAY":"20240105"},"adjusted_prices":true}"#).unwrap();
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing.run_accumulate(&[InstrumentId::from(SAMSUNG)], ymd(2024, 1, 10), ymd(2024, 1, 3)).await.unwrap();
+
+        assert!(report.append_refusals.is_empty());
+        // 1 detect-overlap fetch + 1 forward-window fetch — the single-segment
+        // steady-state path (no trim sub-ranges), identical to pre-change.
+        assert_eq!(count_t8410(&server).await, 2, "detect + one forward fetch");
+        assert_eq!(report.bars_written, 3, "the three served forward candles");
+        assert_eq!(closes(&catalog).await, vec![103, 104, 105, 108, 109, 110]);
+        assert_eq!(Checkpoint::load(&cp_path(&catalog)).unwrap().watermark(SAMSUNG, "1-DAY"), Some(ymd(2024, 1, 10)));
+    }
+
+    /// Multiple covered spans above the watermark subtract to multiple un-covered
+    /// sub-ranges, each fetched and appended disjointly.
+    #[tokio::test]
+    async fn multiple_covered_spans_fetch_each_gap_disjointly() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_daily_map(&server, map(&[
+            ("20240103", 103), ("20240104", 104), ("20240105", 105),
+            ("20240108", 108), // gap 1
+            ("20240110", 110), ("20240111", 111), // far 1
+            ("20240115", 115), // gap 2
+            ("20240116", 116), ("20240117", 117), // far 2
+            ("20240119", 119), // gap 3 (tail)
+        ])).await;
+        let bt = BarKind::Daily.bar_type(InstrumentId::from(SAMSUNG)).unwrap();
+        std::fs::create_dir_all(&catalog).unwrap();
+        write_bars(&catalog, bars(bt, &[(ymd(2024, 1, 3), 103), (ymd(2024, 1, 4), 104), (ymd(2024, 1, 5), 105)])).await.unwrap();
+        write_bars(&catalog, bars(bt, &[(ymd(2024, 1, 10), 110), (ymd(2024, 1, 11), 111)])).await.unwrap();
+        write_bars(&catalog, bars(bt, &[(ymd(2024, 1, 16), 116), (ymd(2024, 1, 17), 117)])).await.unwrap();
+        std::fs::write(
+            cp_path(&catalog),
+            r#"{"completed":["005930.XKRX|1-DAY|20240110..20240111","005930.XKRX|1-DAY|20240116..20240117"],"gaps":[],"watermarks":{"005930.XKRX|1-DAY":"20240105"},"adjusted_prices":true}"#,
+        )
+        .unwrap();
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing.run_accumulate(&[InstrumentId::from(SAMSUNG)], ymd(2024, 1, 19), ymd(2024, 1, 3)).await.unwrap();
+
+        assert!(report.append_refusals.is_empty(), "each sub-range is disjoint from stored coverage");
+        // 1 detect-overlap fetch + 3 un-covered sub-range fetches; neither far range re-fetched.
+        assert_eq!(count_t8410(&server).await, 4, "detect + three sub-range fetches");
+        assert_eq!(
+            closes(&catalog).await,
+            vec![103, 104, 105, 108, 110, 111, 115, 116, 117, 119],
+            "gap days written, far ranges untouched, all contiguous"
+        );
+        assert_eq!(Checkpoint::load(&cp_path(&catalog)).unwrap().watermark(SAMSUNG, "1-DAY"), Some(ymd(2024, 1, 19)));
+    }
+
+    /// `last_closed` at or below the far range's edate: the far range spans across
+    /// last_closed, so the watermark still advances to the far edate — the next run
+    /// starts above it and does not re-overlap it.
+    #[tokio::test]
+    async fn watermark_advances_to_far_edate_when_last_closed_is_lower() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_daily_map(&server, map(&[("20240103", 103), ("20240104", 104), ("20240105", 105), ("20240108", 108), ("20240110", 110), ("20240114", 114)])).await;
+        let bt = BarKind::Daily.bar_type(InstrumentId::from(SAMSUNG)).unwrap();
+        // Far range 0110..0114 straddles last_closed (0112).
+        stage(&catalog, bt, &[(ymd(2024, 1, 3), 103), (ymd(2024, 1, 4), 104), (ymd(2024, 1, 5), 105)], &[(ymd(2024, 1, 10), 110), (ymd(2024, 1, 14), 114)], r#""005930.XKRX|1-DAY|20240110..20240114""#, "20240105").await;
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing.run_accumulate(&[InstrumentId::from(SAMSUNG)], ymd(2024, 1, 12), ymd(2024, 1, 3)).await.unwrap();
+
+        assert!(report.append_refusals.is_empty());
+        // 1 detect-overlap fetch + 1 pre-far gap fetch; the straddling far range is not re-fetched.
+        assert_eq!(count_t8410(&server).await, 2, "detect + the pre-far gap only");
+        assert_eq!(
+            Checkpoint::load(&cp_path(&catalog)).unwrap().watermark(SAMSUNG, "1-DAY"),
+            Some(ymd(2024, 1, 14)),
+            "advances to the far edate, not the lower last_closed, so the next run skips the far range"
+        );
+    }
+
+    /// A halting sub-range stops the loop and never writes (orphans) a higher
+    /// disjoint sub-range above the pinned watermark. Here the halt is an
+    /// unforeseen overlap (a polluting leaf not recorded in `completed`, so the
+    /// trim does not subtract it); the `halt_before` path is exactly the one a
+    /// `PaperThin` truncation also takes — pin before, break, no higher fetch.
+    #[tokio::test]
+    async fn earlier_subrange_halt_does_not_orphan_a_higher_subrange() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_daily_map(&server, map(&[
+            ("20240103", 103), ("20240104", 104), ("20240105", 105),
+            ("20240108", 108), ("20240109", 109), // first sub-range (will overlap pollution)
+            ("20240116", 116), ("20240117", 117), // far range (completed)
+            ("20240118", 118), ("20240119", 119), // higher sub-range (must NOT be fetched/written)
+        ])).await;
+        let bt = BarKind::Daily.bar_type(InstrumentId::from(SAMSUNG)).unwrap();
+        std::fs::create_dir_all(&catalog).unwrap();
+        write_bars(&catalog, bars(bt, &[(ymd(2024, 1, 3), 103), (ymd(2024, 1, 4), 104), (ymd(2024, 1, 5), 105)])).await.unwrap();
+        // Polluting leaf inside the first gap — stored but NOT in `completed`, so the
+        // trim cannot subtract it; the first sub-range's append overlaps it.
+        write_bars(&catalog, bars(bt, &[(ymd(2024, 1, 8), 108), (ymd(2024, 1, 9), 109)])).await.unwrap();
+        write_bars(&catalog, bars(bt, &[(ymd(2024, 1, 16), 116), (ymd(2024, 1, 17), 117)])).await.unwrap();
+        std::fs::write(
+            cp_path(&catalog),
+            r#"{"completed":["005930.XKRX|1-DAY|20240116..20240117"],"gaps":[],"watermarks":{"005930.XKRX|1-DAY":"20240105"},"adjusted_prices":true}"#,
+        )
+        .unwrap();
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing.run_accumulate(&[InstrumentId::from(SAMSUNG)], ymd(2024, 1, 19), ymd(2024, 1, 3)).await.unwrap();
+
+        assert_eq!(report.append_refusals.len(), 1, "the first sub-range's overlap halts the loop");
+        // 1 detect-overlap fetch + 1 first-sub-range fetch (which then refuses on
+        // append); the higher sub-range is NEVER fetched because the loop halted.
+        assert_eq!(count_t8410(&server).await, 2, "detect + the halting sub-range only — no higher fetch");
+        let stored = closes(&catalog).await;
+        assert!(!stored.contains(&118) && !stored.contains(&119), "no bars orphaned above the pinned watermark");
+        assert_eq!(
+            Checkpoint::load(&cp_path(&catalog)).unwrap().watermark(SAMSUNG, "1-DAY"),
+            Some(ymd(2024, 1, 5)),
+            "the watermark pins before the halting sub-range (no advance) → the next run re-derives it"
+        );
     }
 }
