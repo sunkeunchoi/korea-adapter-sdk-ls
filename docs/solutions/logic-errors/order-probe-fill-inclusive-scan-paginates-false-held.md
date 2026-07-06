@@ -54,9 +54,19 @@ requirements conflict on a traded-history symbol, and paginating the `chegb="0"`
 
 ## Disposition / prevention
 
-- The re-cert wave left `CSPAT00601/00701/00801` **HELD** (fail-closed, no order placed) — the
+> **FIXED** — plan `2026-07-06-002` (re-cert wave 2). The flatness scan is reverted to
+> single-page `chegb="2"`; fill detection is decoupled into a bounded post-cancel ordno-scoped
+> check (`classify_control_disposition`) that reads the cancel response rather than a whole-symbol
+> all-states history walk, and teardown surfaces the accepted WAVE-BLOCKED OrdNo into an owned set
+> so it cancels owned rows only (closing the foreign-cancel residual below) with a
+> cancel-every-resting-row fallback when the owned set is incomplete. The `Fill`-visibility
+> reduction is an accepted, documented residual (the non-marketable band-floor control + the
+> WAVE-BLOCKED tripwire carry fill-safety). See `crates/ls-sdk/tests/negative_probe.rs`.
+
+- The re-cert wave (§26) left `CSPAT00601/00701/00801` **HELD** (fail-closed, no order placed) — the
   order-chain control certified the happy path (submit `00040` / modify `00462` / cancel
-  `00463`), but the required differential probe could not certify. Ledger §26.
+  `00463`), but the required differential probe could not certify. Ledger §26. Reopened and
+  fixed offline by plan 2026-07-06-002; live promotion is the attended §27 tail.
 - A correct fix must decouple **fill detection** from the **single-page flatness scan**. Options
   for follow-up (not attempted mid-wave — never patch a live-order path hastily):
   - Detect the control's fill by an **ordno-targeted** lookup (the control's exact `OrgOrdNo`),

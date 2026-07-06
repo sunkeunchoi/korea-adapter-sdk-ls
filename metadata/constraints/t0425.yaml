@@ -12,6 +12,12 @@
 #
 # Grounded against crates/ls-trackers/baselines/api-drift/normalized/trs/t0425.json
 # (five String fields, all required on the wire).
+#
+# gateway_tolerant (plan 2026-07-06-002 §26 differential evidence): the gateway
+# returns rsp_cd=00000 when `chegb` is removed, so its `required` class is
+# gateway-tolerant. Preflight still enforces `required` (a caller contract, KTD3);
+# the facet only tells the differential probe not to read the accepted removal as
+# a divergence. The Recommended claim does not assert gateway-side enforcement.
 tr_code: t0425
 fields:
   - name: expcode
@@ -23,6 +29,7 @@ fields:
   - name: chegb
     type: string          # baseline: String, required (체결구분: "0" all/"1" filled/"2" unfilled).
     required: true
+    gateway_tolerant: [required]   # gateway accepts removal (§26); preflight still enforces.
     enum: { applicable: true, values: ["0", "1", "2"], confirmed: false }
     range: { applicable: false }
     format: { applicable: false }

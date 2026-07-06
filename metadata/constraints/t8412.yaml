@@ -13,11 +13,21 @@
 #     confirms it, so preflight stays permissive on them (R6) until then.
 #   - every field marks each inapplicable class N/A explicitly (`applicable:
 #     false`) so exhaustiveness is auditable, not inferred from silence (R5).
+#
+# gateway_tolerant (plan 2026-07-06-002 §26 differential evidence): the gateway
+# returns rsp_cd=00000 when `shcode` is removed (`required` class) and when
+# `sdate`/`edate` are malformed (`format` class). Those `(field, class)` pairs are
+# gateway-tolerant — the differential probe treats their accepted violation as
+# expected, not a divergence. Preflight still enforces `required` (a caller
+# contract, KTD3); the Recommended claim does not assert gateway-side enforcement
+# of these pairs. Note `shcode` is tolerant on `required` only, NOT on `format`
+# (an accepted malformed-symbol still reports a divergence, AE2).
 tr_code: t8412
 fields:
   - name: shcode
     type: string          # baseline: String, required
     required: true
+    gateway_tolerant: [required]   # gateway accepts removal (§26); format still probed.
     enum: { applicable: false }
     range: { applicable: false }
     format: { applicable: true, kind: symbol, confirmed: false }
@@ -42,12 +52,14 @@ fields:
   - name: sdate
     type: string          # baseline: String, required on the wire, but the date
     required: false        # range is a filter the gateway defaults — declared
+    gateway_tolerant: [format]   # gateway accepts malformed date (§26).
     enum: { applicable: false }   # caller-optional (permissive direction, R6) to
     range: { applicable: false }  # avoid false-rejecting an empty-range query.
     format: { applicable: true, kind: date, confirmed: false }
   - name: edate
     type: string          # baseline: String, required on the wire, caller-optional
     required: false        # (permissive direction — a range filter, R6).
+    gateway_tolerant: [format]   # gateway accepts malformed date (§26).
     enum: { applicable: false }
     range: { applicable: false }
     format: { applicable: true, kind: date, confirmed: false }

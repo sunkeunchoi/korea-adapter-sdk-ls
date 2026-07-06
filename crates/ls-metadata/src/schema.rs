@@ -254,6 +254,12 @@ pub struct FieldConstraint {
     pub enum_rule: EnumRule,
     pub range: RangeRule,
     pub format: FormatRule,
+    /// Input classes whose accepted violation the gateway tolerates for this
+    /// field. Consumed by the differential probe (an accepted violation of a
+    /// listed class is expected, not divergent); does **not** relax preflight.
+    /// Empty = none (backward-compatible default). See plan 2026-07-06-002.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gateway_tolerant: Vec<String>,
 }
 
 /// A cross-field / combination-invalidity rule (R7).

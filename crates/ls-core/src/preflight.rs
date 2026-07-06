@@ -118,6 +118,14 @@ pub struct FieldConstraint {
     pub range: RangeRule,
     /// Malformed-symbol/date class (R7).
     pub format: FormatRule,
+    /// Input classes (`"required"`, `"format"`, …) whose accepted violation the
+    /// gateway is known to tolerate for this field. The differential probe treats
+    /// an accepted violation of a listed class as an expected outcome, not a
+    /// divergence — it does **not** relax preflight (a `required:true` field still
+    /// fails preflight when omitted, regardless of this facet). Empty = none
+    /// (backward-compatible default). See plan 2026-07-06-002 / KTD2-KTD3.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gateway_tolerant: Vec<String>,
 }
 
 /// A cross-field / combination-invalidity rule (R7): fields individually valid
@@ -568,6 +576,7 @@ mod tests {
                 kind: None,
                 confirmed: false,
             },
+            gateway_tolerant: vec![],
         }
     }
 
@@ -727,10 +736,103 @@ mod tests {
     }
 
     #[test]
+    fn gateway_tolerant_class_round_trips_through_yaml() {
+        // A YAML field carrying `gateway_tolerant: [required]` parses with the
+        // class present on the field (U1 round-trip).
+        let yaml = r#"
+tr_code: TEST
+fields:
+  - name: shcode
+    type: string
+    required: true
+    gateway_tolerant: [required]
+    enum: {applicable: false}
+    range: {applicable: false}
+    format: {applicable: false}
+"#;
+        let schema: ConstraintSchema = serde_yaml::from_str(yaml).expect("parses");
+        assert_eq!(schema.fields[0].gateway_tolerant, vec!["required".to_string()]);
+    }
+
+    #[test]
+    fn missing_gateway_tolerant_key_defaults_empty() {
+        // Backward-compat: a schema with no `gateway_tolerant` key parses with an
+        // empty vec — existing schemas round-trip unchanged.
+        let yaml = r#"
+tr_code: TEST
+fields:
+  - name: shcode
+    type: string
+    required: true
+    enum: {applicable: false}
+    range: {applicable: false}
+    format: {applicable: false}
+"#;
+        let schema: ConstraintSchema = serde_yaml::from_str(yaml).expect("parses");
+        assert!(schema.fields[0].gateway_tolerant.is_empty());
+    }
+
+    #[test]
+    fn gateway_tolerant_does_not_weaken_preflight() {
+        // Covers R8, AE1: a `required: true` field that also marks
+        // `gateway_tolerant: [required]` still fails preflight when omitted — the
+        // facet only informs the probe, never preflight.
+        let mut shcode = field("shcode", FieldType::String, true);
+        shcode.gateway_tolerant = vec!["required".into()];
+        let schema = ConstraintSchema {
+            tr_code: "TEST".into(),
+            fields: vec![shcode],
+            cross_field: vec![],
+        };
+        let err = validate_request(&schema, &serde_json::json!({"shcode": ""}))
+            .expect_err("omitted required field must still reject");
+        assert_eq!(err.field, "shcode");
+    }
+
+    #[test]
     fn embedded_constraint_schemas_all_parse() {
         // The registry panics on a malformed embedded schema; touching it proves
         // every committed metadata/constraints/*.yaml round-trips at build+load.
         let _ = registry();
+    }
+
+    #[test]
+    fn gateway_tolerant_classes_are_real_generatable_classes() {
+        // A `gateway_tolerant` entry that names a class the field never generates
+        // (a typo like `Required`, or `[required]` on a `required:false` field) is a
+        // silent dead no-op: the differential probe would still report the accepted
+        // violation as Divergent and promotion would block with no diagnostic. Assert
+        // every marked class is one `generate_invalid_variants` actually emits for the
+        // field, so a mis-declaration fails the offline gate instead of a live probe.
+        for (tr, schema) in registry() {
+            for field in &schema.fields {
+                let mut generatable: std::collections::BTreeSet<&str> = Default::default();
+                if matches!(field.field_type, FieldType::Integer | FieldType::Number) {
+                    generatable.insert("type");
+                }
+                if field.required {
+                    generatable.insert("required");
+                }
+                if field.enum_rule.applicable {
+                    generatable.insert("enum");
+                }
+                if field.range.applicable {
+                    generatable.insert("range");
+                }
+                if field.format.applicable {
+                    generatable.insert("format");
+                }
+                for class in &field.gateway_tolerant {
+                    assert!(
+                        generatable.contains(class.as_str()),
+                        "constraints/{tr}.yaml field `{}`: gateway_tolerant class `{class}` is not \
+                         a class this field generates (generatable: {generatable:?}) — a typo or a \
+                         tolerance on an inapplicable class",
+                        field.name
+                    );
+                }
+            }
+        }
     }
 
     #[test]

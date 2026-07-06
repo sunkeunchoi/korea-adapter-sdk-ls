@@ -514,6 +514,16 @@ fn render_field_rule(field: &FieldConstraint) -> String {
         };
         parts.push(format!("{kind} ({suffix})"));
     }
+    // Gateway-tolerant classes (plan 2026-07-06-002): the gateway accepts a
+    // violation of these classes, so the SDK's stricter declaration is a caller
+    // contract preflight enforces locally, NOT a gateway-enforced bound. Surfaced
+    // here so each tolerance is auditable in the generated reference.
+    if !field.gateway_tolerant.is_empty() {
+        parts.push(format!(
+            "gateway-tolerant on [{}] (preflight enforces; gateway does not)",
+            field.gateway_tolerant.join(", ")
+        ));
+    }
     format!("- `{}` — {}\n", field.name, parts.join("; "))
 }
 

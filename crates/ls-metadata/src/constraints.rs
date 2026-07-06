@@ -174,6 +174,7 @@ mod tests {
                 kind: None,
                 confirmed: false,
             },
+            gateway_tolerant: vec![],
         }
     }
 
