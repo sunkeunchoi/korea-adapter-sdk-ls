@@ -19,6 +19,7 @@
 //! status, business `rsp_cd`, and the injected field/class, never the token,
 //! `rsp_msg`, or body content.
 
+use std::collections::BTreeSet;
 use std::time::Duration;
 
 use ls_core::{
@@ -113,6 +114,42 @@ fn is_success(rsp_cd: &str) -> bool {
     matches!(rsp_cd, "" | "00000" | "00136" | "00707")
 }
 
+/// `true` if the gateway is known to tolerate an accepted violation of `class` on
+/// `field` for this schema — the `gateway_tolerant` facet (U2/KTD4). A pure lookup
+/// so the per-class downgrade is offline-twinnable without a live call. A field the
+/// schema does not carry (e.g. a `"<start>/<end>"` cross-field pseudo-field) is
+/// never tolerant.
+fn is_gateway_tolerant(schema: &ConstraintSchema, field: &str, class: &str) -> bool {
+    schema
+        .fields
+        .iter()
+        .find(|f| f.name == field)
+        .map(|f| f.gateway_tolerant.iter().any(|c| c == class))
+        .unwrap_or(false)
+}
+
+/// The reported outcome LABEL for one differential probe result (U2/KTD4). Pure
+/// tolerance layer over `classify_probe`: a `Divergent` result whose `(field,
+/// class)` is marked `gateway_tolerant` is downgraded to `expected-tolerant`
+/// (non-blocking); every other outcome renders verbatim. `classify_probe` itself
+/// is untouched — this is the single decision function both live probe loops and
+/// the offline twin call, so the two cannot drift.
+fn reported_outcome(
+    schema: &ConstraintSchema,
+    field: &str,
+    class: &str,
+    outcome: ProbeOutcome,
+) -> &'static str {
+    if outcome == ProbeOutcome::Divergent && is_gateway_tolerant(schema, field, class) {
+        return "expected-tolerant";
+    }
+    match outcome {
+        ProbeOutcome::Clean => "Clean",
+        ProbeOutcome::Held => "Held",
+        ProbeOutcome::Divergent => "Divergent",
+    }
+}
+
 #[tokio::test]
 #[ignore = "live probe: needs real LS paper credentials + in-window session; run via `make live-smoke-t8412-negative`"]
 async fn live_smoke_t8412_negative() {
@@ -195,8 +232,13 @@ async fn live_smoke_t8412_negative() {
                 // The gateway answered: a non-success response is a rejection.
                 let variant_rejected = !(http >= 200 && http < 300 && is_success(&rsp_cd));
                 let outcome = classify_probe(control_ok, variant_rejected);
+                // U2/KTD4: a Divergent on a `gateway_tolerant` (field, class) is an
+                // expected-tolerant, non-blocking outcome. t8412 carries the most
+                // tolerant pairs (shcode/required + sdate/edate/format) and does NOT
+                // route through the shared helper, so the downgrade is wired here too.
+                let label = reported_outcome(&schema, field, class, outcome);
                 println!(
-                    "NEG-PROBE target=t8412-negative variant field={field} class={class} result=[http={http} rsp_cd={rsp_cd}] outcome={outcome:?}"
+                    "NEG-PROBE target=t8412-negative variant field={field} class={class} result=[http={http} rsp_cd={rsp_cd}] outcome={label}"
                 );
             }
             None => {
@@ -231,13 +273,41 @@ fn probe_client() -> reqwest::Client {
         .expect("probe client builds")
 }
 
+/// Recursively surface the live order number (`"OrdNo"`) from a response body
+/// (U5/R3). The order number lives under a per-TR OutBlock key (e.g.
+/// `CSPAT00601OutBlock2.OrdNo`), NOT top-level like `rsp_cd`, so the lookup
+/// descends into nested objects/arrays. Only the exact `OrdNo` key matches — the
+/// auxiliary `SpareOrdNo`/`RsvOrdNo` are deliberately excluded. Returns `None`
+/// when absent, empty, `"0"`, or non-scalar (no parseable order number surfaced).
+fn extract_ord_no(body: &serde_json::Value) -> Option<String> {
+    fn scalar(v: &serde_json::Value) -> Option<String> {
+        let s = match v {
+            serde_json::Value::String(s) => s.trim().to_string(),
+            serde_json::Value::Number(n) => n.to_string(),
+            _ => return None,
+        };
+        (!s.is_empty() && s != "0").then_some(s)
+    }
+    match body {
+        serde_json::Value::Object(map) => {
+            if let Some(s) = map.get("OrdNo").and_then(scalar) {
+                return Some(s);
+            }
+            map.values().find_map(extract_ord_no)
+        }
+        serde_json::Value::Array(arr) => arr.iter().find_map(extract_ord_no),
+        _ => None,
+    }
+}
+
 /// Fire one raw InBlock request for `tr_cd` at `url`, wrapping `inblock` under
 /// `inblock_key` (`{"<TR>InBlock…": inblock}`) — the parametrized generalization
-/// of the t8412 exemplar's inline `fire`. Returns `Some((http_status, rsp_cd))`
-/// when the gateway ANSWERED, or `None` on a transport failure (timeout /
-/// connection / body-read error). A transport failure is NOT a rejection —
-/// collapsing it would let a network blip print a false CLEAN. Never emits
-/// `rsp_msg` or body content.
+/// of the t8412 exemplar's inline `fire`. Returns `Some((http_status, rsp_cd,
+/// ord_no))` when the gateway ANSWERED (`ord_no` is the surfaced order number, R3,
+/// `None` for a read TR or an unparseable body), or `None` on a transport failure
+/// (timeout / connection / body-read error). A transport failure is NOT a
+/// rejection — collapsing it would let a network blip print a false CLEAN. Never
+/// emits `rsp_msg` or body content.
 async fn fire_inblock(
     client: &reqwest::Client,
     url: &str,
@@ -245,7 +315,7 @@ async fn fire_inblock(
     tr_cd: &str,
     inblock_key: &str,
     inblock: &serde_json::Value,
-) -> Option<(u16, String)> {
+) -> Option<(u16, String, Option<String>)> {
     let mut wrapper = serde_json::Map::new();
     wrapper.insert(inblock_key.to_string(), inblock.clone());
     let body = serde_json::Value::Object(wrapper).to_string();
@@ -262,11 +332,13 @@ async fn fire_inblock(
         .ok()?;
     let status = resp.status().as_u16();
     let text = resp.text().await.ok()?;
-    let rsp_cd = serde_json::from_str::<serde_json::Value>(&text)
-        .ok()
+    let parsed: Option<serde_json::Value> = serde_json::from_str(&text).ok();
+    let rsp_cd = parsed
+        .as_ref()
         .and_then(|v| v.get("rsp_cd").and_then(|c| c.as_str()).map(String::from))
         .unwrap_or_default();
-    Some((status, rsp_cd))
+    let ord_no = parsed.as_ref().and_then(extract_ord_no);
+    Some((status, rsp_cd, ord_no))
 }
 
 /// Run the differential negative probe for a READ InBlock TR: fire the valid
@@ -280,6 +352,7 @@ async fn run_inblock_negative_probe(
     path: &str,
     inblock_key: &str,
     seed: serde_json::Value,
+    pace: Duration,
 ) {
     paper_guard().expect("paper guard must pass");
     let config = LsConfig::from_env().expect("config from env");
@@ -302,12 +375,23 @@ async fn run_inblock_negative_probe(
     let url = format!("{base}{path}");
     let client = probe_client();
 
+    // U6/R12: pace each dispatch so an account-lane (1/s bucket) TR — CSPAQ12200,
+    // t0425 — does not collide the control and its variants in the bucket and read
+    // a self-inflicted IGW00201 throttle instead of the merits response. Market-data
+    // reads pass `Duration::ZERO`.
+    let pace_dispatch = || async {
+        if !pace.is_zero() {
+            tokio::time::sleep(pace).await;
+        }
+    };
+
     // Valid control, same session.
+    pace_dispatch().await;
     let control = fire_inblock(&client, &url, &token, tr_cd, inblock_key, &seed).await;
     let control_ok =
-        matches!(&control, Some((http, cd)) if *http >= 200 && *http < 300 && is_success(cd));
+        matches!(&control, Some((http, cd, _)) if *http >= 200 && *http < 300 && is_success(cd));
     match &control {
-        Some((http, cd)) => println!(
+        Some((http, cd, _)) => println!(
             "NEG-PROBE target={tr_cd}-negative control=[http={http} rsp_cd={cd} ok={control_ok}]"
         ),
         None => {
@@ -318,13 +402,17 @@ async fn run_inblock_negative_probe(
     for variant in generate_invalid_variants(&schema, &seed) {
         let field = &variant.field;
         let class = &variant.class;
+        pace_dispatch().await;
         match fire_inblock(&client, &url, &token, tr_cd, inblock_key, &variant.request).await {
-            Some((http, rsp_cd)) => {
+            Some((http, rsp_cd, _)) => {
                 let variant_rejected = !(http >= 200 && http < 300 && is_success(&rsp_cd));
                 let outcome = classify_probe(control_ok, variant_rejected);
+                // U2/KTD4: downgrade a Divergent on a gateway_tolerant (field, class)
+                // to the non-blocking expected-tolerant outcome.
+                let label = reported_outcome(&schema, field, class, outcome);
                 println!(
                     "NEG-PROBE target={tr_cd}-negative variant field={field} class={class} \
-                     result=[http={http} rsp_cd={rsp_cd}] outcome={outcome:?}"
+                     result=[http={http} rsp_cd={rsp_cd}] outcome={label}"
                 );
             }
             None => println!(
@@ -354,6 +442,7 @@ async fn live_smoke_t1101_negative() {
         "/stock/market-data",
         "t1101InBlock",
         serde_json::json!({ "shcode": "005930" }),
+        Duration::ZERO,
     )
     .await;
 }
@@ -369,6 +458,7 @@ async fn live_smoke_t1102_negative() {
         // call (the order-leg band fetch uses it); an unverified "1" risks a
         // persistent HELD control that certifies nothing.
         serde_json::json!({ "shcode": "005930", "exchgubun": "K" }),
+        Duration::ZERO,
     )
     .await;
 }
@@ -378,11 +468,16 @@ async fn live_smoke_t1102_negative() {
 async fn live_smoke_cspaq12200_negative() {
     // BalCreTp "0" is the well-formed control; a live HELD on this value (a funding-
     // dependent account) is reconciled by the operator — offline this never runs.
+    // U6/R12: CSPAQ12200 sits on the Account 1/s bucket; its sole `BalCreTp/required`
+    // variant only ever returned IGW00201 (a self-inflicted throttle) when the control
+    // and variant collided in the bucket. Pace 1500ms so the bucket is cool for each
+    // dispatch and the variant is evaluated on merits (AE5), not throttled.
     run_inblock_negative_probe(
         "CSPAQ12200",
         "/stock/accno",
         "CSPAQ12200InBlock1",
         serde_json::json!({ "BalCreTp": "0" }),
+        Duration::from_millis(1500),
     )
     .await;
 }
@@ -399,6 +494,9 @@ async fn live_smoke_t0425_negative() {
             "expcode": "005930", "chegb": "0", "medosu": "0",
             "sortgb": "2", "cts_ordno": " "
         }),
+        // U6/R12: t0425 is also on the Account 1/s bucket — pace so its many variants
+        // do not throttle each other.
+        Duration::from_millis(1500),
     )
     .await;
 }
@@ -769,8 +867,8 @@ fn flat_verdict(rows: &[T0425OutBlock1]) -> FlatVerdict {
     }
 }
 
-/// Why a scanned book is not clear-to-proceed. Shared by the three fill-inclusive
-/// scan consumers (KTD2/KTD3): pre-assert-flat, post-cancel flat-verify, teardown.
+/// Why a scanned book is not clear-to-proceed. Shared by the `chegb="2"` scan
+/// consumers (KTD1): pre-assert-flat, post-cancel flat-verify, teardown.
 #[derive(Debug, PartialEq, Eq)]
 enum NotClear {
     /// Cancelable resting probe rows remain.
@@ -779,12 +877,15 @@ enum NotClear {
     Fill(Vec<String>),
 }
 
-/// Require the scanned book to be **Flat and fill-free** (KTD3). `Ok(())` = clear;
+/// Require the scanned book to be **Flat and fill-free** (KTD1). `Ok(())` = clear;
 /// `Err(NotClear::Resting)` = cancelable resting rows; `Err(NotClear::Fill)` = an
 /// uncancelable fill. Pure over a scanned row set (reuses `flat_verdict`) so every
 /// consumer's guard — pre-assert-flat (refuse to place), post-cancel flat-verify
 /// (HELD), teardown (UNEXPECTED-FILL alarm) — is unit-testable without a live scan.
-/// The `Fill` arm is the one KTD2's fill-inclusive `chegb="0"` newly surfaces.
+/// Under `chegb="2"` the `Fill` arm still fires on a *partial* fill (`cheqty>0`,
+/// `ordrem>0`, which stays on the working set) — it is only a *fully-filled*
+/// (`ordrem==0`) control that `chegb="2"` hides, which the bounded post-cancel
+/// `classify_control_disposition` fill-check covers instead (KTD1).
 fn require_flat_and_fill_free(rows: &[T0425OutBlock1]) -> Result<(), NotClear> {
     match flat_verdict(rows) {
         FlatVerdict::Flat => Ok(()),
@@ -793,21 +894,120 @@ fn require_flat_and_fill_free(rows: &[T0425OutBlock1]) -> Result<(), NotClear> {
     }
 }
 
-/// Build the single-symbol working-orders request, **fill-inclusive** (`chegb="0"`
-/// = all states, KTD2). `chegb="0"` returns still-resting orders, partial fills, AND
-/// fully-filled rows (`ordrem==0`, `cheqty>0`) — the last of which `chegb="2"`
-/// (unfilled-only) hid, blinding `flat_verdict`'s `Fill` branch. Symbol-scoped so the
-/// account-wide `chegb="0"` history-walk that overran the page cap is avoided; the
-/// single-page `tr_cont` guard (below) still fails closed. `chegb` value semantics
-/// per `docs/solutions/integration-issues/ls-gateway-t0425-rate-limit-and-pagination-flat-scan.md`
+/// The post-cancel disposition of the placed control (KTD1 bounded fill-check).
+/// Combines the cancel outcome (`cancel_ok`) with the `chegb="2"` scan to
+/// disambiguate a cleanly-canceled control from one that filled — NOT mere absence
+/// from the resting set. Because `chegb="2"` excludes a *fully-filled* (`ordrem==0`)
+/// row, an absent control is ambiguous on its own; a cancel that **failed** while
+/// the scan reads flat means the control left the book as a fill (it could not be
+/// canceled because there was no remaining quantity), so it is routed to the
+/// unrecoverable `Filled` outcome rather than a clean pass.
+#[derive(Debug, PartialEq, Eq)]
+enum ControlDisposition {
+    /// Nothing resting and no positive fill signal — the control canceled cleanly.
+    CleanlyCanceled,
+    /// The control filled: either a partial-fill row is visible (`chegb="2"` shows
+    /// it) or the gateway POSITIVELY REJECTED the cancel while the book scans flat
+    /// (a `cannot-cancel-because-filled` signal — the control left the book, KTD1).
+    Filled(Vec<String>),
+    /// The control (or residue) is still resting — not flat, reconcile.
+    StillResting(Vec<String>),
+}
+
+/// Classify the control's post-cancel disposition (KTD1 bounded fill-check). Pure
+/// over the scan + `cancel_gateway_rejected` (the specific `cannot-cancel-because-
+/// filled` signal — the gateway ANSWERED and refused the cancel, an `ApiError`, NOT
+/// a transport blip / throttle / session-purge). Only a positive fill signal yields
+/// `Filled`: a scanned partial-fill row, or a gateway-rejected cancel on an
+/// otherwise-flat book. A cancel that merely errored in transport while the book
+/// reads flat is `CleanlyCanceled` — inferring a fill from ANY cancel failure would
+/// raise a spurious unrecoverable UNEXPECTED-FILL on a benign blip. Offline-twinnable.
+fn classify_control_disposition(
+    cancel_gateway_rejected: bool,
+    scan: &[T0425OutBlock1],
+) -> ControlDisposition {
+    match require_flat_and_fill_free(scan) {
+        Err(NotClear::Fill(f)) => ControlDisposition::Filled(f),
+        Err(NotClear::Resting(o)) => ControlDisposition::StillResting(o),
+        Ok(()) => {
+            if cancel_gateway_rejected {
+                // The gateway positively refused to cancel a control that is NOT
+                // resting → it left the book as a fill (cannot-cancel-because-filled).
+                ControlDisposition::Filled(vec![])
+            } else {
+                ControlDisposition::CleanlyCanceled
+            }
+        }
+    }
+}
+
+/// Canonicalize an order number for OWNERSHIP MATCHING only (never for the cancel
+/// call, which must use the gateway's exact string). The submit response and the
+/// `t0425` scan both deserialize `OrdNo` via `string_or_number`, so the same order
+/// can surface as a JSON number `12345` on one and a zero-padded string
+/// `"0000012345"` on the other; a raw string-equality owned-set match would then
+/// treat the control as foreign and strand it. Numeric ordnos compare by value;
+/// a non-numeric ordno falls back to its trimmed form.
+fn normalize_ordno(ordno: &str) -> String {
+    let t = ordno.trim();
+    match t.parse::<u64>() {
+        Ok(n) => n.to_string(),
+        Err(_) => t.to_string(),
+    }
+}
+
+/// Select which resting ordnos teardown cancels (R4/KTD, AE4). When the owned set
+/// was **fully constructed** (every accepted WAVE-BLOCKED variant surfaced a
+/// parseable OrdNo), cancel only owned rows — a foreign row that arrived mid-probe
+/// is left untouched. When the owned set is **incomplete** (an accepted variant
+/// whose body yielded no OrdNo, or a may-rest transport/5xx/ambiguous outcome),
+/// fall back to cancel-every-resting-row so no live order is ever stranded.
+/// Ownership is matched on `normalize_ordno` so a representation mismatch between
+/// the submit response and the scan cannot mis-classify the control as foreign;
+/// the ORIGINAL resting strings are returned (the cancel call needs the exact
+/// ordno). Returns `(ordnos_to_cancel, used_fallback)`; pure and offline-twinnable.
+fn select_teardown_cancels(
+    resting: &[String],
+    owned: &BTreeSet<String>,
+    owned_fully_constructed: bool,
+) -> (Vec<String>, bool) {
+    if owned_fully_constructed {
+        let owned_norm: BTreeSet<String> = owned.iter().map(|o| normalize_ordno(o)).collect();
+        (
+            resting
+                .iter()
+                .filter(|o| owned_norm.contains(&normalize_ordno(o)))
+                .cloned()
+                .collect(),
+            false,
+        )
+    } else {
+        (resting.to_vec(), true)
+    }
+}
+
+/// Build the single-symbol working-orders (flatness) request, **unfilled-only**
+/// (`chegb="2"`, KTD1). Reverted from the §26 fill-inclusive `chegb="0"`: on a
+/// heavily-traded paper symbol `chegb="0"` returns the entire accumulated order
+/// history, sets a continuation, and the single-page guard (below) fail-closed at
+/// pre-assert-flat *before any control was placed*
+/// (`docs/solutions/logic-errors/order-probe-fill-inclusive-scan-paginates-false-held.md`).
+/// `chegb="2"` keeps the working set to a single page (resting + partial-fill rows;
+/// it excludes a fully-filled `ordrem==0` row by construction). That reduction is
+/// accepted: the scan positively confirms only *not-resting*, not *no-fill* — the
+/// non-marketable band-floor control price + the WAVE-BLOCKED tripwire carry
+/// fill-safety, and the bounded post-cancel ordno fill-check
+/// (`classify_control_disposition`) is the defense-in-depth for a fully-filled
+/// control. `chegb` value semantics per
+/// `docs/solutions/integration-issues/ls-gateway-t0425-rate-limit-and-pagination-flat-scan.md`
 /// (the LS API-doc reference; the normalized baseline records `chegb` only as a
 /// 1-char String with no value meanings). Pure so the offline twin can assert the
-/// fill-inclusive class without a live call.
+/// reverted class without a live call.
 fn working_orders_request(symbol: &str) -> T0425Request {
     T0425Request {
         inblock: T0425InBlock {
             expcode: symbol.into(),
-            chegb: "0".into(),
+            chegb: "2".into(),
             medosu: "0".into(),
             sortgb: "2".into(),
             cts_ordno: " ".into(),
@@ -817,11 +1017,11 @@ fn working_orders_request(symbol: &str) -> T0425Request {
     }
 }
 
-/// Run the `t0425` working-orders scan for the traded symbol (KTD2), **fill-inclusive**
-/// (`chegb="0"`, see `working_orders_request`), single page, with a 1500ms pre-pace so
+/// Run the `t0425` working-orders scan for the traded symbol (KTD1), **unfilled-only**
+/// (`chegb="2"`, see `working_orders_request`), single page, with a 1500ms pre-pace so
 /// the per-TR budget refills. Returns `Err` on any failure (treated as NOT flat —
-/// positive confirmation only). Sound only paired with U3's pre-assert-flat, which
-/// proves no foreign/historical fill is present to misattribute.
+/// positive confirmation only). Sound only paired with the pre-assert-flat, which
+/// proves no foreign resting row is present to misattribute.
 async fn scan_symbol_working_orders(
     sdk: &LsSdk,
     symbol: &str,
@@ -891,18 +1091,39 @@ fn order_probe_classes(v: &InvalidVariant) -> bool {
     v.class == "type" || v.class == "required"
 }
 
-/// Best-effort symbol-scoped reconcile + cancel of any resting residue (KTD3): the
-/// may-rest / final teardown. Cancels every resting row the single-page symbol
-/// scan returns; a scan that fails or paginates is surfaced loudly
-/// (`reconcile-scan failed`) rather than silently trusted, so teardown is
-/// best-effort — an operator must confirm the book is flat on a scan failure, and
-/// an unexpected fill is reported as unrecoverable (reset the paper book).
-async fn order_reconcile_teardown(sdk: &LsSdk, symbol: &str) {
+/// Best-effort symbol-scoped reconcile + cancel of resting residue (R4/KTD): the
+/// may-rest / final teardown. Cancels the resting rows `select_teardown_cancels`
+/// picks — **owned rows only** when `owned_fully_constructed` (leaving a foreign
+/// mid-probe row untouched, AE4), or **every resting row** as a loud fallback when
+/// the owned set is incomplete (never strand a live order). A scan that fails or
+/// paginates is surfaced loudly (`reconcile-scan failed`) rather than silently
+/// trusted, so teardown is best-effort — an operator must confirm the book is flat
+/// on a scan failure, and a partial fill is reported as unrecoverable.
+async fn order_reconcile_teardown(
+    sdk: &LsSdk,
+    symbol: &str,
+    owned: &BTreeSet<String>,
+    owned_fully_constructed: bool,
+) {
     match scan_symbol_working_orders(sdk, symbol).await {
         Ok(rows) => {
+            let is_resting = |r: &T0425OutBlock1| parse_qty(&r.cheqty) == 0 && parse_qty(&r.ordrem) > 0;
+            let resting: Vec<String> = rows
+                .iter()
+                .filter(|r| is_resting(r))
+                .map(|r| r.ordno.trim().to_string())
+                .collect();
+            let (to_cancel, used_fallback) =
+                select_teardown_cancels(&resting, owned, owned_fully_constructed);
+            if used_fallback {
+                println!(
+                    "NEG-PROBE reconcile FALLBACK: owned set incomplete — canceling EVERY resting \
+                     row (may include a foreign order) to guarantee no stranded order"
+                );
+            }
             for r in rows
                 .iter()
-                .filter(|r| parse_qty(&r.cheqty) == 0 && parse_qty(&r.ordrem) > 0)
+                .filter(|r| is_resting(r) && to_cancel.contains(&r.ordno.trim().to_string()))
             {
                 let cancel =
                     CSPAT00801Request::new(r.ordno.trim(), r.expcode.trim(), r.ordrem.trim());
@@ -917,9 +1138,42 @@ async fn order_reconcile_teardown(sdk: &LsSdk, symbol: &str) {
                     ),
                 }
             }
-            // Teardown consumer of the fill-inclusive scan (KTD2): a fill the
-            // fill-inclusive `chegb="0"` now surfaces is uncancelable → alarm.
-            if let Err(NotClear::Fill(f)) = require_flat_and_fill_free(&rows) {
+            // R4 stranded-order backstop: on the owned-only path a resting row NOT
+            // selected for cancel is either a foreign mid-probe row (left untouched by
+            // design, AE4) OR a probe order the ack-set classifier failed to recognize.
+            // The two are indistinguishable here, so surface every uncanceled resting
+            // row LOUDLY — never silently strand one. (On the fallback path every
+            // resting row is already being canceled.)
+            if !used_fallback {
+                let unowned: Vec<String> = resting
+                    .iter()
+                    .filter(|o| !to_cancel.contains(*o))
+                    .cloned()
+                    .collect();
+                if !unowned.is_empty() {
+                    println!(
+                        "NEG-PROBE reconcile UNOWNED-RESTING ordnos=[{}] left uncanceled — foreign \
+                         mid-probe row (spared, AE4) OR an unrecognized probe order; operator must \
+                         reconcile the book",
+                        unowned.join(",")
+                    );
+                }
+            }
+            // Teardown fill alarm (KTD1): a *partial* fill still surfaces under
+            // `chegb="2"` (cheqty>0, ordrem>0) and is uncancelable. Scope it to the
+            // rows this teardown is responsible for — owned rows on the owned-only
+            // path (a foreign partial fill is not the probe's to alarm on), every row
+            // on the fallback path — so a foreign fill is not mis-attributed to the probe.
+            let owned_norm: BTreeSet<String> = owned.iter().map(|o| normalize_ordno(o)).collect();
+            let fill_scope: Vec<T0425OutBlock1> = if used_fallback {
+                rows.clone()
+            } else {
+                rows.iter()
+                    .filter(|r| owned_norm.contains(&normalize_ordno(r.ordno.trim())))
+                    .cloned()
+                    .collect()
+            };
+            if let Err(NotClear::Fill(f)) = require_flat_and_fill_free(&fill_scope) {
                 println!(
                     "NEG-PROBE reconcile UNEXPECTED-FILL ordnos=[{}] — a fill cannot be canceled; \
                      reset the paper book",
@@ -1033,14 +1287,20 @@ async fn run_order_negative_probe(
     let url = format!("{base}/stock/order");
     let client = probe_client();
 
-    // PRE-ASSERT-FLAT (KTD3): the symbol must be Flat AND fill-free BEFORE we place
-    // the control. Scan fill-inclusive (KTD2); if any resting OR filled `005930` row
-    // exists, HELD — refuse to place. Do NOT teardown here: a non-flat pre-state means
-    // a FOREIGN row is present (or a stranded control from a prior leg — the operator
-    // clears it between legs, KTD3), which the probe must not cancel. This proven
-    // flat+fill-free baseline is what makes the later teardown's UNCONDITIONAL
-    // cancel-every-resting-row sound: every resting row at teardown is then the probe's
-    // by construction, so no ownership set is needed.
+    // R4/AE4: the OWNED set — every order number this probe placed or had accepted.
+    // Teardown cancels owned rows only (leaving a foreign mid-probe row untouched)
+    // when the set is fully constructed; a may-rest / unsurfaced-accept path passes
+    // `owned_fully_constructed=false` to force the cancel-every-resting-row fallback.
+    let mut owned: BTreeSet<String> = BTreeSet::new();
+
+    // PRE-ASSERT-FLAT (KTD1): the symbol must be Flat AND fill-free BEFORE we place
+    // the control. Scan `chegb="2"` (unfilled-only, single page); if any resting
+    // `005930` row (or a still-visible partial fill) exists, HELD — refuse to place.
+    // Do NOT teardown here: a non-flat pre-state means a FOREIGN row is present (or a
+    // stranded control from a prior leg — the operator clears it between legs), which
+    // the probe must not cancel. This proven-clean baseline is what makes the owned
+    // teardown sound: every resting row the probe later owns is the probe's by
+    // construction.
     match scan_symbol_working_orders(&sdk, symbol).await {
         Ok(rows) => match require_flat_and_fill_free(&rows) {
             Ok(()) => {}
@@ -1085,7 +1345,9 @@ async fn run_order_negative_probe(
                  reconciling, no variants",
                 safe_err(&e)
             );
-            order_reconcile_teardown(&sdk, symbol).await;
+            // Ambiguous submit: a phantom order may rest with an OrdNo we never got —
+            // owned set is NOT trustworthy → fall back to unconditional teardown.
+            order_reconcile_teardown(&sdk, symbol, &owned, false).await;
             return;
         }
     };
@@ -1093,9 +1355,12 @@ async fn run_order_negative_probe(
         println!(
             "NEG-PROBE target={tr_cd}-negative HELD: control returned no usable order number"
         );
-        order_reconcile_teardown(&sdk, symbol).await;
+        // No usable control OrdNo — same as an ambiguous submit: force the fallback.
+        order_reconcile_teardown(&sdk, symbol, &owned, false).await;
         return;
     }
+    // The control is placed and RESTING — record it as owned (its OrdNo is known).
+    owned.insert(placed_ordno.trim().to_string());
     // The valid control came back a success and is RESTING. `control_ok` is
     // `classify_probe`'s precondition (the valid control succeeded) — satisfied by the
     // successful placement; the cancel + flat-verify "cancel works" proof happens AFTER
@@ -1109,8 +1374,8 @@ async fn run_order_negative_probe(
     // Build the variant seed off the RESTING control ordno (KTD1): the referencing
     // modify/cancel legs now exercise a live OrgOrdNo. Fill-vector bound (KTD1): only
     // type/required variants fire (a removed/wrong-typed OrdPrc is rejected, not coerced
-    // to a marketable price), the modify seed is band-floor+1 tick, and the fill-inclusive
-    // post-variant flat-verify (KTD2) catches any fill post-hoc.
+    // to a marketable price), the modify seed is band-floor+1 tick, and the bounded
+    // post-cancel fill-check (classify_control_disposition) covers a fully-filled control.
     let schema = ls_core::schema_for(tr_cd)
         .unwrap_or_else(|| panic!("{tr_cd} carries an embedded constraint schema"))
         .clone();
@@ -1128,35 +1393,50 @@ async fn run_order_negative_probe(
 
     for v in variants.iter().filter(|v| order_probe_classes(v)) {
         match fire_inblock(&client, &url, &token, tr_cd, inblock_key, &v.request).await {
-            // Transport failure / timeout = MAY-REST: stop, reconcile, halt (KTD3).
+            // Transport failure / timeout = MAY-REST: stop, reconcile, halt (KTD3). The
+            // variant may have rested with an OrdNo we never got — force the fallback.
             None => {
                 println!(
                     "NEG-PROBE target={tr_cd}-negative variant field={} class={} \
                      result=[transport-failure] outcome=Held-may-rest halt=true",
                     v.field, v.class
                 );
-                order_reconcile_teardown(&sdk, symbol).await;
+                order_reconcile_teardown(&sdk, symbol, &owned, false).await;
                 return;
             }
             // A 5xx is also MAY-REST — the gateway may have accepted before failing.
-            Some((http, rsp_cd)) if http >= 500 => {
+            Some((http, rsp_cd, _)) if http >= 500 => {
                 println!(
                     "NEG-PROBE target={tr_cd}-negative variant field={} class={} \
                      result=[http={http} rsp_cd={rsp_cd}] outcome=Held-may-rest halt=true",
                     v.field, v.class
                 );
-                order_reconcile_teardown(&sdk, symbol).await;
+                order_reconcile_teardown(&sdk, symbol, &owned, false).await;
                 return;
             }
-            Some((http, rsp_cd)) => {
+            Some((http, rsp_cd, ord_no)) => {
                 if is_order_placement_success(http, &rsp_cd) {
                     // A malformed variant was ACCEPTED — do NOT classify; teardown + block.
+                    // R3/R4: surface the accepted OrdNo into the owned set so teardown
+                    // cancels exactly it (AE4). If the body yielded no OrdNo the owned set
+                    // is incomplete → force the cancel-every-resting-row fallback so the
+                    // accepted-but-unsurfaced order is never stranded.
+                    let owned_fully_constructed = match &ord_no {
+                        Some(o) => {
+                            owned.insert(o.clone());
+                            true
+                        }
+                        None => false,
+                    };
                     println!(
                         "NEG-PROBE target={tr_cd}-negative WAVE BLOCKED pending investigation: \
-                         variant field={} class={} was ACCEPTED [http={http} rsp_cd={rsp_cd}]",
-                        v.field, v.class
+                         variant field={} class={} was ACCEPTED [http={http} rsp_cd={rsp_cd} \
+                         ordno={}]",
+                        v.field,
+                        v.class,
+                        ord_no.as_deref().unwrap_or("<unsurfaced>")
                     );
-                    order_reconcile_teardown(&sdk, symbol).await;
+                    order_reconcile_teardown(&sdk, symbol, &owned, owned_fully_constructed).await;
                     return;
                 }
                 // The normal case: a non-success rsp_cd = the variant placed nothing = Clean.
@@ -1170,38 +1450,50 @@ async fn run_order_negative_probe(
         }
     }
 
-    // Variants fired against the LIVE control. Now CANCEL the control and FLAT-VERIFY
-    // (fill-inclusive, KTD2) — the "cancel works + no residue" proof, moved AFTER the
-    // variants (KTD1). A fill surfaced here (the fill-vector KTD1 bounds) routes to the
-    // unrecoverable UNEXPECTED-FILL HELD path, not a plain not-flat.
+    // Variants fired against the LIVE control. Now CANCEL the control and run the
+    // bounded post-cancel fill-check (KTD1): `classify_control_disposition` combines
+    // the `chegb="2"` scan with whether the gateway POSITIVELY REJECTED the cancel.
+    // Only a positive fill signal (a scanned partial fill, or a gateway-rejected
+    // cancel on an otherwise-flat book) routes to the unrecoverable UNEXPECTED-FILL
+    // HELD path — a cancel that merely errored in transport is not read as a fill.
     let cancel = CSPAT00801Request::new(placed_ordno.trim(), symbol, "1");
-    if let Err(e) = sdk.orders().cancel(&cancel).await {
-        println!(
-            "NEG-PROBE target={tr_cd}-negative control-cancel error [{}] — flat-verify decides",
-            safe_err(&e)
-        );
-    }
+    let cancel_gateway_rejected = match sdk.orders().cancel(&cancel).await {
+        Ok(_) => false,
+        Err(e) => {
+            // A gateway ApiError = the broker ANSWERED and refused (a genuine
+            // cannot-cancel signal); any other error is transport/ambiguous and must
+            // NOT be read as a fill.
+            let rejected = matches!(e, LsError::ApiError { .. });
+            println!(
+                "NEG-PROBE target={tr_cd}-negative control-cancel error [{}] \
+                 (gateway_rejected={rejected}) — bounded fill-check decides",
+                safe_err(&e)
+            );
+            rejected
+        }
+    };
     match scan_symbol_working_orders(&sdk, symbol).await {
-        Ok(rows) => match require_flat_and_fill_free(&rows) {
-            Ok(()) => println!(
+        Ok(rows) => match classify_control_disposition(cancel_gateway_rejected, &rows) {
+            ControlDisposition::CleanlyCanceled => println!(
                 "NEG-PROBE target={tr_cd}-negative \
                  control=[placed+variants-fired+canceled ok=true flat=confirmed]"
             ),
-            Err(NotClear::Fill(f)) => {
+            ControlDisposition::Filled(f) => {
                 println!(
                     "NEG-PROBE target={tr_cd}-negative HELD: UNEXPECTED-FILL ordnos=[{}] after \
-                     variants — a fill cannot be canceled; reset the paper book — reconciling",
+                     variants (gateway_rejected={cancel_gateway_rejected}) — a fill cannot be \
+                     canceled; reset the paper book — reconciling",
                     f.join(",")
                 );
-                order_reconcile_teardown(&sdk, symbol).await;
+                order_reconcile_teardown(&sdk, symbol, &owned, true).await;
                 return;
             }
-            Err(NotClear::Resting(_)) => {
+            ControlDisposition::StillResting(_) => {
                 println!(
                     "NEG-PROBE target={tr_cd}-negative HELD: control not positively flat after \
                      cancel — reconciling"
                 );
-                order_reconcile_teardown(&sdk, symbol).await;
+                order_reconcile_teardown(&sdk, symbol, &owned, true).await;
                 return;
             }
         },
@@ -1210,21 +1502,21 @@ async fn run_order_negative_probe(
                 "NEG-PROBE target={tr_cd}-negative HELD: control flat-verify failed [{e}] — \
                  reconciling"
             );
-            order_reconcile_teardown(&sdk, symbol).await;
+            order_reconcile_teardown(&sdk, symbol, &owned, true).await;
             return;
         }
     }
 
-    // Final flat-verify + cancel any residue — never leave a resting order. The
-    // teardown cancel is UNCONDITIONAL (every resting row, no ownership set): sound
-    // because pre-assert-flat proved the book clean at start, so every resting row is
-    // the probe's — including an accepted WAVE-BLOCKED submit variant whose OrdNo
-    // `fire_inblock` never surfaces (an owned-only teardown would strand it).
-    order_reconcile_teardown(&sdk, symbol).await;
+    // Final flat-verify + cancel any residue — never leave a resting order. Owned-only
+    // teardown (R4/AE4): the control (owned) was just canceled so it is gone; any
+    // remaining owned row is canceled, and a FOREIGN row that arrived mid-probe is left
+    // untouched. The owned set is fully constructed on this path — a WAVE-BLOCKED accept
+    // or a may-rest outcome would have returned early with its own teardown.
+    order_reconcile_teardown(&sdk, symbol, &owned, true).await;
     println!(
         "NEG-PROBE target={tr_cd}-negative teardown=done \
          note=[variants fired against live control; control canceled+flat-verified post-variants; \
-         residue reconciled]"
+         residue reconciled owned-only]"
     );
 }
 
@@ -1431,21 +1723,168 @@ fn flat_verdict_keys_on_quantities_and_a_fill_outranks_a_resting_remainder() {
 }
 
 #[test]
-fn working_orders_scan_request_is_fill_inclusive() {
-    // Gap (b)/KTD2: the shared flat-verify scan request must carry the fill-inclusive
-    // `chegb="0"` (all states incl. fully-filled), not the old unfilled-only `"2"` that
-    // hid a fill from `flat_verdict`. Asserted on the request builder — no live call.
+fn working_orders_scan_request_is_unfilled_only_single_page() {
+    // R1/R5/KTD1: the flatness scan request is reverted to unfilled-only `chegb="2"`
+    // (single page on a traded-history symbol), NOT the §26 fill-inclusive `chegb="0"`
+    // that paginated and false-HELD before placing. Fill-detection is a SEPARATE bounded
+    // path (`classify_control_disposition`), not this scan. Asserted on the request
+    // builder — no live call.
     let req = working_orders_request("005930");
-    assert_eq!(req.inblock.chegb, "0", "scan must be fill-inclusive (chegb=0), not unfilled-only");
+    assert_eq!(
+        req.inblock.chegb, "2",
+        "flatness scan must be unfilled-only (chegb=2, single page), not fill-inclusive chegb=0"
+    );
     assert_eq!(req.inblock.expcode, "005930", "scan stays symbol-scoped");
+    assert_eq!(req.inblock.cts_ordno, " ", "first-page cursor keeps the scan single-page");
+}
+
+#[test]
+fn classify_control_disposition_keys_on_a_positive_fill_signal_only() {
+    // R2/KTD1: the bounded post-cancel fill-check reports Filled ONLY on a positive
+    // signal — a scanned partial fill, or a gateway-REJECTED cancel on a flat book.
+    // The arg is `cancel_gateway_rejected` (the gateway answered+refused), NOT any
+    // cancel failure: a transport blip must not raise a spurious UNEXPECTED-FILL.
+    let row = |ordno: &str, cheqty: &str, ordrem: &str| T0425OutBlock1 {
+        ordno: ordno.into(),
+        cheqty: cheqty.into(),
+        ordrem: ordrem.into(),
+        ..Default::default()
+    };
+    // Cancel not gateway-rejected (acked, OR merely transport-failed) + nothing
+    // resting → cleanly canceled. This is the fix: a benign cancel failure is NOT a fill.
+    assert_eq!(
+        classify_control_disposition(false, &[]),
+        ControlDisposition::CleanlyCanceled
+    );
+    // Gateway POSITIVELY rejected the cancel + nothing resting → the control left the
+    // book as a fill (cannot-cancel-because-filled), not a clean pass.
+    assert_eq!(
+        classify_control_disposition(true, &[]),
+        ControlDisposition::Filled(vec![])
+    );
+    // A partial fill still surfaces under chegb="2" (cheqty>0) → Filled regardless of cancel.
+    assert_eq!(
+        classify_control_disposition(false, &[row("9", "2", "0")]),
+        ControlDisposition::Filled(vec!["9".into()])
+    );
+    // A resting remainder → still resting (reconcile).
+    assert_eq!(
+        classify_control_disposition(false, &[row("7", "0", "5")]),
+        ControlDisposition::StillResting(vec!["7".into()])
+    );
+}
+
+#[test]
+fn extract_ord_no_finds_nested_outblock_key_and_skips_aux_keys() {
+    // R3: the live OrdNo lives under a per-TR OutBlock key (CSPAT00601OutBlock2.OrdNo),
+    // not top-level; the extractor descends and matches only the exact `OrdNo` key.
+    let body = serde_json::json!({
+        "rsp_cd": "00040",
+        "CSPAT00601OutBlock2": { "OrdNo": 123456, "SpareOrdNo": 999, "RsvOrdNo": 888 }
+    });
+    assert_eq!(extract_ord_no(&body), Some("123456".to_string()));
+    // A string OrdNo is trimmed; SpareOrdNo/RsvOrdNo are never matched.
+    let body_str = serde_json::json!({ "X": { "OrdNo": " 42 ", "SpareOrdNo": "7" } });
+    assert_eq!(extract_ord_no(&body_str), Some("42".to_string()));
+    // No OrdNo (or zero / empty) → None: the owned set cannot be constructed.
+    assert_eq!(extract_ord_no(&serde_json::json!({ "rsp_cd": "40510" })), None);
+    assert_eq!(extract_ord_no(&serde_json::json!({ "B": { "OrdNo": 0 } })), None);
+    assert_eq!(extract_ord_no(&serde_json::json!({ "B": { "OrdNo": "" } })), None);
+}
+
+#[test]
+fn select_teardown_cancels_owns_only_when_fully_constructed_else_falls_back() {
+    // R4/AE4: a fully-constructed owned set cancels ONLY owned rows (a foreign row is
+    // left untouched); an incomplete owned set falls back to cancel-every-resting-row so
+    // no live order is stranded.
+    let resting = vec!["OWNED1".to_string(), "FOREIGN".to_string(), "OWNED2".to_string()];
+    let owned: BTreeSet<String> = ["OWNED1".to_string(), "OWNED2".to_string()].into_iter().collect();
+    // Fully constructed: only the owned rows are selected; the foreign row is spared.
+    let (to_cancel, fallback) = select_teardown_cancels(&resting, &owned, true);
+    assert!(!fallback, "owned-only, not fallback");
+    assert_eq!(to_cancel, vec!["OWNED1".to_string(), "OWNED2".to_string()]);
+    assert!(!to_cancel.contains(&"FOREIGN".to_string()), "foreign row left untouched (AE4)");
+    // Incomplete owned set: fall back to every resting row (never strand a live order).
+    let (to_cancel_fb, fallback_fb) = select_teardown_cancels(&resting, &owned, false);
+    assert!(fallback_fb, "incomplete owned set forces the fallback");
+    assert_eq!(to_cancel_fb, resting, "fallback cancels every resting row");
+}
+
+#[test]
+fn owned_matching_survives_ordno_representation_mismatch() {
+    // The control OrdNo can surface zero-padded on one response and bare on another
+    // (string_or_number). Ownership must match on the normalized value, and the
+    // ORIGINAL scan string is returned for the cancel call.
+    assert_eq!(normalize_ordno("0000012345"), "12345");
+    assert_eq!(normalize_ordno(" 12345 "), "12345");
+    assert_eq!(normalize_ordno("O-7"), "O-7", "non-numeric falls back to trimmed");
+    // owned holds the zero-padded submit-response form; the scan returns the bare form.
+    let owned: BTreeSet<String> = ["0000012345".to_string()].into_iter().collect();
+    let resting = vec!["12345".to_string(), "0000067890".to_string()];
+    let (to_cancel, fallback) = select_teardown_cancels(&resting, &owned, true);
+    assert!(!fallback);
+    assert_eq!(
+        to_cancel,
+        vec!["12345".to_string()],
+        "the control is recognized as owned despite the padding mismatch, and its \
+         original scan string is returned for the cancel"
+    );
+}
+
+#[test]
+fn gateway_tolerant_downgrade_fires_only_on_marked_class() {
+    // U2/R9/R10/R11/AE1/AE2: the per-class `gateway_tolerant` downgrade is offline-twinnable.
+    // t8412 carries the most pairs; each split-facet TR is exercised at its real schema.
+    let t8412 = ls_core::schema_for("t8412").expect("t8412 schema");
+    // shcode marked [required] → required downgrades, format does NOT (AE2).
+    assert!(is_gateway_tolerant(t8412, "shcode", "required"));
+    assert!(!is_gateway_tolerant(t8412, "shcode", "format"), "AE2: only the marked class");
+    // sdate/edate marked [format] (R11 spans required + format).
+    assert!(is_gateway_tolerant(t8412, "sdate", "format"));
+    assert!(is_gateway_tolerant(t8412, "edate", "format"));
+    // ncnt carries no facet → never downgrades.
+    assert!(!is_gateway_tolerant(t8412, "ncnt", "required"));
+    // t1102 shcode + exchgubun required; t0425 chegb required (R10).
+    let t1102 = ls_core::schema_for("t1102").expect("t1102 schema");
+    assert!(is_gateway_tolerant(t1102, "shcode", "required"));
+    assert!(is_gateway_tolerant(t1102, "exchgubun", "required"));
+    let t0425 = ls_core::schema_for("t0425").expect("t0425 schema");
+    assert!(is_gateway_tolerant(t0425, "chegb", "required"));
+    assert!(!is_gateway_tolerant(t0425, "medosu", "required"), "medosu is not marked");
+    // An unmarked TR never downgrades (unchanged behavior for every other TR).
+    let t1101 = ls_core::schema_for("t1101").expect("t1101 schema");
+    assert!(!is_gateway_tolerant(t1101, "shcode", "required"));
+
+    // The reported-outcome layer: only a Divergent on a marked (field, class) becomes
+    // expected-tolerant; Clean/Held/an unmarked Divergent render verbatim.
+    assert_eq!(
+        reported_outcome(t8412, "shcode", "required", ProbeOutcome::Divergent),
+        "expected-tolerant"
+    );
+    assert_eq!(
+        reported_outcome(t8412, "shcode", "format", ProbeOutcome::Divergent),
+        "Divergent",
+        "AE2: an accepted malformed shcode still reports a divergence"
+    );
+    assert_eq!(
+        reported_outcome(t8412, "shcode", "required", ProbeOutcome::Clean),
+        "Clean",
+        "a Clean is never downgraded"
+    );
+    assert_eq!(
+        reported_outcome(t1101, "shcode", "required", ProbeOutcome::Divergent),
+        "Divergent",
+        "an unmarked TR's divergence is never downgraded"
+    );
 }
 
 #[test]
 fn require_flat_and_fill_free_gates_all_three_scan_consumers() {
-    // Gap (b)+(c)/KTD2/KTD3: the SAME pure decision feeds all three fill-inclusive scan
-    // consumers — pre-assert-flat (refuse to place), post-cancel flat-verify (HELD), and
-    // teardown (UNEXPECTED-FILL alarm). A synthesized fill drives the unrecoverable
-    // outcome, not just `flat_verdict` in isolation.
+    // KTD1: the SAME pure decision feeds all three `chegb="2"` scan consumers —
+    // pre-assert-flat (refuse to place), post-cancel flat-verify (HELD), and teardown
+    // (UNEXPECTED-FILL alarm). Under chegb="2" the Fill arm still fires on a *partial*
+    // fill (cheqty>0, ordrem>0, which stays on the working set); a fully-filled control
+    // is caught by the bounded post-cancel `classify_control_disposition` instead.
     let row = |ordno: &str, cheqty: &str, ordrem: &str| T0425OutBlock1 {
         ordno: ordno.into(),
         cheqty: cheqty.into(),
@@ -1461,10 +1900,12 @@ fn require_flat_and_fill_free_gates_all_three_scan_consumers() {
         require_flat_and_fill_free(&[row("7", "0", "5")]),
         Err(NotClear::Resting(vec!["7".into()]))
     );
-    // A FILL (cheqty>0), newly visible under chegb="0" → NotClear::Fill (uncancelable):
-    // pre-assert refuses ("reset the paper book"), post-cancel routes to UNEXPECTED-FILL
-    // HELD, teardown raises the UNEXPECTED-FILL alarm. This is the branch the old
-    // unfilled-only scan could never reach.
+    // A FILL (cheqty>0) → NotClear::Fill (uncancelable): pre-assert refuses ("reset the
+    // paper book"), post-cancel routes to UNEXPECTED-FILL HELD, teardown raises the alarm.
+    // Under the reverted chegb="2" scan this arm fires on a *partial* fill (which stays on
+    // the working set); a fully-filled control (ordrem==0) is hidden from chegb="2" and is
+    // caught by the bounded post-cancel classify_control_disposition instead (KTD1). The
+    // pure function still classifies any cheqty>0 row as Fill regardless.
     assert_eq!(
         require_flat_and_fill_free(&[row("9", "2", "0")]),
         Err(NotClear::Fill(vec!["9".into()]))

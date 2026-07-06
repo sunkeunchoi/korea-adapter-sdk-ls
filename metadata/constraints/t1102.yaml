@@ -4,17 +4,26 @@
 # required). `exchgubun` is a closed exchange-distinction toggle, but its full
 # value set is not confirmed here — enum left N/A until the live probe grades it,
 # so preflight stays permissive (R6).
+#
+# gateway_tolerant (plan 2026-07-06-002 §26 differential evidence): the gateway
+# returns rsp_cd=00000 when `shcode` or `exchgubun` is removed, so the `required`
+# class on both is gateway-tolerant. Preflight STILL enforces required (a caller
+# contract, KTD3); the facet only tells the differential probe not to read the
+# accepted removal as a divergence. The Recommended claim does not assert
+# gateway-side enforcement of these pairs.
 tr_code: t1102
 fields:
   - name: shcode
     type: string          # baseline: String, required (6-digit short code).
     required: true
+    gateway_tolerant: [required]   # gateway accepts removal (§26); preflight still enforces.
     enum: { applicable: false }
     range: { applicable: false }
     format: { applicable: true, kind: symbol, confirmed: false }
   - name: exchgubun
     type: string          # baseline: String, required (거래소 구분).
     required: true
+    gateway_tolerant: [required]   # gateway accepts removal (§26); preflight still enforces.
     enum: { applicable: false }
     range: { applicable: false }
     format: { applicable: false }

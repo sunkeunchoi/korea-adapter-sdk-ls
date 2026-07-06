@@ -96,13 +96,24 @@ happy-path smoke is NOT sufficient. Before flipping:
    inconclusive, `HELD <tr> — negative probe control failed`, leave the TR
    Implemented. A **DIVERGENT** variant (paper accepted an injected invalid, or
    rejected a valid value) blocks promotion until the schema is reconciled.
+   An **`expected-tolerant`** variant is **non-blocking** (plan 2026-07-06-002):
+   the `(field, class)` is marked `gateway_tolerant` in the constraint schema
+   because the gateway is known not to enforce it while the SDK keeps the field
+   stricter as a caller contract (preflight still enforces it locally). Treat an
+   `expected-tolerant` line exactly like a `CLEAN` one for the gate — but the TR's
+   recommendation block MUST carry the scope exclusion (see step 5): the claim does
+   NOT assert gateway-side enforcement of that tolerant pair. Only mark
+   `gateway_tolerant` when the field is a genuine caller contract; if it is not,
+   correct the schema to `required: false` instead
+   (`docs/solutions/conventions/gateway-tolerant-facet-preserves-preflight-while-unblocking-differential-probe.md`).
 3. **Error-coverage evidence.** Write `metadata/error-coverage/<tr>.yaml`: the
    per-(field, class) coverage map (probe outcomes) and the reachable
    `gateway_codes` (a subset of `metadata/error-catalog.yaml`). The validator
    REQUIRES `error_coverage_ref` on a recommended TR (a distinct condition from the
    evidence ref — neither implies the other).
 
-Only a CLEAN differential probe with a written coverage artifact clears this gate.
+Only a CLEAN (or `expected-tolerant`, per above) differential probe with a written
+coverage artifact clears this gate.
 
 ## 5. Flip the TR + write the recommendation block (the judgment step)
 
@@ -128,6 +139,13 @@ and overstated freshness automation. Per class, also exclude:
   beyond a successful round-trip.
 - realtime (`S3_`): **trade-data correctness, in-session row delivery, and
   reconnection** — a lifecycle smoke must never become a live-data recommendation.
+- **split-facet (any `gateway_tolerant` field — t1102/t8412/t0425):** the
+  gateway-side enforcement of the tolerant `(field, class)` pair. The claim rests on
+  the preflight-enforced caller contract (offline-tested) plus crisp differential
+  certification of the field's *other* classes; it does NOT assert the gateway
+  rejects the tolerant violation. Add a verbatim exclude, e.g.
+  `"Gateway-side rejection of an omitted shcode/exchgubun — preflight enforces these
+  locally, the gateway tolerates their absence (gateway_tolerant)."`
 
 See `references/templates.md` for worked `excludes` lists per class.
 
