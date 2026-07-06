@@ -1592,3 +1592,72 @@ record; §24's "current Recommended count is 0" holds, now with the re-cert gate
 authored and armed rather than merely staged in plan. The tier restores on the operator's
 next attended open KRX window (reads + token) and attended in-window order session (the
 quartet); every harness is on-branch and reachable via the Makefile targets above.
+
+## 26. Re-cert wave LIVE execution — Recommended tier restored to 3 (2026-07-06)
+
+Plan `docs/plans/2026-07-06-001-feat-recert-wave-order-probe-gap-close-plan.md`. Executed the
+§25 armed gate live in an **attended open-KRX session (Mon 2026-07-06, regular window)**: the
+six read controls + differential negative probes agent-run and operator-witnessed; the order
+quartet operator-run in their own terminal (the fail-closed autonomy chain refuses a non-TTY
+sandbox by construction). U1–U3 shipped first as offline harness hardening (the three
+order-probe gap fixes; commit `ee94b4c`). **This section is the current disposition record for
+the ten re-cert TRs and supersedes §25 (R5).**
+
+**Outcome: the Recommended tier is restored from 0 to 3.** Three reads promoted on clean live
+differential chains; the remaining seven stayed HELD (fail-closed, §25 AE2 / KTD4). The KTD5
+one-time re-wirings landed with the first flip (`recommended_no_banner` `[&str;0]→3`, freshness
+count assertion `0→3`, `EVIDENCE-FRESHNESS.md` `0→3`).
+
+**PROMOTED to `recommended: true` (clean differential chain; commit `943a081`):**
+- **`t1101`** — control `price=307500` + 10-level book; probe `shcode/required` + `shcode/format`
+  → Clean. Owner class `market_session`.
+- **`token`** — shared control `token_len=380`; the bespoke OAuth-form probe's 7 variants all
+  `http=403` → Clean. Owner class `standalone` (auth).
+- **`S3_`** — WS subscribe lifecycle `row received`; **no live differential** (realtime is
+  NOT-OBSERVABLE, KTD2), so the realtime error-coverage substitute is recorded and the
+  recommendation excludes trade-data correctness / in-session delivery / reconnection. Owner
+  class `realtime`.
+
+**HELD (left Implemented with a recorded arm):**
+- **`t1102`** — **DIVERGENT**. `shcode/required` and `exchgubun/required` both → `rsp_cd=00000`
+  (the gateway accepts the request with a required field removed). The constraint schema
+  over-claims `required` relative to gateway reality; promotion blocked until the schema is
+  reconciled (out of scope — Scope Boundaries). *Reopen:* reconcile `constraints/t1102.yaml`
+  against observed gateway tolerance, re-probe, promote.
+- **`t8412`** — **DIVERGENT**. `shcode/required`, `sdate/format`, `edate/format` → `00000` (the
+  gateway tolerates a removed symbol and malformed dates). Same reconcile-then-promote reopen.
+- **`CSPAQ12200`** — HELD (thin evidence). Its sole variant `BalCreTp/required` returned
+  `IGW00201` (a self-inflicted Account-bucket throttle) on both runs — never a crisp
+  merits-rejection, so the differential contract was not actually exercised. Operator declined
+  to promote an outward-facing tier claim on throttle-only evidence. *Reopen:* re-probe with the
+  Account bucket cool so the variant is genuinely evaluated.
+- **`t0425`** — **DIVERGENT**. `chegb/required` → `00000` (the gateway accepts the working-order
+  read with `chegb` removed). It is a READ (`is_order:false`), unaffected by the U1–U3 order
+  harness. Reconcile-then-promote reopen.
+- **`CSPAT00601` / `CSPAT00701` / `CSPAT00801`** — HELD (order-probe pagination, fail-closed;
+  **no order placed by the probe**). The `live-smoke-order-chain` CONTROL certified the full
+  happy-path chain (submit `00040` ordno=20719 / modify `00462` ordno=20720 / cancel `00463`
+  ordno=20721, `flat=confirmed [zero live rows]`), but the required hardened DIFFERENTIAL probe
+  HELD at pre-assert-flat: the gap-(b) fill-inclusive `chegb="0"` scan returns 005930's entire
+  accumulated order history and paginates (`tr_cont=0`), and the single-page guard fail-closes.
+  Confirmed by a `make raw-probe` A/B (`chegb="2"` body_len=63 vs `chegb="0"` body_len=1186).
+  This is a real defect in the gap-(b) fix surfaced live — see
+  `docs/solutions/logic-errors/order-probe-fill-inclusive-scan-paginates-false-held.md`.
+  *Reopen:* decouple fill-detection (ordno-targeted lookup) from the single-page flatness scan,
+  then re-run the hardened probe attended in-window; the order-chain control already certifies
+  the happy path.
+
+**Gap-close (R1) outcome.** (a) reorder — landed and witnessed indirectly (the probe reaches
+pre-assert-flat before firing variants; the resting-control variant lines could not print
+because pre-assert-flat HELD first). (b) fill-inclusive scan — landed offline-green but its
+`chegb="0"` widening is the direct cause of the order-probe pagination HELD above; the fix is
+net-incomplete for the order probe and carries a documented follow-up. (c) pre-assert-flat +
+unconditional teardown — landed and **fired correctly live** (it is exactly what fail-closed on
+the paginated scan, refusing to place). The smoke-map (rows 66–68) was reconciled to the
+hardened sequence.
+
+**Count tally (R6).** **3 flips.** `recommended` count 0→3 (`t1101`/`token`/`S3_`);
+`recommended_no_banner` now `["token","t1101","S3_"]`; the freshness-count assertion and
+`EVIDENCE-FRESHNESS.md` reflect 3; the `slice_metadata` tripwire tightened from "empty" to
+"exactly {S3_,t1101,token}". `reference.len()` unchanged (promoted TRs stay implemented). No
+`banner_trs` entry for the seven HELD TRs was removed. The full root gate is green.
