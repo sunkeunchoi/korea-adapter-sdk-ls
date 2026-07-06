@@ -1661,3 +1661,78 @@ hardened sequence.
 `EVIDENCE-FRESHNESS.md` reflect 3; the `slice_metadata` tripwire tightened from "empty" to
 "exactly {S3_,t1101,token}". `reference.len()` unchanged (promoted TRs stay implemented). No
 `banner_trs` entry for the seven HELD TRs was removed. The full root gate is green.
+
+## 27. Re-cert wave 2 — reopen the 7 §26-HELD TRs; live re-probe (2026-07-06)
+
+Plan `docs/plans/2026-07-06-002-feat-recert-wave-reopen-held-trs-plan.md`. The offline hardening
+(U1–U7) landed first as PR #99 (squash `dad2c2e`): the order-probe `chegb="0"`→`"2"` revert +
+bounded ordno fill-check + owned-only teardown; the per-class `gateway_tolerant` facet
+(preflight unchanged, KTD3; probe downgrades `Divergent`→`expected-tolerant`, KTD4); and the
+CSPAQ12200/t0425 Account-bucket pacing. The seven reopened TRs were then re-probed **attended,
+open-KRX (Mon 2026-07-06, regular window)**. **This section is the current disposition record for
+the seven and supersedes §26's reopen arms.**
+
+**Outcome: 1 CLEAN (t1102), 6 HELD — but for THREE new reasons, each a real finding, not a
+session artifact. Two mechanisms shipped in #99 are validated live: the `gateway_tolerant`
+downgrade fires correctly (t1102/t0425 tolerant pairs read `expected-tolerant`), and the
+CSPAQ12200 pacing works (a merits response, no more `IGW00201`).**
+
+**CLEAN (promotable):**
+- **`t1102`** — control `rsp_cd=00000`; `shcode/required` + `exchgubun/required` → `00000`
+  accepted, **downgraded to `expected-tolerant`** (the facet works); `shcode/format` → `IGW40011`
+  rejected → Clean. A fully clean/tolerant chain. Promotion staged (see Follow-up).
+
+**HELD — reason A: probe throttle-masked (not evaluated):**
+- **`t8412`** — control `00000`, but **all 11 variants → `IGW00201`** (Account/market-data bucket
+  throttle). The U6 pacing was added only to the shared account-lane loop
+  (`run_inblock_negative_probe`); t8412 runs its **own** standalone loop (it carries the tolerant
+  pairs and does not route through the shared helper), which fires ~12 rapid market-data calls
+  **unpaced** → every variant throttled. A throttle classifies as a (non-success) rejection →
+  `Clean`, so the "all Clean" here is FALSE — the differential was never exercised on merits.
+  *Reopen:* pace the t8412 standalone loop (mirror U6), re-probe with the bucket cool.
+
+**HELD — reason B: new gateway-tolerant `(field, class)` pair, unmarked (a schema-reconcile
+decision — the plan says handle a newly-observed tolerant pair when the live probe surfaces it,
+not pre-mark):**
+- **`t0425`** — `chegb/required` → `expected-tolerant` (the §26-marked pair works); but
+  **`medosu/required` → `00000` accepted = `Divergent`** (unmarked). `chegb/enum` + `medosu/enum`
+  → `IGW40011` rejected → Clean; `sortgb/required` → `IGW40013` rejected → Clean. The single
+  `medosu` divergence blocks promotion. *Reopen:* decide `medosu/required` — mark
+  `gateway_tolerant:[required]` (consistent with the `chegb`/`exchgubun` precedent, a
+  gateway-defaulted filter field kept stricter as a caller contract) or correct to
+  `required:false`; then re-probe.
+- **`CSPAQ12200`** — **the pacing fix WORKED**: the sole `BalCreTp/required` variant returned a
+  merits `rsp_cd=00136` (not `IGW00201`) — AE5 satisfied, U6/R12 validated live. But that merits
+  response is an **acceptance** (`00136`) of the removed field = **`Divergent`** (unmarked).
+  *Reopen:* same decision as `medosu` for `BalCreTp/required`.
+
+**HELD — reason C: order-quartet single-page guard bug (a real defect, DISTINCT from §26's
+`chegb="0"` pagination; SAFETY: a stranded control order was left resting):**
+- **`CSPAT00601`** — control **placed** (band-floor resting buy, `ok=true resting`), `IsuNo/required`
+  → `01407` Clean, `OrdQty/type` → `IGW40011` may-rest halt; then the teardown scan **failed on
+  pagination** (`tr_cont=0`) → the control could NOT be canceled → **it is stranded, resting on
+  005930**.
+- **`CSPAT00701` / `CSPAT00801`** — HELD at pre-assert-flat, same `tr_cont=0` pagination (they see
+  the stranded 00601 control) → no placement.
+- **Root cause.** `scan_symbol_working_orders` gates single-page-ness on the **`tr_cont` HEADER**,
+  but t0425 self-paginates on the **`cts_ordno` BODY cursor** (`tr_cont` "rides defensively",
+  per `orders/mod.rs`). The gateway returns `tr_cont="0"` on ANY non-empty page (not a real
+  continuation), so the guard (`!empty && !"N"` = paginated) fail-closes on any non-empty book.
+  The `chegb="2"` revert correctly shrank the row COUNT, but the guard trips on the HEADER, which
+  is orthogonal to actual pagination. It "worked" in §26 only because the book was empty
+  (`tr_cont="N"`); the instant the probe places its own control, every later scan sees data →
+  `tr_cont="0"` → fail. *Reopen:* gate the single-page check on the response `cts_ordno` cursor
+  (empty/`" "`/all-default = terminal), not the `tr_cont` header — in BOTH
+  `negative_probe.rs::scan_symbol_working_orders` and the twin in `order_smoke.rs`. **SAFETY:
+  manually cancel the stranded 005930 band-floor buy in the paper account before re-running** (it
+  is non-marketable, so it cannot fill, but it blocks every subsequent order-probe scan).
+
+**Count tally.** **0 flips in this entry** — no promotion executed yet; `recommended` stays 3
+(`t1101`/`token`/`S3_`), count sites unchanged. `t1102` is CLEAN-certified this session; its
+promotion + the three reopen fixes above are the staged follow-up.
+
+**Follow-up (staged, one PR):** (1) promote `t1102` (clean); (2) after an operator decision, mark
+`t0425 medosu/required` + `CSPAQ12200 BalCreTp/required` `gateway_tolerant:[required]` (or
+`required:false`) → re-probe → promote what certifies; (3) pace the t8412 standalone loop; (4)
+fix the `tr_cont`→`cts_ordno` single-page guard for the order quartet; (5) clear the stranded
+005930 order. (2)–(4) each need an attended in-window re-probe before their flip.
