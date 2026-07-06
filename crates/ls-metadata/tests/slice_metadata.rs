@@ -77,23 +77,28 @@ fn authored_slice_metadata_validates_clean() {
 
 /// The error-resilience gate (plan 2026-07-01-004, R12) demoted the 10 TRs
 /// promoted under the old happy-path gate back to Implemented; each re-promotes
-/// only after passing the new differential-probe gate (U8, operator-run across
-/// live windows). Until then the Recommended set is EMPTY, so the badge carries a
-/// single consistent meaning ("this call fails gracefully"). This test guards
-/// against an accidental re-promotion that skips the new gate.
+/// only after passing the differential-probe gate (operator-run across live
+/// windows). The re-cert wave (plan 2026-07-06-001 U4, attended open-KRX session
+/// 2026-07-06) re-certified `S3_`, `t1101`, and `token` on clean live chains — the
+/// ONLY three currently allowed to carry the Recommended badge. The remaining seven
+/// stayed HELD (t1102/t8412 Divergent, CSPAQ12200 throttled-only, the order quartet
+/// operator-run in a later leg). This test guards against an accidental
+/// re-promotion of any of those seven that skips the gate.
 #[test]
-fn recommended_set_is_empty_pending_error_resilience_recert() {
+fn recommended_set_is_exactly_the_recert_wave_certified_reads() {
     let report = validate_dir(&metadata_root()).expect("slice metadata validates");
-    let recommended: Vec<&String> = report
+    let mut recommended: Vec<&str> = report
         .trs
         .iter()
         .filter(|(_, m)| m.support.recommended)
-        .map(|(code, _)| code)
+        .map(|(code, _)| code.as_str())
         .collect();
-    assert!(
-        recommended.is_empty(),
-        "no TR may be Recommended until re-certified through the error-resilience \
-         gate (U8); found: {recommended:?}"
+    recommended.sort_unstable();
+    assert_eq!(
+        recommended,
+        ["S3_", "t1101", "token"],
+        "only the re-cert-wave-certified reads may be Recommended; any other TR must \
+         first pass the differential-probe gate"
     );
 }
 

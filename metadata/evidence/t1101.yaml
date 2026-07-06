@@ -18,10 +18,10 @@
 # a paper-guard miss (which fails the test) and not a 01900 paper-incompatible
 # refusal (which would Err before recording).
 tr_code: t1101
-date: 2026-06-22
+date: 2026-07-06
 env: paper
 target: live-smoke-book
-line: "LIVE-SMOKE target=live-smoke-book inputs=[env=paper symbol=005930 date=2026-06-22] result=[token_len=380 rsp_cd=00000 price=357000 offerho1=357000 bidho1=356500]"
+line: "LIVE-SMOKE target=live-smoke-book inputs=[env=paper symbol=005930 date=2026-07-06] result=[token_len=380 rsp_cd=00000 price=307500 offerho1=307500 bidho1=307000]"
 
 attested_normalizer_version: 2
 attested_shape:

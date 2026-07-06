@@ -1392,9 +1392,12 @@ mod tests {
             "CFOAT00100", "CFOAT00200", "CFOAT00300",
             // Error-resilience gate (plan 2026-07-01-004, R12): the 10 TRs promoted
             // under the old happy-path gate demoted to Implemented so the badge means
-            // "fails gracefully". Each carries the not-recommended banner again until
-            // re-certified through the new differential-probe gate (U8, operator-run).
-            "token", "t1101", "t1102", "t8412", "S3_", "CSPAQ12200", "CSPAT00601",
+            // "fails gracefully". Each carries the not-recommended banner until
+            // re-certified through the differential-probe gate. The re-cert wave (plan
+            // 2026-07-06-001 U4) promoted token/t1101/S3_ on clean live chains (moved to
+            // recommended_no_banner below); t1102 + t8412 stayed HELD (Divergent probe),
+            // CSPAQ12200 HELD (throttled-only variant), and the order quartet HELD.
+            "t1102", "t8412", "CSPAQ12200", "CSPAT00601",
             "CSPAT00701", "CSPAT00801", "t0425",
         ];
         for tr in banner_trs {
@@ -1407,10 +1410,12 @@ mod tests {
             );
         }
 
-        // The Recommended set is EMPTY after the error-resilience demotion (R12):
-        // no reference page omits the banner. Re-promotion (U8) is operator-gated and
-        // proceeds independently across live windows.
-        let recommended_no_banner: [&str; 0] = [];
+        // The re-cert wave (plan 2026-07-06-001 U4) restored the Recommended set from
+        // its post-demotion empty state: token/t1101/S3_ promoted on clean live
+        // differential chains (an attended open-KRX session, 2026-07-06). Their
+        // reference pages must OMIT the not-recommended banner. Re-promotion of the
+        // remaining seven is operator-gated across later live windows.
+        let recommended_no_banner: [&str; 3] = ["token", "t1101", "S3_"];
         for rec in recommended_no_banner {
             let page = reference
                 .get(Path::new(&format!("docs/reference/{rec}.md")))

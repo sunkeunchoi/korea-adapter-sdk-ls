@@ -494,11 +494,13 @@ mod tests {
 
     /// The real authored metadata, with the 10 error-resilience-demoted TRs
     /// re-marked `recommended` so the freshness *machinery* (the age/change rules)
-    /// stays exercised against a realistic 10-TR recommended set. The error-
-    /// resilience gate (plan 2026-07-01-004, R12) demoted those 10 to Implemented
-    /// pending re-certification through the differential-probe gate (U8), so the
-    /// committed set is currently empty; these tests validate the evaluator, not
-    /// the current promotion state, so they restore a synthetic recommended set.
+    /// stays exercised against a realistic 10-TR recommended set. These tests
+    /// validate the evaluator, not the current promotion state, so they restore a
+    /// synthetic recommended set of all ten re-cert TRs. To keep the age-rule math
+    /// DETERMINISTIC and immune to real re-certifications (the re-cert wave, plan
+    /// 2026-07-06-001 U4, genuinely re-dated token/t1101/S3_ to 2026-07-06), the
+    /// fixture ALSO pins a uniform old `last_reviewed` — otherwise a freshly
+    /// re-reviewed TR would silently drop out of the "all stale at 2026-10-01" set.
     /// (Freshness reads only `support.recommended` + `maintenance.last_reviewed`.)
     fn real_trs() -> BTreeMap<String, TrMetadata> {
         let metadata = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -514,6 +516,7 @@ mod tests {
         ] {
             if let Some(m) = trs.get_mut(code) {
                 m.support.recommended = true;
+                m.maintenance.last_reviewed = "2026-06-16".to_string();
             }
         }
         trs

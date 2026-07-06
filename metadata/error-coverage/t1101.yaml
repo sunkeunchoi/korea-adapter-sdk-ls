@@ -1,0 +1,33 @@
+# Error-coverage evidence for t1101 (주식현재가호가 — current price + 10-level
+# order book). Records the per-(field, class) coverage derived from
+# constraints/t1101.yaml and the reachable gateway codes the Reference page
+# explains from the shared catalog.
+#
+# PROBED: this artifact is backed by a live differential negative probe
+# (`make live-smoke-t1101-negative`, R10) run in an attended open-KRX session on
+# 2026-07-06 (re-cert wave, plan 2026-07-06-001 U4). The valid control succeeded
+# (`http=200 rsp_cd=00000`) and every fired invalid variant was rejected distinctly
+# (`shcode/required` → `rsp_cd=00009`; `shcode/format` → `IGW40011`) — a CLEAN chain.
+#
+# `status` legend: declared = authored offline, not yet probed; confirmed = the
+# differential probe confirmed the bound; held = inconclusive; divergent = observed
+# behavior disagreed with the declaration; n_a = the class does not apply to the field.
+tr_code: t1101
+probe_status: clean
+seed: "shcode=005930"
+input_classes:
+  - { field: shcode, class: type, status: n_a }        # string field — no type-mutation variant is generated
+  - { field: shcode, class: required, status: confirmed }
+  - { field: shcode, class: enum, status: n_a }
+  - { field: shcode, class: range, status: n_a }
+  - { field: shcode, class: format, status: confirmed }
+# Reachable gateway codes for this read TR, explained once from the shared catalog
+# (R8/R9). Environment/entitlement codes are not reproduced per TR — they point at
+# the same catalog entries.
+gateway_codes:
+  - "00000"
+  - "00136"
+  - "00707"
+  - "904"
+  - "01900"
+  - IGW40011

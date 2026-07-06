@@ -18,7 +18,16 @@ dependencies:
 support:
   tracked: true
   implemented: true
-  recommended: false
+  recommended: true
 maintenance:
   source_spec_hash: a1b2c3d4e5f6
-  last_reviewed: 2026-06-16
+  last_reviewed: 2026-07-06
+recommendation:
+  behavior: Paper OAuth2 access-token issuance
+  evidence_ref: evidence/token.yaml
+  excludes:
+    - Production-credential token issuance (evidence is paper only)
+    - Token-lifecycle semantics beyond a single successful issuance (refresh, expiry, revocation)
+    - Auto-revoking the recommendation on a change-driven structural change — detection ships (advisory); auto-revoke of support.recommended stays deferred
+constraints_ref: constraints/token.yaml
+error_coverage_ref: error-coverage/token.yaml

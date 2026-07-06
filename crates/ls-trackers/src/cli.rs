@@ -2370,21 +2370,22 @@ mod tests {
     }
 
     #[test]
-    fn freshness_check_over_empty_recommended_set_exits_zero() {
-        // The error-resilience gate (plan 2026-07-01-004, R12) demoted the 10
-        // previously-Recommended TRs to Implemented pending re-certification through
-        // the differential-probe gate (U8), so the committed recommended set is
-        // currently EMPTY. A stale-window run therefore finds nothing and exits
-        // zero; the cli's validate→evaluate→exit wiring is still exercised. The
+    fn freshness_check_over_recommended_set_counts_and_finds_none_under_backstop() {
+        // The re-cert wave (plan 2026-07-06-001 U4) restored the Recommended set from
+        // its post-demotion empty state: token/t1101/S3_ promoted on clean live
+        // differential chains dated 2026-07-06. Evaluated at 2026-10-01 that evidence
+        // is 87 days old — under the 90-day age backstop — so the run counts the three
+        // Recommended TRs but finds nothing stale and exits zero; the cli's
+        // validate→evaluate→exit wiring is exercised over a NON-empty set. The
         // stale→findings machinery is covered by `freshness::tests` over a synthetic
         // recommended fixture.
-        let root = scratch("freshness-empty-recommended");
+        let root = scratch("freshness-recommended-set");
         let paths = real_metadata_paths(&root);
         let result = run_freshness_check(&paths, chrono::NaiveDate::from_ymd_opt(2026, 10, 1).unwrap());
         let report = result.as_ref().unwrap();
-        assert_eq!(report.recommended_count, 0);
+        assert_eq!(report.recommended_count, 3);
         assert!(report.findings.is_empty());
-        // Advisory — stale evidence never gates (holds trivially with 0 recommended).
+        // Advisory — stale evidence never gates (nothing is past the backstop here).
         assert_eq!(freshness_exit_for(&result), Exit::Ok);
     }
 
