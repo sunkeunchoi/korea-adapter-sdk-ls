@@ -1813,3 +1813,56 @@ the SC1 frame and the t0425 poll collapsed to exactly one `FillDelta` — which 
 (U5), three live-surfaced defect fixes, and two new operator harness legs; no TR changed support
 tier. `recommended` stays 3 (`t1101`/`token`/`S3_`), count sites unchanged. The §27 order-quartet
 promotions remain their own operator-gated live tail (the U1 fix unblocks their re-probe).
+
+## 29. IGW40011-as-500 is placed-nothing on the order type-variant differential (2026-07-07)
+
+Plan `docs/plans/2026-07-07-002-fix-igw40011-placed-nothing-order-differential-plan.md`. The §28
+attended re-probe confirmed the §27 reason-C pagination fix works live (controls placed and torn
+down flat, no pagination HELD) — but it surfaced a **different** blocker that stops the §27 order
+quartet (CSPAT00601/00701/00801) from certifying for `recommended`.
+
+**Root cause.** The order negative-probe fires a `type` variant that deliberately sends a malformed
+numeric field; the gateway correctly rejects it with `IGW40011` — a gateway **ingress** input-
+validation reject (a numeric request field sent as a quoted string; NOT the rate-limit code
+`IGW00201`) — which arrives as `http=500`. The probe fire loop's arm
+`Some((http, rsp_cd, _)) if http >= 500 => …Held-may-rest halt=true` treated **any** 5xx as
+may-have-rested and HALTED the differential before it completed, so all three quartet TRs halted on
+their first `type` variant and never certified. Observed live: CSPAT00601 `OrdQty/type` → `IGW40011
+(500)` → halt; CSPAT00701/00801 `OrgOrdNo/type` → `IGW40011 (500)` → halt. The **live order path**
+carried the same defect at its root: `ls-core` `dispatch_once`'s order non-2xx branch mapped every
+non-2xx order outcome — including `IGW40011@500` — to `LsError::AmbiguousOrder` →
+`SubmitAction::Pending` (may-rest), even though an ingress-rejected request never routes to the
+exchange and structurally cannot rest.
+
+**Fix (landed offline this session, both seams).**
+- **U1 — single source of truth.** New pure `ls_core::is_ingress_validation_reject(rsp_cd)` (`true`
+  only for `IGW40011`, deliberately narrow; excludes the rate-limit `IGW00201` and hard gateway
+  failures `IGW40013`/`IGW50008`, which may have reached the exchange and stay may-rest) +
+  unit test. Consumed by BOTH the live path and the probe so they can never drift.
+- **U2 — live order path (`ls-core inner.rs::dispatch_once`).** The order non-2xx branch now returns
+  `LsError::ApiError` (a clean placed-nothing rejection → `classify_submit_error` → `Reject`) when
+  `is_ingress_validation_reject(code)`, else the existing `AmbiguousOrder` (may-rest). The
+  `adapters/nautilus` `classify_submit_error` is **unchanged** — it is deliberately variant-keyed
+  ("never `rsp_cd` alone — the documented fail-open trap"), so the correct fix is at the seam that
+  *chooses* the `LsError` variant, and the existing `ApiError`→`Reject` mapping does the rest. Two
+  new mock-server regression tests (`IGW40011@500`→`ApiError`; other-5xx→`AmbiguousOrder`); the
+  existing `IGW40011@200`→`ApiError` test stays green.
+- **U3 — offline probe (`crates/ls-sdk/tests/negative_probe.rs`).** The inline `http >= 500` halt
+  arm is replaced by a pure `classify_fired_variant(http, rsp_cd)` → `PlacedNothing | MayHaveRested
+  | Accepted` that exempts `IGW40011@500` to `PlacedNothing` (Clean, continue) via the U1 predicate.
+  Every other 5xx stays `MayHaveRested` (halt), the transport-failure `None` arm is unchanged, and a
+  2xx ack still trips WAVE-BLOCKED. New offline unit test covers the four cases.
+
+**Fail-closed preserved.** The exemption is exactly `IGW40011`, nothing else. Every other 5xx/non-2xx
+order outcome and every transport failure stays may-rest/reconcile. A genuine throttle (`IGW00201`),
+if it ever surfaced as a 5xx, stays on the may-rest default.
+
+**Count tally.** **0 support-tier flips in this entry** — a probe-classifier fix, a live-dispatch
+classification narrowing, a shared predicate, and their tests; no TR changed support tier.
+`recommended` stays 3 (`t1101`/`token`/`S3_`), count sites unchanged.
+
+**Remaining operator blocker.** Certifying the §27 quartet requires an **attended, open-KRX**
+re-probe that places REAL paper orders (`LS_ORDER_SMOKE=1 LS_ORDER_SMOKE_NONCE=$(date +%s) make
+live-smoke-cspat00601-negative` and 00701/00801). Order autonomy refuses unattended runs. After a
+human runs a CLEAN re-probe (the type-variant differential now completes instead of halting), the
+TRs promote via the `promote-tr` recipe — a later step, not this entry.
