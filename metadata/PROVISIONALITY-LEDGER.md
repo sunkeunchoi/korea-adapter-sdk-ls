@@ -1863,6 +1863,29 @@ classification narrowing, a shared predicate, and their tests; no TR changed sup
 
 **Remaining operator blocker.** Certifying the §27 quartet requires an **attended, open-KRX**
 re-probe that places REAL paper orders (`LS_ORDER_SMOKE=1 LS_ORDER_SMOKE_NONCE=$(date +%s) make
-live-smoke-cspat00601-negative` and 00701/00801). Order autonomy refuses unattended runs. After a
-human runs a CLEAN re-probe (the type-variant differential now completes instead of halting), the
-TRs promote via the `promote-tr` recipe — a later step, not this entry.
+live-smoke-cspat00601-negative` and 00701/00801). Order autonomy refuses unattended runs.
+
+**Live re-probe result (attended, open KRX, 2026-07-07).** The operator ran all three legs.
+**The IGW40011 fix is CONFIRMED live:** every `type`/`required` variant returning `IGW40011 (500)`
+(`OrdQty`, `OrdPrc`, `OrgOrdNo`) now prints `outcome=Clean` and the differential **completes** instead
+of halting — the exact intended behavior. **But the now-completing differential UNMASKED a separate,
+previously-hidden blocker: `WAVE BLOCKED` on the `required` variants** (the halt used to stop the
+probe before it ever reached them). The gateway **accepts** a request with a field the constraint
+schema marks `required: true`:
+- **CSPAT00701** (modify) — `IsuNo/required` removed → `00462` (clean modify ack, real ordno). A
+  **real over-claim**: `IsuNo` is not gateway-required for a modify (`OrgOrdNo` identifies the order).
+- **CSPAT00801** (cancel) — `IsuNo/required` removed → `00463` (clean cancel ack, real ordno). Same
+  real over-claim for cancel.
+- **CSPAT00601** (submit) — `BnsTpCode/required` (buy/sell direction) removed → `00000` (ambiguous
+  generic-success, ordno unsurfaced) → the tripwire conservatively fails-closed. **Ambiguous, not
+  proven**: `00000` needs a `raw-probe` A/B to decide whether `BnsTpCode`-removed places a real
+  directional order or is rejected — **safety-relevant** (direction code), resolve before touching
+  that schema. Teardown ran on every leg with no `UNEXPECTED-FILL`/`UNOWNED-RESTING` alarm (fallback
+  cancel on 00601 since the ordno was unsurfaced); the operator confirms 005930 flat as a backstop.
+
+**Disposition.** The IGW40011 fix (this entry / PR #107) is **validated live and stands on its own
+merits** — it is not a promotion, and the WAVE BLOCKED is downstream of it, not a defect in it. The
+§27 quartet **stays HELD**, now on the constraint-schema required-ness divergence rather than the
+IGW40011 halt. That divergence is a **separate follow-up** (raw-probe A/B on `CSPAT00601 BnsTpCode`;
+relax `CSPAT00701`/`00801` `IsuNo` to `required: false`; re-probe), and promotion via the
+`promote-tr` recipe is that follow-up's tail — not this entry's.
