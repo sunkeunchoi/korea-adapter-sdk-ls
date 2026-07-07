@@ -464,6 +464,25 @@ async fn seeded_v3_manifest_satisfies_the_resolution_assertion_and_reruns() {
 }
 
 #[tokio::test]
+async fn a_matching_version_with_a_wrong_gap_trips_the_gap_assertion() {
+    // Version matches (v3) so the version guard passes, but the resolved gap (0.9)
+    // differs from the expected 0.6 → the gap guard bails. Exercises the gap branch
+    // + its float-tolerance compare, which the version-mismatch cases never reach.
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    seed_run(dir.path(), 0.9, 3, stamp(0)).await;
+    let mut cfg = TurnConfig::new(dir.path(), stamp(10));
+    cfg.override_param = None;
+    cfg.expect_version = Some(3); // passes
+    cfg.expect_gap_min_pct = Some(0.6); // resolved 0.9 ≠ 0.6 → bail
+    let err = turn(cfg).await.unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("v3-param resolution failed"), "names the stop condition: {msg}");
+    assert!(msg.contains("0.6000"), "names the expected gap: {msg}");
+    assert_eq!(list_runs(dir.path()).len(), 1, "no new run — only the seed remains");
+}
+
+#[tokio::test]
 async fn a_wrong_seeded_version_trips_the_resolution_assertion() {
     // A home whose latest run is v0 (gap 3.0) while the operator expects v3 → refuse.
     let dir = tempdir().unwrap();

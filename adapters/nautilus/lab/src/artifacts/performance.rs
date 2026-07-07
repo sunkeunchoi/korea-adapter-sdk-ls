@@ -568,4 +568,31 @@ mod tests {
         assert!(b.failing_conditions.iter().any(|m| m.contains("trade-count floor")));
         assert!(b.failing_conditions.iter().any(|m| m.contains("symbol-breadth floor")));
     }
+
+    #[test]
+    fn open_trades_are_excluded_from_the_bar() {
+        // The bar folds only realized (closed) trades. An OPEN leg (ts_closed=None,
+        // no realized P&L) must not touch total_trades, breadth, or the dominance
+        // denominator — matching `num_trades = closed.len()`.
+        let mut trades = trades_for("A.XKRX", 2, 100.0); // 2 closed
+        trades.push(TradeRecord {
+            symbol: "OPEN.XKRX".to_string(),
+            entry_side: "BUY".to_string(),
+            quantity: 10.0,
+            avg_px_open: 60_000.0,
+            avg_px_close: None,
+            realized_pnl: 9_999_999.0, // must be ignored — position not closed
+            ts_opened: 100,
+            ts_closed: None,
+            fills: vec![],
+        });
+        let b = eval(trades);
+        assert_eq!(b.total_trades, 2, "open leg excluded from the trade count");
+        assert_eq!(b.per_symbol.len(), 1, "only the closed symbol is folded");
+        assert_eq!(b.per_symbol[0].symbol, "A.XKRX");
+        assert!(!b.per_symbol.iter().any(|s| s.symbol == "OPEN.XKRX"), "open symbol absent");
+        // The open leg's 9,999,999 P&L did not enter the dominance denominator:
+        // the sole closed symbol carries 100% of aggregate |P&L|.
+        assert!((b.max_abs_pnl_share - 1.0).abs() < 1e-9);
+    }
 }

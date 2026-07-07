@@ -185,9 +185,13 @@ hand-authored against it and never adjusted to the result (R3).
 
 1. **Capture + freeze the universe (U1).** One live `t1444` KOSPI top-market-cap call
    materializes `lab/config/turn3-universe.json` (validated before write). Commit it.
+   The board serves the top `LS_CAPTURE_N` names (default 30) but returns fewer when it
+   holds fewer on the page — the committed turn-3 file froze **20** (all it served under
+   closure), at the R2/U1 floor. To **reproduce** turn 3, use the committed file as-is;
+   re-capturing overwrites it and can change the pinned set.
    ```
    LS_TRADING_ENV=paper LS_CAPTURE_LANE_FILE=.env.domestic \
-     cargo run --bin capture-universe          # → lab/config/turn3-universe.json (~30 shcodes + provenance)
+     cargo run --bin capture-universe          # → lab/config/turn3-universe.json (top-N shcodes + provenance)
    ```
 2. **Fresh-home ingest (U3).** A fresh `LS_DATA_HOME` gives a clean fingerprint and
    sidesteps the write-side overlap residual. The helper expands the frozen list into

@@ -966,6 +966,14 @@ pub fn analyze_scaffold(cfg: &ScaffoldConfig) -> anyhow::Result<ScaffoldOutcome>
     } else {
         bar.failing_conditions.iter().map(|c| format!("- {c}")).collect::<Vec<_>>().join("\n")
     };
+    // Degenerate all-zero P&L: the dominance share is undefined (denominator 0), so
+    // rendering a bare "0.0%" against the ≤40% cap reads as a self-contradiction
+    // ("0.0% → FAIL"). Show the fail reason instead, mirroring the named condition.
+    let dom_display = if bar.degenerate_zero_pnl {
+        "undefined (all-zero P&L)".to_string()
+    } else {
+        format!("{:.1}%", bar.max_abs_pnl_share * 100.0)
+    };
 
     let mut params_rows = String::new();
     for (k, v) in manifest.params.numeric_summary() {
@@ -1029,7 +1037,7 @@ pub fn analyze_scaffold(cfg: &ScaffoldConfig) -> anyhow::Result<ScaffoldOutcome>
          \n\
          - **(a) trade-count floor (≥ {trade_floor}):** `{total_trades}` → **{a_pf}**\n\
          - **(b) symbol-breadth floor (≥ {breadth_floor} symbols each with ≥ {sym_floor} trades):** `{breadth_n}` → **{b_pf}**\n\
-         - **(c) single-symbol dominance (≤ {dom_cap:.0}% of aggregate |P&L|):** `{dom_share:.1}%` → **{c_pf}**\n\
+         - **(c) single-symbol dominance (≤ {dom_cap:.0}% of aggregate |P&L|):** `{dom_share}` → **{c_pf}**\n\
          \n\
          | Symbol | Trades | Realized P&L (KRW) | abs P&L share |\n\
          |---|---|---|---|\n\
@@ -1058,7 +1066,7 @@ pub fn analyze_scaffold(cfg: &ScaffoldConfig) -> anyhow::Result<ScaffoldOutcome>
         dom_cap = crate::artifacts::performance::bar::DOMINANCE_CAP * 100.0,
         total_trades = bar.total_trades,
         breadth_n = bar.symbols_meeting_breadth,
-        dom_share = bar.max_abs_pnl_share * 100.0,
+        dom_share = dom_display,
         a_pf = pf(bar.trade_floor_pass),
         b_pf = pf(bar.breadth_pass),
         c_pf = pf(bar.dominance_pass),
