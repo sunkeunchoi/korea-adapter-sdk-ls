@@ -1843,6 +1843,12 @@ fn classify_fired_variant_exempts_igw40011_at_500_but_holds_other_5xx() {
         classify_fired_variant(503, "IGW00201"),
         FiredVariantOutcome::MayHaveRested
     );
+    // Adversarial precedence: a 5xx that happens to carry an order-ack code is NOT an
+    // acceptance (ack requires a 2xx) — it stays may-rest/halt, fail-closed.
+    assert_eq!(
+        classify_fired_variant(500, "00040"),
+        FiredVariantOutcome::MayHaveRested
+    );
     // A 2xx order-acceptance ack → a malformed variant was ACCEPTED → WAVE BLOCKED.
     assert_eq!(
         classify_fired_variant(200, "00040"),

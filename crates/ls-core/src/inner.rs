@@ -1687,6 +1687,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn post_order_empty_body_5xx_stays_ambiguous_may_rest() {
+        // R5 fail-closed default: a raw 5xx with no parseable rsp_cd (empty code) is the
+        // most ambiguous outcome of all — the order may have reached the exchange. It must
+        // stay AmbiguousOrder; the IGW40011 exemption keys on the exact code and an empty
+        // code is never an ingress reject.
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        Mock::given(method("POST"))
+            .and(path("/order/path"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("upstream unavailable"))
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        let req = serde_json::json!({"OrdQty": 1});
+        let err = inner
+            .post_order::<_, EchoRes>(&order_policy(), &req)
+            .await
+            .expect_err("ambiguous");
+        assert!(
+            matches!(err, LsError::AmbiguousOrder { .. }),
+            "a bodyless/unparseable 5xx order outcome must stay AmbiguousOrder (may-rest), got {err:?}"
+        );
+    }
+
+    #[tokio::test]
     async fn post_order_concurrent_identical_submits_dispatch_exactly_once() {
         let server = MockServer::start().await;
         mount_token(&server).await;
