@@ -43,7 +43,67 @@ use crate::ws::supervisor::{RowKind, SubSpec, WsSupervisor};
 use crate::KRX_VENUE;
 
 /// Default cadence between t0425 poll passes (KTD2 — relaxed after SC certification).
-const DEFAULT_POLL_CADENCE: Duration = Duration::from_secs(2);
+/// This is the poll-authoritative steady state and the shipped default: the exec
+/// client polls every 2s and the SC lane is a corroborating source.
+pub const DEFAULT_POLL_CADENCE: Duration = Duration::from_secs(2);
+
+/// The relaxed backstop cadence for **SC-primary** mode (KTD-3/KTD-4): once the live
+/// probe certifies SC push-fills (U3) the operator flips SC to the primary fill source
+/// and demotes the t0425 poll to a slow fail-closed reconcile backstop. SC frames carry
+/// fills in real time; the poll only catches a *dropped/missed* SC frame.
+///
+/// **This value IS the worst-case time-to-detect a dropped SC fill (KTD-4):** the poll
+/// loop consumes `reconcile_armed` and re-scans only *after* `sleep(cadence)` (no
+/// event-driven wakeup, see [`run_poll_loop`]), so a missed fill stays invisible for at
+/// most one cadence. It is therefore bounded below [`SC_FILL_DETECTION_CEILING`] — the
+/// maximum stale-state window the bar strategy can tolerate — while still being an order
+/// of magnitude slower than [`DEFAULT_POLL_CADENCE`] so it is a genuine backstop, not a
+/// fill path (and stays clear of the t0425 2/s Account-bucket throttle, `IGW00201`).
+pub const SC_PRIMARY_BACKSTOP_CADENCE: Duration = Duration::from_secs(15);
+
+/// The maximum acceptable time-to-detect a dropped/missed SC fill (KTD-4). Because the
+/// poll loop's steady-state cadence *is* the detection latency (it consumes the arm only
+/// after its sleep), the SC-primary backstop cadence must not exceed this ceiling.
+/// Chosen below one 1-minute bar so the bar-driven strategy can never act on stale
+/// flat/position state for a whole bar. Enforced by an offline invariant test.
+pub const SC_FILL_DETECTION_CEILING: Duration = Duration::from_secs(30);
+
+/// Resolve the t0425 poll cadence from the off-by-default SC-primary selector (KTD-5).
+///
+/// - `false` (the shipped default) → [`DEFAULT_POLL_CADENCE`]: poll authoritative,
+///   byte-identical to today. Shipping the mechanism is a no-op until an operator flips
+///   the selector on (U6) under a certifying live verdict.
+/// - `true` → [`SC_PRIMARY_BACKSTOP_CADENCE`]: SC carries fills, poll relaxes to the
+///   fail-closed backstop. The poll loop is **never disabled** — only slowed — so it can
+///   always reconcile a dropped SC frame within the KTD-4 detection ceiling.
+///
+/// Pure so the selector's off = no-op branch and the ceiling invariant are provable
+/// offline, before the scarce attended open-KRX window (KTD-5).
+pub fn resolve_poll_cadence(sc_primary_selected: bool) -> Duration {
+    if sc_primary_selected {
+        SC_PRIMARY_BACKSTOP_CADENCE
+    } else {
+        DEFAULT_POLL_CADENCE
+    }
+}
+
+/// Shape a raw broker account number into a nautilus [`AccountId`] string.
+///
+/// Nautilus requires an `ISSUER-ID` form (at least one `-`), but LS paper account
+/// numbers arrive with no issuer segment (the live gateway accepts the bare number —
+/// U2's t0425 probe returned `rsp_cd=00000` with it). Passing the bare value straight
+/// to `AccountId::from` panics (`did not contain '-'`), which blocked the first real
+/// `node_exec_tester` run. Prefix a synthetic `LS` issuer when none is present; a value
+/// that already carries a `-` (e.g. the mock `00000000-01`) passes through unchanged.
+/// This only shapes nautilus's *internal* account identity — the gateway-facing account
+/// number (`sdk.orders().account_no()`, used for `OrderIntent`) is never rewritten.
+fn normalize_account_id(raw: &str) -> String {
+    if raw.contains('-') {
+        raw.to_string()
+    } else {
+        format!("LS-{raw}")
+    }
+}
 
 /// The LS domestic cash-equity execution client.
 pub struct LsExecClient {
@@ -81,7 +141,7 @@ impl LsExecClient {
     ) -> Self {
         let clock = get_atomic_clock_realtime();
         let trader_id = TraderId::from(trader_id.into().as_str());
-        let account_id = AccountId::from(account_id.into().as_str());
+        let account_id = AccountId::from(normalize_account_id(&account_id.into()).as_str());
         let emitter = ExecutionEventEmitter::new(
             clock,
             trader_id,
@@ -154,16 +214,26 @@ impl LsExecClient {
             )));
         }
 
-        // Holdings check: t0424 per-holding array must be empty.
+        // Holdings check: no t0424 row may carry an OPEN balance. A same-day buy+sell
+        // round-trip leaves a lingering `janqty=0` row for the symbol (net-zero position,
+        // still listed for the session) — that is NOT an open holding, so gating on a
+        // bare `!is_empty()` false-fails "not flat". Mirror the order check above and
+        // fail CLOSED: a row is open if its `janqty` parses > 0 OR is unparseable (never
+        // treat a garbage balance as "0 = flat").
         let holdings = self
             .sdk
             .account()
             .stock_balance(&T0424Request::new("1", "0", "0", "0"))
             .await?;
-        if !holdings.outblock1.is_empty() {
+        let open_holdings = holdings
+            .outblock1
+            .iter()
+            .filter(|r| r.janqty.trim().parse::<i64>().map_or(true, |n| n > 0))
+            .count();
+        if open_holdings > 0 {
             return Err(AdapterError::Config(format!(
-                "flat-start gate: {} holding position(s) present — refusing to start (R14)",
-                holdings.outblock1.len()
+                "flat-start gate: {open_holdings} holding position(s) present — refusing to \
+                 start (R14)"
             )));
         }
         Ok(())
@@ -856,5 +926,17 @@ mod tests {
         // An ambiguous/no side must be refused (None) — never defaulted to a live
         // SELL. This is the fail-closed guard `submit_request` relies on.
         assert_eq!(side_code(OrderSide::NoOrderSide), None);
+    }
+
+    #[test]
+    fn normalize_account_id_adds_a_synthetic_issuer_only_when_absent() {
+        // A bare LS paper account number (no issuer segment) gets the `LS-` prefix so
+        // nautilus `AccountId::from` (which requires a `-`) does not panic — the defect
+        // the first live `node_exec_tester` run surfaced.
+        assert_eq!(normalize_account_id("1234567890"), "LS-1234567890");
+        // An already-issuer-qualified value (e.g. the mock) is untouched — no double prefix.
+        assert_eq!(normalize_account_id("00000000-01"), "00000000-01");
+        // The result is a valid nautilus AccountId (constructing it must not panic).
+        let _ = AccountId::from(normalize_account_id("1234567890").as_str());
     }
 }

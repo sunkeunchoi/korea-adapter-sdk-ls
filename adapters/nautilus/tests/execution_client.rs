@@ -133,6 +133,42 @@ async fn holdings_refuse_start() {
     assert!(err.to_string().contains("holding"), "reason names holdings: {err}");
 }
 
+/// R14: a lingering `janqty=0` row (a same-day buy+sell round-trip leaves one for the
+/// symbol) is NOT an open position — the gate must pass, not false-fail "not flat".
+#[tokio::test]
+async fn zero_balance_lingering_holding_row_is_flat() {
+    let server = MockServer::start().await;
+    let (client, _sdk) = client_and_sdk(&server).await;
+    mount_t0425(&server, "", serde_json::json!([])).await;
+    mount_t0424(
+        &server,
+        serde_json::json!([{ "expcode": "005930", "janqty": "0", "mdposqt": "0", "hname": "삼성전자" }]),
+    )
+    .await;
+
+    client
+        .verify_flat()
+        .await
+        .expect("a net-zero (janqty=0) round-trip row must read as flat, not an open holding");
+}
+
+/// R14 fail-closed: a holding row with an UNPARSEABLE `janqty` refuses the start — a
+/// garbage balance must never be read as "0 = flat" and slip an open position through.
+#[tokio::test]
+async fn unparseable_holding_balance_fails_closed() {
+    let server = MockServer::start().await;
+    let (client, _sdk) = client_and_sdk(&server).await;
+    mount_t0425(&server, "", serde_json::json!([])).await;
+    mount_t0424(
+        &server,
+        serde_json::json!([{ "expcode": "005930", "janqty": "??", "hname": "삼성전자" }]),
+    )
+    .await;
+
+    let err = client.verify_flat().await.expect_err("unparseable balance must refuse");
+    assert!(err.to_string().contains("holding"), "reason names holdings: {err}");
+}
+
 /// AE5: an order row with an UNPARSEABLE `ordrem` fails the gate closed — a garbage
 /// remaining-qty must never be read as "0 = filled" and let a resting order through.
 #[tokio::test]

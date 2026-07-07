@@ -22,6 +22,19 @@ them, plan -005); the `live-smoke-order` matrix's marketable scenario fills on a
 market and leaves a position requiring an out-of-band paper reset, so it is not used for
 the autonomous wave's evidence. Per-TR evidence: `metadata/evidence/{tr}.yaml`.
 
+**SC-lane certification note (2026-07-07, plan 2026-07-07-001, ledger §28):** the nautilus
+adapter's SC0/SC1 order-event lane was **certified live** as a real fill source (beyond the
+`live-smoke-ws-p2` WS-reachability rows below, which remain connection-reachable-only per KTD6).
+In an attended open-KRX paper window, `node_exec_tester LS_NODE_SC_CERTIFY=1` drove a marketable
+1-lot 005930 buy and witnessed the same fill through **both** the SC1 push frame and the t0425
+poll via one production `FillLedger`:
+`sc1_frames=1 sc_execprc_positive=true poll_saw_fill=true cheprice_populated=true
+total_fill_deltas=1 dedup_collapsed_to_one=true 2nd_ws_tolerated=true => CERTIFIED`. This settles
+the wave's open questions — SC push-fills are delivered, the exec client's 2nd concurrent WS
+session is tolerated, the dual-source exactly-once dedup collapses to one `FillDelta` live, and the
+t0425 `cheprice` came back exact (not the limit-price fallback). It authorizes SC-primary mode
+(`LS_NODE_SC_PRIMARY=1`, poll demoted to the 15s `SC_PRIMARY_BACKSTOP_CADENCE`). Account left flat.
+
 **Pre-window F/O-order-capability probe (2026-07-01, plan 2026-07-01-001 U2/Q1):**
 Before committing the operator's scarce in-window session to `make live-smoke-fo-order`,
 confirm the `domestic_option` lane (account `…51`) is F/O-**order**-capable. The prior
