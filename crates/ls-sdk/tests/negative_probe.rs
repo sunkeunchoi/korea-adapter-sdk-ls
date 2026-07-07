@@ -1017,6 +1017,27 @@ fn working_orders_request(symbol: &str) -> T0425Request {
     }
 }
 
+/// `true` if a `t0425` working-orders response is the **terminal** page — the
+/// body cursor carries no real continuation. t0425 self-paginates on the
+/// `cts_ordno` body cursor, NOT the `tr_cont` header: the gateway sets
+/// `tr_cont="0"` on *any* non-empty page, so gating single-page-ness on the header
+/// fail-closes the instant the probe places its own control row (KTD-1; see
+/// `docs/solutions/logic-errors/order-probe-fill-inclusive-scan-paginates-false-held.md`).
+/// Terminal when the cursor is empty / `" "` / the numeric-default `"0"`; paginated only
+/// when it carries a real order-number continuation cursor. The nautilus runtime's own
+/// terminality checks (`adapters/nautilus/src/execution.rs` `verify_flat` and
+/// `orders/poll.rs`) use the stricter `cts_ordno.trim().is_empty()`; this probe helper
+/// **additionally** treats `"0"` as terminal per KTD-1's "all-default" — safe because no
+/// real order number is `0`, so `"0"` can never be a genuine continuation cursor. That is
+/// a deliberate difference, not a mirror: empirically the gateway emits an *empty* terminal
+/// cursor (the live SC-certify run's poll concluded on 005930 without perpetual reconcile),
+/// so the `"0"` branch is defensive belt-and-braces. Pure so the offline twin can assert it
+/// without a live t0425 call.
+fn scan_page_is_terminal(cts_ordno: &str) -> bool {
+    let cursor = cts_ordno.trim();
+    cursor.is_empty() || cursor == "0"
+}
+
 /// Run the `t0425` working-orders scan for the traded symbol (KTD1), **unfilled-only**
 /// (`chegb="2"`, see `working_orders_request`), single page, with a 1500ms pre-pace so
 /// the per-TR budget refills. Returns `Err` on any failure (treated as NOT flat —
@@ -1026,17 +1047,19 @@ async fn scan_symbol_working_orders(
     sdk: &LsSdk,
     symbol: &str,
 ) -> Result<Vec<T0425OutBlock1>, String> {
-    use ls_core::HasPagination;
     let req = working_orders_request(symbol);
     tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
     match sdk.orders().inquiry(&req).await {
         Ok(resp) => {
-            let cont = resp.tr_cont().trim().to_string();
-            if !cont.is_empty() && !cont.eq_ignore_ascii_case("N") {
-                return Err(format!(
-                    "traded-symbol t0425 working-order scan is paginated (tr_cont={cont}) — \
-                     a single page cannot positively confirm flat"
-                ));
+            // Single-page-ness is decided on the `cts_ordno` body cursor (KTD-1),
+            // NOT the `tr_cont` header (which reads `"0"` on any non-empty page and
+            // would false-HELD the instant this probe's own control row is present).
+            if !scan_page_is_terminal(&resp.outblock.cts_ordno) {
+                return Err(
+                    "traded-symbol t0425 working-order scan is paginated (cts_ordno cursor \
+                     carries a continuation) — a single page cannot positively confirm flat"
+                        .to_string(),
+                );
             }
             Ok(resp.outblock1)
         }
@@ -1736,6 +1759,26 @@ fn working_orders_scan_request_is_unfilled_only_single_page() {
     );
     assert_eq!(req.inblock.expcode, "005930", "scan stays symbol-scoped");
     assert_eq!(req.inblock.cts_ordno, " ", "first-page cursor keeps the scan single-page");
+}
+
+#[test]
+fn scan_page_terminality_keys_on_the_cts_ordno_body_cursor_not_tr_cont() {
+    // KTD-1: single-page-ness is decided on the `cts_ordno` body cursor, NOT the
+    // `tr_cont` header. The §27 root cause is that the gateway sets `tr_cont="0"` on
+    // ANY non-empty page, so the header-gated guard false-HELD the moment the probe's
+    // own control row was resting. Terminal on empty / `" "` / the numeric-default
+    // `"0"`; paginated only on a real order-number continuation cursor.
+    // Terminal (single page → confirms flat/working-set):
+    assert!(scan_page_is_terminal(""), "empty cursor is terminal (all-default/omitted block)");
+    assert!(scan_page_is_terminal(" "), "the first-page sentinel cursor is terminal");
+    assert!(scan_page_is_terminal("   "), "whitespace-only cursor is terminal");
+    assert!(scan_page_is_terminal("0"), "numeric-default `0` cursor is terminal (no order is #0)");
+    // Paginated (a genuine continuation cursor → fail-closed, cannot confirm flat):
+    assert!(
+        !scan_page_is_terminal("20240001"),
+        "a real order-number continuation cursor must be treated as paginated (fail-closed)"
+    );
+    assert!(!scan_page_is_terminal(" 12345 "), "a trimmed real cursor is still paginated");
 }
 
 #[test]

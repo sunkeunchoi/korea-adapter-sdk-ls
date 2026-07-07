@@ -1736,3 +1736,80 @@ promotion + the three reopen fixes above are the staged follow-up.
 `required:false`) → re-probe → promote what certifies; (3) pace the t8412 standalone loop; (4)
 fix the `tr_cont`→`cts_ordno` single-page guard for the order quartet; (5) clear the stranded
 005930 order. (2)–(4) each need an attended in-window re-probe before their flip.
+
+## 28. Nautilus open-window SC certification wave — SC CERTIFIED live; U6 authorized (2026-07-07)
+
+Plan `docs/plans/2026-07-07-001-feat-nautilus-open-window-sc-certify-wave-plan.md`. A mixed
+offline/live wave: settle whether the paper gateway delivers SC push-fill frames and tolerates
+the exec client's second WS session, switch SC to the primary fill source if it certifies, and
+fold in the two prerequisites (§27 item 4 guard fix, item 5 stranded-order clear). **Executed
+end-to-end this session in an attended open-KRX window (2026-07-07): the offline half (U1, U4, U5)
+landed and gated green, and the live probe (U2/U3) ran attended and returned a full CERTIFIED
+verdict — SC push-fills are delivered, the 2nd WS session is tolerated, and the same fill via both
+the SC1 frame and the t0425 poll collapsed to exactly one `FillDelta` — which authorizes U6.**
+
+**LANDED offline (this session):**
+- **U1 — the `tr_cont`→`cts_ordno` single-page guard fix (§27 reason C / item 4).** Both probe
+  scans (`negative_probe.rs::scan_symbol_working_orders` and its `order_smoke.rs` twin) now gate
+  single-page terminality on the response **`cts_ordno` body cursor** (empty / `" "` /
+  numeric-default `"0"` = terminal; a real order-number continuation cursor = paginated →
+  fail-closed), not the `tr_cont` header (which reads `"0"` on any non-empty page). Extracted a
+  pure `scan_page_is_terminal(cts_ordno)` fn in each file, mirroring the nautilus runtime's
+  proven `execution.rs` predicate, with a new offline unit test each. `cargo test -p ls-sdk` green;
+  the cross-workspace adapter gate green (KTD-6). This unblocks the §27 order-quartet re-cert —
+  once its attended live re-probe runs, an order probe can now scan a book that already holds its
+  own control row without a false pagination HELD.
+- **U4 — off-by-default SC-primary cadence mechanism (KTD-3/4/5).** New pure
+  `resolve_poll_cadence(sc_primary)` selector in `execution.rs`: OFF (default) → the 2s
+  `DEFAULT_POLL_CADENCE` (poll authoritative, byte-identical to today); ON →
+  `SC_PRIMARY_BACKSTOP_CADENCE` (15s), demoting the poll to a fail-closed reconcile backstop while
+  SC carries fills. Wired to `LS_NODE_SC_PRIMARY=1` (exact "1") in `node_exec_tester`, applied via
+  the existing `with_poll_cadence` hook. **KTD-4 resolved by bounding the cadence:** the poll loop
+  consumes `reconcile_armed` only after `sleep(cadence)`, so the cadence *is* the worst-case
+  dropped-SC-fill detection latency — the 15s backstop is held below a new
+  `SC_FILL_DETECTION_CEILING` (30s, < one 1-minute bar) by an offline invariant test. Five new
+  offline tests + the cadence-independent exactly-once dedup (AE1) assertion. Poll loop is never
+  disabled, only slowed. Ships unconditionally; live activation is U6.
+- **U5 — README corrections.** `adapters/nautilus/README.md`: replaced the stale "a v-next SDK
+  follow-up adds `cheprice`" with the accurate "`cheprice` wired end-to-end today, consumed with a
+  limit-price `price_approximated` fallback"; corrected the SC lane from "subordinate/un-deduped"
+  to "already flows through the one exactly-once ledger seam (AE1); poll authoritative today,
+  relaxes to the SC-primary backstop when the operator certifies SC."
+
+**LIVE EXECUTED (attended, open KRX 2026-07-07, `LS_TRADING_ENV=paper`, `.env.domestic`):**
+- **U2 — flat confirmed.** The §27 stranded 005930 buy was already cleared; a `chegb="2"` t0425
+  scan of 005930 returned the empty/flat signature (`body_len=63`), zero owned resting rows.
+- **U3 — SC CERTIFIED.** Leg 1 (`LS_NODE_SC_PROBE=1`, resting chain) returned `SC0-seen (2 accept
+  frames); 2nd-WS-session tolerated`. Leg 2 (marketable) returned `SC1-seen (1 fill frame)`. A new
+  **`LS_NODE_SC_CERTIFY=1`** leg then drove one marketable 1-lot buy and witnessed the SAME fill
+  through **both** the SC1 frame and the t0425 poll via one production `FillLedger`, printing:
+  `sc1_frames=1 sc_execprc_positive=true poll_saw_fill=true cheprice_populated=true
+  total_fill_deltas=1 dedup_collapsed_to_one=true 2nd_ws_tolerated=true => CERTIFIED`. All KTD-5
+  criteria met live: SC delivers fills with a positive `execprc`, the poll corroborates and carried
+  a **positive `cheprice`** (exact, not the limit-price fallback), and the dual-source dedup
+  collapsed to exactly one `FillDelta`. Account left flat after the sign-aware close.
+- **U6 — authorized.** The CERTIFIED verdict + the U4 mechanism satisfy KTD-5; SC-primary is safe
+  to activate. Go-forward activation is `LS_NODE_SC_PRIMARY=1` on the live node (constructs the
+  exec client at the `SC_PRIMARY_BACKSTOP_CADENCE` 15s backstop; poll demoted, never disabled). The
+  dedup that makes the relaxation safe is now proven against real frames, not just the mock.
+
+**Defects surfaced live and fixed offline (all gated green, KTD-6):**
+1. **`AccountId` panic** — `LsExecClient::new` passed the bare LS account number to nautilus
+   `AccountId::from`, which panics without an `ISSUER-ID` (`-`); it blocked the first live run.
+   Fixed with `normalize_account_id` (synthetic `LS-` issuer when absent; gateway-facing account
+   number never rewritten) + a unit test.
+2. **`verify_flat` over-counted holdings** — a same-day buy+sell leaves a lingering `janqty=0`
+   t0424 row; the gate counted any row as an open position, false-failing "not flat" (the source of
+   the marketable probe's misleading "not flat after close" warning). Now gates on `janqty > 0`,
+   fail-closed on unparseable (mirrors the order check) + 2 tests.
+3. **Marketable-probe fill-witness gap** — `run_marketable_probe` never ran the poll/ledger, so it
+   could not witness the cheprice/dedup evidence KTD-5 requires. Added `LS_NODE_SC_CERTIFY=1` (dual-
+   source witness through the production ledger; ord_no-targeted poll presence detection tolerates a
+   paginating `chegb="0"` symbol) and `LS_NODE_CLOSE_ONLY=1` (fail-closed flatten recovery, never
+   oversells, never buys) for stuck positions.
+
+**Count tally.** **0 support-tier flips in this entry** — the work is a test-harness guard fix
+(U1), an off-by-default runtime mechanism now certified for activation (U4/U6), README corrections
+(U5), three live-surfaced defect fixes, and two new operator harness legs; no TR changed support
+tier. `recommended` stays 3 (`t1101`/`token`/`S3_`), count sites unchanged. The §27 order-quartet
+promotions remain their own operator-gated live tail (the U1 fix unblocks their re-probe).

@@ -274,31 +274,51 @@ best ask) or outside the daily band (the U6 band guard, fail-closed).
 The execution client now emits **`OrderFilled`** (full + partial), and exposes
 **modify/cancel** through the Nautilus `ExecutionClient` surface. Fills come from two
 sources feeding one exactly-once ledger (`orders::ledger`): a t0425 **poll loop**
-(authoritative — fills emit on bare paper with no push frames, paced to the 2/s
-t0425 cap) and the **SC0/SC1 order-event WS lane** (subordinate until the live probe
-below certifies it). KRX modify/cancel issue new order numbers; the ledger chains
-them, so a fill keyed on any chained OrdNo resolves to the originating order — and a
-rejected cancel emits **cancel-rejected** (the order stays open), never a canceled
-event. Poll-derived fills emit at the order's limit price (t0425 models no execution
-price; a v-next SDK follow-up adds `cheprice` to `T0425OutBlock1`).
+(currently authoritative — fills emit on bare paper with no push frames, paced to the
+2/s t0425 cap) and the **SC0/SC1 order-event WS lane**. Both sources already flow
+through the one exactly-once seam, so a fill observed by both lanes collapses to a
+single `FillDelta` regardless of arrival order (`orders::ledger`, AE1) — SC is not a
+separate, un-deduped path. The poll is authoritative by default; the staged live probe
+below has **certified** SC push-fills (§28), so an operator may flip the off-by-default
+SC-primary selector (`LS_NODE_SC_PRIMARY=1`) to relax the poll to a slow fail-closed
+backstop cadence and let SC carry fills. KRX modify/cancel issue new order numbers; the ledger
+chains them, so a fill keyed on any chained OrdNo resolves to the originating order —
+and a rejected cancel emits **cancel-rejected** (the order stays open), never a
+canceled event. Poll-derived fills emit at the row's **`cheprice`** when it parses
+positive; otherwise they fall back to the order's limit price and set
+`price_approximated` (also set on any beyond-first-partial poll fill). `cheprice` is
+wired end-to-end today on `T0425OutBlock1` and consumed in `orders::poll` — there is
+no pending SDK follow-up to add it.
 
-### Staged SC live probe (settles SC-on-paper)
+### Staged SC live probe — CERTIFIED (2026-07-07, ledger §28)
 
-Whether the paper gateway delivers SC push frames — and whether it tolerates the
-exec client's second concurrent WS session — is unknown; the design is correct
-either way (poll is authoritative), and this operator-gated probe settles it. Its
-verdict decides whether SC later becomes the primary fill source.
+The paper gateway **does** deliver SC push frames and **does** tolerate the exec client's
+second concurrent WS session — certified live in an attended open-KRX window. The
+`LS_NODE_SC_CERTIFY=1` leg drove a marketable 1-lot buy and witnessed the same fill via
+**both** the SC1 frame and the t0425 poll through one production ledger, printing
+`sc1_frames=1 sc_execprc_positive=true poll_saw_fill=true cheprice_populated=true
+total_fill_deltas=1 dedup_collapsed_to_one=true 2nd_ws_tolerated=true => CERTIFIED`. So the
+exactly-once dedup (the invariant the SC-primary backstop relaxation makes load-bearing) is
+proven against real frames, and `cheprice` came back exact (not the limit-price fallback).
+
+**SC-primary is therefore authorized:** set `LS_NODE_SC_PRIMARY=1` on the live node to run
+with SC as the primary fill source and the poll demoted to the `SC_PRIMARY_BACKSTOP_CADENCE`
+(15s) fail-closed backstop. Off by default = poll authoritative, byte-identical to prior.
 
 ```
-# Leg 1 (SC0): observe accepts during the guarded resting chain (never fills).
+# SC certification leg (U3/U6): marketable 1-lot buy, dual-source dedup witness + verdict.
+LS_TRADING_ENV=paper LS_NODE_LANE_FILE=.env.domestic LS_NODE_SYMBOL=005930 \
+LS_NODE_SC_CERTIFY=1 \
+  cargo run --bin node_exec_tester
+
+# Leg 1 (SC0 only): observe accepts during the guarded resting chain (never fills).
 LS_TRADING_ENV=paper LS_NODE_LANE_FILE=.env.domestic LS_NODE_SYMBOL=005930 \
 LS_NODE_PRICE=<safe-resting-price> LS_NODE_SC_PROBE=1 \
   cargo run --bin node_exec_tester
 
-# Leg 2 (SC1): a 1-lot marketable buy + sign-aware close (BYPASSES the band guard) —
-# the only way to witness a fill frame. Requires an open KRX window.
+# Recovery: flatten a residual holding a probe left un-netted (fail-closed, never buys).
 LS_TRADING_ENV=paper LS_NODE_LANE_FILE=.env.domestic LS_NODE_SYMBOL=005930 \
-LS_NODE_SC_MARKETABLE=1 \
+LS_NODE_CLOSE_ONLY=1 \
   cargo run --bin node_exec_tester
 ```
 

@@ -675,6 +675,24 @@ fn flat_verdict(rows: &[T0425OutBlock1]) -> FlatVerdict {
     }
 }
 
+/// `true` if a `t0425` working-orders response is the **terminal** page — the body
+/// cursor carries no real continuation. t0425 self-paginates on the `cts_ordno` body
+/// cursor, NOT the `tr_cont` header: the gateway sets `tr_cont="0"` on *any* non-empty
+/// page, so gating single-page-ness on the header fail-closes the instant this smoke
+/// places its own control row (KTD-1; see
+/// `docs/solutions/logic-errors/order-probe-fill-inclusive-scan-paginates-false-held.md`).
+/// Terminal when the cursor is empty / `" "` / the numeric-default `"0"`; paginated only
+/// when it carries a real order-number continuation cursor. The nautilus runtime's own
+/// terminality checks (`adapters/nautilus/src/execution.rs` `verify_flat` and
+/// `orders/poll.rs`) use the stricter `cts_ordno.trim().is_empty()`; this probe helper
+/// **additionally** treats `"0"` as terminal per KTD-1's "all-default" — safe because no
+/// real order number is `0`. A deliberate difference, not a mirror. Pure so the offline
+/// twin can assert it without a live t0425 call.
+fn scan_page_is_terminal(cts_ordno: &str) -> bool {
+    let cursor = cts_ordno.trim();
+    cursor.is_empty() || cursor == "0"
+}
+
 /// Run the `t0425` working-orders scan for the traded symbol (KTD2). Returns `Err` on
 /// any failure — the caller treats that as NOT flat (positive confirmation only).
 ///
@@ -709,7 +727,6 @@ async fn scan_symbol_working_orders(
     sdk: &LsSdk,
     symbol: &str,
 ) -> Result<Vec<T0425OutBlock1>, String> {
-    use ls_core::HasPagination;
     let req = T0425Request {
         inblock: T0425InBlock {
             expcode: symbol.into(), // the smoke's only traded symbol — its own orders
@@ -730,15 +747,17 @@ async fn scan_symbol_working_orders(
     match sdk.orders().inquiry(&req).await {
         Ok(resp) => {
             // Positive confirmation only: a single page that did NOT exhaust the working
-            // set cannot prove flatness. If the gateway signals more pages, fail CLOSED
-            // (NOT flat) rather than conclude flat from a truncated page. In practice the
-            // working set is <= one page, so this never fires on a real flat account.
-            let cont = resp.tr_cont().trim();
-            if !cont.is_empty() && !cont.eq_ignore_ascii_case("N") {
-                return Err(format!(
-                    "traded-symbol t0425 working-order scan is paginated (tr_cont={cont}) — \
-                     a single page cannot positively confirm flat"
-                ));
+            // set cannot prove flatness. Decide single-page-ness on the `cts_ordno` body
+            // cursor (KTD-1), NOT the `tr_cont` header — the gateway sets `tr_cont="0"`
+            // on any non-empty page, so gating on it would fail-closed the instant this
+            // smoke's own control row is resting. Fail CLOSED (NOT flat) only on a real
+            // continuation cursor. In practice the working set is <= one page.
+            if !scan_page_is_terminal(&resp.outblock.cts_ordno) {
+                return Err(
+                    "traded-symbol t0425 working-order scan is paginated (cts_ordno cursor \
+                     carries a continuation) — a single page cannot positively confirm flat"
+                        .to_string(),
+                );
             }
             Ok(resp.outblock1)
         }
@@ -752,6 +771,23 @@ async fn scan_symbol_working_orders(
 // ===========================================================================
 // Offline fail-closed tests (run in the normal suite)
 // ===========================================================================
+
+#[test]
+fn scan_page_terminality_keys_on_the_cts_ordno_body_cursor_not_tr_cont() {
+    // KTD-1/KTD-2 (twin of negative_probe.rs): single-page-ness is decided on the
+    // `cts_ordno` body cursor, NOT the `tr_cont` header (the gateway sets `tr_cont="0"`
+    // on any non-empty page, which would false-HELD once this smoke's own control row
+    // is resting). Terminal on empty / `" "` / `"0"`; paginated only on a real cursor.
+    assert!(scan_page_is_terminal(""), "empty cursor is terminal");
+    assert!(scan_page_is_terminal(" "), "first-page sentinel cursor is terminal");
+    assert!(scan_page_is_terminal("   "), "whitespace-only cursor is terminal");
+    assert!(scan_page_is_terminal("0"), "numeric-default `0` cursor is terminal");
+    assert!(
+        !scan_page_is_terminal("20240001"),
+        "a real order-number continuation cursor is paginated (fail-closed)"
+    );
+    assert!(!scan_page_is_terminal(" 12345 "), "a trimmed real cursor is still paginated");
+}
 
 #[test]
 fn order_smoke_guard_requires_paper_and_explicit_optin() {
