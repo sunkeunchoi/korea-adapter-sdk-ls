@@ -156,11 +156,11 @@ catalog no-go is a non-zero exit, a genuine error is scrubbed and non-zero too.
 
 | Subcommand | What it does | Key env |
 |---|---|---|
-| `turn` | A governed parameter turn: resolve current params from the latest finalized manifest, govern the proposal (deny-by-default + bounds 0.5), append the envelope, run the backtest with the override + version bump. No override → a rerun (same params, no governance, no version bump). | `LS_TURN_PARAM`, `LS_TURN_VALUE`, `LS_TURN_SDATE`/`LS_TURN_EDATE` (optional; inherited otherwise, required on a fresh home) |
+| `turn` | A governed parameter turn: resolve current params from the latest finalized manifest, govern the proposal (deny-by-default + bounds 0.5), append the envelope, run the backtest with the override + version bump. No override → a rerun (same params, no governance, no version bump). Optional `LS_TURN_EXPECT_VERSION`/`LS_TURN_EXPECT_GAP` assert the resolved identity before running — a mismatch (e.g. a fresh home falling back to the v0 default) is a hard stop, not a silent wrong-param run (KTD-5). | `LS_TURN_PARAM`, `LS_TURN_VALUE`, `LS_TURN_SDATE`/`LS_TURN_EDATE` (optional; inherited otherwise, required on a fresh home), `LS_TURN_EXPECT_VERSION`/`LS_TURN_EXPECT_GAP` (optional resolution assertion) |
 | `runs compare` | The manifest verdict: `param` mode (exactly-two-key param diff, code/fingerprint/range equal, universe equal-or-explained) or `data` mode (zero-key param diff + code equal; fingerprint/range/universe deltas require an explanation). PASS/FAIL. | `LS_COMPARE_MODE` (`param`\|`data`), `LS_COMPARE_A`/`LS_COMPARE_B` (default two newest), `LS_COMPARE_EXPLANATION` |
 | `replay` | Guardrail-swap replay over a recorded stream (default the cross-run registry). Refuses a telemetry-only stream (zero evaluated cycles) instead of reporting "no divergence". | `LS_REPLAY_STREAM` (default `<data>/decisions/decisions.jsonl`), `LS_REPLAY_CAP` |
 | `catalog status` | The ingest→backtest go/no-go: per-(instrument, bar-kind) counts + spans; flags a span that undershoots the checkpoint watermark (and, with an expected range, front truncation). | `LS_STATUS_SDATE`/`LS_STATUS_EDATE` (optional expected range) |
-| `analyze --scaffold` | Pre-fills a run's `analysis.md` with run facts (params, trade count, gap-noise summary) + the keep / revert / insufficient-evidence verdict skeleton. Refuses to overwrite. | `LS_ANALYZE_RUN` |
+| `analyze --scaffold` | Pre-fills a run's `analysis.md` with run facts (params, trade count, gap-noise summary), the **computed R1 decisiveness bar** (per-symbol fold + the three per-condition PASS/FAIL + named failing conditions), and the keep / revert / insufficient-evidence verdict skeleton. Refuses to overwrite. | `LS_ANALYZE_RUN` |
 
 A governed param turn, then the payoff compare:
 
@@ -175,6 +175,59 @@ LS_DATA_HOME=./data cargo run --bin lab-research runs compare   # two newest, pa
 
 The deferred live risk-monitor is the other consumer of the decision layer; it is not
 wired yet.
+
+### Turn 3 — broaden-sample data turn (attended, paper) — the fresh-home recipe
+
+Turn 3 is a **pure data turn**: hold all v3 params, broaden the sample to a rule-pinned
+KOSPI cross-section, rerun, and render a verdict against the R1 decisiveness bar fixed
+*before* the run. The bar is machine-computed in the scaffold; the verdict word is
+hand-authored against it and never adjusted to the result (R3).
+
+1. **Capture + freeze the universe (U1).** One live `t1444` KOSPI top-market-cap call
+   materializes `lab/config/turn3-universe.json` (validated before write). Commit it.
+   ```
+   LS_TRADING_ENV=paper LS_CAPTURE_LANE_FILE=.env.domestic \
+     cargo run --bin capture-universe          # → lab/config/turn3-universe.json (~30 shcodes + provenance)
+   ```
+2. **Fresh-home ingest (U3).** A fresh `LS_DATA_HOME` gives a clean fingerprint and
+   sidesteps the write-side overlap residual. The helper expands the frozen list into
+   `LS_INGEST_SYMBOLS` and runs daily (whole range) then bounded minute:
+   ```
+   LS_TRADING_ENV=paper LS_DATA_HOME=./data-turn3 \
+   LS_TURN3_DAILY_SDATE=20240102 LS_TURN3_SDATE=20240110 LS_TURN3_EDATE=20240216 \
+     bash scripts/turn3-ingest.sh
+   # then the go/no-go — pins the achievable range on front-truncation (OQ1):
+   LS_DATA_HOME=./data-turn3 LS_STATUS_SDATE=20240110 LS_STATUS_EDATE=20240216 \
+     cargo run --bin lab-research catalog status   # must be GO before proceeding
+   ```
+3. **Seed v3 params + rerun with the resolution assertion (U4, KTD-5).** A fresh home
+   has no finalized run, so a rerun would fall back to `OrbParams::default` (v0, gap 3.0).
+   Copy the turn-2b v3 run's `manifest.json` into the fresh home's `runs/<same-id>/` so
+   `latest_finalized_run` resolves gap 0.6 / v3, then pin the assertion so a missing seed
+   is a hard stop — not a silent v0 run:
+   ```
+   mkdir -p ./data-turn3/runs/<turn2b-v3-run-id>
+   cp ./data/runs/<turn2b-v3-run-id>/manifest.json ./data-turn3/runs/<turn2b-v3-run-id>/
+   LS_DATA_HOME=./data-turn3 LS_TURN_EXPECT_VERSION=3 LS_TURN_EXPECT_GAP=0.6 \
+   LS_TURN_SDATE=20240110 LS_TURN_EDATE=20240216 \
+     cargo run --bin lab-research turn            # rerun; refuses unless it resolves v3/0.6
+   ```
+4. **Reproducibility compare (U4, KTD-3).** Run a second identical rerun, then data-mode
+   `runs compare` over the two — determinism (run A ≡ run B), not a narrow-vs-wide A/B:
+   ```
+   LS_DATA_HOME=./data-turn3 LS_TURN_EXPECT_VERSION=3 LS_TURN_EXPECT_GAP=0.6 \
+   LS_TURN_SDATE=20240110 LS_TURN_EDATE=20240216 cargo run --bin lab-research turn
+   LS_DATA_HOME=./data-turn3 LS_COMPARE_MODE=data \
+   LS_COMPARE_EXPLANATION="v3-wide vs identical v3-wide rerun — determinism check" \
+     cargo run --bin lab-research runs compare    # expect PASS "no data deltas"
+   ```
+5. **Scaffold + author the verdict (U4, R1/R7).** The scaffold prints the computed bar;
+   author keep/revert only if all three conditions PASS, else insufficient-evidence naming
+   the failing condition(s). Record the outcome in the ledger (`CONCEPTS.md` §-note).
+   ```
+   LS_DATA_HOME=./data-turn3 LS_ANALYZE_RUN=<newest run id> \
+     cargo run --bin lab-research analyze --scaffold
+   ```
 
 ## Live paper session (operator-gated)
 

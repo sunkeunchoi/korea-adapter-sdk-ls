@@ -165,6 +165,14 @@ pub struct TurnConfig {
     /// `{override_param: override_target}`; a divergent map exercises the
     /// refuse-on-mismatch guard (R1).
     pub applied_overrides: Option<BTreeMap<String, f64>>,
+    /// U4/KTD-5: the strategy version the resolved current params MUST carry. When
+    /// set, a mismatch (e.g. a fresh home falling back to `OrbParams::default()`'s
+    /// v0) is a hard stop before any backtest — not a silent default-param run.
+    pub expect_version: Option<u32>,
+    /// U4/KTD-5: the `gap_min_pct` the resolved current params MUST carry. Paired
+    /// with [`Self::expect_version`] to pin the seeded v3 identity (0.6) before a
+    /// fresh-home rerun.
+    pub expect_gap_min_pct: Option<f64>,
 }
 
 impl TurnConfig {
@@ -180,6 +188,8 @@ impl TurnConfig {
             starting_balance: 100_000_000.0,
             now,
             applied_overrides: None,
+            expect_version: None,
+            expect_gap_min_pct: None,
         }
     }
 }
@@ -216,6 +226,31 @@ pub async fn turn(cfg: TurnConfig) -> anyhow::Result<TurnOutcome> {
         Some((_, m)) => (m.params.clone(), m.strategy_version),
         None => (OrbParams::default(), OrbParams::default().strategy_version),
     };
+
+    // U4 / KTD-5: assert the resolved v3 identity BEFORE running. On a fresh home
+    // with no seeded manifest, `latest_finalized_run` is `None` and the params fall
+    // back to `OrbParams::default()` (v0, gap 3.0) — a silent wrong-strategy run. If
+    // the operator pinned the expected identity, refuse rather than run defaults.
+    if let Some(expected) = cfg.expect_version {
+        if current_version != expected {
+            anyhow::bail!(
+                "v3-param resolution failed: resolved strategy v{current_version} (gap_min_pct {:.4}), \
+                 expected v{expected} — the fresh home is missing the seeded v3 manifest (KTD-5). Copy the \
+                 turn-2b v3 run's manifest.json into runs/ before rerunning; refusing a silent default-param backtest",
+                current_params.gap_min_pct
+            );
+        }
+    }
+    if let Some(expected_gap) = cfg.expect_gap_min_pct {
+        if (current_params.gap_min_pct - expected_gap).abs() > 1e-9 {
+            anyhow::bail!(
+                "v3-param resolution failed: resolved gap_min_pct {:.4} (strategy v{current_version}), \
+                 expected {expected_gap:.4} — the fresh home did not resolve the seeded v3 params (KTD-5). \
+                 Refusing a wrong-param backtest",
+                current_params.gap_min_pct
+            );
+        }
+    }
 
     // Range inheritance (KTD1): a param verdict's range/fingerprint equality is
     // true by construction when the new run pins the prior run's range. A fresh
@@ -908,6 +943,30 @@ pub fn analyze_scaffold(cfg: &ScaffoldConfig) -> anyhow::Result<ScaffoldOutcome>
     let num_trades = performance.summary.get("num_trades").copied().unwrap_or(0.0);
     let pnl_total = performance.summary.get("pnl_total").copied().unwrap_or(0.0);
 
+    // The turn-3 decisiveness bar (R1, KTD-2): a computed, per-condition PASS/FAIL
+    // the verdict is authored against — not eyeballed. Symbols render verbatim
+    // (structured, like the universe list — a 6-digit shcode must not be masked).
+    let bar = performance.bar_evaluation();
+    let pf = |pass: bool| if pass { "PASS" } else { "FAIL" };
+    let mut bar_rows = String::new();
+    for s in &bar.per_symbol {
+        bar_rows.push_str(&format!(
+            "| `{}` | {} | {:.0} | {:.1}% |\n",
+            s.symbol,
+            s.trades,
+            s.realized_pnl,
+            s.abs_pnl_share * 100.0
+        ));
+    }
+    if bar_rows.is_empty() {
+        bar_rows.push_str("| _(no realized trades)_ | 0 | 0 | 0.0% |\n");
+    }
+    let bar_failing = if bar.failing_conditions.is_empty() {
+        "_(none — all three conditions hold; the verdict may be keep or revert)_".to_string()
+    } else {
+        bar.failing_conditions.iter().map(|c| format!("- {c}")).collect::<Vec<_>>().join("\n")
+    };
+
     let mut params_rows = String::new();
     for (k, v) in manifest.params.numeric_summary() {
         params_rows.push_str(&format!("- `{k}`: {v:.4}\n"));
@@ -962,10 +1021,29 @@ pub fn analyze_scaffold(cfg: &ScaffoldConfig) -> anyhow::Result<ScaffoldOutcome>
          - **Observations:**\n\
          {observations}\n\
          \n\
+         ## Decisiveness bar (R1) — computed, pre-registered\n\
+         \n\
+         A keep/revert verdict requires **all three** conditions to hold; any failure\n\
+         is insufficient-evidence (the failing condition(s) are named below). The bar\n\
+         was fixed before the run and is not adjusted to the result (R3).\n\
+         \n\
+         - **(a) trade-count floor (≥ {trade_floor}):** `{total_trades}` → **{a_pf}**\n\
+         - **(b) symbol-breadth floor (≥ {breadth_floor} symbols each with ≥ {sym_floor} trades):** `{breadth_n}` → **{b_pf}**\n\
+         - **(c) single-symbol dominance (≤ {dom_cap:.0}% of aggregate |P&L|):** `{dom_share:.1}%` → **{c_pf}**\n\
+         \n\
+         | Symbol | Trades | Realized P&L (KRW) | abs P&L share |\n\
+         |---|---|---|---|\n\
+         {bar_rows}\n\
+         **Bar cleared:** {all_pass}. **Failing conditions:**\n\
+         \n\
+         {bar_failing}\n\
+         \n\
          ## Verdict\n\
          \n\
          State one of **{keep}** / **{revert}** / **{insufficient}**, grounded in the run\n\
-         facts above (positive P&L is not required — the loop's product is a decision):\n\
+         facts above (positive P&L is not required — the loop's product is a decision).\n\
+         Per R1 the verdict may be **{keep}** or **{revert}** only if the bar is cleared;\n\
+         otherwise it is **{insufficient}** naming the failing condition(s):\n\
          \n\
          > _verdict: TODO_\n",
         run_id = cfg.run_id,
@@ -974,6 +1052,19 @@ pub fn analyze_scaffold(cfg: &ScaffoldConfig) -> anyhow::Result<ScaffoldOutcome>
         version = manifest.strategy_version,
         start = manifest.data_range.start,
         end = manifest.data_range.end,
+        trade_floor = crate::artifacts::performance::bar::TRADE_FLOOR,
+        breadth_floor = crate::artifacts::performance::bar::BREADTH_SYMBOL_FLOOR,
+        sym_floor = crate::artifacts::performance::bar::SYMBOL_TRADE_FLOOR,
+        dom_cap = crate::artifacts::performance::bar::DOMINANCE_CAP * 100.0,
+        total_trades = bar.total_trades,
+        breadth_n = bar.symbols_meeting_breadth,
+        dom_share = bar.max_abs_pnl_share * 100.0,
+        a_pf = pf(bar.trade_floor_pass),
+        b_pf = pf(bar.breadth_pass),
+        c_pf = pf(bar.dominance_pass),
+        all_pass = if bar.all_pass { "yes" } else { "no" },
+        bar_rows = bar_rows.trim_end(),
+        bar_failing = bar_failing,
         keep = VERDICT_WORDS[0],
         revert = VERDICT_WORDS[1],
         insufficient = VERDICT_WORDS[2],
@@ -1132,6 +1223,16 @@ fn turn_config_from_env() -> anyhow::Result<TurnConfig> {
     if let Some(bal) = env_f64("LS_TURN_BALANCE")? {
         cfg.starting_balance = bal;
     }
+    // U4 / KTD-5: pin the expected resolved v3 identity so a fresh home missing the
+    // seeded manifest stops instead of running defaults.
+    cfg.expect_version = match std::env::var("LS_TURN_EXPECT_VERSION") {
+        Ok(v) => Some(
+            v.parse()
+                .map_err(|_| anyhow::anyhow!("LS_TURN_EXPECT_VERSION must be an integer, got {v:?}"))?,
+        ),
+        Err(_) => None,
+    };
+    cfg.expect_gap_min_pct = env_f64("LS_TURN_EXPECT_GAP")?;
     Ok(cfg)
 }
 
