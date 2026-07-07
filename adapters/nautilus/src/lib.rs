@@ -37,6 +37,7 @@ pub mod factories;
 pub mod orders;
 pub mod probe;
 pub mod scrub;
+pub mod universe;
 pub mod ws;
 
 pub use error::{AdapterError, AdapterResult};

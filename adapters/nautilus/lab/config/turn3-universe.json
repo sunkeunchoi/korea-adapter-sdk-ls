@@ -1,0 +1,32 @@
+{
+  "provenance": {
+    "source_tr": "t1444",
+    "upcode": "001",
+    "upcode_label": "코스피종합 (KOSPI composite)",
+    "captured_at": "2026-07-07T07:19:32.408728+00:00",
+    "count": 20,
+    "look_ahead_caveat": "Symbols selected by CURRENT market cap (t1444) for a PAST backtest window — a mild look-ahead, disclosed and accepted for a first decisive read (KTD-1). t1444 is not promoted."
+  },
+  "shcodes": [
+    "005930",
+    "000660",
+    "402340",
+    "005935",
+    "009150",
+    "005380",
+    "373220",
+    "032830",
+    "028260",
+    "207940",
+    "105560",
+    "000270",
+    "329180",
+    "012450",
+    "034020",
+    "055550",
+    "034730",
+    "012330",
+    "068270",
+    "006400"
+  ]
+}

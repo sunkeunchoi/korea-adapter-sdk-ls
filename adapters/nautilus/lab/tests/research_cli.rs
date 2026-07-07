@@ -419,6 +419,82 @@ async fn rerun_mode_produces_a_data_turn_comparable_pair() {
     assert!(verdict.pass, "data-turn verdict: {:?}", verdict.lines);
 }
 
+// ---------------------------------------------------------------------------
+// U4 / KTD-5 — the v3-param resolution assertion (fresh-home seed guard).
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn fresh_home_rerun_without_the_seeded_v3_manifest_is_a_stop_condition() {
+    // A fresh home with no seeded manifest resolves OrbParams::default (v0, gap 3.0).
+    // With the expected v3 identity pinned, the turn must REFUSE rather than run a
+    // silent default-param backtest.
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    let mut cfg = TurnConfig::new(dir.path(), stamp(10));
+    cfg.override_param = None; // rerun
+    cfg.range = Some(DataRange { start: "20240102".into(), end: "20240105".into() });
+    cfg.expect_version = Some(3);
+    cfg.expect_gap_min_pct = Some(0.6);
+    let err = turn(cfg).await.unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("v3-param resolution failed"), "names the stop condition: {msg}");
+    assert!(msg.contains("KTD-5"), "points at the seed remedy: {msg}");
+    // Nothing ran.
+    assert!(list_runs(dir.path()).is_empty(), "no backtest on the stop condition");
+}
+
+#[tokio::test]
+async fn seeded_v3_manifest_satisfies_the_resolution_assertion_and_reruns() {
+    // Seed a v3 / gap 0.6 finalized run (stands in for the copied turn-2b v3
+    // manifest). The expected-identity rerun now resolves it and runs.
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    seed_run(dir.path(), 0.6, 3, stamp(0)).await;
+
+    let mut cfg = TurnConfig::new(dir.path(), stamp(10));
+    cfg.override_param = None; // rerun
+    cfg.expect_version = Some(3);
+    cfg.expect_gap_min_pct = Some(0.6);
+    let out = turn(cfg).await.unwrap();
+    assert!(out.ran, "seeded v3 resolves and reruns: {:?}", out.refusal);
+    assert_eq!(out.version, Some(3), "no version bump on a rerun");
+    let m = read_manifest(dir.path(), out.run_id.as_ref().unwrap());
+    assert_eq!(m.params.gap_min_pct, 0.6);
+    assert_eq!(m.strategy_version, 3);
+}
+
+#[tokio::test]
+async fn a_matching_version_with_a_wrong_gap_trips_the_gap_assertion() {
+    // Version matches (v3) so the version guard passes, but the resolved gap (0.9)
+    // differs from the expected 0.6 → the gap guard bails. Exercises the gap branch
+    // + its float-tolerance compare, which the version-mismatch cases never reach.
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    seed_run(dir.path(), 0.9, 3, stamp(0)).await;
+    let mut cfg = TurnConfig::new(dir.path(), stamp(10));
+    cfg.override_param = None;
+    cfg.expect_version = Some(3); // passes
+    cfg.expect_gap_min_pct = Some(0.6); // resolved 0.9 ≠ 0.6 → bail
+    let err = turn(cfg).await.unwrap_err();
+    let msg = err.to_string();
+    assert!(msg.contains("v3-param resolution failed"), "names the stop condition: {msg}");
+    assert!(msg.contains("0.6000"), "names the expected gap: {msg}");
+    assert_eq!(list_runs(dir.path()).len(), 1, "no new run — only the seed remains");
+}
+
+#[tokio::test]
+async fn a_wrong_seeded_version_trips_the_resolution_assertion() {
+    // A home whose latest run is v0 (gap 3.0) while the operator expects v3 → refuse.
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    seed_run(dir.path(), 3.0, 0, stamp(0)).await;
+    let mut cfg = TurnConfig::new(dir.path(), stamp(10));
+    cfg.override_param = None;
+    cfg.expect_version = Some(3);
+    let err = turn(cfg).await.unwrap_err();
+    assert!(err.to_string().contains("v3-param resolution failed"), "{err}");
+}
+
 // ===========================================================================
 // U3 — runs compare
 // ===========================================================================
@@ -766,6 +842,24 @@ async fn scaffold_prefills_run_facts_and_the_verdict_skeleton() {
     }
     // A structured symbol renders VERBATIM (a 6-digit shcode must not be masked).
     assert!(content.contains("005930.XKRX"), "symbol unmasked in the structured list: {content}");
+    // U2: the computed R1 decisiveness bar renders; on this n=1 fixture the
+    // trade-count floor fails (1 < 30) and the bar is not cleared.
+    assert!(content.contains("Decisiveness bar (R1)"), "bar section present: {content}");
+    assert!(
+        content.contains("trade-count floor not met (1 < 30)"),
+        "condition (a) named as failing at 1 < 30: {content}"
+    );
+    assert!(content.contains("**Bar cleared:** no"), "n=1 fixture does not clear the bar: {content}");
+    // The per-symbol table must be well-formed GFM: the header and delimiter rows
+    // carry the same cell count (a literal `|P&L|` in the header would split it into
+    // more cells than the delimiter and GFM would not render a table at all).
+    let header = content.lines().find(|l| l.trim_start().starts_with("| Symbol |")).expect("header row");
+    let delim = content.lines().find(|l| l.trim_start().starts_with("|---|")).expect("delimiter row");
+    assert_eq!(
+        header.matches('|').count(),
+        delim.matches('|').count(),
+        "table header/delimiter pipe counts must match:\n  header: {header}\n  delim:  {delim}"
+    );
 }
 
 #[tokio::test]
