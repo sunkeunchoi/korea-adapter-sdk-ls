@@ -21,6 +21,11 @@
 //! - `LS_INGEST_SYMBOLS`: optional comma-separated shcodes to bound the universe
 //!   (else the whole loaded universe; minute backfills MUST be bounded).
 //! - `LS_INGEST_KIND`: `daily` (default) | `minute:<n>` | `daily,minute:<n>`.
+//! - `LS_INGEST_SKIP_UNIVERSE_LOAD`: `1`/`true` to skip the per-invocation universe
+//!   load (`t8430` + 2× `t9945`) and the `write_instruments` re-snapshot — the
+//!   dominant avoidable IGW00201 cost in a per-symbol drip loop. REQUIRES an
+//!   explicit `LS_INGEST_SYMBOLS` list and a non-empty catalog (a prior
+//!   full-universe pass must have persisted the instrument defs); refuses otherwise.
 
 use std::path::PathBuf;
 
@@ -115,25 +120,53 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
         return Ok(None);
     }
 
-    // Load the domestic-equity universe.
-    let mut provider = InstrumentProvider::new(sdk.clone());
-    provider.load_domain(InstrumentDomain::DomesticEquity).await?;
-    println!("loaded {} domestic-equity instruments", provider.len());
+    // Resolve the universe. A per-symbol drip loop re-invokes `ls-ingest` many times;
+    // the universe load (t8430 + 2× t9945) is identical every time and charges the
+    // shared IGW00201 budget, so `LS_INGEST_SKIP_UNIVERSE_LOAD` (with explicit
+    // symbols + instruments already persisted by the drip's daily pass) skips it —
+    // the dominant avoidable per-invocation cost (KTD5 budget).
+    let symbols_env = std::env::var("LS_INGEST_SYMBOLS").ok().filter(|s| !s.trim().is_empty());
+    let skip_load =
+        should_skip_universe_load(env_flag("LS_INGEST_SKIP_UNIVERSE_LOAD"), symbols_env.is_some())?;
 
-    // Bound the universe if requested (required for minute backfills).
-    let universe: Vec<InstrumentId> = match std::env::var("LS_INGEST_SYMBOLS") {
-        Ok(list) => list
-            .split(',')
-            .map(|s| s.trim())
-            .filter(|s| !s.is_empty())
-            .map(|s| InstrumentId::new(Symbol::from(s), Venue::from(nautilus_ls::KRX_VENUE)))
-            .collect(),
-        Err(_) => provider.all().map(|e| e.id).collect(),
+    let universe: Vec<InstrumentId> = if skip_load {
+        // Skipping the load also skips `write_instruments`, which is only safe when a
+        // prior full-universe pass persisted instrument defs. Refuse on an empty/
+        // missing catalog rather than writing bars with no instruments (a silent
+        // failure that only surfaces when the backtest can't resolve the instrument).
+        let catalog_populated = catalog.exists()
+            && std::fs::read_dir(&catalog).map(|mut d| d.next().is_some()).unwrap_or(false);
+        if !catalog_populated {
+            return Err(format!(
+                "LS_INGEST_SKIP_UNIVERSE_LOAD is set but catalog {} is empty/missing — run a \
+                 full-universe pass (without the flag) first so instrument definitions are persisted",
+                catalog.display()
+            )
+            .into());
+        }
+        let syms = symbols_env.as_deref().unwrap_or_default();
+        let u = parse_symbol_ids(syms);
+        println!(
+            "skipping universe load (LS_INGEST_SKIP_UNIVERSE_LOAD): {} explicit symbols \
+             (catalog already populated)",
+            u.len()
+        );
+        u
+    } else {
+        // Load the domestic-equity universe (t8430 + 2× t9945).
+        let mut provider = InstrumentProvider::new(sdk.clone());
+        provider.load_domain(InstrumentDomain::DomesticEquity).await?;
+        println!("loaded {} domestic-equity instruments", provider.len());
+        // Bound the universe if requested (required for minute backfills).
+        let u: Vec<InstrumentId> = match &symbols_env {
+            Some(list) => parse_symbol_ids(list),
+            None => provider.all().map(|e| e.id).collect(),
+        };
+        // Persist the instrument definitions beside the bars (the universe re-snapshot,
+        // R7 — newly-listed symbols enter coverage from this run forward).
+        nautilus_ls::ingest::write_instruments(&catalog, provider.all_any()).await?;
+        u
     };
-
-    // Persist the instrument definitions beside the bars (the universe re-snapshot,
-    // R7 — newly-listed symbols enter coverage from this run forward).
-    nautilus_ls::ingest::write_instruments(&catalog, provider.all_any()).await?;
 
     // Resolve the per-mode date range.
     let (sdate, edate) = if accumulate {
@@ -286,6 +319,44 @@ fn parse_kinds(spec: &str) -> Result<Vec<BarKind>, String> {
     Ok(kinds)
 }
 
+/// Read a boolean-ish env flag: present and `"1"`/`"true"` (case-insensitive) → true.
+fn env_flag(key: &str) -> bool {
+    std::env::var(key)
+        .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true"))
+        .unwrap_or(false)
+}
+
+/// Whether to skip the 3-call universe load (`t8430` + 2× `t9945`) and its
+/// `write_instruments` re-snapshot for this invocation.
+///
+/// Skipping is the dominant avoidable IGW00201 saving in a per-symbol drip loop
+/// (KTD5 budget): the universe load runs on *every* `ls-ingest` invocation but the
+/// masters don't change minute-to-minute, so a 20-symbol minute drip re-fetches the
+/// identical universe ~20× (3 calls each) on top of the bar fetches. Skipping is
+/// only valid with an explicit `LS_INGEST_SYMBOLS` list (the load is otherwise the
+/// only way to enumerate the universe), and assumes a prior full-universe
+/// invocation already persisted the instrument definitions (the drip daily pass).
+fn should_skip_universe_load(skip_requested: bool, has_symbols: bool) -> Result<bool, String> {
+    match (skip_requested, has_symbols) {
+        (true, true) => Ok(true),
+        (true, false) => Err(
+            "LS_INGEST_SKIP_UNIVERSE_LOAD requires an explicit LS_INGEST_SYMBOLS list \
+             (the universe load is the only way to enumerate the full universe)"
+                .to_string(),
+        ),
+        (false, _) => Ok(false),
+    }
+}
+
+/// Parse a comma-separated shcode list into KRX-venue instrument ids.
+fn parse_symbol_ids(list: &str) -> Vec<InstrumentId> {
+    list.split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| InstrumentId::new(Symbol::from(s), Venue::from(nautilus_ls::KRX_VENUE)))
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -356,5 +427,43 @@ mod tests {
         assert_eq!(exit_code_for(&range), EXIT_REFUSALS, "range refusal → nonzero");
 
         assert_ne!(EXIT_REFUSALS, 1, "the refusal code stays distinct from the hard-error FAILURE");
+    }
+
+    #[test]
+    fn skip_universe_load_decision() {
+        // Flag + explicit symbols → skip the 3-call load (the drip-loop saving).
+        assert_eq!(should_skip_universe_load(true, true), Ok(true));
+        // No flag → always load (default, backward-compatible).
+        assert_eq!(should_skip_universe_load(false, true), Ok(false));
+        assert_eq!(should_skip_universe_load(false, false), Ok(false));
+        // Flag WITHOUT explicit symbols is an error: the load is the only way to
+        // enumerate the universe, so skipping it would leave nothing to ingest.
+        assert!(
+            should_skip_universe_load(true, false).is_err(),
+            "skip without an explicit symbol list must be refused, not silently skipped"
+        );
+    }
+
+    #[test]
+    fn env_flag_parses_truthy_values() {
+        // (env mutation is process-global; use a key unique to this test.)
+        std::env::remove_var("LS_TEST_FLAG_XYZ");
+        assert!(!env_flag("LS_TEST_FLAG_XYZ"), "unset → false");
+        std::env::set_var("LS_TEST_FLAG_XYZ", "1");
+        assert!(env_flag("LS_TEST_FLAG_XYZ"), "1 → true");
+        std::env::set_var("LS_TEST_FLAG_XYZ", "TRUE");
+        assert!(env_flag("LS_TEST_FLAG_XYZ"), "TRUE (case-insensitive) → true");
+        std::env::set_var("LS_TEST_FLAG_XYZ", "0");
+        assert!(!env_flag("LS_TEST_FLAG_XYZ"), "0 → false");
+        std::env::remove_var("LS_TEST_FLAG_XYZ");
+    }
+
+    #[test]
+    fn parse_symbol_ids_builds_krx_venue_ids() {
+        let ids = parse_symbol_ids(" 005930, 000660 ,, 402340 ");
+        assert_eq!(ids.len(), 3, "blank/whitespace entries skipped");
+        assert_eq!(ids[0].symbol.as_str(), "005930");
+        assert_eq!(ids[0].venue.as_str(), nautilus_ls::KRX_VENUE);
+        assert_eq!(ids[2].symbol.as_str(), "402340");
     }
 }
