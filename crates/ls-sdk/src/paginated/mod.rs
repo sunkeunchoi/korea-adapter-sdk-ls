@@ -3,10 +3,16 @@
 //! 1. **`t8412` — header-cursor pagination (multi-page).** Threads an LS
 //!    continuation through the `tr_cont`/`tr_cont_key` HTTP headers and walks pages
 //!    via `chart_all`. See [`chart`].
-//! 2. **Body-`idx` rank/screen TRs — single-page only.** `t1452`, `t1403`,
-//!    `t1441`, `t1463`, `t1466`, `t1489`, `t1492` carry a request-BODY `idx`
-//!    continuation cursor, for which `ls-core` has no multi-page machinery; they
-//!    are promoted at single-page scope. See [`rank_screen`].
+//! 2. **Body-`idx` rank/screen TRs — walked single-page by default.** `t1452`,
+//!    `t1403`, `t1441`, `t1463`, `t1466`, `t1489`, `t1492` carry a request-BODY
+//!    `idx` continuation cursor and are promoted at single-page scope. `ls-core`'s
+//!    generic `collect_all` does not drive them (it walks only the `tr_cont`
+//!    headers), but they are NOT inherently single-page: the gateway continues them
+//!    on the body `idx` cursor **plus** a `tr_cont: Y` request header (the same
+//!    combination the `t8412` fetcher uses). `market_cap_top_all` (below) walks
+//!    `t1444` that way; the rest stay single-page until a caller needs the depth.
+//!    See [`rank_screen`] and
+//!    docs/solutions/integration-issues/ls-gateway-t1444-header-pagination-not-body-idx.md.
 //!
 //! Both submodules' public types are re-exported here, so callers reach them as
 //! `ls_sdk::paginated::T8412Request`, `ls_sdk::paginated::T1452Response`, etc.,
@@ -14,7 +20,7 @@
 
 use std::sync::Arc;
 
-use ls_core::{Inner, LsResult};
+use ls_core::{HasPagination, Inner, LsResult};
 
 mod breadth_board;
 mod chart;
@@ -466,11 +472,87 @@ impl Paginated {
             .await
     }
 
-    /// `t1444` market cap top ([주식] 상위종목). Plan -004 batch C.
+    /// `t1444` market cap top ([주식] 상위종목), single page. Plan -004 batch C.
     pub async fn market_cap_top(&self, req: &T1444Request) -> LsResult<T1444Response> {
         self.inner
             .post_paginated(&ls_core::endpoint_policy::T1444_POLICY, req)
             .await
+    }
+
+    /// `t1444` market cap top, walked across pages until `max_rows` unique shcodes
+    /// are collected (in server market-cap-descending order) or the board is
+    /// exhausted.
+    ///
+    /// A single page holds ~20 KOSPI names, so `universe_top_n > 20` needs this
+    /// walk. t1444's continuation is a request-BODY `idx` cursor **plus** the
+    /// `tr_cont: Y` HTTP header: live, the gateway re-serves page 1 when the header
+    /// is absent even with the `idx` cursor threaded (the same behavior the t8412
+    /// minute fetcher documents). So this mirrors that fetcher's manual loop — NOT
+    /// `collect_all`, whose header-only walk the gateway truncates — threading the
+    /// body `idx` from `outblock.idx` and setting `tr_cont: Y` + `tr_cont_key` on
+    /// each continuation. It stops on a terminal/empty/repeat cursor, a page that
+    /// adds no new shcodes, or the page cap.
+    pub async fn market_cap_top_all(
+        &self,
+        upcode: impl Into<String>,
+        max_rows: usize,
+    ) -> LsResult<Vec<T1444OutBlock1>> {
+        const MAX_PAGES: usize = 32;
+        let mut req = T1444Request::new(upcode);
+        let mut rows: Vec<T1444OutBlock1> = Vec::new();
+        let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        // Distinguish a natural finish (enough rows, or the board exhausted its
+        // cursor) from running out of page budget while the cursor is still live.
+        let mut complete = false;
+
+        for _ in 0..MAX_PAGES {
+            let resp: T1444Response = self
+                .inner
+                .post_paginated(&ls_core::endpoint_policy::T1444_POLICY, &req)
+                .await?;
+
+            // Read the continuation cursor/headers before consuming the row array.
+            let next_idx = resp.outblock.idx.trim().to_string();
+            let header_terminal = resp.tr_cont.trim() == "N";
+            let next_key = resp.tr_cont_key.clone();
+
+            let before = rows.len();
+            for row in resp.outblock1 {
+                let code = row.shcode.trim().to_string();
+                if code.is_empty() || !seen.insert(code) {
+                    continue;
+                }
+                rows.push(row);
+                if rows.len() >= max_rows {
+                    break;
+                }
+            }
+            if rows.len() >= max_rows {
+                complete = true;
+                break;
+            }
+
+            // Continuation requires BOTH the body `idx` cursor and `tr_cont: Y`.
+            let terminal = next_idx.is_empty() || next_idx == "0" || header_terminal;
+            let repeat = next_idx == req.inblock.idx; // gateway did not advance
+            let no_progress = rows.len() == before;
+            if terminal || repeat || no_progress {
+                complete = true; // the board is exhausted — fewer than max_rows exist
+                break;
+            }
+            req.inblock.idx = next_idx;
+            req.set_tr_cont("Y".to_string());
+            req.set_tr_cont_key(next_key);
+        }
+
+        // Ran the page cap with the cursor still advancing and fewer than max_rows
+        // in hand: surface truncation rather than silently freezing a short universe
+        // (mirrors the t8412 fetcher / `collect_all` `PaginationLimit` idiom).
+        if !complete {
+            return Err(ls_core::LsError::PaginationLimit(MAX_PAGES));
+        }
+
+        Ok(rows)
     }
 
     /// `t1422` price limit ([주식] 시세). Plan -004 batch C.

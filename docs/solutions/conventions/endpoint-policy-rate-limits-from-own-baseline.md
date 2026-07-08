@@ -52,11 +52,21 @@ and confirm the two numbers match the `Some(...)` values in the const.
 
 ## Why This Matters
 
-`crates/ls-core/tests/policy_index_crosscheck.rs` (`slice_policies_mirror_metadata_index`)
-validates only **protocol**, **rate-category bucket**, and **pagination** against
-the metadata index — it does **not** compare the numeric rate-limit values. So a
-wrong `rate_limit_per_sec`/`corp_rate_limit_per_sec` is **silent**: the workspace
-gate (`cargo test` + `make docs-check`) stays green with the wrong throttle.
+As of 2026-07-08 the sibling test `slice_rest_rate_pins_mirror_official_quota_baselines`
+(same file) now compares **both** numeric rate fields of every REST policy against
+its own normalized baseline and fails `cargo test -p ls-core` on any disagreement —
+so this class of drift is caught by the gate, not a reviewer. (The reconciliation
+pass that landed the test found **no** live mismatches: the historical t8430 corp
+`3`-vs-`5` divergence had already been fixed, and pin and baseline both read `5`
+today.) The manual quick-check below remains a useful pre-commit sanity step, but
+the gate is now the backstop.
+
+Historically, `slice_policies_mirror_metadata_index` validated only **protocol**,
+**rate-category bucket**, and **pagination** against the metadata index — it did
+**not** compare the numeric rate-limit values, so a wrong
+`rate_limit_per_sec`/`corp_rate_limit_per_sec` was **silent**: the workspace gate
+(`cargo test` + `make docs-check`) stayed green with the wrong throttle. That gap
+is what the new sibling test closes.
 
 A too-low corp limit under-throttles corp-tier callers against the published spec
 (not a hard outage, but a spec divergence); a too-high limit could trip gateway
@@ -95,6 +105,9 @@ pub const T8430_POLICY: EndpointPolicy = EndpointPolicy {
 };
 ```
 
-Prevention idea (not yet implemented): extend `slice_policies_mirror_metadata_index`
-to assert the policy's numeric rate limits equal the baseline's, closing the silent
-gap so the gate — not a reviewer — catches the drift.
+Prevention idea (**implemented 2026-07-08**, KTD-1): the sibling test
+`slice_rest_rate_pins_mirror_official_quota_baselines` asserts each REST policy's
+numeric rate limits equal its baseline's (both ways — a `Some` pin against a `null`
+baseline is also a failure), closing the silent gap so the gate — not a reviewer —
+catches the drift. WebSocket policies (no gateway REST rate contract) are skipped;
+a REST policy whose baseline file is missing fails loudly.

@@ -80,6 +80,12 @@ pub struct T1444OutBlock1 {
 }
 
 /// `t1444` response.
+///
+/// Multi-page continuation (`market_cap_top_all`) needs the response `tr_cont`/
+/// `tr_cont_key` HTTP headers — the LS gateway re-serves page 1 when a request
+/// omits `tr_cont: Y`, even with the body `idx` cursor threaded (the same behavior
+/// the t8412 minute fetcher works around). `dispatch_once` injects both headers
+/// into the deserialized JSON, so `HasPagination` can read them off the page.
 #[derive(Serialize, Deserialize, Debug, Clone, Default)]
 pub struct T1444Response {
     #[serde(default)]
@@ -90,7 +96,14 @@ pub struct T1444Response {
     pub outblock: T1444OutBlock,
     #[serde(rename = "t1444OutBlock1", default, deserialize_with = "ls_core::de_vec_or_single")]
     pub outblock1: Vec<T1444OutBlock1>,
+    /// Continuation token from the response header (injected by `dispatch_once`).
+    #[serde(default)]
+    pub tr_cont: String,
+    /// Continuation key from the response header (injected by `dispatch_once`).
+    #[serde(default)]
+    pub tr_cont_key: String,
 }
+ls_core::impl_has_pagination!(T1444Response);
 
 /// Input block for `t1422`.
 #[derive(Serialize, Debug, Clone)]

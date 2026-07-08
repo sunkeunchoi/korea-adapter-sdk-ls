@@ -1,6 +1,7 @@
 ---
 title: "LS gateway IGW00201 is a rolling call-count cap that aborts a bulk multi-symbol minute ingest — drip-feed one symbol at a time"
 date: 2026-07-07
+last_updated: 2026-07-08
 category: integration-issues
 module: "adapters/nautilus ls-ingest (src/bin/ls-ingest.rs, LS_INGEST_KIND=minute:*) + lab-research catalog status"
 problem_type: integration_issue
@@ -106,6 +107,34 @@ between symbols. Because `range`-mode ingest is per-symbol idempotent (already-c
 `APPEND REFUSED` without re-fetching), the loop is restartable and never double-pulls — so
 retrying the whole symbol list after a trip only fetches the missing symbols.
 
+## Budget-aware layer + probe landed (update 2026-07-08, provisional numbers)
+
+The 120s backoff and "day-ish, credential-shared" window quoted throughout this doc
+are the **guessed** model. As of 2026-07-08 the adapter encodes that model as data and
+adds the machinery to plan against it — but the numbers are still guesses until the probe
+runs (U6):
+
+- **`adapters/nautilus/lab/config/gateway-budget.json`** — the committed, machine-readable
+  budget model (`refill_secs`, `window_secs`, `budget_calls`, `bucket_scope`, `provenance`).
+  It currently holds the **provisional** guesses (`budget_calls: null` ⇒ no plan-ahead), so
+  the ingest keeps exactly today's blind-backoff behavior. The IGW00201 backoff is now read
+  from `refill_secs` (still 120s) instead of a hard-coded constant.
+- **Per-credential spend ledger** (`ingest::budget::SpendLedger`, keyed by hashed appkey,
+  `state/spend-ledger.json`, `LS_SPEND_LEDGER_FILE`-overridable and pinned by
+  `turn4-ingest.sh`) — records every gateway dispatch so the ingest can plan against the
+  measured budget once one exists. Advisory: the gateway stays ground truth.
+- **In-process IGW00201 recovery on the DAILY pass too** — `collect_daily` now backs off and
+  retries the same page (mirroring the minute arm), so the drip script's grep-retry is a thin
+  outer backstop rather than the only daily recovery.
+- **Pre-dispatch budget planner** — under a measured budget the ingest stops before a symbol
+  whose estimated page cost exceeds the remaining window (`SCHEDULED REMAINDER`), never
+  provoking IGW00201. Inert while `budget_calls` is null.
+- **`budget-probe` binary** (`src/bin/budget-probe.rs`, attended, paper-only) — measures the
+  real bucket scope (stage 0), cold-budget size (stage 1), refill window (stage 2), and
+  cross-class span (stage 3) on a spare paper lane, under a hard per-session call ceiling.
+  Its JSON report's numbers get promoted into `gateway-budget.json` and replace the guesses
+  here. **Until that attended run happens, this drip runbook is the operating procedure.**
+
 ## Prevention
 
 - **Never trust `catalog status: GO` as proof of minute completeness.** It reads deduped, so a
@@ -122,3 +151,36 @@ retrying the whole symbol list after a trip only fetches the missing symbols.
   on the credential; a prior attended live session the same day pre-consumes the window, so a
   later bulk ingest trips sooner. Schedule bulk pulls when the budget is cold, or expect more
   backoffs.
+
+## Budget economy: the drip loop re-loads the whole universe on every invocation (update 2026-07-08)
+
+The drip-feed above runs `ls-ingest` **once per symbol**, and each invocation opens with a
+**universe load** — `provider.load_domain(DomesticEquity)` = **3 gateway calls** (`t8430` +
+2× `t9945`) — *before* it fetches a single bar. The masters don't change minute-to-minute, so a
+20-symbol minute drip burns ~60 redundant universe-load calls per pass (more with retries) against
+the same IGW00201 budget it's trying to conserve. On a warm budget this is a large avoidable drain:
+a deep max-depth attempt that whole-symbol-retried a stuck symbol ~8× re-loaded the universe each
+time, pushing toward ~480 wasted calls.
+
+The `Ingestor` never needs the loaded provider for an **explicit** `LS_INGEST_SYMBOLS` list — the
+`InstrumentId`s are built directly from the shcodes; the load only feeds the idempotent
+`write_instruments` re-snapshot, which needs to run **once**. So:
+
+- **`LS_INGEST_SKIP_UNIVERSE_LOAD=1`** skips `load_domain` + `write_instruments` when
+  `LS_INGEST_SYMBOLS` is explicit and the catalog is already populated (a prior full pass persisted
+  the instrument defs). It refuses if the flag is set without an explicit symbol list, or on an
+  empty/missing catalog (skipping `write_instruments` there would write bars with no instrument
+  defs — a silent failure that only surfaces at backtest time).
+- **Drip pattern:** run the **daily pass first, batched, WITHOUT the flag** (it loads the universe
+  once and persists instruments), then set `LS_INGEST_SKIP_UNIVERSE_LOAD=1` on the per-symbol
+  **minute** passes. `adapters/nautilus/scripts/turn4-ingest.sh` wires this (daily `skip=0`, minute
+  `skip=1`).
+- **Also mind the mid-symbol restart:** a symbol whose minute fetch trips IGW00201 mid-way used to
+  abort and re-fetch from page 1 (re-burning the pages already fetched). `collect_minute` now backs
+  off + narrows on IGW00201 and retains completed sub-ranges' bars, so a single invocation makes
+  incremental progress instead of restarting — cutting the other big source of re-burn.
+
+**Caveat this does NOT change:** the irreducible cost is the bar fetches themselves (~1 t8412 page
+per ~2 sessions/symbol). No code change makes a genuinely deep multi-symbol pull fit one day's
+budget — that stays multi-day. Skipping the universe load and the restart re-burn only removes the
+*avoidable* waste, which can tip a moderate pull from "just over budget" to "fits one cold budget."

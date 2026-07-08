@@ -4,5 +4,8 @@
 /catalog
 # Local data home (catalog, runs/, decisions/, probes/) used by the README recipes.
 /data
+# Credential-derived spend ledger (KTD-3): keyed by hashed appkey, never tracked.
+# The turn scripts pin LS_SPEND_LEDGER_FILE here so it survives across fresh homes.
+/state
 /*.lock
 !Cargo.lock

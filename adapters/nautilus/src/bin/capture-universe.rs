@@ -18,10 +18,9 @@
 //!   guard (default `005930`, Samsung Electronics — always #1 KOSPI market cap).
 //! - `LS_CAPTURE_LANE_FILE`: optional lane env-file (else the process env is used).
 
-use ls_sdk::paginated::T1444Request;
 use nautilus_ls::config::LsAdapterConfig;
 use nautilus_ls::scrub;
-use nautilus_ls::universe::{Provenance, UniverseFile, SOURCE_TR};
+use nautilus_ls::universe::{check_capture_completeness, Provenance, UniverseFile, SOURCE_TR};
 
 /// Default output path (relative to the adapter crate root / CWD).
 const DEFAULT_OUT: &str = "lab/config/turn3-universe.json";
@@ -53,6 +52,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Err(_) => DEFAULT_N,
     };
     let sentinel = std::env::var("LS_CAPTURE_SENTINEL").unwrap_or_else(|_| DEFAULT_SENTINEL.into());
+    // KTD-5: allow a legitimately-short board only under an explicit override.
+    let allow_short = matches!(
+        std::env::var("LS_CAPTURE_ALLOW_SHORT").ok().as_deref().map(str::trim).map(str::to_ascii_lowercase).as_deref(),
+        Some("1") | Some("true")
+    );
 
     let adapter_cfg = match std::env::var("LS_CAPTURE_LANE_FILE") {
         Ok(path) => LsAdapterConfig::from_lane_file(path),
@@ -60,25 +64,24 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
     let sdk = adapter_cfg.build_sdk()?;
 
-    // The one live call: KOSPI top-market-cap ranking (server-sorted). A single page
-    // holds far more than the top-30 we freeze.
-    let resp = sdk.paginated().market_cap_top(&T1444Request::new(upcode.clone())).await?;
-    if resp.outblock1.is_empty() {
+    // KOSPI top-market-cap ranking (server-sorted). t1444 serves ~20 names per page
+    // and continues on the body `idx` cursor plus the `tr_cont: Y` header, so
+    // `market_cap_top_all` walks pages until it has the top-N (a single call caps at
+    // ~20 — the top-20/top-40 distinction rides on the walk).
+    let rows = sdk.paginated().market_cap_top_all(upcode.clone(), n).await?;
+    if rows.is_empty() {
         return Err(format!(
-            "t1444 returned no rows (rsp_cd={}, rsp_msg={:?}) — cannot freeze an empty universe",
-            resp.rsp_cd, resp.rsp_msg
+            "t1444 returned no rows for upcode {upcode:?} — cannot freeze an empty universe"
         )
         .into());
     }
 
-    // Take the top-N shcodes in returned (market-cap-descending) order, skipping any
-    // blank/short codes defensively.
-    let shcodes: Vec<String> = resp
-        .outblock1
+    // Shcodes in returned (market-cap-descending) order, blank/short codes skipped.
+    // `market_cap_top_all` already dedups and bounds to n.
+    let shcodes: Vec<String> = rows
         .iter()
         .map(|r| r.shcode.trim().to_string())
         .filter(|s| !s.is_empty())
-        .take(n)
         .collect();
 
     // Wrong-market guard (KTD-1): the KOSPI top-cap board must contain the sentinel.
@@ -92,6 +95,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .into());
     }
 
+    // Short-freeze guard (KTD-5, R12): a walk that reached fewer than the requested
+    // N is a silent-truncation risk (the 20-of-40 freeze that started this incident);
+    // fail closed BEFORE writing unless an explicit override permits a short board.
+    check_capture_completeness(shcodes.len(), n, allow_short)?;
+
     let file = UniverseFile {
         provenance: Provenance {
             source_tr: SOURCE_TR.to_string(),
@@ -99,6 +107,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             upcode_label: upcode_label(&upcode),
             captured_at: chrono::Utc::now().to_rfc3339(),
             count: shcodes.len(),
+            requested_n: n,
             look_ahead_caveat:
                 "Symbols selected by CURRENT market cap (t1444) for a PAST backtest window — a mild \
                  look-ahead, disclosed and accepted for a first decisive read (KTD-1). t1444 is not promoted."

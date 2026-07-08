@@ -1,0 +1,7 @@
+{
+  "refill_secs": 120,
+  "window_secs": 86400,
+  "budget_calls": null,
+  "bucket_scope": "unknown",
+  "provenance": "PROVISIONAL (guessed, pre-probe, 2026-07-08): 120s backoff and a day-ish credential-shared window are UNVERIFIED beliefs carried over from the drip runbook. budget_calls is null so the ingest keeps today's blind-backoff behavior (no plan-ahead). U6 replaces these with measured numbers + per-axis confidence from the budget-probe run."
+}

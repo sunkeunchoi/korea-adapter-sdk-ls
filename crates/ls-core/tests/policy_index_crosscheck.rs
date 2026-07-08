@@ -85,12 +85,37 @@ fn category_matches(runtime: RateLimitCategory, meta: RateBucket) -> bool {
     )
 }
 
-#[test]
-fn slice_policies_mirror_metadata_index() {
-    let report = validate_dir(&metadata_root())
-        .unwrap_or_else(|e| panic!("metadata failed to validate: {e:?}"));
+/// Root of the projected normalized baselines (KTD-1): the officially-derived
+/// per-TR wire shape, including the parsed `requestLimit` rate quota. Loaded by
+/// path so ls-core never takes an ls-trackers crate dependency — the same walk-up
+/// convention as [`metadata_root`].
+fn baseline_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("crates")
+        .join("ls-trackers")
+        .join("baselines")
+        .join("api-drift")
+        .join("normalized")
+        .join("trs")
+}
 
-    let policies: &[EndpointPolicy] = &[
+/// The two official-quota rate fields projected into each normalized baseline
+/// (`crates/ls-trackers/src/api_drift.rs`), deserialized in isolation. Absent =
+/// `None`, matching a policy const whose pins are `None`.
+#[derive(serde::Deserialize)]
+struct BaselineRates {
+    #[serde(default)]
+    rate_limit_per_sec: Option<u32>,
+    #[serde(default)]
+    corp_rate_limit_per_sec: Option<u32>,
+}
+
+/// All slice TR runtime policy consts — the shared iteration source for both the
+/// metadata-index crosscheck and the official-quota rate-pin crosscheck (KTD-1).
+fn all_slice_policies() -> Vec<EndpointPolicy> {
+    vec![
         TOKEN_POLICY,
         REVOKE_POLICY,
         T1101_POLICY,
@@ -419,9 +444,17 @@ fn slice_policies_mirror_metadata_index() {
         YJC_POLICY,
         YJ_POLICY,
         H3_POLICY,
-    ];
+    ]
+}
 
-    for policy in policies {
+#[test]
+fn slice_policies_mirror_metadata_index() {
+    let report = validate_dir(&metadata_root())
+        .unwrap_or_else(|e| panic!("metadata failed to validate: {e:?}"));
+
+    let policies = all_slice_policies();
+
+    for policy in &policies {
         let entry = report.index.trs.get(policy.tr_code).unwrap_or_else(|| {
             panic!(
                 "runtime const {}_POLICY has tr_code `{}` that is not in tr-index.yaml",
@@ -464,4 +497,56 @@ fn slice_policies_mirror_metadata_index() {
             );
         }
     }
+}
+
+/// KTD-1 (R6/R7): each REST policy's hand-authored `rate_limit_per_sec` /
+/// `corp_rate_limit_per_sec` pins are the runtime mirror of LS's officially
+/// published per-TR quota (`ThroughputQuotaRule.requestLimit`), which the tracker
+/// parses and projects into the normalized baselines. This asserts exact equality
+/// both ways — a policy `Some(n)` against a baseline `null`, or a differing number,
+/// is a drift failure — so a change in LS's published limits (they moved ~3× in
+/// Dec 2025) surfaces offline in this gate instead of as a live incident. WebSocket
+/// policies carry no gateway REST rate contract and are skipped; a REST policy whose
+/// baseline file is absent fails loudly (never a silent skip).
+#[test]
+fn slice_rest_rate_pins_mirror_official_quota_baselines() {
+    let policies = all_slice_policies();
+    let mut compared = 0usize;
+    for policy in &policies {
+        if policy.protocol == Protocol::WebSocket {
+            continue;
+        }
+        let path = baseline_root().join(format!("{}.json", policy.tr_code));
+        let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+            panic!(
+                "REST policy {}_POLICY has no readable official-quota baseline at {}: {e} \
+                 — every REST TR must project a normalized baseline",
+                policy.tr_code.to_uppercase(),
+                path.display()
+            )
+        });
+        let base: BaselineRates = serde_json::from_str(&raw)
+            .unwrap_or_else(|e| panic!("baseline {} failed to parse: {e}", path.display()));
+        assert_eq!(
+            policy.rate_limit_per_sec, base.rate_limit_per_sec,
+            "TR `{}`: policy rate_limit_per_sec {:?} disagrees with official baseline {:?} \
+             — reconcile the pin to the LS spec (KTD-1)",
+            policy.tr_code, policy.rate_limit_per_sec, base.rate_limit_per_sec
+        );
+        assert_eq!(
+            policy.corp_rate_limit_per_sec, base.corp_rate_limit_per_sec,
+            "TR `{}`: policy corp_rate_limit_per_sec {:?} disagrees with official baseline {:?} \
+             — reconcile the pin to the LS spec (KTD-1)",
+            policy.tr_code, policy.corp_rate_limit_per_sec, base.corp_rate_limit_per_sec
+        );
+        compared += 1;
+    }
+    // Guard against a silent skip-everything regression (test scenario 4): the WS
+    // skip must never collapse the REST assertion set. There are well over 150 REST
+    // policies; a count below that means the list or the skip broke.
+    assert!(
+        compared >= 150,
+        "expected at least 150 REST rate-pin comparisons, made {compared} \
+         — did the policy list or the WebSocket skip regress?"
+    );
 }
