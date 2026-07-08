@@ -18,7 +18,6 @@
 //!   guard (default `005930`, Samsung Electronics — always #1 KOSPI market cap).
 //! - `LS_CAPTURE_LANE_FILE`: optional lane env-file (else the process env is used).
 
-use ls_sdk::paginated::T1444Request;
 use nautilus_ls::config::LsAdapterConfig;
 use nautilus_ls::scrub;
 use nautilus_ls::universe::{Provenance, UniverseFile, SOURCE_TR};
@@ -60,25 +59,24 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     };
     let sdk = adapter_cfg.build_sdk()?;
 
-    // The one live call: KOSPI top-market-cap ranking (server-sorted). A single page
-    // holds far more than the top-30 we freeze.
-    let resp = sdk.paginated().market_cap_top(&T1444Request::new(upcode.clone())).await?;
-    if resp.outblock1.is_empty() {
+    // KOSPI top-market-cap ranking (server-sorted). t1444 serves ~20 names per page
+    // and continues on the body `idx` cursor plus the `tr_cont: Y` header, so
+    // `market_cap_top_all` walks pages until it has the top-N (a single call caps at
+    // ~20 — the top-20/top-40 distinction rides on the walk).
+    let rows = sdk.paginated().market_cap_top_all(upcode.clone(), n).await?;
+    if rows.is_empty() {
         return Err(format!(
-            "t1444 returned no rows (rsp_cd={}, rsp_msg={:?}) — cannot freeze an empty universe",
-            resp.rsp_cd, resp.rsp_msg
+            "t1444 returned no rows for upcode {upcode:?} — cannot freeze an empty universe"
         )
         .into());
     }
 
-    // Take the top-N shcodes in returned (market-cap-descending) order, skipping any
-    // blank/short codes defensively.
-    let shcodes: Vec<String> = resp
-        .outblock1
+    // Shcodes in returned (market-cap-descending) order, blank/short codes skipped.
+    // `market_cap_top_all` already dedups and bounds to n.
+    let shcodes: Vec<String> = rows
         .iter()
         .map(|r| r.shcode.trim().to_string())
         .filter(|s| !s.is_empty())
-        .take(n)
         .collect();
 
     // Wrong-market guard (KTD-1): the KOSPI top-cap board must contain the sentinel.

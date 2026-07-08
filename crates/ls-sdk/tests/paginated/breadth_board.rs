@@ -124,6 +124,172 @@ fn t1444_request_and_response_round_trip() {
     assert!(empty.outblock1.is_empty());
 }
 
+/// Build a t1444 response body with rows for `ids` (shcode = zero-padded id) and a
+/// next-page body cursor `next_idx`.
+fn t1444_body(ids: std::ops::RangeInclusive<u32>, next_idx: &str) -> String {
+    let rows: Vec<serde_json::Value> = ids
+        .map(|i| serde_json::json!({ "hname": format!("SYM{i}"), "shcode": format!("{i:06}"), "price": 10_000 + i }))
+        .collect();
+    serde_json::json!({
+        "rsp_cd": "00000",
+        "rsp_msg": "정상",
+        "t1444OutBlock": { "idx": next_idx },
+        "t1444OutBlock1": rows,
+    })
+    .to_string()
+}
+
+/// t1444 multi-page walk (`market_cap_top_all`): the LS gateway serves the next
+/// page ONLY when the request carries `tr_cont: Y` (plus the body `idx` cursor) —
+/// with the header absent it re-serves page 1 (live-verified; the same behavior the
+/// t8412 minute fetcher documents). The walker must set the header on the
+/// continuation and collect both pages. Regression for the top-20 single-page cap
+/// that made a top-40 universe unreachable.
+#[tokio::test]
+async fn t1444_market_cap_top_all_walks_pages_with_tr_cont_header() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+
+    // Page 1: first-page request (tr_cont defaults to "N"). Rows 1..=20, next-page
+    // body cursor idx="20", and a response `tr_cont: Y` header signalling more.
+    Mock::given(method("POST"))
+        .and(path(HIGH_ITEM_PATH))
+        .and(header("tr_cd", "t1444"))
+        .and(header("tr_cont", "N"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(t1444_body(1..=20, "20"))
+                .insert_header("content-type", "application/json")
+                .insert_header("tr_cont", "Y")
+                .insert_header("tr_cont_key", "k1"),
+        )
+        .mount(&server)
+        .await;
+
+    // Page 2: served ONLY for a continuation request (tr_cont = "Y"). Rows 21..=40,
+    // terminal cursor idx="0" and `tr_cont: N`.
+    Mock::given(method("POST"))
+        .and(path(HIGH_ITEM_PATH))
+        .and(header("tr_cd", "t1444"))
+        .and(header("tr_cont", "Y"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(t1444_body(21..=40, "0"))
+                .insert_header("content-type", "application/json")
+                .insert_header("tr_cont", "N"),
+        )
+        .mount(&server)
+        .await;
+
+    let rows = sdk_for(&server)
+        .paginated()
+        .market_cap_top_all("001", 40)
+        .await
+        .expect("t1444 multi-page walk should succeed");
+
+    assert_eq!(rows.len(), 40, "both pages collected (20 + 20)");
+    assert_eq!(rows[0].shcode, "000001", "first row from page 1");
+    assert_eq!(rows[19].shcode, "000020", "last row of page 1");
+    assert_eq!(
+        rows[20].shcode, "000021",
+        "first row of page 2 — proves the tr_cont:Y continuation reached the second page"
+    );
+    assert_eq!(rows[39].shcode, "000040", "last row of page 2");
+}
+
+/// A single-page board (`tr_cont: N` on page 1) stops after one page — the walker
+/// must not hang requesting a non-existent page 2, and honors `max_rows`.
+#[tokio::test]
+async fn t1444_market_cap_top_all_stops_on_single_page_board() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(HIGH_ITEM_PATH))
+        .and(header("tr_cd", "t1444"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(t1444_body(1..=20, "0"))
+                .insert_header("content-type", "application/json")
+                .insert_header("tr_cont", "N"),
+        )
+        .mount(&server)
+        .await;
+
+    let rows = sdk_for(&server)
+        .paginated()
+        .market_cap_top_all("001", 40)
+        .await
+        .expect("single-page t1444 walk should succeed");
+    assert_eq!(rows.len(), 20, "a terminal cursor / tr_cont:N stops after one page");
+}
+
+/// A gateway that keeps saying `tr_cont: Y` but re-serves the same rows with a
+/// non-advancing cursor (the live t1444 single-page behavior) must terminate on the
+/// no-progress / repeat guard and return what it has — not loop to the page cap.
+#[tokio::test]
+async fn t1444_market_cap_top_all_stops_on_stuck_cursor() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    // Every page: same 20 rows, same non-terminal cursor idx="20", tr_cont: Y.
+    Mock::given(method("POST"))
+        .and(path(HIGH_ITEM_PATH))
+        .and(header("tr_cd", "t1444"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_string(t1444_body(1..=20, "20"))
+                .insert_header("content-type", "application/json")
+                .insert_header("tr_cont", "Y"),
+        )
+        .mount(&server)
+        .await;
+
+    let rows = sdk_for(&server)
+        .paginated()
+        .market_cap_top_all("001", 40)
+        .await
+        .expect("a stuck cursor terminates cleanly, it does not error or hang");
+    assert_eq!(rows.len(), 20, "returns the distinct rows once the cursor stops advancing");
+}
+
+/// A gateway that never terminates (fresh rows + advancing cursor + `tr_cont: Y`
+/// forever) must surface `PaginationLimit` at the page cap rather than silently
+/// returning a short list as if the universe were complete.
+#[tokio::test]
+async fn t1444_market_cap_top_all_surfaces_truncation_at_page_cap() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct EndlessBoard {
+        hits: AtomicUsize,
+    }
+    impl wiremock::Respond for EndlessBoard {
+        fn respond(&self, _req: &wiremock::Request) -> ResponseTemplate {
+            let n = self.hits.fetch_add(1, Ordering::SeqCst) as u32;
+            // Fresh unique shcodes + an ever-advancing cursor, never terminal.
+            let body = t1444_body((n * 100 + 1)..=(n * 100 + 20), &((n + 1) * 20).to_string());
+            ResponseTemplate::new(200)
+                .set_body_string(body)
+                .insert_header("content-type", "application/json")
+                .insert_header("tr_cont", "Y")
+        }
+    }
+
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    Mock::given(method("POST"))
+        .and(path(HIGH_ITEM_PATH))
+        .and(header("tr_cd", "t1444"))
+        .respond_with(EndlessBoard { hits: AtomicUsize::new(0) })
+        .mount(&server)
+        .await;
+
+    // Ask for more rows than 32 pages can supply against a never-terminating board.
+    let result = sdk_for(&server).paginated().market_cap_top_all("001", 100_000).await;
+    assert!(
+        matches!(result, Err(ls_core::LsError::PaginationLimit(_))),
+        "hitting the page cap with a live cursor surfaces PaginationLimit, got {result:?}"
+    );
+}
+
 /// t1422 — numeric request fields are JSON numbers; representative body round-trips (response numerics via string_or_number); empty 00707.
 #[test]
 fn t1422_request_and_response_round_trip() {
