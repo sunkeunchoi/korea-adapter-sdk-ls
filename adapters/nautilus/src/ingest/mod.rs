@@ -13,11 +13,13 @@
 //! wall-clock strings; the adapter converts to UTC `UnixNanos` with `ts_event` =
 //! **bar close** (Nautilus convention). Runs are resumable via [`checkpoint`].
 
+pub mod budget;
 pub mod checkpoint;
 pub mod pacer;
 
 use std::collections::{BTreeMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use chrono::{Duration as ChronoDuration, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime, TimeZone};
@@ -39,8 +41,16 @@ use crate::error::{AdapterError, AdapterResult};
 use crate::lock::{AdvisoryLock, LockKind};
 use crate::parse::strict_i64;
 use crate::rules::{KRX_REGULAR_CLOSE, KST_UTC_OFFSET_HOURS};
+use self::budget::{spend_ledger_path, BudgetModel, SpendLedger};
 use self::checkpoint::{Checkpoint, CoverageGap, GapReason, RebaseEvent, RebaseOrigin};
 use self::pacer::{Pacer, MARKET_DATA_CATEGORY_PER_SEC};
+
+/// Current wall-clock as a unix timestamp (seconds) — the spend-ledger dispatch
+/// stamp. Isolated so the ledger's bucketing is the only `Utc::now` seam in the
+/// fetch path.
+fn now_unix() -> i64 {
+    chrono::Utc::now().timestamp()
+}
 
 /// A defensive upper bound on daily-cursor pages per symbol (guards a gateway that
 /// never terminates the cursor).
@@ -279,6 +289,14 @@ pub trait DailyFetcher {
     fn pace_per_sec(&self) -> u32 {
         0
     }
+
+    /// Backoff to wait after an `IGW00201` throttle before retrying a daily page
+    /// (KTD-4). Daily is ~1 page per symbol, so the recovery arm backs off and
+    /// retries the same page rather than narrowing. Default zero so test fakes
+    /// retry instantly; `SdkFetcher` takes it from the measured budget model.
+    fn throttle_backoff(&self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
 }
 
 /// Fetches all minute-chart pages for a symbol over a date chunk.
@@ -323,16 +341,62 @@ pub struct SdkFetcher {
     minute_pacer: Pacer,
     daily_qrycnt: usize,
     minute_qrycnt: usize,
+    /// SHA-256 of the resolved appkey — the spend-ledger key (KTD-3).
+    cred_hash: String,
+    /// IGW00201 backoff from the measured budget model (R10/KTD-6). Read once at
+    /// construction; the trait default (zero, for test fakes) is untouched.
+    throttle_backoff: std::time::Duration,
+    /// Shared in-process spend ledger; each gateway dispatch records against
+    /// `cred_hash` at the pacer-acquire seam (KTD-3). `None` disables recording
+    /// (always `Some` in production; the field lets a bare fetcher skip it).
+    ledger: Option<Arc<Mutex<SpendLedger>>>,
 }
 
 impl SdkFetcher {
-    fn new(sdk: LsSdk) -> Self {
+    fn new(
+        sdk: LsSdk,
+        cred_hash: String,
+        throttle_backoff: std::time::Duration,
+        ledger: Option<Arc<Mutex<SpendLedger>>>,
+    ) -> Self {
         SdkFetcher {
             sdk,
             daily_pacer: Pacer::for_policy(&T8410_POLICY, MARKET_DATA_CATEGORY_PER_SEC),
             minute_pacer: Pacer::for_policy(&T8412_POLICY, MARKET_DATA_CATEGORY_PER_SEC),
             daily_qrycnt: 900,
             minute_qrycnt: 900,
+            cred_hash,
+            throttle_backoff,
+            ledger,
+        }
+    }
+
+    /// Record one gateway dispatch in the shared spend ledger (KTD-3) — called at
+    /// each pacer-acquire seam, so the count matches the calls the gateway charges.
+    /// Best-effort: a poisoned lock or absent ledger silently skips (advisory data).
+    fn record_dispatch(&self) {
+        if let Some(ledger) = &self.ledger {
+            if let Ok(mut l) = ledger.lock() {
+                l.record_spend(&self.cred_hash, now_unix());
+            }
+        }
+    }
+
+    /// Record a model-miss for each observed `IGW00201` dispatch (KTD-3): the
+    /// gateway tripped the budget the model did not keep us under. Under the
+    /// provisional model (no plan-ahead) every trip is unpredicted; under a measured
+    /// model the planner defers first, so a trip here is a genuine miss. Counts each
+    /// throttled dispatch (a dead-budget symbol contributes several) — a rough signal
+    /// of how throttle-heavy the run was, never trusted over the gateway.
+    fn note_if_throttled<T>(&self, result: &ls_core::LsResult<T>) {
+        if let Err(LsError::ApiError { code, .. }) = result {
+            if code == "IGW00201" {
+                if let Some(ledger) = &self.ledger {
+                    if let Ok(mut l) = ledger.lock() {
+                        l.record_model_miss(&self.cred_hash);
+                    }
+                }
+            }
         }
     }
 }
@@ -347,6 +411,7 @@ impl DailyFetcher for SdkFetcher {
         cts_date: &str,
     ) -> AdapterResult<T8410Response> {
         self.daily_pacer.acquire().await;
+        self.record_dispatch();
         let mut req = T8410Request::new(
             shcode,
             "2", // daily
@@ -355,11 +420,17 @@ impl DailyFetcher for SdkFetcher {
             edate.to_string(),
         );
         req.inblock.cts_date = cts_date.to_string();
-        Ok(self.sdk.paginated().stock_chart_period(&req).await?)
+        let resp = self.sdk.paginated().stock_chart_period(&req).await;
+        self.note_if_throttled(&resp);
+        Ok(resp?)
     }
 
     fn pace_per_sec(&self) -> u32 {
         self.daily_pacer.per_sec_cap()
+    }
+
+    fn throttle_backoff(&self) -> std::time::Duration {
+        self.throttle_backoff
     }
 }
 
@@ -394,7 +465,10 @@ impl MinuteFetcher for SdkFetcher {
         let mut seen = HashSet::new();
         for _ in 0..MINUTE_MAX_PAGES {
             self.minute_pacer.acquire().await;
-            let page = self.sdk.paginated().chart_page(&req).await?;
+            self.record_dispatch();
+            let page = self.sdk.paginated().chart_page(&req).await;
+            self.note_if_throttled(&page);
+            let page = page?;
             let next_date = page.outblock.cts_date.trim().to_string();
             let next_time = page.outblock.cts_time.trim().to_string();
             let next_key = page.tr_cont_key().to_string();
@@ -435,15 +509,25 @@ impl MinuteFetcher for SdkFetcher {
     }
 
     fn throttle_backoff(&self) -> std::time::Duration {
-        IGW00201_BACKOFF
+        self.throttle_backoff
     }
 }
 
-/// Backoff after an `IGW00201` throttle before a narrowed retry (KTD5). The
-/// gateway's rolling call-count budget refills over a window, so a bulk deep pull
-/// pauses here rather than aborting the whole symbol (matches the drip-feed
-/// runbook's 120s pause).
-const IGW00201_BACKOFF: std::time::Duration = std::time::Duration::from_secs(120);
+/// A conservative page-cost estimate for a triple's un-covered sub-ranges (AE3/
+/// KTD-3): daily is ~1 page per symbol; minute is ~1 t8412 page per ~2 trading
+/// sessions at qrycnt 900 (the drip anchor). Trading days are approximated from the
+/// calendar span at 5/7. Used only by the pre-dispatch budget planner.
+fn estimate_pages(kind: BarKind, sub_ranges: &[(NaiveDate, NaiveDate)]) -> u32 {
+    let calendar_days: i64 = sub_ranges.iter().map(|(s, e)| (*e - *s).num_days() + 1).sum();
+    let trading = ((calendar_days * 5 + 6) / 7).max(1);
+    match kind {
+        // Daily walks ~`daily_qrycnt` (900) rows/page on the cursor: ~1 page for a
+        // short accumulate window, but ceil(sessions/900) for a deep first backfill —
+        // never a flat 1, which would under-count a multi-page daily walk.
+        BarKind::Daily => (((trading + 899) / 900).max(1)) as u32,
+        BarKind::Minute(_) => (((trading + 1) / 2).max(1)) as u32,
+    }
+}
 
 /// The outcome of ingesting one `(instrument, bar-kind)` triple.
 enum TripleOutcome {
@@ -465,18 +549,43 @@ async fn collect_daily<F: DailyFetcher>(
     let mut cts_date = String::new();
     let mut seen = HashSet::new();
     let mut hit_cap = true;
+    // Consecutive IGW00201 throttles since the last successful page (reset on any
+    // `Ok`), bounding a dead/too-slow budget exactly like `collect_minute` (KTD-4).
+    let mut throttle_retries = 0usize;
 
     for page in 0..MAX_DAILY_PAGES {
-        let resp = match fetcher.fetch_daily_page(shcode, sdate, edate, &cts_date).await {
-            Ok(r) => r,
-            Err(AdapterError::Sdk(LsError::ApiError { code, .. })) if code == "01715" => {
-                return Ok(TripleOutcome::Gap(GapReason::NonTradingDay));
-            }
-            // R9: wrap a genuine gateway failure with locating context (TR code,
-            // page index, pacer cap) — the control-flow codes above are handled
-            // first, so anything here is a real failure worth localizing.
-            Err(e) => {
-                return Err(with_gateway_context(e, fetcher.tr_label(), page + 1, fetcher.pace_per_sec()))
+        // Retry the SAME page on an IGW00201 throttle (KTD-4): daily is ~1 page per
+        // symbol, so narrow-and-requeue adds nothing — back off (measured refill
+        // window) and retry the same cursor. On a budget that stays dead past
+        // MAX_THROTTLE_RETRIES consecutive throttles, degrade the symbol to a thin
+        // gap (watermark withheld, re-fetched on a later cold budget) rather than
+        // aborting the whole multi-symbol run — mirroring the minute arm's discipline.
+        let resp = loop {
+            match fetcher.fetch_daily_page(shcode, sdate, edate, &cts_date).await {
+                Ok(r) => {
+                    throttle_retries = 0; // forward progress resets the throttle bound
+                    break r;
+                }
+                Err(AdapterError::Sdk(LsError::ApiError { code, .. })) if code == "01715" => {
+                    return Ok(TripleOutcome::Gap(GapReason::NonTradingDay));
+                }
+                Err(AdapterError::Sdk(LsError::ApiError { code, .. })) if code == "IGW00201" => {
+                    if throttle_retries >= MAX_THROTTLE_RETRIES {
+                        // Dead budget: withhold the watermark for this symbol (thin
+                        // gap), never abort the run. Partial daily pages already read
+                        // are discarded — the symbol re-pulls whole on a cold budget.
+                        return Ok(TripleOutcome::Gap(GapReason::PaperThin));
+                    }
+                    throttle_retries += 1;
+                    tokio::time::sleep(fetcher.throttle_backoff()).await;
+                    continue;
+                }
+                // R9: wrap a genuine gateway failure with locating context (TR code,
+                // page index, pacer cap) — the control-flow codes above are handled
+                // first, so anything here is a real failure worth localizing.
+                Err(e) => {
+                    return Err(with_gateway_context(e, fetcher.tr_label(), page + 1, fetcher.pace_per_sec()))
+                }
             }
         };
         for row in &resp.outblock1 {
@@ -908,6 +1017,24 @@ pub struct BackwardWidenWarning {
     pub earliest_stored: String,
 }
 
+/// A symbol/triple deferred pre-dispatch because its estimated page cost exceeds
+/// the remaining measured budget (AE3/KTD-3): the ingest stopped before dispatching,
+/// preserved the checkpoint unchanged, and scheduled the remainder — no IGW00201 was
+/// provoked. Informational like a backward-widen warning: it never reddens CI, and a
+/// later cold-window run resumes it. Only ever populated under a measured budget
+/// model (`budget_calls: Some`); inert under the provisional default.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BudgetDeferral {
+    /// The instrument id (`{shcode}.XKRX`).
+    pub instrument: String,
+    /// The bar-type label (e.g. `1-MINUTE`).
+    pub bar_type: String,
+    /// The estimated page cost of the deferred triple.
+    pub estimated_pages: u32,
+    /// The budget remaining in the current window when it was deferred.
+    pub remaining_budget: u32,
+}
+
 /// The result of an ingest run.
 #[derive(Debug, Clone)]
 pub struct CoverageReport {
@@ -930,6 +1057,9 @@ pub struct CoverageReport {
     /// Backward-widen loud no-ops (R4/KTD-6): triples whose lookback floor precedes
     /// their earliest stored coverage, so the pre-coverage region is unreachable.
     pub backward_widen_warnings: Vec<BackwardWidenWarning>,
+    /// Triples deferred pre-dispatch under a measured budget (AE3/KTD-3) — stopped
+    /// before the cliff with the remainder scheduled, never provoking IGW00201.
+    pub budget_deferrals: Vec<BudgetDeferral>,
     /// The request-budget estimate for the run.
     pub budget: BudgetEstimate,
 }
@@ -966,13 +1096,57 @@ impl IngestConfig {
 pub struct Ingestor {
     fetcher: SdkFetcher,
     config: IngestConfig,
+    /// Shared per-credential spend ledger (KTD-3): the fetcher records each
+    /// dispatch into it, the accumulate planner reads it, and it is persisted after
+    /// each run so a run interrupted by budget exhaustion resumes across sessions.
+    ledger: Arc<Mutex<SpendLedger>>,
+    /// Where [`Self::ledger`] persists (env override or `<catalog>/../state/`).
+    ledger_path: PathBuf,
+    /// The measured IGW00201 budget model (fail-open provisional until U6).
+    budget_model: BudgetModel,
+    /// This lane's credential-hash ledger key.
+    cred_hash: String,
 }
 
 impl Ingestor {
-    /// Build an ingestor over an SDK handle and config.
+    /// Build an ingestor over an SDK handle and config. Resolves the credential
+    /// hash, loads the (fail-open) budget model, and loads + prunes the shared
+    /// spend ledger — all advisory: an absent model/ledger keeps today's behavior.
     pub fn new(sdk: LsSdk, config: IngestConfig) -> Self {
-        let fetcher = SdkFetcher::new(sdk);
-        Ingestor { fetcher, config }
+        let cred_hash = SpendLedger::hash_appkey(&sdk.inner().config.appkey);
+        let budget_model = BudgetModel::load_default();
+        let ledger_path = spend_ledger_path(&config.catalog_path);
+        let cutoff = now_unix() - budget_model.window_secs;
+        let ledger = Arc::new(Mutex::new(SpendLedger::load_pruned(&ledger_path, cutoff)));
+        let fetcher = SdkFetcher::new(
+            sdk,
+            cred_hash.clone(),
+            budget_model.throttle_backoff(),
+            Some(Arc::clone(&ledger)),
+        );
+        Ingestor {
+            fetcher,
+            config,
+            ledger,
+            ledger_path,
+            budget_model,
+            cred_hash,
+        }
+    }
+
+    /// Persist the shared spend ledger (best-effort, advisory): a failure warns but
+    /// never fails the run. Called at the end of a run so the next invocation (the
+    /// per-symbol drip re-invokes the binary) sees this run's spend.
+    fn save_ledger(&self) {
+        if let Ok(l) = self.ledger.lock() {
+            if let Err(e) = l.save(&self.ledger_path) {
+                tracing::warn!(
+                    path = %self.ledger_path.display(),
+                    error = %e,
+                    "failed to persist spend ledger (advisory; ingest unaffected)"
+                );
+            }
+        }
     }
 
     /// Run ingestion while holding the R15 ingest lock (refuses if a live session
@@ -1000,6 +1174,16 @@ impl Ingestor {
         let mut gaps_this_run = Vec::new();
         let mut range_refusals: Vec<RangeRefusal> = Vec::new();
         let mut append_refusals: Vec<AppendRefusal> = Vec::new();
+        let mut budget_deferrals: Vec<BudgetDeferral> = Vec::new();
+        // Parsed once for the pre-dispatch budget planner (AE3/KTD-3). `None` if the
+        // range dates don't parse (e.g. a probe-style empty range) → planning skipped.
+        let range_span: Option<(NaiveDate, NaiveDate)> = match (
+            parse_yyyymmdd("sdate", &self.config.sdate),
+            parse_yyyymmdd("edate", &self.config.edate),
+        ) {
+            (Ok(s), Ok(e)) => Some((s, e)),
+            _ => None,
+        };
 
         for id in universe {
             let shcode = id.symbol.as_str().to_string();
@@ -1025,6 +1209,41 @@ impl Ingestor {
                 if checkpoint.is_done(&id.to_string(), &label, &range) {
                     skipped += 1;
                     continue;
+                }
+                // Pre-dispatch budget plan (AE3/KTD-3), range mode — the same guard
+                // as accumulate: under a measured budget, stop before a triple whose
+                // estimated page cost exceeds the remaining budget window (schedule the
+                // remainder, no bars fetched), never marking it done so a later cold
+                // run resumes it. Inert under the provisional model (`budget_calls:
+                // None`), so today's behavior is unchanged.
+                if let Some((s, e)) = range_span {
+                    let estimated = estimate_pages(kind, &[(s, e)]);
+                    let decision = match self.ledger.lock() {
+                        Ok(led) => budget::plan_dispatch(
+                            &self.budget_model,
+                            &led,
+                            &self.cred_hash,
+                            now_unix(),
+                            estimated,
+                        ),
+                        Err(_) => budget::BudgetDecision::Proceed,
+                    };
+                    if let budget::BudgetDecision::Defer { estimated, remaining } = decision {
+                        tracing::info!(
+                            instrument = %id,
+                            bar_type = %label,
+                            estimated,
+                            remaining,
+                            "deferring symbol pre-dispatch (range mode): estimated page cost exceeds the remaining budget window; scheduling the remainder (no bars fetched)"
+                        );
+                        budget_deferrals.push(BudgetDeferral {
+                            instrument: id.to_string(),
+                            bar_type: label.clone(),
+                            estimated_pages: estimated,
+                            remaining_budget: remaining,
+                        });
+                        continue;
+                    }
                 }
                 let bar_type = kind.bar_type(*id)?;
                 let outcome = match kind {
@@ -1098,6 +1317,8 @@ impl Ingestor {
             "ingest budget estimate"
         );
 
+        // Persist this run's dispatch spend for the next invocation (KTD-3).
+        self.save_ledger();
         Ok(CoverageReport {
             bars_written,
             triples_ingested: ingested,
@@ -1107,6 +1328,7 @@ impl Ingestor {
             range_refusals,
             append_refusals,
             backward_widen_warnings: Vec::new(),
+            budget_deferrals,
             budget,
         })
     }
@@ -1152,6 +1374,7 @@ impl Ingestor {
         let mut heal_refusals: Vec<HealRefusal> = Vec::new();
         let mut append_refusals: Vec<AppendRefusal> = Vec::new();
         let mut backward_widen_warnings: Vec<BackwardWidenWarning> = Vec::new();
+        let mut budget_deferrals: Vec<BudgetDeferral> = Vec::new();
 
         for id in universe {
             let shcode = id.symbol.as_str().to_string();
@@ -1304,6 +1527,46 @@ impl Ingestor {
                     .max();
                 let sub_ranges = subtract_covered(start, last_closed, &covered);
 
+                // Pre-dispatch budget plan (AE3/KTD-3): under a measured budget, stop
+                // before a triple whose estimated page cost exceeds the remaining
+                // budget window — the checkpoint is unchanged (nothing lost), the
+                // remainder is scheduled, and no IGW00201 is provoked. A no-op under
+                // the provisional model (`budget_calls: None`), so today's behavior is
+                // unchanged until U6 promotes measured numbers. The gateway stays
+                // ground truth — this only ever refuses to dispatch, never fabricates
+                // coverage.
+                if !sub_ranges.is_empty() {
+                    let estimated = estimate_pages(kind, &sub_ranges);
+                    // Advisory: a poisoned ledger lock never blocks ingest (the
+                    // gateway stays ground truth) — fall through to Proceed.
+                    let decision = match self.ledger.lock() {
+                        Ok(led) => budget::plan_dispatch(
+                            &self.budget_model,
+                            &led,
+                            &self.cred_hash,
+                            now_unix(),
+                            estimated,
+                        ),
+                        Err(_) => budget::BudgetDecision::Proceed,
+                    };
+                    if let budget::BudgetDecision::Defer { estimated, remaining } = decision {
+                        tracing::info!(
+                            instrument = %instrument,
+                            bar_type = %label,
+                            estimated,
+                            remaining,
+                            "deferring symbol pre-dispatch: estimated page cost exceeds the remaining budget window; scheduling the remainder (no bars fetched)"
+                        );
+                        budget_deferrals.push(BudgetDeferral {
+                            instrument: instrument.clone(),
+                            bar_type: label.clone(),
+                            estimated_pages: estimated,
+                            remaining_budget: remaining,
+                        });
+                        continue;
+                    }
+                }
+
                 let mut wrote_any = false;
                 // The start of the first sub-range that halts the loop — a PaperThin
                 // truncation (un-fetched older history) or an unforeseen overlap. The
@@ -1430,6 +1693,10 @@ impl Ingestor {
             gaps = gaps_this_run.len(),
             "accumulate-forward run complete"
         );
+        // Persist this run's dispatch spend for the next invocation (KTD-3, R11):
+        // the per-symbol drip re-invokes the binary, so this is the seam that lets a
+        // budget-interrupted run resume across sessions.
+        self.save_ledger();
         Ok(CoverageReport {
             bars_written,
             triples_ingested: ingested,
@@ -1441,6 +1708,7 @@ impl Ingestor {
             range_refusals: Vec::new(),
             append_refusals,
             backward_widen_warnings,
+            budget_deferrals,
             budget,
         })
     }
@@ -2551,12 +2819,13 @@ mod tests {
 
     #[tokio::test]
     async fn daily_gateway_error_is_wrapped_with_tr_page_and_pacer_context() {
-        // R9: a non-control-flow gateway error (e.g. IGW00201) propagates wrapped
-        // with the TR code, the page index, and the pacer cap — the raw LsError
-        // stays reachable via Error::source for classification, and the message
-        // localizes the failure without a raw-probe A/B.
+        // R9: a non-control-flow gateway error propagates wrapped with the TR code,
+        // the page index, and the pacer cap — the raw LsError stays reachable via
+        // Error::source for classification, and the message localizes the failure
+        // without a raw-probe A/B. (IGW00201 is now a *control-flow* code for daily —
+        // KTD-4 recovers it in-process — so this uses a genuinely-failing code.)
         let bar_type = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
-        let fetcher = PacedErrDaily { code: "IGW00201".to_string() };
+        let fetcher = PacedErrDaily { code: "IGW00301".to_string() };
         let err = match collect_daily(&fetcher, "005930", bar_type, "20240101", "20240131").await {
             Ok(_) => panic!("expected a propagated gateway error"),
             Err(e) => e,
@@ -2567,12 +2836,86 @@ mod tests {
         assert_eq!(*tr, "t8410", "TR code present");
         assert_eq!(*page, 1, "page index present");
         assert_eq!(*per_sec, 1, "pacer cap present");
-        assert!(matches!(source.as_ref(), LsError::ApiError { code, .. } if code == "IGW00201"));
+        assert!(matches!(source.as_ref(), LsError::ApiError { code, .. } if code == "IGW00301"));
         let text = err.to_string();
         assert!(text.contains("t8410") && text.contains("page 1"), "context in Display: {text}");
         // The wrapped display carries no raw request body — only the TR/page/pace
         // and the gateway's own message.
         assert!(text.contains("rate limit exceeded"));
+    }
+
+    /// A daily fetcher that throttles (IGW00201) its first `throttle_first` calls,
+    /// then serves a single terminating page (U3/KTD-4). `throttle_backoff` defaults
+    /// to zero, so the test does not sleep.
+    struct ThrottledDaily {
+        throttle_first: usize,
+        calls: AtomicUsize,
+    }
+    #[async_trait]
+    impl DailyFetcher for ThrottledDaily {
+        async fn fetch_daily_page(&self, _s: &str, _sd: &str, _ed: &str, _cts: &str) -> AdapterResult<T8410Response> {
+            let n = self.calls.fetch_add(1, Ordering::SeqCst);
+            if n < self.throttle_first {
+                Err(AdapterError::Sdk(LsError::ApiError {
+                    code: "IGW00201".to_string(),
+                    message: "호출 거래건수를 초과하였습니다.".to_string(),
+                }))
+            } else {
+                Ok(daily_resp("", "20240105")) // single terminating page, one row
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn daily_igw00201_backs_off_retries_same_page_and_completes() {
+        // KTD-4 regression: today `collect_daily` has no IGW00201 arm and aborts the
+        // whole run on a throttle. The new arm backs off and retries the SAME page
+        // (daily is ~1 page, so no narrowing), then completes with bars.
+        let bar_type = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        let fetcher = ThrottledDaily { throttle_first: 3, calls: AtomicUsize::new(0) };
+        let outcome = collect_daily(&fetcher, "005930", bar_type, "20240101", "20240131")
+            .await
+            .expect("throttle recovers, does not abort the run");
+        assert!(
+            matches!(outcome, TripleOutcome::Bars(ref b) if !b.is_empty()),
+            "backoff-and-retry recovers bars instead of aborting"
+        );
+        // 3 throttles + 1 success — the same page was retried, not narrowed.
+        assert_eq!(fetcher.calls.load(Ordering::SeqCst), 4);
+    }
+
+    /// A daily fetcher whose budget is permanently dead: every call throttles.
+    struct AlwaysThrottleDaily {
+        calls: AtomicUsize,
+    }
+    #[async_trait]
+    impl DailyFetcher for AlwaysThrottleDaily {
+        async fn fetch_daily_page(&self, _s: &str, _sd: &str, _ed: &str, _cts: &str) -> AdapterResult<T8410Response> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Err(AdapterError::Sdk(LsError::ApiError {
+                code: "IGW00201".to_string(),
+                message: "호출 거래건수를 초과하였습니다.".to_string(),
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn daily_igw00201_dead_budget_degrades_to_gap_not_run_abort() {
+        // A permanently-throttled daily budget terminates in bounded time (the
+        // consecutive-throttle counter) and degrades to a thin GAP — watermark
+        // withheld — instead of propagating an Err that aborts the multi-symbol run.
+        let bar_type = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        let fetcher = AlwaysThrottleDaily { calls: AtomicUsize::new(0) };
+        let outcome = collect_daily(&fetcher, "005930", bar_type, "20240101", "20240131")
+            .await
+            .expect("a dead daily budget degrades to a gap, it does not error the run");
+        assert!(
+            matches!(outcome, TripleOutcome::Gap(GapReason::PaperThin)),
+            "dead budget → thin gap (watermark withheld), got {:?}",
+            std::mem::discriminant(&outcome)
+        );
+        let calls = fetcher.calls.load(Ordering::SeqCst);
+        assert!(calls > 0 && calls < 1000, "bounded retries, not an infinite loop (calls={calls})");
     }
 
     fn minute_row(date: &str, time: &str) -> T8412OutBlock1 {

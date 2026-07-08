@@ -107,6 +107,34 @@ between symbols. Because `range`-mode ingest is per-symbol idempotent (already-c
 `APPEND REFUSED` without re-fetching), the loop is restartable and never double-pulls — so
 retrying the whole symbol list after a trip only fetches the missing symbols.
 
+## Budget-aware layer + probe landed (update 2026-07-08, provisional numbers)
+
+The 120s backoff and "day-ish, credential-shared" window quoted throughout this doc
+are the **guessed** model. As of 2026-07-08 the adapter encodes that model as data and
+adds the machinery to plan against it — but the numbers are still guesses until the probe
+runs (U6):
+
+- **`adapters/nautilus/lab/config/gateway-budget.json`** — the committed, machine-readable
+  budget model (`refill_secs`, `window_secs`, `budget_calls`, `bucket_scope`, `provenance`).
+  It currently holds the **provisional** guesses (`budget_calls: null` ⇒ no plan-ahead), so
+  the ingest keeps exactly today's blind-backoff behavior. The IGW00201 backoff is now read
+  from `refill_secs` (still 120s) instead of a hard-coded constant.
+- **Per-credential spend ledger** (`ingest::budget::SpendLedger`, keyed by hashed appkey,
+  `state/spend-ledger.json`, `LS_SPEND_LEDGER_FILE`-overridable and pinned by
+  `turn4-ingest.sh`) — records every gateway dispatch so the ingest can plan against the
+  measured budget once one exists. Advisory: the gateway stays ground truth.
+- **In-process IGW00201 recovery on the DAILY pass too** — `collect_daily` now backs off and
+  retries the same page (mirroring the minute arm), so the drip script's grep-retry is a thin
+  outer backstop rather than the only daily recovery.
+- **Pre-dispatch budget planner** — under a measured budget the ingest stops before a symbol
+  whose estimated page cost exceeds the remaining window (`SCHEDULED REMAINDER`), never
+  provoking IGW00201. Inert while `budget_calls` is null.
+- **`budget-probe` binary** (`src/bin/budget-probe.rs`, attended, paper-only) — measures the
+  real bucket scope (stage 0), cold-budget size (stage 1), refill window (stage 2), and
+  cross-class span (stage 3) on a spare paper lane, under a hard per-session call ceiling.
+  Its JSON report's numbers get promoted into `gateway-budget.json` and replace the guesses
+  here. **Until that attended run happens, this drip runbook is the operating procedure.**
+
 ## Prevention
 
 - **Never trust `catalog status: GO` as proof of minute completeness.** It reads deduped, so a

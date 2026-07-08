@@ -34,6 +34,11 @@ pub struct Provenance {
     pub captured_at: String,
     /// The declared N (must equal the shcode count).
     pub count: usize,
+    /// The N the operator requested (`LS_CAPTURE_N`), recorded so a legitimately
+    /// short board (captured `count` < `requested_n`, override-allowed) is audit-
+    /// visible (KTD-5). `#[serde(default)]` = 0 so legacy captures (no field) load.
+    #[serde(default)]
+    pub requested_n: usize,
     /// The disclosed current-market-cap look-ahead caveat (KTD-1).
     pub look_ahead_caveat: String,
 }
@@ -45,6 +50,27 @@ pub struct UniverseFile {
     pub provenance: Provenance,
     /// The shcodes, in server-returned (market-cap-descending) order.
     pub shcodes: Vec<String>,
+}
+
+/// The short-freeze guard (KTD-5, R12): a capture that froze fewer than the
+/// requested N is the silent-truncation risk that started this incident (a 20-of-40
+/// freeze fed a plan needing 40). Returns `Err` naming both counts — the caller must
+/// exit non-zero and write nothing — unless `allow_short` (an explicit operator
+/// override for a board that legitimately ends early). `Ok(())` = safe to write.
+pub fn check_capture_completeness(
+    captured: usize,
+    requested: usize,
+    allow_short: bool,
+) -> Result<(), String> {
+    if captured < requested && !allow_short {
+        return Err(format!(
+            "short freeze: captured {captured} of {requested} requested — refusing to write a \
+             silently-truncated universe (the t1444 walk did not reach the requested N; the header \
+             pagination fix may have regressed). If this board legitimately ends early, set \
+             LS_CAPTURE_ALLOW_SHORT=1 to override (provenance then records requested_n)."
+        ));
+    }
+    Ok(())
 }
 
 impl UniverseFile {
@@ -119,6 +145,7 @@ mod tests {
             upcode_label: "코스피종합 (KOSPI composite)".to_string(),
             captured_at: "2026-07-07T00:00:00Z".to_string(),
             count,
+            requested_n: count,
             look_ahead_caveat: "current-market-cap selection for a past window; disclosed (KTD-1)".to_string(),
         }
     }
@@ -200,5 +227,46 @@ mod tests {
     fn ingest_symbols_is_comma_joined() {
         let f = valid_file(3);
         assert_eq!(f.ingest_symbols(), "000100,000101,000102");
+    }
+
+    // --- KTD-5 short-freeze guard ---
+
+    #[test]
+    fn full_capture_passes_the_completeness_guard() {
+        // captured == requested → write.
+        assert!(check_capture_completeness(40, 40, false).is_ok());
+        // captured > requested (a board over-served) is never a short freeze.
+        assert!(check_capture_completeness(41, 40, false).is_ok());
+    }
+
+    #[test]
+    fn short_capture_is_refused_and_names_both_counts() {
+        // captured < requested, no override → refuse, naming the 20/40 shortfall.
+        let err = check_capture_completeness(20, 40, false).unwrap_err();
+        assert!(err.contains("20 of 40"), "message names both counts: {err}");
+        assert!(err.contains("LS_CAPTURE_ALLOW_SHORT"), "message names the override: {err}");
+    }
+
+    #[test]
+    fn short_capture_is_allowed_under_the_override() {
+        // captured < requested WITH override → allowed (a legitimately short board).
+        assert!(check_capture_completeness(20, 40, true).is_ok());
+    }
+
+    #[test]
+    fn legacy_file_without_requested_n_loads_as_zero() {
+        // A pre-KTD-5 committed universe file has no `requested_n`; it must still
+        // deserialize (the field defaults to 0), so old captures keep loading.
+        let json = r#"{
+            "provenance": {
+                "source_tr": "t1444", "upcode": "001", "upcode_label": "x",
+                "captured_at": "2026-07-07T00:00:00Z", "count": 20,
+                "look_ahead_caveat": "disclosed"
+            },
+            "shcodes": []
+        }"#;
+        let f: UniverseFile = serde_json::from_str(json).expect("legacy file loads");
+        assert_eq!(f.provenance.requested_n, 0, "absent requested_n defaults to 0");
+        assert_eq!(f.provenance.count, 20);
     }
 }

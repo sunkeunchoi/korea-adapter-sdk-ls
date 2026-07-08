@@ -240,6 +240,14 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
             );
         }
     }
+    if !report.budget_deferrals.is_empty() {
+        for d in &report.budget_deferrals {
+            println!(
+                "SCHEDULED REMAINDER (budget): {} {} — estimated {} pages exceeds the remaining budget window ({} calls); stopped before the cliff, no bars fetched. Re-run on a cold budget window to resume (per-symbol idempotent).",
+                d.instrument, d.bar_type, d.estimated_pages, d.remaining_budget
+            );
+        }
+    }
     println!(
         "budget: {} symbols x {} bar-kinds, paced to {}/s (>= {:.0}s wall clock)",
         report.budget.symbols,
@@ -373,6 +381,7 @@ mod tests {
             range_refusals: Vec::new(),
             append_refusals: Vec::new(),
             backward_widen_warnings: Vec::new(),
+            budget_deferrals: Vec::new(),
             budget: BudgetEstimate { symbols: 0, bar_kinds: 0, per_sec_cap: 1, min_requests: 0 },
         }
     }

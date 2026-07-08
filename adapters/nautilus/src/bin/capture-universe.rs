@@ -20,7 +20,7 @@
 
 use nautilus_ls::config::LsAdapterConfig;
 use nautilus_ls::scrub;
-use nautilus_ls::universe::{Provenance, UniverseFile, SOURCE_TR};
+use nautilus_ls::universe::{check_capture_completeness, Provenance, UniverseFile, SOURCE_TR};
 
 /// Default output path (relative to the adapter crate root / CWD).
 const DEFAULT_OUT: &str = "lab/config/turn3-universe.json";
@@ -52,6 +52,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Err(_) => DEFAULT_N,
     };
     let sentinel = std::env::var("LS_CAPTURE_SENTINEL").unwrap_or_else(|_| DEFAULT_SENTINEL.into());
+    // KTD-5: allow a legitimately-short board only under an explicit override.
+    let allow_short = matches!(
+        std::env::var("LS_CAPTURE_ALLOW_SHORT").ok().as_deref().map(str::trim).map(str::to_ascii_lowercase).as_deref(),
+        Some("1") | Some("true")
+    );
 
     let adapter_cfg = match std::env::var("LS_CAPTURE_LANE_FILE") {
         Ok(path) => LsAdapterConfig::from_lane_file(path),
@@ -90,6 +95,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .into());
     }
 
+    // Short-freeze guard (KTD-5, R12): a walk that reached fewer than the requested
+    // N is a silent-truncation risk (the 20-of-40 freeze that started this incident);
+    // fail closed BEFORE writing unless an explicit override permits a short board.
+    check_capture_completeness(shcodes.len(), n, allow_short)?;
+
     let file = UniverseFile {
         provenance: Provenance {
             source_tr: SOURCE_TR.to_string(),
@@ -97,6 +107,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             upcode_label: upcode_label(&upcode),
             captured_at: chrono::Utc::now().to_rfc3339(),
             count: shcodes.len(),
+            requested_n: n,
             look_ahead_caveat:
                 "Symbols selected by CURRENT market cap (t1444) for a PAST backtest window — a mild \
                  look-ahead, disclosed and accepted for a first decisive read (KTD-1). t1444 is not promoted."
