@@ -51,6 +51,17 @@ const MAX_DAILY_PAGES: usize = 500;
 /// `collect_minute` are unchanged by the page-by-page drive).
 const MINUTE_MAX_PAGES: usize = 100;
 
+/// Backstop on **consecutive** `IGW00201` backoff-and-narrow retries within one
+/// `collect_minute` call (KTD5) — the counter resets on any successful fetch, so a
+/// deep, healthy pull that keeps making progress never accumulates toward it; only
+/// a run of throttles with no success in between (a dead/too-slow budget) climbs.
+/// Narrowing a very wide range to a budget-sized chunk costs ~log2 consecutive
+/// throttles, far under this bound. At the 120s backoff this caps the worst-case
+/// wall-clock spent on one throttled sub-range at ~32×120s ≈ 64min; on exhaustion
+/// the sub-range degrades to an uncovered thin gap (bars retained, watermark
+/// withheld) rather than aborting the whole run.
+const MAX_THROTTLE_RETRIES: usize = 32;
+
 /// The default post-close safety buffer for the accumulate session-clock rule
 /// (16:30 KST): today counts as a *closed* session only after this time, so a
 /// post-close cron delivers the just-closed session rather than lagging a day, and
@@ -294,6 +305,13 @@ pub trait MinuteFetcher {
     fn pace_per_sec(&self) -> u32 {
         0
     }
+
+    /// Backoff to wait after an `IGW00201` throttle before narrowing and retrying a
+    /// range (KTD5 drip-feed). `IGW00201` is a rolling call-count budget, so a pause
+    /// lets it refill; the default is zero so test fakes narrow instantly.
+    fn throttle_backoff(&self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
 }
 
 /// Production fetcher over the SDK, paced per-TR (KTD4). Dates ride per call (U5),
@@ -415,7 +433,17 @@ impl MinuteFetcher for SdkFetcher {
     fn pace_per_sec(&self) -> u32 {
         self.minute_pacer.per_sec_cap()
     }
+
+    fn throttle_backoff(&self) -> std::time::Duration {
+        IGW00201_BACKOFF
+    }
 }
+
+/// Backoff after an `IGW00201` throttle before a narrowed retry (KTD5). The
+/// gateway's rolling call-count budget refills over a window, so a bulk deep pull
+/// pauses here rather than aborting the whole symbol (matches the drip-feed
+/// runbook's 120s pause).
+const IGW00201_BACKOFF: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// The outcome of ingesting one `(instrument, bar-kind)` triple.
 enum TripleOutcome {
@@ -496,8 +524,16 @@ async fn collect_minute<F: MinuteFetcher>(
     let start = parse_yyyymmdd("sdate", sdate)?;
     let end = parse_yyyymmdd("edate", edate)?;
     let mut bars = Vec::new();
-    let mut overflowed_single_day = false;
+    // A sub-range we could not fully cover (a single day that overflowed the page
+    // cap, or a range the throttle budget stayed dead on): if the symbol ends up with
+    // no bars at all this reports a thin gap rather than empty history, and either
+    // way the watermark is withheld for the uncovered span.
+    let mut left_uncovered_gap = false;
     let mut chunk = 0usize;
+    // Consecutive IGW00201 throttles since the last successful fetch (reset on any
+    // `Ok`). Bounds a dead/too-slow budget; a healthy pull that keeps progressing
+    // never accumulates toward MAX_THROTTLE_RETRIES.
+    let mut throttle_retries = 0usize;
     let mut queue: VecDeque<(NaiveDate, NaiveDate)> = VecDeque::new();
     queue.push_back((start, end));
 
@@ -507,6 +543,7 @@ async fn collect_minute<F: MinuteFetcher>(
         let e_str = e.format("%Y%m%d").to_string();
         match fetcher.fetch_minute_chunk(shcode, ncnt, &s_str, &e_str).await {
             Ok(pages) => {
+                throttle_retries = 0; // forward progress resets the throttle bound
                 for page in &pages {
                     for row in &page.outblock1 {
                         if let Some(b) = build_minute_bar(bar_type, row)? {
@@ -516,21 +553,40 @@ async fn collect_minute<F: MinuteFetcher>(
                 }
             }
             Err(AdapterError::Sdk(LsError::PaginationLimit(_))) => {
-                if let Some((left, right)) = split_range(s, e) {
-                    // Requeue narrower halves at the FRONT so we finish this range
-                    // before moving on (keeps memory bounded).
-                    queue.push_front(right);
-                    queue.push_front(left);
+                // Too many pages for this span — narrow and retry; a single day that
+                // still overflows is an uncoverable thin gap.
+                if !requeue_halves(&mut queue, s, e) {
+                    left_uncovered_gap = true;
+                }
+            }
+            // IGW00201 is the gateway's rolling call-count budget (KTD5), NOT a
+            // page-size problem: back off to let it refill, then narrow-and-requeue so
+            // the retry unit is smaller and fits the refilled window. Bars already
+            // collected from completed chunks are retained. On a budget that stays
+            // dead past MAX_THROTTLE_RETRIES *consecutive* throttles, degrade this
+            // sub-range to an uncovered thin gap (keeping the bars gathered so far)
+            // instead of aborting the whole multi-symbol run — the deep-pull dead-end
+            // this arm exists to prevent must not be re-introduced by the exhaustion
+            // path. A later cold-budget re-run re-fetches the withheld span.
+            Err(AdapterError::Sdk(LsError::ApiError { code, .. })) if code == "IGW00201" => {
+                if throttle_retries >= MAX_THROTTLE_RETRIES {
+                    left_uncovered_gap = true;
                 } else {
-                    // Can't narrow below a single day — record and skip.
-                    overflowed_single_day = true;
+                    throttle_retries += 1;
+                    tokio::time::sleep(fetcher.throttle_backoff()).await;
+                    // A single day that still throttles is retried as-is (bounded by
+                    // the counter); anything wider narrows first.
+                    if !requeue_halves(&mut queue, s, e) {
+                        queue.push_front((s, e));
+                    }
                 }
             }
             Err(AdapterError::Sdk(LsError::ApiError { code, .. })) if code == "01715" => {
                 // Non-trading sub-range — skip it, keep the rest.
             }
             // R9: wrap a genuine gateway failure with locating context (the
-            // pagination/non-trading control-flow codes above are handled first).
+            // pagination/throttle/non-trading control-flow codes above are handled
+            // first, and the throttle now degrades to a gap rather than propagating).
             Err(e) => {
                 return Err(with_gateway_context(e, fetcher.tr_label(), chunk, fetcher.pace_per_sec()))
             }
@@ -542,7 +598,7 @@ async fn collect_minute<F: MinuteFetcher>(
         // (the catalog requires ascending ts_init).
         bars.sort_by_key(|b| b.ts_init.as_u64());
         Ok(TripleOutcome::Bars(bars))
-    } else if overflowed_single_day {
+    } else if left_uncovered_gap {
         Ok(TripleOutcome::Gap(GapReason::PaperThin))
     } else {
         Ok(TripleOutcome::Gap(GapReason::EmptyHistory))
@@ -585,6 +641,22 @@ fn split_range(s: NaiveDate, e: NaiveDate) -> Option<((NaiveDate, NaiveDate), (N
         Some(((s, s), (e, e)))
     } else {
         Some(((s, mid), (mid + ChronoDuration::days(1), e)))
+    }
+}
+
+/// Split `[s, e]` into narrower halves and requeue them at the FRONT (finish this
+/// range before moving on — keeps memory bounded). Returns `false` when the range
+/// is already a single day and cannot be narrowed further. Shared by the
+/// `PaginationLimit` (page-size) and `IGW00201` (throttle) recovery arms of
+/// [`collect_minute`], which narrow identically.
+fn requeue_halves(queue: &mut VecDeque<(NaiveDate, NaiveDate)>, s: NaiveDate, e: NaiveDate) -> bool {
+    match split_range(s, e) {
+        Some((left, right)) => {
+            queue.push_front(right);
+            queue.push_front(left);
+            true
+        }
+        None => false,
     }
 }
 
@@ -2569,6 +2641,102 @@ mod tests {
         }
         // The widest range was retried narrower (more than one distinct request).
         assert!(fetcher.ranges.lock().unwrap().len() > 1);
+    }
+
+    /// A fetcher that throttles (IGW00201) on any chunk spanning >2 days and returns
+    /// one row per narrow chunk otherwise — modelling the rolling call-count budget
+    /// that only serves a small range per window. `throttle_backoff` is zero so the
+    /// test does not actually sleep.
+    struct ThrottledMinute {
+        ranges: Mutex<Vec<(String, String)>>,
+    }
+    #[async_trait]
+    impl MinuteFetcher for ThrottledMinute {
+        async fn fetch_minute_chunk(
+            &self,
+            _shcode: &str,
+            _ncnt: u32,
+            sdate: &str,
+            edate: &str,
+        ) -> AdapterResult<Vec<T8412Response>> {
+            self.ranges.lock().unwrap().push((sdate.to_string(), edate.to_string()));
+            let s = NaiveDate::parse_from_str(sdate, "%Y%m%d").unwrap();
+            let e = NaiveDate::parse_from_str(edate, "%Y%m%d").unwrap();
+            if (e - s).num_days() > 2 {
+                Err(AdapterError::Sdk(LsError::ApiError {
+                    code: "IGW00201".to_string(),
+                    message: "호출 거래건수를 초과하였습니다.".to_string(),
+                }))
+            } else {
+                Ok(vec![minute_page(sdate)])
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn minute_igw00201_backs_off_narrows_and_ingests_all() {
+        // Regression: a mid-range IGW00201 throttle must NOT abort the whole symbol
+        // (discarding every bar) — it backs off and narrows so completed sub-ranges'
+        // bars are retained and the deep pull makes incremental progress.
+        let bar_type = BarKind::Minute(1).bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        let fetcher = ThrottledMinute { ranges: Mutex::new(Vec::new()) };
+        let outcome = collect_minute(&fetcher, "005930", 1, bar_type, "20240101", "20240110")
+            .await
+            .expect("throttle narrows and recovers rather than aborting");
+        let bars = match outcome {
+            TripleOutcome::Bars(b) => b,
+            other => panic!("expected bars, got a gap: {:?}", std::mem::discriminant(&other)),
+        };
+        assert!(!bars.is_empty(), "IGW00201 narrowing recovers bars instead of aborting the symbol");
+        for w in bars.windows(2) {
+            assert!(w[0].ts_init.as_u64() <= w[1].ts_init.as_u64(), "ts ascending");
+        }
+        // The throttled wide range was narrowed and retried (more than one request).
+        assert!(
+            fetcher.ranges.lock().unwrap().len() > 1,
+            "the throttled range was narrowed, not aborted"
+        );
+    }
+
+    /// A fetcher whose budget is permanently dead: every chunk throttles.
+    struct AlwaysThrottleMinute {
+        calls: Mutex<usize>,
+    }
+    #[async_trait]
+    impl MinuteFetcher for AlwaysThrottleMinute {
+        async fn fetch_minute_chunk(
+            &self,
+            _shcode: &str,
+            _ncnt: u32,
+            _sdate: &str,
+            _edate: &str,
+        ) -> AdapterResult<Vec<T8412Response>> {
+            *self.calls.lock().unwrap() += 1;
+            Err(AdapterError::Sdk(LsError::ApiError {
+                code: "IGW00201".to_string(),
+                message: "호출 거래건수를 초과하였습니다.".to_string(),
+            }))
+        }
+    }
+
+    #[tokio::test]
+    async fn minute_igw00201_dead_budget_degrades_to_gap_not_whole_run_abort() {
+        // A permanently-throttled budget must terminate (bounded by
+        // MAX_THROTTLE_RETRIES) and degrade to a thin GAP — NOT propagate an Err that
+        // would abort the whole multi-symbol run and discard other symbols' bars.
+        let bar_type = BarKind::Minute(1).bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        let fetcher = AlwaysThrottleMinute { calls: Mutex::new(0) };
+        let outcome = collect_minute(&fetcher, "005930", 1, bar_type, "20240101", "20240110")
+            .await
+            .expect("a dead budget degrades to a gap, it does not error the run");
+        assert!(
+            matches!(outcome, TripleOutcome::Gap(GapReason::PaperThin)),
+            "dead budget → thin gap (bars withheld), got {:?}",
+            std::mem::discriminant(&outcome)
+        );
+        // Terminated in bounded time — the consecutive-throttle counter capped the retries.
+        let calls = *fetcher.calls.lock().unwrap();
+        assert!(calls > 0 && calls < 10_000, "bounded retries, not an infinite loop (calls={calls})");
     }
 
     struct EmptyMinute;
