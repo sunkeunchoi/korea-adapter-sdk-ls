@@ -39,8 +39,14 @@ pub struct Manifest {
     /// (KTD8): identical in-range data yields an identical fingerprint across
     /// accumulate days; a changed fingerprint means real in-range drift.
     pub catalog_fingerprint: String,
-    /// A hash of the resolved universe symbol list (the composition lives in the
-    /// data-quality report; the manifest carries only its hash, KTD8).
+    /// A hash of the resolved universe selection. For a multi-session backtest the
+    /// runner populates it with [`universe_sequence_hash`] — a **sequence-sensitive**
+    /// digest over the chronological per-session `(date, symbols-in-rank-order)` tuples
+    /// (not the order-insensitive flat [`universe_hash`]). It is the comparability key
+    /// for the run's selection, capturing per-session and out-of-range prior-daily
+    /// influence that the range-scoped `catalog_fingerprint` does not; `runs compare`
+    /// keys on both. The composition itself lives in the data-quality report; the
+    /// manifest carries only the hash (KTD8/KTD-5).
     pub universe_hash: String,
     /// A hash of the strategy's source code. `strategy_version` is operator-set and
     /// can drift from the actual logic; this fingerprint changes whenever the strategy
@@ -92,11 +98,30 @@ pub fn strategy_code_hash() -> String {
     hash_bytes(crate::strategy::ORB_SOURCE.as_bytes())
 }
 
-/// Hash a sorted list of universe symbols into a stable hex digest.
+/// Hash a sorted list of universe symbols into a stable hex digest. Order-insensitive
+/// (sorts first) — the single-selection universe fingerprint used before the runner
+/// became multi-session. Retained for callers that hash one flat symbol set.
 pub fn universe_hash(symbols: &[String]) -> String {
     let mut sorted = symbols.to_vec();
     sorted.sort();
     hash_lines(&sorted)
+}
+
+/// Hash the per-session universe *selection sequence* into a stable hex digest
+/// (KTD-5): the chronologically-ordered `(session_date, symbols-in-rank-order)`
+/// tuples, hashed **without sorting** so the fingerprint is sensitive to both the
+/// session order and each session's rank order — unlike [`universe_hash`], which
+/// sorts and destroys order. Two multi-session runs with the identical per-session
+/// selection sequence produce the identical hash; a run whose selection sequence
+/// differs (a different day's symbols, a different rank order, a different set of
+/// tradeable sessions) produces a different hash.
+pub fn universe_sequence_hash(sessions: &[(chrono::NaiveDate, Vec<String>)]) -> String {
+    let lines: Vec<String> = sessions
+        .iter()
+        .map(|(date, symbols)| format!("{date}|{}", symbols.join(",")))
+        .collect();
+    // Deliberately NOT sorted — the sequence is the fingerprint.
+    hash_lines(&lines)
 }
 
 /// SHA-256 of the newline-joined lines, hex-encoded.

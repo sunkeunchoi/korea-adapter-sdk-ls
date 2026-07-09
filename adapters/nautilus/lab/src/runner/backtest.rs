@@ -1,13 +1,16 @@
 //! Backtest runner (U5, F1) — one command runs ORB vN over the catalog and lands a
 //! registry run. Loads instruments + bars for the pinned range from the
-//! `ParquetDataCatalog`, scans the universe from prior-session daily bars, mounts ORB
-//! in a `BacktestEngine`, and wires the resulting fills into the RunWriter.
+//! `ParquetDataCatalog`, then drives **every** in-range trading session: per session it
+//! reselects the universe from that day's prior/today daily bars, mounts a fresh ORB
+//! `OrbStrategy` in a fresh `BacktestEngine` (a structural per-day reset) over that
+//! day's minute bars, and folds the positions into one union ledger + one RunWriter run.
 //!
 //! Guards (KTD2/KTD8): the runner refuses to start while the ingest advisory lock is
 //! held (and holds it for the run so ingest cannot mutate the catalog mid-run), and
 //! re-reads the range-scoped catalog fingerprint at finalize — failing the run with no
 //! registry residue if it changed since start.
 
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
@@ -16,15 +19,18 @@ use nautilus_backtest::engine::BacktestEngine;
 use nautilus_ls::ingest::checkpoint::Checkpoint;
 use nautilus_ls::ingest::{kst_to_unix_nanos, read_all_bars, read_all_instruments, BarKind};
 use nautilus_ls::lock::{AdvisoryLock, LockKind};
+use nautilus_ls::rules::KRX_REGULAR_OPEN;
 use nautilus_model::data::{Bar, Data};
 use nautilus_model::enums::{AccountType, BarAggregation, BookType, OmsType};
-use nautilus_model::identifiers::Venue;
+use nautilus_model::identifiers::{InstrumentId, Venue};
 use nautilus_model::instruments::{Instrument, InstrumentAny};
 use nautilus_model::position::Position;
 use nautilus_model::types::{Currency, Money};
 
 use crate::artifacts::data_quality::{CoverageGapRecord, DataQualityReport, GapReasonKind};
-use crate::artifacts::manifest::{hash_bytes, range_fingerprint, universe_hash, DataRange, Manifest};
+use crate::artifacts::manifest::{
+    hash_bytes, range_fingerprint, universe_sequence_hash, DataRange, Manifest,
+};
 use crate::artifacts::performance::PerformanceReport;
 use crate::artifacts::{run_id, RunSource, RunWriter};
 use crate::agent::sink::DecisionSink;
@@ -107,62 +113,32 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
     // The range-scoped catalog fingerprint at start (KTD8).
     let fingerprint_start = range_fingerprint(&all_bars, start_ns, end_ns);
 
-    // Universe scan from prior-session daily bars WITHIN the pinned range (KTD8): the
-    // scan must key only on data inside the fingerprinted window, or accumulate-forward
-    // growth outside the range would silently change the selected universe while the
-    // range-scoped fingerprint stayed identical — breaking run comparability.
+    // The one decision sink accumulates every session's universe + trade envelopes
+    // into a single stream (KTD-6); it is drained after the loop for decisions.jsonl.
     let sink = DecisionSink::new();
-    let (candidates, missing) = build_candidates(&instruments, &all_bars, start_ns, end_ns);
-    let selected_symbols = select_universe(&candidates, &cfg.params, &sink, start_ns);
 
-    // A backtest run trades a SINGLE session — the last trading day whose daily bar
-    // falls in the pinned range (the session the universe scan selected "today" from).
-    // Pinning one session keeps the run reproducible and matches the universe scan; a
-    // multi-day range grows coverage but a run always trades its last in-range session.
-    let session_date = all_bars
-        .iter()
-        .filter(|b| is_daily(b) && in_range(b, start_ns, end_ns))
-        .map(kst_date_of)
-        .max();
-
-    // Resolve the selected symbols to instrument ids + minute bar types.
-    let selected: Vec<SelectedSymbol> = instruments
-        .iter()
-        .filter(|i| selected_symbols.iter().any(|s| s == &i.id().to_string()))
-        .filter_map(|i| {
-            BarKind::Minute(cfg.minute_step)
-                .bar_type(i.id())
-                .ok()
-                .map(|bar_type| SelectedSymbol { instrument_id: i.id(), bar_type })
-        })
-        .collect();
-
-    // The selected symbols' minute bars for the pinned session feed the engine.
-    let minute_bars: Vec<Bar> = all_bars
-        .iter()
-        .filter(|b| is_minute(b) && in_range(b, start_ns, end_ns))
-        .filter(|b| session_date.is_none_or(|d| kst_date_of(b) == d))
-        .filter(|b| selected.iter().any(|s| s.bar_type == b.bar_type))
-        .cloned()
-        .collect();
-
-    let engine_instruments: Vec<InstrumentAny> = instruments.clone();
+    // Drive every in-range session (R1): for each session date the universe is
+    // reselected from that day's prior/today daily bars (R2), a fresh strategy trades
+    // that session's minute bars (R3, structural per-day reset), and positions fold
+    // into one ledger. The whole loop runs on ONE blocking-pool thread (the engine
+    // drives an internal `block_on` — the documented catalog/engine `spawn_blocking`
+    // gotcha), so N sequential fresh engines are exercised same-thread (KTD-1).
+    let instruments_for_loop = instruments.clone();
+    let all_bars_for_loop = all_bars.clone();
     let params = cfg.params.clone();
-    let sink_for_engine = sink.clone();
-    let selected_for_engine = selected.clone();
+    let sink_for_loop = sink.clone();
     let starting_balance = cfg.starting_balance;
-
-    // The engine drives an internal runtime (`block_on`) → run on the blocking pool
-    // (the documented catalog/engine `spawn_blocking` gotcha). Extract positions
-    // inside the closure before the engine drops.
-    let positions: Vec<Position> = tokio::task::spawn_blocking(move || {
-        run_engine(
-            engine_instruments,
-            minute_bars,
-            params,
-            selected_for_engine,
-            sink_for_engine,
+    let minute_step = cfg.minute_step;
+    let loop_out: SessionLoop = tokio::task::spawn_blocking(move || {
+        run_sessions(
+            &instruments_for_loop,
+            &all_bars_for_loop,
+            &params,
+            &sink_for_loop,
             starting_balance,
+            minute_step,
+            start_ns,
+            end_ns,
         )
     })
     .await??;
@@ -171,30 +147,32 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
     before_finalize.await;
 
     // Re-check the fingerprint at finalize: a mid-run catalog mutation invalidates the
-    // run (no registry residue, KTD8).
+    // run (no registry residue, KTD8). The guard spans the whole session loop.
     let all_bars_end = read_all_bars(&catalog_path).await?;
     let fingerprint_end = range_fingerprint(&all_bars_end, start_ns, end_ns);
     if fingerprint_end != fingerprint_start {
         anyhow::bail!("catalog changed in-range during the run — aborting with no registry residue");
     }
 
-    // Assemble artifacts.
+    // Assemble artifacts over the union ledger.
     let checkpoint = load_checkpoint(&catalog_path);
-    let performance = PerformanceReport::from_positions(&positions, cfg.starting_balance);
+    let performance = PerformanceReport::from_positions(&loop_out.positions, cfg.starting_balance);
+    let selected_union = loop_out.selected_union.clone();
     // R7: report DETECTED per-symbol shifts — the checkpoint's unhealed shifted
-    // marks intersected with this run's selected universe. A clean catalog
-    // reports an empty list; the agent discounts only affected runs.
+    // marks intersected with this run's selected universe (the union across
+    // sessions). A clean catalog reports an empty list; the agent discounts only
+    // affected runs.
     let shift_symbols: Vec<String> = checkpoint
         .as_ref()
         .map(|c| {
             c.shifted_instruments("1-DAY")
                 .into_iter()
-                .filter(|s| selected_symbols.contains(s))
+                .filter(|s| selected_union.contains(s))
                 .collect()
         })
         .unwrap_or_default();
-    let mut data_quality = DataQualityReport::backtest(selected_symbols.clone(), shift_symbols);
-    data_quality.coverage_gaps = collect_gaps(checkpoint.as_ref(), &missing);
+    let mut data_quality = DataQualityReport::backtest(selected_union.clone(), shift_symbols);
+    data_quality.coverage_gaps = collect_gaps(checkpoint.as_ref(), &loop_out.missing);
 
     let rid = run_id(start, RunSource::Backtest, &cfg.params.strategy_id, cfg.params.strategy_version);
     let manifest = Manifest {
@@ -205,7 +183,8 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
         params: cfg.params.clone(),
         data_range: cfg.range.clone(),
         catalog_fingerprint: fingerprint_start,
-        universe_hash: universe_hash(&selected_symbols),
+        // KTD-5: sequence-sensitive hash over the per-session selection sequence.
+        universe_hash: universe_sequence_hash(&loop_out.selection_sequence),
         strategy_code_hash: crate::artifacts::manifest::strategy_code_hash(),
         checkpoint_hash: checkpoint_hash(&catalog_path),
         created_utc: start.to_rfc3339(),
@@ -221,56 +200,201 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
     Ok(RunOutcome { run_dir, run_id: rid })
 }
 
-/// Build universe candidates from prior-session daily bars: per instrument with ≥2
-/// in-catalog daily bars, `prior_close` = the second-to-last close, `today_open` =
-/// the last open, `prior_turnover` = the prior bar's close × volume. Instruments
-/// without a prior daily bar are returned as `missing` (a data-quality gap).
-/// Select `(prior, today)` as the last two DISTINCT sessions from a `ts_event`-sorted
-/// daily slice, or `None` when fewer than two distinct sessions exist. Keying on
-/// distinct `ts_event` (not raw index) keeps the gap scan robust to a same-session
-/// duplicate a re-ingest overlap can leave in the catalog: `read_all_bars` drops
-/// byte-identical duplicates but deliberately keeps a value-divergent same-session
-/// bar (an un-healed adjustment-basis overlap), and taking `prior`/`today` by index
-/// could draw both from ONE session — reproducing the nonsensical intraday self-gap
-/// (open vs its own close) the read-side dedup set out to eliminate.
-fn select_prior_today<'a>(daily_sorted: &[&'a Bar]) -> Option<(&'a Bar, &'a Bar)> {
-    let today = *daily_sorted.last()?;
-    let prior = *daily_sorted.iter().rev().find(|b| b.ts_event != today.ts_event)?;
+/// The union outcome of driving every in-range session (KTD-1/KTD-6): the folded
+/// position ledger, the chronological per-session selection sequence (for the
+/// sequence-sensitive `universe_hash`, KTD-5), the deduped selected-symbol union
+/// (the universe snapshot + shift-mark intersection), and the coverage-gap symbols.
+struct SessionLoop {
+    positions: Vec<Position>,
+    selection_sequence: Vec<(NaiveDate, Vec<String>)>,
+    selected_union: Vec<String>,
+    missing: Vec<String>,
+}
+
+/// Drive every in-range trading session, reselecting the universe and resetting
+/// per-symbol state each day (R1/R2/R3). For each distinct in-range daily date:
+/// build that session's candidates (KTD-3), select its universe into the shared
+/// sink with a session-scoped `ts_event`, run a fresh engine + `OrbStrategy` over
+/// that day's minute bars, and fold the positions forward. Runs on the blocking
+/// pool (the engine's internal `block_on`), so all sessions execute sequentially on
+/// one thread — the same-thread engine-independence case KTD-1 gates on.
+#[allow(clippy::too_many_arguments)]
+fn run_sessions(
+    instruments: &[InstrumentAny],
+    all_bars: &[Bar],
+    params: &OrbParams,
+    sink: &DecisionSink,
+    starting_balance: f64,
+    minute_step: u32,
+    start_ns: u64,
+    end_ns: u64,
+) -> anyhow::Result<SessionLoop> {
+    // Index the catalog ONCE (one pass each), so the per-session loop does no repeated
+    // full-catalog scans: daily bars bucketed per instrument (sorted by ts, for the
+    // prior/today lookup + the noise filter) and in-range minute bars bucketed by KST
+    // date (the per-bar KST conversion runs exactly once here, not once per session).
+    let mut daily_by_inst: HashMap<InstrumentId, Vec<&Bar>> = HashMap::new();
+    let mut minute_by_date: HashMap<NaiveDate, Vec<&Bar>> = HashMap::new();
+    for b in all_bars {
+        if is_daily(b) {
+            daily_by_inst.entry(b.bar_type.instrument_id()).or_default().push(b);
+        } else if is_minute(b) && in_range(b, start_ns, end_ns) {
+            minute_by_date.entry(kst_date_of(b)).or_default().push(b);
+        }
+    }
+    for bars in daily_by_inst.values_mut() {
+        bars.sort_by_key(|b| b.ts_event.as_u64());
+    }
+
+    // The distinct in-range daily session dates — the tradeable sessions, in order.
+    // Each day's minute bars are pinned to the range; the prior-daily lookback may
+    // reach one session BEFORE the range (KTD-3). That backward reach is safe against
+    // the accumulate-forward comparability break the range-scoped scan guarded (forward
+    // growth only appends dates AFTER the range, never a prior for any in-range
+    // session); a heal/backfill of the pre-range prior daily instead surfaces through
+    // `universe_hash` (the per-session selection sequence, KTD-5), which `runs compare`
+    // keys on alongside the range-scoped `catalog_fingerprint`.
+    let mut session_dates: Vec<NaiveDate> = daily_by_inst
+        .values()
+        .flat_map(|bars| bars.iter())
+        .filter(|b| in_range(b, start_ns, end_ns))
+        .map(|b| kst_date_of(b))
+        .collect();
+    session_dates.sort();
+    session_dates.dedup();
+
+    // The instruments that carry ANY daily bar (the gap-report noise filter, KTD5):
+    // a never-ingested symbol (no daily bars anywhere) must never surface as a
+    // spurious coverage gap. Derived from the daily bucket's keys.
+    let daily_symbols: BTreeSet<String> = instruments
+        .iter()
+        .filter(|inst| daily_by_inst.contains_key(&inst.id()))
+        .map(|inst| inst.id().to_string())
+        .collect();
+
+    let mut positions: Vec<Position> = Vec::new();
+    let mut selection_sequence: Vec<(NaiveDate, Vec<String>)> = Vec::new();
+    let mut selected_union: BTreeSet<String> = BTreeSet::new();
+    let mut ever_candidate: BTreeSet<String> = BTreeSet::new();
+
+    for date in &session_dates {
+        // The universe scan is a session-open state change — stamp its envelopes at
+        // this session's open so decisions.jsonl carries one scan per session date.
+        let session_ts = kst_to_unix_nanos(*date, KRX_REGULAR_OPEN)?.as_u64();
+
+        let candidates = build_candidates(instruments, &daily_by_inst, *date);
+        for c in &candidates {
+            ever_candidate.insert(c.symbol.clone());
+        }
+        let selected_symbols = select_universe(&candidates, params, sink, session_ts);
+        for s in &selected_symbols {
+            selected_union.insert(s.clone());
+        }
+        selection_sequence.push((*date, selected_symbols.clone()));
+
+        // Resolve the selected symbols to instrument ids + minute bar types.
+        let selected: Vec<SelectedSymbol> = instruments
+            .iter()
+            .filter(|i| selected_symbols.iter().any(|s| s == &i.id().to_string()))
+            .filter_map(|i| {
+                BarKind::Minute(minute_step)
+                    .bar_type(i.id())
+                    .ok()
+                    .map(|bar_type| SelectedSymbol { instrument_id: i.id(), bar_type })
+            })
+            .collect();
+
+        // This session's minute bars only (from the pre-bucketed by-date index), kept
+        // to the selected symbols.
+        let minute_bars: Vec<Bar> = minute_by_date
+            .get(date)
+            .map(|bars| {
+                bars.iter()
+                    .filter(|b| selected.iter().any(|s| s.bar_type == b.bar_type))
+                    .map(|b| (*b).clone())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        // Nothing selected or no minute bars → no trades this session; skip the engine
+        // construction entirely (the universe scan is already recorded above).
+        if selected.is_empty() || minute_bars.is_empty() {
+            continue;
+        }
+
+        // A fresh engine + `OrbStrategy` (hence fresh `OrbState`s) per session is the
+        // structural per-day reset (R3/KTD-2): a symbol that reached `Done` yesterday
+        // starts clean today. Only the selected instruments are mounted — they are the
+        // only ones with data/orders this session.
+        let selected_instruments: Vec<InstrumentAny> = instruments
+            .iter()
+            .filter(|i| selected.iter().any(|s| s.instrument_id == i.id()))
+            .cloned()
+            .collect();
+        let session_positions = run_engine(
+            selected_instruments,
+            minute_bars,
+            params.clone(),
+            selected,
+            sink.clone(),
+            starting_balance,
+        )?;
+        positions.extend(session_positions);
+    }
+
+    // Coverage-gap symbols (KTD5, R8; U2 "no spurious global gap"): a symbol with
+    // daily bars that NEVER formed a valid (prior, today) candidate on any in-range
+    // session. A symbol missing its prior daily on one day but selected on another is
+    // NOT a gap — it was tradeable.
+    let missing: Vec<String> = daily_symbols.difference(&ever_candidate).cloned().collect();
+
+    Ok(SessionLoop {
+        positions,
+        selection_sequence,
+        selected_union: selected_union.into_iter().collect(),
+        missing,
+    })
+}
+
+/// Select `(prior, today)` for a target `session_date` from a `ts_event`-sorted
+/// daily slice (KTD-3): `today` is the latest daily bar dated exactly on the
+/// session, `prior` is the latest daily bar dated strictly before it — which may be
+/// the session immediately before the pinned range (the first-session lookback).
+/// `None` when either is absent. Keying on the KST date (not raw index) keeps the
+/// scan robust to a same-session duplicate a re-ingest overlap can leave in the
+/// catalog: `read_all_bars` drops byte-identical duplicates but deliberately keeps a
+/// value-divergent same-session bar (an un-healed adjustment-basis overlap); because
+/// `prior` is strictly an earlier date than `today`, the two can never collapse onto
+/// one session (the nonsensical intraday self-gap the read-side dedup eliminates).
+fn select_prior_today<'a>(
+    daily_sorted: &[&'a Bar],
+    session_date: NaiveDate,
+) -> Option<(&'a Bar, &'a Bar)> {
+    let today = *daily_sorted.iter().rev().find(|b| kst_date_of(b) == session_date)?;
+    let prior = *daily_sorted.iter().rev().find(|b| kst_date_of(b) < session_date)?;
     Some((prior, today))
 }
 
+/// Build the universe candidates for one `session_date` (KTD-3): per instrument with
+/// any catalog daily bar, `today_open` = the open of its daily on `session_date`,
+/// `prior_close` = the close of its latest daily strictly before, `prior_turnover` =
+/// the prior close × volume. An instrument lacking either is skipped for this session
+/// (it may still be a candidate on another day). Reads each instrument's pre-sorted
+/// daily slice from `daily_by_inst`; an instrument absent from the map has NO daily
+/// bars anywhere (the never-ingested noise filter — not a candidate, not a gap).
 fn build_candidates(
     instruments: &[InstrumentAny],
-    all_bars: &[Bar],
-    start_ns: u64,
-    end_ns: u64,
-) -> (Vec<UniverseCandidate>, Vec<String>) {
+    daily_by_inst: &HashMap<InstrumentId, Vec<&Bar>>,
+    session_date: NaiveDate,
+) -> Vec<UniverseCandidate> {
     let mut candidates = Vec::new();
-    let mut missing = Vec::new();
     for inst in instruments {
         let id = inst.id();
-        // Gap-report noise filter (KTD5, R8): skip instruments with NO daily bars
-        // anywhere in the catalog — the whole-universe instrument write records
-        // ~2,600 symbols while bars are bounded to the ingested few, so a
-        // never-ingested symbol must not land as a spurious missing-prior-daily
-        // gap. An instrument that HAS daily bars but lacks the prior session's
-        // in-range daily still reports (a real gap). This filters the report only;
-        // the universe snapshot still documents the full instrument count.
-        let has_any_daily = all_bars
-            .iter()
-            .any(|b| is_daily(b) && b.bar_type.instrument_id() == id);
-        if !has_any_daily {
-            continue;
-        }
-        // Only daily bars INSIDE the pinned range drive the scan (KTD8 comparability).
-        let mut daily: Vec<&Bar> = all_bars
-            .iter()
-            .filter(|b| is_daily(b) && b.bar_type.instrument_id() == id && in_range(b, start_ns, end_ns))
-            .collect();
-        daily.sort_by_key(|b| b.ts_event.as_u64());
-        let Some((prior, today)) = select_prior_today(&daily) else {
-            missing.push(id.to_string());
-            continue;
+        let Some(daily) = daily_by_inst.get(&id) else {
+            continue; // never-ingested → not a candidate, not a gap
+        };
+        let Some((prior, today)) = select_prior_today(daily, session_date) else {
+            continue; // no daily today, or no prior before it — not a candidate today
         };
         candidates.push(UniverseCandidate {
             symbol: id.to_string(),
@@ -279,7 +403,7 @@ fn build_candidates(
             prior_turnover: prior.close.as_f64() * prior.volume.as_f64(),
         });
     }
-    (candidates, missing)
+    candidates
 }
 
 /// Build + run the engine, returning the finished positions (cloned).
@@ -464,8 +588,10 @@ mod tests {
         let jan5_a = day(bt, (2024, 1, 5), 110, 120);
         let jan5_b = day(bt, (2024, 1, 5), 60, 65); // divergent same-session copy
         let daily = vec![&jan4, &jan5_a, &jan5_b];
-        let (prior, today) = select_prior_today(&daily).expect("two distinct sessions");
+        let jan5 = NaiveDate::from_ymd_opt(2024, 1, 5).unwrap();
+        let (prior, today) = select_prior_today(&daily, jan5).expect("prior + today for the session");
         assert_eq!(prior.ts_event, jan4.ts_event, "prior is the earlier distinct session");
+        assert_eq!(kst_date_of(today), jan5, "today is dated on the session");
         assert_ne!(prior.ts_event, today.ts_event, "prior and today are never the same session");
     }
 
@@ -476,8 +602,9 @@ mod tests {
         // a gap — no prior session exists.
         let a = day(bt, (2024, 1, 5), 110, 120);
         let b = day(bt, (2024, 1, 5), 60, 65);
-        assert!(select_prior_today(&vec![&a, &b]).is_none(), "one session is not a gap");
-        assert!(select_prior_today(&[]).is_none(), "empty is not a gap");
+        let jan5 = NaiveDate::from_ymd_opt(2024, 1, 5).unwrap();
+        assert!(select_prior_today(&vec![&a, &b], jan5).is_none(), "one session has no prior");
+        assert!(select_prior_today(&[], jan5).is_none(), "empty has no prior");
     }
 
     #[test]
