@@ -25,6 +25,9 @@ It is a snapshot, not a runtime oracle: it can under-report a request block (omi
 ### Body-cursor continuation
 How LS chart TRs actually paginate on the live gateway: the response out-block echoes a body cursor (continuation date/time fields), and the next page request must thread that cursor back **and** set the `tr_cont: Y` transport header — either alone re-serves the newest page. The `tr_cont`/`tr_cont_key` transport headers terminate after the first page even while in-range rows remain, so a header-driven walk silently truncates a multi-page range to its newest page. Every page dispatch must individually pass the TR's own per-TR rate cap (the runtime limiter enforces only the category bucket).
 
+### Rolling call budget
+The second, unpublished layer of LS gateway throttling behind `IGW00201`. The official docs publish only per-TR per-second caps (`transactionPerSec` / `requestLimit`), but the same error code also fires from a cumulative call-count budget that a correctly per-second-paced bulk pull still exhausts once the window is warm — the two layers are distinguishable only by whether steady pacing avoids the error. The budget is shared across everything dispatched on the credential; its size, window, and exact bucket scope are not published anywhere and must be measured empirically. Consequence: a deep multi-symbol bar pull is budget-bound, not rate-bound — no per-second pacing makes it fit, only spend planning against the budget does.
+
 ## Support lifecycle
 
 A TR climbs a three-rung support ladder; each rung is a deliberate, separately-gated promotion.
@@ -102,7 +105,7 @@ Three terminals reach this status, distinguished by the gateway signal: a hard *
 Vocabulary for the standalone Nautilus adapter's market-data catalog (`adapters/nautilus/`).
 
 ### Accumulate-forward
-The adapter's checkpoint-driven ingest mode: per `(instrument, bar type)`, a watermark records the last closed session date whose bars are covered, and each run grows coverage from watermark+1 to the last closed session (or from the bounded backfill floor for an unseen instrument). The watermark is the sole skip authority and advances even over a gap day, so an empty history is reported once and never retried forever. Idempotent by construction — re-running covers nothing twice.
+The adapter's checkpoint-driven ingest mode: per `(instrument, bar type)`, a watermark records the last closed session date whose bars are covered, and each run grows coverage from watermark+1 to the last closed session (or from the bounded backfill floor for an unseen instrument). The watermark is the sole skip authority and advances even over a gap day, so an empty history is reported once and never retried forever. Idempotent by construction — re-running covers nothing twice — but only within the watermark format: the watermark records a last covered date with no representable coverage start, so a checkpoint predating the format (legacy `completed` ranges, empty watermarks) shares no coverage state with it, and widening such a catalog re-fetches from the floor and writes overlapping duplicates.
 
 ### Adjustment-basis splice
 The corruption an appending catalog accrues on an adjusted-price basis: the gateway rewrites the entire adjusted series at every split/dividend, so bars accumulated before a corporate action sit on a different price basis than bars appended after it. The spliced series shows an overnight discontinuity that a gap/stocks-in-play scanner misreads as signal. Detected per symbol by [[Accumulate-forward]]'s overlap re-fetch and reported per run as the set of affected symbols — never as a catalog-wide flag.
@@ -151,3 +154,12 @@ The crate that houses strategy code, the backtest and live-paper runners, and th
 
 ### Paper-cut log
 The committed friction log the [[Strategy-improvement loop]]'s operator or agent maintains: each entry is an observed workflow friction framed as a candidate requirement for the deferred research CLI, with enough context to act on without re-running the cycle. Credential-free by construction and linked from the lab recipe so an agent discovers it before turning the loop; defects fixed in-flight stay in the log with their residual owner named.
+
+### Merit-bearing turn
+A [[Strategy-improvement loop]] turn whose run produced real fills for the analysis to reason about — trades > 0 — and whose analysis reaches an explicit, evidence-grounded verdict on the change: keep, revert, or insufficient-evidence. Positive P&L is NOT part of the bar: on a thin sample any expectancy number is noise, and requiring profitability would push the loop toward overfitting its first real data. The loop's product is decisions, so a clean "revert — sample too thin, widen the slice" verdict is full merit. Contrast: the zero-trade baseline turns before it, which prove the machinery but give the analysis nothing to judge.
+
+### Composed data turn
+A loop turn that changes the data rather than a parameter — a wider ingested slice (more symbols or days) — executed by composing existing pieces (ingest, catalog inspection, backtest, manifest compare) rather than through the parameter-turn envelope machinery. Its manifest delta is *explained* (the universe/range change acknowledged under the comparison verdict's equal-or-explained clause) instead of param-isolated; it does not get first-class envelope support until the shape has been exercised more than once.
+
+### Param-turn governance
+The two refuse-and-run-nothing guards a parameter [[Strategy-improvement loop]] turn passes before a backtest runs. **Proposal-bounds cap:** a single turn may change a parameter by at most 50% relative to its current value (a committed constant, not operator-overridable); a larger intended change is reached through multiple legged turns, each within the cap. **Seed-assertion:** the turn asserts the resolved base strategy identity (version + gap seed) before running, so it cannot silently drift from an unexpected base — on a fresh [[Run registry]] with no prior run it refuses rather than fall back to default parameters. Together they keep the loop's evidence chain from being corrupted by an oversized jump or a wrong-base run.

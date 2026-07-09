@@ -59,18 +59,48 @@ pub struct EquityPoint {
     pub equity: f64,
 }
 
-/// The turn-3 decisiveness bar (R1). A keep/revert verdict requires **all three**
+/// The decisiveness bar (R1), **re-registered for turn 4 as a function of the
+/// pinned universe size** (KTD-2). A keep/revert verdict requires **all three**
 /// conditions; any failure means insufficient-evidence. The verdict word stays
 /// hand-authored (KTD-2) — this type only computes the machine-checkable bar.
+///
+/// The two count floors scale linearly with `N = universe_top_n`, generalizing the
+/// turn-3 constants (`TRADE_FLOOR = 30`, `BREADTH_SYMBOL_FLOOR = 6` at N = 20):
+/// `trade_floor(N) = round_half_up(1.5·N)`, `breadth_floor(N) = round_half_up(0.30·N)`.
+/// `SYMBOL_TRADE_FLOOR` and `DOMINANCE_CAP` are unchanged (dominance is a
+/// scale-invariant ratio). The generalization reduces to the turn-3 bar at N = 20
+/// (`trade_floor(20) = 30`, `breadth_floor(20) = 6`; R1b, AE5) — asserted in tests.
 pub mod bar {
-    /// Condition (a): minimum total realized trades.
-    pub const TRADE_FLOOR: usize = 30;
-    /// Condition (b): minimum count of symbols each carrying ≥ [`SYMBOL_TRADE_FLOOR`] trades.
-    pub const BREADTH_SYMBOL_FLOOR: usize = 6;
+    /// Condition (a): realized trades required **per symbol** of universe size.
+    /// `trade_floor(N) = round_half_up(1.5·N)` (turn-3: 30 at N = 20).
+    pub const TRADE_FLOOR_PER_SYMBOL: f64 = 1.5;
+    /// Condition (b): fraction of the universe that must show breadth.
+    /// `breadth_floor(N) = round_half_up(0.30·N)` (turn-3: 6 at N = 20).
+    pub const BREADTH_FRACTION: f64 = 0.30;
     /// Condition (b): a symbol counts toward breadth only with at least this many trades.
     pub const SYMBOL_TRADE_FLOOR: usize = 2;
     /// Condition (c): max single-symbol share of aggregate |P&L| (inclusive pass at 40.0%).
+    /// Scale-invariant — unchanged from turn 3.
     pub const DOMINANCE_CAP: f64 = 0.40;
+
+    /// Round-half-up, deterministic (`.5` always rounds away from zero, upward for
+    /// the non-negative floors we compute here). At the pinned N = 40 the products
+    /// are integers so rounding is moot; the rule is fixed for any N (KTD-2).
+    pub fn round_half_up(x: f64) -> usize {
+        (x + 0.5).floor().max(0.0) as usize
+    }
+
+    /// Condition (a) floor for a universe of `n` symbols: `round_half_up(1.5·n)`.
+    /// N = 20 → 30 (turn-3 backward-compat, R1b); N = 40 → 60.
+    pub fn trade_floor(n: usize) -> usize {
+        round_half_up(TRADE_FLOOR_PER_SYMBOL * n as f64)
+    }
+
+    /// Condition (b) floor for a universe of `n` symbols: `round_half_up(0.30·n)`.
+    /// N = 20 → 6 (turn-3 backward-compat, R1b); N = 40 → 12.
+    pub fn breadth_floor(n: usize) -> usize {
+        round_half_up(BREADTH_FRACTION * n as f64)
+    }
 }
 
 /// One symbol's fold of the realized trade ledger (KTD-2).
@@ -93,13 +123,22 @@ pub struct SymbolAggregate {
 /// verdict is insufficient-evidence.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BarEvaluation {
+    /// The pinned universe size the floors were derived from (`universe_top_n`, R3 —
+    /// never the realized snapshot). N = 40 this turn.
+    pub universe_size: usize,
+    /// The derived condition (a) floor for `universe_size` (`round_half_up(1.5·N)`;
+    /// 60 at N = 40, 30 at N = 20).
+    pub trade_floor: usize,
+    /// The derived condition (b) floor for `universe_size` (`round_half_up(0.30·N)`;
+    /// 12 at N = 40, 6 at N = 20).
+    pub breadth_floor: usize,
     /// Total realized (closed) trades — condition (a) numerator.
     pub total_trades: usize,
-    /// Condition (a): `total_trades >= TRADE_FLOOR`.
+    /// Condition (a): `total_trades >= trade_floor`.
     pub trade_floor_pass: bool,
     /// Count of symbols with ≥ `SYMBOL_TRADE_FLOOR` trades — condition (b) numerator.
     pub symbols_meeting_breadth: usize,
-    /// Condition (b): `symbols_meeting_breadth >= BREADTH_SYMBOL_FLOOR`.
+    /// Condition (b): `symbols_meeting_breadth >= breadth_floor`.
     pub breadth_pass: bool,
     /// The dominance metric `max(|per-symbol P&L|) / Σ|per-symbol P&L|` (0.0 in the
     /// degenerate all-zero case).
@@ -187,22 +226,29 @@ impl PerformanceReport {
         Self::assemble(trades, starting_balance)
     }
 
-    /// Evaluate the turn-3 decisiveness bar (R1, KTD-2) over the realized ledger.
+    /// Evaluate the re-registered decisiveness bar (R1, KTD-2) over the realized
+    /// ledger, with the two count floors scaled to the **pinned** `universe_size`
+    /// (`universe_top_n`, R3 — never the realized snapshot).
     ///
     /// A trade is *realized* iff it is closed (`ts_closed.is_some()`) — matching the
-    /// `num_trades` summary. The three conditions:
-    /// - (a) `total_trades >= 30`;
-    /// - (b) `>= 6` symbols each with `>= 2` realized trades;
+    /// `num_trades` summary. The three conditions (at N = 40 the floors are 60/12):
+    /// - (a) `total_trades >= trade_floor(N)` (`round_half_up(1.5·N)`);
+    /// - (b) `>= breadth_floor(N)` (`round_half_up(0.30·N)`) symbols each with `>= 2`
+    ///   realized trades;
     /// - (c) no single symbol exceeds 40% of aggregate |P&L|, where the share is
     ///   `max(|per-symbol realized P&L|) / Σ|per-symbol realized P&L|` — an
     ///   absolute-magnitude share, well-defined under mixed signs (a signed
     ///   share-of-net can exceed 100% or go negative).
     ///
-    /// Boundaries pass inclusively (exactly 30 trades / exactly 6 symbols / exactly
-    /// 40.0% all pass). The degenerate all-zero-P&L case (denominator 0) fails
-    /// closed to insufficient-evidence with a named condition.
-    pub fn bar_evaluation(&self) -> BarEvaluation {
+    /// Boundaries pass inclusively (exactly the floor / exactly 40.0% all pass). The
+    /// degenerate all-zero-P&L case (denominator 0) fails closed to
+    /// insufficient-evidence with a named condition. Reduces to the turn-3 bar at
+    /// N = 20 (floors 30/6, R1b).
+    pub fn bar_evaluation(&self, universe_size: usize) -> BarEvaluation {
         use std::collections::BTreeMap;
+
+        let trade_floor = bar::trade_floor(universe_size);
+        let breadth_floor = bar::breadth_floor(universe_size);
 
         // Fold closed trades by symbol → (count, summed realized P&L).
         let mut folded: BTreeMap<String, (usize, f64)> = BTreeMap::new();
@@ -233,22 +279,20 @@ impl PerformanceReport {
             })
             .collect();
 
-        let trade_floor_pass = total_trades >= bar::TRADE_FLOOR;
-        let breadth_pass = symbols_meeting_breadth >= bar::BREADTH_SYMBOL_FLOOR;
+        let trade_floor_pass = total_trades >= trade_floor;
+        let breadth_pass = symbols_meeting_breadth >= breadth_floor;
         // Fail closed on the degenerate case: dominance is undefined, so it cannot pass.
         let dominance_pass = !degenerate_zero_pnl && max_abs_pnl_share <= bar::DOMINANCE_CAP;
 
         let mut failing_conditions = Vec::new();
         if !trade_floor_pass {
             failing_conditions.push(format!(
-                "trade-count floor not met ({total_trades} < {})",
-                bar::TRADE_FLOOR
+                "trade-count floor not met ({total_trades} < {trade_floor})"
             ));
         }
         if !breadth_pass {
             failing_conditions.push(format!(
-                "symbol-breadth floor not met ({symbols_meeting_breadth} < {})",
-                bar::BREADTH_SYMBOL_FLOOR
+                "symbol-breadth floor not met ({symbols_meeting_breadth} < {breadth_floor})"
             ));
         }
         if degenerate_zero_pnl {
@@ -266,6 +310,9 @@ impl PerformanceReport {
 
         let all_pass = trade_floor_pass && breadth_pass && dominance_pass;
         BarEvaluation {
+            universe_size,
+            trade_floor,
+            breadth_floor,
             total_trades,
             trade_floor_pass,
             symbols_meeting_breadth,
@@ -407,29 +454,76 @@ mod tests {
         (0..n).map(|i| trade(symbol, pnl_each, (i as u64) * 2 + 1, (i as u64) * 2 + 2)).collect()
     }
 
-    /// The R1 bar over a raw ledger (no analyzer round-trip needed — the bar folds
-    /// the trades directly).
-    fn eval(trades: Vec<TradeRecord>) -> BarEvaluation {
-        PerformanceReport { trades, equity_curve: vec![], summary: Default::default() }.bar_evaluation()
+    /// The R1 bar over a raw ledger at a pinned universe size `n` (no analyzer
+    /// round-trip needed — the bar folds the trades directly).
+    fn eval(trades: Vec<TradeRecord>, n: usize) -> BarEvaluation {
+        PerformanceReport { trades, equity_curve: vec![], summary: Default::default() }
+            .bar_evaluation(n)
+    }
+
+    // --- Floor scaling / backward-compat (KTD-2, R1b, AE5) -------------------
+
+    #[test]
+    fn floors_scale_with_universe_and_reduce_to_turn3_bar_at_n20() {
+        // AE5 / R1b: the generalization reproduces the turn-3 bar (30, 6) at N = 20.
+        assert_eq!(bar::trade_floor(20), 30, "turn-3 trade floor");
+        assert_eq!(bar::breadth_floor(20), 6, "turn-3 breadth floor");
+        // Pinned N = 40 → (60, 12).
+        assert_eq!(bar::trade_floor(40), 60);
+        assert_eq!(bar::breadth_floor(40), 12);
     }
 
     #[test]
-    fn ae1_bar_cleared_all_three_conditions_pass() {
-        // 42 trades across 9 symbols, each ≥ 2, spread P&L → max share well under 40%.
-        // 9 symbols × varied counts summing to 42; distinct magnitudes keep no single
-        // symbol dominant.
-        let mut trades = Vec::new();
-        // counts: 6+6+6+6+4+4+4+3+3 = 42, all ≥ 2.
-        let plan = [("A", 6usize), ("B", 6), ("C", 6), ("D", 6), ("E", 4), ("F", 4), ("G", 4), ("H", 3), ("I", 3)];
-        for (i, (sym, n)) in plan.iter().enumerate() {
-            // Per-symbol totals spread so the max abs-share stays < 40%.
-            trades.extend(trades_for(&format!("{sym}.XKRX"), *n, 100.0 + i as f64 * 10.0));
+    fn floors_round_half_up_deterministically_for_odd_n() {
+        // Odd N = 37: 1.5·37 = 55.5 → round-half-up 56; 0.30·37 = 11.1 → 11.
+        assert_eq!(bar::trade_floor(37), 56, "round(55.5) half-up → 56");
+        assert_eq!(bar::breadth_floor(37), 11, "round(11.1) → 11");
+        // The output is a pure function of N — deterministic for any N (KTD-2).
+        // (Exact half-way cases on 0.30·N are not exercised: 0.30 is not
+        // representable in f64, so no 0.30·N lands exactly on x.5; the rule is fixed
+        // and deterministic regardless, and at the pinned N = 40 the floors are
+        // integers so rounding is moot.)
+        assert_eq!(bar::trade_floor(37), bar::trade_floor(37), "deterministic");
+    }
+
+    #[test]
+    fn backward_compat_full_eval_at_n20_matches_turn3_boundary() {
+        // The turn-3 boundary vector (exactly 30 trades / 6 breadth-symbols / 40.0%)
+        // still clears at N = 20 — the generalization is behavior-preserving there.
+        let mut trades = trades_for("D.XKRX", 5, 40_000.0 / 5.0); // 40k dominant
+        for i in 0..5 {
+            trades.extend(trades_for(&format!("N{i}.XKRX"), 5, 12_000.0 / 5.0)); // 12k each → 60k
         }
-        let b = eval(trades);
-        assert_eq!(b.total_trades, 42);
-        assert!(b.trade_floor_pass, "(a) 42 ≥ 30");
-        assert_eq!(b.symbols_meeting_breadth, 9);
-        assert!(b.breadth_pass, "(b) 9 ≥ 6");
+        let b = eval(trades, 20);
+        assert_eq!(b.universe_size, 20);
+        assert_eq!(b.trade_floor, 30);
+        assert_eq!(b.breadth_floor, 6);
+        assert_eq!(b.total_trades, 30);
+        assert!(b.trade_floor_pass && b.breadth_pass && b.dominance_pass);
+        assert!(b.all_pass, "turn-3 boundary clears at N = 20: {:?}", b.failing_conditions);
+    }
+
+    // --- N = 40 acceptance vectors (AE1–AE4, floors 60/12) -------------------
+
+    #[test]
+    fn ae1_bar_cleared_all_three_conditions_pass_n40() {
+        // AE1: 72 trades across 16 symbols (each ≥ 2), spread P&L → max share well
+        // under 40% → all three PASS against the N = 40 floors (60, 12).
+        // Counts: 8 symbols × 5 + 8 symbols × 4 = 40 + 32 = 72, all ≥ 2.
+        let mut trades = Vec::new();
+        for i in 0..8 {
+            trades.extend(trades_for(&format!("A{i}.XKRX"), 5, 100.0 + i as f64 * 10.0));
+        }
+        for i in 0..8 {
+            trades.extend(trades_for(&format!("B{i}.XKRX"), 4, 100.0 + i as f64 * 10.0));
+        }
+        let b = eval(trades, 40);
+        assert_eq!(b.trade_floor, 60);
+        assert_eq!(b.breadth_floor, 12);
+        assert_eq!(b.total_trades, 72);
+        assert!(b.trade_floor_pass, "(a) 72 ≥ 60");
+        assert_eq!(b.symbols_meeting_breadth, 16);
+        assert!(b.breadth_pass, "(b) 16 ≥ 12");
         assert!(b.max_abs_pnl_share <= 0.40, "share {} ≤ 40%", b.max_abs_pnl_share);
         assert!(b.dominance_pass, "(c) passes");
         assert!(b.all_pass, "bar cleared: {:?}", b.failing_conditions);
@@ -437,69 +531,94 @@ mod tests {
     }
 
     #[test]
-    fn ae2_trade_floor_missed() {
-        // 24 trades across 8 symbols (3 each) → (a) FAILs, others irrelevant.
+    fn ae2_trade_floor_missed_n40() {
+        // AE2: 51 total trades (17 symbols × 3) → (a) FAILs against the 60 floor.
         let mut trades = Vec::new();
-        for i in 0..8 {
+        for i in 0..17 {
             trades.extend(trades_for(&format!("S{i}.XKRX"), 3, 100.0 + i as f64));
         }
-        let b = eval(trades);
-        assert_eq!(b.total_trades, 24);
+        let b = eval(trades, 40);
+        assert_eq!(b.total_trades, 51);
         assert!(!b.trade_floor_pass);
         assert!(!b.all_pass);
         assert!(
-            b.failing_conditions.iter().any(|m| m == "trade-count floor not met (24 < 30)"),
+            b.failing_conditions.iter().any(|m| m == "trade-count floor not met (51 < 60)"),
             "messages: {:?}",
             b.failing_conditions
         );
     }
 
     #[test]
-    fn ae3_breadth_floor_missed() {
-        // 33 trades but only 5 symbols with ≥ 2 trades (5 symbols × 6 trades = 30,
-        // plus 3 singletons = 33 total, only 5 clear the ≥2 breadth gate).
+    fn ae3_breadth_floor_missed_n40() {
+        // AE3: 63 trades but only 10 symbols with ≥ 2 (10 × 6 = 60, plus 3 singletons
+        // = 63); (a) passes (63 ≥ 60), (b) FAILs against the 12 floor.
         let mut trades = Vec::new();
-        for i in 0..5 {
-            trades.extend(trades_for(&format!("B{i}.XKRX"), 6, 100.0 + i as f64));
+        // Per-symbol totals spread so no single symbol dominates.
+        for i in 0..10 {
+            trades.extend(trades_for(&format!("B{i}.XKRX"), 6, 900.0 + i as f64 * 20.0));
         }
         for i in 0..3 {
             trades.extend(trades_for(&format!("X{i}.XKRX"), 1, 50.0 + i as f64));
         }
-        let b = eval(trades);
-        assert_eq!(b.total_trades, 33);
-        assert!(b.trade_floor_pass, "(a) 33 ≥ 30");
-        assert_eq!(b.symbols_meeting_breadth, 5);
+        let b = eval(trades, 40);
+        assert_eq!(b.total_trades, 63);
+        assert!(b.trade_floor_pass, "(a) 63 ≥ 60");
+        assert_eq!(b.symbols_meeting_breadth, 10);
         assert!(!b.breadth_pass);
         assert!(!b.all_pass);
         assert!(
-            b.failing_conditions.iter().any(|m| m == "symbol-breadth floor not met (5 < 6)"),
+            b.failing_conditions.iter().any(|m| m == "symbol-breadth floor not met (10 < 12)"),
             "messages: {:?}",
             b.failing_conditions
         );
     }
 
     #[test]
-    fn ae4_dominance_guard_tripped() {
-        // 35 trades across 7 symbols; one symbol carries 58% of aggregate |P&L|.
-        // Dominant symbol: 5 trades summing to 58,000; the other 6 symbols sum to
-        // 42,000 |P&L| across 30 trades (5 each). Σ|P&L| = 100,000 → share 58%.
-        let mut trades = Vec::new();
-        trades.extend(trades_for("DOM.XKRX", 5, 58_000.0 / 5.0)); // 58k over 5 trades
-        for i in 0..6 {
-            trades.extend(trades_for(&format!("R{i}.XKRX"), 5, 7_000.0 / 5.0)); // 7k each → 42k
+    fn ae4_dominance_guard_tripped_n40() {
+        // AE4: 65 trades across 13 symbols (5 each); one symbol carries 47% of
+        // aggregate |P&L|. (a) 65 ≥ 60 and (b) 13 ≥ 12 pass; (c) FAILs.
+        // Dominant 47,000; 11 symbols × 4,000 = 44,000; 1 symbol × 9,000 = 9,000.
+        // Σ|P&L| = 47k + 44k + 9k = 100k → share 0.47.
+        let mut trades = trades_for("DOM.XKRX", 5, 47_000.0 / 5.0);
+        for i in 0..11 {
+            trades.extend(trades_for(&format!("R{i}.XKRX"), 5, 4_000.0 / 5.0));
         }
-        let b = eval(trades);
-        assert_eq!(b.total_trades, 35);
-        assert_eq!(b.symbols_meeting_breadth, 7);
-        assert!((b.max_abs_pnl_share - 0.58).abs() < 1e-9, "share {}", b.max_abs_pnl_share);
+        trades.extend(trades_for("Q.XKRX", 5, 9_000.0 / 5.0));
+        let b = eval(trades, 40);
+        assert_eq!(b.total_trades, 65);
+        assert_eq!(b.symbols_meeting_breadth, 13);
+        assert!(b.trade_floor_pass && b.breadth_pass, "(a)+(b) hold");
+        assert!((b.max_abs_pnl_share - 0.47).abs() < 1e-9, "share {}", b.max_abs_pnl_share);
         assert!(!b.dominance_pass);
         assert!(!b.all_pass);
         assert!(
-            b.failing_conditions.iter().any(|m| m == "single-symbol dominance (58% > 40%)"),
+            b.failing_conditions.iter().any(|m| m == "single-symbol dominance (47% > 40%)"),
             "messages: {:?}",
             b.failing_conditions
         );
     }
+
+    #[test]
+    fn boundary_exact_thresholds_all_pass_n40() {
+        // Exactly 60 trades / exactly 12 breadth-symbols / exactly 40.0% abs-share.
+        // 12 symbols × 5 = 60. Dominant 40,000; 10 symbols × 5,000 = 50,000; 1 symbol
+        // × 10,000 = 10,000 → Σ = 100,000 → dominant share exactly 0.40.
+        let mut trades = trades_for("D.XKRX", 5, 40_000.0 / 5.0); // 40k
+        for i in 0..10 {
+            trades.extend(trades_for(&format!("N{i}.XKRX"), 5, 5_000.0 / 5.0)); // 5k each → 50k
+        }
+        trades.extend(trades_for("M.XKRX", 5, 10_000.0 / 5.0)); // 10k
+        let b = eval(trades, 40);
+        assert_eq!(b.total_trades, 60);
+        assert!(b.trade_floor_pass, "(a) exactly 60 passes");
+        assert_eq!(b.symbols_meeting_breadth, 12);
+        assert!(b.breadth_pass, "(b) exactly 12 passes");
+        assert!((b.max_abs_pnl_share - 0.40).abs() < 1e-9, "share {}", b.max_abs_pnl_share);
+        assert!(b.dominance_pass, "(c) exactly 40.0% passes inclusively");
+        assert!(b.all_pass, "boundary clears: {:?}", b.failing_conditions);
+    }
+
+    // --- Scale-invariant mechanics (unchanged from turn 3) -------------------
 
     #[test]
     fn mixed_sign_abs_share_never_exceeds_100_or_goes_negative() {
@@ -507,7 +626,7 @@ mod tests {
         // is 200k / 300k = 67% — a signed share-of-net would read 200%.
         let mut trades = trades_for("WIN.XKRX", 2, 100_000.0); // +200k
         trades.extend(trades_for("LOSS.XKRX", 2, -50_000.0)); // −100k
-        let b = eval(trades);
+        let b = eval(trades, 20);
         assert!(b.max_abs_pnl_share > 0.0 && b.max_abs_pnl_share <= 1.0, "share {}", b.max_abs_pnl_share);
         assert!((b.max_abs_pnl_share - (200_000.0 / 300_000.0)).abs() < 1e-9);
         assert!(!b.dominance_pass, "67% > 40% → dominance fails");
@@ -519,33 +638,14 @@ mod tests {
     }
 
     #[test]
-    fn boundary_exact_thresholds_all_pass() {
-        // Exactly 30 trades / exactly 6 symbols with ≥2 / exactly 40.0% abs-share.
-        // Dominant symbol 40,000 |P&L|; the other 5 sum to 60,000 → Σ = 100,000 →
-        // share exactly 0.40. Counts: 5 symbols × 5 + 1 symbol × 5 = 30, 6 symbols.
-        let mut trades = trades_for("D.XKRX", 5, 40_000.0 / 5.0); // 40k
-        for i in 0..5 {
-            trades.extend(trades_for(&format!("N{i}.XKRX"), 5, 12_000.0 / 5.0)); // 12k each → 60k
-        }
-        let b = eval(trades);
-        assert_eq!(b.total_trades, 30);
-        assert!(b.trade_floor_pass, "(a) exactly 30 passes");
-        assert_eq!(b.symbols_meeting_breadth, 6);
-        assert!(b.breadth_pass, "(b) exactly 6 passes");
-        assert!((b.max_abs_pnl_share - 0.40).abs() < 1e-9, "share {}", b.max_abs_pnl_share);
-        assert!(b.dominance_pass, "(c) exactly 40.0% passes inclusively");
-        assert!(b.all_pass, "boundary clears: {:?}", b.failing_conditions);
-    }
-
-    #[test]
     fn degenerate_all_zero_pnl_fails_closed() {
         // 30 trades across 6 symbols, all P&L zero → denominator 0 → dominance
-        // undefined → fail-closed to insufficient-evidence, even though (a) and (b) hold.
+        // undefined → fail-closed, even though (a)+(b) hold at N = 20 (floors 30/6).
         let mut trades = Vec::new();
         for i in 0..6 {
             trades.extend(trades_for(&format!("Z{i}.XKRX"), 5, 0.0));
         }
-        let b = eval(trades);
+        let b = eval(trades, 20);
         assert_eq!(b.total_trades, 30);
         assert!(b.trade_floor_pass && b.breadth_pass, "(a)+(b) hold");
         assert!(b.degenerate_zero_pnl);
@@ -559,14 +659,14 @@ mod tests {
     }
 
     #[test]
-    fn empty_ledger_fails_all() {
-        let b = eval(vec![]);
+    fn empty_ledger_fails_all_n40() {
+        let b = eval(vec![], 40);
         assert_eq!(b.total_trades, 0);
         assert!(!b.trade_floor_pass && !b.breadth_pass && !b.dominance_pass);
         assert!(!b.all_pass);
-        // Trade floor + breadth both named; dominance is degenerate (zero aggregate).
-        assert!(b.failing_conditions.iter().any(|m| m.contains("trade-count floor")));
-        assert!(b.failing_conditions.iter().any(|m| m.contains("symbol-breadth floor")));
+        // Trade floor + breadth both named against the N = 40 floors.
+        assert!(b.failing_conditions.iter().any(|m| m == "trade-count floor not met (0 < 60)"));
+        assert!(b.failing_conditions.iter().any(|m| m == "symbol-breadth floor not met (0 < 12)"));
     }
 
     #[test]
@@ -586,7 +686,7 @@ mod tests {
             ts_closed: None,
             fills: vec![],
         });
-        let b = eval(trades);
+        let b = eval(trades, 20);
         assert_eq!(b.total_trades, 2, "open leg excluded from the trade count");
         assert_eq!(b.per_symbol.len(), 1, "only the closed symbol is folded");
         assert_eq!(b.per_symbol[0].symbol, "A.XKRX");

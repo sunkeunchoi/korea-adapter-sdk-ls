@@ -1,7 +1,7 @@
 ---
 title: "LS gateway IGW00201 is a rolling call-count cap that aborts a bulk multi-symbol minute ingest — drip-feed one symbol at a time"
 date: 2026-07-07
-last_updated: 2026-07-08
+last_updated: 2026-07-09
 category: integration-issues
 module: "adapters/nautilus ls-ingest (src/bin/ls-ingest.rs, LS_INGEST_KIND=minute:*) + lab-research catalog status"
 problem_type: integration_issue
@@ -107,18 +107,38 @@ between symbols. Because `range`-mode ingest is per-symbol idempotent (already-c
 `APPEND REFUSED` without re-fetching), the loop is restartable and never double-pulls — so
 retrying the whole symbol list after a trip only fetches the missing symbols.
 
-## Budget-aware layer + probe landed (update 2026-07-08, provisional numbers)
+## Probe ran — the cold budget is LARGE, warm depletion is the real trigger (update 2026-07-09)
 
-The 120s backoff and "day-ish, credential-shared" window quoted throughout this doc
-are the **guessed** model. As of 2026-07-08 the adapter encodes that model as data and
-adds the machinery to plan against it — but the numbers are still guesses until the probe
-runs (U6):
+The `budget-probe` (U6) ran on paper (`.env.domestic_option`), **retargeted from t1102
+to t8412** (the actual minute-ingest TR — a paced `t1102` probe never exhausts its far
+roomier 10/s bucket, so it measured the wrong thing). Result, and it **confirms** this
+doc's thesis rather than overturning it:
+
+- **The cold budget is large and was never exhausted:** t8412 served **≥600 calls @1/s
+  (10 minutes sustained)** with no IGW00201; t1102 served ≥1200 @10/s. So a *single cold*
+  minute ingest comfortably fits — the trips are **warm-budget** events.
+- **It is a cumulative rolling budget, not pure rate** (the point of "What Didn't Work" #1):
+  turn-3 recorded *paced* requests tripping after ~13 t8412 pages **once the budget was
+  warm**. The probe simply ran from a relatively cold bucket, so it only established a large
+  **lower bound**, not the ceiling.
+- **Scope is per-credential** (stage 0), and a key already heavy with t1102 spend still
+  served ≥600 t8412 calls — no cross-TR depletion at these volumes.
+
+Consequence for the model: **`budget_calls` stays `null` (plan-ahead OFF).** The true
+ceiling is unmeasured, and pinning a too-low number would only cause needless deferrals;
+the drip loop + the in-process U3 recovery arm remain the correct defense for warm-budget
+ingests. `refill_secs` stays 120s — the turn-3 field-proven recovery backoff, not
+probe-measured (stage 2 never saw an exhaustion to time). To measure the ceiling + refill,
+**warm the t8412 budget first**, then probe with a much higher `LS_PROBE_CEILING`.
+
+The adapter encodes this model as data (landed 2026-07-08, promoted 2026-07-09):
 
 - **`adapters/nautilus/lab/config/gateway-budget.json`** — the committed, machine-readable
   budget model (`refill_secs`, `window_secs`, `budget_calls`, `bucket_scope`, `provenance`).
-  It currently holds the **provisional** guesses (`budget_calls: null` ⇒ no plan-ahead), so
-  the ingest keeps exactly today's blind-backoff behavior. The IGW00201 backoff is now read
-  from `refill_secs` (still 120s) instead of a hard-coded constant.
+  Post-probe it holds the **measured** finding above (`budget_calls: null` ⇒ no plan-ahead,
+  because the ceiling is a large unmeasured lower bound, not because no budget exists), so the
+  ingest keeps today's drip + blind-backoff behavior. The IGW00201 backoff is read from
+  `refill_secs` (120s) instead of a hard-coded constant.
 - **Per-credential spend ledger** (`ingest::budget::SpendLedger`, keyed by hashed appkey,
   `state/spend-ledger.json`, `LS_SPEND_LEDGER_FILE`-overridable and pinned by
   `turn4-ingest.sh`) — records every gateway dispatch so the ingest can plan against the
@@ -131,9 +151,11 @@ runs (U6):
   provoking IGW00201. Inert while `budget_calls` is null.
 - **`budget-probe` binary** (`src/bin/budget-probe.rs`, attended, paper-only) — measures the
   real bucket scope (stage 0), cold-budget size (stage 1), refill window (stage 2), and
-  cross-class span (stage 3) on a spare paper lane, under a hard per-session call ceiling.
-  Its JSON report's numbers get promoted into `gateway-budget.json` and replace the guesses
-  here. **Until that attended run happens, this drip runbook is the operating procedure.**
+  cross-class span (stage 3) on a spare paper lane, under a hard per-session call ceiling. It
+  probes **t8412** (the minute-ingest TR), paced at its 1/s cap (`LS_PROBE_PACE_MS >= 1000`).
+  Ran 2026-07-09 (finding above); its JSON report lives at `probes/budget-model-report.json`.
+  **This drip runbook remains the operating procedure** — the cold budget is large but a warm
+  budget still trips, and the ceiling is unmeasured.
 
 ## Prevention
 

@@ -13,7 +13,8 @@
 //! Stages (`LS_PROBE_STAGES`, default `0,1`):
 //! - **0** scope: one spare-key call while the domestic key is exhausted → served =
 //!   per-credential (AE1), throttled = broader-than-credential (AE2).
-//! - **1** cold budget: a MarketData read at a gentle pace until the first IGW00201.
+//! - **1** cold budget: a `t8412` minute-chart read (the TR the minute ingest
+//!   drives) at a gentle pace until the first IGW00201.
 //! - **2** refill: single calls at widening intervals until one serves again.
 //! - **3** cross-class: one Account-bucket call post-exhaustion (does it span classes?).
 //!
@@ -23,8 +24,12 @@
 //! - `LS_PROBE_STAGES`: comma-separated stage list (default `0,1`).
 //! - `LS_PROBE_CEILING`: hard per-session call ceiling (default `40`, R5).
 //! - `LS_PROBE_SYMBOL`: the MarketData probe shcode (default `005930`).
+//! - `LS_PROBE_SDATE` / `LS_PROBE_EDATE`: the t8412 trading-day range (YYYYMMDD).
+//!   Default = the last weekday on/before today (KST). Override to a known-data day
+//!   if the gateway errors (e.g. holiday) — the probe only needs the call to serve.
 //! - `LS_PROBE_PACE_MS`: inter-call pace in ms for stage 1 (default `1000`; must stay
-//!   at or under the published per-second cap — t1102 is 10/s, so 1/s is well under).
+//!   at or under the published per-second cap — **t8412 is 1/s, so keep `>=1000`**;
+//!   a faster pace would trip t8412's per-second cap and confound the measurement).
 //! - `LS_PROBE_CATALOG`: catalog dir the spend ledger derives from (default `catalog`).
 //! - `LS_PROBE_OUT`: report path (default `probes/budget-model-report.json`).
 //! - `LS_PROBE_REFILL_SAMPLES`: comma-separated widening intervals for stage 2
@@ -69,6 +74,9 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let stages = parse_stages(&std::env::var("LS_PROBE_STAGES").unwrap_or_else(|_| DEFAULT_STAGES.into()))?;
     let ceiling_n: usize = parse_env("LS_PROBE_CEILING", DEFAULT_CEILING)?;
     let symbol = std::env::var("LS_PROBE_SYMBOL").unwrap_or_else(|_| DEFAULT_SYMBOL.into());
+    let default_day = recent_trading_day();
+    let sdate = std::env::var("LS_PROBE_SDATE").unwrap_or_else(|_| default_day.clone());
+    let edate = std::env::var("LS_PROBE_EDATE").unwrap_or_else(|_| default_day.clone());
     let pace_ms: u64 = parse_env("LS_PROBE_PACE_MS", DEFAULT_PACE_MS)?;
     let pace = std::time::Duration::from_millis(pace_ms);
     let out = std::env::var("LS_PROBE_OUT").unwrap_or_else(|_| DEFAULT_OUT.into());
@@ -88,7 +96,14 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 
     let ledger_path = spend_ledger_path(&catalog);
     let ledger = Arc::new(Mutex::new(SpendLedger::load(&ledger_path)));
-    let caller = SdkProbeCaller::new(sdk, Arc::clone(&ledger), cred_hash.clone(), symbol.clone());
+    let caller = SdkProbeCaller::new(
+        sdk,
+        Arc::clone(&ledger),
+        cred_hash.clone(),
+        symbol.clone(),
+        sdate.clone(),
+        edate.clone(),
+    );
 
     let mut ceiling = CallCeiling::new(ceiling_n);
     let mut report = ProbeReport {
@@ -224,6 +239,19 @@ fn paper_ok(env: Option<&str>) -> bool {
     env == Some("paper")
 }
 
+/// The last weekday on/before today in KST (`YYYYMMDD`) — the default t8412 probe
+/// day. A weekend rolls back to Friday so the gateway does not `01715`; holidays
+/// still need an `LS_PROBE_SDATE`/`EDATE` override (the probe only needs a servable
+/// day, not real data).
+fn recent_trading_day() -> String {
+    use chrono::{Datelike, Duration, Weekday};
+    let mut day = (chrono::Utc::now() + Duration::hours(9)).date_naive();
+    while matches!(day.weekday(), Weekday::Sat | Weekday::Sun) {
+        day -= Duration::days(1);
+    }
+    day.format("%Y%m%d").to_string()
+}
+
 /// Parse the comma-separated stage list (`"0,1"` → `[0, 1]`), rejecting junk.
 fn parse_stages(spec: &str) -> Result<Vec<u8>, String> {
     let mut out = Vec::new();
@@ -275,5 +303,14 @@ mod tests {
     fn refill_sample_list_parses() {
         assert_eq!(parse_i64_list("30,60,120").unwrap(), vec![30, 60, 120]);
         assert!(parse_i64_list("30,abc").is_err());
+    }
+
+    #[test]
+    fn recent_trading_day_is_a_weekday_yyyymmdd() {
+        use chrono::{Datelike, NaiveDate, Weekday};
+        let day = recent_trading_day();
+        assert_eq!(day.len(), 8, "YYYYMMDD");
+        let parsed = NaiveDate::parse_from_str(&day, "%Y%m%d").expect("parses");
+        assert!(!matches!(parsed.weekday(), Weekday::Sat | Weekday::Sun));
     }
 }
