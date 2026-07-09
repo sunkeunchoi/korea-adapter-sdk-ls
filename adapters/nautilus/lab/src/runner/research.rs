@@ -943,16 +943,17 @@ pub fn analyze_scaffold(cfg: &ScaffoldConfig) -> anyhow::Result<ScaffoldOutcome>
     let num_trades = performance.summary.get("num_trades").copied().unwrap_or(0.0);
     let pnl_total = performance.summary.get("pnl_total").copied().unwrap_or(0.0);
 
-    // The turn-3 decisiveness bar (R1, KTD-2): a computed, per-condition PASS/FAIL
-    // the verdict is authored against — not eyeballed. Symbols render verbatim
-    // (structured, like the universe list — a 6-digit shcode must not be masked).
-    // Scale the bar to the **pinned** universe size (`universe_top_n`, R3 — never the
-    // realized snapshot), so a run output cannot move the bar. At N = 40 → 60/12.
-    let bar = performance.bar_evaluation(manifest.params.universe_top_n);
+    // The turn-5 edge-quality evaluation (R4, KTD-4): win-rate / expectancy / total
+    // P&L read from the summary, single-symbol **dominance kept**, and the turn-3/4
+    // trade-count + breadth floors **retired** (per-day trading clears those by
+    // construction). The verdict is authored against these computed edge stats — not
+    // eyeballed. Symbols render verbatim (structured, like the universe list — a
+    // 6-digit shcode must not be masked).
+    let edge = performance.edge_evaluation();
     let pf = |pass: bool| if pass { "PASS" } else { "FAIL" };
-    let mut bar_rows = String::new();
-    for s in &bar.per_symbol {
-        bar_rows.push_str(&format!(
+    let mut edge_rows = String::new();
+    for s in &edge.per_symbol {
+        edge_rows.push_str(&format!(
             "| `{}` | {} | {:.0} | {:.1}% |\n",
             s.symbol,
             s.trades,
@@ -960,22 +961,26 @@ pub fn analyze_scaffold(cfg: &ScaffoldConfig) -> anyhow::Result<ScaffoldOutcome>
             s.abs_pnl_share * 100.0
         ));
     }
-    if bar_rows.is_empty() {
-        bar_rows.push_str("| _(no realized trades)_ | 0 | 0 | 0.0% |\n");
+    if edge_rows.is_empty() {
+        edge_rows.push_str("| _(no realized trades)_ | 0 | 0 | 0.0% |\n");
     }
-    let bar_failing = if bar.failing_conditions.is_empty() {
-        "_(none — all three conditions hold; the verdict may be keep or revert)_".to_string()
+    let edge_notes = if edge.failing_conditions.is_empty() {
+        "_(none — positive expectancy with single-symbol dominance capped; the strategy advances)_"
+            .to_string()
     } else {
-        bar.failing_conditions.iter().map(|c| format!("- {c}")).collect::<Vec<_>>().join("\n")
+        edge.failing_conditions.iter().map(|c| format!("- {c}")).collect::<Vec<_>>().join("\n")
     };
     // Degenerate all-zero P&L: the dominance share is undefined (denominator 0), so
     // rendering a bare "0.0%" against the ≤40% cap reads as a self-contradiction
     // ("0.0% → FAIL"). Show the fail reason instead, mirroring the named condition.
-    let dom_display = if bar.degenerate_zero_pnl {
+    let dom_display = if edge.degenerate_zero_pnl {
         "undefined (all-zero P&L)".to_string()
     } else {
-        format!("{:.1}%", bar.max_abs_pnl_share * 100.0)
+        format!("{:.1}%", edge.max_abs_pnl_share * 100.0)
     };
+    let fmt_opt = |v: Option<f64>| v.map(|x| format!("{x:.4}")).unwrap_or_else(|| "n/a".to_string());
+    let win_rate_display = fmt_opt(edge.win_rate);
+    let expectancy_display = fmt_opt(edge.expectancy);
 
     let mut params_rows = String::new();
     for (k, v) in manifest.params.numeric_summary() {
@@ -1031,29 +1036,34 @@ pub fn analyze_scaffold(cfg: &ScaffoldConfig) -> anyhow::Result<ScaffoldOutcome>
          - **Observations:**\n\
          {observations}\n\
          \n\
-         ## Decisiveness bar (R1) — computed, pre-registered\n\
+         ## Edge quality (R4) — computed\n\
          \n\
-         A keep/revert verdict requires **all three** conditions to hold; any failure\n\
-         is insufficient-evidence (the failing condition(s) are named below). The bar\n\
-         was fixed before the run and is not adjusted to the result (R3).\n\
+         Turn 5 judges the multi-session strategy on **edge quality** (expectancy /\n\
+         win-rate) with single-symbol **dominance still capped**. The old trade-count\n\
+         and symbol-breadth frequency bar is **retired** — per-day trading clears it by\n\
+         construction, so a measurable edge implicitly proves the per-day reset fires.\n\
+         The edge stats below are read from this run's `performance.json` summary (KTD-4).\n\
          \n\
-         - **(a) trade-count floor (≥ {trade_floor}):** `{total_trades}` → **{a_pf}**\n\
-         - **(b) symbol-breadth floor (≥ {breadth_floor} symbols each with ≥ {sym_floor} trades):** `{breadth_n}` → **{b_pf}**\n\
+         - **Win rate:** `{win_rate}`\n\
+         - **Expectancy (KRW/trade):** `{expectancy}`\n\
+         - **Total realized P&L (KRW):** `{pnl_total:.4}`\n\
+         - **Closed trades:** `{num_trades:.0}`\n\
          - **(c) single-symbol dominance (≤ {dom_cap:.0}% of aggregate |P&L|):** `{dom_share}` → **{c_pf}**\n\
          \n\
          | Symbol | Trades | Realized P&L (KRW) | abs P&L share |\n\
          |---|---|---|---|\n\
-         {bar_rows}\n\
-         **Bar cleared:** {all_pass}. **Failing conditions:**\n\
+         {edge_rows}\n\
+         **Edge:** {is_edge}. **Notes:**\n\
          \n\
-         {bar_failing}\n\
+         {edge_notes}\n\
          \n\
          ## Verdict\n\
          \n\
-         State one of **{keep}** / **{revert}** / **{insufficient}**, grounded in the run\n\
-         facts above (positive P&L is not required — the loop's product is a decision).\n\
-         Per R1 the verdict may be **{keep}** or **{revert}** only if the bar is cleared;\n\
-         otherwise it is **{insufficient}** naming the failing condition(s):\n\
+         State one of **{keep}** / **{revert}** / **{insufficient}**, grounded in the edge\n\
+         stats above. A **positive expectancy** with dominance capped is a real edge →\n\
+         **{keep}** (the strategy advances). A flat / negative expectancy, or a tripped\n\
+         dominance cap, → **{insufficient}** naming the next lever to try. Per R5 a\n\
+         flat/negative edge is a **valid recorded outcome**, not a turn failure:\n\
          \n\
          > _verdict: TODO_\n",
         run_id = cfg.run_id,
@@ -1062,19 +1072,14 @@ pub fn analyze_scaffold(cfg: &ScaffoldConfig) -> anyhow::Result<ScaffoldOutcome>
         version = manifest.strategy_version,
         start = manifest.data_range.start,
         end = manifest.data_range.end,
-        trade_floor = bar.trade_floor,
-        breadth_floor = bar.breadth_floor,
-        sym_floor = crate::artifacts::performance::bar::SYMBOL_TRADE_FLOOR,
+        win_rate = win_rate_display,
+        expectancy = expectancy_display,
         dom_cap = crate::artifacts::performance::bar::DOMINANCE_CAP * 100.0,
-        total_trades = bar.total_trades,
-        breadth_n = bar.symbols_meeting_breadth,
         dom_share = dom_display,
-        a_pf = pf(bar.trade_floor_pass),
-        b_pf = pf(bar.breadth_pass),
-        c_pf = pf(bar.dominance_pass),
-        all_pass = if bar.all_pass { "yes" } else { "no" },
-        bar_rows = bar_rows.trim_end(),
-        bar_failing = bar_failing,
+        c_pf = pf(edge.dominance_pass),
+        edge_rows = edge_rows.trim_end(),
+        is_edge = if edge.is_edge { "yes" } else { "no" },
+        edge_notes = edge_notes,
         keep = VERDICT_WORDS[0],
         revert = VERDICT_WORDS[1],
         insufficient = VERDICT_WORDS[2],

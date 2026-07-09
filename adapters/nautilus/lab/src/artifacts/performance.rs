@@ -117,10 +117,35 @@ pub struct SymbolAggregate {
     pub abs_pnl_share: f64,
 }
 
+/// The shared closed-trade fold + single-symbol dominance derivation used by BOTH
+/// the retired R1 bar ([`PerformanceReport::bar_evaluation`]) and the turn-5 edge
+/// verdict ([`PerformanceReport::edge_evaluation`]) — condition (c) is identical in
+/// each. One implementation keeps the two verdicts from silently drifting if the
+/// dominance cap or the degenerate-case handling ever changes.
+struct DominanceFold {
+    /// Per-symbol `(closed-trade count, summed realized P&L)`, sorted by symbol.
+    folded: std::collections::BTreeMap<String, (usize, f64)>,
+    /// Total realized (closed) trades.
+    total_trades: usize,
+    /// `max(|per-symbol P&L|) / Σ|per-symbol P&L|` (0.0 in the degenerate case).
+    max_abs_pnl_share: f64,
+    /// `max_abs_pnl_share <= DOMINANCE_CAP` and not degenerate.
+    dominance_pass: bool,
+    /// Aggregate |P&L| is zero (dominance undefined → fail-closed).
+    degenerate_zero_pnl: bool,
+    /// Per-symbol fold as [`SymbolAggregate`]s, sorted by symbol.
+    per_symbol: Vec<SymbolAggregate>,
+}
+
 /// The computed R1 decisiveness bar over a run's realized trade ledger (KTD-2):
 /// the per-symbol fold, the three per-condition PASS/FAIL flags, and the named
 /// failing conditions. `all_pass` gates a keep/revert verdict; otherwise the
 /// verdict is insufficient-evidence.
+///
+/// **Retained but off the turn-5 verdict path.** The turn-5 verdict is
+/// [`EdgeEvaluation`]; this frequency/breadth bar is kept for historical and future
+/// param-turn analysis (its dominance condition (c) is shared via [`DominanceFold`]),
+/// not deleted — the retirement is of its *use in the scaffold*, not the type.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct BarEvaluation {
     /// The pinned universe size the floors were derived from (`universe_top_n`, R3 —
@@ -153,6 +178,42 @@ pub struct BarEvaluation {
     pub failing_conditions: Vec<String>,
     /// True iff all three conditions hold — the only state eligible for keep/revert.
     pub all_pass: bool,
+}
+
+/// The turn-5 **edge-quality** evaluation (R4, KTD-4): the realized edge stats
+/// (win-rate, expectancy, total P&L) read from the [`PerformanceReport`] summary,
+/// with single-symbol **dominance still capped** but the turn-3/4 frequency and
+/// breadth floors **retired** — per-day trading clears those by construction, so the
+/// verdict now judges whether the strategy shows a real, evaluable edge rather than a
+/// trade-count bar. These are the reset-invariant per-trade stats only (KTD-7); the
+/// evaluation deliberately does NOT read the union `max_drawdown` / `equity_curve`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct EdgeEvaluation {
+    /// Total realized (closed) trades.
+    pub num_trades: usize,
+    /// Total realized P&L (KRW, signed).
+    pub pnl_total: f64,
+    /// Win rate over closed trades (`None` when no edge stat was computed — e.g. a
+    /// zero-trade run whose summary lacks the analyzer keys).
+    pub win_rate: Option<f64>,
+    /// Expectancy (KRW per trade) over closed trades (`None` — see [`Self::win_rate`]).
+    pub expectancy: Option<f64>,
+    /// The dominance metric `max(|per-symbol P&L|) / Σ|per-symbol P&L|` (0.0 in the
+    /// degenerate all-zero case).
+    pub max_abs_pnl_share: f64,
+    /// Condition (c) retained: `max_abs_pnl_share <= DOMINANCE_CAP` and not degenerate.
+    pub dominance_pass: bool,
+    /// True when aggregate |P&L| is zero (dominance undefined → fail-closed).
+    pub degenerate_zero_pnl: bool,
+    /// Per-symbol fold, sorted by symbol for deterministic output.
+    pub per_symbol: Vec<SymbolAggregate>,
+    /// The edge verdict input: a **positive expectancy** with **dominance capped**
+    /// over at least one closed trade. `true` ⇒ the strategy advances (R4/R5);
+    /// `false` ⇒ a flat/negative/dominated (or zero-trade) run — a recorded finding
+    /// with the next lever named, not an auto-pass and not a turn failure (R5).
+    pub is_edge: bool,
+    /// Human-readable reasons the run is not an edge (empty ⇒ `is_edge` holds).
+    pub failing_conditions: Vec<String>,
 }
 
 /// The performance report artifact.
@@ -244,31 +305,24 @@ impl PerformanceReport {
     /// degenerate all-zero-P&L case (denominator 0) fails closed to
     /// insufficient-evidence with a named condition. Reduces to the turn-3 bar at
     /// N = 20 (floors 30/6, R1b).
-    pub fn bar_evaluation(&self, universe_size: usize) -> BarEvaluation {
+    /// The shared closed-trade fold + dominance derivation (condition (c)) — see
+    /// [`DominanceFold`]. Both [`Self::bar_evaluation`] and [`Self::edge_evaluation`]
+    /// build on this so the dominance metric can never drift between the two verdicts.
+    fn dominance_fold(&self) -> DominanceFold {
         use std::collections::BTreeMap;
 
-        let trade_floor = bar::trade_floor(universe_size);
-        let breadth_floor = bar::breadth_floor(universe_size);
-
-        // Fold closed trades by symbol → (count, summed realized P&L).
         let mut folded: BTreeMap<String, (usize, f64)> = BTreeMap::new();
         for t in self.trades.iter().filter(|t| t.ts_closed.is_some()) {
             let e = folded.entry(t.symbol.clone()).or_insert((0, 0.0));
             e.0 += 1;
             e.1 += t.realized_pnl;
         }
-
         let total_trades: usize = folded.values().map(|(c, _)| *c).sum();
-        let symbols_meeting_breadth = folded
-            .values()
-            .filter(|(c, _)| *c >= bar::SYMBOL_TRADE_FLOOR)
-            .count();
-
         let sum_abs: f64 = folded.values().map(|(_, p)| p.abs()).sum();
         let max_abs: f64 = folded.values().map(|(_, p)| p.abs()).fold(0.0, f64::max);
         let degenerate_zero_pnl = sum_abs == 0.0;
         let max_abs_pnl_share = if degenerate_zero_pnl { 0.0 } else { max_abs / sum_abs };
-
+        let dominance_pass = !degenerate_zero_pnl && max_abs_pnl_share <= bar::DOMINANCE_CAP;
         let per_symbol: Vec<SymbolAggregate> = folded
             .iter()
             .map(|(symbol, (trades, realized_pnl))| SymbolAggregate {
@@ -278,11 +332,38 @@ impl PerformanceReport {
                 abs_pnl_share: if degenerate_zero_pnl { 0.0 } else { realized_pnl.abs() / sum_abs },
             })
             .collect();
+        DominanceFold {
+            folded,
+            total_trades,
+            max_abs_pnl_share,
+            dominance_pass,
+            degenerate_zero_pnl,
+            per_symbol,
+        }
+    }
+
+    pub fn bar_evaluation(&self, universe_size: usize) -> BarEvaluation {
+        let trade_floor = bar::trade_floor(universe_size);
+        let breadth_floor = bar::breadth_floor(universe_size);
+
+        let DominanceFold {
+            folded,
+            total_trades,
+            max_abs_pnl_share,
+            dominance_pass,
+            degenerate_zero_pnl,
+            per_symbol,
+        } = self.dominance_fold();
+
+        let symbols_meeting_breadth = folded
+            .values()
+            .filter(|(c, _)| *c >= bar::SYMBOL_TRADE_FLOOR)
+            .count();
 
         let trade_floor_pass = total_trades >= trade_floor;
         let breadth_pass = symbols_meeting_breadth >= breadth_floor;
-        // Fail closed on the degenerate case: dominance is undefined, so it cannot pass.
-        let dominance_pass = !degenerate_zero_pnl && max_abs_pnl_share <= bar::DOMINANCE_CAP;
+        // `dominance_pass` (condition (c)) comes from the shared fold, already
+        // fail-closed on the degenerate all-zero case.
 
         let mut failing_conditions = Vec::new();
         if !trade_floor_pass {
@@ -323,6 +404,84 @@ impl PerformanceReport {
             per_symbol,
             failing_conditions,
             all_pass,
+        }
+    }
+
+    /// Evaluate the turn-5 **edge-quality** verdict (R4/R5, KTD-4): read the realized
+    /// edge stats (win-rate, expectancy, total P&L) already computed into the summary
+    /// by [`Self::assemble`], keep the single-symbol **dominance** guard (condition
+    /// (c)), and **retire** the trade-count (a) and breadth (b) floors — per-day
+    /// trading clears those by construction, so a measurable edge implicitly proves the
+    /// per-day reset fires (there is no separate frequency floor gate).
+    ///
+    /// `is_edge` holds iff there is at least one closed trade with a **positive
+    /// expectancy** and dominance under the cap. The degenerate all-zero-P&L case fails
+    /// closed (dominance undefined). A zero-trade run is not an edge (edge undefined) —
+    /// the fail-closed/insufficient branch. Reads only the reset-invariant per-trade
+    /// stats; never the union drawdown / equity curve (KTD-7).
+    pub fn edge_evaluation(&self) -> EdgeEvaluation {
+        // The shared closed-trade fold + dominance (condition (c)), kept identical to
+        // the R1 bar via `dominance_fold`.
+        let DominanceFold {
+            folded,
+            total_trades: num_trades,
+            max_abs_pnl_share,
+            dominance_pass,
+            degenerate_zero_pnl,
+            per_symbol,
+        } = self.dominance_fold();
+
+        // Edge stats read from the already-assembled summary (KTD-4). A raw report
+        // whose summary was never assembled (no analyzer keys) falls back to the fold.
+        let pnl_total = self
+            .summary
+            .get("pnl_total")
+            .copied()
+            .unwrap_or_else(|| folded.values().map(|(_, p)| *p).sum());
+        let win_rate = self.summary.get("Win Rate").copied();
+        let expectancy = self.summary.get("Expectancy").copied();
+
+        let mut failing_conditions = Vec::new();
+        if num_trades == 0 {
+            failing_conditions
+                .push("no closed trades — edge undefined (insufficient evidence)".to_string());
+        } else {
+            let positive_expectancy = expectancy.map(|e| e > 0.0).unwrap_or(false);
+            if !positive_expectancy {
+                failing_conditions.push(match expectancy {
+                    Some(e) => format!("expectancy not positive ({e:.2} KRW/trade)"),
+                    None => "expectancy unavailable (no analyzer stat)".to_string(),
+                });
+            }
+            if degenerate_zero_pnl {
+                failing_conditions.push(
+                    "all per-symbol P&L is zero — dominance undefined (fail-closed to insufficient-evidence)"
+                        .to_string(),
+                );
+            } else if !dominance_pass {
+                failing_conditions.push(format!(
+                    "single-symbol dominance ({:.0}% > {:.0}%)",
+                    max_abs_pnl_share * 100.0,
+                    bar::DOMINANCE_CAP * 100.0
+                ));
+            }
+        }
+
+        let is_edge = num_trades > 0
+            && expectancy.map(|e| e > 0.0).unwrap_or(false)
+            && dominance_pass;
+
+        EdgeEvaluation {
+            num_trades,
+            pnl_total,
+            win_rate,
+            expectancy,
+            max_abs_pnl_share,
+            dominance_pass,
+            degenerate_zero_pnl,
+            per_symbol,
+            is_edge,
+            failing_conditions,
         }
     }
 }
@@ -694,5 +853,91 @@ mod tests {
         // The open leg's 9,999,999 P&L did not enter the dominance denominator:
         // the sole closed symbol carries 100% of aggregate |P&L|.
         assert!((b.max_abs_pnl_share - 1.0).abs() < 1e-9);
+    }
+
+    // -----------------------------------------------------------------------
+    // U3 — the turn-5 edge-quality evaluation (R4/R5, KTD-4): dominance kept,
+    // frequency/breadth retired.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn edge_positive_expectancy_with_dominance_capped_is_an_edge() {
+        // 4 symbols × 3 winning trades, equal per-symbol P&L → 25% dominance share
+        // each → (c) passes, positive expectancy → a real edge (strategy advances).
+        let mut trades = Vec::new();
+        for i in 0..4 {
+            trades.extend(trades_for(&format!("S{i}.XKRX"), 3, 100.0));
+        }
+        let report = PerformanceReport::assemble(trades, 1_000_000.0);
+        let e = report.edge_evaluation();
+        assert_eq!(e.num_trades, 12);
+        assert!(e.expectancy.unwrap() > 0.0, "expectancy positive");
+        assert!(e.win_rate.unwrap() > 0.0, "win rate surfaced");
+        assert!(e.dominance_pass, "equal shares → dominance under cap");
+        assert!(e.is_edge, "positive expectancy + dominance capped: {:?}", e.failing_conditions);
+        assert!(e.failing_conditions.is_empty());
+    }
+
+    #[test]
+    fn edge_retires_the_frequency_bar_high_count_negative_expectancy_is_no_edge() {
+        // >60 closed trades but a net-negative expectancy → NOT an auto-pass: the
+        // retired trade-count floor cannot rescue a losing strategy (R4/R5).
+        let mut trades = Vec::new();
+        for i in 0..12 {
+            trades.extend(trades_for(&format!("L{i}.XKRX"), 4, -100.0)); // 48 losers
+            trades.extend(trades_for(&format!("W{i}.XKRX"), 2, 50.0)); // 24 winners
+        }
+        let report = PerformanceReport::assemble(trades, 10_000_000.0);
+        let e = report.edge_evaluation();
+        assert!(e.num_trades > 60, "trade count clears the retired floor: {}", e.num_trades);
+        assert!(e.expectancy.unwrap() < 0.0, "net expectancy negative");
+        assert!(e.dominance_pass, "spread P&L → dominance under cap");
+        assert!(!e.is_edge, "a high trade count does not auto-pass a losing edge");
+        assert!(
+            e.failing_conditions.iter().any(|c| c.contains("expectancy not positive")),
+            "expectancy named as failing: {:?}",
+            e.failing_conditions
+        );
+    }
+
+    #[test]
+    fn edge_single_symbol_dominance_trips_even_when_winning() {
+        // One symbol carries all the P&L → 100% dominance → not an edge, even winning.
+        let report = PerformanceReport::assemble(trades_for("SOLE.XKRX", 3, 100.0), 1_000_000.0);
+        let e = report.edge_evaluation();
+        assert!(e.expectancy.unwrap() > 0.0);
+        assert!((e.max_abs_pnl_share - 1.0).abs() < 1e-9);
+        assert!(!e.dominance_pass);
+        assert!(!e.is_edge, "dominance caps a single-symbol edge");
+        assert!(e.failing_conditions.iter().any(|c| c.contains("single-symbol dominance")));
+    }
+
+    #[test]
+    fn edge_degenerate_all_zero_pnl_fails_closed() {
+        let mut trades = Vec::new();
+        for i in 0..3 {
+            trades.extend(trades_for(&format!("Z{i}.XKRX"), 3, 0.0));
+        }
+        let report = PerformanceReport::assemble(trades, 1_000_000.0);
+        let e = report.edge_evaluation();
+        assert_eq!(e.num_trades, 9);
+        assert!(e.degenerate_zero_pnl);
+        assert!(!e.dominance_pass, "degenerate dominance fails closed");
+        assert!(!e.is_edge);
+        assert!(
+            e.failing_conditions.iter().any(|c| c.contains("dominance undefined")),
+            "degenerate named: {:?}",
+            e.failing_conditions
+        );
+    }
+
+    #[test]
+    fn edge_zero_trades_is_not_an_edge() {
+        let report = PerformanceReport::assemble(vec![], 1_000_000.0);
+        let e = report.edge_evaluation();
+        assert_eq!(e.num_trades, 0);
+        assert!(!e.is_edge);
+        assert!(e.win_rate.is_none(), "no edge stat on a zero-trade run");
+        assert!(e.failing_conditions.iter().any(|c| c.contains("no closed trades")));
     }
 }

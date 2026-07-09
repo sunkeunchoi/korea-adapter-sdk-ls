@@ -842,14 +842,20 @@ async fn scaffold_prefills_run_facts_and_the_verdict_skeleton() {
     }
     // A structured symbol renders VERBATIM (a 6-digit shcode must not be masked).
     assert!(content.contains("005930.XKRX"), "symbol unmasked in the structured list: {content}");
-    // U2: the computed R1 decisiveness bar renders; on this n=1 fixture the
-    // trade-count floor fails (1 < 30) and the bar is not cleared.
-    assert!(content.contains("Decisiveness bar (R1)"), "bar section present: {content}");
+    // U3: the computed turn-5 edge-quality section renders (frequency/breadth bar
+    // retired, dominance kept). On this single-symbol fixture the lone winner carries
+    // 100% of |P&L| → dominance trips → not an edge, even though expectancy is positive.
+    assert!(content.contains("Edge quality (R4)"), "edge section present: {content}");
+    assert!(content.contains("Win rate"), "win-rate stat surfaced: {content}");
+    assert!(content.contains("Expectancy"), "expectancy stat surfaced: {content}");
     assert!(
-        content.contains("trade-count floor not met (1 < 30)"),
-        "condition (a) named as failing at 1 < 30: {content}"
+        content.contains("single-symbol dominance"),
+        "dominance retained and named: {content}"
     );
-    assert!(content.contains("**Bar cleared:** no"), "n=1 fixture does not clear the bar: {content}");
+    assert!(content.contains("**Edge:** no"), "single-symbol dominance trips the edge: {content}");
+    // The retired frequency bar leaves no trace.
+    assert!(!content.contains("trade-count floor"), "frequency bar retired: {content}");
+    assert!(!content.contains("Decisiveness bar"), "decisiveness bar retired: {content}");
     // The per-symbol table must be well-formed GFM: the header and delimiter rows
     // carry the same cell count (a literal `|P&L|` in the header would split it into
     // more cells than the delimiter and GFM would not render a table at all).
