@@ -5,3 +5,8 @@
 .env.*
 !.env.example
 
+# Local, operator-run data homes + probe reports (repo-root CWD): ingest catalogs,
+# runs, and budget-probe/lookback JSON. Never committed — see adapters/nautilus/.gitignore.
+/data/
+/probes/
+

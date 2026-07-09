@@ -577,35 +577,45 @@ impl ProbeReport {
     }
 }
 
-/// The live probe caller (U4): issues one `t1102` (MarketData) or `CSPAQ12200`
-/// (Account — a different rate bucket) read per call and records the dispatch in
-/// the shared spend ledger. The payload is discarded (`Ok(())`) — the probe only
-/// needs the serve/throttle verdict. Held in the binary; here so its wiremock test
-/// lives beside the stage logic.
+/// The live probe caller (U4): issues one `t8412` (MarketData minute chart) or
+/// `CSPAQ12200` (Account — a different rate bucket) read per call and records the
+/// dispatch in the shared spend ledger. The payload is discarded (`Ok(())`) — the
+/// probe only needs the serve/throttle verdict. `t8412` (not the cheaper `t1102`)
+/// is deliberate: it is the exact TR the minute ingest drives, so its IGW00201
+/// budget is the one plan-ahead must model — a paced `t1102` probe never exhausts
+/// its far roomier 10/s bucket. Held in the binary; here so its wiremock test lives
+/// beside the stage logic.
 pub struct SdkProbeCaller {
     sdk: ls_sdk::LsSdk,
     ledger: Arc<Mutex<SpendLedger>>,
     cred_hash: String,
     shcode: String,
-    exchgubun: String,
+    /// Trading-day range for the t8412 minute-chart probe. MUST be real trading
+    /// days — empty defaults to today on the gateway and fails weekends with `01715`
+    /// (surfaced as a loud stage stop, never mistaken for a throttle).
+    sdate: String,
+    edate: String,
     balcretp: String,
 }
 
 impl SdkProbeCaller {
-    /// Build a caller for `shcode` on the `K` (KRX) exchange, recording spend into
-    /// `ledger` under `cred_hash`.
+    /// Build a caller for `shcode` over the pinned `sdate..=edate` trading-day range,
+    /// recording spend into `ledger` under `cred_hash`.
     pub fn new(
         sdk: ls_sdk::LsSdk,
         ledger: Arc<Mutex<SpendLedger>>,
         cred_hash: String,
         shcode: String,
+        sdate: String,
+        edate: String,
     ) -> Self {
         SdkProbeCaller {
             sdk,
             ledger,
             cred_hash,
             shcode,
-            exchgubun: "K".to_string(),
+            sdate,
+            edate,
             balcretp: "0".to_string(),
         }
     }
@@ -621,8 +631,20 @@ impl SdkProbeCaller {
 impl ProbeCaller for SdkProbeCaller {
     async fn market_data_call(&self) -> ls_core::LsResult<()> {
         self.record();
-        let req = ls_sdk::market_session::T1102Request::new(self.shcode.clone(), self.exchgubun.clone());
-        self.sdk.market_session().quote(&req).await.map(|_| ())
+        // t8412 (minute chart, 1/s) — the TR the minute ingest actually drives, so
+        // its IGW00201 budget is the one plan-ahead must model. One first page
+        // (1-minute bars, qrycnt 900) over the pinned range; the payload is
+        // discarded — only the serve/throttle verdict matters.
+        let req = ls_sdk::paginated::T8412Request::new(
+            self.shcode.clone(),
+            "1",   // ncnt — 1-minute bars
+            "900", // qrycnt
+            "0",   // nday
+            self.sdate.clone(),
+            self.edate.clone(),
+            "N", // comp_yn
+        );
+        self.sdk.paginated().chart_page(&req).await.map(|_| ())
     }
 
     async fn other_class_call(&self) -> ls_core::LsResult<()> {
@@ -972,22 +994,21 @@ mod probe_wiremock_tests {
     async fn stage1_counts_mocked_successes_before_igw00201() {
         let server = MockServer::start().await;
         mount_token(&server).await;
-        // Serve t1102 successfully the first 4 times (higher precedence), then the
+        // Serve t8412 successfully the first 4 times (higher precedence), then the
         // catch-all returns IGW00201.
         Mock::given(method("POST"))
-            .and(path("/stock/market-data"))
-            .and(header("tr_cd", "t1102"))
+            .and(path("/stock/chart"))
+            .and(header("tr_cd", "t8412"))
             .respond_with(json_response(serde_json::json!({
-                "rsp_cd": "00000", "rsp_msg": "정상",
-                "t1102OutBlock": { "hname": "삼성전자", "price": "60000" }
+                "rsp_cd": "00000", "rsp_msg": "정상"
             })))
             .up_to_n_times(4)
             .with_priority(1)
             .mount(&server)
             .await;
         Mock::given(method("POST"))
-            .and(path("/stock/market-data"))
-            .and(header("tr_cd", "t1102"))
+            .and(path("/stock/chart"))
+            .and(header("tr_cd", "t8412"))
             .respond_with(json_response(serde_json::json!({
                 "rsp_cd": "IGW00201", "rsp_msg": "호출 거래건수를 초과하였습니다."
             })))
@@ -998,7 +1019,14 @@ mod probe_wiremock_tests {
         let sdk = LsSdk::new(mock_config(&server.uri())).expect("sdk builds");
         let ledger = Arc::new(Mutex::new(SpendLedger::default()));
         let cred_hash = SpendLedger::hash_appkey("mock-appkey");
-        let caller = SdkProbeCaller::new(sdk, Arc::clone(&ledger), cred_hash.clone(), "005930".to_string());
+        let caller = SdkProbeCaller::new(
+            sdk,
+            Arc::clone(&ledger),
+            cred_hash.clone(),
+            "005930".to_string(),
+            "20250711".to_string(),
+            "20250711".to_string(),
+        );
 
         let mut ceiling = CallCeiling::new(50);
         let cold = measure_cold_budget(&caller, &mut ceiling, std::time::Duration::ZERO).await;
