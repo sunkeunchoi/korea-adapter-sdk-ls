@@ -946,7 +946,9 @@ pub fn analyze_scaffold(cfg: &ScaffoldConfig) -> anyhow::Result<ScaffoldOutcome>
     // The turn-3 decisiveness bar (R1, KTD-2): a computed, per-condition PASS/FAIL
     // the verdict is authored against — not eyeballed. Symbols render verbatim
     // (structured, like the universe list — a 6-digit shcode must not be masked).
-    let bar = performance.bar_evaluation();
+    // Scale the bar to the **pinned** universe size (`universe_top_n`, R3 — never the
+    // realized snapshot), so a run output cannot move the bar. At N = 40 → 60/12.
+    let bar = performance.bar_evaluation(manifest.params.universe_top_n);
     let pf = |pass: bool| if pass { "PASS" } else { "FAIL" };
     let mut bar_rows = String::new();
     for s in &bar.per_symbol {
@@ -1060,8 +1062,8 @@ pub fn analyze_scaffold(cfg: &ScaffoldConfig) -> anyhow::Result<ScaffoldOutcome>
         version = manifest.strategy_version,
         start = manifest.data_range.start,
         end = manifest.data_range.end,
-        trade_floor = crate::artifacts::performance::bar::TRADE_FLOOR,
-        breadth_floor = crate::artifacts::performance::bar::BREADTH_SYMBOL_FLOOR,
+        trade_floor = bar.trade_floor,
+        breadth_floor = bar.breadth_floor,
         sym_floor = crate::artifacts::performance::bar::SYMBOL_TRADE_FLOOR,
         dom_cap = crate::artifacts::performance::bar::DOMINANCE_CAP * 100.0,
         total_trades = bar.total_trades,
