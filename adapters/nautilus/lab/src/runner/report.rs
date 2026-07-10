@@ -23,7 +23,9 @@ use chrono::NaiveDate;
 use nautilus_core::UnixNanos;
 use nautilus_ls::ingest::kst_date_of;
 
-use crate::agent::envelope::SignalKind;
+use nautilus_ls::reference::universe_metadata::Stratum;
+
+use crate::agent::envelope::{Decision, DecisionEnvelope, SignalKind};
 use crate::agent::replay::read_envelopes;
 use crate::artifacts::manifest::Manifest;
 use crate::artifacts::DECISIONS_FILE;
@@ -177,6 +179,302 @@ fn leg_two_candidate(positive_sorted: &[f64], profit_target_r: f64) -> LegTwoCan
         CandidateVerdict::Runnable
     };
     LegTwoCandidate { value: Some(candidate), p70: Some(p70), verdict, band }
+}
+
+// ---------------------------------------------------------------------------
+// Per-tier trade counts + the power pre-check (plan 2026-07-10-003, U6/R8).
+// ---------------------------------------------------------------------------
+
+/// The pre-registered per-tier trade floor (Goal Capsule): a tier "clears"
+/// with at least this many joined trades.
+pub const PRECHECK_TRADE_FLOOR: usize = 30;
+/// The pre-registered tier quorum (Goal Capsule): the pre-check is green when
+/// at least this many tiers clear [`PRECHECK_TRADE_FLOOR`].
+pub const PRECHECK_MIN_TIERS: usize = 2;
+
+/// Count joined trades per stratum from a decision stream (U5's join): exit
+/// envelopes (`stop_hit`/`target`/`time_exit`) join to their tagged
+/// universe-accept envelope on `(symbol, KST session date)`; the stratum comes
+/// from the accept envelope's conditioner tags (KTD4). Returns the per-stratum
+/// counts (every stratum keyed, zeros included) plus the exits that joined no
+/// tagged accept (counted, never silently dropped).
+pub fn tier_trade_counts(envelopes: &[DecisionEnvelope]) -> (BTreeMap<Stratum, usize>, usize) {
+    let mut accept_stratum: BTreeMap<(String, NaiveDate), Stratum> = BTreeMap::new();
+    for e in envelopes {
+        let Some(d) = &e.decision_detail else { continue };
+        if d.kind == SignalKind::Universe && d.decision == Some(Decision::Accept) {
+            if let Some(tags) = &d.tags {
+                accept_stratum
+                    .entry((d.symbol.clone(), kst_date_of(UnixNanos::from(e.ts_event))))
+                    .or_insert(tags.stratum());
+            }
+        }
+    }
+    let mut counts: BTreeMap<Stratum, usize> = Stratum::ALL.iter().map(|s| (*s, 0)).collect();
+    let mut untagged_exits = 0usize;
+    for e in envelopes {
+        let Some(d) = &e.decision_detail else { continue };
+        if !matches!(d.kind, SignalKind::StopHit | SignalKind::Target | SignalKind::TimeExit) {
+            continue;
+        }
+        let key = (d.symbol.clone(), kst_date_of(UnixNanos::from(e.ts_event)));
+        match accept_stratum.get(&key) {
+            Some(stratum) => *counts.get_mut(stratum).expect("all strata keyed") += 1,
+            None => untagged_exits += 1,
+        }
+    }
+    (counts, untagged_exits)
+}
+
+/// The pre-registered power pre-check (R8): green iff at least
+/// [`PRECHECK_MIN_TIERS`] tiers carry at least [`PRECHECK_TRADE_FLOOR`] trades.
+pub fn power_precheck(counts: &BTreeMap<Stratum, usize>) -> bool {
+    counts.values().filter(|c| **c >= PRECHECK_TRADE_FLOOR).count() >= PRECHECK_MIN_TIERS
+}
+
+/// Render the Turn-N per-tier count summary (U6): per-tier counts against the
+/// floor plus the green/red verdict line. **Counts only — no expectancy, no
+/// P&L** (the KTD5 staging guard; the caller never reads `performance.json`).
+/// `symbols_label` names the symbol population the caller supplies — the
+/// runner passes per-tier **selected**-union counts, `report tiers` passes the
+/// ingest pin's **ingested** counts; the label keeps the two surfaces from
+/// printing identical-looking columns with different meanings.
+pub fn tier_summary_lines(
+    symbols_label: &str,
+    symbol_counts: &BTreeMap<Stratum, usize>,
+    trade_counts: &BTreeMap<Stratum, usize>,
+    untagged_exits: usize,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    lines.push("per-tier trade counts (power pre-check; counts only, KTD5 staging guard):".to_string());
+    for stratum in Stratum::ALL {
+        let trades = trade_counts.get(&stratum).copied().unwrap_or(0);
+        let symbols = symbol_counts.get(&stratum).copied().unwrap_or(0);
+        lines.push(format!(
+            "  {:<20} {symbols_label} symbols {:<4} trades {:<4} floor {} -> {}",
+            stratum.label(),
+            symbols,
+            trades,
+            PRECHECK_TRADE_FLOOR,
+            if trades >= PRECHECK_TRADE_FLOOR { "clears" } else { "short" }
+        ));
+    }
+    if untagged_exits > 0 {
+        lines.push(format!(
+            "  (untagged: {untagged_exits} exits joined no tagged accept — excluded from every tier)"
+        ));
+    }
+    let green = power_precheck(trade_counts);
+    lines.push(format!(
+        "power pre-check: {} (>= {} trades in >= {} tiers) — {}",
+        if green { "GREEN" } else { "RED" },
+        PRECHECK_TRADE_FLOOR,
+        PRECHECK_MIN_TIERS,
+        if green {
+            "Turn N+1 verdict run is green-lit"
+        } else {
+            "Turn N+1 is called off; a red pre-check is a valid completion (AE2)"
+        }
+    ));
+    lines
+}
+
+// ---------------------------------------------------------------------------
+// `report tiers` — the Turn-N per-tier count report (plan 2026-07-10-003, U6).
+// ---------------------------------------------------------------------------
+
+/// `report tiers` config.
+#[derive(Debug, Clone)]
+pub struct TiersConfig {
+    /// The data home.
+    pub data_home: PathBuf,
+    /// The run to report on (`LS_REPORT_RUN`); `None` = latest finalized.
+    pub run_id: Option<String>,
+    /// Artifact-path override (`LS_REPORT_METADATA`); `None` reads the path the
+    /// ingest pin recorded. The content hash is asserted either way.
+    pub artifact_path: Option<PathBuf>,
+}
+
+/// A `report tiers` outcome: structured counts for tests + the printed lines.
+#[derive(Debug, Clone)]
+pub struct TiersOutcome {
+    /// The reported run.
+    pub run_id: String,
+    /// Joined trades per stratum.
+    pub trade_counts: BTreeMap<Stratum, usize>,
+    /// The pre-registered power pre-check verdict (R8).
+    pub green: bool,
+    /// The printed report lines — counts + distribution only, **no expectancy**
+    /// (the KTD5 staging guard: `performance.json` is never read here).
+    pub lines: Vec<String>,
+}
+
+/// Build the per-tier trade-count report + power pre-check for one run (U6,
+/// R7/R8). Fails on I/O, on a run that carries no metadata hash, and on any
+/// artifact-hash mismatch between the ingest pin, the run manifest, and the
+/// artifact on disk (KTD2 — a re-capture between ingest and backtest would
+/// silently re-tier symbols). A **red** verdict is a valid completion, not a
+/// failure (AE2): the exit code reflects integrity + I/O only.
+pub async fn report_tiers(cfg: &TiersConfig) -> anyhow::Result<TiersOutcome> {
+    let (run_id, manifest): (String, Manifest) = match &cfg.run_id {
+        Some(id) => (id.clone(), read_manifest(&cfg.data_home, id)?),
+        None => latest_finalized_run(&cfg.data_home)?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "no finalized runs under {} — set LS_REPORT_RUN or run a backtest first",
+                cfg.data_home.display()
+            )
+        })?,
+    };
+    let Some(expected_hash) = manifest.universe_metadata_hash.clone() else {
+        anyhow::bail!(
+            "run {run_id} carries no universe_metadata_hash — not a metadata-driven run \
+             (re-run the backtest with LS_BT_METADATA)"
+        );
+    };
+
+    // KTD2 hash handshake: ingest pin ↔ run manifest ↔ artifact on disk.
+    let catalog_path = cfg.data_home.join("catalog");
+    let pin = nautilus_ls::reference::universe_metadata::MetadataPin::load(&catalog_path)
+        .map_err(|e| anyhow::anyhow!(e))?
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "no ingest pin at {}/universe-metadata-pin.json — run the tier-stratified \
+                 ingest (LS_INGEST_METADATA) before reporting (KTD2)",
+                catalog_path.display()
+            )
+        })?;
+    if pin.content_hash != expected_hash {
+        anyhow::bail!(
+            "artifact hash mismatch (KTD2): ingest pinned {} but run {run_id} was backtested \
+             against {} — a re-capture between ingest and backtest re-tiers symbols and \
+             corrupts the per-tier counts; re-ingest and re-run against ONE artifact",
+            pin.content_hash,
+            expected_hash
+        );
+    }
+    let artifact_path =
+        cfg.artifact_path.clone().unwrap_or_else(|| PathBuf::from(&pin.artifact_path));
+    let artifact = nautilus_ls::reference::universe_metadata::UniverseMetadata::load(&artifact_path)
+        .map_err(|e| anyhow::anyhow!(e))?;
+    if artifact.content_hash() != expected_hash {
+        anyhow::bail!(
+            "artifact {} no longer matches the run: its content hash differs from the pinned \
+             {expected_hash} (KTD2)",
+            artifact_path.display()
+        );
+    }
+
+    // Per-tier trade counts via the tagged accept join (U5).
+    let decisions_path = cfg.data_home.join("runs").join(&run_id).join(DECISIONS_FILE);
+    let envelopes = read_envelopes(&decisions_path)
+        .map_err(|e| anyhow::anyhow!("reading {}: {e:?}", decisions_path.display()))?;
+    let (trade_counts, untagged_exits) = tier_trade_counts(&envelopes);
+
+    // Ingested-symbol counts per tier, from the pin's recorded composition.
+    let mut symbol_counts: BTreeMap<Stratum, usize> =
+        Stratum::ALL.iter().map(|s| (*s, 0)).collect();
+    for stratum in Stratum::ALL {
+        if let Some(n) = pin.per_stratum.get(stratum.label()) {
+            symbol_counts.insert(stratum, *n);
+        }
+    }
+
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "report tiers: run {run_id} (strategy v{}, artifact hash {})",
+        manifest.strategy_version, expected_hash
+    ));
+    lines.extend(tier_summary_lines("ingested", &symbol_counts, &trade_counts, untagged_exits));
+
+    // Per-tier opening-gap-% distribution from catalog daily bars (AE2's
+    // diagnosability): separates a genuinely thin tier (no qualifying gaps)
+    // from a blue-chip-calibrated `gap_min_pct` sitting just above another
+    // tier's gap sizes. Descriptive counts only — no P&L (KTD5).
+    let gap_min = manifest.params.gap_min_pct;
+    let all_bars = nautilus_ls::ingest::read_all_bars(&catalog_path).await?;
+    let start_ns = kst_bound_ns(&manifest.data_range.start, false)?;
+    let end_ns = kst_bound_ns(&manifest.data_range.end, true)?;
+    let mut gap_samples: BTreeMap<Stratum, Vec<f64>> =
+        Stratum::ALL.iter().map(|s| (*s, Vec::new())).collect();
+    {
+        use crate::runner::backtest::{is_daily, kst_date_of as bar_date, select_prior_today};
+        let mut daily_by_inst: std::collections::HashMap<String, Vec<&nautilus_model::data::Bar>> =
+            std::collections::HashMap::new();
+        for b in &all_bars {
+            if is_daily(b) {
+                daily_by_inst.entry(b.bar_type.instrument_id().to_string()).or_default().push(b);
+            }
+        }
+        let stratum_by_shcode: std::collections::HashMap<&str, Stratum> = artifact
+            .records
+            .iter()
+            .map(|r| {
+                (r.shcode.as_str(), nautilus_ls::reference::universe_metadata::stratum_of(r.market_class, r.cap_tier))
+            })
+            .collect();
+        for (symbol, daily) in daily_by_inst.iter_mut() {
+            let shcode = symbol.split('.').next().unwrap_or(symbol);
+            let Some(stratum) = stratum_by_shcode.get(shcode) else { continue };
+            daily.sort_by_key(|b| b.ts_event.as_u64());
+            let mut session_dates: Vec<NaiveDate> = daily
+                .iter()
+                .filter(|b| {
+                    let ts = b.ts_event.as_u64();
+                    ts >= start_ns && ts <= end_ns
+                })
+                .map(|b| bar_date(b))
+                .collect();
+            session_dates.sort();
+            session_dates.dedup();
+            for date in session_dates {
+                if let Some((prior, today)) = select_prior_today(daily, date) {
+                    let prior_close = prior.close.as_f64();
+                    if prior_close > 0.0 {
+                        let gap = (today.open.as_f64() - prior_close) / prior_close * 100.0;
+                        gap_samples.get_mut(stratum).expect("keyed").push(gap);
+                    }
+                }
+            }
+        }
+    }
+    lines.push(format!("per-tier opening-gap% distribution (gap_min_pct {gap_min}):"));
+    for stratum in Stratum::ALL {
+        let sample = sorted(gap_samples.remove(&stratum).unwrap_or_default());
+        if sample.is_empty() {
+            lines.push(format!("  {:<20} (no daily-bar symbol-sessions)", stratum.label()));
+            continue;
+        }
+        let clearing = sample.iter().filter(|g| **g >= gap_min).count();
+        let p = |pct: f64| {
+            nearest_rank(&sample, pct).map(|v| format!("{v:.2}")).unwrap_or_else(|| "n/a".into())
+        };
+        lines.push(format!(
+            "  {:<20} n={:<5} p25 {} | p50 {} | p75 {} | p90 {} | >= {gap_min}%: {}/{} ({:.1}%)",
+            stratum.label(),
+            sample.len(),
+            p(25.0),
+            p(50.0),
+            p(75.0),
+            p(90.0),
+            clearing,
+            sample.len(),
+            clearing as f64 / sample.len() as f64 * 100.0
+        ));
+    }
+
+    let green = power_precheck(&trade_counts);
+    Ok(TiersOutcome { run_id, trade_counts, green, lines })
+}
+
+/// A KST day bound (`YYYYMMDD` → UTC unix ns), start-of-day or end-of-day.
+fn kst_bound_ns(date: &str, end_of_day: bool) -> anyhow::Result<u64> {
+    let d = NaiveDate::parse_from_str(date.trim(), "%Y%m%d")?;
+    let t = if end_of_day {
+        chrono::NaiveTime::from_hms_opt(23, 59, 59).expect("valid time")
+    } else {
+        chrono::NaiveTime::from_hms_opt(0, 0, 0).expect("valid time")
+    };
+    Ok(nautilus_ls::ingest::kst_to_unix_nanos(d, t)?.as_u64())
 }
 
 /// Build the MFE-distribution report for one run (R5, R7). Fails cleanly on a
@@ -434,7 +732,7 @@ mod tests {
     use std::collections::BTreeMap;
     use std::path::Path;
 
-    use chrono::{NaiveDate, TimeZone, Utc};
+    use chrono::{TimeZone, Utc};
 
     use super::*;
     use crate::agent::context::AgentContext;
@@ -502,6 +800,7 @@ mod tests {
             universe_hash: "uh".to_string(),
             strategy_code_hash: "ch".to_string(),
             checkpoint_hash: None,
+            universe_metadata_hash: None,
             created_utc: "2026-07-10T00:00:00+00:00".to_string(),
         };
         std::fs::write(dir.join(MANIFEST_FILE), serde_json::to_string(&manifest).unwrap())

@@ -113,3 +113,25 @@ values appear here.
 11. **README catalog-path inconsistency.** → the adapter README's backfill,
     accumulate, and rebase examples standardize on `<data home>/catalog`
     (`./data/catalog`), matching the probe example and the lab README.
+
+## Open — reference-data universe engine (plan 2026-07-10-003 review)
+
+12. **The governed `turn` flow cannot enable a zero-defaulted gate parameter.**
+    `OrbParams.turnover_floor_krw` defaults `0.0` (floor off), and
+    `ProposalBoundsGuardrail` fail-closes any change away from an exactly-zero
+    current value (relative change from zero is undefined → out of bounds, by
+    design). So the R5 liquidity floor can only enter via a code/default turn
+    (default change + version bump + re-baseline), never via a governed param
+    turn. Deliberate governance semantics, but worth knowing before proposing
+    `turnover_floor_krw` as a param leg. Owner: next code turn that enables
+    the floor.
+
+13. **An `LS_BT_PARAMS_FROM_RUN` count run becomes the latest finalized run.**
+    The Turn-N count run adopts a prior identity's params and finalizes into
+    the shared registry; the next `turn` resolves current params from it.
+    Mitigated: the bin now requires `LS_BT_VERSION` (distinct version) and
+    prints a reminder to pin `LS_TURN_EXPECT_VERSION`; `runs compare` now
+    fails on a `universe_metadata_hash` difference. Residual: `turn` itself
+    never sets `metadata_path`, so a metadata-gated baseline vs ungated turn
+    run still needs the operator to notice the compare FAIL. Owner: a
+    turn-integrated metadata mode if Turn N+1 keeps the engine.

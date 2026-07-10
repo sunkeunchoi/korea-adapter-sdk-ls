@@ -131,6 +131,7 @@ async fn scripted_fill_flows_into_a_live_run() {
         universe_hash: universe_hash(&["005930.XKRX".to_string()]),
         strategy_code_hash: String::new(),
         checkpoint_hash: None,
+        universe_metadata_hash: None,
         created_utc: "2024-01-05T06:00:00Z".into(),
     };
     writer.write_manifest(&manifest).unwrap();

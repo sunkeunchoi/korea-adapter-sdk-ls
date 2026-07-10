@@ -1293,3 +1293,190 @@ async fn whipsaw_entry_strength_rejected_emits_no_exit() {
     let perf = read_perf(&outcome.run_dir);
     assert_eq!(perf.summary["num_trades"], 0.0, "no trade on a rejected whipsaw");
 }
+
+// ---------------------------------------------------------------------------
+// Metadata-driven run (plan 2026-07-10-003, U4/U5/U6): gated, tagged selection
+// over a metadata fixture; tier composition + the Turn-N count summary.
+// ---------------------------------------------------------------------------
+
+mod metadata_driven {
+    use super::*;
+    use nautilus_ls::reference::universe_metadata::{
+        CapCutoff, CapTier, Designation, DesignationKind, IndexMembership, InstrumentMetadata,
+        LiquidityTier, MarketClass, MetadataProvenance, Resolved, UniverseMetadata,
+    };
+    use nautilus_ls_lab::agent::envelope::Decision;
+
+    /// Write a one-record artifact for 005930 (KOSPI × Top = blue-chip) and
+    /// return its path + content hash. `tradable: false` carries a t1405 halt.
+    pub(super) fn write_artifact_for_tests(
+        data_home: &Path,
+        tradable: bool,
+    ) -> (std::path::PathBuf, String) {
+        write_artifact(data_home, tradable)
+    }
+
+    fn write_artifact(data_home: &Path, tradable: bool) -> (std::path::PathBuf, String) {
+        let designation = (!tradable)
+            .then(|| Designation { kind: DesignationKind::Halt, source_tr: "t1405".to_string() });
+        let artifact = UniverseMetadata {
+            provenance: MetadataProvenance {
+                captured_at: "2026-07-10T00:30:00Z".to_string(),
+                session_date: "20240105".to_string(),
+                source_trs: vec!["t8430".into(), "t1444".into(), "t1405".into()],
+                instrument_type_filter: "equities-only (test fixture)".to_string(),
+                tier_boundary_rule: "test: top half per market".to_string(),
+                cap_cutoffs: vec![CapCutoff {
+                    market_class: MarketClass::Kospi,
+                    on_board: 1,
+                    top_count: 1,
+                    boundary_cap: Some(4_000_000.0),
+                }],
+                paper_incompatible: Vec::new(),
+            },
+            records: vec![InstrumentMetadata {
+                shcode: "005930".to_string(),
+                market_class: MarketClass::Kospi,
+                market_cap: Resolved::Value(4_000_000.0),
+                cap_tier: CapTier::Top,
+                turnover: Resolved::Unavailable,
+                liquidity_tier: LiquidityTier::Unknown,
+                index_membership: Resolved::Proxy(IndexMembership::Kospi200),
+                has_derivative: Resolved::Value(true),
+                designation,
+                tradable,
+            }],
+        };
+        let path = data_home.join("universe-metadata.json");
+        std::fs::write(&path, serde_json::to_string_pretty(&artifact).unwrap()).unwrap();
+        (path, artifact.content_hash())
+    }
+
+    /// U4/U5: the metadata-driven run tags the accept, attributes the trade to
+    /// its tier, pins the artifact hash in the manifest, records the typed tier
+    /// composition, and emits a counts-only Turn-N summary (KTD5: no expectancy).
+    #[tokio::test]
+    async fn metadata_run_tags_selection_and_records_tier_composition() {
+        let dir = tempdir().unwrap();
+        build_fixture(dir.path(), false).await;
+        let (artifact_path, hash) = write_artifact(dir.path(), true);
+
+        let mut config = cfg(dir.path());
+        config.metadata_path = Some(artifact_path);
+        let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
+        let outcome = run(config, start).await.unwrap();
+
+        // KTD2: the artifact identity is pinned into the manifest.
+        let manifest: Manifest = serde_json::from_str(
+            &std::fs::read_to_string(outcome.run_dir.join(MANIFEST_FILE)).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(manifest.universe_metadata_hash.as_deref(), Some(hash.as_str()));
+
+        // R9/KTD4: the accept envelope carries all five conditioner tags.
+        let envelopes = read_envelopes(&outcome.run_dir.join(DECISIONS_FILE)).unwrap();
+        let accept = envelopes
+            .iter()
+            .filter_map(|e| e.decision_detail.as_ref())
+            .find(|d| d.decision == Some(Decision::Accept))
+            .expect("the gapping symbol is accepted");
+        let tags = accept.tags.as_ref().expect("accept carries the tag set");
+        assert_eq!(tags.cap_tier, CapTier::Top);
+        assert_eq!(tags.market_class, MarketClass::Kospi);
+        assert_eq!(tags.index_membership, Resolved::Proxy(IndexMembership::Kospi200));
+        assert_eq!(tags.has_derivative, Resolved::Value(true));
+        // The daily-bar liquidity proxy resolved a tier (prior close 60000 ×
+        // 1,000,000 shares = 60bn KRW ≥ the High floor).
+        assert_eq!(tags.liquidity_tier, LiquidityTier::High);
+
+        // U6: the typed tier composition attributes the symbol + its trade to
+        // the blue-chip cell.
+        let dq: DataQualityReport = serde_json::from_str(
+            &std::fs::read_to_string(outcome.run_dir.join(DATA_QUALITY_FILE)).unwrap(),
+        )
+        .unwrap();
+        let composition = dq.tier_composition.expect("metadata run records tier composition");
+        let blue = composition.iter().find(|t| t.stratum == "kospi_blue_chip").unwrap();
+        assert_eq!((blue.symbols, blue.trades), (1, 1), "one symbol, one joined trade");
+        for other in composition.iter().filter(|t| t.stratum != "kospi_blue_chip") {
+            assert_eq!((other.symbols, other.trades), (0, 0), "{}", other.stratum);
+        }
+
+        // KTD5 staging guard: the Turn-N summary reports counts + verdict only.
+        let summary = outcome.tier_summary.expect("metadata run emits the Turn-N summary");
+        let joined = summary.join("\n");
+        assert!(joined.contains("kospi_blue_chip"), "{joined}");
+        assert!(joined.contains("RED"), "1 trade cannot clear the 30-in-2 floor: {joined}");
+        for banned in ["expectancy", "pnl", "P&L", "return"] {
+            assert!(!joined.to_lowercase().contains(&banned.to_lowercase()), "no {banned}: {joined}");
+        }
+        // The standard performance artifact is still written unchanged.
+        assert!(outcome.run_dir.join(PERFORMANCE_FILE).exists());
+    }
+
+    /// AE3 end-to-end: a designated symbol is gated out of selection, so it
+    /// contributes no trade to any tier and the rejection names the gate.
+    #[tokio::test]
+    async fn designated_symbol_contributes_no_trade_to_any_tier() {
+        let dir = tempdir().unwrap();
+        build_fixture(dir.path(), false).await;
+        let (artifact_path, _) = write_artifact(dir.path(), false);
+
+        let mut config = cfg(dir.path());
+        config.metadata_path = Some(artifact_path);
+        let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
+        let outcome = run(config, start).await.unwrap();
+
+        let envelopes = read_envelopes(&outcome.run_dir.join(DECISIONS_FILE)).unwrap();
+        assert!(
+            envelopes.iter().filter_map(|e| e.decision_detail.as_ref()).any(|d| d
+                .filter
+                .as_deref()
+                == Some("not_tradable")),
+            "the halt gates the symbol out"
+        );
+        assert!(
+            !envelopes
+                .iter()
+                .filter_map(|e| e.decision_detail.as_ref())
+                .any(|d| d.kind == SignalKind::OrderPlaced),
+            "no order for a designated symbol"
+        );
+        let dq: DataQualityReport = serde_json::from_str(
+            &std::fs::read_to_string(outcome.run_dir.join(DATA_QUALITY_FILE)).unwrap(),
+        )
+        .unwrap();
+        for tier in dq.tier_composition.expect("composition recorded") {
+            assert_eq!(tier.trades, 0, "{}: no trade in any tier", tier.stratum);
+        }
+        let joined = outcome.tier_summary.unwrap().join("\n");
+        assert!(joined.contains("RED"), "{joined}");
+    }
+}
+
+// KTD2 at the runner (review finding): a catalog pinned to a DIFFERENT
+// artifact fails the run before any engine work — the runner's own summary
+// must never green-light a re-captured artifact.
+#[tokio::test]
+async fn mismatched_ingest_pin_fails_the_metadata_run() {
+    use nautilus_ls::reference::universe_metadata::MetadataPin;
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path(), false).await;
+    let (artifact_path, _) = metadata_driven::write_artifact_for_tests(dir.path(), true);
+    MetadataPin {
+        artifact_path: "elsewhere.json".to_string(),
+        content_hash: "a-different-capture".to_string(),
+        per_stratum: std::collections::BTreeMap::new(),
+        symbols: vec![],
+        pinned_at: "2026-07-10T00:00:00Z".to_string(),
+    }
+    .write(&dir.path().join("catalog"))
+    .unwrap();
+
+    let mut config = cfg(dir.path());
+    config.metadata_path = Some(artifact_path);
+    let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
+    let err = run(config, start).await.unwrap_err();
+    assert!(err.to_string().contains("hash mismatch"), "{err}");
+    assert!(err.to_string().contains("KTD2"), "{err}");
+}

@@ -8,7 +8,8 @@ use nautilus_ls_lab::agent::envelope::{Decision, DecisionTrigger, SignalKind};
 use nautilus_ls_lab::agent::sink::DecisionSink;
 use nautilus_ls_lab::params::OrbParams;
 use nautilus_ls_lab::strategy::orb::{
-    breakout_strength, select_universe, ExitReason, OrbAction, OrbState, Phase, UniverseCandidate,
+    breakout_strength, select_universe, CandidateMeta, ExitReason, OrbAction, OrbState, Phase,
+    UniverseCandidate,
 };
 
 fn t(h: u32, m: u32) -> NaiveTime {
@@ -329,6 +330,7 @@ fn candidate(sym: &str, prior_close: f64, today_open: f64, turnover: f64) -> Uni
         prior_close,
         today_open,
         prior_turnover: turnover,
+        meta: CandidateMeta::Untagged,
     }
 }
 
@@ -387,4 +389,170 @@ fn universe_caps_top_n_by_turnover() {
         })
         .count();
     assert_eq!(rank_rejects, 5);
+}
+
+// ---------------------------------------------------------------------------
+// Metadata-gated selection (plan 2026-07-10-003, U4)
+// ---------------------------------------------------------------------------
+
+use nautilus_ls::reference::universe_metadata::{
+    CapTier, ConditionerTags, IndexMembership, LiquidityTier, MarketClass, Resolved, Stratum,
+};
+
+fn tags(market: MarketClass, cap: CapTier) -> ConditionerTags {
+    ConditionerTags {
+        cap_tier: cap,
+        // Unknown mirrors a record whose capture-time turnover is Unavailable
+        // (the t1463 walk is deferred this turn, R2).
+        liquidity_tier: LiquidityTier::Unknown,
+        market_class: market,
+        index_membership: Resolved::Proxy(IndexMembership::NotMember),
+        has_derivative: Resolved::Value(false),
+    }
+}
+
+fn tagged(
+    sym: &str,
+    today_open: f64,
+    turnover: f64,
+    tradable: bool,
+    market: MarketClass,
+    cap: CapTier,
+) -> UniverseCandidate {
+    UniverseCandidate {
+        symbol: sym.to_string(),
+        prior_close: 100.0,
+        today_open,
+        prior_turnover: turnover,
+        meta: CandidateMeta::Tagged { tradable, tags: tags(market, cap) },
+    }
+}
+
+/// Covers AE3: a non-tradable (designated) symbol is excluded even when its gap
+/// and turnover qualify, with the rejection naming the gate.
+#[test]
+fn non_tradable_candidate_is_excluded_even_when_gap_and_turnover_qualify() {
+    let p = OrbParams::default(); // gap_min_pct 3.0
+    let sink = DecisionSink::new();
+    let cands = vec![
+        tagged("111111.XKRX", 105.0, 9_999_999.0, false, MarketClass::Kospi, CapTier::Top),
+        tagged("222222.XKRX", 105.0, 1_000.0, true, MarketClass::Kospi, CapTier::Top),
+    ];
+    let selected = select_universe(&cands, &p, &sink, 1);
+    assert_eq!(selected, vec!["222222.XKRX".to_string()], "only the clean symbol is selected");
+    let rejects: Vec<_> = sink
+        .snapshot()
+        .into_iter()
+        .filter_map(|e| e.decision_detail)
+        .filter(|d| d.filter.as_deref() == Some("not_tradable"))
+        .collect();
+    assert_eq!(rejects.len(), 1);
+    assert_eq!(rejects[0].symbol, "111111.XKRX");
+    assert_eq!(rejects[0].decision, Some(Decision::Reject));
+}
+
+/// R5: the liquidity floor excludes a below-floor candidate and admits one at
+/// the floor; the floor evaluates the daily-bar prior_turnover.
+#[test]
+fn below_floor_candidate_is_excluded_and_at_floor_passes() {
+    let mut p = OrbParams::default();
+    p.turnover_floor_krw = 1_000.0;
+    let sink = DecisionSink::new();
+    let cands = vec![
+        tagged("111111.XKRX", 105.0, 999.0, true, MarketClass::Kosdaq, CapTier::Mid),
+        tagged("222222.XKRX", 105.0, 1_000.0, true, MarketClass::Kosdaq, CapTier::Mid),
+    ];
+    let selected = select_universe(&cands, &p, &sink, 1);
+    assert_eq!(selected, vec!["222222.XKRX".to_string()], "at-floor passes, below-floor is cut");
+    let reject = sink
+        .snapshot()
+        .into_iter()
+        .filter_map(|e| e.decision_detail)
+        .find(|d| d.filter.as_deref() == Some("turnover_floor"))
+        .expect("floor rejection recorded");
+    assert_eq!(reject.symbol, "111111.XKRX");
+    assert_eq!(reject.values.get("turnover_floor_krw").copied(), Some(1_000.0));
+}
+
+/// R5: a candidate whose CAPTURE-time turnover was Unavailable (liquidity tier
+/// Unknown) is floor-gated on its daily-bar prior_turnover — admitted when that
+/// clears the floor, never dropped for the unresolved capture attribute.
+#[test]
+fn unavailable_capture_turnover_gates_on_daily_bar_prior_turnover() {
+    let mut p = OrbParams::default();
+    p.turnover_floor_krw = 1_000.0;
+    let sink = DecisionSink::new();
+    // Unknown liquidity tier (capture turnover Unavailable) but a healthy
+    // daily-bar prior_turnover → selected.
+    let cands =
+        vec![tagged("300001.XKRX", 105.0, 5_000.0, true, MarketClass::Kosdaq, CapTier::BelowBoard)];
+    let selected = select_universe(&cands, &p, &sink, 1);
+    assert_eq!(selected, vec!["300001.XKRX".to_string()]);
+}
+
+/// R4: a candidate the artifact does not cover is non-selectable and recorded,
+/// never silently defaulted into the tradeable set.
+#[test]
+fn missing_metadata_candidate_is_dropped_and_recorded() {
+    let p = OrbParams::default();
+    let sink = DecisionSink::new();
+    let mut c = candidate("111111.XKRX", 100.0, 105.0, 9_999.0);
+    c.meta = CandidateMeta::Missing;
+    let selected = select_universe(&[c], &p, &sink, 1);
+    assert!(selected.is_empty(), "missing metadata is non-selectable");
+    let d = sink.snapshot()[0].decision_detail.clone().unwrap();
+    assert_eq!(d.filter.as_deref(), Some("missing_metadata"));
+    assert_eq!(d.decision, Some(Decision::Reject));
+}
+
+/// The gap + turnover-rank ordering is preserved within the gated set: the
+/// metadata gate removes candidates but never reorders the survivors.
+#[test]
+fn gap_and_turnover_ranking_preserved_within_the_filtered_set() {
+    let mut p = OrbParams::default();
+    p.universe_top_n = 2;
+    let sink = DecisionSink::new();
+    let cands = vec![
+        // Highest turnover but designated — gated out before ranking.
+        tagged("111111.XKRX", 105.0, 10_000.0, false, MarketClass::Kospi, CapTier::Top),
+        tagged("222222.XKRX", 105.0, 3_000.0, true, MarketClass::Kospi, CapTier::Top),
+        tagged("333333.XKRX", 105.0, 5_000.0, true, MarketClass::Kospi, CapTier::Mid),
+        tagged("444444.XKRX", 105.0, 1_000.0, true, MarketClass::Kosdaq, CapTier::Mid),
+    ];
+    let selected = select_universe(&cands, &p, &sink, 1);
+    assert_eq!(
+        selected,
+        vec!["333333.XKRX".to_string(), "222222.XKRX".to_string()],
+        "survivors rank by prior_turnover, top-N capped"
+    );
+}
+
+/// R9/KTD4: the accept envelope carries the full conditioner-tag set and the
+/// implied stratum; a legacy (untagged) accept carries none.
+#[test]
+fn accept_envelope_carries_conditioner_tags_and_the_correct_tier() {
+    let p = OrbParams::default();
+    let sink = DecisionSink::new();
+    let cands = vec![
+        tagged("111111.XKRX", 105.0, 5_000.0, true, MarketClass::Kospi, CapTier::Top),
+        candidate("222222.XKRX", 100.0, 105.0, 1_000.0), // legacy Untagged
+    ];
+    let selected = select_universe(&cands, &p, &sink, 1);
+    assert_eq!(selected.len(), 2);
+    let accepts: Vec<_> = sink
+        .snapshot()
+        .into_iter()
+        .filter_map(|e| e.decision_detail)
+        .filter(|d| d.decision == Some(Decision::Accept))
+        .collect();
+    let tagged_accept = accepts.iter().find(|d| d.symbol == "111111.XKRX").unwrap();
+    let t = tagged_accept.tags.as_ref().expect("accept carries the tag set");
+    assert_eq!(t.cap_tier, CapTier::Top);
+    assert_eq!(t.market_class, MarketClass::Kospi);
+    assert_eq!(t.liquidity_tier, LiquidityTier::Unknown);
+    assert_eq!(t.index_membership, Resolved::Proxy(IndexMembership::NotMember));
+    assert_eq!(t.has_derivative, Resolved::Value(false));
+    assert_eq!(t.stratum(), Stratum::KospiBlueChip, "the tier the report buckets on");
+    let legacy_accept = accepts.iter().find(|d| d.symbol == "222222.XKRX").unwrap();
+    assert!(legacy_accept.tags.is_none(), "a legacy run carries no tags");
 }

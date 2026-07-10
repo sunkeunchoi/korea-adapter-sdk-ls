@@ -24,8 +24,19 @@
 //! - `LS_INGEST_SKIP_UNIVERSE_LOAD`: `1`/`true` to skip the per-invocation universe
 //!   load (`t8430` + 2× `t9945`) and the `write_instruments` re-snapshot — the
 //!   dominant avoidable IGW00201 cost in a per-symbol drip loop. REQUIRES an
-//!   explicit `LS_INGEST_SYMBOLS` list and a non-empty catalog (a prior
-//!   full-universe pass must have persisted the instrument defs); refuses otherwise.
+//!   explicit symbol list (`LS_INGEST_SYMBOLS` or the metadata selection) and a
+//!   non-empty catalog (a prior full-universe pass must have persisted the
+//!   instrument defs); refuses otherwise.
+//! - `LS_INGEST_METADATA`: optional `UniverseMetadata` artifact path (U3, plan
+//!   2026-07-10-003). When set, the ingest symbol set is a tier-stratified sample
+//!   drawn via `reference::stratify` (R6) and the artifact's content hash is
+//!   pinned into `<catalog>/universe-metadata-pin.json` (KTD2). Mutually
+//!   exclusive with `LS_INGEST_SYMBOLS`.
+//! - `LS_INGEST_PER_STRATUM`: symbols per stratum for the stratified sample
+//!   (default `5`; four strata → ≤ 4× this many symbols).
+//! - `LS_INGEST_STRATIFY_DRY_RUN`: `1`/`true` to print the stratified selection
+//!   with per-stratum counts (the floor-reachability pre-check input) and exit
+//!   without touching the gateway or the catalog.
 
 use std::path::PathBuf;
 
@@ -37,6 +48,9 @@ use nautilus_ls::ingest::{
 };
 use nautilus_ls::instruments::{InstrumentDomain, InstrumentProvider};
 use nautilus_ls::lock::{AdvisoryLock, LockKind};
+use nautilus_ls::reference::universe_metadata::{
+    stratify, MetadataPin, Stratum, UniverseMetadata,
+};
 use nautilus_ls::scrub;
 use nautilus_model::identifiers::{InstrumentId, Symbol, Venue};
 
@@ -101,6 +115,38 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
     };
     let bar_kinds = parse_kinds(&std::env::var("LS_INGEST_KIND").unwrap_or_else(|_| "daily".into()))?;
 
+    // U3 (plan 2026-07-10-003): tier-stratified symbol selection from the
+    // metadata artifact (R6). Resolved before the lock and the client so the
+    // dry-run (the floor-reachability pre-check input) stays fully offline.
+    let symbols_env = std::env::var("LS_INGEST_SYMBOLS").ok().filter(|s| !s.trim().is_empty());
+    let metadata_selection = resolve_metadata_selection()?;
+    if let Some(sel) = &metadata_selection {
+        if symbols_env.is_some() {
+            return Err(
+                "both LS_INGEST_METADATA and LS_INGEST_SYMBOLS are set — the stratified \
+                 selection and an explicit symbol list are mutually exclusive"
+                    .into(),
+            );
+        }
+        for (label, count) in &sel.per_stratum {
+            println!("stratum {label}: {count} symbols");
+        }
+        println!(
+            "stratified selection: {} symbols from {} (hash {})",
+            sel.symbols.len(),
+            sel.artifact_path,
+            sel.content_hash
+        );
+        println!("LS_INGEST_SYMBOLS={}", sel.symbols.join(","));
+    }
+    if env_flag("LS_INGEST_STRATIFY_DRY_RUN") {
+        if metadata_selection.is_none() {
+            return Err("LS_INGEST_STRATIFY_DRY_RUN requires LS_INGEST_METADATA".into());
+        }
+        println!("dry run: no gateway calls, no catalog writes, no pin");
+        return Ok(None);
+    }
+
     // Take the R15 ingest lock FIRST — before any gateway request — so a live
     // session holding the counterpart lock blocks us before we issue the universe
     // load (t8430 + 2x t9945) against the shared per-process rate buckets.
@@ -124,10 +170,16 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
     // the universe load (t8430 + 2× t9945) is identical every time and charges the
     // shared IGW00201 budget, so `LS_INGEST_SKIP_UNIVERSE_LOAD` (with explicit
     // symbols + instruments already persisted by the drip's daily pass) skips it —
-    // the dominant avoidable per-invocation cost (KTD5 budget).
-    let symbols_env = std::env::var("LS_INGEST_SYMBOLS").ok().filter(|s| !s.trim().is_empty());
-    let skip_load =
-        should_skip_universe_load(env_flag("LS_INGEST_SKIP_UNIVERSE_LOAD"), symbols_env.is_some())?;
+    // the dominant avoidable per-invocation cost (KTD5 budget). The stratified
+    // metadata selection counts as an explicit symbol list.
+    let explicit_symbols: Option<String> = metadata_selection
+        .as_ref()
+        .map(|sel| sel.symbols.join(","))
+        .or(symbols_env);
+    let skip_load = should_skip_universe_load(
+        env_flag("LS_INGEST_SKIP_UNIVERSE_LOAD"),
+        explicit_symbols.is_some(),
+    )?;
 
     let universe: Vec<InstrumentId> = if skip_load {
         // Skipping the load also skips `write_instruments`, which is only safe when a
@@ -144,7 +196,7 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
             )
             .into());
         }
-        let syms = symbols_env.as_deref().unwrap_or_default();
+        let syms = explicit_symbols.as_deref().unwrap_or_default();
         let u = parse_symbol_ids(syms);
         println!(
             "skipping universe load (LS_INGEST_SKIP_UNIVERSE_LOAD): {} explicit symbols \
@@ -158,7 +210,7 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
         provider.load_domain(InstrumentDomain::DomesticEquity).await?;
         println!("loaded {} domestic-equity instruments", provider.len());
         // Bound the universe if requested (required for minute backfills).
-        let u: Vec<InstrumentId> = match &symbols_env {
+        let u: Vec<InstrumentId> = match &explicit_symbols {
             Some(list) => parse_symbol_ids(list),
             None => provider.all().map(|e| e.id).collect(),
         };
@@ -179,7 +231,7 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
     };
 
     let config = IngestConfig {
-        catalog_path: catalog,
+        catalog_path: catalog.clone(),
         bar_kinds,
         sdate: sdate.clone(),
         edate: edate.clone(),
@@ -199,6 +251,30 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
     } else {
         ingestor.run(&universe).await?
     };
+
+    // Pin the artifact identity into the catalog (KTD2) ONLY now that the
+    // ingest completed: a pin written before/despite failure would attest a
+    // selection whose bars never landed, and the per-tier report's hash
+    // handshake (pin == manifest == artifact) would pass on un-ingested data.
+    // A run carrying genuine refusals withholds the pin for the same reason.
+    if let Some(sel) = &metadata_selection {
+        if exit_code_for(&report) == 0 {
+            MetadataPin {
+                artifact_path: sel.artifact_path.clone(),
+                content_hash: sel.content_hash.clone(),
+                per_stratum: sel.per_stratum.clone(),
+                symbols: sel.symbols.clone(),
+                pinned_at: Utc::now().to_rfc3339(),
+            }
+            .write(&catalog)?;
+            println!("metadata pin written: {} (hash {})", sel.artifact_path, sel.content_hash);
+        } else {
+            println!(
+                "metadata pin WITHHELD: the run carried refusals — resolve them and re-run \
+                 before backtesting against this artifact (KTD2)"
+            );
+        }
+    }
 
     println!(
         "ingest complete: {} bars across {} triples ({} skipped), {} coverage gaps, {} refused pending heal",
@@ -356,6 +432,71 @@ fn should_skip_universe_load(skip_requested: bool, has_symbols: bool) -> Result<
     }
 }
 
+/// A resolved tier-stratified ingest selection (U3, plan 2026-07-10-003).
+#[derive(Debug, Clone)]
+struct StratifiedSelection {
+    artifact_path: String,
+    content_hash: String,
+    /// Per-stratum selected counts, keyed by `Stratum::label`.
+    per_stratum: std::collections::BTreeMap<String, usize>,
+    /// The selected shcodes, in stratum order.
+    symbols: Vec<String>,
+}
+
+/// Draw the tier-stratified sample from a `UniverseMetadata` artifact (R6):
+/// up to `per_stratum` tradable symbols per pre-registered stratum, via the
+/// reference module's deterministic `stratify`. A thin stratum contributes all
+/// it has; the total is bounded by `4 × per_stratum`.
+fn stratified_selection(
+    artifact: &UniverseMetadata,
+    artifact_path: &str,
+    per_stratum: usize,
+) -> Result<StratifiedSelection, String> {
+    let sample = stratify(&artifact.records, per_stratum);
+    let mut per_stratum_counts = std::collections::BTreeMap::new();
+    let mut symbols = Vec::new();
+    for stratum in Stratum::ALL {
+        let picked = sample.get(&stratum).cloned().unwrap_or_default();
+        per_stratum_counts.insert(stratum.label().to_string(), picked.len());
+        symbols.extend(picked);
+    }
+    if symbols.is_empty() {
+        return Err(format!(
+            "metadata artifact {artifact_path} yields no tradable symbols in any stratum"
+        ));
+    }
+    Ok(StratifiedSelection {
+        artifact_path: artifact_path.to_string(),
+        content_hash: artifact.content_hash(),
+        per_stratum: per_stratum_counts,
+        symbols,
+    })
+}
+
+/// Resolve the optional metadata-driven selection from the env (`None` when
+/// `LS_INGEST_METADATA` is unset — the existing `LS_INGEST_SYMBOLS` behavior
+/// is preserved).
+fn resolve_metadata_selection() -> Result<Option<StratifiedSelection>, String> {
+    let Some(path) = std::env::var("LS_INGEST_METADATA").ok().filter(|s| !s.trim().is_empty())
+    else {
+        return Ok(None);
+    };
+    let per_stratum: usize = match std::env::var("LS_INGEST_PER_STRATUM") {
+        Ok(v) => v
+            .parse()
+            .map_err(|_| format!("LS_INGEST_PER_STRATUM must be a positive integer, got {v:?}"))?,
+        Err(_) => 5,
+    };
+    if per_stratum == 0 {
+        return Err("LS_INGEST_PER_STRATUM must be at least 1".to_string());
+    }
+    let artifact = UniverseMetadata::load(std::path::Path::new(&path))?;
+    artifact
+        .validate()
+        .map_err(|errs| format!("metadata artifact {path} failed validation:\n  - {}", errs.join("\n  - ")))?;
+    stratified_selection(&artifact, &path, per_stratum).map(Some)
+}
+
 /// Parse a comma-separated shcode list into KRX-venue instrument ids.
 fn parse_symbol_ids(list: &str) -> Vec<InstrumentId> {
     list.split(',')
@@ -465,6 +606,100 @@ mod tests {
         std::env::set_var("LS_TEST_FLAG_XYZ", "0");
         assert!(!env_flag("LS_TEST_FLAG_XYZ"), "0 → false");
         std::env::remove_var("LS_TEST_FLAG_XYZ");
+    }
+
+    mod stratified {
+        use super::super::*;
+        use nautilus_ls::reference::universe_metadata::{
+            assign_cap_tiers, CapTier, InstrumentMetadata, LiquidityTier, MarketClass,
+            MetadataProvenance, Resolved, IndexMembership,
+        };
+
+        fn record(shcode: &str, market: MarketClass, cap: Resolved<f64>) -> InstrumentMetadata {
+            InstrumentMetadata {
+                shcode: shcode.to_string(),
+                market_class: market,
+                market_cap: cap,
+                cap_tier: CapTier::BelowBoard,
+                turnover: Resolved::Unavailable,
+                liquidity_tier: LiquidityTier::Unknown,
+                index_membership: Resolved::Proxy(IndexMembership::NotMember),
+                has_derivative: Resolved::Value(false),
+                designation: None,
+                tradable: true,
+            }
+        }
+
+        /// 6 on-board KOSPI + 4 on-board KOSDAQ + 3 below-board equities.
+        fn artifact() -> UniverseMetadata {
+            let mut records: Vec<InstrumentMetadata> = Vec::new();
+            for i in 0..6 {
+                records.push(record(
+                    &format!("{:06}", 100 + i),
+                    MarketClass::Kospi,
+                    Resolved::Value((1000 - i) as f64),
+                ));
+            }
+            for i in 0..4 {
+                records.push(record(
+                    &format!("{:06}", 200 + i),
+                    MarketClass::Kosdaq,
+                    Resolved::Value((100 - i) as f64),
+                ));
+            }
+            for i in 0..3 {
+                records.push(record(&format!("{:06}", 300 + i), MarketClass::Kosdaq, Resolved::Unavailable));
+            }
+            let cutoffs = assign_cap_tiers(&mut records, 0.5);
+            UniverseMetadata {
+                provenance: MetadataProvenance {
+                    captured_at: "2026-07-10T00:00:00Z".to_string(),
+                    session_date: "20260710".to_string(),
+                    source_trs: vec!["t8430".into()],
+                    instrument_type_filter: "equities-only".to_string(),
+                    tier_boundary_rule: "test quantile 0.5".to_string(),
+                    cap_cutoffs: cutoffs,
+                    paper_incompatible: Vec::new(),
+                },
+                records,
+            }
+        }
+
+        #[test]
+        fn selection_is_equal_per_stratum_and_bounded() {
+            let sel = stratified_selection(&artifact(), "x.json", 2).unwrap();
+            // 4 strata × 2 — every stratum here has ≥ 2 candidates.
+            assert_eq!(sel.per_stratum["kospi_blue_chip"], 2);
+            assert_eq!(sel.per_stratum["kospi_mid"], 2);
+            assert_eq!(sel.per_stratum["kosdaq_on_board"], 2);
+            assert_eq!(sel.per_stratum["small_cap_exclusion"], 2);
+            assert_eq!(sel.symbols.len(), 8, "total respects the 4×per_stratum bound");
+            assert_eq!(sel.content_hash, artifact().content_hash());
+        }
+
+        #[test]
+        fn a_thin_stratum_contributes_all_it_has() {
+            let sel = stratified_selection(&artifact(), "x.json", 10).unwrap();
+            assert_eq!(sel.per_stratum["kospi_blue_chip"], 3, "top half of 6");
+            assert_eq!(sel.per_stratum["kospi_mid"], 3);
+            assert_eq!(sel.per_stratum["kosdaq_on_board"], 4);
+            assert_eq!(sel.per_stratum["small_cap_exclusion"], 3);
+            assert_eq!(sel.symbols.len(), 13);
+        }
+
+        #[test]
+        fn an_all_designated_artifact_is_refused() {
+            let mut a = artifact();
+            for r in &mut a.records {
+                r.designation = Some(nautilus_ls::reference::universe_metadata::Designation {
+                    kind: nautilus_ls::reference::universe_metadata::DesignationKind::Halt,
+                    source_tr: "t1405".to_string(),
+                });
+                r.tradable = false;
+            }
+            let err = stratified_selection(&a, "x.json", 2).unwrap_err();
+            assert!(err.contains("no tradable symbols"), "{err}");
+        }
     }
 
     #[test]

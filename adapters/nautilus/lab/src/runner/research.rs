@@ -554,6 +554,11 @@ pub fn compare(cfg: &CompareConfig) -> anyhow::Result<CompareOutcome> {
     let fp_equal = a.catalog_fingerprint == b.catalog_fingerprint;
     let range_equal = a.data_range == b.data_range;
     let universe_equal = a.universe_hash == b.universe_hash;
+    // A metadata-gated run vs a legacy run (or two runs against different
+    // re-captured artifacts) is a selection-identity difference even when the
+    // selected sets happen to coincide (plan 2026-07-10-003 KTD2) — hard FAIL
+    // in param mode, explanation-required delta in data mode.
+    let metadata_equal = a.universe_metadata_hash == b.universe_metadata_hash;
 
     let pass = match cfg.mode {
         CompareMode::Param => {
@@ -597,6 +602,15 @@ pub fn compare(cfg: &CompareConfig) -> anyhow::Result<CompareOutcome> {
                     }
                 }
             }
+            if !metadata_equal {
+                lines.push(
+                    "FAIL: universe_metadata_hash differs — the runs were selected under \
+                     different (or gated vs ungated) reference-data artifacts, so the delta \
+                     cannot be attributed to the governed parameter"
+                        .to_string(),
+                );
+                ok = false;
+            }
             ok
         }
         CompareMode::Data => {
@@ -615,6 +629,7 @@ pub fn compare(cfg: &CompareConfig) -> anyhow::Result<CompareOutcome> {
                 (!fp_equal).then_some("catalog_fingerprint"),
                 (!range_equal).then_some("data_range"),
                 (!universe_equal).then_some("universe_hash"),
+                (!metadata_equal).then_some("universe_metadata_hash"),
             ]
             .into_iter()
             .flatten()
@@ -1105,7 +1120,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
 // ===========================================================================
 
 /// A usage string enumerating the valid subcommands (KTD2).
-const USAGE: &str = "usage: lab-research <turn | runs compare | replay | catalog status | catalog compact | analyze --scaffold | report mfe>";
+const USAGE: &str = "usage: lab-research <turn | runs compare | replay | catalog status | catalog compact | analyze --scaffold | report mfe | report tiers>";
 
 /// Parse an optional `YYYYMMDD` range from a pair of env vars, returning `None`
 /// when neither is set and erroring when only one is.
@@ -1224,7 +1239,15 @@ fn dispatch() -> anyhow::Result<ExitCode> {
                 // content (censored / out-of-band) is never a failure.
                 Ok(ExitCode::SUCCESS)
             }
-            other => anyhow::bail!("unknown `report` subcommand {other:?} — want `report mfe`\n{USAGE}"),
+            Some("tiers") => {
+                let rt = tokio::runtime::Runtime::new()?;
+                let out = rt.block_on(crate::runner::report::report_tiers(&tiers_config_from_env()?))?;
+                print_lines(&out.lines);
+                // A red pre-check is a valid completion (AE2), not a failure —
+                // the exit code reflects integrity + I/O only.
+                Ok(ExitCode::SUCCESS)
+            }
+            other => anyhow::bail!("unknown `report` subcommand {other:?} — want `report mfe` | `report tiers`\n{USAGE}"),
         },
         other => anyhow::bail!("unknown subcommand {other:?}\n{USAGE}"),
     }
@@ -1298,6 +1321,17 @@ fn status_config_from_env() -> anyhow::Result<StatusConfig> {
 
 fn compact_config_from_env() -> anyhow::Result<CompactConfig> {
     Ok(CompactConfig { data_home: data_home_from_env()? })
+}
+
+fn tiers_config_from_env() -> anyhow::Result<crate::runner::report::TiersConfig> {
+    Ok(crate::runner::report::TiersConfig {
+        data_home: data_home_from_env()?,
+        run_id: std::env::var("LS_REPORT_RUN").ok().filter(|s| !s.trim().is_empty()),
+        artifact_path: std::env::var("LS_REPORT_METADATA")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .map(std::path::PathBuf::from),
+    })
 }
 
 fn report_config_from_env() -> anyhow::Result<crate::runner::report::ReportConfig> {

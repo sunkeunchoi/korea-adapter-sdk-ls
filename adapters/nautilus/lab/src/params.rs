@@ -61,6 +61,15 @@ pub struct OrbParams {
     /// legacy manifests deserialize with the filter disabled.
     #[serde(default = "default_breakout_strength_max")]
     pub breakout_strength_max: f64,
+    /// The liquidity floor (KRW daily turnover, plan 2026-07-10-003 R5): a
+    /// candidate whose daily-bar `prior_turnover` sits below the floor is
+    /// excluded from selection before the gap + turnover rank. A **parameter**,
+    /// not a hardcoded blue-chip cut, so the engine can reach into gappier
+    /// mid/small-cap tiers while still expressing a tradability-safety floor.
+    /// The pass-through default `0.0` disables the floor — legacy manifests
+    /// deserialize unchanged.
+    #[serde(default)]
+    pub turnover_floor_krw: f64,
 }
 
 /// The back-compat default for [`OrbParams::profit_target_r`] (R2, KTD3): a v8
@@ -101,6 +110,7 @@ impl Default for OrbParams {
             profit_target_r: default_profit_target_r(),
             breakout_strength_min: default_breakout_strength_min(),
             breakout_strength_max: default_breakout_strength_max(),
+            turnover_floor_krw: 0.0,
         }
     }
 }
