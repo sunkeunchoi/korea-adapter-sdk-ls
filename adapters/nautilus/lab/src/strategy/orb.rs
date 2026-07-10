@@ -375,24 +375,35 @@ impl OrbState {
             self.high_water = high;
         }
         if self.phase == Phase::Long {
-            // Track the post-entry peak for per-trade MFE. On the entry bar this is
-            // a no-op (high_water was just set to high).
-            self.high_water = self.high_water.max(high);
+            // Determine the exit BEFORE folding the bar into the high-water mark
+            // (turn 10, R6 / KTD5): MFE folds only the excursion provably observed
+            // while the position was open.
             if low <= self.range_low {
                 // Stop first (KTD2 / R4): when a bar breaches both the stop and the
                 // target, Stop wins — intrabar order is unknowable, so fail toward
                 // the conservative side (matches KTD6's pessimistic fills). This is
-                // also the whipsaw same-bar enter+stop path (R3), unchanged.
+                // also the whipsaw same-bar enter+stop path (R3), unchanged. The
+                // stop bar's high is NOT folded — under stop-first pessimism it is
+                // not provably pre-stop (KTD5).
                 acts.push(OrbAction::Exit { limit_price: low, reason: ExitReason::Stop });
                 self.phase = Phase::Done;
             } else if let Some(target) = self.target_price(params) {
                 if high >= target {
                     // Bank the move at the target price — a favorable limit, not the
                     // bar wick (R1). The entry bar can never reach here: its high
-                    // equals entry_price < target.
+                    // equals entry_price < target. Fold capped at the target: price
+                    // provably reached it, but the above-target wick is not provably
+                    // pre-exit (KTD5), so MFE right-censors at profit_target_r·R.
+                    self.high_water = self.high_water.max(target);
                     acts.push(OrbAction::Exit { limit_price: target, reason: ExitReason::Target });
                     self.phase = Phase::Done;
+                } else {
+                    // No exit this bar → fold the full bar high (unchanged).
+                    self.high_water = self.high_water.max(high);
                 }
+            } else {
+                // No target configured, no stop → fold the full bar high (unchanged).
+                self.high_water = self.high_water.max(high);
             }
         }
         acts

@@ -236,6 +236,66 @@ fn non_positive_profit_target_r_never_fires() {
 }
 
 // ---------------------------------------------------------------------------
+// MFE fold semantics (Turn 10 / v12, R6 / KTD5): mfe_r folds only the excursion
+// provably observed while the position was open. Exit determination precedes the
+// fold — a Stop-exit bar's high is excluded (not provably pre-stop); a
+// Target-exit bar caps at the target price (the above-target wick is not provably
+// pre-exit). Reporting-only: no entry/exit decision or P&L changes (exits read
+// bar high/low directly, never high_water).
+// ---------------------------------------------------------------------------
+
+/// KTD5: a Stop-exit bar whose high exceeds all prior highs is EXCLUDED from
+/// `mfe_r` — under stop-first pessimism its high is not provably pre-stop.
+#[test]
+fn stop_exit_excludes_the_stop_bar_high_from_mfe() {
+    let p = OrbParams::default(); // profit_target_r 1.0
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000); // R = 1500, target 63_500, stop 60_000
+    st.on_bar(t(9, 20), 62_000, 61_000, &p); // entry 62_000
+    // A mid-hold peak below the target fixes the high-water at 63_000.
+    assert!(st.on_bar(t(9, 30), 63_000, 61_000, &p).is_empty());
+    // A stop bar whose HIGH (63_400) tops all prior highs but whose LOW breaches
+    // the stop → Stop exit, and the bar high is excluded from MFE.
+    let acts = st.on_bar(t(9, 40), 63_400, 59_900, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 59_900, reason: ExitReason::Stop }]);
+    // MFE stays at the 63_000 peak, not the 63_400 stop-bar high.
+    assert!((st.mfe_r() - (1_000.0 / 1_500.0)).abs() < 1e-9, "stop bar high excluded: {}", st.mfe_r());
+}
+
+/// KTD5: a Target-exit bar with an above-target wick caps `mfe_r` at exactly
+/// `profit_target_r` — price provably reached the target, but the wick above it
+/// is not provably pre-exit. This makes the report's right-censoring claim exact.
+#[test]
+fn target_exit_caps_mfe_at_profit_target_r() {
+    let p = OrbParams::default(); // profit_target_r 1.0 → cap at 1.0R
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000); // R = 1500, entry→target 63_500
+    st.on_bar(t(9, 20), 62_000, 61_000, &p); // entry 62_000
+    // A target-exit bar with a wick far above the 63_500 target (high 64_800).
+    let acts = st.on_bar(t(10, 0), 64_800, 62_500, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 63_500, reason: ExitReason::Target }]);
+    // MFE caps at exactly 1.0R — the above-target wick is excluded.
+    assert!((st.mfe_r() - 1.0).abs() < 1e-9, "mfe caps at profit_target_r: {}", st.mfe_r());
+}
+
+/// KTD5 / R6: a degenerate-range trade still reports `mfe_r = 0.0` — the
+/// `saw_range`/`R ≤ 0` sentinel guard survives the fold restructure.
+#[test]
+fn degenerate_range_trade_reports_zero_mfe() {
+    let p = OrbParams::default();
+    let mut st = OrbState::new();
+    // A flat opening range (high == low) → R = 0.
+    assert!(st.on_bar(t(9, 0), 61_000, 61_000, &p).is_empty());
+    assert_eq!(st.range(), Some((61_000, 61_000)));
+    // Breakout above the flat range → entry (no target with R ≤ 0).
+    st.on_bar(t(9, 20), 62_000, 61_500, &p);
+    // A higher bar folds into high_water, but the degenerate range makes mfe_r
+    // report 0.0 via the sentinel guard.
+    st.on_bar(t(10, 0), 63_000, 61_800, &p);
+    assert_eq!(st.mfe_r(), 0.0, "degenerate range → mfe_r 0.0");
+}
+
+// ---------------------------------------------------------------------------
 // Breakout strength (Turn 10 / v12 band-pass, R2 / KTD6)
 // ---------------------------------------------------------------------------
 
