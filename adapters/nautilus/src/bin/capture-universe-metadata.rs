@@ -14,12 +14,17 @@
 //! - `LS_CAPTURE_LANE_FILE`: optional lane env-file (else the process env).
 //! - `LS_CAPTURE_KOSPI_UPCODE` / `LS_CAPTURE_KOSDAQ_UPCODE`: `t1444` boards
 //!   (defaults `001` / `301`; confirm in the closed-window pre-flight).
-//! - `LS_CAPTURE_CAP_ROWS`: board walk depth per market (default `400`).
+//! - `LS_CAPTURE_CAP_ROWS`: board walk depth per market (default `200`; the
+//!   paced walk errors at its 32-page cap ≈ 640 rows rather than truncating).
 //! - `LS_CAPTURE_T1405_CATEGORIES` / `LS_CAPTURE_T1404_CATEGORIES`: designation
 //!   category specs, `gubun:jongchk:kind;...` with kind one of
 //!   halt|managed|caution|warning|risk|overheated — the enum is confirmed live
 //!   in the pre-flight; whatever is queried is recorded in provenance.
-//! - `LS_CAPTURE_PACE_MS`: inter-call pacing (default `600`).
+//! - `LS_CAPTURE_PACE_MS`: inter-call/inter-page pacing (default `2000` — the
+//!   2026-07-10 rehearsal showed faster pacing landing in the gateway's
+//!   short-window budget hole).
+//! - `LS_CAPTURE_BACKOFF_MS`: one-shot backoff before retrying an `IGW00201`
+//!   throttled fetch (default `120000`).
 //! - `LS_CAPTURE_CATALOG`: optional ingest catalog path — enables the shared
 //!   MarketData budget gate (refuses on `Defer`, KTD6) and records the capture's
 //!   spend into the shared ledger so the minute ingest's planner sees it.

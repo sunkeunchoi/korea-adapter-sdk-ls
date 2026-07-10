@@ -554,6 +554,11 @@ pub fn compare(cfg: &CompareConfig) -> anyhow::Result<CompareOutcome> {
     let fp_equal = a.catalog_fingerprint == b.catalog_fingerprint;
     let range_equal = a.data_range == b.data_range;
     let universe_equal = a.universe_hash == b.universe_hash;
+    // A metadata-gated run vs a legacy run (or two runs against different
+    // re-captured artifacts) is a selection-identity difference even when the
+    // selected sets happen to coincide (plan 2026-07-10-003 KTD2) — hard FAIL
+    // in param mode, explanation-required delta in data mode.
+    let metadata_equal = a.universe_metadata_hash == b.universe_metadata_hash;
 
     let pass = match cfg.mode {
         CompareMode::Param => {
@@ -597,6 +602,15 @@ pub fn compare(cfg: &CompareConfig) -> anyhow::Result<CompareOutcome> {
                     }
                 }
             }
+            if !metadata_equal {
+                lines.push(
+                    "FAIL: universe_metadata_hash differs — the runs were selected under \
+                     different (or gated vs ungated) reference-data artifacts, so the delta \
+                     cannot be attributed to the governed parameter"
+                        .to_string(),
+                );
+                ok = false;
+            }
             ok
         }
         CompareMode::Data => {
@@ -615,6 +629,7 @@ pub fn compare(cfg: &CompareConfig) -> anyhow::Result<CompareOutcome> {
                 (!fp_equal).then_some("catalog_fingerprint"),
                 (!range_equal).then_some("data_range"),
                 (!universe_equal).then_some("universe_hash"),
+                (!metadata_equal).then_some("universe_metadata_hash"),
             ]
             .into_iter()
             .flatten()

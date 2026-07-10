@@ -152,19 +152,6 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
     // load (t8430 + 2x t9945) against the shared per-process rate buckets.
     let _lock = AdvisoryLock::acquire(&catalog, LockKind::Ingest)?;
 
-    // Pin the artifact identity into the catalog (KTD2): the ingest-side half of
-    // the hash handshake the per-tier report asserts against the run manifest.
-    if let Some(sel) = &metadata_selection {
-        MetadataPin {
-            artifact_path: sel.artifact_path.clone(),
-            content_hash: sel.content_hash.clone(),
-            per_stratum: sel.per_stratum.clone(),
-            symbols: sel.symbols.clone(),
-            pinned_at: Utc::now().to_rfc3339(),
-        }
-        .write(&catalog)?;
-    }
-
     let adapter_cfg = match std::env::var("LS_INGEST_LANE_FILE") {
         Ok(path) => LsAdapterConfig::from_lane_file(path),
         Err(_) => LsAdapterConfig::from_env(),
@@ -244,7 +231,7 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
     };
 
     let config = IngestConfig {
-        catalog_path: catalog,
+        catalog_path: catalog.clone(),
         bar_kinds,
         sdate: sdate.clone(),
         edate: edate.clone(),
@@ -264,6 +251,30 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
     } else {
         ingestor.run(&universe).await?
     };
+
+    // Pin the artifact identity into the catalog (KTD2) ONLY now that the
+    // ingest completed: a pin written before/despite failure would attest a
+    // selection whose bars never landed, and the per-tier report's hash
+    // handshake (pin == manifest == artifact) would pass on un-ingested data.
+    // A run carrying genuine refusals withholds the pin for the same reason.
+    if let Some(sel) = &metadata_selection {
+        if exit_code_for(&report) == 0 {
+            MetadataPin {
+                artifact_path: sel.artifact_path.clone(),
+                content_hash: sel.content_hash.clone(),
+                per_stratum: sel.per_stratum.clone(),
+                symbols: sel.symbols.clone(),
+                pinned_at: Utc::now().to_rfc3339(),
+            }
+            .write(&catalog)?;
+            println!("metadata pin written: {} (hash {})", sel.artifact_path, sel.content_hash);
+        } else {
+            println!(
+                "metadata pin WITHHELD: the run carried refusals — resolve them and re-run \
+                 before backtesting against this artifact (KTD2)"
+            );
+        }
+    }
 
     println!(
         "ingest complete: {} bars across {} triples ({} skipped), {} coverage gaps, {} refused pending heal",

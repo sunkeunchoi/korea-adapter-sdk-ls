@@ -135,6 +135,34 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
         None => None,
     };
 
+    // KTD2 at the runner, not only in `report tiers` (review finding): the
+    // runner's own trailing summary prints the GREEN/RED pre-check, so it must
+    // not green-light an artifact the ingest never pinned. A mismatched pin is
+    // fatal; an absent pin (a catalog that never had a stratified ingest) is
+    // surfaced as a loud warning on the summary instead.
+    let mut pin_warning: Option<String> = None;
+    if let Some((hash, _)) = &metadata {
+        use nautilus_ls::reference::universe_metadata::MetadataPin;
+        match MetadataPin::load(&catalog_path) {
+            Ok(Some(pin)) if &pin.content_hash != hash => anyhow::bail!(
+                "metadata artifact hash mismatch (KTD2): the catalog's ingest pin holds {} but \
+                 LS_BT_METADATA resolves to {} — a re-capture between ingest and backtest \
+                 re-tiers symbols; re-ingest and re-run against ONE artifact",
+                pin.content_hash,
+                hash
+            ),
+            Ok(Some(_)) => {}
+            Ok(None) => {
+                pin_warning = Some(
+                    "(no ingest pin in the catalog — the artifact-to-ingest handshake is \
+                     unverified; run `report tiers` before acting on these counts)"
+                        .to_string(),
+                )
+            }
+            Err(e) => anyhow::bail!("reading the catalog metadata pin: {e}"),
+        }
+    }
+
     let start_date = parse_date(&cfg.range.start)?;
     let end_date = parse_date(&cfg.range.end)?;
     let start_ns = kst_to_unix_nanos(start_date, midnight())?.as_u64();
@@ -237,8 +265,15 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
                     trades: trade_counts[s] as u64,
                 })
                 .collect();
-            let lines =
-                crate::runner::report::tier_summary_lines(&symbol_counts, &trade_counts, untagged);
+            let mut lines = crate::runner::report::tier_summary_lines(
+                "selected",
+                &symbol_counts,
+                &trade_counts,
+                untagged,
+            );
+            if let Some(w) = &pin_warning {
+                lines.push(w.clone());
+            }
             (Some(entries), Some(lines))
         }
         None => (None, None),
@@ -639,7 +674,9 @@ pub fn main_cli() -> anyhow::Result<()> {
     let sdate = std::env::var("LS_BT_SDATE").map_err(|_| anyhow::anyhow!("LS_BT_SDATE is required"))?;
     let edate = std::env::var("LS_BT_EDATE").map_err(|_| anyhow::anyhow!("LS_BT_EDATE is required"))?;
     let mut cfg = BacktestConfig::new(data_home.clone(), &sdate, &edate);
-    if let Ok(run_id) = std::env::var("LS_BT_PARAMS_FROM_RUN") {
+    if let Some(run_id) =
+        std::env::var("LS_BT_PARAMS_FROM_RUN").ok().filter(|s| !s.trim().is_empty())
+    {
         let manifest = crate::runner::research::read_manifest(Path::new(&data_home), run_id.trim())?;
         println!(
             "params adopted from run {} (v{}, gap_min_pct {})",
@@ -648,8 +685,27 @@ pub fn main_cli() -> anyhow::Result<()> {
             manifest.params.gap_min_pct
         );
         cfg.params = manifest.params;
-    }
-    if let Ok(v) = std::env::var("LS_BT_VERSION") {
+        // Review finding: an adopted-params run finalizing under the SOURCE
+        // run's version would become the next `turn`'s latest-finalized
+        // baseline indistinguishably — require a distinct version so the
+        // EXPECT_VERSION seed assertion and `runs compare` can tell a count
+        // run from the identity it borrowed.
+        let v = std::env::var("LS_BT_VERSION").map_err(|_| {
+            anyhow::anyhow!(
+                "LS_BT_PARAMS_FROM_RUN requires LS_BT_VERSION: an adopted-params run must \
+                 finalize under its own version, or the next turn resolves its baseline from \
+                 this run without knowing it"
+            )
+        })?;
+        cfg.params.strategy_version = v
+            .parse()
+            .map_err(|_| anyhow::anyhow!("LS_BT_VERSION must be an integer, got {v:?}"))?;
+        println!(
+            "count run finalizes as the LATEST run (v{}) — pin LS_TURN_EXPECT_VERSION on the \
+             next turn accordingly",
+            cfg.params.strategy_version
+        );
+    } else if let Ok(v) = std::env::var("LS_BT_VERSION") {
         cfg.params.strategy_version = v
             .parse()
             .map_err(|_| anyhow::anyhow!("LS_BT_VERSION must be an integer, got {v:?}"))?;

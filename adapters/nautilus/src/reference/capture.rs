@@ -274,6 +274,13 @@ pub async fn capture(sdk: &LsSdk, cfg: &CaptureConfig) -> Result<CaptureOutcome,
         calls_made += 1;
         let req = T1904Request::new(proxy.shcode.clone(), cfg.session_date.clone(), "1");
         match sdk.market_session().etf_constituents(&req).await {
+            Ok(resp) if resp.outblock1.is_empty() => {
+                // Empty-Ok holdings (review finding): treating this as served
+                // would resolve EVERY symbol Proxy(NotMember) — an all-false
+                // index axis whose recorded resolution falsely implies data.
+                any_etf_failed = true;
+                failures.push(TrFailure { tr: "t1904".into(), code: "empty".into() });
+            }
             Ok(resp) => {
                 for row in &resp.outblock1 {
                     let code = row.shcode.trim().to_string();
@@ -334,9 +341,14 @@ pub async fn capture(sdk: &LsSdk, cfg: &CaptureConfig) -> Result<CaptureOutcome,
     for q in &cfg.t1405_categories {
         tokio::time::sleep(cfg.pace).await;
         let mut attempt = walk_t1405(sdk, q).await;
-        if matches!(&attempt, Err(code) if code == "IGW00201") {
-            tokio::time::sleep(cfg.throttle_backoff).await;
-            attempt = walk_t1405(sdk, q).await;
+        if let Err((code, pages)) = &attempt {
+            if code == "IGW00201" {
+                // Count attempt 1's real spend before retrying (review
+                // finding: dropped pages under-record the shared ledger, KTD6).
+                calls_made += pages;
+                tokio::time::sleep(cfg.throttle_backoff).await;
+                attempt = walk_t1405(sdk, q).await;
+            }
         }
         match attempt {
             Ok((codes, pages)) => {
@@ -347,12 +359,12 @@ pub async fn capture(sdk: &LsSdk, cfg: &CaptureConfig) -> Result<CaptureOutcome,
                         .or_insert(Designation { kind: q.kind, source_tr: "t1405".into() });
                 }
             }
-            Err(code) => {
-                calls_made += 1;
+            Err((code, pages)) => {
+                calls_made += pages;
                 if code == "IGW00201" {
                     return Err(fail(
                         format!(
-                            "t1405 category gubun={} jongchk={} throttled (IGW00201) after retry —                              a transient hole in the hard tradability gate must not be baked into                              the artifact; re-run when the budget is colder",
+                            "t1405 category gubun={} jongchk={} throttled (IGW00201) after retry — a transient hole in the hard tradability gate must not be baked into the artifact; re-run when the budget is colder",
                             q.gubun, q.jongchk
                         ),
                         calls_made,
@@ -365,9 +377,14 @@ pub async fn capture(sdk: &LsSdk, cfg: &CaptureConfig) -> Result<CaptureOutcome,
     for q in &cfg.t1404_categories {
         tokio::time::sleep(cfg.pace).await;
         let mut attempt = walk_t1404(sdk, q).await;
-        if matches!(&attempt, Err(code) if code == "IGW00201") {
-            tokio::time::sleep(cfg.throttle_backoff).await;
-            attempt = walk_t1404(sdk, q).await;
+        if let Err((code, pages)) = &attempt {
+            if code == "IGW00201" {
+                // Count attempt 1's real spend before retrying (review
+                // finding: dropped pages under-record the shared ledger, KTD6).
+                calls_made += pages;
+                tokio::time::sleep(cfg.throttle_backoff).await;
+                attempt = walk_t1404(sdk, q).await;
+            }
         }
         match attempt {
             Ok((codes, pages)) => {
@@ -378,12 +395,12 @@ pub async fn capture(sdk: &LsSdk, cfg: &CaptureConfig) -> Result<CaptureOutcome,
                         .or_insert(Designation { kind: q.kind, source_tr: "t1404".into() });
                 }
             }
-            Err(code) => {
-                calls_made += 1;
+            Err((code, pages)) => {
+                calls_made += pages;
                 if code == "IGW00201" {
                     return Err(fail(
                         format!(
-                            "t1404 category gubun={} jongchk={} throttled (IGW00201) after retry —                              a transient hole in the hard tradability gate must not be baked into                              the artifact; re-run when the budget is colder",
+                            "t1404 category gubun={} jongchk={} throttled (IGW00201) after retry — a transient hole in the hard tradability gate must not be baked into the artifact; re-run when the budget is colder",
                             q.gubun, q.jongchk
                         ),
                         calls_made,
@@ -560,12 +577,15 @@ async fn walk_t1444(
         let next_idx = resp.outblock.idx.trim().to_string();
         let terminal =
             next_idx.is_empty() || next_idx == "0" || resp.tr_cont.trim() == "N";
-        if terminal
-            || !progressed
-            || next_idx == req.inblock.idx.trim()
-            || pages as usize >= MAX_DESIGNATION_PAGES
-        {
+        if terminal || !progressed || next_idx == req.inblock.idx.trim() {
             return Ok((rows, pages));
+        }
+        if pages as usize >= MAX_DESIGNATION_PAGES {
+            // A live cursor at the safety cap means the requested depth cannot
+            // be served — mirroring the SDK walk's PaginationLimit rather than
+            // silently truncating (a truncated board mis-tiers every symbol
+            // below the cutoff into the exclusion stratum).
+            return Err(("pagination_limit".to_string(), pages));
         }
         req.inblock.idx = next_idx;
         req.set_tr_cont("Y".to_string());
@@ -578,14 +598,17 @@ async fn walk_t1444(
 /// `tr_cont` header fields (a single-page read) — continuation threads the
 /// **body** cursor plus a request-side `tr_cont: Y`; the walk terminates on an
 /// empty/repeated cursor, a no-progress page, or the page cap.
-async fn walk_t1405(sdk: &LsSdk, q: &DesignationQuery) -> Result<(Vec<String>, u32), String> {
+async fn walk_t1405(sdk: &LsSdk, q: &DesignationQuery) -> Result<(Vec<String>, u32), (String, u32)> {
     let mut req = T1405Request::new(q.gubun.clone(), q.jongchk.clone());
     let mut seen: HashSet<String> = HashSet::new();
     let mut codes = Vec::new();
     let mut pages: u32 = 0;
     loop {
         pages += 1;
-        let resp = sdk.paginated().trade_suspension(&req).await.map_err(|e| fail_code(&e))?;
+        let resp = match sdk.paginated().trade_suspension(&req).await {
+            Ok(r) => r,
+            Err(e) => return Err((fail_code(&e), pages)),
+        };
         let mut progressed = false;
         for row in &resp.outblock1 {
             let code = row.shcode.trim().to_string();
@@ -609,7 +632,7 @@ async fn walk_t1405(sdk: &LsSdk, q: &DesignationQuery) -> Result<(Vec<String>, u
 
 /// Walk one `t1404` category across its `cts_shcode` pages (same body-cursor
 /// protocol as [`walk_t1405`]).
-async fn walk_t1404(sdk: &LsSdk, q: &DesignationQuery) -> Result<(Vec<String>, u32), String> {
+async fn walk_t1404(sdk: &LsSdk, q: &DesignationQuery) -> Result<(Vec<String>, u32), (String, u32)> {
     let mut req = T1404Request::new();
     req.inblock.gubun = q.gubun.clone();
     req.inblock.jongchk = q.jongchk.clone();
@@ -618,7 +641,10 @@ async fn walk_t1404(sdk: &LsSdk, q: &DesignationQuery) -> Result<(Vec<String>, u
     let mut pages: u32 = 0;
     loop {
         pages += 1;
-        let resp = sdk.paginated().designation_board(&req).await.map_err(|e| fail_code(&e))?;
+        let resp = match sdk.paginated().designation_board(&req).await {
+            Ok(r) => r,
+            Err(e) => return Err((fail_code(&e), pages)),
+        };
         let mut progressed = false;
         for row in &resp.outblock1 {
             let code = row.shcode.trim().to_string();

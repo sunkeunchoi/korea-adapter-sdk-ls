@@ -235,7 +235,12 @@ pub fn power_precheck(counts: &BTreeMap<Stratum, usize>) -> bool {
 /// Render the Turn-N per-tier count summary (U6): per-tier counts against the
 /// floor plus the green/red verdict line. **Counts only — no expectancy, no
 /// P&L** (the KTD5 staging guard; the caller never reads `performance.json`).
+/// `symbols_label` names the symbol population the caller supplies — the
+/// runner passes per-tier **selected**-union counts, `report tiers` passes the
+/// ingest pin's **ingested** counts; the label keeps the two surfaces from
+/// printing identical-looking columns with different meanings.
 pub fn tier_summary_lines(
+    symbols_label: &str,
     symbol_counts: &BTreeMap<Stratum, usize>,
     trade_counts: &BTreeMap<Stratum, usize>,
     untagged_exits: usize,
@@ -246,7 +251,7 @@ pub fn tier_summary_lines(
         let trades = trade_counts.get(&stratum).copied().unwrap_or(0);
         let symbols = symbol_counts.get(&stratum).copied().unwrap_or(0);
         lines.push(format!(
-            "  {:<20} symbols {:<4} trades {:<4} floor {} -> {}",
+            "  {:<20} {symbols_label} symbols {:<4} trades {:<4} floor {} -> {}",
             stratum.label(),
             symbols,
             trades,
@@ -379,7 +384,7 @@ pub async fn report_tiers(cfg: &TiersConfig) -> anyhow::Result<TiersOutcome> {
         "report tiers: run {run_id} (strategy v{}, artifact hash {})",
         manifest.strategy_version, expected_hash
     ));
-    lines.extend(tier_summary_lines(&symbol_counts, &trade_counts, untagged_exits));
+    lines.extend(tier_summary_lines("ingested", &symbol_counts, &trade_counts, untagged_exits));
 
     // Per-tier opening-gap-% distribution from catalog daily bars (AE2's
     // diagnosability): separates a genuinely thin tier (no qualifying gaps)

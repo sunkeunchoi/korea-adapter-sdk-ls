@@ -125,7 +125,18 @@ pub fn select_universe(
         // even when its gap and turnover qualify (R3, AE3).
         match c.meta {
             CandidateMeta::Missing => {
-                reject("missing_metadata", vals(&[("prior_turnover", c.prior_turnover)]));
+                // Carry the gap diagnostics too (review finding): an operator
+                // triaging a missing-metadata reject needs "would it have
+                // gapped in" answerable from the envelope alone.
+                reject(
+                    "missing_metadata",
+                    vals(&[
+                        ("gap_pct", c.gap_pct()),
+                        ("prior_close", c.prior_close),
+                        ("today_open", c.today_open),
+                        ("prior_turnover", c.prior_turnover),
+                    ]),
+                );
                 continue;
             }
             CandidateMeta::Tagged { tradable: false, .. } => {

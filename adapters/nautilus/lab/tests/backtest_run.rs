@@ -1309,6 +1309,13 @@ mod metadata_driven {
 
     /// Write a one-record artifact for 005930 (KOSPI × Top = blue-chip) and
     /// return its path + content hash. `tradable: false` carries a t1405 halt.
+    pub(super) fn write_artifact_for_tests(
+        data_home: &Path,
+        tradable: bool,
+    ) -> (std::path::PathBuf, String) {
+        write_artifact(data_home, tradable)
+    }
+
     fn write_artifact(data_home: &Path, tradable: bool) -> (std::path::PathBuf, String) {
         let designation = (!tradable)
             .then(|| Designation { kind: DesignationKind::Halt, source_tr: "t1405".to_string() });
@@ -1445,4 +1452,31 @@ mod metadata_driven {
         let joined = outcome.tier_summary.unwrap().join("\n");
         assert!(joined.contains("RED"), "{joined}");
     }
+}
+
+// KTD2 at the runner (review finding): a catalog pinned to a DIFFERENT
+// artifact fails the run before any engine work — the runner's own summary
+// must never green-light a re-captured artifact.
+#[tokio::test]
+async fn mismatched_ingest_pin_fails_the_metadata_run() {
+    use nautilus_ls::reference::universe_metadata::MetadataPin;
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path(), false).await;
+    let (artifact_path, _) = metadata_driven::write_artifact_for_tests(dir.path(), true);
+    MetadataPin {
+        artifact_path: "elsewhere.json".to_string(),
+        content_hash: "a-different-capture".to_string(),
+        per_stratum: std::collections::BTreeMap::new(),
+        symbols: vec![],
+        pinned_at: "2026-07-10T00:00:00Z".to_string(),
+    }
+    .write(&dir.path().join("catalog"))
+    .unwrap();
+
+    let mut config = cfg(dir.path());
+    config.metadata_path = Some(artifact_path);
+    let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
+    let err = run(config, start).await.unwrap_err();
+    assert!(err.to_string().contains("hash mismatch"), "{err}");
+    assert!(err.to_string().contains("KTD2"), "{err}");
 }
