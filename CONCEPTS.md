@@ -149,6 +149,9 @@ The development model for trading strategies on the Nautilus adapter: collect da
 ### Run registry
 The append-only store of strategy-run records. Every run — backtest or live paper — deposits the same four agent-readable artifacts: a performance report (fills, per-trade P&L, equity curve, summary stats), a per-decision envelope stream (`decisions.jsonl` — every candidate evaluated, the decision, and the rejecting filter/signal values), a data-quality report (coverage gaps, adjustment-basis splice flags, and for live runs any reconcile-advised conditions), and a run manifest (strategy version, full parameter set, data range, catalog state) that makes any two runs comparable and any run reproducible. Runs are never overwritten; improvement analyses are stored alongside the runs they analyzed.
 
+### Latest finalized run
+The newest completed record in the [[Run registry]], and the loop's single authority for "current": a governed parameter turn resolves the parameters it proposes from — and its guardrail measures relative change against — the latest finalized run's manifest, regardless of which older run an operator happens to be inspecting. Any tool that previews a governed decision while reading a different run must either share this anchor or state the divergence explicitly, because a verdict computed off an older run's parameters can flip against what the governed turn will actually decide.
+
 ### Strategy lab
 The crate that houses strategy code, the backtest and live-paper runners, and the artifact writer — deliberately separate from the certified adapter crate, whose contract is translation only. The [[Strategy-improvement loop]] exists to generate strategy churn, and the lab boundary keeps that churn from destabilizing the adapter.
 
