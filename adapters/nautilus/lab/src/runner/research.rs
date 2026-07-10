@@ -1303,7 +1303,10 @@ fn compact_config_from_env() -> anyhow::Result<CompactConfig> {
 fn report_config_from_env() -> anyhow::Result<crate::runner::report::ReportConfig> {
     Ok(crate::runner::report::ReportConfig {
         data_home: data_home_from_env()?,
-        // Absent → the latest finalized run (the LS_ANALYZE_RUN precedent).
+        // Absent → default to the latest finalized run, marked as defaulted in
+        // the report header. (Unlike `analyze --scaffold`, which hard-requires
+        // LS_ANALYZE_RUN because it WRITES into the run dir — the report is
+        // read-only, so a default is safe.)
         run_id: std::env::var("LS_REPORT_RUN").ok().filter(|s| !s.trim().is_empty()),
     })
 }

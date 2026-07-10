@@ -76,6 +76,9 @@ impl CandidateVerdict {
 pub struct LegTwoCandidate {
     /// The rounded candidate value (`None` when there is no positive-MFE sample).
     pub value: Option<f64>,
+    /// The raw nearest-rank p70 the candidate was rounded from (`None` with no
+    /// positive-MFE sample) — carried so display never recomputes it.
+    pub p70: Option<f64>,
     /// The disposition.
     pub verdict: CandidateVerdict,
     /// The proposal-bounds band off the source run's `profit_target_r`.
@@ -130,6 +133,14 @@ fn nearest_rank(sorted: &[f64], pct: f64) -> Option<f64> {
     Some(sorted[rank.clamp(1, n) - 1])
 }
 
+/// Sort an f64 sample ascending. The unwrap is safe for every sample this
+/// report builds: `mfe_r` arrives via serde_json (which cannot carry NaN) and
+/// strength is only computed under an `r > 0` guard.
+fn sorted(mut values: Vec<f64>) -> Vec<f64> {
+    values.sort_by(|a, b| a.partial_cmp(b).expect("sample is never NaN"));
+    values
+}
+
 fn mean(values: &[f64]) -> f64 {
     if values.is_empty() {
         return 0.0;
@@ -155,7 +166,7 @@ fn leg_two_candidate(positive_sorted: &[f64], profit_target_r: f64) -> LegTwoCan
         profit_target_r * (1.0 + PROPOSAL_BOUNDS_CAP),
     );
     let Some(p70) = nearest_rank(positive_sorted, 70.0) else {
-        return LegTwoCandidate { value: None, verdict: CandidateVerdict::NoSample, band };
+        return LegTwoCandidate { value: None, p70: None, verdict: CandidateVerdict::NoSample, band };
     };
     let candidate = (p70 / CANDIDATE_STEP).round() * CANDIDATE_STEP;
     let verdict = if (candidate - profit_target_r).abs() <= CANDIDATE_STEP + 1e-9 {
@@ -165,22 +176,24 @@ fn leg_two_candidate(positive_sorted: &[f64], profit_target_r: f64) -> LegTwoCan
     } else {
         CandidateVerdict::Runnable
     };
-    LegTwoCandidate { value: Some(candidate), verdict, band }
+    LegTwoCandidate { value: Some(candidate), p70: Some(p70), verdict, band }
 }
 
 /// Build the MFE-distribution report for one run (R5, R7). Fails cleanly on a
 /// missing/empty decision stream or an unknown run id; the distribution's
 /// *content* never fails the command (the exit code reflects I/O only).
 pub fn report_mfe(cfg: &ReportConfig) -> anyhow::Result<ReportOutcome> {
+    let latest = latest_finalized_run(&cfg.data_home)?;
     let (run_id, manifest): (String, Manifest) = match &cfg.run_id {
         Some(id) => (id.clone(), read_manifest(&cfg.data_home, id)?),
-        None => latest_finalized_run(&cfg.data_home)?.ok_or_else(|| {
+        None => latest.clone().ok_or_else(|| {
             anyhow::anyhow!(
                 "no finalized runs under {} — set LS_REPORT_RUN or run a backtest first",
                 cfg.data_home.display()
             )
         })?,
     };
+    let defaulted = cfg.run_id.is_none();
     let profit_target_r = manifest.params.profit_target_r;
 
     let decisions_path = cfg.data_home.join("runs").join(&run_id).join(DECISIONS_FILE);
@@ -277,17 +290,29 @@ pub fn report_mfe(cfg: &ReportConfig) -> anyhow::Result<ReportOutcome> {
     let target_exits = rows.iter().filter(|r| r.kind == SignalKind::Target).count();
     let target_exit_share = target_exits as f64 / trades as f64;
 
-    let mut all_mfe: Vec<f64> = rows.iter().map(|r| r.mfe_r).collect();
-    all_mfe.sort_by(|a, b| a.partial_cmp(b).expect("mfe_r is never NaN"));
-    let mut positive: Vec<f64> = all_mfe.iter().copied().filter(|m| *m > 0.0).collect();
-    positive.sort_by(|a, b| a.partial_cmp(b).expect("mfe_r is never NaN"));
+    let all_mfe = sorted(rows.iter().map(|r| r.mfe_r).collect());
+    // Filtering a sorted sample preserves order — no second sort.
+    let positive: Vec<f64> = all_mfe.iter().copied().filter(|m| *m > 0.0).collect();
     let candidate = leg_two_candidate(&positive, profit_target_r);
 
     let mut lines = Vec::new();
     lines.push(format!(
-        "report mfe: run {run_id} (strategy v{}, profit_target_r {profit_target_r:.2})",
-        manifest.strategy_version
+        "report mfe: run {run_id} (strategy v{}, profit_target_r {profit_target_r:.2}){}",
+        manifest.strategy_version,
+        if defaulted { " [defaulted: latest finalized]" } else { "" }
     ));
+    // The governance band below is anchored on THIS run's target, but a next
+    // `turn` proposes off the LATEST finalized run's params — when they differ,
+    // say so rather than letting the band read as the guardrail's answer.
+    if let Some((latest_id, latest_m)) = &latest {
+        if *latest_id != run_id {
+            lines.push(format!(
+                "note: latest finalized run is {latest_id} (profit_target_r {:.2}) — the turn \
+                 guardrail bands off that value, not this run's",
+                latest_m.params.profit_target_r
+            ));
+        }
+    }
     lines.push(format!(
         "records: {trades} mfe-bearing exits, {} breakouts ({orphan_breakouts} breakouts without exit, \
          {orphan_exits} exits without breakout, {degenerate_ranges} degenerate ranges, \
@@ -313,17 +338,20 @@ pub fn report_mfe(cfg: &ReportConfig) -> anyhow::Result<ReportOutcome> {
     // By exit reason (median = nearest-rank p50, KTD5).
     lines.push("mfe_r by exit reason:".to_string());
     for kind in [SignalKind::StopHit, SignalKind::Target, SignalKind::TimeExit] {
-        let mut sample: Vec<f64> =
-            rows.iter().filter(|r| r.kind == kind).map(|r| r.mfe_r).collect();
-        sample.sort_by(|a, b| a.partial_cmp(b).expect("mfe_r is never NaN"));
+        let sample = sorted(rows.iter().filter(|r| r.kind == kind).map(|r| r.mfe_r).collect());
         let median = nearest_rank(&sample, 50.0)
             .map(|v| format!("{v:.2}"))
             .unwrap_or_else(|| "n/a".to_string());
+        // An empty sample has no mean — "0.00" would read as a real value.
+        let mean_s = if sample.is_empty() {
+            "n/a".to_string()
+        } else {
+            format!("{:.2}", mean(&sample))
+        };
         lines.push(format!(
-            "  {:<9} n={:<4} median {median}  mean {:.2}",
+            "  {:<9} n={:<4} median {median}  mean {mean_s}",
             exit_kind_label(kind),
             sample.len(),
-            mean(&sample)
         ));
     }
 
@@ -337,19 +365,10 @@ pub fn report_mfe(cfg: &ReportConfig) -> anyhow::Result<ReportOutcome> {
             .to_string(),
     );
     let n = by_strength.len();
-    if n == 0 {
-        lines.push("  (no joined trades with a non-degenerate range)".to_string());
-    }
-    for q in 0..4usize {
-        let (start, end) = (q * n / 4, (q + 1) * n / 4);
-        if start >= end {
-            continue;
-        }
-        let bucket = &by_strength[start..end];
+    let bucket_line = |label: &str, bucket: &[&TradeRow]| -> String {
         let lo = bucket.first().and_then(|r| r.strength).unwrap_or(0.0);
         let hi = bucket.last().and_then(|r| r.strength).unwrap_or(0.0);
-        let mut sample: Vec<f64> = bucket.iter().map(|r| r.mfe_r).collect();
-        sample.sort_by(|a, b| a.partial_cmp(b).expect("mfe_r is never NaN"));
+        let sample = sorted(bucket.iter().map(|r| r.mfe_r).collect());
         let wins: Vec<bool> = bucket.iter().filter_map(|r| r.win).collect();
         let win_share = if wins.is_empty() {
             "n/a".to_string()
@@ -359,22 +378,33 @@ pub fn report_mfe(cfg: &ReportConfig) -> anyhow::Result<ReportOutcome> {
         let median = nearest_rank(&sample, 50.0)
             .map(|v| format!("{v:.2}"))
             .unwrap_or_else(|| "n/a".to_string());
-        lines.push(format!(
-            "  q{} strength [{lo:.3}..{hi:.3}]  n={:<4} win {win_share}  median {median}  mean {:.2}",
-            q + 1,
+        format!(
+            "  {label} strength [{lo:.3}..{hi:.3}]  n={:<4} win {win_share}  median {median}  mean {:.2}",
             bucket.len(),
             mean(&sample)
-        ));
+        )
+    };
+    if n == 0 {
+        lines.push("  (no joined trades with a non-degenerate range)".to_string());
+    } else if n < 4 {
+        // Too thin for a quartile cut — one honest bucket instead of a rank
+        // formula that would label a single trade "q4".
+        lines.push(bucket_line("all (n<4, no quartile cut)", &by_strength));
+    } else {
+        for q in 0..4usize {
+            let (start, end) = (q * n / 4, (q + 1) * n / 4);
+            let label = format!("q{}", q + 1);
+            lines.push(bucket_line(&label, &by_strength[start..end]));
+        }
     }
 
     // Leg-2 candidate (KTD6).
-    match candidate.value {
-        Some(v) => lines.push(format!(
-            "leg-2 candidate: p70(mfe_r > 0, n={}) = {:.4} -> {v:.2} (rounded to {CANDIDATE_STEP})",
+    match (candidate.value, candidate.p70) {
+        (Some(v), Some(p70)) => lines.push(format!(
+            "leg-2 candidate: p70(mfe_r > 0, n={}) = {p70:.4} -> {v:.2} (rounded to {CANDIDATE_STEP})",
             positive.len(),
-            nearest_rank(&positive, 70.0).unwrap_or(0.0)
         )),
-        None => lines.push("leg-2 candidate: no positive-MFE trades".to_string()),
+        _ => lines.push("leg-2 candidate: no positive-MFE trades".to_string()),
     }
     lines.push(format!(
         "governance band off {profit_target_r:.2}: [{:.2}, {:.2}] (proposal-bounds cap {PROPOSAL_BOUNDS_CAP})",
@@ -749,6 +779,152 @@ mod tests {
         .unwrap();
         // Numeric version ordering: -v10 is the latest, not -v2.
         assert_eq!(out.run_id, "20260101T000000Z-backtest-orb-v10");
+    }
+
+    #[test]
+    fn strength_quartiles_report_ranges_win_share_and_medians() {
+        // Eight trades with distinct strengths 0.1..0.8 (breakout_price 101..108
+        // over range 100/90 → strength k/10) and alternating win/loss exits:
+        // each rank-quartile holds two trades, one win one loss.
+        let tmp = tempfile::tempdir().unwrap();
+        let d = ts_kst(2026, 6, 1);
+        let mut envs = Vec::new();
+        for k in 1..=8u32 {
+            let sym = format!("S{k}.XKRX");
+            let mfe = k as f64 / 10.0;
+            let exit_price = if k % 2 == 0 { 200.0 } else { 50.0 };
+            envs.push(breakout(&sym, d, 100.0, 90.0, 100.0 + k as f64));
+            envs.push(exit(&sym, d + 1, SignalKind::TimeExit, mfe, exit_price));
+        }
+        write_run(tmp.path(), "run-v9", 1.0, &envs);
+        let out = report_mfe(&cfg(tmp.path(), "run-v9")).unwrap();
+
+        let q1 = out.lines.iter().find(|l| l.contains("q1 strength")).unwrap();
+        assert!(q1.contains("[0.100..0.200]"), "{q1}");
+        assert!(q1.contains("win 50.0%"), "one win, one loss per bucket: {q1}");
+        assert!(q1.contains("median 0.10"), "nearest-rank p50 of [0.1, 0.2]: {q1}");
+        assert!(q1.contains("mean 0.15"), "{q1}");
+        let q4 = out.lines.iter().find(|l| l.contains("q4 strength")).unwrap();
+        assert!(q4.contains("[0.700..0.800]"), "highest-strength bucket last: {q4}");
+        assert!(q4.contains("median 0.70") && q4.contains("mean 0.75"), "{q4}");
+        for q in ["q1", "q2", "q3", "q4"] {
+            assert!(
+                out.lines.iter().any(|l| l.contains(&format!("{q} strength")) && l.contains("n=2")),
+                "{q} holds exactly 2 of 8 trades: {:?}",
+                out.lines
+            );
+        }
+    }
+
+    #[test]
+    fn thin_sample_prints_one_bucket_not_a_mislabeled_q4() {
+        // Fewer than 4 joined trades cannot fill a quartile cut; the rank
+        // formula would label a single trade "q4" — print one honest bucket.
+        let tmp = tempfile::tempdir().unwrap();
+        let d = ts_kst(2026, 6, 1);
+        let envs = vec![
+            breakout("A.XKRX", d, 100.0, 90.0, 101.0),
+            exit("A.XKRX", d + 1, SignalKind::TimeExit, 0.5, 102.0),
+        ];
+        write_run(tmp.path(), "run-v9", 1.0, &envs);
+        let out = report_mfe(&cfg(tmp.path(), "run-v9")).unwrap();
+        assert!(
+            out.lines.iter().any(|l| l.contains("all (n<4, no quartile cut) strength")),
+            "{:?}",
+            out.lines
+        );
+        assert!(!out.lines.iter().any(|l| l.contains("q4 strength")), "{:?}", out.lines);
+    }
+
+    #[test]
+    fn no_positive_mfe_yields_no_sample_verdict() {
+        // Every trade stopped out without favorable excursion: no candidate.
+        let tmp = tempfile::tempdir().unwrap();
+        let d1 = ts_kst(2026, 6, 1);
+        let d2 = ts_kst(2026, 6, 2);
+        let envs = vec![
+            breakout("A.XKRX", d1, 100.0, 90.0, 101.0),
+            exit("A.XKRX", d1 + 1, SignalKind::StopHit, 0.0, 90.0),
+            breakout("A.XKRX", d2, 100.0, 90.0, 101.0),
+            exit("A.XKRX", d2 + 1, SignalKind::StopHit, -0.2, 90.0),
+        ];
+        write_run(tmp.path(), "run-v9", 1.0, &envs);
+        let out = report_mfe(&cfg(tmp.path(), "run-v9")).unwrap();
+        assert_eq!(out.candidate.verdict, CandidateVerdict::NoSample);
+        assert!(out.candidate.value.is_none());
+        assert!(
+            out.lines.iter().any(|l| l.contains("no positive-MFE trades")),
+            "{:?}",
+            out.lines
+        );
+        assert!(out.lines.iter().any(|l| l.contains("NO-SAMPLE")), "{:?}", out.lines);
+    }
+
+    #[test]
+    fn empty_registry_without_run_id_is_a_clean_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("runs")).unwrap();
+        let err = report_mfe(&ReportConfig {
+            data_home: tmp.path().to_path_buf(),
+            run_id: None,
+        })
+        .unwrap_err();
+        assert!(err.to_string().contains("no finalized runs"), "{err}");
+        assert!(err.to_string().contains("LS_REPORT_RUN"), "names the pin var: {err}");
+    }
+
+    #[test]
+    fn empty_exit_kind_prints_na_mean_not_a_fake_zero() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = ts_kst(2026, 6, 1);
+        let envs = vec![
+            breakout("A.XKRX", d, 100.0, 90.0, 101.0),
+            exit("A.XKRX", d + 1, SignalKind::TimeExit, 0.5, 102.0),
+        ];
+        write_run(tmp.path(), "run-v9", 1.0, &envs);
+        let out = report_mfe(&cfg(tmp.path(), "run-v9")).unwrap();
+        let stop = out.lines.iter().find(|l| l.trim_start().starts_with("stop_hit")).unwrap();
+        assert!(stop.contains("median n/a") && stop.contains("mean n/a"), "{stop}");
+    }
+
+    #[test]
+    fn pinned_non_latest_run_notes_the_latest_guardrail_anchor() {
+        // The band is anchored on the REPORTED run's target, but a next `turn`
+        // proposes off the LATEST finalized run's params — reporting an older
+        // run must say so, or the band reads as the guardrail's answer.
+        let tmp = tempfile::tempdir().unwrap();
+        let d = ts_kst(2026, 6, 1);
+        let envs = vec![
+            breakout("A.XKRX", d, 100.0, 90.0, 101.0),
+            exit("A.XKRX", d + 1, SignalKind::TimeExit, 0.5, 102.0),
+        ];
+        write_run(tmp.path(), "20260101T000000Z-backtest-orb-v9", 1.0, &envs);
+        write_run(tmp.path(), "20260101T000000Z-backtest-orb-v10", 1.5, &envs);
+        let out = report_mfe(&cfg(tmp.path(), "20260101T000000Z-backtest-orb-v9")).unwrap();
+        let note = out.lines.iter().find(|l| l.starts_with("note: latest finalized")).unwrap();
+        assert!(note.contains("20260101T000000Z-backtest-orb-v10"), "{note}");
+        assert!(note.contains("1.50"), "names the latest run's target: {note}");
+        // Reporting the latest run itself carries no note and no defaulted marker.
+        let out = report_mfe(&cfg(tmp.path(), "20260101T000000Z-backtest-orb-v10")).unwrap();
+        assert!(!out.lines.iter().any(|l| l.starts_with("note: latest")), "{:?}", out.lines);
+        assert!(!out.lines[0].contains("defaulted"), "{}", out.lines[0]);
+    }
+
+    #[test]
+    fn defaulted_run_selection_is_marked_in_the_header() {
+        let tmp = tempfile::tempdir().unwrap();
+        let d = ts_kst(2026, 6, 1);
+        let envs = vec![
+            breakout("A.XKRX", d, 100.0, 90.0, 101.0),
+            exit("A.XKRX", d + 1, SignalKind::TimeExit, 0.5, 102.0),
+        ];
+        write_run(tmp.path(), "run-v9", 1.0, &envs);
+        let out = report_mfe(&ReportConfig {
+            data_home: tmp.path().to_path_buf(),
+            run_id: None,
+        })
+        .unwrap();
+        assert!(out.lines[0].contains("[defaulted: latest finalized]"), "{}", out.lines[0]);
     }
 
     #[test]

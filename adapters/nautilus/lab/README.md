@@ -150,9 +150,11 @@ envelope's context alone).
 
 The `lab-research` bin is the production caller of the decision pipeline: it wires
 `DecisionPipeline` with the proposal-bounds cap pinned at **0.5** relative change and
-drives a loop turn end-to-end without scratch code. Five subcommands, each over one
+drives a loop turn end-to-end without scratch code. Seven subcommands, each over one
 data home (`LS_DATA_HOME`); a governance refusal / verdict FAIL / replay refusal /
-catalog no-go is a non-zero exit, a genuine error is scrubbed and non-zero too.
+catalog no-go is a non-zero exit, a genuine error is scrubbed and non-zero too
+(`report mfe` is the one verdict-free command: its exit code reflects I/O only —
+a censored or out-of-band candidate is a reported fact, not a failure).
 
 | Subcommand | What it does | Key env |
 |---|---|---|
@@ -160,7 +162,9 @@ catalog no-go is a non-zero exit, a genuine error is scrubbed and non-zero too.
 | `runs compare` | The manifest verdict: `param` mode (exactly-two-key param diff, code/fingerprint/range equal, universe equal-or-explained) or `data` mode (zero-key param diff + code equal; fingerprint/range/universe deltas require an explanation). PASS/FAIL. | `LS_COMPARE_MODE` (`param`\|`data`), `LS_COMPARE_A`/`LS_COMPARE_B` (default two newest), `LS_COMPARE_EXPLANATION` |
 | `replay` | Guardrail-swap replay over a recorded stream (default the cross-run registry). Refuses a telemetry-only stream (zero evaluated cycles) instead of reporting "no divergence". | `LS_REPLAY_STREAM` (default `<data>/decisions/decisions.jsonl`), `LS_REPLAY_CAP` |
 | `catalog status` | The ingest→backtest go/no-go: per-(instrument, bar-kind) counts + spans; flags a span that undershoots the checkpoint watermark (and, with an expected range, front truncation). | `LS_STATUS_SDATE`/`LS_STATUS_EDATE` (optional expected range) |
+| `catalog compact` | Collapses byte-identical duplicate bars per series into a clean file set (before/after file + bar counts); refuses a value-divergent series and never touches the checkpoint. | — |
 | `analyze --scaffold` | Pre-fills a run's `analysis.md` with run facts (params, trade count, gap-noise summary), the **computed R1 decisiveness bar** (per-symbol fold + the three per-condition PASS/FAIL + named failing conditions), and the keep / revert / insufficient-evidence verdict skeleton. Refuses to overwrite. | `LS_ANALYZE_RUN` |
+| `report mfe` | The MFE-distribution report over a run's `decisions.jsonl`: per-trade `mfe_r` percentiles (nearest-rank), MFE by exit reason, MFE by breakout-strength quartile (the entry-filter spec input), and the leg-2 profit-target candidate with its RUNNABLE / RIGHT-CENSORED / OUT-OF-BAND verdict. Prints the source run's own `profit_target_r` + target-exit share (every distribution is right-censored at that target) and notes when the reported run is not the latest finalized one (the turn guardrail bands off the latest run's params). Reads artifacts only — never moves the strategy code hash. | `LS_REPORT_RUN` (default: latest finalized, marked `[defaulted]`) |
 
 A governed param turn, then the payoff compare:
 
