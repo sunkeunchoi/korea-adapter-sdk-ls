@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Right-censoring — reading truncated MFE distributions</title>
+<style>
+  :root {
+    --surface-1: #fcfcfb;
+    --text-primary: #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted: #7a7873;
+    --series-observed: #2a78d6;
+    --series-censored: #e34948;
+    --rule: #e2e1dd;
+    --code-bg: #f4f3f0;
+    --annot: #52514e;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --surface-1: #1a1a19;
+      --text-primary: #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted: #8f8d85;
+      --series-observed: #3987e5;
+      --series-censored: #e66767;
+      --rule: #33322f;
+      --code-bg: #232320;
+      --annot: #c3c2b7;
+    }
+  }
+  html { background: var(--surface-1); }
+  body {
+    margin: 0 auto;
+    padding: 2.5rem 1.5rem 4rem;
+    max-width: 46rem;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 Helvetica, Arial, sans-serif;
+    color: var(--text-primary);
+    line-height: 1.55;
+    font-size: 16px;
+  }
+  header.meta {
+    border-bottom: 2px solid var(--rule);
+    padding-bottom: 1.1rem;
+    margin-bottom: 2rem;
+  }
+  header.meta h1 { font-size: 1.55rem; line-height: 1.25; margin: 0 0 .6rem; }
+  header.meta dl {
+    display: grid; grid-template-columns: max-content 1fr;
+    gap: .15rem 1rem; margin: 0; font-size: .85rem;
+  }
+  header.meta dt { color: var(--text-muted); }
+  header.meta dd { margin: 0; color: var(--text-secondary); }
+  h2 { font-size: 1.15rem; margin: 2.2rem 0 .6rem; }
+  p, li { max-width: 70ch; color: var(--text-primary); }
+  .aside { color: var(--text-secondary); font-size: .92rem; }
+  figure { margin: 1.4rem 0; }
+  figcaption { font-size: .85rem; color: var(--text-secondary); margin-top: .5rem; max-width: 70ch; }
+  table {
+    border-collapse: collapse; font-size: .9rem; margin: 1rem 0;
+    font-variant-numeric: tabular-nums;
+  }
+  th, td { padding: .35rem .8rem; text-align: right; border-bottom: 1px solid var(--rule); }
+  th:first-child, td:first-child { text-align: left; }
+  thead th { color: var(--text-secondary); font-weight: 600; }
+  pre {
+    background: var(--code-bg); border-radius: 6px; padding: .9rem 1rem;
+    overflow-x: auto; font-size: .82rem; line-height: 1.5;
+  }
+  code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  p code, li code { background: var(--code-bg); padding: .05rem .3rem; border-radius: 4px; font-size: .85em; }
+  .c-comment { color: var(--text-muted); }
+  .c-kw { color: var(--series-observed); }
+  .c-variant { color: var(--series-censored); }
+  .callout {
+    border-left: 3px solid var(--series-censored);
+    padding: .5rem 1rem; margin: 1.2rem 0;
+    background: var(--code-bg); border-radius: 0 6px 6px 0;
+    max-width: 70ch;
+  }
+  footer {
+    margin-top: 3rem; padding-top: 1rem; border-top: 1px solid var(--rule);
+    font-size: .8rem; color: var(--text-muted);
+  }
+  svg text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+</style>
+</head>
+<body>
+
+<header class="meta">
+  <h1>Right-censoring — why a profit target poisons its own MFE data</h1>
+  <dl>
+    <dt>Date</dt><dd>2026-07-10</dd>
+    <dt>Input shape</dt><dd>concept</dd>
+    <dt>Subject</dt><dd>right-censoring (truncated observation)</dd>
+    <dt>Grounding</dt><dd>korea-adapter-sdk-ls — <code>adapters/nautilus/lab/src/runner/report.rs</code>, strategy-loop turn 9 (PR #114)</dd>
+  </dl>
+</header>
+
+<h2>The picture</h2>
+
+<figure aria-label="Per-trade MFE bars clipped at the profit target">
+<svg viewBox="0 0 680 330" width="100%" role="img">
+  <!-- plot area: x maps MFE 0R..2R onto 70..610 (270px per R) -->
+  <!-- recessive grid -->
+  <g stroke="var(--rule)" stroke-width="1">
+    <line x1="70" y1="20" x2="70" y2="262"/>
+    <line x1="205" y1="20" x2="205" y2="262"/>
+    <line x1="475" y1="20" x2="475" y2="262"/>
+    <line x1="610" y1="20" x2="610" y2="262"/>
+    <line x1="70" y1="262" x2="610" y2="262"/>
+  </g>
+  <g fill="var(--text-secondary)" font-size="12">
+    <text x="70" y="280" text-anchor="middle">0R</text>
+    <text x="205" y="280" text-anchor="middle">0.5R</text>
+    <text x="340" y="280" text-anchor="middle">1.0R</text>
+    <text x="475" y="280" text-anchor="middle">1.5R</text>
+    <text x="610" y="280" text-anchor="middle">2.0R</text>
+    <text x="340" y="302" text-anchor="middle">maximum favorable excursion (R-multiples of the opening range)</text>
+  </g>
+  <!-- the censoring bound: profit_target_r = 1.0 -->
+  <line x1="340" y1="14" x2="340" y2="262" stroke="var(--text-primary)" stroke-width="2" stroke-dasharray="6 4"/>
+  <text x="348" y="26" fill="var(--text-primary)" font-size="12" font-weight="600">profit_target_r = 1.0 — observation stops here</text>
+
+  <!-- observed trades (blue): exited by stop or time-flat, MFE fully seen -->
+  <g fill="var(--series-observed)">
+    <rect x="70" y="40"  width="41"  height="14" rx="4"/>
+    <rect x="70" y="66"  width="124" height="14" rx="4"/>
+    <rect x="70" y="92"  width="103" height="14" rx="4"/>
+    <rect x="70" y="118" width="216" height="14" rx="4"/>
+    <rect x="70" y="144" width="257" height="14" rx="4"/>
+  </g>
+  <g fill="var(--text-secondary)" font-size="11">
+    <text x="117" y="51">0.15</text>
+    <text x="200" y="77">0.46</text>
+    <text x="179" y="103">0.38</text>
+    <text x="292" y="129">0.80</text>
+    <text x="333" y="155">0.95</text>
+  </g>
+
+  <!-- censored trades (red): target exit fired at 1.0R; true MFE unknown -->
+  <g>
+    <rect x="70" y="178" width="270" height="14" rx="4" fill="var(--series-censored)"/>
+    <rect x="70" y="204" width="270" height="14" rx="4" fill="var(--series-censored)"/>
+    <rect x="70" y="230" width="270" height="14" rx="4" fill="var(--series-censored)"/>
+    <!-- the unobserved continuation: what the trade might have done -->
+    <g stroke="var(--series-censored)" stroke-width="3" stroke-dasharray="3 5" opacity="0.55">
+      <line x1="344" y1="185" x2="430" y2="185"/>
+      <line x1="344" y1="211" x2="520" y2="211"/>
+      <line x1="344" y1="237" x2="465" y2="237"/>
+    </g>
+    <g fill="var(--series-censored)" font-size="11" font-weight="600">
+      <text x="438" y="189">recorded 1.0 — true MFE ≥ 1.0, unknown</text>
+      <text x="528" y="215">≥ 1.0</text>
+      <text x="473" y="241">≥ 1.0</text>
+    </g>
+  </g>
+
+  <!-- legend -->
+  <g font-size="12">
+    <rect x="70" y="312" width="14" height="10" rx="3" fill="var(--series-observed)"/>
+    <text x="90" y="321" fill="var(--text-secondary)">observed — stop/time exit, full MFE seen</text>
+    <rect x="360" y="312" width="14" height="10" rx="3" fill="var(--series-censored)"/>
+    <text x="380" y="321" fill="var(--text-secondary)">censored — target exit clipped the measurement</text>
+  </g>
+</svg>
+<figcaption>
+Eight trades from a run with a 1.0R profit target. Blue bars exited by stop
+or time-flat, so their MFE is the true value. Red bars hit the target: the
+exit rule closed the trade the moment price reached 1.0R, so the recorded
+<code>mfe_r</code> is ~1.0 no matter how far price would have run (dashed:
+the unobserved continuation). Every value at the dashed line means
+"at least this much", not "exactly this much".
+</figcaption>
+</figure>
+
+<h2>What right-censoring is</h2>
+
+<p>
+A measurement is <strong>right-censored</strong> when the recording process
+stops at a known bound before the true value is reached, so what lands in the
+data is the bound — and the only honest reading is
+<em>true&nbsp;value&nbsp;≥&nbsp;bound</em>. The canonical case is survival
+analysis: a five-year study ends and a patient is still alive, so their
+survival time is recorded as "5 years, censored" — they lived <em>at
+least</em> five years, not exactly five. The defining feature is that the
+cutoff comes from the <em>measuring apparatus</em>, not the phenomenon.
+</p>
+
+<h2>Why this lab manufactures it, structurally</h2>
+
+<p>
+In the ORB backtest, the thing that measures MFE and the thing that ends the
+trade are the same mechanism. <code>mfe_r</code> tracks
+<code>high_water</code> from entry — but the fixed profit target
+<em>exits the trade</em> the moment price reaches
+<code>entry&nbsp;+&nbsp;profit_target_r&nbsp;·&nbsp;R</code>. So every
+target-exit trade's MFE is clipped at the run's own
+<code>profit_target_r</code> (give or take intra-bar overshoot on the
+triggering bar). The distribution is not sampled from "how far winners run";
+it is sampled from "how far winners run, <em>through a window that closes at
+the current setting</em>."
+</p>
+
+<p>You can see the window move between runs. Same 254 entries, different targets:</p>
+
+<table>
+  <thead>
+    <tr><th>Percentile of <code>mfe_r</code></th><th>v9 (target 1.00)</th><th>v10 (target 1.50)</th></tr>
+  </thead>
+  <tbody>
+    <tr><td>p50</td><td>0.47</td><td>0.46</td></tr>
+    <tr><td>p70</td><td>0.95</td><td>0.93</td></tr>
+    <tr><td>p75</td><td><strong>1.00</strong></td><td>1.15</td></tr>
+    <tr><td>p90</td><td><strong>1.05</strong></td><td>1.52</td></tr>
+    <tr><td>target-exit share</td><td>28.5%</td><td>17.6%</td></tr>
+  </tbody>
+</table>
+
+<p class="aside">
+Below the target the two distributions agree almost exactly (p50, p70) —
+same entries, same market. Above it they diverge: v9's p75/p90 are pinned at
+its own 1.0 bound, while v10's higher window reveals real mass at 1.15 and
+1.52 that v9 structurally could not record. The pinned tail is the censoring
+artifact; the divergence is the previously-unobservable region becoming
+visible.
+</p>
+
+<h2>The trap it prevented in turn 9</h2>
+
+<p>
+Turn 9's rule for picking the next profit target was "p70 of positive MFE,
+rounded to 0.05." Run that on v9 and you get 1.00 — <strong>the current
+setting echoed back</strong>, because the percentile sits exactly where the
+exit rule pins it. It looks like evidence ("the data says 1.0 is optimal!")
+but carries zero information: any target value would nominate itself by the
+same mechanism. The plan review caught this before execution: the leg-2
+candidate had to come from the <em>v10</em> run, whose 1.5 window leaves the
+1.0–1.5 region observable — and that run produced a genuine candidate
+(p70&nbsp;=&nbsp;1.0476&nbsp;→&nbsp;1.05).
+</p>
+
+<p>
+The report doesn't rely on the operator remembering this. The verdict is
+mechanical, in <code>runner/report.rs</code>:
+</p>
+
+<pre><code><span class="c-comment">// A candidate pinned at the source target is the truncation echoing
+// back, not information. Checked BEFORE the governance band — a
+// censored candidate is uninformative regardless of band.</span>
+<span class="c-kw">let</span> verdict = <span class="c-kw">if</span> (candidate - profit_target_r).abs() &lt;= CANDIDATE_STEP + 1e-9 {
+    CandidateVerdict::<span class="c-variant">RightCensored</span>
+} <span class="c-kw">else if</span> candidate &lt; band.0 - 1e-9 || candidate &gt; band.1 + 1e-9 {
+    CandidateVerdict::<span class="c-variant">OutOfBand</span>
+} <span class="c-kw">else</span> {
+    CandidateVerdict::<span class="c-variant">Runnable</span>
+};</code></pre>
+
+<p>
+Two supporting habits ride along: every report prints the source run's own
+<code>profit_target_r</code> and target-exit share next to the percentiles
+(so the truncation is visible in every future read, not rediscovered), and
+the tolerance is one rounding step — <code>mfe_r</code> can legitimately
+overshoot the target slightly within the triggering bar
+(<code>high_water</code> updates before the exit fires; v9's p90 is 1.05),
+so exact equality would under-detect.
+</p>
+
+<div class="callout">
+<strong>The general lesson:</strong> when a system's control setting also
+terminates its own measurement, the recorded optimum will gravitate toward
+the current setting. Ask "could this statistic have come out any other way
+given the rule that recorded it?" before treating it as evidence. Other
+places the shape appears: timeout tuning from latency logs that the timeout
+itself truncates; retry budgets tuned from attempt counts capped by the
+budget; cache TTLs derived from observed entry lifetimes the TTL evicts.
+</div>
+
+<h2>What statisticians do about it (and what we did instead)</h2>
+
+<p>
+The proper toolkit treats a censored observation as the inequality it is.
+Survival analysis (Kaplan–Meier estimation, and regression models built on
+it) estimates the distribution using "≥&nbsp;x" observations without
+discarding them or pretending they equal x — each censored point removes
+itself from the at-risk pool without registering an event. The lab's report
+takes the cheap, honest alternative: it doesn't <em>estimate</em> the
+uncensored distribution, it <strong>flags and refuses</strong> — a pinned
+candidate is declared <code>RightCensored</code> and a further sweep leg
+proceeds only by explicit operator override. Right-sized here because the
+decision needed is "is this candidate informative?", not "what is the true
+tail shape?" — and turn 9 got the informative candidate for free from the
+other leg's differently-censored window.
+</p>
+
+<h2>Where the concept does <em>not</em> apply</h2>
+
+<ul>
+  <li><strong>Fully observed quantities.</strong> Stop distances, entry
+  slippage, opening-range width — nothing clips their recording. Treating
+  them as censored would discard real data for no reason.</li>
+  <li><strong>Missing data is not censoring.</strong> The 82 sizing-rejected
+  breakouts have <em>no</em> MFE at all (no trade existed). Censoring means
+  a partial observation with a known bound; absence is just absence — the
+  report counts orphans separately rather than folding them in.</li>
+  <li><strong>Left-truncation is a different animal.</strong> If trades below
+  some MFE never entered the dataset at all (e.g., only logging exits above
+  a threshold), the sample itself is biased — no per-observation bound can
+  fix that, and the flag-and-refuse pattern doesn't transfer.</li>
+</ul>
+
+<footer>Composed 2026-07-10 by ce-explain · korea-adapter-sdk-ls · sources: <code>lab/src/runner/report.rs</code>, <code>lab/src/strategy/orb.rs</code>, turn-9 diagnostic (docs/solutions/conventions), live run output v9/v10/v11</footer>
+
+</body>
+</html>
