@@ -58,14 +58,26 @@ pub struct CapBoard {
 }
 
 /// One designation-category query against `t1405` or `t1404` (R3). The
-/// category enum is not captured in the normalized baseline — the closed-window
-/// pre-flight confirms it live before the gate relies on specific codes
-/// (plan Dependencies); the queried categories are recorded in provenance.
+/// category enum was confirmed live in the closed-window pre-flight
+/// (2026-07-10, field-level row evidence) — `gubun` is the market axis
+/// (`0` all / `1` KOSPI / `2` KOSDAQ) on **both** TRs, `jongchk` is the
+/// category:
+///
+/// - `t1405`: 1 투자경고(warning) / 2 매매정지(halt, >1 page) / 3 정리매매
+///   (liquidation → halt) / 4 투자주의(caution, one-day) / 5 투자위험(risk)
+///   / 6 투자위험예고(pre-announce → warning) / 7 단기과열(overheated).
+/// - `t1404`: 1 관리(managed, >1 page) / 2 불성실공시(caution) / 3 투자유의
+///   (caution) / 4 투자환기(caution).
+///
+/// **`jongchk = "0"` is NOT a category**: on `t1404` it returns the whole
+/// non-designated board — querying it would mark every symbol non-tradable —
+/// so [`capture`] refuses it. The queried categories are recorded in
+/// provenance either way.
 #[derive(Debug, Clone)]
 pub struct DesignationQuery {
-    /// The `gubun` request field.
+    /// The `gubun` request field (market axis; `0` = all markets).
     pub gubun: String,
-    /// The `jongchk` request field.
+    /// The `jongchk` request field (the category — never `"0"`).
     pub jongchk: String,
     /// The designation category this query lists.
     pub kind: DesignationKind,
@@ -116,18 +128,23 @@ impl CaptureConfig {
                 EtfProxy { shcode: "069500".into(), index: IndexMembership::Kospi200 },
                 EtfProxy { shcode: "229200".into(), index: IndexMembership::Kosdaq150 },
             ],
-            // Default category guesses recorded in provenance; the closed-window
-            // pre-flight confirms/overrides them (LS_CAPTURE_T1405_CATEGORIES).
+            // Categories confirmed live in the closed-window pre-flight
+            // (2026-07-10; see DesignationQuery). Overridable via
+            // LS_CAPTURE_T1405_CATEGORIES / LS_CAPTURE_T1404_CATEGORIES.
             t1405_categories: vec![
                 DesignationQuery { gubun: "0".into(), jongchk: "1".into(), kind: DesignationKind::Warning },
                 DesignationQuery { gubun: "0".into(), jongchk: "2".into(), kind: DesignationKind::Halt },
+                DesignationQuery { gubun: "0".into(), jongchk: "3".into(), kind: DesignationKind::Halt },
                 DesignationQuery { gubun: "0".into(), jongchk: "4".into(), kind: DesignationKind::Caution },
                 DesignationQuery { gubun: "0".into(), jongchk: "5".into(), kind: DesignationKind::Risk },
+                DesignationQuery { gubun: "0".into(), jongchk: "6".into(), kind: DesignationKind::Warning },
                 DesignationQuery { gubun: "0".into(), jongchk: "7".into(), kind: DesignationKind::Overheated },
             ],
             t1404_categories: vec![
                 DesignationQuery { gubun: "0".into(), jongchk: "1".into(), kind: DesignationKind::Managed },
+                DesignationQuery { gubun: "0".into(), jongchk: "2".into(), kind: DesignationKind::Caution },
                 DesignationQuery { gubun: "0".into(), jongchk: "3".into(), kind: DesignationKind::Caution },
+                DesignationQuery { gubun: "0".into(), jongchk: "4".into(), kind: DesignationKind::Caution },
             ],
             cap_top_quantile: DEFAULT_CAP_TOP_QUANTILE,
             pace: Duration::from_millis(600),
@@ -183,6 +200,19 @@ pub fn budget_gate(
 /// board fails — everything else records a [`TrFailure`] and resolves the
 /// affected attribute `Unavailable` (R4), so the join has no silent holes.
 pub async fn capture(sdk: &LsSdk, cfg: &CaptureConfig) -> Result<CaptureOutcome, String> {
+    // Refuse the whole-board pseudo-category (pre-flight finding, 2026-07-10):
+    // `jongchk = "0"` on t1404 returns every listed issue, designated or not —
+    // treating those rows as designations would mark the entire market
+    // non-tradable. Fail closed before any gateway call.
+    for (tr, qs) in [("t1405", &cfg.t1405_categories), ("t1404", &cfg.t1404_categories)] {
+        if let Some(q) = qs.iter().find(|q| q.jongchk.trim() == "0") {
+            return Err(format!(
+                "{tr} designation query with jongchk=\"0\" (gubun={}) is the whole board, not a \
+                 category — it would designate every symbol; query categories individually",
+                q.gubun
+            ));
+        }
+    }
     let mut failures: Vec<TrFailure> = Vec::new();
     let mut calls_made: u32 = 0;
 
@@ -481,8 +511,21 @@ mod tests {
     #[test]
     fn estimated_calls_cover_skeleton_boards_and_categories() {
         let cfg = CaptureConfig::new("2026-07-10T00:00:00Z", "20260710");
-        // 1 t8430 + 1 t2522 + 2 t1904 + 2 boards x ceil(400/20)=20 + 5 + 2 categories.
-        assert_eq!(estimated_capture_calls(&cfg), (1 + 1 + 2 + 40 + 5 + 2) as u32);
+        // 1 t8430 + 1 t2522 + 2 t1904 + 2 boards x ceil(400/20)=20 + 7 + 4 categories.
+        assert_eq!(estimated_capture_calls(&cfg), (1 + 1 + 2 + 40 + 7 + 4) as u32);
+    }
+
+    #[test]
+    fn default_categories_never_query_the_whole_board() {
+        // Pre-flight finding (2026-07-10): jongchk "0" is the whole board on
+        // t1404, not a category — the defaults must never include it.
+        let cfg = CaptureConfig::new("2026-07-10T00:00:00Z", "20260710");
+        for q in cfg.t1405_categories.iter().chain(&cfg.t1404_categories) {
+            assert_ne!(q.jongchk, "0", "gubun={} kind={:?}", q.gubun, q.kind);
+        }
+        // The confirmed category counts: t1405 1..=7, t1404 1..=4.
+        assert_eq!(cfg.t1405_categories.len(), 7);
+        assert_eq!(cfg.t1404_categories.len(), 4);
     }
 
     #[test]

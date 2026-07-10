@@ -338,3 +338,22 @@ async fn a_failed_reference_tr_is_recorded_not_silently_dropped() {
         assert!(r.has_derivative.is_unavailable(), "{}: derivative unresolved", r.shcode);
     }
 }
+
+#[tokio::test]
+async fn a_whole_board_jongchk_zero_category_is_refused_before_any_call() {
+    // Pre-flight finding (2026-07-10): t1404 jongchk="0" returns every listed
+    // issue — treating it as a designation category would mark the whole
+    // market non-tradable. The capture fails closed before any gateway call
+    // (no mocks mounted: a dispatched request would error differently).
+    let server = MockServer::start().await;
+    let sdk = LsSdk::new(mock_config(&server.uri())).expect("sdk builds");
+    let mut cfg = test_config();
+    cfg.t1404_categories = vec![DesignationQuery {
+        gubun: "0".into(),
+        jongchk: "0".into(),
+        kind: DesignationKind::Managed,
+    }];
+    let err = capture(&sdk, &cfg).await.unwrap_err();
+    assert!(err.contains("whole board"), "{err}");
+    assert!(err.contains("t1404"), "{err}");
+}
