@@ -127,6 +127,16 @@ impl OrbParams {
         open_positions < self.max_concurrent
     }
 
+    /// Whether a breakout of the given `strength` passes the band-pass filter
+    /// (turn 10, R2/KTD6): the **inclusive** band `[min, max]`. Strength is
+    /// `(breakout_price − range_high) / R`; a degenerate range (`R ≤ 0`) is the
+    /// caller's concern — it bypasses the filter and never reaches here (KTD6).
+    /// With the filter-off defaults (`0.0`, `f64::MAX`) every positive-strength
+    /// breakout is in-band, so legacy entry behavior is preserved.
+    pub fn strength_in_band(&self, strength: f64) -> bool {
+        strength >= self.breakout_strength_min && strength <= self.breakout_strength_max
+    }
+
     /// The numeric (f64-able) fields of this parameter set, keyed by serde
     /// field name. String-typed fields (strategy id, `HH:MM:SS` times) are
     /// omitted — context params maps are `f64`-valued.
@@ -332,5 +342,31 @@ mod tests {
         assert!(p.sizing_allows(4));
         assert!(!p.sizing_allows(5));
         assert!(!p.sizing_allows(6));
+    }
+
+    #[test]
+    fn filter_off_defaults_pass_every_positive_strength() {
+        // R1: the pass-through band [0.0, f64::MAX] admits any breakout (strength
+        // is always > 0 for a real break), so legacy entry behavior is preserved.
+        let p = OrbParams::default();
+        assert!(p.strength_in_band(0.001));
+        assert!(p.strength_in_band(0.5));
+        assert!(p.strength_in_band(42.0));
+    }
+
+    #[test]
+    fn strength_band_is_inclusive_on_both_edges() {
+        // R2 / KTD6: in-band means min ≤ strength ≤ max — both edges pass.
+        let mut p = OrbParams::default();
+        p.breakout_strength_min = 0.06;
+        p.breakout_strength_max = 0.13;
+        assert!(p.strength_in_band(0.06), "the floor is inclusive");
+        assert!(p.strength_in_band(0.13), "the ceiling is inclusive");
+        assert!(p.strength_in_band(0.09), "a mid-band breakout passes");
+        assert!(!p.strength_in_band(0.03), "below the floor is rejected");
+        assert!(!p.strength_in_band(0.20), "above the ceiling is rejected");
+        // Just outside the edges (float-adjacent) is rejected.
+        assert!(!p.strength_in_band(0.06 - 1e-9));
+        assert!(!p.strength_in_band(0.13 + 1e-9));
     }
 }

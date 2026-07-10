@@ -935,3 +935,238 @@ async fn manifest_version_held_params_and_sequence_sensitive_universe_hash() {
     let m3 = read_manifest_file(&o3.run_dir);
     assert_ne!(m1.universe_hash, m3.universe_hash, "a different session sequence → different hash");
 }
+
+// ---------------------------------------------------------------------------
+// Turn 10 — breakout-strength band-pass (R2/R3, AE1/AE2/AE3, KTD3/KTD4/KTD6).
+// The single-symbol `build_fixture` breaks out at strength 0.5: range
+// [62500, 63500] (R = 1000), breakout bar high 64000 → (64000−63500)/1000 = 0.5.
+// ---------------------------------------------------------------------------
+
+/// Locate the first decision detail of a given kind in a run's decision stream.
+fn find_detail_kind(
+    envelopes: &[nautilus_ls_lab::agent::envelope::DecisionEnvelope],
+    kind: SignalKind,
+) -> Option<&nautilus_ls_lab::agent::envelope::DecisionDetail> {
+    envelopes
+        .iter()
+        .filter_map(|e| e.decision_detail.as_ref())
+        .find(|d| d.kind == kind)
+}
+
+/// AE2 / R3: a breakout whose strength (0.5) falls outside the configured band
+/// [0.06, 0.13] is rejected done-for-day — the `Breakout` envelope AND a distinct
+/// `breakout_strength_band` rejection are both recorded, and no order is placed.
+#[tokio::test]
+async fn band_pass_rejects_out_of_band_breakout() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path(), false).await;
+    let mut c = cfg(dir.path());
+    c.params.breakout_strength_min = 0.06;
+    c.params.breakout_strength_max = 0.13;
+    let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
+    let outcome = run(c, start).await.unwrap();
+
+    let decisions_path = outcome.run_dir.join(DECISIONS_FILE);
+    let decisions = std::fs::read_to_string(&decisions_path).unwrap();
+    assert!(decisions.contains("breakout_strength_band"), "the band filter rejected the entry");
+    assert!(!decisions.contains("order_placed"), "no order placed on an out-of-band breakout");
+
+    let envelopes = read_envelopes(&decisions_path).unwrap();
+    // The Breakout envelope is still emitted, carrying strength ≈ 0.5 (R3: the
+    // filtered population stays visible to strength-quartile reports).
+    let breakout = find_detail_kind(&envelopes, SignalKind::Breakout).expect("a breakout envelope");
+    let s = breakout.values.get("strength").copied().expect("strength recorded on the breakout");
+    assert!((s - 0.5).abs() < 1e-9, "strength recorded: {s}");
+    // The rejection reuses OrderRejectedSizing with the band filter string + edges.
+    let reject = envelopes
+        .iter()
+        .filter_map(|e| e.decision_detail.as_ref())
+        .find(|d| d.filter.as_deref() == Some("breakout_strength_band"))
+        .expect("a band rejection envelope");
+    assert_eq!(reject.kind, SignalKind::OrderRejectedSizing);
+    assert_eq!(reject.values.get("strength").copied(), Some(0.5));
+    assert_eq!(reject.values.get("breakout_strength_min").copied(), Some(0.06));
+    assert_eq!(reject.values.get("breakout_strength_max").copied(), Some(0.13));
+
+    let perf = read_perf(&outcome.run_dir);
+    assert_eq!(perf.summary["num_trades"], 0.0, "no trade on a rejected entry");
+}
+
+/// AE1: a breakout at strength 0.5 inside the band [0.06, 0.6] enters exactly as
+/// it would unfiltered — the order is placed, the trade completes, and no band
+/// rejection is recorded.
+#[tokio::test]
+async fn band_pass_admits_in_band_breakout() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path(), false).await;
+    let mut c = cfg(dir.path());
+    c.params.breakout_strength_min = 0.06;
+    c.params.breakout_strength_max = 0.6;
+    let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
+    let outcome = run(c, start).await.unwrap();
+
+    let decisions = std::fs::read_to_string(outcome.run_dir.join(DECISIONS_FILE)).unwrap();
+    assert!(decisions.contains("order_placed"), "an in-band breakout places the order");
+    assert!(!decisions.contains("breakout_strength_band"), "no band rejection for an in-band breakout");
+    let perf = read_perf(&outcome.run_dir);
+    assert_eq!(perf.summary["num_trades"], 1.0, "the in-band trade completes");
+}
+
+/// R2 / KTD6: the band is inclusive on the ceiling — a breakout whose strength
+/// equals the ceiling exactly (0.5) enters; narrowing the ceiling a hair below
+/// rejects it.
+#[tokio::test]
+async fn band_pass_ceiling_is_inclusive() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path(), false).await;
+
+    let mut inclusive = cfg(dir.path());
+    inclusive.params.breakout_strength_max = 0.5; // == the fixture strength
+    let s1 = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
+    let o1 = run(inclusive, s1).await.unwrap();
+    let d1 = std::fs::read_to_string(o1.run_dir.join(DECISIONS_FILE)).unwrap();
+    assert!(d1.contains("order_placed"), "strength == ceiling enters (inclusive band)");
+    assert!(!d1.contains("breakout_strength_band"), "the inclusive edge is not a rejection");
+
+    let mut exclusive = cfg(dir.path());
+    exclusive.params.breakout_strength_max = 0.49; // just below the fixture strength
+    let s2 = Utc.with_ymd_and_hms(2024, 1, 7, 0, 0, 0).unwrap();
+    let o2 = run(exclusive, s2).await.unwrap();
+    let d2 = std::fs::read_to_string(o2.run_dir.join(DECISIONS_FILE)).unwrap();
+    assert!(!d2.contains("order_placed"), "strength above the ceiling is rejected");
+    assert!(d2.contains("breakout_strength_band"));
+}
+
+/// AE3: with the filter-off defaults, entry/exit behavior is unchanged from the
+/// pre-filter binary — the order is placed and the winning trade completes — and
+/// the only additive change to the decision stream is a `strength` value on the
+/// Breakout envelope. (The params-summary band fields are covered by the
+/// `numeric_summary_includes_band_fields` unit test.)
+#[tokio::test]
+async fn default_params_preserve_entry_and_add_strength() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path(), false).await;
+    let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
+    let outcome = run(cfg(dir.path()), start).await.unwrap();
+
+    let decisions_path = outcome.run_dir.join(DECISIONS_FILE);
+    let decisions = std::fs::read_to_string(&decisions_path).unwrap();
+    assert!(decisions.contains("order_placed"), "default params place the order as before");
+    assert!(!decisions.contains("breakout_strength_band"), "filter-off defaults never reject");
+    let perf = read_perf(&outcome.run_dir);
+    assert_eq!(perf.summary["num_trades"], 1.0, "the trade sequence is unchanged");
+    assert!(perf.summary["pnl_total"] > 0.0, "the winning trade is unchanged");
+
+    let envelopes = read_envelopes(&decisions_path).unwrap();
+    let breakout = find_detail_kind(&envelopes, SignalKind::Breakout).expect("a breakout envelope");
+    assert!(breakout.values.contains_key("strength"), "the Breakout envelope gains strength");
+}
+
+/// A single-session breakout where the opening range is [base−500, base+500] and
+/// the breakout bar's high is `break_high` (> base+500) — so strength is
+/// `(break_high − (base+500)) / 1000`. Mirrors [`breakout_session`]'s valid-OHLC
+/// shape (a clean hold above the stop, below the 1.0R target, to the 15:00
+/// time-flat), parametrizing only the breakout height to grade strength.
+fn breakout_session_graded(date: &str, base: i64, break_high: i64) -> Vec<serde_json::Value> {
+    let s = |n: i64| n.to_string();
+    let rl = base - 500;
+    let rh = base + 500;
+    let bo = break_high;
+    vec![
+        minute_json(date, "090000", &s(base), &s(rh), &s(rl), &s(base), "1000"),
+        minute_json(date, "091000", &s(base), &s(rh), &s(rl + 100), &s(base), "1000"),
+        minute_json(date, "092000", &s(base + 200), &s(bo), &s(base + 100), &s(bo - 100), "1000"),
+        minute_json(date, "100000", &s(bo - 100), &s(bo + 500), &s(rl + 600), &s(bo + 400), "1000"),
+        minute_json(date, "150000", &s(bo + 400), &s(bo + 800), &s(bo + 300), &s(bo + 600), "1000"),
+        minute_json(date, "150100", &s(bo + 600), &s(bo + 800), &s(bo + 500), &s(bo + 700), "1000"),
+    ]
+}
+
+/// A 2-symbol single-session fixture (0105, prior 0104) where both symbols gap
+/// +5% and break out, but at DIFFERENT strengths: 005930 breaks strongly
+/// (strength 0.5), 000660 breaks mildly (strength 0.1). Proves a band-rejected
+/// entry does not consume a `max_concurrent` slot.
+async fn build_graded_strength_fixture(data_home: &Path) {
+    let catalog = data_home.join("catalog");
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    for (p, tr, body) in [
+        ("/stock/etc", "t8430", t8430_body_two()),
+        ("/stock/market-data", "t9945", t9945_body()),
+    ] {
+        Mock::given(method("POST"))
+            .and(path(p))
+            .and(header("tr_cd", tr))
+            .respond_with(json_response(body))
+            .mount(&server)
+            .await;
+    }
+    let sdk = LsSdk::new(mock_config(&server.uri())).unwrap();
+    let mut provider = InstrumentProvider::new(sdk.clone());
+    provider.load_domain(InstrumentDomain::DomesticEquity).await.unwrap();
+    write_instruments(&catalog, provider.all_any()).await.unwrap();
+
+    // Both gap +5% on 0105 (prior 0104), so both are selected.
+    write_daily_series(
+        &catalog,
+        "005930.XKRX",
+        &[
+            daily_json("20240104", "59000", "60500", "58500", "60000", "1000000"),
+            daily_json("20240105", "63000", "64500", "62000", "64000", "1200000"), // +5%
+        ],
+    )
+    .await;
+    write_daily_series(
+        &catalog,
+        "000660.XKRX",
+        &[
+            daily_json("20240104", "49000", "50500", "48800", "50000", "900000"),
+            daily_json("20240105", "52500", "53500", "52200", "53000", "1000000"), // +5%
+        ],
+    )
+    .await;
+
+    // 005930 strong breakout: range [62500, 63500], high 64000 → strength 0.5.
+    write_minute_session(&catalog, "005930.XKRX", &breakout_session_graded("20240105", 63000, 64000)).await;
+    // 000660 mild breakout: range [52500, 53500], high 53600 → strength 0.1.
+    write_minute_session(&catalog, "000660.XKRX", &breakout_session_graded("20240105", 53000, 53600)).await;
+
+    let mut cp = Checkpoint::default();
+    cp.adjusted_prices = true;
+    cp.save(&catalog.join("ingest-checkpoint.json")).unwrap();
+}
+
+/// R3 / slot accounting: with `max_concurrent = 1` and the band [0.06, 0.13], the
+/// strong 005930 break (strength 0.5) is band-rejected and the mild 000660 break
+/// (strength 0.1) is admitted — the rejection did NOT consume the single slot.
+#[tokio::test]
+async fn band_rejected_entry_does_not_consume_a_concurrency_slot() {
+    let dir = tempdir().unwrap();
+    build_graded_strength_fixture(dir.path()).await;
+    let mut c = cfg(dir.path());
+    c.params.max_concurrent = 1;
+    c.params.breakout_strength_min = 0.06;
+    c.params.breakout_strength_max = 0.13;
+    let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
+    let outcome = run(c, start).await.unwrap();
+
+    let decisions_path = outcome.run_dir.join(DECISIONS_FILE);
+    let envelopes = read_envelopes(&decisions_path).unwrap();
+    // 005930 is band-rejected...
+    let rejected_5930 = envelopes.iter().filter_map(|e| e.decision_detail.as_ref()).any(|d| {
+        d.filter.as_deref() == Some("breakout_strength_band") && d.symbol == "005930.XKRX"
+    });
+    assert!(rejected_5930, "the strong 005930 break is band-rejected");
+    // ...and 000660 still places its order (the freed slot admits the in-band break).
+    let placed_660 = envelopes.iter().filter_map(|e| e.decision_detail.as_ref()).any(|d| {
+        d.kind == SignalKind::OrderPlaced && d.symbol == "000660.XKRX"
+    });
+    assert!(placed_660, "the in-band 000660 break enters despite max_concurrent = 1");
+    // No entry was rejected by the concurrency gate — the band rejection never
+    // leaked the single slot (max_concurrent appears only in the params summary).
+    let concurrency_reject = envelopes
+        .iter()
+        .filter_map(|e| e.decision_detail.as_ref())
+        .any(|d| d.filter.as_deref() == Some("max_concurrent"));
+    assert!(!concurrency_reject, "no slot was consumed by the band rejection");
+}

@@ -8,7 +8,7 @@ use nautilus_ls_lab::agent::envelope::{Decision, DecisionTrigger, SignalKind};
 use nautilus_ls_lab::agent::sink::DecisionSink;
 use nautilus_ls_lab::params::OrbParams;
 use nautilus_ls_lab::strategy::orb::{
-    select_universe, ExitReason, OrbAction, OrbState, Phase, UniverseCandidate,
+    breakout_strength, select_universe, ExitReason, OrbAction, OrbState, Phase, UniverseCandidate,
 };
 
 fn t(h: u32, m: u32) -> NaiveTime {
@@ -233,6 +233,30 @@ fn non_positive_profit_target_r_never_fires() {
     // The position holds to the time-flat backstop.
     let acts = st.on_bar(t(15, 0), 69_000, 68_000, &p);
     assert_eq!(acts, vec![OrbAction::Exit { limit_price: 68_000, reason: ExitReason::TimeFlat }]);
+}
+
+// ---------------------------------------------------------------------------
+// Breakout strength (Turn 10 / v12 band-pass, R2 / KTD6)
+// ---------------------------------------------------------------------------
+
+/// Strength `= (breakout_price − range_high) / R`. For the range [62500, 63500]
+/// (R = 1000), a breakout bar high of 64000 is strength 0.5.
+#[test]
+fn breakout_strength_is_break_over_range() {
+    assert_eq!(breakout_strength(64_000, 63_500, 62_500), Some(0.5));
+    // A marginal break just above the high is near-zero strength (a q1/q2 entry).
+    let s = breakout_strength(63_540, 63_500, 62_500).unwrap();
+    assert!((s - 0.04).abs() < 1e-9, "strength = {s}");
+    // A real break is always strictly positive (breakout_price > range_high).
+    assert!(breakout_strength(63_501, 63_500, 62_500).unwrap() > 0.0);
+}
+
+/// KTD6: a degenerate range (`R ≤ 0`) yields `None` — no division — so the
+/// caller bypasses the band-pass filter and preserves legacy entry.
+#[test]
+fn breakout_strength_none_on_degenerate_range() {
+    assert_eq!(breakout_strength(64_000, 63_500, 63_500), None, "R == 0 → None");
+    assert_eq!(breakout_strength(64_000, 63_000, 63_500), None, "R < 0 → None");
 }
 
 // ---------------------------------------------------------------------------
