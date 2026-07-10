@@ -627,13 +627,33 @@ fn end_of_day() -> NaiveTime {
 /// CLI entry point for the `lab-backtest` bin. Reads config from env:
 /// `LS_DATA_HOME`, `LS_BT_SDATE`, `LS_BT_EDATE` (required); `LS_BT_MINUTE_STEP`,
 /// `LS_BT_BALANCE`, `LS_BT_METADATA` (optional — the `UniverseMetadata`
-/// artifact path for a metadata-driven run, plan 2026-07-10-003).
+/// artifact path for a metadata-driven run, plan 2026-07-10-003),
+/// `LS_BT_PARAMS_FROM_RUN` (optional — adopt the full parameter set from a
+/// finalized run's manifest, so a count run reproduces the loop's current
+/// identity instead of the v0 defaults; the pre-check counts are
+/// threshold-conditioned on `gap_min_pct`, AE2), `LS_BT_VERSION` (optional
+/// version override for the adopted set).
 pub fn main_cli() -> anyhow::Result<()> {
     nautilus_ls::scrub::install();
     let data_home = std::env::var("LS_DATA_HOME").map_err(|_| anyhow::anyhow!("LS_DATA_HOME is required"))?;
     let sdate = std::env::var("LS_BT_SDATE").map_err(|_| anyhow::anyhow!("LS_BT_SDATE is required"))?;
     let edate = std::env::var("LS_BT_EDATE").map_err(|_| anyhow::anyhow!("LS_BT_EDATE is required"))?;
-    let mut cfg = BacktestConfig::new(data_home, &sdate, &edate);
+    let mut cfg = BacktestConfig::new(data_home.clone(), &sdate, &edate);
+    if let Ok(run_id) = std::env::var("LS_BT_PARAMS_FROM_RUN") {
+        let manifest = crate::runner::research::read_manifest(Path::new(&data_home), run_id.trim())?;
+        println!(
+            "params adopted from run {} (v{}, gap_min_pct {})",
+            run_id.trim(),
+            manifest.strategy_version,
+            manifest.params.gap_min_pct
+        );
+        cfg.params = manifest.params;
+    }
+    if let Ok(v) = std::env::var("LS_BT_VERSION") {
+        cfg.params.strategy_version = v
+            .parse()
+            .map_err(|_| anyhow::anyhow!("LS_BT_VERSION must be an integer, got {v:?}"))?;
+    }
     if let Ok(step) = std::env::var("LS_BT_MINUTE_STEP") {
         cfg.minute_step = step.parse().unwrap_or(1);
     }

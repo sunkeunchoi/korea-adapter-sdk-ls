@@ -22,7 +22,7 @@ use std::time::Duration;
 
 use ls_core::HasPagination;
 use ls_sdk::market_session::{T1904Request, T2522Request, T8430Request};
-use ls_sdk::paginated::{T1404Request, T1405Request};
+use ls_sdk::paginated::{T1404Request, T1405Request, T1444Request};
 use ls_sdk::LsSdk;
 
 use crate::ingest::budget::{plan_dispatch, BudgetDecision, BudgetModel, SpendLedger};
@@ -38,9 +38,10 @@ pub const SOURCE_TRS: [&str; 6] = ["t8430", "t2522", "t1904", "t1444", "t1405", 
 /// The recorded instrument-type filter (R2): the skeleton is equities-only.
 pub const INSTRUMENT_TYPE_FILTER: &str =
     "t8430 etfgubun in {empty, '0'} (equities-only; ETF '1' / ETN '2' rows dropped before \
-     tiering — the live master serves '0' for common equities). t8430 exposes no flag for \
-     preferred shares/SPACs/REITs — residual non-common-stock pollution in the exclusion \
-     stratum is an accepted, documented limitation.";
+     tiering — the live master serves '0' for common equities). Letter-suffixed shcodes \
+     (e.g. 02826K/33626L, 신형우선주) are dropped — the one detectable preferred-share class. \
+     t8430 exposes no flag for numeric-coded preferred shares/SPACs/REITs — residual \
+     non-common-stock pollution in the exclusion stratum is an accepted, documented limitation.";
 
 /// Page-walk safety cap for the `t1405`/`t1404` category walks (mirrors the
 /// SDK's `market_cap_top_all` cap).
@@ -112,6 +113,9 @@ pub struct CaptureConfig {
     pub cap_top_quantile: f64,
     /// Inter-call pacing (KTD6 — shares the attended window with the ingest).
     pub pace: Duration,
+    /// One-shot backoff before retrying a fetch that hit `IGW00201` (the
+    /// 2026-07-10 rehearsal showed the budget refilling within ~2 minutes).
+    pub throttle_backoff: Duration,
 }
 
 impl CaptureConfig {
@@ -120,9 +124,13 @@ impl CaptureConfig {
         CaptureConfig {
             captured_at: captured_at.into(),
             session_date: session_date.into(),
+            // 200 rows/board = Top 100 + Mid 100 per market — deep enough for
+            // per-stratum sampling, and half the page cost of 400: the 2026-07-10
+            // rehearsal showed a 2×20-page walk exhausting a warm IGW00201
+            // cumulative budget mid-walk while every single-page read served.
             cap_boards: vec![
-                CapBoard { upcode: "001".into(), market_class: MarketClass::Kospi, max_rows: 400 },
-                CapBoard { upcode: "301".into(), market_class: MarketClass::Kosdaq, max_rows: 400 },
+                CapBoard { upcode: "001".into(), market_class: MarketClass::Kospi, max_rows: 200 },
+                CapBoard { upcode: "301".into(), market_class: MarketClass::Kosdaq, max_rows: 200 },
             ],
             etf_proxies: vec![
                 EtfProxy { shcode: "069500".into(), index: IndexMembership::Kospi200 },
@@ -147,7 +155,10 @@ impl CaptureConfig {
                 DesignationQuery { gubun: "0".into(), jongchk: "4".into(), kind: DesignationKind::Caution },
             ],
             cap_top_quantile: DEFAULT_CAP_TOP_QUANTILE,
-            pace: Duration::from_millis(600),
+            // 2s pacing: the rehearsal showed 600ms landing calls in the
+            // short-window budget hole behind the big master read.
+            pace: Duration::from_millis(2000),
+            throttle_backoff: Duration::from_secs(120),
         }
     }
 }
@@ -162,6 +173,27 @@ pub struct CaptureOutcome {
     /// Gateway calls made (skeleton + boards + category pages).
     pub calls_made: u32,
 }
+
+/// A failed capture. Carries the calls spent **before** the failure so the
+/// caller can still record them into the shared spend ledger — a failed run
+/// spends real budget (the 2026-07-10 rehearsal burned a board walk before
+/// erroring), and dropping that spend would make the ingest planner
+/// over-optimistic in the shared attended window (KTD6).
+#[derive(Debug)]
+pub struct CaptureError {
+    /// What failed (credential-free).
+    pub message: String,
+    /// Gateway calls spent before the failure.
+    pub calls_made: u32,
+}
+
+impl std::fmt::Display for CaptureError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} (after {} gateway calls)", self.message, self.calls_made)
+    }
+}
+
+impl std::error::Error for CaptureError {}
 
 /// A conservative pre-dispatch call estimate for the whole capture (KTD6):
 /// 1 (`t8430`) + 1 (`t2522`) + one per ETF proxy + the boards' worst-case page
@@ -199,53 +231,26 @@ pub fn budget_gate(
 /// the artifact. Fails hard only when the skeleton (`t8430`) or **every** cap
 /// board fails — everything else records a [`TrFailure`] and resolves the
 /// affected attribute `Unavailable` (R4), so the join has no silent holes.
-pub async fn capture(sdk: &LsSdk, cfg: &CaptureConfig) -> Result<CaptureOutcome, String> {
+pub async fn capture(sdk: &LsSdk, cfg: &CaptureConfig) -> Result<CaptureOutcome, CaptureError> {
+    let fail = |message: String, calls_made: u32| CaptureError { message, calls_made };
     // Refuse the whole-board pseudo-category (pre-flight finding, 2026-07-10):
     // `jongchk = "0"` on t1404 returns every listed issue, designated or not —
     // treating those rows as designations would mark the entire market
     // non-tradable. Fail closed before any gateway call.
     for (tr, qs) in [("t1405", &cfg.t1405_categories), ("t1404", &cfg.t1404_categories)] {
         if let Some(q) = qs.iter().find(|q| q.jongchk.trim() == "0") {
-            return Err(format!(
-                "{tr} designation query with jongchk=\"0\" (gubun={}) is the whole board, not a \
-                 category — it would designate every symbol; query categories individually",
-                q.gubun
+            return Err(fail(
+                format!(
+                    "{tr} designation query with jongchk=\"0\" (gubun={}) is the whole board, not a \
+                     category — it would designate every symbol; query categories individually",
+                    q.gubun
+                ),
+                0,
             ));
         }
     }
     let mut failures: Vec<TrFailure> = Vec::new();
     let mut calls_made: u32 = 0;
-
-    // --- Skeleton: t8430 master (market class + equities-only filter, R1/R2).
-    calls_made += 1;
-    let master = sdk
-        .market_session()
-        .stock_issues(&T8430Request::all())
-        .await
-        .map_err(|e| format!("t8430 master failed — no skeleton, no capture: {}", fail_code(&e)))?;
-    let mut skeleton: Vec<(String, MarketClass)> = Vec::new();
-    for row in &master.outblock {
-        let shcode = row.shcode.trim().to_string();
-        if shcode.is_empty() {
-            continue;
-        }
-        // Equities-only (R2): an ETF/ETN etfgubun ("1" ETF / "2" ETN) drops the
-        // row. The live master serves "0" (not empty) for common equities — the
-        // adapter's instrument mapper reads the same convention
-        // (`instruments.rs`: `etfgubun == "1"` → ETF).
-        if !matches!(row.etfgubun.trim(), "" | "0") {
-            continue;
-        }
-        let market_class = match row.gubun.trim() {
-            "1" => MarketClass::Kospi,
-            "2" => MarketClass::Kosdaq,
-            _ => continue, // neither KOSPI nor KOSDAQ — outside the v1 identity
-        };
-        skeleton.push((shcode, market_class));
-    }
-    if skeleton.is_empty() {
-        return Err("t8430 returned no equity rows — cannot capture an empty skeleton".into());
-    }
 
     // --- t2522: single-stock-futures underlying set (derivative flag, R1).
     tokio::time::sleep(cfg.pace).await;
@@ -289,29 +294,38 @@ pub async fn capture(sdk: &LsSdk, cfg: &CaptureConfig) -> Result<CaptureOutcome,
     let mut boards_served = 0usize;
     for board in &cfg.cap_boards {
         tokio::time::sleep(cfg.pace).await;
-        // The walk issues up to max_rows/20 pages; count them conservatively.
-        calls_made += board.max_rows.div_ceil(20) as u32;
-        match sdk.paginated().market_cap_top_all(board.upcode.clone(), board.max_rows).await {
-            Ok(rows) => {
+        match walk_t1444(sdk, board, cfg.pace, cfg.throttle_backoff).await {
+            Ok((rows, pages)) => {
+                calls_made += pages;
                 boards_served += 1;
-                for row in &rows {
-                    let code = row.shcode.trim().to_string();
-                    if code.is_empty() {
-                        continue;
-                    }
-                    if let Ok(total) = row.total.trim().parse::<f64>() {
-                        cap_by_shcode.entry(code).or_insert(total);
-                    }
+                for (code, total) in rows {
+                    cap_by_shcode.entry(code).or_insert(total);
                 }
             }
-            Err(e) => {
-                failures.push(TrFailure { tr: "t1444".into(), code: fail_code(&e) });
+            Err((code, pages)) => {
+                calls_made += pages;
+                if code == "IGW00201" {
+                    // Transient throttle (even after the page retry): abort
+                    // rather than tier a whole market below-board (rehearsal
+                    // finding, 2026-07-10) — re-run on a colder window.
+                    return Err(fail(
+                        format!(
+                            "t1444 board upcode {} throttled (IGW00201) after retry — a missing                              board mis-tiers its whole market; re-run when the budget is colder",
+                            board.upcode
+                        ),
+                        calls_made,
+                    ));
+                }
+                failures.push(TrFailure { tr: "t1444".into(), code });
             }
         }
     }
     if boards_served == 0 {
-        return Err(format!(
-            "every t1444 cap board failed — no cap axis, no stratification (failures: {failures:?})"
+        return Err(fail(
+            format!(
+                "every t1444 cap board failed — no cap axis, no stratification (failures: {failures:?})"
+            ),
+            calls_made,
         ));
     }
 
@@ -319,7 +333,12 @@ pub async fn capture(sdk: &LsSdk, cfg: &CaptureConfig) -> Result<CaptureOutcome,
     let mut designation_by_shcode: HashMap<String, Designation> = HashMap::new();
     for q in &cfg.t1405_categories {
         tokio::time::sleep(cfg.pace).await;
-        match walk_t1405(sdk, q).await {
+        let mut attempt = walk_t1405(sdk, q).await;
+        if matches!(&attempt, Err(code) if code == "IGW00201") {
+            tokio::time::sleep(cfg.throttle_backoff).await;
+            attempt = walk_t1405(sdk, q).await;
+        }
+        match attempt {
             Ok((codes, pages)) => {
                 calls_made += pages;
                 for code in codes {
@@ -330,13 +349,27 @@ pub async fn capture(sdk: &LsSdk, cfg: &CaptureConfig) -> Result<CaptureOutcome,
             }
             Err(code) => {
                 calls_made += 1;
+                if code == "IGW00201" {
+                    return Err(fail(
+                        format!(
+                            "t1405 category gubun={} jongchk={} throttled (IGW00201) after retry —                              a transient hole in the hard tradability gate must not be baked into                              the artifact; re-run when the budget is colder",
+                            q.gubun, q.jongchk
+                        ),
+                        calls_made,
+                    ));
+                }
                 failures.push(TrFailure { tr: "t1405".into(), code });
             }
         }
     }
     for q in &cfg.t1404_categories {
         tokio::time::sleep(cfg.pace).await;
-        match walk_t1404(sdk, q).await {
+        let mut attempt = walk_t1404(sdk, q).await;
+        if matches!(&attempt, Err(code) if code == "IGW00201") {
+            tokio::time::sleep(cfg.throttle_backoff).await;
+            attempt = walk_t1404(sdk, q).await;
+        }
+        match attempt {
             Ok((codes, pages)) => {
                 calls_made += pages;
                 for code in codes {
@@ -347,9 +380,57 @@ pub async fn capture(sdk: &LsSdk, cfg: &CaptureConfig) -> Result<CaptureOutcome,
             }
             Err(code) => {
                 calls_made += 1;
+                if code == "IGW00201" {
+                    return Err(fail(
+                        format!(
+                            "t1404 category gubun={} jongchk={} throttled (IGW00201) after retry —                              a transient hole in the hard tradability gate must not be baked into                              the artifact; re-run when the budget is colder",
+                            q.gubun, q.jongchk
+                        ),
+                        calls_made,
+                    ));
+                }
                 failures.push(TrFailure { tr: "t1404".into(), code });
             }
         }
+    }
+
+    // --- Skeleton: t8430 master (market class + equities-only filter, R1/R2).
+    // Fetched LAST deliberately (rehearsal finding, 2026-07-10): its ~800KB
+    // response drains the gateway's short-window budget and throttled the very
+    // next reads; the join is in-memory, so fetch order is free.
+    tokio::time::sleep(cfg.pace).await;
+    calls_made += 1;
+    let master = sdk.market_session().stock_issues(&T8430Request::all()).await.map_err(|e| {
+        fail(format!("t8430 master failed — no skeleton, no capture: {}", fail_code(&e)), calls_made)
+    })?;
+    let mut skeleton: Vec<(String, MarketClass)> = Vec::new();
+    for row in &master.outblock {
+        let shcode = row.shcode.trim().to_string();
+        // 6-digit numeric codes only: letter-suffixed codes (02826K / 33626L,
+        // 신형우선주) are the one preferred-share class the master makes
+        // detectable — dropped per the recorded instrument-type filter (R2).
+        if shcode.len() != 6 || !shcode.bytes().all(|b| b.is_ascii_digit()) {
+            continue;
+        }
+        // Equities-only (R2): an ETF/ETN etfgubun ("1" ETF / "2" ETN) drops the
+        // row. The live master serves "0" (not empty) for common equities — the
+        // adapter's instrument mapper reads the same convention
+        // (`instruments.rs`: `etfgubun == "1"` → ETF).
+        if !matches!(row.etfgubun.trim(), "" | "0") {
+            continue;
+        }
+        let market_class = match row.gubun.trim() {
+            "1" => MarketClass::Kospi,
+            "2" => MarketClass::Kosdaq,
+            _ => continue, // neither KOSPI nor KOSDAQ — outside the v1 identity
+        };
+        skeleton.push((shcode, market_class));
+    }
+    if skeleton.is_empty() {
+        return Err(fail(
+            "t8430 returned no equity rows — cannot capture an empty skeleton".to_string(),
+            calls_made,
+        ));
     }
 
     // --- Join by shcode into U1 records (R4: resolution recorded per symbol).
@@ -415,9 +496,81 @@ pub async fn capture(sdk: &LsSdk, cfg: &CaptureConfig) -> Result<CaptureOutcome,
     // Fail closed BEFORE the caller writes: an artifact that would not pass the
     // offline validator must never land on disk (the capture-universe pattern).
     if let Err(errs) = artifact.validate() {
-        return Err(format!("captured artifact failed validation:\n  - {}", errs.join("\n  - ")));
+        return Err(fail(
+            format!("captured artifact failed validation:\n  - {}", errs.join("\n  - ")),
+            calls_made,
+        ));
     }
     Ok(CaptureOutcome { artifact, calls_made })
+}
+
+
+/// Walk one `t1444` ranked cap board with **inter-page pacing** (rehearsal
+/// finding, 2026-07-10): the SDK's `market_cap_top_all` fires continuation
+/// pages back-to-back at the client rate cap, and a 10-page burst trips the
+/// gateway's short-window `IGW00201` even though every paced single-page read
+/// serves — so the capture pages itself, sleeping `pace` between pages, with
+/// one backoff-retry per throttled page. Termination mirrors the SDK walk:
+/// terminal `idx` (empty/`"0"`/header `tr_cont: N`), a repeated cursor, a
+/// no-progress page, `max_rows`, or the page safety cap. Returns
+/// `(shcode, market_cap)` rows (deduped, first-seen) and the pages spent.
+async fn walk_t1444(
+    sdk: &LsSdk,
+    board: &CapBoard,
+    pace: Duration,
+    backoff: Duration,
+) -> Result<(Vec<(String, f64)>, u32), (String, u32)> {
+    let mut req = T1444Request::new(board.upcode.clone());
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut rows: Vec<(String, f64)> = Vec::new();
+    let mut pages: u32 = 0;
+    loop {
+        if pages > 0 {
+            tokio::time::sleep(pace).await;
+        }
+        pages += 1;
+        let resp = match sdk.paginated().market_cap_top(&req).await {
+            Ok(r) => r,
+            Err(e) if is_throttled(&e) => {
+                // One page-level backoff-retry: the short-window budget refills
+                // in ~2 minutes (rehearsal finding).
+                tokio::time::sleep(backoff).await;
+                pages += 1;
+                match sdk.paginated().market_cap_top(&req).await {
+                    Ok(r) => r,
+                    Err(e) => return Err((fail_code(&e), pages)),
+                }
+            }
+            Err(e) => return Err((fail_code(&e), pages)),
+        };
+        let mut progressed = false;
+        for row in &resp.outblock1 {
+            let code = row.shcode.trim().to_string();
+            if code.is_empty() || !seen.insert(code.clone()) {
+                continue;
+            }
+            progressed = true;
+            if let Ok(total) = row.total.trim().parse::<f64>() {
+                rows.push((code, total));
+            }
+            if rows.len() >= board.max_rows {
+                return Ok((rows, pages));
+            }
+        }
+        let next_idx = resp.outblock.idx.trim().to_string();
+        let terminal =
+            next_idx.is_empty() || next_idx == "0" || resp.tr_cont.trim() == "N";
+        if terminal
+            || !progressed
+            || next_idx == req.inblock.idx.trim()
+            || pages as usize >= MAX_DESIGNATION_PAGES
+        {
+            return Ok((rows, pages));
+        }
+        req.inblock.idx = next_idx;
+        req.set_tr_cont("Y".to_string());
+        req.set_tr_cont_key(resp.tr_cont_key.clone());
+    }
 }
 
 /// Walk one `t1405` category across its `cts_shcode` pages. Returns the
@@ -497,6 +650,11 @@ fn describe_categories(qs: &[DesignationQuery]) -> String {
 /// A credential-free failure code for provenance: the gateway `rsp_cd` when the
 /// error is an API envelope, else a coarse class (mirrors the budget probe's
 /// retention discipline — never a raw broker message).
+/// Whether an SDK error is the gateway budget throttle (`IGW00201`).
+fn is_throttled(e: &ls_core::LsError) -> bool {
+    matches!(e, ls_core::LsError::ApiError { code, .. } if code == "IGW00201")
+}
+
 fn fail_code(e: &ls_core::LsError) -> String {
     match e {
         ls_core::LsError::ApiError { code, .. } => code.clone(),
@@ -511,8 +669,8 @@ mod tests {
     #[test]
     fn estimated_calls_cover_skeleton_boards_and_categories() {
         let cfg = CaptureConfig::new("2026-07-10T00:00:00Z", "20260710");
-        // 1 t8430 + 1 t2522 + 2 t1904 + 2 boards x ceil(400/20)=20 + 7 + 4 categories.
-        assert_eq!(estimated_capture_calls(&cfg), (1 + 1 + 2 + 40 + 7 + 4) as u32);
+        // 1 t8430 + 1 t2522 + 2 t1904 + 2 boards x ceil(200/20)=10 + 7 + 4 categories.
+        assert_eq!(estimated_capture_calls(&cfg), (1 + 1 + 2 + 20 + 7 + 4) as u32);
     }
 
     #[test]

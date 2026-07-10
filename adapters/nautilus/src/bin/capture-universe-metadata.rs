@@ -81,6 +81,10 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         let ms: u64 = v.parse().map_err(|_| format!("LS_CAPTURE_PACE_MS must be an integer, got {v:?}"))?;
         cfg.pace = Duration::from_millis(ms);
     }
+    if let Ok(v) = std::env::var("LS_CAPTURE_BACKOFF_MS") {
+        let ms: u64 = v.parse().map_err(|_| format!("LS_CAPTURE_BACKOFF_MS must be an integer, got {v:?}"))?;
+        cfg.throttle_backoff = Duration::from_millis(ms);
+    }
 
     let adapter_cfg = match std::env::var("LS_CAPTURE_LANE_FILE") {
         Ok(path) => LsAdapterConfig::from_lane_file(path),
@@ -104,20 +108,26 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Err(_) => None,
     };
 
-    let outcome = capture(&sdk, &cfg).await?;
-    let artifact = outcome.artifact;
+    let result = capture(&sdk, &cfg).await;
 
     // Record the spend into the shared ledger (best-effort, advisory) so the
-    // minute ingest's pre-dispatch planner sees the capture's cumulative cost.
+    // minute ingest's pre-dispatch planner sees the capture's cumulative cost —
+    // on BOTH outcomes: a failed capture spends real budget too (the 2026-07-10
+    // rehearsal burned a board walk before erroring).
+    let calls_made = match &result {
+        Ok(o) => o.calls_made,
+        Err(e) => e.calls_made,
+    };
     if let Some((ledger_path, mut ledger, cred_hash)) = budget_wiring {
         let at = Utc::now().timestamp();
-        for _ in 0..outcome.calls_made {
+        for _ in 0..calls_made {
             ledger.record_spend(&cred_hash, at);
         }
         if let Err(e) = ledger.save(&ledger_path) {
             eprintln!("warning: failed to persist spend ledger (advisory): {e}");
         }
     }
+    let artifact = result?.artifact;
 
     let json = serde_json::to_string_pretty(&artifact)?;
     if let Some(parent) = Path::new(&out).parent() {
@@ -151,7 +161,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     println!("content hash: {}", artifact.content_hash());
-    println!("gateway calls made: {}", outcome.calls_made);
+    println!("gateway calls made: {calls_made}");
     Ok(())
 }
 

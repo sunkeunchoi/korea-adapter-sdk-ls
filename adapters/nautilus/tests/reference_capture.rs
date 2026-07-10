@@ -39,6 +39,7 @@ fn t8430_body() -> serde_json::Value {
             row("에코프로", "086520", "0", "2"),
             row("에코프로비엠", "247540", "0", "2"),
             row("소형주", "300001", "0", "2"),
+            row("삼성물산우B", "02826K", "0", "1"),
         ]
     })
 }
@@ -180,7 +181,8 @@ async fn capture_joins_six_trs_by_shcode_into_resolved_records() {
     let outcome = capture(&sdk, &test_config()).await.expect("capture joins");
     let artifact = outcome.artifact;
 
-    // The ETF master row is dropped (R2); five equities remain, sorted by shcode.
+    // The ETF master row and the letter-suffixed preferred share are dropped
+    // (R2); five common equities remain, sorted by shcode.
     let codes: Vec<&str> = artifact.records.iter().map(|r| r.shcode.as_str()).collect();
     assert_eq!(codes, ["000660", "005930", "086520", "247540", "300001"]);
     let by = |code: &str| artifact.records.iter().find(|r| r.shcode == code).unwrap();
@@ -354,6 +356,8 @@ async fn a_whole_board_jongchk_zero_category_is_refused_before_any_call() {
         kind: DesignationKind::Managed,
     }];
     let err = capture(&sdk, &cfg).await.unwrap_err();
-    assert!(err.contains("whole board"), "{err}");
-    assert!(err.contains("t1404"), "{err}");
+    assert_eq!(err.calls_made, 0, "refused before any gateway call");
+    let msg = err.to_string();
+    assert!(msg.contains("whole board"), "{msg}");
+    assert!(msg.contains("t1404"), "{msg}");
 }
