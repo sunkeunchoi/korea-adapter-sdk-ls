@@ -988,8 +988,39 @@ async fn band_pass_rejects_out_of_band_breakout() {
     assert_eq!(reject.values.get("breakout_strength_min").copied(), Some(0.06));
     assert_eq!(reject.values.get("breakout_strength_max").copied(), Some(0.13));
 
+    // KTD3 one-shot-per-session: the rejected symbol is Done for the rest of the
+    // session — the later 10:00/11:00 bars (both above range_high 63500) do NOT
+    // re-arm a second breakout, so exactly one Breakout envelope is recorded.
+    let breakouts = envelopes
+        .iter()
+        .filter_map(|e| e.decision_detail.as_ref())
+        .filter(|d| d.kind == SignalKind::Breakout)
+        .count();
+    assert_eq!(breakouts, 1, "a strength-rejected symbol stays Done — no re-break re-entry");
+
     let perf = read_perf(&outcome.run_dir);
     assert_eq!(perf.summary["num_trades"], 0.0, "no trade on a rejected entry");
+}
+
+/// AE2 (below-floor direction) through the engine: a breakout at strength 0.5 is
+/// rejected when it falls BELOW the band floor [0.6, 0.9] (the above-ceiling
+/// direction is covered by `band_pass_rejects_out_of_band_breakout`). Reuses the
+/// single-symbol fixture; no new fixture needed — only the floor moves.
+#[tokio::test]
+async fn band_pass_rejects_below_floor_breakout() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path(), false).await;
+    let mut c = cfg(dir.path());
+    c.params.breakout_strength_min = 0.6; // above the fixture's 0.5 strength
+    c.params.breakout_strength_max = 0.9;
+    let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
+    let outcome = run(c, start).await.unwrap();
+
+    let decisions = std::fs::read_to_string(outcome.run_dir.join(DECISIONS_FILE)).unwrap();
+    assert!(decisions.contains("breakout_strength_band"), "below-floor strength is rejected");
+    assert!(!decisions.contains("order_placed"), "no order on a below-floor breakout");
+    let perf = read_perf(&outcome.run_dir);
+    assert_eq!(perf.summary["num_trades"], 0.0);
 }
 
 /// AE1: a breakout at strength 0.5 inside the band [0.06, 0.6] enters exactly as
@@ -1169,4 +1200,96 @@ async fn band_rejected_entry_does_not_consume_a_concurrency_slot() {
         .filter_map(|e| e.decision_detail.as_ref())
         .any(|d| d.filter.as_deref() == Some("max_concurrent"));
     assert!(!concurrency_reject, "no slot was consumed by the band rejection");
+}
+
+/// Build a single-symbol fixture whose breakout bar is a WHIPSAW: it clears the
+/// range high (strength 0.5) AND breaches the range low on the same bar, so
+/// `OrbState::on_bar` returns `[Enter, Exit{Stop}]` in one batch.
+async fn build_whipsaw_fixture(data_home: &Path) {
+    let catalog = data_home.join("catalog");
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    for (p, tr, body) in [
+        ("/stock/etc", "t8430", t8430_body()),
+        ("/stock/market-data", "t9945", t9945_body()),
+    ] {
+        Mock::given(method("POST"))
+            .and(path(p))
+            .and(header("tr_cd", tr))
+            .respond_with(json_response(body))
+            .mount(&server)
+            .await;
+    }
+    let sdk = LsSdk::new(mock_config(&server.uri())).unwrap();
+    let mut provider = InstrumentProvider::new(sdk.clone());
+    provider.load_domain(InstrumentDomain::DomesticEquity).await.unwrap();
+    write_instruments(&catalog, provider.all_any()).await.unwrap();
+
+    // Prior close 60000, today open 63000 → +5% gap (selected).
+    write_daily_series(
+        &catalog,
+        "005930.XKRX",
+        &[
+            daily_json("20240104", "59000", "60500", "58500", "60000", "1000000"),
+            daily_json("20240105", "63000", "64500", "62000", "64000", "1200000"),
+        ],
+    )
+    .await;
+    // Opening range 09:00–09:14 = [62500, 63500]; the 09:20 bar is a whipsaw:
+    // high 64000 (> 63500, strength 0.5) AND low 62000 (<= the 62500 stop).
+    write_minute_session(
+        &catalog,
+        "005930.XKRX",
+        &[
+            minute_json("20240105", "090000", "63000", "63500", "62500", "63200", "1000"),
+            minute_json("20240105", "091000", "63200", "63400", "62800", "63000", "1000"),
+            minute_json("20240105", "092000", "63000", "64000", "62000", "62500", "1000"),
+            minute_json("20240105", "150000", "62500", "62800", "62000", "62400", "1000"),
+            minute_json("20240105", "150100", "62400", "62600", "62000", "62300", "1000"),
+        ],
+    )
+    .await;
+
+    let mut cp = Checkpoint::default();
+    cp.adjusted_prices = true;
+    cp.save(&catalog.join("ingest-checkpoint.json")).unwrap();
+}
+
+/// R3 / KTD4: a whipsaw breakout whose entry is strength-rejected emits NO exit
+/// envelope — the rejected Enter `continue`s before `entered_qty` is set, so the
+/// same-bar Exit action hits the `qty <= 0` guard and places/records nothing.
+/// (Guards against a future refactor moving the rejection after the qty insert,
+/// which would emit a phantom exit for a position that never opened.)
+#[tokio::test]
+async fn whipsaw_entry_strength_rejected_emits_no_exit() {
+    let dir = tempdir().unwrap();
+    build_whipsaw_fixture(dir.path()).await;
+    let mut c = cfg(dir.path());
+    c.params.breakout_strength_min = 0.06;
+    c.params.breakout_strength_max = 0.13; // the whipsaw's 0.5 strength is out of band
+    let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
+    let outcome = run(c, start).await.unwrap();
+
+    let envelopes = read_envelopes(&outcome.run_dir.join(DECISIONS_FILE)).unwrap();
+    // The band rejected the entry...
+    assert!(
+        find_detail_kind(&envelopes, SignalKind::Breakout).is_some(),
+        "the whipsaw breakout is still recorded"
+    );
+    let band_rejected = envelopes
+        .iter()
+        .filter_map(|e| e.decision_detail.as_ref())
+        .any(|d| d.filter.as_deref() == Some("breakout_strength_band"));
+    assert!(band_rejected, "the whipsaw entry is band-rejected");
+    // ...and NO exit envelope (Stop / Target / TimeExit) or order was emitted for
+    // the position that never opened.
+    let has_exit_or_order = envelopes.iter().filter_map(|e| e.decision_detail.as_ref()).any(|d| {
+        matches!(
+            d.kind,
+            SignalKind::StopHit | SignalKind::Target | SignalKind::TimeExit | SignalKind::OrderPlaced
+        )
+    });
+    assert!(!has_exit_or_order, "a band-rejected whipsaw emits no exit and places no order");
+    let perf = read_perf(&outcome.run_dir);
+    assert_eq!(perf.summary["num_trades"], 0.0, "no trade on a rejected whipsaw");
 }
