@@ -46,6 +46,21 @@ pub struct OrbParams {
     /// lacking this key still deserialize (KTD3) — hence the `serde(default)`.
     #[serde(default = "default_profit_target_r")]
     pub profit_target_r: f64,
+    /// Entry breakout-strength band-pass floor (turn 10, R1/KTD2). At the
+    /// Armed→entry transition, strength `= (breakout_price − range_high) / R`
+    /// (`R = range_high − range_low`); the entry proceeds only when
+    /// `breakout_strength_min ≤ strength ≤ breakout_strength_max`. The
+    /// pass-through default `0.0` leaves entry behavior unchanged when the field
+    /// is absent from a manifest — prior runs in `data/turn4-fresh` deserialize
+    /// with the filter disabled (KTD2).
+    #[serde(default = "default_breakout_strength_min")]
+    pub breakout_strength_min: f64,
+    /// Entry breakout-strength band-pass ceiling (turn 10, R1/KTD2). See
+    /// [`OrbParams::breakout_strength_min`]. The pass-through default `f64::MAX`
+    /// keeps every breakout in-band unless a manifest narrows the ceiling, so
+    /// legacy manifests deserialize with the filter disabled.
+    #[serde(default = "default_breakout_strength_max")]
+    pub breakout_strength_max: f64,
 }
 
 /// The back-compat default for [`OrbParams::profit_target_r`] (R2, KTD3): a v8
@@ -53,6 +68,21 @@ pub struct OrbParams {
 /// every prior run in `data/turn4-fresh` still resolves.
 fn default_profit_target_r() -> f64 {
     1.0
+}
+
+/// The filter-off default for [`OrbParams::breakout_strength_min`] (R1, KTD2): a
+/// pre-turn-10 manifest deserializes with a floor of `0.0`, leaving entry
+/// behavior unchanged. Concrete (not `Option`) so `numeric_summary` surfaces the
+/// field into every manifest and a governed turn can sweep it.
+fn default_breakout_strength_min() -> f64 {
+    0.0
+}
+
+/// The filter-off default for [`OrbParams::breakout_strength_max`] (R1, KTD2):
+/// `f64::MAX` keeps every breakout in-band, so a pre-turn-10 manifest resolves
+/// with the band-pass disabled.
+fn default_breakout_strength_max() -> f64 {
+    f64::MAX
 }
 
 impl Default for OrbParams {
@@ -69,6 +99,8 @@ impl Default for OrbParams {
             flat_time: NaiveTime::from_hms_opt(15, 0, 0).expect("valid time"),
             notional_per_position: 10_000_000.0,
             profit_target_r: default_profit_target_r(),
+            breakout_strength_min: default_breakout_strength_min(),
+            breakout_strength_max: default_breakout_strength_max(),
         }
     }
 }
@@ -93,6 +125,16 @@ impl OrbParams {
     /// (the `max_concurrent` risk cap, KTD6).
     pub fn sizing_allows(&self, open_positions: usize) -> bool {
         open_positions < self.max_concurrent
+    }
+
+    /// Whether a breakout of the given `strength` passes the band-pass filter
+    /// (turn 10, R2/KTD6): the **inclusive** band `[min, max]`. Strength is
+    /// `(breakout_price − range_high) / R`; a degenerate range (`R ≤ 0`) is the
+    /// caller's concern — it bypasses the filter and never reaches here (KTD6).
+    /// With the filter-off defaults (`0.0`, `f64::MAX`) every positive-strength
+    /// breakout is in-band, so legacy entry behavior is preserved.
+    pub fn strength_in_band(&self, strength: f64) -> bool {
+        strength >= self.breakout_strength_min && strength <= self.breakout_strength_max
     }
 
     /// The numeric (f64-able) fields of this parameter set, keyed by serde
@@ -158,6 +200,9 @@ mod tests {
         assert_eq!(p.range_end(), NaiveTime::from_hms_opt(9, 15, 0).unwrap());
         assert_eq!(p.flat_time, NaiveTime::from_hms_opt(15, 0, 0).unwrap());
         assert_eq!(p.profit_target_r, 1.0);
+        // Turn 10: filter-off band defaults leave entry behavior unchanged.
+        assert_eq!(p.breakout_strength_min, 0.0);
+        assert_eq!(p.breakout_strength_max, f64::MAX);
     }
 
     #[test]
@@ -171,6 +216,61 @@ mod tests {
         assert!(json.contains("\"15:00:00\""), "json: {json}");
         // The profit target rides the manifest so a param-turn can sweep it.
         assert!(json.contains("\"profit_target_r\":1.0"), "json: {json}");
+        // The band edges ride the manifest too (turn 10) — the filter-off
+        // ceiling f64::MAX round-trips as the largest finite f64.
+        let back_band: OrbParams = serde_json::from_str(&json).unwrap();
+        assert_eq!(back_band.breakout_strength_min, 0.0);
+        assert_eq!(back_band.breakout_strength_max, f64::MAX);
+    }
+
+    #[test]
+    fn band_params_round_trip_explicit_values() {
+        // Turn 10: an explicit band [0.06, 0.13] (the filtered-run values)
+        // serializes and deserializes unchanged.
+        let mut p = OrbParams::default();
+        p.breakout_strength_min = 0.06;
+        p.breakout_strength_max = 0.13;
+        let back: OrbParams = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+        assert_eq!(back.breakout_strength_min, 0.06);
+        assert_eq!(back.breakout_strength_max, 0.13);
+    }
+
+    #[test]
+    fn band_params_deserialize_from_pre_field_manifest() {
+        // R1 / KTD2: a v9-era manifest predates the band fields. Its JSON has no
+        // such keys, yet must still deserialize — the serde defaults supply the
+        // filter-off band (0.0, f64::MAX) so every prior run keeps resolving with
+        // unchanged entry behavior.
+        let legacy = serde_json::json!({
+            "strategy_id": "orb",
+            "strategy_version": 9,
+            "gap_min_pct": 0.6,
+            "universe_top_n": 40,
+            "max_concurrent": 7,
+            "range_open": "09:00:00",
+            "range_minutes": 20,
+            "flat_time": "15:00:00",
+            "notional_per_position": 10_000_000.0,
+            "profit_target_r": 1.0,
+        })
+        .to_string();
+        let p: OrbParams = serde_json::from_str(&legacy).unwrap();
+        assert_eq!(p.breakout_strength_min, 0.0, "missing floor defaults to 0.0");
+        assert_eq!(p.breakout_strength_max, f64::MAX, "missing ceiling defaults to f64::MAX");
+        assert_eq!(p.strategy_version, 9);
+    }
+
+    #[test]
+    fn numeric_summary_includes_band_fields() {
+        // The band edges are f64-typed so the serde value-walk surfaces them into
+        // the params summary — where a governed turn reads them to sweep (KTD2:
+        // Option = None fields would vanish and never be sweepable).
+        let mut p = OrbParams::default();
+        p.breakout_strength_min = 0.06;
+        p.breakout_strength_max = 0.13;
+        let summary = p.numeric_summary();
+        assert_eq!(summary.get("breakout_strength_min"), Some(&0.06));
+        assert_eq!(summary.get("breakout_strength_max"), Some(&0.13));
     }
 
     #[test]
@@ -242,5 +342,31 @@ mod tests {
         assert!(p.sizing_allows(4));
         assert!(!p.sizing_allows(5));
         assert!(!p.sizing_allows(6));
+    }
+
+    #[test]
+    fn filter_off_defaults_pass_every_positive_strength() {
+        // R1: the pass-through band [0.0, f64::MAX] admits any breakout (strength
+        // is always > 0 for a real break), so legacy entry behavior is preserved.
+        let p = OrbParams::default();
+        assert!(p.strength_in_band(0.001));
+        assert!(p.strength_in_band(0.5));
+        assert!(p.strength_in_band(42.0));
+    }
+
+    #[test]
+    fn strength_band_is_inclusive_on_both_edges() {
+        // R2 / KTD6: in-band means min ≤ strength ≤ max — both edges pass.
+        let mut p = OrbParams::default();
+        p.breakout_strength_min = 0.06;
+        p.breakout_strength_max = 0.13;
+        assert!(p.strength_in_band(0.06), "the floor is inclusive");
+        assert!(p.strength_in_band(0.13), "the ceiling is inclusive");
+        assert!(p.strength_in_band(0.09), "a mid-band breakout passes");
+        assert!(!p.strength_in_band(0.03), "below the floor is rejected");
+        assert!(!p.strength_in_band(0.20), "above the ceiling is rejected");
+        // Just outside the edges (float-adjacent) is rejected.
+        assert!(!p.strength_in_band(0.06 - 1e-9));
+        assert!(!p.strength_in_band(0.13 + 1e-9));
     }
 }

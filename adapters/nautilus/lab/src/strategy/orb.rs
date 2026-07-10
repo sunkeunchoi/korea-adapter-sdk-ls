@@ -146,6 +146,17 @@ fn vals(pairs: &[(&str, f64)]) -> BTreeMap<String, f64> {
     pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect()
 }
 
+/// Breakout strength in R-multiples: `(breakout_price − range_high) / R`, where
+/// `R = range_high − range_low` (turn 10, R2/KTD6). `None` for a degenerate
+/// range (`R ≤ 0`): the division would be `x/0`, and the q3 evidence carved
+/// degenerate ranges out — so the caller bypasses the band-pass filter and
+/// preserves legacy entry (KTD6). For a real breakout (`breakout_price >
+/// range_high`) the result is strictly positive.
+pub fn breakout_strength(breakout_price: i64, range_high: i64, range_low: i64) -> Option<f64> {
+    let r = range_high - range_low;
+    (r > 0).then(|| (breakout_price - range_high) as f64 / r as f64)
+}
+
 /// The universe scan's decision trigger: universe selection happens at session
 /// open, keyed to the scan — an internal state change, not a bar (R5).
 fn universe_trigger() -> DecisionTrigger {
@@ -364,24 +375,35 @@ impl OrbState {
             self.high_water = high;
         }
         if self.phase == Phase::Long {
-            // Track the post-entry peak for per-trade MFE. On the entry bar this is
-            // a no-op (high_water was just set to high).
-            self.high_water = self.high_water.max(high);
+            // Determine the exit BEFORE folding the bar into the high-water mark
+            // (turn 10, R6 / KTD5): MFE folds only the excursion provably observed
+            // while the position was open.
             if low <= self.range_low {
                 // Stop first (KTD2 / R4): when a bar breaches both the stop and the
                 // target, Stop wins — intrabar order is unknowable, so fail toward
                 // the conservative side (matches KTD6's pessimistic fills). This is
-                // also the whipsaw same-bar enter+stop path (R3), unchanged.
+                // also the whipsaw same-bar enter+stop path (R3), unchanged. The
+                // stop bar's high is NOT folded — under stop-first pessimism it is
+                // not provably pre-stop (KTD5).
                 acts.push(OrbAction::Exit { limit_price: low, reason: ExitReason::Stop });
                 self.phase = Phase::Done;
             } else if let Some(target) = self.target_price(params) {
                 if high >= target {
                     // Bank the move at the target price — a favorable limit, not the
                     // bar wick (R1). The entry bar can never reach here: its high
-                    // equals entry_price < target.
+                    // equals entry_price < target. Fold capped at the target: price
+                    // provably reached it, but the above-target wick is not provably
+                    // pre-exit (KTD5), so MFE right-censors at profit_target_r·R.
+                    self.high_water = self.high_water.max(target);
                     acts.push(OrbAction::Exit { limit_price: target, reason: ExitReason::Target });
                     self.phase = Phase::Done;
+                } else {
+                    // No exit this bar → fold the full bar high (unchanged).
+                    self.high_water = self.high_water.max(high);
                 }
+            } else {
+                // No target configured, no stop → fold the full bar high (unchanged).
+                self.high_water = self.high_water.max(high);
             }
         }
         acts
@@ -540,11 +562,43 @@ impl OrbStrategy {
                     let open = self.open_positions_excluding(&id);
                     let qty = self.params.position_qty(limit_price as f64);
                     let range = self.states.get(&id).and_then(|s| s.range()).unwrap_or((0, 0));
+                    // Breakout strength = (breakout_price − range_high) / R (R2,
+                    // KTD3). `None` for a degenerate range (R ≤ 0), which bypasses
+                    // the band-pass; the `Breakout` envelope records 0.0 for it.
+                    let strength = breakout_strength(limit_price, range.0, range.1);
                     self.emit_market_data(id, ts, DecisionDetail::transition(
                         symbol.clone(),
                         SignalKind::Breakout,
-                        vals(&[("range_high", range.0 as f64), ("range_low", range.1 as f64), ("breakout_price", limit_price as f64)]),
+                        vals(&[
+                            ("range_high", range.0 as f64),
+                            ("range_low", range.1 as f64),
+                            ("breakout_price", limit_price as f64),
+                            ("strength", strength.unwrap_or(0.0)),
+                        ]),
                     ));
+                    // Breakout-strength band-pass (turn 10, R2/R3, KTD3/KTD4/KTD6):
+                    // the q3 evidence is a band — both the marginal (q2) and the
+                    // strongest (q4) breakouts lose. An out-of-band strength rejects
+                    // the entry done-for-day, ahead of the emission/sizing/qty
+                    // composite so the label stays truthful. A degenerate range
+                    // (strength `None`) has no evidence basis to reject, so it enters.
+                    if strength.is_some_and(|s| !self.params.strength_in_band(s)) {
+                        if let Some(st) = self.states.get_mut(&id) {
+                            st.force_done();
+                        }
+                        self.emit_market_data(id, ts, DecisionDetail {
+                            kind: SignalKind::OrderRejectedSizing,
+                            symbol: symbol.clone(),
+                            decision: None,
+                            filter: Some("breakout_strength_band".to_string()),
+                            values: vals(&[
+                                ("strength", strength.unwrap_or(0.0)),
+                                ("breakout_strength_min", self.params.breakout_strength_min),
+                                ("breakout_strength_max", self.params.breakout_strength_max),
+                            ]),
+                        });
+                        continue;
+                    }
                     if !self.emission.allowed() || !self.params.sizing_allows(open) || qty <= 0 {
                         // Emission stopped (teardown), or the sizing / concurrency gate
                         // vetoes the entry: the position is never opened, so roll the
