@@ -44,6 +44,7 @@ fn manifest(run_id: &str, source: RunSource, params: OrbParams) -> Manifest {
         universe_hash: universe_hash(&["005930.XKRX".to_string()]),
         strategy_code_hash: String::new(),
         checkpoint_hash: None,
+        universe_metadata_hash: None,
         created_utc: "2024-01-05T09:00:00Z".into(),
     }
 }

@@ -27,7 +27,14 @@ use nautilus_model::instruments::{Instrument, InstrumentAny};
 use nautilus_model::position::Position;
 use nautilus_model::types::{Currency, Money};
 
-use crate::artifacts::data_quality::{CoverageGapRecord, DataQualityReport, GapReasonKind};
+use nautilus_ls::reference::universe_metadata::{
+    assign_liquidity_tier, stratum_of, ConditionerTags, InstrumentMetadata, Resolved, Stratum,
+    UniverseMetadata,
+};
+
+use crate::artifacts::data_quality::{
+    CoverageGapRecord, DataQualityReport, GapReasonKind, TierCompositionEntry,
+};
 use crate::artifacts::manifest::{
     hash_bytes, range_fingerprint, universe_sequence_hash, DataRange, Manifest,
 };
@@ -36,7 +43,7 @@ use crate::artifacts::{run_id, RunSource, RunWriter};
 use crate::agent::sink::DecisionSink;
 use crate::params::OrbParams;
 use crate::strategy::orb::{
-    select_universe, OrbStrategy, SelectedSymbol, UniverseCandidate,
+    select_universe, CandidateMeta, OrbStrategy, SelectedSymbol, UniverseCandidate,
 };
 
 /// Backtest run configuration.
@@ -52,6 +59,12 @@ pub struct BacktestConfig {
     pub starting_balance: f64,
     /// The minute-bar step the strategy trades (default 1).
     pub minute_step: u32,
+    /// Optional `UniverseMetadata` artifact path (plan 2026-07-10-003, U4/R10):
+    /// when set, `build_candidates` joins each candidate to its record, the
+    /// selection gates on tradability + the liquidity floor, accepts carry the
+    /// R9 conditioner tags, and the artifact's content hash is stamped into the
+    /// manifest (KTD2). `None` preserves legacy (metadata-less) behavior.
+    pub metadata_path: Option<PathBuf>,
 }
 
 impl BacktestConfig {
@@ -63,6 +76,7 @@ impl BacktestConfig {
             params: OrbParams::default(),
             starting_balance: 100_000_000.0,
             minute_step: 1,
+            metadata_path: None,
         }
     }
 }
@@ -74,6 +88,11 @@ pub struct RunOutcome {
     pub run_dir: PathBuf,
     /// The run id.
     pub run_id: String,
+    /// The Turn-N per-tier count summary for a metadata-driven run (U6):
+    /// per-tier trade counts + the pre-check verdict, computed from the decision
+    /// stream — **never** from `performance.json` (the KTD5 staging guard).
+    /// `None` for a legacy run.
+    pub tier_summary: Option<Vec<String>>,
 }
 
 /// Run a backtest to a finalized registry run.
@@ -98,6 +117,23 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
     // cannot be mutated mid-run (KTD2). Released on drop / at end of the run.
     let _guard = AdvisoryLock::acquire(&catalog_path, LockKind::Ingest)
         .map_err(|e| anyhow::anyhow!("backtest refused — ingest/live in progress: {e}"))?;
+
+    // Metadata-driven run (U4, plan 2026-07-10-003): load + validate the
+    // artifact and index its records by shcode. The content hash pins the
+    // manifest (KTD2) so the per-tier report can assert the ingest and the
+    // backtest read the same artifact.
+    let metadata: Option<(String, HashMap<String, InstrumentMetadata>)> = match &cfg.metadata_path {
+        Some(path) => {
+            let artifact = UniverseMetadata::load(path).map_err(|e| anyhow::anyhow!(e))?;
+            artifact.validate().map_err(|errs| {
+                anyhow::anyhow!("metadata artifact failed validation:\n  - {}", errs.join("\n  - "))
+            })?;
+            let hash = artifact.content_hash();
+            let map = artifact.records.into_iter().map(|r| (r.shcode.clone(), r)).collect();
+            Some((hash, map))
+        }
+        None => None,
+    };
 
     let start_date = parse_date(&cfg.range.start)?;
     let end_date = parse_date(&cfg.range.end)?;
@@ -129,6 +165,7 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
     let sink_for_loop = sink.clone();
     let starting_balance = cfg.starting_balance;
     let minute_step = cfg.minute_step;
+    let metadata_for_loop = metadata.as_ref().map(|(_, map)| map.clone());
     let loop_out: SessionLoop = tokio::task::spawn_blocking(move || {
         run_sessions(
             &instruments_for_loop,
@@ -139,6 +176,7 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
             minute_step,
             start_ns,
             end_ns,
+            metadata_for_loop.as_ref(),
         )
     })
     .await??;
@@ -174,6 +212,39 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
     let mut data_quality = DataQualityReport::backtest(selected_union.clone(), shift_symbols);
     data_quality.coverage_gaps = collect_gaps(checkpoint.as_ref(), &loop_out.missing);
 
+    // U6: per-tier composition + the Turn-N count summary for a metadata-driven
+    // run — symbols attributed via the artifact, trades via the tagged accept
+    // join over the decision stream. Counts only; `performance.json` is written
+    // unchanged below but never read for this summary (the KTD5 staging guard).
+    let (tier_composition, tier_summary) = match &metadata {
+        Some((_, map)) => {
+            let mut symbol_counts: std::collections::BTreeMap<Stratum, usize> =
+                Stratum::ALL.iter().map(|s| (*s, 0)).collect();
+            for sym in &selected_union {
+                if let Some(rec) = map.get(shcode_of(sym)) {
+                    *symbol_counts
+                        .get_mut(&stratum_of(rec.market_class, rec.cap_tier))
+                        .expect("all strata keyed") += 1;
+                }
+            }
+            let envelopes = sink.snapshot();
+            let (trade_counts, untagged) = crate::runner::report::tier_trade_counts(&envelopes);
+            let entries: Vec<TierCompositionEntry> = Stratum::ALL
+                .iter()
+                .map(|s| TierCompositionEntry {
+                    stratum: s.label().to_string(),
+                    symbols: symbol_counts[s] as u64,
+                    trades: trade_counts[s] as u64,
+                })
+                .collect();
+            let lines =
+                crate::runner::report::tier_summary_lines(&symbol_counts, &trade_counts, untagged);
+            (Some(entries), Some(lines))
+        }
+        None => (None, None),
+    };
+    data_quality.tier_composition = tier_composition;
+
     let rid = run_id(start, RunSource::Backtest, &cfg.params.strategy_id, cfg.params.strategy_version);
     let manifest = Manifest {
         run_id: rid.clone(),
@@ -187,6 +258,7 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
         universe_hash: universe_sequence_hash(&loop_out.selection_sequence),
         strategy_code_hash: crate::artifacts::manifest::strategy_code_hash(),
         checkpoint_hash: checkpoint_hash(&catalog_path),
+        universe_metadata_hash: metadata.as_ref().map(|(hash, _)| hash.clone()),
         created_utc: start.to_rfc3339(),
     };
 
@@ -197,7 +269,7 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
     writer.write_decisions(&sink.snapshot())?;
     let run_dir = writer.finalize()?;
 
-    Ok(RunOutcome { run_dir, run_id: rid })
+    Ok(RunOutcome { run_dir, run_id: rid, tier_summary })
 }
 
 /// The union outcome of driving every in-range session (KTD-1/KTD-6): the folded
@@ -228,6 +300,7 @@ fn run_sessions(
     minute_step: u32,
     start_ns: u64,
     end_ns: u64,
+    metadata: Option<&HashMap<String, InstrumentMetadata>>,
 ) -> anyhow::Result<SessionLoop> {
     // Index the catalog ONCE (one pass each), so the per-session loop does no repeated
     // full-catalog scans: daily bars bucketed per instrument (sorted by ts, for the
@@ -282,7 +355,7 @@ fn run_sessions(
         // this session's open so decisions.jsonl carries one scan per session date.
         let session_ts = kst_to_unix_nanos(*date, KRX_REGULAR_OPEN)?.as_u64();
 
-        let candidates = build_candidates(instruments, &daily_by_inst, *date);
+        let candidates = build_candidates(instruments, &daily_by_inst, *date, metadata);
         for c in &candidates {
             ever_candidate.insert(c.symbol.clone());
         }
@@ -366,7 +439,7 @@ fn run_sessions(
 /// value-divergent same-session bar (an un-healed adjustment-basis overlap); because
 /// `prior` is strictly an earlier date than `today`, the two can never collapse onto
 /// one session (the nonsensical intraday self-gap the read-side dedup eliminates).
-fn select_prior_today<'a>(
+pub(crate) fn select_prior_today<'a>(
     daily_sorted: &[&'a Bar],
     session_date: NaiveDate,
 ) -> Option<(&'a Bar, &'a Bar)> {
@@ -386,6 +459,7 @@ fn build_candidates(
     instruments: &[InstrumentAny],
     daily_by_inst: &HashMap<InstrumentId, Vec<&Bar>>,
     session_date: NaiveDate,
+    metadata: Option<&HashMap<String, InstrumentMetadata>>,
 ) -> Vec<UniverseCandidate> {
     let mut candidates = Vec::new();
     for inst in instruments {
@@ -396,14 +470,52 @@ fn build_candidates(
         let Some((prior, today)) = select_prior_today(daily, session_date) else {
             continue; // no daily today, or no prior before it — not a candidate today
         };
+        let symbol = id.to_string();
+        let prior_turnover = prior.close.as_f64() * prior.volume.as_f64();
+        let meta = candidate_meta(metadata, &symbol, prior_turnover);
         candidates.push(UniverseCandidate {
-            symbol: id.to_string(),
+            symbol,
             prior_close: prior.close.as_f64(),
             today_open: today.open.as_f64(),
-            prior_turnover: prior.close.as_f64() * prior.volume.as_f64(),
+            prior_turnover,
+            meta,
         });
     }
     candidates
+}
+
+/// Join one candidate to its metadata record (U4): `Untagged` for a legacy run
+/// (no artifact), `Missing` when the artifact carries no record for the symbol
+/// (non-selectable, recorded — never silently defaulted, R4), else `Tagged`
+/// with the gate verdict and the R9 conditioner tags. The liquidity tier is
+/// daily-bar derived (a close×volume **proxy**) because the capture-time
+/// turnover attribute is `Unavailable` this turn (R2/R5).
+fn candidate_meta(
+    metadata: Option<&HashMap<String, InstrumentMetadata>>,
+    symbol: &str,
+    prior_turnover: f64,
+) -> CandidateMeta {
+    let Some(map) = metadata else {
+        return CandidateMeta::Untagged;
+    };
+    match map.get(shcode_of(symbol)) {
+        None => CandidateMeta::Missing,
+        Some(rec) => CandidateMeta::Tagged {
+            tradable: rec.tradable,
+            tags: ConditionerTags {
+                cap_tier: rec.cap_tier,
+                liquidity_tier: assign_liquidity_tier(&Resolved::Proxy(prior_turnover)),
+                market_class: rec.market_class,
+                index_membership: rec.index_membership,
+                has_derivative: rec.has_derivative,
+            },
+        },
+    }
+}
+
+/// The shcode of a `{shcode}.XKRX` instrument-id string.
+fn shcode_of(symbol: &str) -> &str {
+    symbol.split('.').next().unwrap_or(symbol)
 }
 
 /// Build + run the engine, returning the finished positions (cloned).
@@ -485,7 +597,7 @@ fn checkpoint_hash(catalog_path: &Path) -> Option<String> {
         .map(|bytes| hash_bytes(&bytes))
 }
 
-fn is_daily(b: &Bar) -> bool {
+pub(crate) fn is_daily(b: &Bar) -> bool {
     b.bar_type.spec().aggregation == BarAggregation::Day
 }
 fn is_minute(b: &Bar) -> bool {
@@ -498,7 +610,7 @@ fn in_range(b: &Bar, start_ns: u64, end_ns: u64) -> bool {
 
 /// The KST calendar date of a bar (delegates to the adapter's single KST
 /// conversion so session-slicing and ingest agree on date boundaries).
-fn kst_date_of(b: &Bar) -> NaiveDate {
+pub(crate) fn kst_date_of(b: &Bar) -> NaiveDate {
     nautilus_ls::ingest::kst_date_of(b.ts_event)
 }
 
@@ -514,7 +626,8 @@ fn end_of_day() -> NaiveTime {
 
 /// CLI entry point for the `lab-backtest` bin. Reads config from env:
 /// `LS_DATA_HOME`, `LS_BT_SDATE`, `LS_BT_EDATE` (required); `LS_BT_MINUTE_STEP`,
-/// `LS_BT_BALANCE` (optional).
+/// `LS_BT_BALANCE`, `LS_BT_METADATA` (optional — the `UniverseMetadata`
+/// artifact path for a metadata-driven run, plan 2026-07-10-003).
 pub fn main_cli() -> anyhow::Result<()> {
     nautilus_ls::scrub::install();
     let data_home = std::env::var("LS_DATA_HOME").map_err(|_| anyhow::anyhow!("LS_DATA_HOME is required"))?;
@@ -527,11 +640,20 @@ pub fn main_cli() -> anyhow::Result<()> {
     if let Ok(bal) = std::env::var("LS_BT_BALANCE") {
         cfg.starting_balance = bal.parse().unwrap_or(cfg.starting_balance);
     }
+    cfg.metadata_path =
+        std::env::var("LS_BT_METADATA").ok().filter(|s| !s.trim().is_empty()).map(PathBuf::from);
     let rt = tokio::runtime::Runtime::new()?;
     let outcome = rt.block_on(run(cfg, Utc::now()))?;
     // R10: a trailing summary block printed AFTER all engine logs, so the only
     // operator-relevant output never scrolls away under the engine's INFO noise.
     print!("{}", summary_block(&outcome.run_id, &outcome.run_dir));
+    // The Turn-N per-tier count summary (U6) — counts + verdict only, computed
+    // from the decision stream, never from performance.json (KTD5).
+    if let Some(lines) = &outcome.tier_summary {
+        for l in lines {
+            println!("{l}");
+        }
+    }
     Ok(())
 }
 

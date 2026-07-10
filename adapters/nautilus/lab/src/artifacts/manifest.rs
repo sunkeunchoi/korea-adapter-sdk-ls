@@ -58,6 +58,14 @@ pub struct Manifest {
     /// the comparability authority — the range-scoped fingerprint is, KTD8).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checkpoint_hash: Option<String>,
+    /// The `UniverseMetadata` artifact's content hash for a metadata-driven run
+    /// (plan 2026-07-10-003, KTD2). The per-tier report asserts it matches the
+    /// ingest pin's hash — a re-capture between ingest and backtest would
+    /// silently re-tier symbols and corrupt the per-tier counts. `None` for a
+    /// legacy (metadata-less) run; absent from prior manifests, hence the
+    /// `serde(default)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub universe_metadata_hash: Option<String>,
     /// The instant the run started (UTC, RFC3339-like stamp).
     pub created_utc: String,
 }

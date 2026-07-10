@@ -13,6 +13,7 @@
 use std::collections::BTreeMap;
 
 use nautilus_core::UUID4;
+use nautilus_ls::reference::universe_metadata::ConditionerTags;
 use nautilus_model::identifiers::InstrumentId;
 use serde::{Deserialize, Serialize};
 
@@ -175,6 +176,12 @@ pub struct DecisionDetail {
     pub filter: Option<String>,
     /// The signal values at decision time (sorted keys → deterministic output).
     pub values: BTreeMap<String, f64>,
+    /// The conditioner-tag set riding a universe-accept decision (R9, KTD4):
+    /// cap tier, liquidity tier, market class, index membership, derivative
+    /// flag — typed, kept off the numeric `values` map. Absent for rejects,
+    /// bar-driven transitions, and metadata-less (legacy) runs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tags: Option<ConditionerTags>,
 }
 
 impl DecisionDetail {
@@ -191,6 +198,7 @@ impl DecisionDetail {
             decision: Some(decision),
             filter,
             values,
+            tags: None,
         }
     }
 
@@ -200,7 +208,13 @@ impl DecisionDetail {
         kind: SignalKind,
         values: BTreeMap<String, f64>,
     ) -> Self {
-        DecisionDetail { kind, symbol: symbol.into(), decision: None, filter: None, values }
+        DecisionDetail { kind, symbol: symbol.into(), decision: None, filter: None, values, tags: None }
+    }
+
+    /// Attach the conditioner-tag set (R9) — used on the universe-accept path.
+    pub fn with_tags(mut self, tags: Option<ConditionerTags>) -> Self {
+        self.tags = tags;
+        self
     }
 }
 
@@ -345,6 +359,7 @@ mod tests {
             decision: Some(Decision::Reject),
             filter: Some("gap".to_string()),
             values: vals(&[("gap_pct", 1.2)]),
+            tags: None,
         }
     }
 
@@ -462,6 +477,47 @@ mod tests {
         assert_eq!(e.lowering, LoweringOutcome::NotEvaluated);
         assert!(e.action.is_none());
         assert!(e.decision_detail.is_some());
+    }
+
+    #[test]
+    fn conditioner_tags_round_trip_and_stay_off_the_values_map() {
+        // R9/KTD4: a tagged universe-accept serializes the five typed tags with
+        // their resolutions, round-trips, and keeps the numeric values map
+        // untouched; an untagged detail keeps `tags` off the wire entirely.
+        use nautilus_ls::reference::universe_metadata::{
+            CapTier, IndexMembership, LiquidityTier, MarketClass, Resolved, Stratum,
+        };
+        let tags = ConditionerTags {
+            cap_tier: CapTier::Top,
+            liquidity_tier: LiquidityTier::High,
+            market_class: MarketClass::Kospi,
+            index_membership: Resolved::Proxy(IndexMembership::Kospi200),
+            has_derivative: Resolved::Value(true),
+        };
+        let d = DecisionDetail::universe(
+            "005930.XKRX",
+            Decision::Accept,
+            None,
+            vals(&[("gap_pct", 5.0)]),
+        )
+        .with_tags(Some(tags));
+        let line = serde_json::to_string(&d).unwrap();
+        assert!(line.contains("\"tags\""), "{line}");
+        assert!(line.contains("\"cap_tier\":\"top\""), "{line}");
+        assert!(
+            line.contains("\"index_membership\":{\"resolution\":\"proxy\",\"value\":\"kospi200\"}"),
+            "proxy resolution stays disclosed on the wire (AE4): {line}"
+        );
+        let back: DecisionDetail = serde_json::from_str(&line).unwrap();
+        assert_eq!(back.tags, Some(tags));
+        assert_eq!(back.tags.unwrap().stratum(), Stratum::KospiBlueChip);
+        assert_eq!(back.values.get("gap_pct").copied(), Some(5.0), "values map untouched");
+        // Untagged details (rejects, transitions, legacy runs) stay tag-free.
+        let untagged = serde_json::to_string(&detail()).unwrap();
+        assert!(!untagged.contains("tags"), "{untagged}");
+        let old_line: DecisionDetail =
+            serde_json::from_str(&untagged).expect("pre-tag lines still parse");
+        assert!(old_line.tags.is_none());
     }
 
     #[test]

@@ -212,6 +212,7 @@ fn report_mfe_through_the_bin_prints_the_distribution() {
         universe_hash: "uh".to_string(),
         strategy_code_hash: "ch".to_string(),
         checkpoint_hash: None,
+        universe_metadata_hash: None,
         created_utc: "2026-07-10T00:00:00+00:00".to_string(),
     };
     std::fs::write(run_dir.join(MANIFEST_FILE), serde_json::to_string(&manifest).unwrap())
@@ -1078,4 +1079,291 @@ async fn catalog_compact_library_reports_clean_on_the_fixture() {
     let out = catalog_compact(&CompactConfig { data_home: dir.path().to_path_buf() }).await.unwrap();
     assert!(!out.refused, "the clean fixture is not refused");
     assert!(out.lines.iter().any(|l| l.contains("compact: OK")));
+}
+
+// ===========================================================================
+// `report tiers` — the Turn-N per-tier count report (plan 2026-07-10-003, U6)
+// ===========================================================================
+
+mod report_tiers {
+    use std::collections::BTreeMap;
+    use std::path::PathBuf;
+
+    use chrono::{TimeZone, Utc};
+    use nautilus_ls::reference::universe_metadata::{
+        CapTier, ConditionerTags, IndexMembership, InstrumentMetadata, LiquidityTier, MarketClass,
+        MetadataPin, MetadataProvenance, Resolved, UniverseMetadata,
+    };
+    use nautilus_ls_lab::agent::context::AgentContext;
+    use nautilus_ls_lab::agent::envelope::{
+        to_jsonl, Decision, DecisionDetail, DecisionEnvelope, DecisionTrigger, SignalKind,
+    };
+    use nautilus_ls_lab::artifacts::{RunSource, DECISIONS_FILE};
+    use nautilus_ls_lab::params::OrbParams;
+    use nautilus_ls_lab::runner::report::{report_tiers, TiersConfig};
+    use tempfile::tempdir;
+
+    use super::*;
+
+    fn tags(market: MarketClass, cap: CapTier) -> ConditionerTags {
+        ConditionerTags {
+            cap_tier: cap,
+            liquidity_tier: LiquidityTier::Unknown,
+            market_class: market,
+            index_membership: Resolved::Proxy(IndexMembership::NotMember),
+            has_derivative: Resolved::Value(false),
+        }
+    }
+
+    fn record(shcode: &str, market: MarketClass, cap_tier: CapTier) -> InstrumentMetadata {
+        let market_cap = match cap_tier {
+            CapTier::BelowBoard => Resolved::Unavailable,
+            _ => Resolved::Value(1_000_000.0),
+        };
+        InstrumentMetadata {
+            shcode: shcode.to_string(),
+            market_class: market,
+            market_cap,
+            cap_tier,
+            turnover: Resolved::Unavailable,
+            liquidity_tier: LiquidityTier::Unknown,
+            index_membership: Resolved::Proxy(IndexMembership::NotMember),
+            has_derivative: Resolved::Value(false),
+            designation: None,
+            tradable: true,
+        }
+    }
+
+    /// 10:00 KST on 2026-06-`day` as UTC unix ns.
+    fn ts_kst(day: u32) -> u64 {
+        Utc.with_ymd_and_hms(2026, 6, day, 1, 0, 0).unwrap().timestamp_nanos_opt().unwrap() as u64
+    }
+
+    /// One tagged accept + one exit for `symbol` on 2026-06-`day`.
+    fn trade(symbol: &str, day: u32, t: ConditionerTags) -> Vec<DecisionEnvelope> {
+        let env = |ts: u64, detail: DecisionDetail| {
+            DecisionEnvelope::telemetry(
+                ts,
+                DecisionTrigger::Manual { reason: "test".to_string() },
+                detail,
+                AgentContext::telemetry("orb", 13, BTreeMap::new(), BTreeMap::new()),
+            )
+        };
+        vec![
+            env(
+                ts_kst(day),
+                DecisionDetail::universe(symbol, Decision::Accept, None, BTreeMap::new())
+                    .with_tags(Some(t)),
+            ),
+            env(
+                ts_kst(day) + 3_600_000_000_000,
+                DecisionDetail::transition(
+                    symbol,
+                    SignalKind::TimeExit,
+                    [("mfe_r".to_string(), 0.5), ("price".to_string(), 100.0)].into(),
+                ),
+            ),
+        ]
+    }
+
+    /// Write a full synthetic metadata-driven run: artifact + catalog daily
+    /// bars + ingest pin + manifest (hash-stamped) + decisions. Returns the
+    /// data home and the run id.
+    async fn build_tiers_fixture(
+        blue_chip_trades: u32,
+        exclusion_trades: u32,
+    ) -> (tempfile::TempDir, String) {
+        let dir = tempdir().unwrap();
+        let data_home = dir.path().to_path_buf();
+
+        // The artifact: one blue-chip KOSPI name, one below-board KOSDAQ name.
+        let artifact = UniverseMetadata {
+            provenance: MetadataProvenance {
+                captured_at: "2026-06-01T00:30:00Z".to_string(),
+                session_date: "20260601".to_string(),
+                source_trs: vec!["t8430".into()],
+                instrument_type_filter: "equities-only (test fixture)".to_string(),
+                tier_boundary_rule: "test".to_string(),
+                cap_cutoffs: Vec::new(),
+                paper_incompatible: Vec::new(),
+            },
+            records: vec![
+                record("005930", MarketClass::Kospi, CapTier::Top),
+                record("300001", MarketClass::Kosdaq, CapTier::BelowBoard),
+            ],
+        };
+        let artifact_path = data_home.join("universe-metadata.json");
+        std::fs::write(&artifact_path, serde_json::to_string_pretty(&artifact).unwrap()).unwrap();
+        let hash = artifact.content_hash();
+
+        // Catalog daily bars for the gap distribution: 005930 gaps +5%
+        // (60000 → 63000 open), 300001 gaps +1% (10000 → 10100 open).
+        let catalog = data_home.join("catalog");
+        for (sym, rows) in [
+            (
+                "005930.XKRX",
+                [
+                    daily_json("20260601", "59000", "60500", "58500", "60000", "1000"),
+                    daily_json("20260602", "63000", "64500", "62000", "64000", "1000"),
+                ],
+            ),
+            (
+                "300001.XKRX",
+                [
+                    daily_json("20260601", "9900", "10100", "9800", "10000", "1000"),
+                    daily_json("20260602", "10100", "10300", "10000", "10200", "1000"),
+                ],
+            ),
+        ] {
+            let bt = BarKind::Daily.bar_type(InstrumentId::from(sym)).unwrap();
+            let bars: Vec<Bar> = rows
+                .iter()
+                .map(|r| {
+                    build_daily_bar(bt, &serde_json::from_value(r.clone()).unwrap())
+                        .unwrap()
+                        .unwrap()
+                })
+                .collect();
+            write_bars(&catalog, bars).await.unwrap();
+        }
+
+        // The ingest pin (KTD2's ingest-side half).
+        MetadataPin {
+            artifact_path: artifact_path.display().to_string(),
+            content_hash: hash.clone(),
+            per_stratum: BTreeMap::from([
+                ("kospi_blue_chip".to_string(), 1usize),
+                ("small_cap_exclusion".to_string(), 1usize),
+            ]),
+            symbols: vec!["005930".to_string(), "300001".to_string()],
+            pinned_at: "2026-06-01T01:00:00Z".to_string(),
+        }
+        .write(&catalog)
+        .unwrap();
+
+        // The finalized run: manifest (hash-stamped) + tagged decisions.
+        let run_id = "20260630T000000Z-backtest-orb-v13".to_string();
+        let run_dir = data_home.join("runs").join(&run_id);
+        std::fs::create_dir_all(&run_dir).unwrap();
+        let mut params = OrbParams::default();
+        params.strategy_version = 13;
+        let manifest = Manifest {
+            run_id: run_id.clone(),
+            source: RunSource::Backtest,
+            strategy_id: "orb".to_string(),
+            strategy_version: 13,
+            params,
+            data_range: DataRange { start: "20260601".to_string(), end: "20260630".to_string() },
+            catalog_fingerprint: "fp".to_string(),
+            universe_hash: "uh".to_string(),
+            strategy_code_hash: "ch".to_string(),
+            checkpoint_hash: None,
+            universe_metadata_hash: Some(hash),
+            created_utc: "2026-06-30T07:00:00Z".to_string(),
+        };
+        std::fs::write(run_dir.join(MANIFEST_FILE), serde_json::to_string(&manifest).unwrap())
+            .unwrap();
+
+        let mut envelopes = Vec::new();
+        for day in 0..blue_chip_trades {
+            envelopes.extend(trade(
+                "005930.XKRX",
+                1 + (day % 30),
+                tags(MarketClass::Kospi, CapTier::Top),
+            ));
+        }
+        for day in 0..exclusion_trades {
+            envelopes.extend(trade(
+                "300001.XKRX",
+                1 + (day % 30),
+                tags(MarketClass::Kosdaq, CapTier::BelowBoard),
+            ));
+        }
+        std::fs::write(run_dir.join(DECISIONS_FILE), to_jsonl(&envelopes).unwrap()).unwrap();
+        (dir, run_id)
+    }
+
+    fn tiers_cfg(data_home: &Path, run_id: &str) -> TiersConfig {
+        TiersConfig {
+            data_home: data_home.to_path_buf(),
+            run_id: Some(run_id.to_string()),
+            artifact_path: None,
+        }
+    }
+
+    /// Covers AE1: ≥30 trades in ≥2 tiers → GREEN, with the per-tier gap-%
+    /// distribution alongside the counts and no expectancy anywhere.
+    #[tokio::test]
+    async fn thirty_trades_in_two_tiers_is_a_green_verdict() {
+        let (dir, run_id) = build_tiers_fixture(30, 31).await;
+        let out = report_tiers(&tiers_cfg(dir.path(), &run_id)).await.unwrap();
+        assert!(out.green);
+        let joined = out.lines.join("\n");
+        assert!(joined.contains("GREEN"), "{joined}");
+        assert!(joined.contains("trades 30"), "{joined}");
+        assert!(joined.contains("trades 31"), "{joined}");
+        // AE2 diagnosability: the gap-% distribution rides every report.
+        assert!(joined.contains("opening-gap%"), "{joined}");
+        assert!(joined.contains("p50 5.00"), "005930 gapped +5%: {joined}");
+        assert!(joined.contains("p50 1.00"), "300001 gapped +1%: {joined}");
+        assert!(joined.contains(">= 3%: 1/1"), "blue-chip session clears gap_min 3.0: {joined}");
+        assert!(joined.contains(">= 3%: 0/1"), "exclusion session misses gap_min 3.0: {joined}");
+        // KTD5 staging guard: counts only.
+        for banned in ["expectancy", "pnl", "p&l"] {
+            assert!(!joined.to_lowercase().contains(banned), "no {banned}: {joined}");
+        }
+    }
+
+    /// Covers AE2: fewer than 2 tiers clearing 30 → RED, a valid completion
+    /// (Ok, not Err) that calls off Turn N+1.
+    #[tokio::test]
+    async fn a_thin_run_is_a_red_verdict_not_a_failure() {
+        let (dir, run_id) = build_tiers_fixture(30, 4).await;
+        let out = report_tiers(&tiers_cfg(dir.path(), &run_id)).await.unwrap();
+        assert!(!out.green, "only one tier clears the floor");
+        let joined = out.lines.join("\n");
+        assert!(joined.contains("RED"), "{joined}");
+        assert!(joined.contains("called off"), "{joined}");
+    }
+
+    /// Covers KTD2: a pin whose hash differs from the run manifest fails the
+    /// report outright — a re-capture between ingest and backtest re-tiers
+    /// symbols and corrupts the counts.
+    #[tokio::test]
+    async fn mismatched_artifact_hashes_fail_the_report() {
+        let (dir, run_id) = build_tiers_fixture(5, 5).await;
+        let catalog = dir.path().join("catalog");
+        let mut pin = MetadataPin::load(&catalog).unwrap().unwrap();
+        pin.content_hash = "recaptured-differently".to_string();
+        pin.write(&catalog).unwrap();
+        let err = report_tiers(&tiers_cfg(dir.path(), &run_id)).await.unwrap_err();
+        assert!(err.to_string().contains("hash mismatch"), "{err}");
+        assert!(err.to_string().contains("KTD2"), "{err}");
+    }
+
+    /// A legacy (metadata-less) run cannot be tier-reported: clean failure
+    /// naming the fix, never a silently empty report.
+    #[tokio::test]
+    async fn a_run_without_metadata_hash_is_a_clean_failure() {
+        let (dir, run_id) = build_tiers_fixture(1, 1).await;
+        // Strip the hash from the manifest.
+        let manifest_path = dir.path().join("runs").join(&run_id).join(MANIFEST_FILE);
+        let mut m: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&manifest_path).unwrap()).unwrap();
+        m.as_object_mut().unwrap().remove("universe_metadata_hash");
+        std::fs::write(&manifest_path, serde_json::to_string(&m).unwrap()).unwrap();
+        let err = report_tiers(&tiers_cfg(dir.path(), &run_id)).await.unwrap_err();
+        assert!(err.to_string().contains("LS_BT_METADATA"), "{err}");
+    }
+
+    /// Dispatch: `report tiers` is reachable through the compiled bin and the
+    /// usage line names it.
+    #[test]
+    fn report_tiers_dispatches_through_the_bin() {
+        let out = bin().args(["report", "bogus-tiers"]).output().unwrap();
+        assert!(!out.status.success());
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("report tiers"), "{stderr}");
+        let _ = PathBuf::new(); // keep the import used on all platforms
+    }
 }

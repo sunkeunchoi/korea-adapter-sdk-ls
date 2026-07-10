@@ -1105,7 +1105,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
 // ===========================================================================
 
 /// A usage string enumerating the valid subcommands (KTD2).
-const USAGE: &str = "usage: lab-research <turn | runs compare | replay | catalog status | catalog compact | analyze --scaffold | report mfe>";
+const USAGE: &str = "usage: lab-research <turn | runs compare | replay | catalog status | catalog compact | analyze --scaffold | report mfe | report tiers>";
 
 /// Parse an optional `YYYYMMDD` range from a pair of env vars, returning `None`
 /// when neither is set and erroring when only one is.
@@ -1224,7 +1224,15 @@ fn dispatch() -> anyhow::Result<ExitCode> {
                 // content (censored / out-of-band) is never a failure.
                 Ok(ExitCode::SUCCESS)
             }
-            other => anyhow::bail!("unknown `report` subcommand {other:?} — want `report mfe`\n{USAGE}"),
+            Some("tiers") => {
+                let rt = tokio::runtime::Runtime::new()?;
+                let out = rt.block_on(crate::runner::report::report_tiers(&tiers_config_from_env()?))?;
+                print_lines(&out.lines);
+                // A red pre-check is a valid completion (AE2), not a failure —
+                // the exit code reflects integrity + I/O only.
+                Ok(ExitCode::SUCCESS)
+            }
+            other => anyhow::bail!("unknown `report` subcommand {other:?} — want `report mfe` | `report tiers`\n{USAGE}"),
         },
         other => anyhow::bail!("unknown subcommand {other:?}\n{USAGE}"),
     }
@@ -1298,6 +1306,17 @@ fn status_config_from_env() -> anyhow::Result<StatusConfig> {
 
 fn compact_config_from_env() -> anyhow::Result<CompactConfig> {
     Ok(CompactConfig { data_home: data_home_from_env()? })
+}
+
+fn tiers_config_from_env() -> anyhow::Result<crate::runner::report::TiersConfig> {
+    Ok(crate::runner::report::TiersConfig {
+        data_home: data_home_from_env()?,
+        run_id: std::env::var("LS_REPORT_RUN").ok().filter(|s| !s.trim().is_empty()),
+        artifact_path: std::env::var("LS_REPORT_METADATA")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .map(std::path::PathBuf::from),
+    })
 }
 
 fn report_config_from_env() -> anyhow::Result<crate::runner::report::ReportConfig> {

@@ -349,6 +349,7 @@ mod tests {
             universe_hash: "fixture-universe".to_string(),
             strategy_code_hash: "fixture-code".to_string(),
             checkpoint_hash: None,
+            universe_metadata_hash: None,
             created_utc: "2026-07-03T00:00:00Z".to_string(),
         };
         let performance = PerformanceReport::assemble(

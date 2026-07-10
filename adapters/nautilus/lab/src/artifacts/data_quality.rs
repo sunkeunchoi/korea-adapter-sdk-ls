@@ -62,6 +62,18 @@ pub struct ReconcileCondition {
     pub symbol: String,
 }
 
+/// One stratum's composition in a metadata-driven run (plan 2026-07-10-003,
+/// U6/R7): how many selected symbols and joined trades the tier carried.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TierCompositionEntry {
+    /// The stratum label (`Stratum::label`).
+    pub stratum: String,
+    /// Selected symbols attributed to the tier (the union across sessions).
+    pub symbols: u64,
+    /// Joined trades attributed to the tier.
+    pub trades: u64,
+}
+
 /// The data-quality report artifact.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DataQualityReport {
@@ -84,6 +96,11 @@ pub struct DataQualityReport {
     /// The resolved universe symbol list used (its hash rides on the manifest; the
     /// composition lives here so the agent can compare runs, R7/KTD8).
     pub universe_snapshot: Vec<String>,
+    /// Per-tier symbol + trade counts for a metadata-driven run (plan
+    /// 2026-07-10-003, U6): typed alongside the flat `universe_snapshot`.
+    /// `None` for a legacy run; absent from prior artifacts (`serde(default)`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tier_composition: Option<Vec<TierCompositionEntry>>,
     /// Free-form observations (scrubbed at write time — the one free-text carrier).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub observations: Vec<String>,
@@ -102,6 +119,7 @@ impl DataQualityReport {
             price_approximated_fills: 0,
             reconcile_advised: Vec::new(),
             universe_snapshot,
+            tier_composition: None,
             observations: Vec::new(),
         }
     }

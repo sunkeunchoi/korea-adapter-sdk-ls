@@ -26,6 +26,8 @@ use nautilus_trading::nautilus_strategy;
 use nautilus_trading::strategy::{Strategy, StrategyConfig, StrategyCore};
 use nautilus_common::actor::DataActor;
 
+use nautilus_ls::reference::universe_metadata::ConditionerTags;
+
 use crate::agent::envelope::{
     Decision, DecisionDetail, DecisionEnvelope, DecisionTrigger, SignalKind,
 };
@@ -44,6 +46,25 @@ pub fn kst_time_from_nanos(ns: u64) -> NaiveTime {
 // Universe scan (stocks-in-play)
 // ---------------------------------------------------------------------------
 
+/// A candidate's reference-data join state (plan 2026-07-10-003, U4). A
+/// metadata-less run gates nothing (`Untagged`, the legacy path); a
+/// metadata-driven run either joined a record (`Tagged` — gate + tags) or did
+/// not (`Missing` — non-selectable and recorded, never silently defaulted, R4).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum CandidateMeta {
+    /// No metadata artifact was supplied — legacy selection, no gate, no tags.
+    Untagged,
+    /// The artifact was supplied but carries no record for this symbol.
+    Missing,
+    /// Joined metadata: the hard tradability verdict + the R9 conditioner tags.
+    Tagged {
+        /// The surveillance gate's verdict (R3) — `false` excludes (AE3).
+        tradable: bool,
+        /// The five conditioner tags that ride the accept envelope (R9).
+        tags: ConditionerTags,
+    },
+}
+
 /// A universe candidate assembled from prior-session daily context.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UniverseCandidate {
@@ -55,6 +76,8 @@ pub struct UniverseCandidate {
     pub today_open: f64,
     /// Prior-session turnover (value traded) used for ranking.
     pub prior_turnover: f64,
+    /// The reference-data join state (U4).
+    pub meta: CandidateMeta,
 }
 
 impl UniverseCandidate {
@@ -67,22 +90,23 @@ impl UniverseCandidate {
     }
 }
 
-/// Run the stocks-in-play scan (KTD6): keep candidates whose gap ≥ `gap_min_pct`,
-/// rank the survivors by prior-session turnover, and cap at `universe_top_n`. Emits
-/// one universe decision envelope per candidate — accept for a selected symbol,
-/// reject naming the filter (`gap` or `turnover_rank`) for the rest (R6, AE2).
-/// Returns the selected symbols in rank order.
+/// Run the stocks-in-play scan (KTD6): gate on tradability + the liquidity
+/// floor (plan 2026-07-10-003, U4 — before the legacy filters), keep candidates
+/// whose gap ≥ `gap_min_pct`, rank the survivors by prior-session turnover, and
+/// cap at `universe_top_n`. Emits one universe decision envelope per candidate —
+/// accept for a selected symbol (carrying the R9 conditioner tags when the run
+/// is metadata-driven), reject naming the filter (`missing_metadata`,
+/// `not_tradable`, `turnover_floor`, `gap`, or `turnover_rank`) for the rest
+/// (R6, AE2/AE3). Returns the selected symbols in rank order.
 pub fn select_universe(
     candidates: &[UniverseCandidate],
     params: &OrbParams,
     sink: &DecisionSink,
     ts_event: u64,
 ) -> Vec<String> {
-    // Partition on the gap filter first.
     let mut passed: Vec<&UniverseCandidate> = Vec::new();
     for c in candidates {
-        let gap = c.gap_pct();
-        if gap < params.gap_min_pct {
+        let reject = |filter: &str, values: BTreeMap<String, f64>| {
             emit_telemetry(
                 sink,
                 params,
@@ -91,9 +115,40 @@ pub fn select_universe(
                 DecisionDetail::universe(
                     c.symbol.clone(),
                     Decision::Reject,
-                    Some("gap".to_string()),
-                    vals(&[("gap_pct", gap), ("prior_close", c.prior_close), ("today_open", c.today_open)]),
+                    Some(filter.to_string()),
+                    values,
                 ),
+            );
+        };
+        // Metadata gate first (U4): a symbol the artifact does not cover is
+        // non-selectable and recorded (R4); a designated symbol is excluded
+        // even when its gap and turnover qualify (R3, AE3).
+        match c.meta {
+            CandidateMeta::Missing => {
+                reject("missing_metadata", vals(&[("prior_turnover", c.prior_turnover)]));
+                continue;
+            }
+            CandidateMeta::Tagged { tradable: false, .. } => {
+                reject("not_tradable", vals(&[("gap_pct", c.gap_pct()), ("prior_turnover", c.prior_turnover)]));
+                continue;
+            }
+            CandidateMeta::Untagged | CandidateMeta::Tagged { tradable: true, .. } => {}
+        }
+        // Liquidity floor (R5): evaluated on the daily-bar prior_turnover —
+        // present for every ingested candidate, so an `Unavailable` capture
+        // turnover never silently passes or fails the floor. Default 0.0 = off.
+        if params.turnover_floor_krw > 0.0 && c.prior_turnover < params.turnover_floor_krw {
+            reject(
+                "turnover_floor",
+                vals(&[("prior_turnover", c.prior_turnover), ("turnover_floor_krw", params.turnover_floor_krw)]),
+            );
+            continue;
+        }
+        let gap = c.gap_pct();
+        if gap < params.gap_min_pct {
+            reject(
+                "gap",
+                vals(&[("gap_pct", gap), ("prior_close", c.prior_close), ("today_open", c.today_open)]),
             );
         } else {
             passed.push(c);
@@ -111,6 +166,13 @@ pub fn select_universe(
     let mut selected = Vec::new();
     for (rank, c) in passed.iter().enumerate() {
         if rank < params.universe_top_n {
+            // The accept envelope carries the full conditioner-tag set (R9,
+            // KTD4) so every resulting trade is attributable to its tier via
+            // the (symbol, session) join — no artifact re-read at report time.
+            let tags = match c.meta {
+                CandidateMeta::Tagged { tags, .. } => Some(tags),
+                _ => None,
+            };
             emit_telemetry(
                 sink,
                 params,
@@ -121,7 +183,8 @@ pub fn select_universe(
                     Decision::Accept,
                     None,
                     vals(&[("gap_pct", c.gap_pct()), ("prior_turnover", c.prior_turnover), ("rank", rank as f64)]),
-                ),
+                )
+                .with_tags(tags),
             );
             selected.push(c.symbol.clone());
         } else {
@@ -596,6 +659,7 @@ impl OrbStrategy {
                                 ("breakout_strength_min", self.params.breakout_strength_min),
                                 ("breakout_strength_max", self.params.breakout_strength_max),
                             ]),
+                            tags: None,
                         });
                         continue;
                     }
@@ -619,6 +683,7 @@ impl OrbStrategy {
                             decision: None,
                             filter: Some(filter.to_string()),
                             values: vals(&[("open_positions", open as f64), ("qty", qty as f64)]),
+                            tags: None,
                         });
                         continue;
                     }

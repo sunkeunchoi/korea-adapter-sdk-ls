@@ -26,6 +26,10 @@ name = "capture-universe"
 path = "src/bin/capture-universe.rs"
 
 [[bin]]
+name = "capture-universe-metadata"
+path = "src/bin/capture-universe-metadata.rs"
+
+[[bin]]
 name = "budget-probe"
 path = "src/bin/budget-probe.rs"
 
