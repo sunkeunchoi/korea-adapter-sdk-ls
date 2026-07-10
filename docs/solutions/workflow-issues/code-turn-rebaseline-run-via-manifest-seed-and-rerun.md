@@ -1,0 +1,131 @@
+---
+title: "Producing a version-labeled code-turn re-baseline run when the lab-research CLI has no version-only-bump path"
+date: 2026-07-10
+category: workflow-issues
+module: "adapters/nautilus/lab strategy loop — runner/research.rs turn/rerun surface + artifacts/manifest.rs strategy_code_hash; operator data home data/turn4-fresh"
+problem_type: workflow_issue
+component: development_workflow
+applies_when:
+  - "Running a strategy-loop CODE turn — one that edits crates/strategy source (adapters/nautilus/lab/src/strategy/orb.rs) and so bumps strategy_code_hash — but changes no swept OrbParams field (or the new param stays at its default)"
+  - "You need the run labeled at the next version (e.g. v9) with params otherwise identical to the prior run, over an existing operator data home"
+  - "`lab-research turn` refuses: the governed param turn requires a real param change to bump the version, and the rerun path keeps the current version — neither yields a version-only bump, and there is no LS_TURN_FORCE_VERSION"
+severity: medium
+related_components:
+  - "lab-research CLI (turn / runs compare)"
+  - "strategy loop re-baseline governance"
+---
+
+## Context
+
+The `adapters/nautilus/lab` strategy loop advances by **turns**, each judged against the
+prior run. The `lab-research turn` CLI produces runs two ways
+(`adapters/nautilus/lab/src/runner/research.rs`):
+
+- **Governed param turn** (`LS_TURN_PARAM` set) — applies exactly one `OrbParams`
+  change, bumps `strategy_version` by 1, and refuses unless the manifest diff is
+  exactly `{the param, strategy_version}` (research.rs ~373-389).
+- **Rerun** (no `LS_TURN_PARAM`) — reruns with the current params and **no version
+  bump** (research.rs ~269-283).
+
+A **code turn** — editing `orb.rs` (which moves `strategy_code_hash`) while changing
+no swept param — fits neither. You want the next version label (v9) with params
+identical to the prior run (v8). The governed path won't run without a param change;
+the rerun path won't bump the version. There is no force-version env var.
+
+This is the recurring shape for every exit-geometry / entry-logic turn (turn 5 → v6,
+turn 8 → v9). The mechanic below is how to get a clean version-labeled run with the
+new code hash over the existing catalog, fully offline.
+
+## Guidance
+
+**Seed a version-authority manifest, then rerun.** `latest_finalized_run` reads only
+each run's `manifest.json` (research.rs:101-106 → `ordered_runs().last()` →
+`read_manifest`), and `list_runs` accepts any run dir not prefixed `.tmp-`
+(`adapters/nautilus/lab/src/artifacts/mod.rs:210`). So a manifest-only dir is a valid
+params/version authority for the next rerun.
+
+1. **Seed.** Copy the latest finalized run's `manifest.json` into a new run dir named
+   `<later-timestamp>Z-backtest-orb-v<N>/`. Set `strategy_version` and
+   `params.strategy_version` to `N`, and add any newly-introduced param at its default
+   (e.g. `profit_target_r: 1.0`). No `performance.json` / `decisions.jsonl` needed.
+
+2. **Order it last.** `run_order_key` sorts by `(timestamp-head, version)`
+   (research.rs:84-89), so date the seed *after* the prior run (a 2026-07-10 stamp
+   outranks a 2026-07-09 run) — otherwise `latest_finalized_run` won't pick it.
+
+3. **Rerun.** Run `lab-research turn` with **no** `LS_TURN_PARAM`. Rerun mode reads the
+   seed as the current authority (version `N`, new param at default), pins the seed's
+   `data_range`, and runs the backtest with the compiled-in new code → a real
+   `<now>Z-backtest-orb-v<N>` run whose manifest carries the **new** `strategy_code_hash`.
+
+4. **Remove the seed dir.** The real run (later timestamp) outranks it; delete the seed
+   for registry hygiene. The data home is gitignored, so nothing hits git either way.
+
+5. **Capture the re-baseline signal.** `runs compare` param-mode `v(N-1) → vN` **FAILs**
+   — `FAIL: strategy_code_hash differs` (research.rs ~571-574), plus
+   `param diff must be exactly {strategy_version, one param}` when the new param's default
+   equals the run value (so `param_diff` shows only `["strategy_version"]`). That FAIL
+   *is* the re-baseline evidence — capture it; no `runs compare` mode PASSes a code turn.
+
+## Why This Matters
+
+`strategy_code_hash = sha256(include_str!("orb.rs"))`
+(`adapters/nautilus/lab/src/artifacts/manifest.rs:97-99`,
+`adapters/nautilus/lab/src/strategy/mod.rs:10` `ORB_SOURCE`). It fingerprints **only
+`orb.rs`** — runner or param edits do not move it (that's why turn 5's runner rewrite
+kept v5's hash). A code turn is therefore judged on the **edge bar** (expectancy /
+dominance), not on a green compare: the compare *is expected to fail*, and treating that
+FAIL as a stop instead of the signal would block every code turn.
+
+Doing this via seed+rerun (rather than a governed turn to a non-default param value)
+keeps the code change as the turn's single change — the new param stays at its provisional
+default, and its sweep is deferred to a later governed param turn.
+
+## When to Apply
+
+Any strategy-loop code turn (edits `orb.rs`) that needs a version-labeled re-baseline run
+over an existing data home, where the change touches no swept param (or the new param
+holds its default). Not needed for a governed single-param turn — that bumps the version
+through `LS_TURN_PARAM` normally.
+
+## Examples
+
+Turn 8 (v8 → v9, fixed profit target; `profit_target_r` default 1.0):
+
+```bash
+# Data home lives at REPO ROOT: /data (gitignored), NOT under adapters/nautilus/.
+DH=$PWD/data/turn4-fresh
+
+# 1. Seed a v9 params-authority manifest from the v8 run (Python: copy + edit).
+python3 - <<'PY'
+import json, os
+v8 = json.load(open(f'{DH}/runs/<v8-run-id>/manifest.json'))
+seed = dict(v8, run_id='20260710T000000Z-backtest-orb-v9', strategy_version=9)
+seed['params'] = dict(v8['params'], strategy_version=9, profit_target_r=1.0)
+os.makedirs(f'{DH}/runs/20260710T000000Z-backtest-orb-v9', exist_ok=True)
+json.dump(seed, open(f'{DH}/runs/20260710T000000Z-backtest-orb-v9/manifest.json','w'), indent=2)
+PY
+
+# 2. Rerun (no LS_TURN_PARAM) — reads the seed as authority, runs the new code.
+LS_DATA_HOME=$DH ./adapters/nautilus/target/release/lab-research turn
+# -> "rerun: current params (strategy v9) ... finalized run 20260710T013757Z-backtest-orb-v9"
+
+# 3. Remove the seed; the real run outranks it.
+rm -rf $DH/runs/20260710T000000Z-backtest-orb-v9
+
+# 4. Capture the re-baseline FAIL (the intended signal, exit 1).
+LS_DATA_HOME=$DH LS_COMPARE_A=<v8-run-id> LS_COMPARE_B=20260710T013757Z-backtest-orb-v9 \
+  LS_COMPARE_MODE=param ./adapters/nautilus/target/release/lab-research runs compare
+# param diff: ["strategy_version"]
+# FAIL: strategy_code_hash differs
+# verdict: FAIL
+```
+
+**Shortcut for a follow-up code turn on the same version:** if the latest finalized run
+is *already* at version `N` (e.g. you re-run vN after applying a code-review fix), you can
+skip the seed entirely — a plain rerun reads that run as authority and reproduces vN with
+the new hash. Confirm the edit is behavior-neutral by checking the summary is byte-identical
+where expected. Rebuild the release binary from `adapters/nautilus/lab` first
+(`cargo build --release -p nautilus-ls-lab --bin lab-research`) — building from repo root
+fails with `package ID specification nautilus-ls-lab did not match any packages`, and a
+stale binary silently produces a run with the old hash.

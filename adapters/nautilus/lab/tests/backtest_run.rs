@@ -181,6 +181,20 @@ async fn full_backtest_lands_a_registry_run() {
     // AE3: the signal log is subsumed by decisions.jsonl — no signals.jsonl remains.
     assert!(!outcome.run_dir.join("signals.jsonl").exists(), "subsumed by decisions.jsonl");
 
+    // R5: every exit envelope (Target / StopHit / TimeExit) carries per-trade MFE
+    // alongside qty + price, so the next exit-tuning turn reads give-back directly.
+    let exits: Vec<_> = envelopes
+        .iter()
+        .filter_map(|e| e.decision_detail.as_ref())
+        .filter(|d| matches!(d.kind, SignalKind::Target | SignalKind::StopHit | SignalKind::TimeExit))
+        .collect();
+    assert!(!exits.is_empty(), "the completed trade recorded an exit");
+    for d in &exits {
+        for key in ["mfe_r", "qty", "price"] {
+            assert!(d.values.contains_key(key), "exit {:?} carries {key}: {:?}", d.kind, d.values);
+        }
+    }
+
     let perf = read_perf(&outcome.run_dir);
     assert_eq!(perf.summary["num_trades"], 1.0, "one completed ORB trade");
     assert!(perf.summary["pnl_total"] > 0.0, "the winning trade is positive");

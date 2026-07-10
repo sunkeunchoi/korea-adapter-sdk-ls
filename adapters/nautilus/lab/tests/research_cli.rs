@@ -553,6 +553,35 @@ async fn param_verdict_fails_on_a_three_key_diff() {
     );
 }
 
+/// Turn-8 / KTD5: a **code turn** (v9) bumps only `strategy_version` — its fixed
+/// profit target rides `orb.rs`, not a swept param (`profit_target_r`'s default
+/// keeps it out of `param_diff`). The param-mode verdict therefore FAILs on the
+/// version-only diff: no `runs compare` mode PASSes a code turn, so the turn is
+/// judged on the edge bar, not a green compare.
+#[tokio::test]
+async fn param_verdict_fails_on_a_version_only_code_turn_diff() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    // v8 baseline then a v9 run with identical params (a code-turn shape).
+    let v8 = seed_run(dir.path(), 2.4, 8, stamp(0)).await;
+    let v9 = seed_run(dir.path(), 2.4, 9, stamp(10)).await;
+
+    let verdict = compare(&CompareConfig {
+        data_home: dir.path().to_path_buf(),
+        run_a: Some(v8),
+        run_b: Some(v9),
+        mode: CompareMode::Param,
+        explanation: None,
+    })
+    .unwrap();
+    assert!(!verdict.pass, "a version-only (code-turn) diff FAILs param mode: {:?}", verdict.lines);
+    assert!(
+        verdict.lines.iter().any(|l| l.contains("must be exactly")),
+        "the FAIL names the not-exactly-{{version, one param}} diff: {:?}",
+        verdict.lines
+    );
+}
+
 #[tokio::test]
 async fn data_verdict_requires_an_explanation_for_deltas() {
     let dir = tempdir().unwrap();
