@@ -164,9 +164,92 @@ fn unknown_subcommand_enumerates_valid_ones() {
     assert!(!out.status.success(), "unknown subcommand is a non-zero exit");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("unknown subcommand"), "{stderr}");
-    for expected in ["turn", "runs compare", "replay", "catalog status", "analyze --scaffold"] {
+    for expected in
+        ["turn", "runs compare", "replay", "catalog status", "analyze --scaffold", "report mfe"]
+    {
         assert!(stderr.contains(expected), "usage enumerates {expected:?}: {stderr}");
     }
+}
+
+#[test]
+fn report_unknown_mode_names_report_mfe() {
+    let out = bin().args(["report", "bogus"]).output().unwrap();
+    assert!(!out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("report mfe"), "{stderr}");
+}
+
+#[test]
+fn report_mfe_through_the_bin_prints_the_distribution() {
+    // Dispatch + env wiring end-to-end: a synthetic finalized run (manifest +
+    // decisions.jsonl) under LS_DATA_HOME, selected by LS_REPORT_RUN, prints the
+    // MFE distribution with the shcode verbatim (KTD8) and exits zero.
+    use std::collections::BTreeMap;
+
+    use nautilus_ls_lab::agent::context::AgentContext;
+    use nautilus_ls_lab::agent::envelope::{
+        to_jsonl, DecisionDetail, DecisionEnvelope, DecisionTrigger, SignalKind,
+    };
+    use nautilus_ls_lab::artifacts::{RunSource, DECISIONS_FILE};
+    use nautilus_ls_lab::params::OrbParams;
+
+    let dir = tempdir().unwrap();
+    let run_id = "20260601T000000Z-backtest-orb-v9";
+    let run_dir = dir.path().join("runs").join(run_id);
+    std::fs::create_dir_all(&run_dir).unwrap();
+
+    let mut params = OrbParams::default();
+    params.strategy_version = 9;
+    params.profit_target_r = 1.0;
+    let manifest = Manifest {
+        run_id: run_id.to_string(),
+        source: RunSource::Backtest,
+        strategy_id: "orb".to_string(),
+        strategy_version: 9,
+        params,
+        data_range: DataRange { start: "20260601".to_string(), end: "20260630".to_string() },
+        catalog_fingerprint: "fp".to_string(),
+        universe_hash: "uh".to_string(),
+        strategy_code_hash: "ch".to_string(),
+        checkpoint_hash: None,
+        created_utc: "2026-07-10T00:00:00+00:00".to_string(),
+    };
+    std::fs::write(run_dir.join(MANIFEST_FILE), serde_json::to_string(&manifest).unwrap())
+        .unwrap();
+
+    let vals = |pairs: &[(&str, f64)]| -> BTreeMap<String, f64> {
+        pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect()
+    };
+    let env = |kind: SignalKind, values: BTreeMap<String, f64>| {
+        DecisionEnvelope::telemetry(
+            // 10:00 KST on 2026-06-01 (01:00Z).
+            1_780_275_600_000_000_000,
+            DecisionTrigger::Manual { reason: "test".to_string() },
+            DecisionDetail::transition("005930.XKRX", kind, values),
+            AgentContext::telemetry("orb", 9, BTreeMap::new(), BTreeMap::new()),
+        )
+    };
+    let envelopes = vec![
+        env(
+            SignalKind::Breakout,
+            vals(&[("range_high", 100.0), ("range_low", 90.0), ("breakout_price", 101.0)]),
+        ),
+        env(SignalKind::Target, vals(&[("mfe_r", 1.05), ("price", 111.0), ("qty", 10.0)])),
+    ];
+    std::fs::write(run_dir.join(DECISIONS_FILE), to_jsonl(&envelopes).unwrap()).unwrap();
+
+    let out = bin()
+        .args(["report", "mfe"])
+        .env("LS_DATA_HOME", dir.path())
+        .env("LS_REPORT_RUN", run_id)
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("mfe_r percentiles"), "{stdout}");
+    assert!(stdout.contains("target-exit share: 1/1"), "{stdout}");
+    assert!(!stdout.contains("***"), "structured output is not masked: {stdout}");
+    assert!(stdout.contains("candidate verdict:"), "{stdout}");
 }
 
 #[test]

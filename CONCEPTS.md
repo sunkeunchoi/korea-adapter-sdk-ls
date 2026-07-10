@@ -149,6 +149,9 @@ The development model for trading strategies on the Nautilus adapter: collect da
 ### Run registry
 The append-only store of strategy-run records. Every run — backtest or live paper — deposits the same four agent-readable artifacts: a performance report (fills, per-trade P&L, equity curve, summary stats), a per-decision envelope stream (`decisions.jsonl` — every candidate evaluated, the decision, and the rejecting filter/signal values), a data-quality report (coverage gaps, adjustment-basis splice flags, and for live runs any reconcile-advised conditions), and a run manifest (strategy version, full parameter set, data range, catalog state) that makes any two runs comparable and any run reproducible. Runs are never overwritten; improvement analyses are stored alongside the runs they analyzed.
 
+### Latest finalized run
+The newest completed record in the [[Run registry]], and the loop's single authority for "current": a governed parameter turn resolves the parameters it proposes from — and its guardrail measures relative change against — the latest finalized run's manifest, regardless of which older run an operator happens to be inspecting. Any tool that previews a governed decision while reading a different run must either share this anchor or state the divergence explicitly, because a verdict computed off an older run's parameters can flip against what the governed turn will actually decide.
+
 ### Strategy lab
 The crate that houses strategy code, the backtest and live-paper runners, and the artifact writer — deliberately separate from the certified adapter crate, whose contract is translation only. The [[Strategy-improvement loop]] exists to generate strategy churn, and the lab boundary keeps that churn from destabilizing the adapter.
 
@@ -166,3 +169,6 @@ The two refuse-and-run-nothing guards a parameter [[Strategy-improvement loop]] 
 
 ### Strategy-logic turn
 A loop turn that changes the strategy's *code* rather than a parameter or the data — adding or altering entry/exit logic such as a profit target, trailing stop, or breakout-strength filter. It is the third turn type alongside a parameter turn (see [[Param-turn governance]]) and a [[Composed data turn]]. Because it edits code it bumps the strategy's code hash and **re-baselines** the loop (the new strategy version becomes the base for subsequent runs), so it sits *outside* [[Param-turn governance]] — its outcome is a re-baseline, not a keep/revert verdict on one knob. It is the correct escalation when no parameter knob can move the metric that matters: e.g. when a knob raises win rate but expectancy stays negative, the residual lives in payoff/exit geometry, which only a strategy-logic turn can change.
+
+### MFE (maximum favorable excursion)
+The per-trade best unrealized gain, expressed in R-multiples of the opening range: how far price moved in the trade's favor between entry and exit, regardless of where the exit actually landed. Recorded on every exit envelope in a run's decision stream so exit-geometry tuning reads give-back (MFE achieved vs. profit realized) directly from data instead of reconstructing it. A trade stopped out at −1R with an MFE of +1.2R gave back a winner; a distribution of MFEs across a run tells an exit-tuning turn where a profit target should sit. Zero before entry or when the opening range is degenerate.

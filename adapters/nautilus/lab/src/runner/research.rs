@@ -68,8 +68,9 @@ fn data_home_from_env() -> anyhow::Result<PathBuf> {
         .into())
 }
 
-/// Read a finalized run's manifest.
-fn read_manifest(data_home: &Path, run_id: &str) -> anyhow::Result<Manifest> {
+/// Read a finalized run's manifest. Crate-visible: `runner::report` resolves
+/// its source run through the same seam.
+pub(crate) fn read_manifest(data_home: &Path, run_id: &str) -> anyhow::Result<Manifest> {
     let path = data_home.join("runs").join(run_id).join(MANIFEST_FILE);
     let text = std::fs::read_to_string(&path)
         .map_err(|e| anyhow::anyhow!("reading {}: {e}", path.display()))?;
@@ -1104,7 +1105,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
 // ===========================================================================
 
 /// A usage string enumerating the valid subcommands (KTD2).
-const USAGE: &str = "usage: lab-research <turn | runs compare | replay | catalog status | catalog compact | analyze --scaffold>";
+const USAGE: &str = "usage: lab-research <turn | runs compare | replay | catalog status | catalog compact | analyze --scaffold | report mfe>";
 
 /// Parse an optional `YYYYMMDD` range from a pair of env vars, returning `None`
 /// when neither is set and erroring when only one is.
@@ -1215,6 +1216,16 @@ fn dispatch() -> anyhow::Result<ExitCode> {
             }
             other => anyhow::bail!("unknown `analyze` mode {other:?} — want `analyze --scaffold`\n{USAGE}"),
         },
+        Some("report") => match std::env::args().nth(2).as_deref() {
+            Some("mfe") => {
+                let out = crate::runner::report::report_mfe(&report_config_from_env()?)?;
+                print_lines(&out.lines);
+                // The exit code reflects I/O success only — the distribution's
+                // content (censored / out-of-band) is never a failure.
+                Ok(ExitCode::SUCCESS)
+            }
+            other => anyhow::bail!("unknown `report` subcommand {other:?} — want `report mfe`\n{USAGE}"),
+        },
         other => anyhow::bail!("unknown subcommand {other:?}\n{USAGE}"),
     }
 }
@@ -1287,6 +1298,17 @@ fn status_config_from_env() -> anyhow::Result<StatusConfig> {
 
 fn compact_config_from_env() -> anyhow::Result<CompactConfig> {
     Ok(CompactConfig { data_home: data_home_from_env()? })
+}
+
+fn report_config_from_env() -> anyhow::Result<crate::runner::report::ReportConfig> {
+    Ok(crate::runner::report::ReportConfig {
+        data_home: data_home_from_env()?,
+        // Absent → default to the latest finalized run, marked as defaulted in
+        // the report header. (Unlike `analyze --scaffold`, which hard-requires
+        // LS_ANALYZE_RUN because it WRITES into the run dir — the report is
+        // read-only, so a default is safe.)
+        run_id: std::env::var("LS_REPORT_RUN").ok().filter(|s| !s.trim().is_empty()),
+    })
 }
 
 fn scaffold_config_from_env() -> anyhow::Result<ScaffoldConfig> {
