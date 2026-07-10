@@ -198,6 +198,9 @@ pub enum ExitReason {
     Stop,
     /// The time-flat deadline was reached with a position still open.
     TimeFlat,
+    /// The fixed profit target (`entry_price + profit_target_r · R`) was reached
+    /// while Long — banked at the target price, a favorable limit (R1).
+    Target,
 }
 
 /// An action the state machine asks the strategy to take on a bar.
@@ -218,6 +221,12 @@ pub struct OrbState {
     saw_range: bool,
     session_high: i64,
     session_low: i64,
+    /// The breakout fill price (the emitted Enter limit) — the target's reference
+    /// (KTD1). Zero before an entry.
+    entry_price: i64,
+    /// The post-entry high-water mark, updated each Long bar — the basis for
+    /// per-trade MFE (KTD4). Zero before an entry.
+    high_water: i64,
 }
 
 impl Default for OrbState {
@@ -229,6 +238,8 @@ impl Default for OrbState {
             saw_range: false,
             session_high: i64::MIN,
             session_low: i64::MAX,
+            entry_price: 0,
+            high_water: 0,
         }
     }
 }
@@ -258,6 +269,26 @@ impl OrbState {
     /// (KTD9). `None` before any bar.
     pub fn session_extremes(&self) -> Option<(i64, i64)> {
         (self.session_high != i64::MIN).then_some((self.session_high, self.session_low))
+    }
+
+    /// The breakout fill price the target is measured from (KTD1). Zero before an
+    /// entry.
+    pub fn entry_price(&self) -> i64 {
+        self.entry_price
+    }
+
+    /// Per-trade maximum-favorable-excursion in R-multiples (R5, KTD4):
+    /// `(high_water − entry_price) / R`, where `R = range_high − range_low`.
+    /// Returns `0.0` before an entry or when the range is degenerate (`R ≤ 0`).
+    pub fn mfe_r(&self) -> f64 {
+        if !self.saw_range {
+            return 0.0; // range sentinels are unset — never subtract them
+        }
+        let r = self.range_high - self.range_low;
+        if r <= 0 {
+            return 0.0;
+        }
+        (self.high_water - self.entry_price) as f64 / r as f64
     }
 
     /// Force the symbol flat/done — used by the strategy when the sizing gate vetoes
@@ -307,6 +338,10 @@ impl OrbState {
         if t >= params.flat_time {
             let mut acts = Vec::new();
             if self.phase == Phase::Long {
+                // The flat bar is still part of the hold — fold its high into the
+                // high-water mark so a TimeFlat exit's MFE matches the Stop/Target
+                // exits (R5: MFE covers the whole trade, including the exit bar).
+                self.high_water = self.high_water.max(high);
                 acts.push(OrbAction::Exit { limit_price: low, reason: ExitReason::TimeFlat });
             }
             self.phase = Phase::Done;
@@ -323,13 +358,46 @@ impl OrbState {
             // range high is the trigger; the fill price must be marketable, KTD6).
             acts.push(OrbAction::Enter { limit_price: high });
             self.phase = Phase::Long;
+            // The fill price is the target's reference (KTD1); seed the high-water
+            // mark so MFE starts at the entry (R5, KTD4).
+            self.entry_price = high;
+            self.high_water = high;
         }
-        if self.phase == Phase::Long && low <= self.range_low {
-            // Stop: a marketable sell limit at the breaching bar's low.
-            acts.push(OrbAction::Exit { limit_price: low, reason: ExitReason::Stop });
-            self.phase = Phase::Done;
+        if self.phase == Phase::Long {
+            // Track the post-entry peak for per-trade MFE. On the entry bar this is
+            // a no-op (high_water was just set to high).
+            self.high_water = self.high_water.max(high);
+            if low <= self.range_low {
+                // Stop first (KTD2 / R4): when a bar breaches both the stop and the
+                // target, Stop wins — intrabar order is unknowable, so fail toward
+                // the conservative side (matches KTD6's pessimistic fills). This is
+                // also the whipsaw same-bar enter+stop path (R3), unchanged.
+                acts.push(OrbAction::Exit { limit_price: low, reason: ExitReason::Stop });
+                self.phase = Phase::Done;
+            } else if let Some(target) = self.target_price(params) {
+                if high >= target {
+                    // Bank the move at the target price — a favorable limit, not the
+                    // bar wick (R1). The entry bar can never reach here: its high
+                    // equals entry_price < target.
+                    acts.push(OrbAction::Exit { limit_price: target, reason: ExitReason::Target });
+                    self.phase = Phase::Done;
+                }
+            }
         }
         acts
+    }
+
+    /// The fixed profit-target price `entry_price + round(profit_target_r · R)`
+    /// (R1, KTD1), or `None` when the range is degenerate (`R ≤ 0`) or the target
+    /// size is non-positive — either way the entry bar can never trip the target
+    /// (a `profit_target_r ≤ 0` from a hand-seeded manifest must not fire an
+    /// immediate same-bar breakeven exit).
+    fn target_price(&self, params: &OrbParams) -> Option<i64> {
+        let r = self.range_high - self.range_low;
+        if r <= 0 || params.profit_target_r <= 0.0 {
+            return None;
+        }
+        Some(self.entry_price + (params.profit_target_r * r as f64).round() as i64)
     }
 }
 
@@ -519,11 +587,15 @@ impl OrbStrategy {
                     let kind = match reason {
                         ExitReason::Stop => SignalKind::StopHit,
                         ExitReason::TimeFlat => SignalKind::TimeExit,
+                        ExitReason::Target => SignalKind::Target,
                     };
+                    // Per-trade MFE (R5) rides every exit envelope so the next
+                    // exit-tuning turn reads give-back directly.
+                    let mfe_r = self.states.get(&id).map(|s| s.mfe_r()).unwrap_or(0.0);
                     self.emit_market_data(id, ts, DecisionDetail::transition(
                         symbol.clone(),
                         kind,
-                        vals(&[("qty", qty as f64), ("price", limit_price as f64)]),
+                        vals(&[("qty", qty as f64), ("price", limit_price as f64), ("mfe_r", mfe_r)]),
                     ));
                     self.entered_qty.remove(&id);
                 }

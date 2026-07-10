@@ -39,6 +39,20 @@ pub struct OrbParams {
     /// Fixed notional (KRW) targeted per position; the entry quantity is
     /// `floor(notional / entry_price)`.
     pub notional_per_position: f64,
+    /// Fixed profit target in R-multiples of the opening range
+    /// (`R = range_high − range_low`): while Long, exit when a bar's high reaches
+    /// `entry_price + profit_target_r · R`. Provisional default **1.0**; **1.5** is
+    /// the Step-0 sim optimum reserved for a later param-turn sweep. Prior manifests
+    /// lacking this key still deserialize (KTD3) — hence the `serde(default)`.
+    #[serde(default = "default_profit_target_r")]
+    pub profit_target_r: f64,
+}
+
+/// The back-compat default for [`OrbParams::profit_target_r`] (R2, KTD3): a v8
+/// manifest written before the field existed deserializes with this value, so
+/// every prior run in `data/turn4-fresh` still resolves.
+fn default_profit_target_r() -> f64 {
+    1.0
 }
 
 impl Default for OrbParams {
@@ -54,6 +68,7 @@ impl Default for OrbParams {
             // 15:00 KST time-flat (before the 15:30 regular close).
             flat_time: NaiveTime::from_hms_opt(15, 0, 0).expect("valid time"),
             notional_per_position: 10_000_000.0,
+            profit_target_r: default_profit_target_r(),
         }
     }
 }
@@ -142,6 +157,7 @@ mod tests {
         assert_eq!(p.range_open, KRX_REGULAR_OPEN);
         assert_eq!(p.range_end(), NaiveTime::from_hms_opt(9, 15, 0).unwrap());
         assert_eq!(p.flat_time, NaiveTime::from_hms_opt(15, 0, 0).unwrap());
+        assert_eq!(p.profit_target_r, 1.0);
     }
 
     #[test]
@@ -153,6 +169,39 @@ mod tests {
         // Time fields are human-readable in the manifest.
         assert!(json.contains("\"09:00:00\""), "json: {json}");
         assert!(json.contains("\"15:00:00\""), "json: {json}");
+        // The profit target rides the manifest so a param-turn can sweep it.
+        assert!(json.contains("\"profit_target_r\":1.0"), "json: {json}");
+    }
+
+    #[test]
+    fn profit_target_r_deserializes_from_pre_field_manifest() {
+        // R2 / KTD3: a v8-era manifest predates `profit_target_r`. Its JSON has no
+        // such key, yet must still deserialize — the serde default supplies 1.0 so
+        // every prior run in `data/turn4-fresh` keeps resolving.
+        let legacy = serde_json::json!({
+            "strategy_id": "orb",
+            "strategy_version": 8,
+            "gap_min_pct": 3.0,
+            "universe_top_n": 20,
+            "max_concurrent": 7,
+            "range_open": "09:00:00",
+            "range_minutes": 20,
+            "flat_time": "15:00:00",
+            "notional_per_position": 10_000_000.0,
+        })
+        .to_string();
+        let p: OrbParams = serde_json::from_str(&legacy).unwrap();
+        assert_eq!(p.profit_target_r, 1.0, "missing key defaults to 1.0");
+        assert_eq!(p.strategy_version, 8);
+        assert_eq!(p.range_minutes, 20);
+    }
+
+    #[test]
+    fn numeric_summary_includes_profit_target_r() {
+        // The field is f64-typed so the serde value-walk surfaces it into the
+        // params summary — where `analyze --scaffold` reads it (KTD1/KTD5).
+        let summary = OrbParams::default().numeric_summary();
+        assert_eq!(summary.get("profit_target_r"), Some(&1.0));
     }
 
     #[test]

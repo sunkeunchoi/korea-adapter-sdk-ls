@@ -42,6 +42,8 @@ pub enum SignalKind {
     OrderRejectedSizing,
     /// A held position hit its stop (range low).
     StopHit,
+    /// A held position was banked at its fixed profit target.
+    Target,
     /// A held position was flattened at the time-flat deadline.
     TimeExit,
     /// End-of-session summary for a selected symbol (extreme values observed).
@@ -487,6 +489,9 @@ mod tests {
         // The relocated enums preserve the retired log's exact wire shape.
         let kind = serde_json::to_string(&SignalKind::OrderRejectedSizing).unwrap();
         assert_eq!(kind, "\"order_rejected_sizing\"");
+        // The v9 target exit renders as "target" on the wire, alongside the existing
+        // stop_hit / time_exit exit tags.
+        assert_eq!(serde_json::to_string(&SignalKind::Target).unwrap(), "\"target\"");
         let decision = serde_json::to_string(&Decision::Reject).unwrap();
         assert_eq!(decision, "\"reject\"");
     }

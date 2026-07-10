@@ -116,6 +116,126 @@ fn session_extremes_track_high_and_low() {
 }
 
 // ---------------------------------------------------------------------------
+// Fixed profit target (Turn 8 / v9)
+// ---------------------------------------------------------------------------
+
+/// (U2 scenario 1) A held long that reaches the fixed target exits at the target
+/// price — a favorable limit `entry_price + round(profit_target_r · R)`, not the
+/// bar wick.
+#[test]
+fn target_exit_fires_at_the_target_price() {
+    let p = OrbParams::default(); // profit_target_r 1.0
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000); // R = 1500
+    // Entry at the breakout high → entry_price 62_000, target = 62_000 + 1.0*1500.
+    assert_eq!(st.on_bar(t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    // A later bar whose high clears the 63_500 target (and does not breach the stop).
+    let acts = st.on_bar(t(10, 0), 63_600, 62_500, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 63_500, reason: ExitReason::Target }]);
+    assert_eq!(st.phase(), Phase::Done);
+}
+
+/// (U2 scenario 2) A long that approaches but never reaches the target, then breaches
+/// the stop, exits Stop — never Target.
+#[test]
+fn approach_then_revert_stops_never_targets() {
+    let p = OrbParams::default();
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000); // R = 1500, target 63_500
+    assert_eq!(st.on_bar(t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    // Nears the target (63_400 < 63_500) but does not reach it → no action.
+    assert!(st.on_bar(t(9, 30), 63_400, 61_200, &p).is_empty());
+    // A later bar breaches the stop → Stop, not Target.
+    let acts = st.on_bar(t(9, 40), 61_000, 59_900, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 59_900, reason: ExitReason::Stop }]);
+    assert_eq!(st.phase(), Phase::Done);
+}
+
+/// (U2 scenario 5, Covers R4 / KTD2) When one Long bar breaches both the target and
+/// the stop, Stop wins — the pessimistic precedence, since intrabar order is unknowable.
+#[test]
+fn same_bar_target_and_stop_resolves_to_stop() {
+    let p = OrbParams::default();
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000); // R = 1500, target 63_500
+    assert_eq!(st.on_bar(t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    // One bar clears the target (high 63_600 ≥ 63_500) AND breaches the stop
+    // (low 59_900 ≤ 60_000) → Stop wins.
+    let acts = st.on_bar(t(9, 30), 63_600, 59_900, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 59_900, reason: ExitReason::Stop }]);
+    assert_eq!(st.phase(), Phase::Done);
+}
+
+/// (U2 scenario 6, Covers R5) `mfe_r()` reports the post-entry high-water excursion in
+/// R-multiples: `(high_water − entry_price) / R`, and stays 0.0 before an entry.
+#[test]
+fn mfe_r_reports_post_entry_excursion() {
+    let p = OrbParams::default();
+    let mut st = OrbState::new();
+    assert_eq!(st.mfe_r(), 0.0, "no excursion before a range/entry");
+    set_range(&mut st, &p, 61_500, 60_000); // R = 1500
+    assert_eq!(st.mfe_r(), 0.0, "no excursion before an entry");
+    st.on_bar(t(9, 20), 62_000, 61_000, &p); // entry_price 62_000
+    // A bar peaking at 63_000 (below the 63_500 target) sets the high-water mark.
+    assert!(st.on_bar(t(10, 0), 63_000, 61_500, &p).is_empty());
+    // (63_000 − 62_000) / 1500 = 0.6667.
+    assert!((st.mfe_r() - (1_000.0 / 1_500.0)).abs() < 1e-9, "mfe_r = {}", st.mfe_r());
+    assert_eq!(st.entry_price(), 62_000);
+}
+
+/// A wider `profit_target_r` (the 1.5 sim optimum) moves the target proportionally —
+/// the param actually drives the exit level.
+#[test]
+fn profit_target_r_scales_the_target_level() {
+    let mut p = OrbParams::default();
+    p.profit_target_r = 1.5;
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000); // R = 1500, target = 62_000 + 1.5*1500 = 64_250
+    assert_eq!(st.on_bar(t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    // 63_600 would trip a 1.0R target but not the 1.5R one → held.
+    assert!(st.on_bar(t(10, 0), 63_600, 62_500, &p).is_empty());
+    // 64_300 clears 64_250 → Target at the wider level.
+    let acts = st.on_bar(t(11, 0), 64_300, 63_000, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 64_250, reason: ExitReason::Target }]);
+}
+
+/// (review fix) A TimeFlat exit's MFE includes the flat bar's high — the flat bar
+/// is part of the hold, so its excursion counts (symmetry with Stop/Target exits).
+#[test]
+fn timeflat_mfe_includes_the_flat_bar_high() {
+    let p = OrbParams::default();
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000); // R = 1500, target 63_500
+    st.on_bar(t(9, 20), 62_000, 61_000, &p); // entry_price 62_000
+    // A mid-hold peak below the target.
+    assert!(st.on_bar(t(10, 0), 63_000, 61_500, &p).is_empty());
+    // The 15:00 flat bar prints a NEW high (still below the target) then closes flat.
+    let acts = st.on_bar(t(15, 0), 63_200, 62_000, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 62_000, reason: ExitReason::TimeFlat }]);
+    // MFE reflects the flat bar's 63_200 high, not the earlier 63_000 peak.
+    assert!((st.mfe_r() - (1_200.0 / 1_500.0)).abs() < 1e-9, "mfe_r = {}", st.mfe_r());
+}
+
+/// (review fix) A non-positive `profit_target_r` (e.g. a hand-seeded manifest) must
+/// NOT fire an immediate same-bar breakeven target — the position holds to the stop
+/// or the bell as if no target were configured.
+#[test]
+fn non_positive_profit_target_r_never_fires() {
+    let mut p = OrbParams::default();
+    p.profit_target_r = 0.0;
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000);
+    // Entry bar emits ONLY an Enter — no same-bar breakeven Target exit.
+    assert_eq!(st.on_bar(t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    assert_eq!(st.phase(), Phase::Long);
+    // A bar far above any conceivable target still does not exit.
+    assert!(st.on_bar(t(10, 0), 70_000, 61_000, &p).is_empty());
+    // The position holds to the time-flat backstop.
+    let acts = st.on_bar(t(15, 0), 69_000, 68_000, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 68_000, reason: ExitReason::TimeFlat }]);
+}
+
+// ---------------------------------------------------------------------------
 // Universe scan
 // ---------------------------------------------------------------------------
 
