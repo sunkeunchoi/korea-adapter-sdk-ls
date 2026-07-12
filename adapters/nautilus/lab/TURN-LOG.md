@@ -4,6 +4,66 @@ Committed record of each loop turn's verdict + the bar conditions it held. The
 full artifacts (`analysis.md`, manifests, performance) live in the gitignored data
 home; this file is the durable, reviewable outcome trail.
 
+## Turn — OR-width decoupled from ATR availability (2026-07-12) — plan 2026-07-11-001
+
+- **Verdict: KEEP (decoupled OR-width clears the edge gate and improves expectancy 4.3×
+  over v16 — the loop's SECOND kept lever).** A CODE turn (decouple the OR-width gate
+  from ATR availability) followed by its single flip `or_width_max_atr` 0.0 → **0.666**
+  (same p80 threshold as the reverted lever 3 / v18). Pre-registered value + keep rule +
+  decouple signature before the run (R3,
+  `data/turn4-fresh/PRE-REGISTER-v21-or-width-decoupled.md`).
+- **The code change — SKIP-not-reject (design A).** The OR-width arm of
+  `session_gate_reject` (`orb.rs`) used to fail closed as `atr_unavailable` on any
+  session lacking a positive prior ATR — coupling a width test to ATR coverage. Lever 3
+  reverted for exactly that confound (191 `atr_unavailable` culls of the winner-rich
+  ATR-uncovered cohort swamped a clean 68-session width tail). The decouple makes a
+  no-ATR session simply **not width-gated** (skip, not reject); the ATR-STOP arm keeps
+  its fail-closed reject (a stop needs its ATR); the RVOL arm is unchanged. At
+  `or_width_max_atr=0.0` the arm is inert. Pre-flip code review (correctness +
+  adversarial, lever-2 precondition discipline) found **no defect** — default-off
+  byte-identical, ATR-stop arm untouched, tests non-vacuous.
+- **Type: CODE turn.** `strategy_code_hash` moved `fa7733f6…` → **`f8a0f2bf78033264…`**.
+  Re-baselined via seed-and-rerun (KTD2): v20 seeded from v16, all params identical
+  (`or_width_max_atr` still 0.0), `strategy_version=20`. Per-trade ledger vs v16
+  **161/161 byte-identical**; all 21 summary fields equal — the decouple is verifiably
+  default-off. Re-baseline signal: `runs compare` param mode (v16 → v20) **FAILs**
+  `strategy_code_hash differs`, `param diff ["strategy_version"]` (KTD3 — the FAIL *is*
+  the evidence). Baseline advanced to v20 (== v16 behavior, new hash).
+- **AE2 attribution:** `runs compare` param mode (**v20 → v21**) **PASS**, diff exactly
+  `{or_width_max_atr, strategy_version}` — clean single-lever flip on the re-baselined
+  code (v20 and v21 share the new hash).
+- **Bind check — decouple PROVEN (pre-registered signature validated):** v21
+  `decisions.jsonl` carries **0** `atr_unavailable` rejects (v18 had 191 — all converted
+  to skips; `stop_mode=0.0` so the ATR-stop arm never fires, and zero confirms no leak)
+  and **68** `filter:"or_width_atr"` rejects (identical to v18 — the clean width tail
+  still binds). `max_concurrent` 34 → 48 (more sessions reach breakout). Closed trades
+  158 → **153** (only 5 removed net, vs v18's −64).
+- **Edge gate (`EdgeEvaluation`, unchanged): CLEARED (`is_edge = true`).** Expectancy
+  **+20,690.73** KRW/trade (v16 +4,812.74 — 4.3×), PF **1.204** (from 1.044), pnl_total
+  **+3,124,300** (from +755,600), Sharpe **+1.89** / Sortino **+3.22**, WR 49.67%.
+  Dominance **10.3%** (≤ 40%), top-|P&L| symbol `035420.XKRX` is a **winner**
+  (+1,822,200) — not one-winner-carried. Keep rule (is_edge AND expectancy > +4,812.74
+  AND dominance ≤ 40%): **all three cleared.**
+- **Read — the clean width signal earns its keep once the confound is removed:** the
+  decouple isolated exactly what lever 3 could not — removing the 68 wide-OR width-tail
+  sessions (drifters+losers, 0 targets) **without** the winner-rich ATR-coverage cull.
+  Only 5 net trades leave, yet pnl_total quadruples. Same 0.666 threshold, same 68 width
+  kills, opposite verdict from v18 — proving v18 reverted for the *coverage confound*,
+  not the width signal. The `max_concurrent` re-admission (34 → 48) did not drown the
+  benefit (unlike the U7 midpoint stop). `report mfe`: target share 31.0% → **34.3%**
+  (58/169), stop_mode 0 (range-R label).
+- **Queue re-rank (R6) — the entry-filter mechanism class is now SPENT.** Baseline
+  advances to **v21** (`or_width_max_atr=0.666`). Two kept levers, both entry-quality:
+  close-confirm (v16) + decoupled OR-width (v21). Falsified/exhausted: stop geometry (U7
+  + demoted leg-2), entry timing (lever 4), entry quality via RVOL (lever 5, inverted).
+  The next motivated turn is a **NEW mechanism class** — strongest candidates: a
+  risk/position-sizing lever (scale the now-positive edge), or an exit-timing lever (the
+  `time_exit` bucket n=76 median 0.41R give-back is still the largest non-target exit).
+  A second OR-width percentile sweep is NOT motivated (would be pnl-fit).
+- **Provenance:** re-baseline run `20260712T040752Z-backtest-orb-v20`, flip run
+  `20260712T041102Z-backtest-orb-v21` (home `data/turn4-fresh`, gitignored). Offline, no
+  gateway. Zero `orb.rs` edits after the v20 re-baseline run (KTD8).
+
 ## Turn — lever 5: opening-window RVOL (2026-07-12) — plan 2026-07-11-001
 
 - **Verdict: REVERT (lever 5 fails the edge gate — expectancy collapses).**
