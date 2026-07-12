@@ -4,6 +4,65 @@ Committed record of each loop turn's verdict + the bar conditions it held. The
 full artifacts (`analysis.md`, manifests, performance) live in the gitignored data
 home; this file is the durable, reviewable outcome trail.
 
+## Turn — lever 5: opening-window RVOL (2026-07-12) — plan 2026-07-11-001
+
+- **Verdict: REVERT (lever 5 fails the edge gate — expectancy collapses).**
+  `rvol_min` 0.0 → **0.655** (p20 of the RVOL-ratio distribution) as a single-param
+  seed-and-rerun flip from the v16 baseline. Pre-registered value + keep rule before the
+  run (R3). The gate rejects a session when `open_window_vol < rvol_min ·
+  prior_open_vol_mean` — a low-relative-volume opening (a FLOOR trimming the bottom tail).
+- **Diagnostic-first — predicted the revert up front (two adverse signals).** A
+  throwaway probe (`rvol_min = 1e9`, deleted) measured, over the v16 sessions: **RVOL
+  coverage 78.4%** (417/532 have a positive prior mean with ≥5 samples) — the other
+  21.6% fail-close as `rvol_insufficient_history` at any threshold, winner-rich (40 v16
+  trades there, 16 target = 40% vs 31% overall) — the same lever-3-style coverage cull,
+  milder. **AND the hypothesis was INVERTED:** winners (target) have LOWER opening RVOL
+  (med 0.898) than losers (stop+time, med 1.064), so a `rvol_min` floor trims the
+  winner-enriched bottom tail. A first-order projection showed the kept target-rate
+  degrading at every threshold (p20 → 25.9% vs 31.0% baseline). Both predicted a
+  confounded revert — said so in the pre-registration.
+- **Type: PARAM turn, not a code turn.** `strategy_code_hash fa7733f6df76ca39…`
+  unchanged between baseline and flip; zero `orb.rs` edits (hash lock, KTD8). The RVOL
+  gate already shipped in the harness code turn (#121); this only moves the param.
+  Seed-and-rerun (not a governed `LS_TURN_PARAM` turn) because the 0.0 → 0.655 move is an
+  infinite relative change off the 0.0 sentinel (guardrail PROPOSAL_BOUNDS_CAP 0.5
+  fail-closes it).
+- **Seed from v16, NOT the registry head.** Latest finalized was v18 (reverted lever 3);
+  the seed took v16's params (`or_width_max_atr` and `entry_cutoff_min` at 0.0) + the
+  flip, dated after v18 so `latest_finalized_run` picked it. Next version = v19.
+- **AE2 attribution:** `runs compare` param mode (**v16** → v19) **PASS**, diff exactly
+  `{rvol_min, strategy_version}` — clean single-lever attribution, code hash identical.
+- **Bind check — BINDS but CONFOUNDED:** v19 `decisions.jsonl` carries **84**
+  `filter:"rvol_min"` rejects (the gate firing on volume — not inert) **plus 115**
+  `rvol_insufficient_history` rejects. The coverage cull dominates numerically (115 vs
+  84) — exactly the pre-registered confound, the same shape as lever 3 (191 vs 68).
+  Closed trades 158 → 111.
+- **Edge gate (`EdgeEvaluation`, unchanged): NOT cleared (`is_edge = false`).**
+  Expectancy **−21,276.15** KRW/trade (v16 +4,812.74), PF 0.82 (from 1.044), pnl_total
+  **−2,319,100** (from +755,600), Sharpe −1.59 / Sortino −2.17, WR 46.9% (from 49.4%).
+  Dominance 13.0% (≤ 40% passes, but moot — expectancy is deeply negative).
+- **Read — coverage confound PLUS an inverted signal (falsification):** target-exit
+  share fell 31.0% → 24.6% (`report mfe` 30/122); P&L swung −3,074,700 over 47 fewer
+  trades → the removed cohort was net-winning. Win rate barely moved while expectancy
+  collapsed — the floor removed winners, not the loser tail. Unlike lever 3 (a *correct*
+  width signal swamped by coverage), the RVOL signal is **itself backwards** on this
+  sample, compounded by its own history-coverage cull — so no coverage-decoupling fix
+  rescues it. Entry *quality via RVOL* joins entry timing (lever 4), entry quality via
+  OR-width (lever 3), and stop geometry (U7) as falsified; close-confirm (v16) is the
+  only kept lever.
+- **Queue re-rank (R6) — the 0.0-sentinel param queue is EXHAUSTED.** Baseline **stays
+  v16**. Three consecutive entry-quality param flips (timing, width, RVOL) have now
+  reverted; close-confirm remains the sole kept lever. All five queue levers are spent
+  (leg-1 midpoint falsified U7; lever 2 kept; levers 3/4/5 reverted; leg-2 ATR stop
+  demoted). **The honest call: the next motivated turn is a CODE turn, not another param
+  flip** — strongest candidate the noted decouple-OR-width-from-ATR-availability turn
+  (lever 3 found a *clean* width signal a param flip couldn't isolate from the coverage
+  cull). RVOL is NOT a decoupling candidate — its signal is inverted, so no coverage fix
+  helps. Alternatively a new mechanism outside the five-lever frame.
+- **Provenance:** baseline run `20260712T022255Z-backtest-orb-v16`, flip run
+  `20260712T034649Z-backtest-orb-v19`, diagnostic probe (v900) run+deleted (home
+  `data/turn4-fresh`, gitignored). Offline, no gateway.
+
 ## Turn — lever 3: OR-width sanity (2026-07-12) — plan 2026-07-11-001
 
 - **Verdict: REVERT (lever 3 fails the edge gate — expectancy collapses).**
