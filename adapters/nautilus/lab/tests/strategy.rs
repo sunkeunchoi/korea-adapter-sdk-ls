@@ -331,6 +331,8 @@ fn candidate(sym: &str, prior_close: f64, today_open: f64, turnover: f64) -> Uni
         today_open,
         prior_turnover: turnover,
         meta: CandidateMeta::Untagged,
+        prior_atr: None,
+        prior_open_vol_mean: None,
     }
 }
 
@@ -425,6 +427,8 @@ fn tagged(
         today_open,
         prior_turnover: turnover,
         meta: CandidateMeta::Tagged { tradable, tags: tags(market, cap) },
+        prior_atr: None,
+        prior_open_vol_mean: None,
     }
 }
 

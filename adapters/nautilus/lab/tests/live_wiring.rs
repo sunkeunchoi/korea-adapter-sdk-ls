@@ -73,7 +73,12 @@ async fn strategy_mounts_in_a_built_live_node() {
         .expect("node builds");
 
     let id = InstrumentId::from("005930.XKRX");
-    let selected = vec![SelectedSymbol { instrument_id: id, bar_type: BarKind::Minute(1).bar_type(id).unwrap() }];
+    let selected = vec![SelectedSymbol {
+        instrument_id: id,
+        bar_type: BarKind::Minute(1).bar_type(id).unwrap(),
+        prior_atr: None,
+        prior_open_vol_mean: None,
+    }];
     let strategy = OrbStrategy::new(OrbParams::default(), selected, DecisionSink::new());
     node.add_strategy(strategy).expect("the ORB strategy mounts in the live node");
 }

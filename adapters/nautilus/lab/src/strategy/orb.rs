@@ -78,6 +78,15 @@ pub struct UniverseCandidate {
     pub prior_turnover: f64,
     /// The reference-data join state (U4).
     pub meta: CandidateMeta,
+    /// Prior-daily ATR(`atr_window`) strictly before the session (KTD5), or
+    /// `None` when fewer than `atr_window`+1 prior sessions exist. Read only by
+    /// the stop / OR-width gates in the strategy — never by universe selection
+    /// (R4), so its presence is selection-neutral.
+    pub prior_atr: Option<f64>,
+    /// Mean opening-window volume over up to `rvol_window_sessions` prior in-range
+    /// sessions (KTD9), or `None` below `rvol_min_history` samples. The RVOL
+    /// gate's baseline; never read by selection (R4).
+    pub prior_open_vol_mean: Option<f64>,
 }
 
 impl UniverseCandidate {
@@ -312,6 +321,13 @@ pub struct OrbState {
     /// The post-entry high-water mark, updated each Long bar — the basis for
     /// per-trade MFE (KTD4). Zero before an entry.
     high_water: i64,
+    /// The prior-daily ATR for this symbol-session (KTD5), threaded from the
+    /// candidate seam (U2). `None` when fewer than `atr_window`+1 priors — the
+    /// ATR stop / OR-width gate fail closed rather than silently fall back.
+    prior_atr: Option<f64>,
+    /// The prior opening-window volume mean for this symbol-session (KTD9),
+    /// threaded from the candidate seam (U2). `None` below `rvol_min_history`.
+    prior_open_vol_mean: Option<f64>,
 }
 
 impl Default for OrbState {
@@ -325,6 +341,8 @@ impl Default for OrbState {
             session_low: i64::MAX,
             entry_price: 0,
             high_water: 0,
+            prior_atr: None,
+            prior_open_vol_mean: None,
         }
     }
 }
@@ -535,6 +553,12 @@ pub struct SelectedSymbol {
     pub instrument_id: InstrumentId,
     /// The bar type to subscribe (typically the 1-minute series).
     pub bar_type: BarType,
+    /// The symbol's prior-daily ATR for this session (KTD5), threaded to its
+    /// [`OrbState`] for the stop / OR-width gates. `None` when unavailable.
+    pub prior_atr: Option<f64>,
+    /// The symbol's prior opening-window volume mean for this session (KTD9),
+    /// threaded to its [`OrbState`] for the RVOL gate. `None` when below history.
+    pub prior_open_vol_mean: Option<f64>,
 }
 
 /// The ORB v0 nautilus strategy. Mounts one [`OrbState`] per selected symbol, feeds
@@ -559,7 +583,17 @@ impl OrbStrategy {
             strategy_id: Some(StrategyId::from(strategy_id_str(&params).as_str())),
             ..Default::default()
         };
-        let states = selected.iter().map(|s| (s.instrument_id, OrbState::new())).collect();
+        // Thread each selected symbol's prior-daily ATR + opening-window volume
+        // mean (U2 candidate seam) onto its fresh state for the gates to read.
+        let states = selected
+            .iter()
+            .map(|s| {
+                let mut st = OrbState::new();
+                st.prior_atr = s.prior_atr;
+                st.prior_open_vol_mean = s.prior_open_vol_mean;
+                (s.instrument_id, st)
+            })
+            .collect();
         OrbStrategy {
             core: StrategyCore::new(base),
             params,

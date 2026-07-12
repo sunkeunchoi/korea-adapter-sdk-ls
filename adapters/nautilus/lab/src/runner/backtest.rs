@@ -10,7 +10,7 @@
 //! re-reads the range-scoped catalog fingerprint at finalize — failing the run with no
 //! registry residue if it changed since start.
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
@@ -43,7 +43,8 @@ use crate::artifacts::{run_id, RunSource, RunWriter};
 use crate::agent::sink::DecisionSink;
 use crate::params::OrbParams;
 use crate::strategy::orb::{
-    select_universe, CandidateMeta, OrbStrategy, SelectedSymbol, UniverseCandidate,
+    kst_time_from_nanos, select_universe, CandidateMeta, OrbStrategy, SelectedSymbol,
+    UniverseCandidate,
 };
 
 /// Backtest run configuration.
@@ -354,6 +355,29 @@ fn run_sessions(
         bars.sort_by_key(|b| b.ts_event.as_u64());
     }
 
+    // Opening-window volume per (instrument, session date) — one pass over the
+    // in-range minute index (KTD9). The window is the OR window itself
+    // (`[range_open, range_end)`, the same predicate `OrbState` accumulates the
+    // range over), so today's live opening-window volume the RVOL gate compares
+    // against is measured identically. The RVOL baseline for a candidate is the
+    // mean of these over its prior in-range sessions; building it here keeps the
+    // per-session loop free of a re-scan (U2 execution note).
+    let range_open = params.range_open;
+    let range_end = params.range_end();
+    let mut open_vol_by_inst: HashMap<InstrumentId, BTreeMap<NaiveDate, f64>> = HashMap::new();
+    for (date, bars) in &minute_by_date {
+        for b in bars {
+            let t = kst_time_from_nanos(b.ts_event.as_u64());
+            if t >= range_open && t < range_end {
+                *open_vol_by_inst
+                    .entry(b.bar_type.instrument_id())
+                    .or_default()
+                    .entry(*date)
+                    .or_insert(0.0) += b.volume.as_f64();
+            }
+        }
+    }
+
     // The distinct in-range daily session dates — the tradeable sessions, in order.
     // Each day's minute bars are pinned to the range; the prior-daily lookback may
     // reach one session BEFORE the range (KTD-3). That backward reach is safe against
@@ -390,25 +414,36 @@ fn run_sessions(
         // this session's open so decisions.jsonl carries one scan per session date.
         let session_ts = kst_to_unix_nanos(*date, KRX_REGULAR_OPEN)?.as_u64();
 
-        let candidates = build_candidates(instruments, &daily_by_inst, *date, metadata);
+        let candidates =
+            build_candidates(instruments, &daily_by_inst, &open_vol_by_inst, params, *date, metadata);
         for c in &candidates {
             ever_candidate.insert(c.symbol.clone());
         }
+        // The derived per-symbol ATR / RVOL baseline, keyed by symbol so the
+        // selected-symbol seam can thread it to the strategy (U2). Selection
+        // itself reads neither value (R4) — computed on every candidate,
+        // consumed only for the selected ones.
+        let derived: HashMap<String, (Option<f64>, Option<f64>)> = candidates
+            .iter()
+            .map(|c| (c.symbol.clone(), (c.prior_atr, c.prior_open_vol_mean)))
+            .collect();
         let selected_symbols = select_universe(&candidates, params, sink, session_ts);
         for s in &selected_symbols {
             selected_union.insert(s.clone());
         }
         selection_sequence.push((*date, selected_symbols.clone()));
 
-        // Resolve the selected symbols to instrument ids + minute bar types.
+        // Resolve the selected symbols to instrument ids + minute bar types,
+        // threading each symbol's ATR / RVOL baseline onto its SelectedSymbol.
         let selected: Vec<SelectedSymbol> = instruments
             .iter()
             .filter(|i| selected_symbols.iter().any(|s| s == &i.id().to_string()))
             .filter_map(|i| {
-                BarKind::Minute(minute_step)
-                    .bar_type(i.id())
-                    .ok()
-                    .map(|bar_type| SelectedSymbol { instrument_id: i.id(), bar_type })
+                BarKind::Minute(minute_step).bar_type(i.id()).ok().map(|bar_type| {
+                    let (prior_atr, prior_open_vol_mean) =
+                        derived.get(&i.id().to_string()).copied().unwrap_or((None, None));
+                    SelectedSymbol { instrument_id: i.id(), bar_type, prior_atr, prior_open_vol_mean }
+                })
             })
             .collect();
 
@@ -493,9 +528,14 @@ pub(crate) fn select_prior_today<'a>(
 fn build_candidates(
     instruments: &[InstrumentAny],
     daily_by_inst: &HashMap<InstrumentId, Vec<&Bar>>,
+    open_vol_by_inst: &HashMap<InstrumentId, BTreeMap<NaiveDate, f64>>,
+    params: &OrbParams,
     session_date: NaiveDate,
     metadata: Option<&HashMap<String, InstrumentMetadata>>,
 ) -> Vec<UniverseCandidate> {
+    let atr_window = params.atr_window as usize;
+    let rvol_window = params.rvol_window_sessions as usize;
+    let rvol_min_history = params.rvol_min_history as usize;
     let mut candidates = Vec::new();
     for inst in instruments {
         let id = inst.id();
@@ -508,15 +548,87 @@ fn build_candidates(
         let symbol = id.to_string();
         let prior_turnover = prior.close.as_f64() * prior.volume.as_f64();
         let meta = candidate_meta(metadata, &symbol, prior_turnover);
+        // Derived gate inputs (U2) — computed for every candidate but read only
+        // by the strategy's gates for the selected ones, never by selection (R4).
+        let prior_atr = prior_atr(daily, session_date, atr_window);
+        let prior_open_vol_mean = prior_open_window_vol_mean(
+            open_vol_by_inst.get(&id),
+            session_date,
+            rvol_window,
+            rvol_min_history,
+        );
         candidates.push(UniverseCandidate {
             symbol,
             prior_close: prior.close.as_f64(),
             today_open: today.open.as_f64(),
             prior_turnover,
             meta,
+            prior_atr,
+            prior_open_vol_mean,
         });
     }
     candidates
+}
+
+/// ATR(`window`) over the daily bars strictly before `session_date` (KTD5),
+/// deduped to one bar per KST session (the latest, matching
+/// [`select_prior_today`], so a value-divergent re-ingest overlap never
+/// double-counts a session). True range per session =
+/// `max(high−low, |high−prev_close|, |low−prev_close|)`; ATR is the mean TR over
+/// the most recent `window` sessions. `None` when fewer than `window`+1 prior
+/// sessions exist (the fail-closed boundary) or `window` is zero.
+pub(crate) fn prior_atr(daily_sorted: &[&Bar], session_date: NaiveDate, window: usize) -> Option<f64> {
+    if window == 0 {
+        return None;
+    }
+    // Dedup to one bar per prior session date; BTreeMap keeps them date-ascending
+    // and a later ts (the sort order) overwrites an earlier same-date copy.
+    let mut by_date: BTreeMap<NaiveDate, &Bar> = BTreeMap::new();
+    for b in daily_sorted {
+        let d = kst_date_of(b);
+        if d < session_date {
+            by_date.insert(d, *b);
+        }
+    }
+    // Need window+1 sessions: each of the `window` true ranges needs a prior close.
+    if by_date.len() < window + 1 {
+        return None;
+    }
+    let sessions: Vec<&Bar> = by_date.values().copied().collect();
+    let tail = &sessions[sessions.len() - (window + 1)..];
+    let mut sum_tr = 0.0;
+    for pair in tail.windows(2) {
+        let prev_close = pair[0].close.as_f64();
+        let high = pair[1].high.as_f64();
+        let low = pair[1].low.as_f64();
+        let tr = (high - low)
+            .max((high - prev_close).abs())
+            .max((low - prev_close).abs());
+        sum_tr += tr;
+    }
+    Some(sum_tr / window as f64)
+}
+
+/// The mean opening-window volume over up to `window` prior in-range sessions
+/// strictly before `session_date` (KTD9), or `None` below `min_history` samples
+/// (the fail-closed thin-history boundary) or when no prior sample exists. The
+/// per-date map is already range-filtered, so the first `min_history` sessions of
+/// the range yield `None` — the accepted, recorded trade-count asymmetry.
+pub(crate) fn prior_open_window_vol_mean(
+    per_date: Option<&BTreeMap<NaiveDate, f64>>,
+    session_date: NaiveDate,
+    window: usize,
+    min_history: usize,
+) -> Option<f64> {
+    let per_date = per_date?;
+    let mut priors: Vec<f64> = per_date.range(..session_date).map(|(_, v)| *v).collect();
+    if priors.len() > window {
+        priors = priors.split_off(priors.len() - window); // keep the most recent `window`
+    }
+    if priors.is_empty() || priors.len() < min_history {
+        return None;
+    }
+    Some(priors.iter().sum::<f64>() / priors.len() as f64)
 }
 
 /// Join one candidate to its metadata record (U4): `Untagged` for a legacy run
@@ -821,5 +933,124 @@ mod tests {
         assert!(block.contains("run:    r1"));
         assert!(block.contains("trades: 0"), "trade count present: {block}");
         assert!(block.contains("dir:"));
+    }
+
+    // -- U2: candidate-seam ATR + opening-window RVOL derivation --------------
+
+    /// A daily bar with explicit high/low/close (the `day` helper derives them;
+    /// ATR needs them controlled).
+    fn day_hlc(bt: BarType, ymd: (i32, u32, u32), high: i64, low: i64, close: i64) -> Bar {
+        let ts = kst_to_unix_nanos(NaiveDate::from_ymd_opt(ymd.0, ymd.1, ymd.2).unwrap(), KRX_REGULAR_CLOSE)
+            .unwrap();
+        Bar::new(
+            bt,
+            Price::from(close.to_string().as_str()),
+            Price::from(high.to_string().as_str()),
+            Price::from(low.to_string().as_str()),
+            Price::from(close.to_string().as_str()),
+            Quantity::from(1000),
+            ts,
+            ts,
+        )
+    }
+
+    #[test]
+    fn prior_atr_matches_hand_computation_and_excludes_own_bar() {
+        let bt = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        // jan1 close 100; jan2 TR = max(20, |110-100|, |90-100|) = 20;
+        // jan3 TR = max(10, |108-105|, |98-105|) = 10. ATR(2) over jan1..jan3 = 15.
+        let d1 = day_hlc(bt, (2024, 1, 1), 101, 99, 100);
+        let d2 = day_hlc(bt, (2024, 1, 2), 110, 90, 105);
+        let d3 = day_hlc(bt, (2024, 1, 3), 108, 98, 104);
+        // The session's OWN bar (jan4) must be excluded from the lookback.
+        let d4 = day_hlc(bt, (2024, 1, 4), 200, 10, 150);
+        let daily = vec![&d1, &d2, &d3, &d4];
+        let jan4 = NaiveDate::from_ymd_opt(2024, 1, 4).unwrap();
+        assert_eq!(prior_atr(&daily, jan4, 2), Some(15.0));
+    }
+
+    #[test]
+    fn prior_atr_fails_closed_below_window_plus_one() {
+        let bt = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        let d1 = day_hlc(bt, (2024, 1, 1), 101, 99, 100);
+        let d2 = day_hlc(bt, (2024, 1, 2), 110, 90, 105);
+        let d3 = day_hlc(bt, (2024, 1, 3), 108, 98, 104);
+        let jan4 = NaiveDate::from_ymd_opt(2024, 1, 4).unwrap();
+        // window 2 needs 3 priors: exactly 2 → None, exactly 3 → Some (boundary).
+        assert_eq!(prior_atr(&vec![&d2, &d3], jan4, 2), None, "2 priors, window 2");
+        assert!(prior_atr(&vec![&d1, &d2, &d3], jan4, 2).is_some(), "3 priors, window 2");
+        assert_eq!(prior_atr(&vec![&d1, &d2, &d3], jan4, 0), None, "zero window");
+    }
+
+    #[test]
+    fn prior_atr_dedups_a_same_session_divergent_copy() {
+        let bt = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        let d1 = day_hlc(bt, (2024, 1, 1), 101, 99, 100);
+        let d2 = day_hlc(bt, (2024, 1, 2), 110, 90, 105);
+        let d3 = day_hlc(bt, (2024, 1, 3), 108, 98, 104);
+        // A value-divergent duplicate of jan3 sits last after the ts sort; the
+        // latest per-date wins (matching select_prior_today), so it must not add
+        // a phantom fourth session.
+        let d3_dup = day_hlc(bt, (2024, 1, 3), 108, 98, 104);
+        let jan4 = NaiveDate::from_ymd_opt(2024, 1, 4).unwrap();
+        assert_eq!(
+            prior_atr(&vec![&d1, &d2, &d3, &d3_dup], jan4, 2),
+            Some(15.0),
+            "the same-session copy is deduped, not counted as a 4th session"
+        );
+    }
+
+    #[test]
+    fn prior_open_window_vol_mean_respects_history_and_window() {
+        let jan1 = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let jan2 = NaiveDate::from_ymd_opt(2024, 1, 2).unwrap();
+        let jan3 = NaiveDate::from_ymd_opt(2024, 1, 3).unwrap();
+        let session = NaiveDate::from_ymd_opt(2024, 1, 4).unwrap();
+        let per_date: BTreeMap<NaiveDate, f64> =
+            [(jan1, 100.0), (jan2, 200.0), (jan3, 300.0)].into_iter().collect();
+        // Two priors (jan2, jan3 under a window of 2), min_history 2 → mean 250.
+        assert_eq!(
+            prior_open_window_vol_mean(Some(&per_date), session, 2, 2),
+            Some(250.0),
+            "most-recent 2 sessions averaged"
+        );
+        // Same window, min_history 3 → fewer samples than required → None.
+        assert_eq!(prior_open_window_vol_mean(Some(&per_date), session, 2, 3), None);
+        // All three within window 5, min_history 2 → mean 200.
+        assert_eq!(prior_open_window_vol_mean(Some(&per_date), session, 5, 2), Some(200.0));
+    }
+
+    #[test]
+    fn prior_open_window_vol_mean_none_without_prior_samples() {
+        let jan1 = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let session = jan1; // no strictly-prior sample
+        let per_date: BTreeMap<NaiveDate, f64> = [(jan1, 100.0)].into_iter().collect();
+        assert_eq!(prior_open_window_vol_mean(Some(&per_date), session, 5, 1), None, "first session");
+        assert_eq!(prior_open_window_vol_mean(None, session, 5, 1), None, "no minute index");
+    }
+
+    #[test]
+    fn candidate_derived_fields_are_selection_neutral() {
+        // R4: select_universe reads neither prior_atr nor prior_open_vol_mean —
+        // the same candidates with the fields None vs Some select identically.
+        let sink_a = DecisionSink::new();
+        let sink_b = DecisionSink::new();
+        let params = OrbParams::default(); // gap_min_pct 3.0
+        let base = |atr: Option<f64>, rvol: Option<f64>| UniverseCandidate {
+            symbol: "005930.XKRX".to_string(),
+            prior_close: 60_000.0,
+            today_open: 63_000.0, // +5% gap, passes
+            prior_turnover: 1_000_000.0,
+            meta: CandidateMeta::Untagged,
+            prior_atr: atr,
+            prior_open_vol_mean: rvol,
+        };
+        let none = vec![base(None, None)];
+        let some = vec![base(Some(1234.0), Some(9999.0))];
+        assert_eq!(
+            select_universe(&none, &params, &sink_a, 0),
+            select_universe(&some, &params, &sink_b, 0),
+            "derived fields never change selection"
+        );
     }
 }
