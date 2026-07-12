@@ -122,6 +122,17 @@ pub struct OrbParams {
     /// than passing on thin history. Inert unless `rvol_min` > 0.0. Default 5.0.
     #[serde(default = "default_rvol_min_history")]
     pub rvol_min_history: f64,
+    /// Breakeven-move exit lever (lever 6, KTD1/KTD11): once a held long's
+    /// provably-observed MFE reaches `breakeven_trigger_r · R` (R = the entry-fixed
+    /// `r_denom`), the stop ratchets up to the entry price for *subsequent* bars —
+    /// so a runner that peaks then gives it back books at breakeven instead of
+    /// decaying to the 15:00 time-flat exit (the largest give-back cohort in v21's
+    /// `report mfe`). The ratchet never applies on the bar that triggers it
+    /// (same-bar stop-first pessimism, KTD2) and only ever tightens the stop
+    /// (entry > every stop-mode's initial level). Sentinel `0.0` = off
+    /// (byte-identical to v21); legacy manifests deserialize with it.
+    #[serde(default)]
+    pub breakeven_trigger_r: f64,
 }
 
 /// The back-compat default for [`OrbParams::profit_target_r`] (R2, KTD3): a v8
@@ -197,6 +208,7 @@ impl Default for OrbParams {
             rvol_min: 0.0,
             rvol_window_sessions: default_rvol_window_sessions(),
             rvol_min_history: default_rvol_min_history(),
+            breakeven_trigger_r: 0.0,
         }
     }
 }
@@ -283,6 +295,17 @@ impl OrbParams {
                 "rvol_window_sessions {} and rvol_min_history {} must both be positive under \
                  the RVOL gate — else every session fails rvol_insufficient_history",
                 self.rvol_window_sessions, self.rvol_min_history
+            ));
+        }
+        // Breakeven-move trigger (lever 6): 0.0 disables it, a positive R-multiple
+        // enables it. A negative trigger would ratchet the stop to breakeven on the
+        // first held bar (MFE starts at 0 ≥ a negative threshold) — a near-instant
+        // breakeven stop-out, not the intended "off". Reject it as a config error.
+        if self.breakeven_trigger_r < 0.0 {
+            return Err(format!(
+                "breakeven_trigger_r {} is negative — use 0.0 to disable the breakeven move, \
+                 a positive R-multiple to arm it (KTD11)",
+                self.breakeven_trigger_r
             ));
         }
         Ok(())
@@ -422,6 +445,7 @@ mod tests {
         assert_eq!(p.rvol_min, 0.0, "RVOL gate off");
         assert_eq!(p.rvol_window_sessions, 14.0);
         assert_eq!(p.rvol_min_history, 5.0);
+        assert_eq!(p.breakeven_trigger_r, 0.0, "breakeven move off");
         // The decoded helpers agree with the filter-off defaults.
         assert_eq!(p.stop_placement(), StopMode::RangeLow);
         assert!(!p.close_confirm_entry());
@@ -478,6 +502,17 @@ mod tests {
         // A valid ATR / RVOL config passes.
         let ok = OrbParams { stop_mode: 2.0, rvol_min: 1.0, ..Default::default() };
         assert!(ok.validate().is_ok(), "default companions are valid when gates are on");
+    }
+
+    #[test]
+    fn validate_breakeven_trigger_r_rejects_negative_arms_positive() {
+        // 0.0 (off) and a positive R-multiple both validate; a negative trigger is a
+        // config error (it would ratchet the stop to breakeven on the first held bar).
+        assert!(OrbParams::default().validate().is_ok(), "off by default");
+        let armed = OrbParams { breakeven_trigger_r: 0.4, ..Default::default() };
+        assert!(armed.validate().is_ok(), "a positive breakeven trigger is valid");
+        let neg = OrbParams { breakeven_trigger_r: -0.1, ..Default::default() };
+        assert!(neg.validate().is_err(), "negative breakeven_trigger_r must be rejected");
     }
 
     #[test]
@@ -586,6 +621,7 @@ mod tests {
         assert_eq!(p.rvol_min, 0.0);
         assert_eq!(p.rvol_window_sessions, 14.0);
         assert_eq!(p.rvol_min_history, 5.0);
+        assert_eq!(p.breakeven_trigger_r, 0.0);
         // Empty param_diff proxy: the deserialized legacy set's numeric summary
         // equals a freshly-defaulted set carrying the same version — no gate key
         // diverges, so a pre-field manifest yields no spurious param_diff (KTD1).
@@ -613,6 +649,7 @@ mod tests {
             "rvol_min",
             "rvol_window_sessions",
             "rvol_min_history",
+            "breakeven_trigger_r",
         ] {
             assert!(summary.contains_key(key), "numeric_summary missing {key}");
         }
@@ -632,6 +669,7 @@ mod tests {
             rvol_min: 1.2,
             rvol_window_sessions: 20.0,
             rvol_min_history: 3.0,
+            breakeven_trigger_r: 0.5,
             ..Default::default()
         };
         let back: OrbParams = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();

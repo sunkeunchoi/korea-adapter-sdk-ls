@@ -597,6 +597,24 @@ impl OrbState {
                 // No target configured, no stop → fold the full bar high (unchanged).
                 self.high_water = self.high_water.max(high);
             }
+            // Breakeven-move ratchet (lever 6, KTD11) — evaluated AFTER folding this
+            // bar's provably-observed high-water (KTD5) and only when the position is
+            // still open (an exit branch above already rolled it to Done). Once the
+            // observed MFE reaches `breakeven_trigger_r · R`, raise the stop to the
+            // entry price for SUBSEQUENT bars. It is deliberately NOT applied to this
+            // bar's own stop check above: the low that would hit the ratcheted stop may
+            // have printed before the high that just triggered it — same-bar order is
+            // unknowable (KTD2), so booking it would be a stop the position never
+            // provably reached. The move only ever tightens the stop (entry sits above
+            // every stop mode's initial level) and arms once (guarded by
+            // `stop_price < entry_price`). Off (`breakeven_trigger_r == 0.0`) it is inert.
+            if self.phase == Phase::Long {
+                if let Some(trigger) = self.breakeven_trigger_price(params) {
+                    if self.high_water >= trigger && self.stop_price < self.entry_price {
+                        self.stop_price = self.entry_price;
+                    }
+                }
+            }
         }
         acts
     }
@@ -708,6 +726,18 @@ impl OrbState {
             return None;
         }
         Some(self.entry_price + (params.profit_target_r * self.r_denom as f64).round() as i64)
+    }
+
+    /// The breakeven-move trigger price (lever 6, KTD11): the high-water level
+    /// `entry_price + round(breakeven_trigger_r · R)` at which the stop ratchets up to
+    /// the entry price, where `R` is the entry-fixed `r_denom` (range-R at mode 0,
+    /// trade-R otherwise). `None` when the lever is off (`breakeven_trigger_r ≤ 0.0`)
+    /// or `R ≤ 0` — either way no ratchet ever arms, so the exit path is unchanged.
+    fn breakeven_trigger_price(&self, params: &OrbParams) -> Option<i64> {
+        if params.breakeven_trigger_r <= 0.0 || self.r_denom <= 0 {
+            return None;
+        }
+        Some(self.entry_price + (params.breakeven_trigger_r * self.r_denom as f64).round() as i64)
     }
 }
 

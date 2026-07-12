@@ -418,6 +418,113 @@ fn degenerate_range_midpoint_defines_trade_r_while_strength_stays_none() {
     assert_eq!(breakout_strength(62_000, 61_000, 61_000), None);
 }
 
+// ---------------------------------------------------------------------------
+// Breakeven-move exit lever (lever 6, KTD11): once observed MFE reaches
+// `breakeven_trigger_r · R`, the stop ratchets to entry for SUBSEQUENT bars — a
+// runner that peaks then reverts books at breakeven instead of decaying to the
+// time-flat exit. Off (0.0) is byte-identical to v9. The ratchet never fires on
+// the bar that triggers it (same-bar stop-first pessimism, KTD2), only tightens
+// the stop, and arms once.
+// ---------------------------------------------------------------------------
+
+/// Off (`breakeven_trigger_r == 0.0`): a give-back trade that peaks well above the
+/// trigger-that-would-be, then reverts toward entry, does NOT stop at breakeven —
+/// it rides to the time-flat exit exactly as v9 (byte-identical no-op).
+#[test]
+fn breakeven_off_is_a_no_op_giveback_rides_to_time_flat() {
+    let p = OrbParams::default(); // breakeven_trigger_r 0.0
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000); // R 1500, entry→stop 60_000, target 63_500
+    assert_eq!(bar(&mut st, t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    // A bar peaks at 62_800 (would arm a 0.5R=62_750 breakeven) — but the lever is off.
+    assert!(bar(&mut st, t(9, 30), 62_800, 62_000, &p).is_empty());
+    // Reverts to 61_900 — above the 60_000 range-low stop, so with the lever off no
+    // exit fires (a breakeven stop at 62_000 WOULD have stopped here).
+    assert!(bar(&mut st, t(10, 0), 62_400, 61_900, &p).is_empty());
+    // Rides to the time-flat exit.
+    let acts = bar(&mut st, t(15, 0), 62_100, 62_000, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 62_000, reason: ExitReason::TimeFlat }]);
+}
+
+/// On: a runner that reaches the `breakeven_trigger_r · R` MFE then reverts to entry
+/// books a Stop at the ratcheted breakeven stop on a LATER bar — not a time-flat
+/// give-back. This is the whole mechanism.
+#[test]
+fn breakeven_arms_then_books_at_the_ratcheted_stop() {
+    let mut p = OrbParams::default();
+    p.breakeven_trigger_r = 0.5; // trigger = 62_000 + round(0.5 * 1500) = 62_750
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000); // R 1500, entry 62_000, initial stop 60_000
+    assert_eq!(bar(&mut st, t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    // Bar A peaks at 62_800 ≥ 62_750 (below the 63_500 target) and holds above the
+    // stop → no exit, but the ratchet arms: the stop moves to entry (62_000).
+    assert!(bar(&mut st, t(9, 30), 62_800, 62_000, &p).is_empty());
+    // Bar B dips to 61_900 ≤ 62_000 (the ratcheted stop) → Stop at the bar low. Under
+    // the v9 60_000 stop this bar would NOT have exited.
+    let acts = bar(&mut st, t(10, 0), 62_400, 61_900, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 61_900, reason: ExitReason::Stop }]);
+    assert_eq!(st.phase(), Phase::Done);
+}
+
+/// KTD2 same-bar pessimism: the ratchet is NOT applied to the bar that triggers it,
+/// even when that same bar dips below entry. Same-bar order is unknowable — the low
+/// may precede the high that arms the move — so booking a breakeven stop on the
+/// triggering bar would be a stop the position never provably reached. The stop
+/// binds only from the NEXT bar.
+#[test]
+fn breakeven_does_not_book_on_the_triggering_bar() {
+    let mut p = OrbParams::default();
+    p.breakeven_trigger_r = 0.5; // trigger 62_750
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000);
+    assert_eq!(bar(&mut st, t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    // Bar A both arms the ratchet (high 62_800 ≥ 62_750) AND dips below entry
+    // (low 61_800 < 62_000) in the same bar. The stop check uses the OLD 60_000 stop
+    // (61_800 > 60_000 → no exit); the ratchet arms only AFTER, for later bars.
+    assert!(bar(&mut st, t(9, 30), 62_800, 61_800, &p).is_empty());
+    assert_eq!(st.phase(), Phase::Long, "no same-bar breakeven stop-out");
+    // The NEXT bar's dip to 61_900 ≤ 62_000 does book the breakeven stop.
+    let acts = bar(&mut st, t(10, 0), 62_200, 61_900, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 61_900, reason: ExitReason::Stop }]);
+}
+
+/// The trigger binds on its threshold: a peak BELOW `breakeven_trigger_r · R` does
+/// not arm the ratchet, so a later revert toward entry is not stopped at breakeven.
+#[test]
+fn breakeven_does_not_arm_below_the_trigger() {
+    let mut p = OrbParams::default();
+    p.breakeven_trigger_r = 0.5; // trigger 62_750
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000);
+    assert_eq!(bar(&mut st, t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    // A peak of 62_700 < 62_750 does NOT arm the ratchet.
+    assert!(bar(&mut st, t(9, 30), 62_700, 62_000, &p).is_empty());
+    // A dip to 61_900 is above the un-ratcheted 60_000 stop → no exit (the lever
+    // never armed, so nothing tightened).
+    assert!(bar(&mut st, t(10, 0), 62_400, 61_900, &p).is_empty());
+    let acts = bar(&mut st, t(15, 0), 62_100, 62_000, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 62_000, reason: ExitReason::TimeFlat }]);
+}
+
+/// An armed breakeven ratchet never blocks a subsequent Target: a winner that arms
+/// the move on one bar and then clears the target on a later bar (staying above the
+/// ratcheted stop) still banks Target, with MFE capped at `profit_target_r`. The
+/// ratchet neither corrupts the high-water fold nor pre-empts the target.
+#[test]
+fn breakeven_armed_trade_still_targets() {
+    let mut p = OrbParams::default(); // profit_target_r 1.0 → target 63_500
+    p.breakeven_trigger_r = 0.5; // trigger 62_750
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000);
+    assert_eq!(bar(&mut st, t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    // Bar A arms the ratchet (high 62_800), holds above entry → no exit, stop → 62_000.
+    assert!(bar(&mut st, t(9, 30), 62_800, 62_100, &p).is_empty());
+    // Bar B clears the 63_500 target and stays above the 62_000 ratcheted stop → Target.
+    let acts = bar(&mut st, t(10, 0), 63_600, 62_500, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 63_500, reason: ExitReason::Target }]);
+    assert!((st.mfe_r() - 1.0).abs() < 1e-9, "mfe caps at profit_target_r: {}", st.mfe_r());
+}
+
 /// AE5: ATR mode with no prior ATR fails closed at range fix — one recorded
 /// `atr_unavailable` reject, done-for-day, never a silent range-low fallback.
 #[test]
