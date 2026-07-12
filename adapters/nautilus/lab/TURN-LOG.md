@@ -4,6 +4,63 @@ Committed record of each loop turn's verdict + the bar conditions it held. The
 full artifacts (`analysis.md`, manifests, performance) live in the gitignored data
 home; this file is the durable, reviewable outcome trail.
 
+## Turn — lever 3: OR-width sanity (2026-07-12) — plan 2026-07-11-001
+
+- **Verdict: REVERT (lever 3 fails the edge gate — expectancy collapses).**
+  `or_width_max_atr` 0.0 → **0.666** (p80 of the range_R/ATR distribution) as a
+  single-param seed-and-rerun flip from the v16 baseline. Pre-registered value +
+  keep rule before the run (R3). The gate rejects a session when `range_R >
+  or_width_max_atr · prior_ATR` — a too-wide/choppy opening range.
+- **Diagnostic-first (no prior OR-width report existed).** A throwaway probe
+  (`or_width_max_atr = 0.01`, deleted) measured, over the v16 sessions: **ATR
+  coverage 64.1%** (341/532 have a positive prior ATR) and range_R/ATR by outcome
+  (target med 0.43 narrowest, time_exit 0.57 widest — wide OR ↔ drift, as
+  hypothesized). Chose **0.666 = p80** to trim the widest ~20% tail; on v16 trades
+  the *width* kills were 20 time_exit + 3 stop_hit, **0 targets** (clean). The probe
+  also predicted the confound: **62 of v16's 174 trades are `atr_unavailable`** and
+  winner-rich (39% target rate vs 31% overall) — a cohort the gate fail-closes at any
+  threshold > 0.
+- **Type: PARAM turn, not a code turn.** `strategy_code_hash fa7733f6df76ca39…`
+  unchanged between baseline and flip; zero `orb.rs` edits (hash lock, KTD8). The
+  OR-width gate already shipped in the harness code turn (#121); this only moves the
+  param. Seed-and-rerun (not a governed `LS_TURN_PARAM` turn) because the 0.0 → 0.666
+  move is an infinite relative change off the 0.0 sentinel (guardrail fail-closes it).
+- **Seed from v16, NOT the registry head.** Latest finalized was v17 (reverted
+  lever 4); the seed took v16's params (`entry_cutoff_min` back to 0.0) + the flip,
+  dated after v17 so `latest_finalized_run` picked it. Next version = v18.
+- **AE2 attribution:** `runs compare` param mode (**v16** → v18) **PASS**, diff exactly
+  `{or_width_max_atr, strategy_version}` — clean single-lever attribution, code hash
+  identical (comparing v17 would have shown a spurious `entry_cutoff_min` delta).
+- **Bind check — BINDS but CONFOUNDED:** v18 `decisions.jsonl` carries **68**
+  `filter:"or_width_atr"` SessionRejects (the gate firing on width — not inert) **plus
+  191** `atr_unavailable` rejects. The ATR-coverage cull dominates numerically (191 vs
+  68) — exactly the pre-registered confound. Closed trades 158 → 94.
+- **Edge gate (`EdgeEvaluation`, unchanged): NOT cleared (`is_edge = false`).**
+  Expectancy **−24,074.73** KRW/trade (v16 +4,812.74), PF 0.80 (from 1.044), pnl_total
+  **−2,238,950** (from +755,600), Sharpe −1.99 / Sortino −2.91, WR 42.6% (from 49.4%).
+  Dominance 6.1% (≤ 40% passes, but moot — expectancy is deeply negative).
+- **Read — the ATR-coverage confound swamps the clean width signal (falsification):**
+  the gate is inseparable from its `atr_unavailable` fail-closed arm, so turning on
+  OR-width took out the winner-rich 36% lacking a positive prior ATR (a *coverage*
+  property, not a *width* property) alongside the drift/loser tail. The clean width
+  component (68 rejections, drifters+losers) can't compensate; expectancy collapses.
+  Genuine falsification of the OR-width gate **as coupled to ATR availability** — on
+  this gappy small-cap sample the ATR-normalization confound dominates. Decoupling
+  (skip-not-reject on `atr_unavailable`, or an absolute non-ATR width gate) would be a
+  **code turn**, out of scope. Entry *quality via OR-width* joins entry *timing*
+  (lever 4) and stop *geometry* (U7) as falsified; entry *quality via close-confirm*
+  (v16) remains the only kept lever.
+- **Queue re-rank (R6):** baseline **stays v16** (revert; future turns seed from v16).
+  New head = **lever 5 (opening-window RVOL, `rvol_min`)** — a volume/context filter,
+  but it carries its **own coverage confound** (`rvol_insufficient_history`
+  fail-closes short-history priors); run the diagnostic-first discipline again before
+  pre-registering. Lever 1 leg 2 (ATR stop) stays **demoted**. Noted (not queued): a
+  future code turn to decouple OR-width from ATR availability, so the clean width
+  signal the diagnostic found can be tested without the confound.
+- **Provenance:** baseline run `20260712T022255Z-backtest-orb-v16`, flip run
+  `20260712T032737Z-backtest-orb-v18`, diagnostic probe (v900) run+deleted (home
+  `data/turn4-fresh`, gitignored). Offline, no gateway.
+
 ## Turn — lever 4: entry cutoff (2026-07-12) — plan 2026-07-11-001
 
 - **Verdict: REVERT (lever 4 fails the edge gate — expectancy turns negative).**
