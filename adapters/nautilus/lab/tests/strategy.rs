@@ -583,8 +583,9 @@ fn breakeven_arms_on_trade_r_under_midpoint_stop() {
 }
 
 /// The ratchet arms once and never re-widens or drifts: after the stop moves to entry,
-/// a later even-higher peak leaves the stop at entry (the `stop_price < entry_price`
-/// guard blocks a second fire), so a subsequent dip still stops at breakeven.
+/// a later even-higher peak leaves the stop at entry (with the trail off the new stop
+/// is exactly entry, and `stop_price.max(entry)` is a no-op once armed), so a
+/// subsequent dip still stops at breakeven.
 #[test]
 fn breakeven_ratchet_is_idempotent_and_never_rewidens() {
     let mut p = OrbParams::default(); // target 63_500
@@ -643,6 +644,186 @@ fn breakeven_arms_under_close_confirm_entry() {
     // Bar B dips to 61_900 ≤ 62_000 → breakeven Stop, just as in wick mode.
     let acts = st.on_bar(t(10, 0), 62_400, 61_900, 62_100, 0.0, &p);
     assert_eq!(acts, vec![OrbAction::Exit { limit_price: 61_900, reason: ExitReason::Stop }]);
+}
+
+// ---------------------------------------------------------------------------
+// Breakeven-TRAIL exit lever (candidate A on top of lever 6, KTD12): once the
+// breakeven ratchet has armed (`high_water ≥ breakeven_trigger_r · R`), the stop
+// trails `trail_frac_r · R` below the high-water mark for SUBSEQUENT bars, floored
+// at entry — a runner that peaks well past the trigger then reverts books a PARTIAL
+// win at the trailed stop, not just a scratch at breakeven. Off (`trail_frac_r`
+// 0.0) is byte-identical to v23's flat breakeven move. The trail never engages
+// before the ratchet arms, never applies on the bar that raised high_water (KTD2),
+// only tightens, and never loosens below entry.
+// ---------------------------------------------------------------------------
+
+/// The whole mechanism: an armed runner peaks well past the trigger, then reverts.
+/// With the trail on it books a Stop at the trailed level (a PARTIAL WIN above entry)
+/// on a later bar — where v23's flat breakeven would have booked a scratch at entry.
+#[test]
+fn trail_books_a_partial_win_above_breakeven() {
+    let mut p = OrbParams::default();
+    p.breakeven_trigger_r = 0.5; // trigger = 62_000 + round(0.5 * 1500) = 62_750
+    p.trail_frac_r = 0.25; // give-back = round(0.25 * 1500) = 375
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000); // R 1500, entry 62_000, target 63_500
+    assert_eq!(bar(&mut st, t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    // Bar A peaks at 63_400 (arms: ≥ 62_750; below the 63_500 target), holds above the
+    // stop → no exit. Trail sets the stop to 63_400 − 375 = 63_025 for later bars.
+    assert!(bar(&mut st, t(9, 30), 63_400, 62_500, &p).is_empty());
+    // Bar B dips to 63_000 ≤ 63_025 (the trailed stop) → Stop at the bar low 63_000 —
+    // a partial win of (63_000 − 62_000)/1500 ≈ 0.67R, NOT a breakeven scratch.
+    let acts = bar(&mut st, t(10, 0), 63_200, 63_000, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 63_000, reason: ExitReason::Stop }]);
+    assert!(st.realized_exit_r(63_000) > 0.0, "the trail books a positive partial: {}", st.realized_exit_r(63_000));
+}
+
+/// The trail engages ONLY after the breakeven ratchet arms: a peak BELOW the
+/// `breakeven_trigger_r · R` trigger neither arms breakeven nor trails, so a dip that
+/// would hit a hypothetical trailed stop but stays above the range-low stop does not
+/// exit. The trail rides on top of the kept trigger — never independently of it.
+#[test]
+fn trail_does_not_engage_before_breakeven_arms() {
+    let mut p = OrbParams::default();
+    p.breakeven_trigger_r = 0.5; // trigger 62_750
+    p.trail_frac_r = 0.1; // a very tight trail — must still not engage un-armed
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000);
+    assert_eq!(bar(&mut st, t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    // Peak 62_700 < 62_750 → the ratchet never arms, so the trail never engages.
+    assert!(bar(&mut st, t(9, 30), 62_700, 62_000, &p).is_empty());
+    // A dip to 62_100 — which a trail off the 62_700 peak WOULD have stopped — is above
+    // the un-ratcheted 60_000 range-low stop, so no exit fires.
+    assert!(bar(&mut st, t(10, 0), 62_400, 62_100, &p).is_empty());
+    let acts = bar(&mut st, t(15, 0), 62_100, 62_000, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 62_000, reason: ExitReason::TimeFlat }]);
+}
+
+/// The trailed stop is floored at entry: when `high_water − round(trail_frac_r · R)`
+/// sits below entry (a modest peak with a wide trail), the stop clamps to entry — the
+/// flat breakeven of lever 6, never a stop loosened below breakeven.
+#[test]
+fn trail_floors_at_entry_never_below_breakeven() {
+    let mut p = OrbParams::default();
+    p.breakeven_trigger_r = 0.5; // trigger 62_750
+    p.trail_frac_r = 0.6; // give-back = round(0.6 * 1500) = 900
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000);
+    assert_eq!(bar(&mut st, t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    // Bar A peaks at 62_800 (arms). Trailed = 62_800 − 900 = 61_900 < entry 62_000 →
+    // floored at entry 62_000 (flat breakeven), NOT loosened to 61_900.
+    assert!(bar(&mut st, t(9, 30), 62_800, 62_100, &p).is_empty());
+    // A dip to 61_950 (< the floored 62_000 stop, but > the un-floored 61_900) books a
+    // Stop at breakeven — proving the floor held.
+    let acts = bar(&mut st, t(10, 0), 62_400, 61_950, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 61_950, reason: ExitReason::Stop }]);
+}
+
+/// The trail only ever tightens: once it lifts the stop off a peak, a later bar with a
+/// LOWER high does not fold a new high_water, so the trailed stop holds (never drifts
+/// back down toward entry). A dip to the held level still books there.
+#[test]
+fn trail_only_tightens_never_loosens() {
+    let mut p = OrbParams::default();
+    p.breakeven_trigger_r = 0.5; // trigger 62_750
+    p.trail_frac_r = 0.25; // give-back 375
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000); // R 1500, entry 62_000, target 63_500
+    assert_eq!(bar(&mut st, t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    // Bar A peaks 63_400 (arms; < 63_500 target) → trailed stop 63_400 − 375 = 63_025.
+    assert!(bar(&mut st, t(9, 30), 63_400, 62_500, &p).is_empty());
+    // Bar B has a LOWER high (63_100, no new high_water) and holds above 63_025 → no
+    // exit, and the trailed stop must NOT drift down.
+    assert!(bar(&mut st, t(10, 0), 63_100, 63_050, &p).is_empty());
+    // Bar C dips to 63_000 ≤ 63_025 → Stop at the still-held trailed level.
+    let acts = bar(&mut st, t(10, 30), 63_100, 63_000, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 63_000, reason: ExitReason::Stop }]);
+}
+
+/// KTD2 same-bar: the trailed stop is NOT applied on the bar that raised high_water.
+/// A bar prints a new peak AND a low below the would-be-trailed level in the same bar;
+/// the low may precede the high, so no same-bar stop — the trail binds only next bar.
+#[test]
+fn trail_does_not_book_on_the_high_raising_bar() {
+    let mut p = OrbParams::default();
+    p.breakeven_trigger_r = 0.5; // trigger 62_750
+    p.trail_frac_r = 0.25; // give-back 375
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000);
+    assert_eq!(bar(&mut st, t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    // Bar A arms the ratchet on an earlier bar (peak 63_000 → trailed 63_000 − 375 =
+    // 62_625, above entry).
+    assert!(bar(&mut st, t(9, 30), 63_000, 62_500, &p).is_empty());
+    // Bar B raises high_water to 63_400 (new trailed 63_025) AND dips to 62_700 in the
+    // same bar. The stop check uses the PRIOR trailed 62_625 (62_700 > 62_625 → no
+    // exit); the tighter 63_025 arms only AFTER, for later bars.
+    assert!(bar(&mut st, t(10, 0), 63_400, 62_700, &p).is_empty());
+    assert_eq!(st.phase(), Phase::Long, "no same-bar trailed stop-out on the high-raising bar");
+    // The NEXT bar's dip to 63_000 ≤ 63_025 books the tightened trailed stop.
+    let acts = bar(&mut st, t(10, 30), 63_100, 63_000, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 63_000, reason: ExitReason::Stop }]);
+}
+
+/// A tiny positive `trail_frac_r` whose rounded give-back is 0 is treated as no trail
+/// (flat breakeven), not a peak-tight stop: the give-back rounds to 0, so the stop
+/// stays at entry and a give-back trade books the breakeven scratch — never a stop
+/// pinned at the high-water mark.
+#[test]
+fn trail_tiny_give_back_that_rounds_to_zero_is_flat_breakeven() {
+    let mut p = OrbParams::default();
+    p.breakeven_trigger_r = 0.5; // trigger 62_750
+    p.trail_frac_r = 0.0001; // round(0.0001 * 1500) = round(0.15) = 0 → no trail
+    assert!(p.validate().is_ok(), "a positive trail validates");
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000);
+    assert_eq!(bar(&mut st, t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    // Bar A peaks 63_400 (arms). Give-back rounds to 0 → the stop is entry 62_000
+    // (flat), NOT 63_400 (a peak-tight trail).
+    assert!(bar(&mut st, t(9, 30), 63_400, 62_500, &p).is_empty());
+    // A dip to 63_000 — which a peak-tight trail WOULD have stopped — is above the
+    // flat-breakeven 62_000 stop, so no exit.
+    assert!(bar(&mut st, t(10, 0), 63_200, 63_000, &p).is_empty());
+    // A dip to entry books the breakeven scratch.
+    let acts = bar(&mut st, t(10, 30), 62_100, 61_950, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 61_950, reason: ExitReason::Stop }]);
+}
+
+/// Off (`trail_frac_r == 0.0`) is byte-identical to v23's flat breakeven move: with
+/// the trail off, an armed give-back trade books a Stop at entry (breakeven), exactly
+/// as lever 6 alone — the trail arm changes nothing until it is switched on.
+#[test]
+fn trail_off_is_flat_breakeven_byte_identical() {
+    let mut p = OrbParams::default();
+    p.breakeven_trigger_r = 0.5; // trigger 62_750
+    // trail_frac_r stays 0.0 (off)
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000);
+    assert_eq!(bar(&mut st, t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    // Bar A peaks 63_400 (arms) — with the trail off the stop moves only to entry.
+    assert!(bar(&mut st, t(9, 30), 63_400, 62_500, &p).is_empty());
+    // A dip to 63_000 does NOT stop (the flat breakeven stop is entry 62_000, not a
+    // trailed 63_025) — the exact v23 behavior.
+    assert!(bar(&mut st, t(10, 0), 63_200, 63_000, &p).is_empty());
+    // A dip to entry books the breakeven Stop.
+    let acts = bar(&mut st, t(10, 30), 62_100, 61_950, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 61_950, reason: ExitReason::Stop }]);
+}
+
+/// `realized_exit_r` reports the booked R at a fill: positive above entry (a trailed
+/// partial or target), ≈0 at breakeven, negative below (a stop-out). Pure telemetry,
+/// guarded like `mfe_r` (0.0 before a range / entry / on a degenerate R).
+#[test]
+fn realized_exit_r_reports_booked_r() {
+    let p = OrbParams::default();
+    let mut st = OrbState::new();
+    // Before a range: 0.0 (guarded).
+    assert_eq!(st.realized_exit_r(62_000), 0.0);
+    set_range(&mut st, &p, 61_500, 60_000); // R 1500
+    assert_eq!(bar(&mut st, t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    // entry 62_000, R 1500.
+    assert!((st.realized_exit_r(62_000) - 0.0).abs() < 1e-9, "breakeven books ≈0");
+    assert!((st.realized_exit_r(62_750) - 0.5).abs() < 1e-9, "a +750 fill books +0.5R");
+    assert!((st.realized_exit_r(61_250) + 0.5).abs() < 1e-9, "a −750 fill books −0.5R");
 }
 
 /// AE5: ATR mode with no prior ATR fails closed at range fix — one recorded

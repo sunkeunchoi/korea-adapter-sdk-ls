@@ -429,6 +429,20 @@ impl OrbState {
         (self.high_water - self.entry_price) as f64 / self.r_denom as f64
     }
 
+    /// The realized exit in R-multiples for a fill at `exit_price` (R5, KTD12):
+    /// `(exit_price − entry_price) / R`, the entry-fixed `r_denom` (same denominator
+    /// as [`OrbState::mfe_r`]). Pure telemetry that rides every exit envelope so the
+    /// breakeven-trail turn can read give-back-cohort realized-R directly — a
+    /// breakeven scratch books ≈0, a trailed partial books positive, a stop-out
+    /// books negative. Returns `0.0` before an entry, before a range, or on a
+    /// degenerate `R ≤ 0` (mirroring `mfe_r`'s guards).
+    pub fn realized_exit_r(&self, exit_price: i64) -> f64 {
+        if !self.saw_range || self.r_denom <= 0 {
+            return 0.0;
+        }
+        (exit_price - self.entry_price) as f64 / self.r_denom as f64
+    }
+
     /// Force the symbol flat/done — used by the strategy when the sizing gate vetoes
     /// an otherwise-triggered entry (the position was never actually opened).
     pub fn force_done(&mut self) {
@@ -597,21 +611,47 @@ impl OrbState {
                 // No target configured, no stop → fold the full bar high (unchanged).
                 self.high_water = self.high_water.max(high);
             }
-            // Breakeven-move ratchet (lever 6, KTD11) — evaluated AFTER folding this
-            // bar's provably-observed high-water (KTD5) and only when the position is
-            // still open (an exit branch above already rolled it to Done). Once the
-            // observed MFE reaches `breakeven_trigger_r · R`, raise the stop to the
-            // entry price for SUBSEQUENT bars. It is deliberately NOT applied to this
-            // bar's own stop check above: the low that would hit the ratcheted stop may
-            // have printed before the high that just triggered it — same-bar order is
-            // unknowable (KTD2), so booking it would be a stop the position never
-            // provably reached. The move only ever tightens the stop (entry sits above
-            // every stop mode's initial level) and arms once (guarded by
-            // `stop_price < entry_price`). Off (`breakeven_trigger_r == 0.0`) it is inert.
+            // Breakeven-move ratchet (lever 6, KTD11) + breakeven-trail (candidate A,
+            // KTD12) — evaluated AFTER folding this bar's provably-observed high-water
+            // (KTD5) and only when the position is still open (an exit branch above
+            // already rolled it to Done). Once the observed MFE reaches
+            // `breakeven_trigger_r · R` the ratchet ARMS: the stop is raised for
+            // SUBSEQUENT bars to at least the entry price (the flat breakeven, lever 6),
+            // and — when the trail is on — up to `high_water − round(trail_frac_r · R)`,
+            // floored at entry, so a runner that peaks well past the trigger then reverts
+            // books a partial win at the trailed stop rather than a scratch at breakeven.
+            //
+            // The new stop is deliberately NOT applied to this bar's own stop check
+            // above: the low that would hit it may have printed before the high that just
+            // raised the high-water (and thus the trail) — same-bar order is unknowable
+            // (KTD2), so booking it would be a stop the position never provably reached.
+            // It binds only from the next bar. The stop only ever tightens
+            // (`stop_price.max(...)`) and, once armed, never loosens below entry. Off
+            // (`breakeven_trigger_r == 0.0`) the ratchet never arms; with the ratchet on
+            // but the trail off (`trail_frac_r == 0.0`) the new stop is exactly the entry
+            // price — byte-identical to v23's flat breakeven move.
             if self.phase == Phase::Long {
                 if let Some(trigger) = self.breakeven_trigger_price(params) {
-                    if self.high_water >= trigger && self.stop_price < self.entry_price {
-                        self.stop_price = self.entry_price;
+                    if self.high_water >= trigger {
+                        // Armed: the breakeven floor is the entry price (lever 6).
+                        let mut new_stop = self.entry_price;
+                        // Trail arm (candidate A): give back a fixed fraction of R below
+                        // the high-water mark. `trail_frac_r == 0.0` (off) skips this so
+                        // the stop stays flat at entry (the trail term would otherwise be
+                        // `high_water` itself — too tight). A give-back that rounds to 0
+                        // (a tiny positive `trail_frac_r`) would also collapse the trail
+                        // onto `high_water`; treat it as no trail (flat breakeven) rather
+                        // than an accidental peak-tight stop.
+                        if params.trail_frac_r > 0.0 {
+                            let give_back = (params.trail_frac_r * self.r_denom as f64).round() as i64;
+                            if give_back > 0 {
+                                new_stop = new_stop.max(self.high_water - give_back);
+                            }
+                        }
+                        // Only ever tighten — never loosen a stop already at/above the
+                        // new level (the trail rises monotonically with high_water, but
+                        // this guards the general case too).
+                        self.stop_price = self.stop_price.max(new_stop);
                     }
                 }
             }
@@ -981,12 +1021,22 @@ impl OrbStrategy {
                         ExitReason::Target => SignalKind::Target,
                     };
                     // Per-trade MFE (R5) rides every exit envelope so the next
-                    // exit-tuning turn reads give-back directly.
-                    let mfe_r = self.states.get(&id).map(|s| s.mfe_r()).unwrap_or(0.0);
+                    // exit-tuning turn reads give-back directly; realized-R (KTD12)
+                    // rides alongside it so the breakeven-trail bind check reads the
+                    // give-back cohort's *booked* R (scratch ≈0 vs trailed partial)
+                    // without re-joining entry price across envelopes.
+                    let st = self.states.get(&id);
+                    let mfe_r = st.map(|s| s.mfe_r()).unwrap_or(0.0);
+                    let realized_r = st.map(|s| s.realized_exit_r(limit_price)).unwrap_or(0.0);
                     self.emit_market_data(id, ts, DecisionDetail::transition(
                         symbol.clone(),
                         kind,
-                        vals(&[("qty", qty as f64), ("price", limit_price as f64), ("mfe_r", mfe_r)]),
+                        vals(&[
+                            ("qty", qty as f64),
+                            ("price", limit_price as f64),
+                            ("mfe_r", mfe_r),
+                            ("realized_r", realized_r),
+                        ]),
                     ));
                     self.entered_qty.remove(&id);
                 }

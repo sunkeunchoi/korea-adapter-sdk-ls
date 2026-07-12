@@ -4,6 +4,74 @@ Committed record of each loop turn's verdict + the bar conditions it held. The
 full artifacts (`analysis.md`, manifests, performance) live in the gitignored data
 home; this file is the durable, reviewable outcome trail.
 
+## Turn — breakeven-TRAIL exit lever (candidate A) (2026-07-12) — plan 2026-07-11-001
+
+- **Verdict: REVERT v25 — the trailing-stop variant is FALSIFIED. It BINDS exactly as
+  designed (books partial wins on the give-back cohort) but the winner-cutting cost
+  dominates: expectancy collapses −67% vs v23. Baseline STAYS v23 (flat breakeven move).
+  A binding-but-worse falsification (R5), not insufficient-evidence — the mechanism is
+  proven to work and proven not to pay.** A CODE turn (add a default-off trailing arm on
+  top of the kept breakeven ratchet in `orb.rs`) followed by its single flip `trail_frac_r`
+  0.0 → **0.25** (= ½·median of v23's breakeven-armed `stop_hit` cohort peak-MFE 0.524).
+  Pre-registered value + keep rule + bind signature before the run (R3,
+  `data/turn4-fresh/PRE-REGISTER-vNEXT-breakeven-trail.md`).
+- **The code change.** Once the breakeven ratchet has ARMED (`high_water ≥ entry +
+  round(0.41·R)`, the sweep-confirmed trigger, untouched), for SUBSEQUENT bars the stop
+  trails: `stop = max(prior_stop, entry, high_water − round(trail_frac_r·R))` — floored at
+  entry, only ever tightens. So a runner that peaks well past the trigger then reverts
+  books a **partial win** at the trailed stop, not just a scratch at breakeven. Respects
+  **KTD5** (reads only folded `high_water`) and **KTD2** (never applies the tightened trail
+  on the bar that raised `high_water`). Off (`trail_frac_r == 0.0`) the trail term would be
+  `high_water` (too tight), so OFF is an explicit `trail_frac_r > 0` gate that falls back to
+  the flat breakeven — outcome-identical to v23. A round-to-zero give-back is also treated
+  as flat breakeven. `validate()` rejects a negative trail. A new telemetry `realized_r`
+  rides every exit envelope (booked R) so the bind check reads give-back-cohort realized-R
+  directly. Pre-flip code review (correctness + adversarial, both session-model) found **no
+  correctness defect**; one doc-precision fix (off-path is outcome-identical, not
+  `decisions.jsonl`-byte-identical). 315 lab tests pass (306 + 9 new trail tests).
+- **Type: CODE turn.** `strategy_code_hash a5521c3e…` → **`fd5125c2…`**. Re-baselined via
+  seed-and-rerun (KTD2): v24 seeded from v23, `trail_frac_r=0.0`, `strategy_version=24`.
+  `performance.json` (trades + equity_curve + summary) vs v23 **reconciled 1:1**
+  (expectancy 44,046.41, PF 1.620, 167 closed — identical) — the trail is verifiably
+  default-off. Re-baseline signal: `runs compare` param mode (v23 → v24) **FAILs**
+  `strategy_code_hash differs`, param diff `["strategy_version"]` (KTD3 — the FAIL *is* the
+  evidence). The flip off the `0.0` sentinel is seed-and-rerun, not a governed turn
+  (`0.0 → 0.25` is an infinite relative change; `PROPOSAL_BOUNDS_CAP` 0.5 fail-closes).
+- **AE2 attribution:** `runs compare` param mode (**v24 → v25**) **PASS**, diff exactly
+  `{trail_frac_r, strategy_version}` — clean single-lever flip on the re-baselined code
+  (v24 and v25 share `fd5125c2…`).
+- **Bind check — mechanism BINDS (pre-registered signature validated):** the breakeven-armed
+  `stop_hit` cohort's realized exit-R shifts UP off scratch **−0.034R → +0.242R** (median);
+  **97% (99/102)** of the armed cohort now books a positive partial (`realized_r > 0`; v23
+  had ≈none). But the **winner-cutting cost is severe**: `target` runners collapse **50 →
+  11** (the 0.25R trail stops 39 of v23's 50 would-be 1.0R winners short, re-booking them as
+  ~0.24R partials). Exit mix `stop_hit`/`time_exit`/`target`: v23 `77/57/50` → v25
+  `131/52/11`.
+- **Edge gate (`EdgeEvaluation`, unchanged): `is_edge = yes`** (positive expectancy,
+  dominance **9.2%** ≤ 40%), but the keep rule (is_edge AND expectancy > +44,046.41 AND
+  dominance ≤ 40%) **FAILS on the middle clause**: expectancy **+14,737.28** KRW/trade
+  (v23 +44,046.41 — a **−67%** collapse), pnl_total **2,549,550** (v23 6,739,100), WR 62.5%,
+  176 closed. → **REVERT.**
+- **Read — the trail works but does not pay.** Converting the peaked-then-reverted give-back
+  scratches into ~0.24R partials (99 of them) does not compensate for surrendering ~0.76R
+  apiece on 39 would-be-target winners: the 0.25R give-back is **too tight** relative to the
+  winners' intraday pullback structure — they routinely dip past 0.25R below an interim high
+  on the way to 1.0R and get trailed out. A looser trail would cut fewer winners but (per the
+  pre-register) degenerate toward v23's flat breakeven. The pessimistic bar-low fill leaves
+  14,737 a lower bound, but the gap to v23 is far too wide to close.
+- **Queue re-rank (R6) — exit block now WELL-CHARACTERIZED; baseline unchanged at v23.**
+  Three exit-block probes: breakeven **trigger** sweep-confirmed near-optimal (0.41),
+  flat-breakeven **move** KEPT (v23), **trail** FALSIFIED (this turn). Still THREE kept
+  levers across TWO classes (entry quality ×2 + exit timing ×1 = the flat breakeven move).
+  Trailing joins the falsified set (stop geometry U7, entry timing lever 4, entry-quality
+  RVOL lever 5). The next motivated turn is a **new class — CLASS B risk/position-sizing**
+  (needs `/ce-plan` for a normalized edge metric), not another exit-block probe.
+- **Provenance:** baseline `20260712T045403Z-backtest-orb-v23` (registry head, restored),
+  re-baseline `20260712T054957Z-backtest-orb-v24` (`trail_frac_r=0.0`, reconciled 1:1),
+  flip `20260712T055143Z-backtest-orb-v25` (`trail_frac_r=0.25`) — both archived under
+  `data/turn4-fresh/trail-archive/` so v23 stays head (home `data/turn4-fresh`, gitignored).
+  Offline, no gateway.
+
 ## Turn — breakeven-trigger governed sweep / confirm-or-deny (2026-07-12) — plan 2026-07-11-001
 
 - **Verdict: CONFIRM v23 — the sweep confirms the pre-registered `breakeven_trigger_r

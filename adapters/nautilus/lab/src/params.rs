@@ -136,6 +136,24 @@ pub struct OrbParams {
     /// (byte-identical to v21); legacy manifests deserialize with it.
     #[serde(default)]
     pub breakeven_trigger_r: f64,
+    /// Breakeven-trail exit lever (candidate A on top of lever 6, KTD1/KTD12): once
+    /// the breakeven ratchet has ARMED (`high_water ≥ breakeven_trigger_r · R`), the
+    /// stop trails `trail_frac_r · R` below the high-water mark for *subsequent* bars,
+    /// floored at the entry price — so a runner that peaks well past the trigger then
+    /// reverts books a **partial win** at the trailed stop, not just a scratch at
+    /// breakeven (the give-back cohort that lever 6 currently books ≈entry). It rides
+    /// *on top of* the kept breakeven trigger (0.41) — it never engages before the
+    /// ratchet arms, only ever tightens, and never loosens below breakeven. The exit
+    /// still fills at the pessimistic bar low (as every stop), so a gap-through books
+    /// slightly below the trail — conservative (the lever can only under-state its
+    /// edge). Sentinel `0.0` = off: the trail term collapses to `high_water` (too
+    /// tight), so OFF is an explicit `trail_frac_r > 0` gate that falls back to the
+    /// flat-breakeven ratchet — **outcome-identical to v23** (same orders, fills, and
+    /// per-trade P&L, so `performance.json` reconciles 1:1; the only telemetry delta is
+    /// the always-on `realized_r` exit field, which no verdict metric reads). Legacy
+    /// manifests deserialize with it.
+    #[serde(default)]
+    pub trail_frac_r: f64,
 }
 
 /// The back-compat default for [`OrbParams::profit_target_r`] (R2, KTD3): a v8
@@ -212,6 +230,7 @@ impl Default for OrbParams {
             rvol_window_sessions: default_rvol_window_sessions(),
             rvol_min_history: default_rvol_min_history(),
             breakeven_trigger_r: 0.0,
+            trail_frac_r: 0.0,
         }
     }
 }
@@ -309,6 +328,17 @@ impl OrbParams {
                 "breakeven_trigger_r {} is negative — use 0.0 to disable the breakeven move, \
                  a positive R-multiple to arm it (KTD11)",
                 self.breakeven_trigger_r
+            ));
+        }
+        // Breakeven-trail give-back (candidate A): 0.0 disables the trail (flat
+        // breakeven), a positive R-multiple sets the give-back below the high-water
+        // mark. A negative give-back would trail the stop ABOVE the high water — a
+        // stop the price has never reached, an instant same-bar stop-out. Reject it.
+        if self.trail_frac_r < 0.0 {
+            return Err(format!(
+                "trail_frac_r {} is negative — use 0.0 to disable the trail (flat breakeven), \
+                 a positive R-multiple to trail the stop below the high-water mark (KTD12)",
+                self.trail_frac_r
             ));
         }
         Ok(())
@@ -449,6 +479,7 @@ mod tests {
         assert_eq!(p.rvol_window_sessions, 14.0);
         assert_eq!(p.rvol_min_history, 5.0);
         assert_eq!(p.breakeven_trigger_r, 0.0, "breakeven move off");
+        assert_eq!(p.trail_frac_r, 0.0, "breakeven trail off");
         // The decoded helpers agree with the filter-off defaults.
         assert_eq!(p.stop_placement(), StopMode::RangeLow);
         assert!(!p.close_confirm_entry());
@@ -516,6 +547,18 @@ mod tests {
         assert!(armed.validate().is_ok(), "a positive breakeven trigger is valid");
         let neg = OrbParams { breakeven_trigger_r: -0.1, ..Default::default() };
         assert!(neg.validate().is_err(), "negative breakeven_trigger_r must be rejected");
+    }
+
+    #[test]
+    fn validate_trail_frac_r_rejects_negative_arms_positive() {
+        // 0.0 (off) and a positive R-multiple both validate; a negative give-back is a
+        // config error (it would trail the stop above the high water — an instant
+        // stop-out at a level the price never reached).
+        assert!(OrbParams::default().validate().is_ok(), "off by default");
+        let armed = OrbParams { trail_frac_r: 0.25, ..Default::default() };
+        assert!(armed.validate().is_ok(), "a positive breakeven trail is valid");
+        let neg = OrbParams { trail_frac_r: -0.1, ..Default::default() };
+        assert!(neg.validate().is_err(), "negative trail_frac_r must be rejected");
     }
 
     #[test]
@@ -625,6 +668,7 @@ mod tests {
         assert_eq!(p.rvol_window_sessions, 14.0);
         assert_eq!(p.rvol_min_history, 5.0);
         assert_eq!(p.breakeven_trigger_r, 0.0);
+        assert_eq!(p.trail_frac_r, 0.0);
         // Empty param_diff proxy: the deserialized legacy set's numeric summary
         // equals a freshly-defaulted set carrying the same version — no gate key
         // diverges, so a pre-field manifest yields no spurious param_diff (KTD1).
@@ -653,6 +697,7 @@ mod tests {
             "rvol_window_sessions",
             "rvol_min_history",
             "breakeven_trigger_r",
+            "trail_frac_r",
         ] {
             assert!(summary.contains_key(key), "numeric_summary missing {key}");
         }
@@ -673,6 +718,7 @@ mod tests {
             rvol_window_sessions: 20.0,
             rvol_min_history: 3.0,
             breakeven_trigger_r: 0.5,
+            trail_frac_r: 0.25,
             ..Default::default()
         };
         let back: OrbParams = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
