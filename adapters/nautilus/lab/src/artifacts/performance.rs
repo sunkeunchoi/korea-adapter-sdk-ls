@@ -48,6 +48,54 @@ pub struct TradeRecord {
     pub ts_closed: Option<u64>,
     /// The fills that make up this trade.
     pub fills: Vec<FillRecord>,
+    /// Entry-fixed **risk capital** deployed on this trade (KRW): `qty ·
+    /// risk_per_share`, where `risk_per_share = entry_price − stop_price` (the
+    /// initial, entry-fixed stop). Joined from the strategy's per-position entry
+    /// risk at ledger assembly (R4) — the trade ledger cannot derive it alone (the
+    /// stop lives on the strategy's `OrbState`, not the nautilus `Position`).
+    /// `None` for a run with no strategy risk map, a legacy artifact, or a
+    /// degenerate (`risk_per_share ≤ 0` / `qty ≤ 0`) entry — the R-metrics then
+    /// fall back to the legacy P&L path. **Additive**: absent from a pre-field
+    /// `performance.json` (serde default), so every legacy artifact still
+    /// deserializes and the existing summary keys are byte-unchanged (KTD-D).
+    #[serde(default)]
+    pub risk_capital: Option<f64>,
+    /// The realized **R-multiple** of this trade (R1/R4): `realized_pnl /
+    /// risk_capital` = `(exit − entry) / (entry − stop)`, **size-invariant** by
+    /// construction (no `qty` term survives the ratio). `None` while open, when no
+    /// risk was joined, or on a degenerate risk (mirrors [`Self::risk_capital`]).
+    /// Additive — see [`Self::risk_capital`].
+    #[serde(default)]
+    pub realized_r: Option<f64>,
+}
+
+/// Entry-time risk for one opened position (R4), captured by the strategy at order
+/// placement and joined into the trade ledger at assembly. `risk_per_share =
+/// entry_price − stop_price` (the entry-fixed initial stop — the same per-share
+/// risk the `risk_per_trade_krw` sizing lever divides its budget by, R5). The
+/// deployed risk capital is `qty · risk_per_share`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct EntryRisk {
+    /// The entry-fixed per-share risk (`entry_price − stop_price`, KRW).
+    pub risk_per_share: f64,
+    /// The filled entry quantity (shares).
+    pub qty: f64,
+}
+
+/// Join entry-time risk into a trade's ledger fields (R4): `risk_capital = qty ·
+/// risk_per_share`, `realized_r = realized_pnl / risk_capital` (only for a closed
+/// trade). Returns `(None, None)` when no risk was captured or the per-share risk /
+/// qty is non-positive (degenerate) — the trade then evaluates via the legacy P&L
+/// path, and never yields a NaN/Inf from a zero denominator.
+fn joined_risk(realized_pnl: f64, closed: bool, risk: Option<EntryRisk>) -> (Option<f64>, Option<f64>) {
+    match risk {
+        Some(r) if r.risk_per_share > 0.0 && r.qty > 0.0 => {
+            let risk_capital = r.qty * r.risk_per_share;
+            let realized_r = closed.then_some(realized_pnl / risk_capital);
+            (Some(risk_capital), realized_r)
+        }
+        _ => (None, None),
+    }
 }
 
 /// One point on the equity curve.
@@ -135,6 +183,28 @@ struct DominanceFold {
     degenerate_zero_pnl: bool,
     /// Per-symbol fold as [`SymbolAggregate`]s, sorted by symbol.
     per_symbol: Vec<SymbolAggregate>,
+    // ---- Size-invariant risk metrics (R1/R2/R3, U2) ----
+    // Present (`Some`/computed) only when **every** closed trade carries
+    // `risk_capital` — a run with any risk-less closed trade falls back to the
+    // legacy P&L path, so old artifacts and the pre-risk-field re-baseline still
+    // evaluate.
+    /// Return-on-risk `Σrealized_pnl / Σrisk_capital` — the risk-weighted mean R,
+    /// the size-invariant edge crux (R1). `None` when risk info is absent or the
+    /// deployed risk is degenerate (zero total).
+    return_on_risk: Option<f64>,
+    /// Equal-weight mean of per-trade `realized_r` (R2) — the size-invariant
+    /// diagnostic invariant. `None` when risk info is absent/degenerate.
+    mean_realized_r: Option<f64>,
+    /// Total deployed risk capital over closed trades (R1). `None` when absent.
+    risk_capital_total: Option<f64>,
+    /// `max(per-symbol Σrisk_capital) / Σrisk_capital` (R3). `None` when absent.
+    max_risk_capital_share: Option<f64>,
+    /// `max_risk_capital_share <= DOMINANCE_CAP` and not degenerate (R3). `None`
+    /// when risk info is absent (the verdict then gates on P&L-dominance).
+    risk_dominance_pass: Option<bool>,
+    /// Deployed risk is present but sums to zero (risk-dominance undefined →
+    /// fail-closed). `false` when risk info is absent (there is nothing to gate).
+    degenerate_zero_risk: bool,
 }
 
 /// The computed R1 decisiveness bar over a run's realized trade ledger (KTD-2):
@@ -207,10 +277,34 @@ pub struct EdgeEvaluation {
     pub degenerate_zero_pnl: bool,
     /// Per-symbol fold, sorted by symbol for deterministic output.
     pub per_symbol: Vec<SymbolAggregate>,
+    // ---- Size-invariant edge metrics (R1/R2/R3, CLASS B) ----
+    /// **Return-on-risk** `Σrealized_pnl / Σrisk_capital` — the size-invariant edge
+    /// crux (R1): flat under a uniform size-up, responsive to risk reallocation. The
+    /// KEEP verdict is authored against this (R6). `None` when no closed trade carries
+    /// risk info (the legacy P&L path) or deployed risk is degenerate.
+    pub return_on_risk: Option<f64>,
+    /// Equal-weight mean of per-trade `realized_r` (R2) — a size-invariant diagnostic
+    /// *invariant*, inert to a pure sizing change (not a verdict input). `None` when
+    /// risk info is absent/degenerate.
+    pub mean_realized_r: Option<f64>,
+    /// Total deployed risk capital over closed trades (R1). `None` when absent.
+    pub risk_capital_total: Option<f64>,
+    /// `max(per-symbol Σrisk_capital) / Σrisk_capital` (R3) — the **decisional**
+    /// dominance share under variable sizing (cannot be gamed by sizing one symbol
+    /// huge). `None` when risk info is absent (verdict gates on `dominance_pass`).
+    pub max_risk_capital_share: Option<f64>,
+    /// Condition (c) re-grounded (R3): `max_risk_capital_share <= DOMINANCE_CAP` and
+    /// not degenerate. `None` when risk info is absent. When present, this — not
+    /// `dominance_pass` — is the `is_edge` dominance gate.
+    pub risk_dominance_pass: Option<bool>,
+    /// Deployed risk is present but sums to zero (risk-dominance undefined →
+    /// fail-closed). `false` when risk info is absent.
+    pub degenerate_zero_risk: bool,
     /// The edge verdict input: a **positive expectancy** with **dominance capped**
-    /// over at least one closed trade. `true` ⇒ the strategy advances (R4/R5);
-    /// `false` ⇒ a flat/negative/dominated (or zero-trade) run — a recorded finding
-    /// with the next lever named, not an auto-pass and not a turn failure (R5).
+    /// over at least one closed trade. Dominance gates on **risk-capital share** when
+    /// present (R3), P&L share otherwise (legacy). `true` ⇒ the strategy advances
+    /// (R4/R5); `false` ⇒ a flat/negative/dominated (or zero-trade) run — a recorded
+    /// finding with the next lever named, not an auto-pass and not a turn failure (R5).
     pub is_edge: bool,
     /// Human-readable reasons the run is not an edge (empty ⇒ `is_edge` holds).
     pub failing_conditions: Vec<String>,
@@ -281,9 +375,29 @@ impl PerformanceReport {
     }
 
     /// Assemble a report directly from finished nautilus positions (the backtest /
-    /// live path): each position becomes a [`TradeRecord`] with its fill ledger.
+    /// live path): each position becomes a [`TradeRecord`] with its fill ledger. No
+    /// per-position risk is joined — every `risk_capital`/`realized_r` is `None` (the
+    /// legacy path; the R-metrics fall back to P&L).
     pub fn from_positions(positions: &[Position], starting_balance: f64) -> Self {
-        let trades = positions.iter().map(trade_from_position).collect();
+        Self::from_positions_with_risk(positions, &[], starting_balance)
+    }
+
+    /// Assemble a report from finished positions **plus** an index-aligned slice of
+    /// entry-time risk (R4): `risks[i]` is the captured [`EntryRisk`] for
+    /// `positions[i]` (`None` where none was captured). A shorter/empty `risks`
+    /// slice leaves the trailing positions risk-less (the legacy path). Populates
+    /// each [`TradeRecord`]'s additive `risk_capital`/`realized_r` without disturbing
+    /// any existing summary key.
+    pub fn from_positions_with_risk(
+        positions: &[Position],
+        risks: &[Option<EntryRisk>],
+        starting_balance: f64,
+    ) -> Self {
+        let trades = positions
+            .iter()
+            .enumerate()
+            .map(|(i, p)| trade_from_position(p, risks.get(i).copied().flatten()))
+            .collect();
         Self::assemble(trades, starting_balance)
     }
 
@@ -312,12 +426,54 @@ impl PerformanceReport {
         use std::collections::BTreeMap;
 
         let mut folded: BTreeMap<String, (usize, f64)> = BTreeMap::new();
+        // Risk fold (U2): per-symbol Σrisk_capital, Σrealized_pnl and Σrealized_r
+        // over closed trades — computed only if EVERY closed trade carries risk.
+        let mut risk_by_symbol: BTreeMap<String, f64> = BTreeMap::new();
+        let mut all_have_risk = true;
+        let mut all_have_realized_r = true;
+        let mut risk_pnl_sum = 0.0;
+        let mut realized_r_sum = 0.0;
         for t in self.trades.iter().filter(|t| t.ts_closed.is_some()) {
             let e = folded.entry(t.symbol.clone()).or_insert((0, 0.0));
             e.0 += 1;
             e.1 += t.realized_pnl;
+            match t.risk_capital {
+                Some(rc) => *risk_by_symbol.entry(t.symbol.clone()).or_insert(0.0) += rc,
+                None => all_have_risk = false,
+            }
+            match t.realized_r {
+                Some(r) => realized_r_sum += r,
+                None => all_have_realized_r = false,
+            }
+            risk_pnl_sum += t.realized_pnl;
         }
         let total_trades: usize = folded.values().map(|(c, _)| *c).sum();
+
+        // The R-metrics exist only when there is at least one closed trade AND every
+        // closed trade carries `risk_capital` (R1/R4 fallback discipline).
+        let risk_present = total_trades > 0 && all_have_risk;
+        let (
+            return_on_risk,
+            mean_realized_r,
+            risk_capital_total,
+            max_risk_capital_share,
+            risk_dominance_pass,
+            degenerate_zero_risk,
+        ) = if risk_present {
+            let total: f64 = risk_by_symbol.values().sum();
+            let degenerate = total == 0.0;
+            let max_risk: f64 = risk_by_symbol.values().copied().fold(0.0, f64::max);
+            let share = if degenerate { 0.0 } else { max_risk / total };
+            let dom_pass = !degenerate && share <= bar::DOMINANCE_CAP;
+            let ror = (!degenerate).then_some(risk_pnl_sum / total);
+            // Equal-weight mean-R is the mean of the size-invariant per-trade
+            // `realized_r`; `None` if any closed trade lacks it (degenerate join).
+            let mean_r = (!degenerate && all_have_realized_r)
+                .then_some(realized_r_sum / total_trades as f64);
+            (ror, mean_r, Some(total), Some(share), Some(dom_pass), degenerate)
+        } else {
+            (None, None, None, None, None, false)
+        };
         let sum_abs: f64 = folded.values().map(|(_, p)| p.abs()).sum();
         let max_abs: f64 = folded.values().map(|(_, p)| p.abs()).fold(0.0, f64::max);
         let degenerate_zero_pnl = sum_abs == 0.0;
@@ -339,6 +495,12 @@ impl PerformanceReport {
             dominance_pass,
             degenerate_zero_pnl,
             per_symbol,
+            return_on_risk,
+            mean_realized_r,
+            risk_capital_total,
+            max_risk_capital_share,
+            risk_dominance_pass,
+            degenerate_zero_risk,
         }
     }
 
@@ -353,6 +515,7 @@ impl PerformanceReport {
             dominance_pass,
             degenerate_zero_pnl,
             per_symbol,
+            ..
         } = self.dominance_fold();
 
         let symbols_meeting_breadth = folded
@@ -420,8 +583,8 @@ impl PerformanceReport {
     /// the fail-closed/insufficient branch. Reads only the reset-invariant per-trade
     /// stats; never the union drawdown / equity curve (KTD-7).
     pub fn edge_evaluation(&self) -> EdgeEvaluation {
-        // The shared closed-trade fold + dominance (condition (c)), kept identical to
-        // the R1 bar via `dominance_fold`.
+        // The shared closed-trade fold + dominance (condition (c)) + the size-invariant
+        // risk metrics (R1/R2/R3), kept identical to the R1 bar via `dominance_fold`.
         let DominanceFold {
             folded,
             total_trades: num_trades,
@@ -429,6 +592,12 @@ impl PerformanceReport {
             dominance_pass,
             degenerate_zero_pnl,
             per_symbol,
+            return_on_risk,
+            mean_realized_r,
+            risk_capital_total,
+            max_risk_capital_share,
+            risk_dominance_pass,
+            degenerate_zero_risk,
         } = self.dominance_fold();
 
         // Edge stats read from the already-assembled summary (KTD-4). A raw report
@@ -440,6 +609,12 @@ impl PerformanceReport {
             .unwrap_or_else(|| folded.values().map(|(_, p)| *p).sum());
         let win_rate = self.summary.get("Win Rate").copied();
         let expectancy = self.summary.get("Expectancy").copied();
+
+        // Dominance is gated on **risk-capital share** when the run carries risk info
+        // (R3, size-robust); on the legacy |P&L| share otherwise (old artifacts / the
+        // pre-risk-field re-baseline still evaluate).
+        let risk_metrics_present = risk_dominance_pass.is_some();
+        let effective_dominance_pass = risk_dominance_pass.unwrap_or(dominance_pass);
 
         let mut failing_conditions = Vec::new();
         if num_trades == 0 {
@@ -453,7 +628,21 @@ impl PerformanceReport {
                     None => "expectancy unavailable (no analyzer stat)".to_string(),
                 });
             }
-            if degenerate_zero_pnl {
+            if risk_metrics_present {
+                // Risk-share is the decisional dominance gate (R3).
+                if degenerate_zero_risk {
+                    failing_conditions.push(
+                        "all deployed risk_capital is zero — risk-dominance undefined (fail-closed to insufficient-evidence)"
+                            .to_string(),
+                    );
+                } else if !effective_dominance_pass {
+                    failing_conditions.push(format!(
+                        "single-symbol risk dominance ({:.0}% > {:.0}%)",
+                        max_risk_capital_share.unwrap_or(0.0) * 100.0,
+                        bar::DOMINANCE_CAP * 100.0
+                    ));
+                }
+            } else if degenerate_zero_pnl {
                 failing_conditions.push(
                     "all per-symbol P&L is zero — dominance undefined (fail-closed to insufficient-evidence)"
                         .to_string(),
@@ -467,9 +656,11 @@ impl PerformanceReport {
             }
         }
 
+        // Positivity stays on the sign of expectancy (RoR and expectancy share sign);
+        // the dominance clause switches to risk-share when present (R3/R6, U2).
         let is_edge = num_trades > 0
             && expectancy.map(|e| e > 0.0).unwrap_or(false)
-            && dominance_pass;
+            && effective_dominance_pass;
 
         EdgeEvaluation {
             num_trades,
@@ -480,13 +671,19 @@ impl PerformanceReport {
             dominance_pass,
             degenerate_zero_pnl,
             per_symbol,
+            return_on_risk,
+            mean_realized_r,
+            risk_capital_total,
+            max_risk_capital_share,
+            risk_dominance_pass,
+            degenerate_zero_risk,
             is_edge,
             failing_conditions,
         }
     }
 }
 
-fn trade_from_position(p: &Position) -> TradeRecord {
+fn trade_from_position(p: &Position, risk: Option<EntryRisk>) -> TradeRecord {
     let fills = p
         .events
         .iter()
@@ -499,16 +696,21 @@ fn trade_from_position(p: &Position) -> TradeRecord {
             commission: f.commission.map(|m| m.as_f64()).unwrap_or(0.0),
         })
         .collect();
+    let realized_pnl = p.realized_pnl.map(|m| m.as_f64()).unwrap_or(0.0);
+    let closed = p.ts_closed.is_some();
+    let (risk_capital, realized_r) = joined_risk(realized_pnl, closed, risk);
     TradeRecord {
         symbol: p.instrument_id.to_string(),
         entry_side: format!("{:?}", p.entry).to_uppercase(),
         quantity: p.peak_qty.as_f64(),
         avg_px_open: p.avg_px_open,
         avg_px_close: p.avg_px_close,
-        realized_pnl: p.realized_pnl.map(|m| m.as_f64()).unwrap_or(0.0),
+        realized_pnl,
         ts_opened: p.ts_opened.as_u64(),
         ts_closed: p.ts_closed.map(|t| t.as_u64()),
         fills,
+        risk_capital,
+        realized_r,
     }
 }
 
@@ -560,6 +762,27 @@ mod tests {
             ts_opened: ts_open,
             ts_closed: Some(ts_close),
             fills: vec![],
+            risk_capital: None,
+            realized_r: None,
+        }
+    }
+
+    /// A closed trade carrying entry-fixed risk (U1/U2): `risk_capital = qty ·
+    /// risk_per_share` and `realized_r = pnl / risk_capital`. `realized_r` is set
+    /// independently (size-invariant per-trade R) so the reallocation test can hold
+    /// it fixed while shifting `risk_capital` across symbols.
+    fn trade_risk(
+        symbol: &str,
+        pnl: f64,
+        risk_capital: f64,
+        realized_r: f64,
+        ts_open: u64,
+        ts_close: u64,
+    ) -> TradeRecord {
+        TradeRecord {
+            risk_capital: Some(risk_capital),
+            realized_r: Some(realized_r),
+            ..trade(symbol, pnl, ts_open, ts_close)
         }
     }
 
@@ -844,6 +1067,8 @@ mod tests {
             ts_opened: 100,
             ts_closed: None,
             fills: vec![],
+            risk_capital: None,
+            realized_r: None,
         });
         let b = eval(trades, 20);
         assert_eq!(b.total_trades, 2, "open leg excluded from the trade count");
@@ -939,5 +1164,285 @@ mod tests {
         assert!(!e.is_edge);
         assert!(e.win_rate.is_none(), "no edge stat on a zero-trade run");
         assert!(e.failing_conditions.iter().any(|c| c.contains("no closed trades")));
+        // No risk info on a zero-trade run — R-metrics absent, not degenerate.
+        assert!(e.return_on_risk.is_none());
+        assert!(e.risk_dominance_pass.is_none());
+        assert!(!e.degenerate_zero_risk);
+    }
+
+    // -----------------------------------------------------------------------
+    // U1 — per-trade risk carried into the ledger (R4): joined_risk + additive.
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn joined_risk_happy_path_closed_trade() {
+        // qty=100, entry=60000, stop=57000 → risk_per_share=3000, risk_capital=300000;
+        // pnl = 100·(exit−60000); with exit=61500 pnl=150000 → realized_r=0.5.
+        let risk = EntryRisk { risk_per_share: 3000.0, qty: 100.0 };
+        let (rc, rr) = joined_risk(150_000.0, true, Some(risk));
+        assert_eq!(rc, Some(300_000.0));
+        assert_eq!(rr, Some(0.5));
+    }
+
+    #[test]
+    fn joined_risk_absent_and_degenerate_yield_none() {
+        // No risk captured → legacy path (both None).
+        assert_eq!(joined_risk(100.0, true, None), (None, None));
+        // Non-positive per-share risk / qty → None, never a divide-by-zero.
+        let bad_rps = EntryRisk { risk_per_share: 0.0, qty: 100.0 };
+        assert_eq!(joined_risk(100.0, true, Some(bad_rps)), (None, None));
+        let bad_qty = EntryRisk { risk_per_share: 3000.0, qty: 0.0 };
+        assert_eq!(joined_risk(100.0, true, Some(bad_qty)), (None, None));
+    }
+
+    #[test]
+    fn joined_risk_open_leg_has_capital_but_no_realized_r() {
+        // An open leg carries deployed risk_capital but no realized R (not closed).
+        let risk = EntryRisk { risk_per_share: 3000.0, qty: 100.0 };
+        let (rc, rr) = joined_risk(0.0, false, Some(risk));
+        assert_eq!(rc, Some(300_000.0));
+        assert_eq!(rr, None, "realized_r undefined while open");
+    }
+
+    #[test]
+    fn risk_fields_are_additive_summary_byte_identical() {
+        // Assembling the SAME trades with vs without the risk fields set must leave
+        // every pre-existing summary key identical (the additive-only guarantee, R4).
+        let plain = vec![
+            trade("A.XKRX", 100.0, 1, 2),
+            trade("B.XKRX", -50.0, 3, 4),
+            trade("C.XKRX", 200.0, 5, 6),
+        ];
+        let with_risk = vec![
+            trade_risk("A.XKRX", 100.0, 200_000.0, 0.5, 1, 2),
+            trade_risk("B.XKRX", -50.0, 200_000.0, -0.25, 3, 4),
+            trade_risk("C.XKRX", 200.0, 200_000.0, 1.0, 5, 6),
+        ];
+        let a = PerformanceReport::assemble(plain, 1_000_000.0);
+        let b = PerformanceReport::assemble(with_risk, 1_000_000.0);
+        assert_eq!(a.summary, b.summary, "risk fields never perturb summary keys");
+        for k in ["Expectancy", "Win Rate", "pnl_total", "num_trades", "max_drawdown"] {
+            assert_eq!(a.summary.get(k), b.summary.get(k), "summary key {k} unchanged");
+        }
+        assert_eq!(a.equity_curve, b.equity_curve, "equity curve unchanged");
+    }
+
+    #[test]
+    fn trade_record_risk_none_round_trips() {
+        // A legacy artifact predates the risk fields — its JSON has no such keys, yet
+        // the additive serde defaults deserialize them to None (R4).
+        let legacy = serde_json::json!({
+            "symbol": "A.XKRX",
+            "entry_side": "BUY",
+            "quantity": 10.0,
+            "avg_px_open": 60000.0,
+            "avg_px_close": 61000.0,
+            "realized_pnl": 10000.0,
+            "ts_opened": 1,
+            "ts_closed": 2,
+            "fills": []
+        })
+        .to_string();
+        let t: TradeRecord = serde_json::from_str(&legacy).unwrap();
+        assert_eq!(t.risk_capital, None);
+        assert_eq!(t.realized_r, None);
+        // And a round-trip with the fields set preserves them.
+        let with = trade_risk("A.XKRX", 100.0, 300_000.0, 0.5, 1, 2);
+        let back: TradeRecord = serde_json::from_str(&serde_json::to_string(&with).unwrap()).unwrap();
+        assert_eq!(back, with);
+    }
+
+    // -----------------------------------------------------------------------
+    // U2 — return-on-risk + mean-R + risk-dominance on the edge verdict.
+    // -----------------------------------------------------------------------
+
+    /// The RoR / risk-dominance metrics folded from a raw ledger (no analyzer
+    /// round-trip needed — the fold reads the trades directly).
+    fn risk_edge(trades: Vec<TradeRecord>) -> EdgeEvaluation {
+        PerformanceReport { trades, equity_curve: vec![], summary: Default::default() }
+            .edge_evaluation()
+    }
+
+    #[test]
+    fn ror_is_invariant_to_a_uniform_size_up() {
+        // The load-bearing test (R1): two ledgers identical except every qty ×k →
+        // identical return_on_risk; pnl_total and Σrisk_capital both scale by k.
+        let base = vec![
+            trade_risk("A.XKRX", 100_000.0, 200_000.0, 0.5, 1, 2),
+            trade_risk("B.XKRX", 300_000.0, 200_000.0, 1.5, 3, 4),
+        ];
+        let k = 3.0;
+        // qty×k → risk_capital×k and realized_pnl×k; realized_r (size-invariant) held.
+        let scaled = vec![
+            trade_risk("A.XKRX", 100_000.0 * k, 200_000.0 * k, 0.5, 1, 2),
+            trade_risk("B.XKRX", 300_000.0 * k, 200_000.0 * k, 1.5, 3, 4),
+        ];
+        let e0 = risk_edge(base);
+        let e1 = risk_edge(scaled);
+        // RoR = 400000/400000 = 1.0 in both — no free edge from leverage.
+        assert!((e0.return_on_risk.unwrap() - 1.0).abs() < 1e-9);
+        assert!(
+            (e0.return_on_risk.unwrap() - e1.return_on_risk.unwrap()).abs() < 1e-9,
+            "RoR invariant to uniform size-up: {:?} vs {:?}",
+            e0.return_on_risk,
+            e1.return_on_risk
+        );
+        // mean_realized_r is equally invariant (per-trade R unchanged).
+        assert!((e0.mean_realized_r.unwrap() - 1.0).abs() < 1e-9);
+        assert_eq!(e0.mean_realized_r, e1.mean_realized_r);
+        // The size-contaminated metric DID move: Σrisk_capital scaled by k.
+        assert!((e1.risk_capital_total.unwrap() / e0.risk_capital_total.unwrap() - k).abs() < 1e-9);
+    }
+
+    #[test]
+    fn ror_rises_under_risk_reallocation_while_mean_r_holds() {
+        // Reallocation sensitivity (R1/R2): shift risk_capital from a low-realized_r
+        // symbol to a high one at constant Σrisk_capital → RoR rises, mean-R ~unchanged.
+        // Base: A(r=0.5, rc=100k, pnl=50k) B(r=2.0, rc=100k, pnl=200k). Σrc=200k,
+        // Σpnl=250k → RoR=1.25; mean-R=(0.5+2.0)/2=1.25.
+        let base = vec![
+            trade_risk("A.XKRX", 50_000.0, 100_000.0, 0.5, 1, 2),
+            trade_risk("B.XKRX", 200_000.0, 100_000.0, 2.0, 3, 4),
+        ];
+        // Reallocated: A(rc=50k, pnl=25k) B(rc=150k, pnl=300k). Σrc=200k (held),
+        // Σpnl=325k → RoR=1.625; per-trade realized_r held → mean-R still 1.25.
+        let realloc = vec![
+            trade_risk("A.XKRX", 25_000.0, 50_000.0, 0.5, 1, 2),
+            trade_risk("B.XKRX", 300_000.0, 150_000.0, 2.0, 3, 4),
+        ];
+        let e0 = risk_edge(base);
+        let e1 = risk_edge(realloc);
+        assert!((e0.return_on_risk.unwrap() - 1.25).abs() < 1e-9, "base RoR {:?}", e0.return_on_risk);
+        assert!(e1.return_on_risk.unwrap() > e0.return_on_risk.unwrap(), "RoR rises on reallocation");
+        assert!((e1.return_on_risk.unwrap() - 1.625).abs() < 1e-9, "realloc RoR {:?}", e1.return_on_risk);
+        assert_eq!(e0.risk_capital_total, e1.risk_capital_total, "Σrisk_capital held constant");
+        assert!(
+            (e0.mean_realized_r.unwrap() - e1.mean_realized_r.unwrap()).abs() < 1e-9,
+            "mean-R inert to reallocation: {:?} vs {:?}",
+            e0.mean_realized_r,
+            e1.mean_realized_r
+        );
+    }
+
+    #[test]
+    fn risk_dominance_trips_even_when_pnl_share_is_under_cap() {
+        // One symbol carries >40% of DEPLOYED RISK while its |P&L| share stays under
+        // 40% (it lost, others won) → verdict gates on risk-share and fails.
+        // D: rc=600k (60% of 1.0M risk), pnl=-10k. Three winners rc≈133k each,
+        // pnl=+120k each (+360k). |P&L| shares: 10/370≈2.7% and 120/370≈32% each — all
+        // under 40%, so the legacy P&L guard would PASS.
+        let trades = vec![
+            trade_risk("D.XKRX", -10_000.0, 600_000.0, -0.017, 1, 2),
+            trade_risk("W0.XKRX", 120_000.0, 133_400.0, 0.9, 3, 4),
+            trade_risk("W1.XKRX", 120_000.0, 133_300.0, 0.9, 5, 6),
+            trade_risk("W2.XKRX", 120_000.0, 133_300.0, 0.9, 7, 8),
+        ];
+        let e = risk_edge(trades);
+        assert!(e.max_abs_pnl_share < 0.40, "P&L share under cap: {}", e.max_abs_pnl_share);
+        assert!(e.dominance_pass, "legacy P&L dominance would pass");
+        assert!(e.max_risk_capital_share.unwrap() > 0.40, "risk share over cap");
+        assert_eq!(e.risk_dominance_pass, Some(false), "risk-dominance trips");
+        assert!(!e.is_edge, "verdict gates on risk-share, not P&L-share");
+        assert!(
+            e.failing_conditions.iter().any(|c| c.contains("risk dominance")),
+            "risk-dominance named: {:?}",
+            e.failing_conditions
+        );
+    }
+
+    #[test]
+    fn risk_present_edge_reports_both_dominance_shares() {
+        // A clean edge: 4 symbols, equal risk + P&L → both shares 25%, positive RoR.
+        let trades = vec![
+            trade_risk("A.XKRX", 100_000.0, 200_000.0, 0.5, 1, 2),
+            trade_risk("B.XKRX", 100_000.0, 200_000.0, 0.5, 3, 4),
+            trade_risk("C.XKRX", 100_000.0, 200_000.0, 0.5, 5, 6),
+            trade_risk("D.XKRX", 100_000.0, 200_000.0, 0.5, 7, 8),
+        ];
+        let report = PerformanceReport::assemble(trades, 10_000_000.0);
+        let e = report.edge_evaluation();
+        assert!((e.max_abs_pnl_share - 0.25).abs() < 1e-9, "P&L share reported");
+        assert!((e.max_risk_capital_share.unwrap() - 0.25).abs() < 1e-9, "risk share reported");
+        assert_eq!(e.risk_dominance_pass, Some(true));
+        assert!(e.return_on_risk.unwrap() > 0.0);
+        assert!(e.is_edge, "positive RoR + risk-dominance capped: {:?}", e.failing_conditions);
+    }
+
+    #[test]
+    fn risk_absent_falls_back_to_legacy_pnl_dominance() {
+        // No trade carries risk_capital (`trade` sets None) → R-metrics None and the
+        // verdict is byte-for-byte the legacy P&L path (identical to today).
+        let mut trades = Vec::new();
+        for i in 0..4 {
+            trades.extend(trades_for(&format!("S{i}.XKRX"), 3, 100.0));
+        }
+        let report = PerformanceReport::assemble(trades, 1_000_000.0);
+        let e = report.edge_evaluation();
+        assert!(e.return_on_risk.is_none(), "no RoR without risk info");
+        assert!(e.risk_dominance_pass.is_none(), "no risk-dominance without risk info");
+        assert!(!e.degenerate_zero_risk);
+        assert!(e.is_edge, "legacy P&L path still evaluates the edge");
+        assert!(e.dominance_pass, "legacy dominance gate used");
+    }
+
+    #[test]
+    fn mixed_risk_presence_falls_back_to_legacy_path() {
+        // Any single risk-less closed trade drops the whole run to the legacy path
+        // (R4 all-or-nothing) — no partial RoR from a subset.
+        let trades = vec![
+            trade_risk("A.XKRX", 100_000.0, 200_000.0, 0.5, 1, 2),
+            trade("B.XKRX", 100_000.0, 3, 4), // risk_capital None
+        ];
+        let e = risk_edge(trades);
+        assert!(e.return_on_risk.is_none(), "one risk-less trade → no RoR");
+        assert!(e.risk_dominance_pass.is_none());
+    }
+
+    #[test]
+    fn degenerate_zero_deployed_risk_fails_closed() {
+        // Every closed trade carries risk_capital but it sums to zero → risk-dominance
+        // undefined → fail-closed (R3), named condition, not an edge.
+        let trades = vec![
+            trade_risk("A.XKRX", 100_000.0, 0.0, 0.0, 1, 2),
+            trade_risk("B.XKRX", 100_000.0, 0.0, 0.0, 3, 4),
+        ];
+        let report = PerformanceReport::assemble(trades, 1_000_000.0);
+        let e = report.edge_evaluation();
+        assert!(e.degenerate_zero_risk, "zero total deployed risk flagged");
+        assert_eq!(e.risk_dominance_pass, Some(false), "fail-closed");
+        assert!(e.return_on_risk.is_none(), "RoR undefined on zero risk");
+        assert!(!e.is_edge);
+        assert!(
+            e.failing_conditions.iter().any(|c| c.contains("risk-dominance undefined")),
+            "degenerate risk named: {:?}",
+            e.failing_conditions
+        );
+    }
+
+    #[test]
+    fn open_leg_contributes_no_risk_to_aggregates() {
+        // An OPEN leg (ts_closed=None) with a huge risk_capital must not enter the RoR
+        // denominator or the risk-dominance fold — only closed trades aggregate.
+        let mut trades = vec![
+            trade_risk("A.XKRX", 100_000.0, 200_000.0, 0.5, 1, 2),
+            trade_risk("B.XKRX", 100_000.0, 200_000.0, 0.5, 3, 4),
+        ];
+        trades.push(TradeRecord {
+            symbol: "OPEN.XKRX".to_string(),
+            entry_side: "BUY".to_string(),
+            quantity: 10.0,
+            avg_px_open: 60_000.0,
+            avg_px_close: None,
+            realized_pnl: 9_999_999.0,
+            ts_opened: 100,
+            ts_closed: None,
+            fills: vec![],
+            risk_capital: Some(9_999_999.0),
+            realized_r: None,
+        });
+        let e = risk_edge(trades);
+        assert_eq!(e.num_trades, 2, "open leg excluded from the trade count");
+        assert_eq!(e.risk_capital_total, Some(400_000.0), "open risk_capital excluded");
+        assert!((e.return_on_risk.unwrap() - 0.5).abs() < 1e-9, "RoR over closed only");
     }
 }

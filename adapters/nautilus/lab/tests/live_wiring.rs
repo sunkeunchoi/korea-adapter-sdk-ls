@@ -118,6 +118,8 @@ async fn scripted_fill_flows_into_a_live_run() {
             trade_id: deltas[0].trade_id.to_string(),
             commission: 0.0,
         }],
+        risk_capital: None,
+        realized_r: None,
     };
     writer.write_performance(&PerformanceReport::assemble(vec![trade], 1_000_000.0)).unwrap();
 

@@ -332,6 +332,8 @@ mod tests {
             ts_opened: ts_open,
             ts_closed: Some(ts_close),
             fills: vec![],
+            risk_capital: None,
+            realized_r: None,
         }
     }
 

@@ -67,6 +67,8 @@ fn trade(symbol: &str, pnl: f64, exec_px: f64) -> TradeRecord {
             trade_id: "POLL-1001-10".into(),
             commission: 0.0,
         }],
+        risk_capital: None,
+        realized_r: None,
     }
 }
 

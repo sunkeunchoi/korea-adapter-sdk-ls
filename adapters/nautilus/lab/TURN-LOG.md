@@ -4,6 +4,188 @@ Committed record of each loop turn's verdict + the bar conditions it held. The
 full artifacts (`analysis.md`, manifests, performance) live in the gitignored data
 home; this file is the durable, reviewable outcome trail.
 
+## Turn — `risk_per_trade_krw` governed sweep: re-KEEP 299,340 as v26 (2026-07-12) — plan 2026-07-12-002
+
+- **Verdict: re-KEEP v26 — the sweep DENIES that 348k was near-optimal and re-KEEPs the
+  tighter LOWER leg `risk_per_trade_krw = 299,340`** (p33 of v24's closed-trade
+  `risk_capital` distribution) as the new registry head, superseding v25's 348,000 (p50).
+  A **GOVERNED THREE-LEG PARAM FAN-OUT off v25**, not a code turn: no `orb.rs` / `params.rs`
+  / `performance.rs` edit → `strategy_code_hash d199d124…` fixed on every leg. Pre-registered
+  values + keep/confirm rule + bind signature before any run (R1/R8,
+  `data/turn4-fresh/PRE-REGISTER-vNEXT-sizing-sweep.md`). Anchor = v25
+  (`20260712T065730Z-backtest-orb-v25`, RoR **0.1139**, the bar to beat).
+- **The three legs (percentile neighbours of v24 `risk_capital`, n=167, linear/R-7; NOT a
+  P&L fit).** Each a governed `LS_TURN_PARAM=risk_per_trade_krw` turn seeded from v25
+  (`EXPECT_VERSION=25 → v26`), each archived out of `runs/` before the next so v25 stayed
+  `latest_finalized` (fan-out discipline, KTD-B). All three `runs compare` **param mode**
+  vs v25 PASS with diff exactly `{risk_per_trade_krw, strategy_version}`, `strategy_code_hash`
+  equal (`d199d124…`):
+
+  | Leg | budget | percentile | **RoR (crux)** | mean-R | Σrisk_capital | risk-dom | risk-budget-bound | exp (diag) |
+  |---|---|---|---|---|---|---|---|---|
+  | HIGHER | 392,000 | p66 | 0.1106 | 0.1129 | 53.36M | 5.3% | 76/184 | +38,585 |
+  | _v25 (bar)_ | _348,000_ | _p50_ | _**0.1139**_ | _0.1129_ | _49.65M_ | _5.3%_ | _98/184_ | _+36,959_ |
+  | **LOWER ← re-KEEP** | **299,340** | **p33** | **0.1171** | 0.1129 | 44.64M | 5.5% | 130/184 | +34,178 |
+  | TIGHT | 238,000 | p15 | 0.1168 | 0.1140 | 36.80M | 5.6% | 158/183 | +28,274 |
+
+- **Why re-KEEP, not the anticipated CONFIRM (the crux).** The keep rule (R6) is a
+  deterministic strict inequality on RoR: re-KEEP iff a leg's RoR strictly beats 0.1139 with
+  `is_edge` (positive expectancy, risk-capital dominance ≤ 40%). **Two legs cleared it**
+  (LOWER 0.1171, TIGHT 0.1168); LOWER is the argmax. RoR-vs-budget is single-peaked (concave)
+  with its **interior maximum at 299,340 — *tighter* than the kept 348k** — so 348k was not
+  near-optimal: the risk-adjusted edge kept climbing as the cap tightened below it, turning
+  over only between 299,340 and 238,000 (TIGHT 0.1168 < LOWER 0.1171, the predicted
+  overshoot-then-decline, but the turnover point sits well below 348k). The plan expected
+  CONFIRM but pre-registered this exact re-KEEP branch ("if LOWER or TIGHT strictly beats
+  0.1139 with `is_edge`, RoR is still climbing → re-KEEP").
+- **Bind validated, monotone, no INERT leg.** Classifying each `order_placed` from its
+  `decisions.jsonl` sizing telemetry (`qty = min(floor(budget/risk_per_share),
+  floor(notional/price))`, ties → budget-bound per the v25 convention), risk-budget-bound
+  count is monotone in the budget (76 → 98 → 130 → 158 of 184) and Σrisk_capital monotone
+  (53.36M → 49.65M → 44.64M → 36.80M). v25's split reproduces the KEEP turn's 98/184 exactly.
+  Equal-weight **mean-R is invariant at 0.1129** across the three pure-reallocation legs (same
+  167-trade set), confirming RoR moved purely from **risk reallocation**, not a size change —
+  a genuine risk-adjusted improvement. The mechanism is the same one-sided de-risking v25
+  named: tightening the budget de-weights the wide-`risk_per_share` cohort (below-mean
+  return-per-unit-risk) further, lifting RoR past the equal-weight mean until ~300k, past
+  which the equalization begins trimming the trade set (238k: 166 vs 167 closed) and RoR ticks
+  back down.
+- **Registry state.** New head **v26** (`20260712T080054Z-backtest-orb-v26`, budget 299,340,
+  hash `d199d124…`) in `runs/`; v25 stays in the chain; the losing legs
+  (`TIGHT-238000-…-orb-v26`, `HIGHER-392000-…-orb-v26`) and the CLASS B re-baseline v24 sit
+  under `sizing-archive/`. Pessimistic bar-low fill makes the +2.8% RoR gain a lower bound.
+  Judged on **RoR + risk-capital dominance** only; KRW/trade expectancy is size-contaminated
+  and diagnostic. `cargo test -p nautilus-ls-lab` green; `strategy_code_hash` unchanged.
+  **Next lever:** a *separate* pre-registered deeper-equalization probe (p10 / p5 of the v24
+  `risk_capital` distribution) to find where RoR turns over, or the next CLASS B lever
+  (ATR/volatility-scaled notional, Kelly-fraction sizing).
+
+## Turn — CLASS B: normalized edge metric + first risk-sizing lever (2026-07-12) — plan 2026-07-12-001
+
+- **Verdict: KEEP v25 — the first CLASS B (risk / position-sizing) lever, judged on a
+  re-grounded size-invariant edge metric.** A CODE turn (return-on-risk + risk-dominance
+  metric, additive per-trade risk ledger fields, the default-off `risk_per_trade_krw`
+  sizing lever) followed by its single flip `risk_per_trade_krw` 0.0 → **348,000** KRW
+  (= median of v24's closed-trade `risk_capital` distribution). Pre-registered value +
+  keep rule + bind signature before the run (R8,
+  `data/turn4-fresh/PRE-REGISTER-vNEXT-sizing.md`). Baseline for the verdict is the
+  re-baseline **v24** (`20260712T065529Z-backtest-orb-v24`), not v23's stored artifacts
+  (they carry no per-trade `risk_capital`).
+- **Why the metric moved first (the crux).** Every prior lever was judged on KRW/trade
+  **expectancy** against a fixed 10M notional — size-invariant only while size is held
+  constant. A sizing lever decouples them (uniformly sizing up doubles expectancy with
+  zero better edge), so the keep gate is re-grounded on **return-on-risk**
+  `RoR = Σrealized_pnl / Σrisk_capital` (the risk-weighted mean R): flat under a uniform
+  size-up, responsive only to risk reallocation. Equal-weight `mean_realized_r` rides as
+  a size-invariant diagnostic invariant; dominance is re-grounded to **risk-capital
+  share** (can't be gamed by sizing one symbol huge), legacy |P&L| share retained as a
+  diagnostic. The `> +44,046.41 KRW/trade` clause is **retired**.
+- **The code change.** `risk_per_trade_krw` (default-off `f64`, sentinel 0.0 =
+  fixed-notional v23): when `> 0`, `qty = min(floor(budget / risk_per_share), floor(notional
+  / entry))` where `risk_per_share = entry − stop` (entry-fixed initial stop). The
+  **notional ceiling** caps a tiny-stop blow-up, so the lever can only shift size within
+  the 10M envelope. Per-trade `risk_capital`/`realized_r` joined into the trade ledger
+  (additive; legacy `performance.json` keys byte-unchanged). `validate()` rejects a
+  negative budget.
+- **Re-baseline evidence (R7, KTD3).** v24 (`risk_per_trade_krw = 0.0`) reconciles
+  **1:1** to v23 (`20260712T045403Z-backtest-orb-v23`): summary + equity_curve + all 171
+  trades' legacy fields byte-identical; the only delta is the additive risk fields (all
+  167 closed trades' `risk_capital` populated — the strategy→ledger join is complete).
+  `runs compare` param-mode `v23 → v24` **FAILs** on `strategy_code_hash differs` (param
+  diff `["strategy_version"]`) — the expected code-turn re-baseline signal. `v24 → v25`
+  PASSes with diff exactly `{risk_per_trade_krw, strategy_version}`.
+- **The result (the three pre-registered keep conditions, all met).**
+  **RoR 0.10811 (v24) → 0.11389 (v25)** (+5.3%, strictly rises — the KEEP crux);
+  `is_edge(v25)` holds (expectancy +36,959 > 0, risk-dominance 5.3% ≤ 40%);
+  risk-dominance 5.3% ≤ 40%. **KEEP.**
+- **Bind validated + honest deviation (KTD).** The lever BINDS — 98/184 order placements
+  risk-budget-bound (wide-`risk_per_share` setups shrink toward the 348k budget), 86
+  notional-cap-bound (**identical to v24**). So the flip is a **one-sided de-risking of
+  the wide-stop cohort**, not the symmetric reallocation the pre-register predicted:
+  median `risk_capital` drifted 348k → 318k, Σrisk_capital −20% (the notional ceiling
+  prevents tight-stop upsizing → risk can only be *cut* off wide-stop setups). RoR rises
+  because that de-weighted cohort has below-average return-per-unit-risk: v24 fixed-notional
+  RoR 0.108 sits **below** the equal-weight mean-R 0.113 (fixed notional over-weights
+  low-R wide-stop trades); capping their risk moves RoR to 0.114, at/above the mean.
+  Σpnl falls in absolute KRW (6.74M → 5.65M) and the retired expectancy falls (44,046 →
+  36,959) — expected and non-decisional (v25 earns more per unit deployed risk).
+- **Registry.** v25 (`20260712T065730Z-backtest-orb-v25`) is the new head; v24 (the
+  intermediate re-baseline) archived under `data/turn4-fresh/sizing-archive/`. Offline
+  throughout; pessimistic bar-low fill → the +5.3% RoR is a lower bound. **FOUR kept
+  levers, THREE classes (entry-quality ×2, exit-timing ×1, risk-sizing ×1).**
+- **Next lever.** A governed sweep of `risk_per_trade_krw` to percentile neighbours of
+  348k (p33/p66 of the v24 risk_capital distribution) — mirrors the breakeven trigger
+  sweep — to test whether the risk cap is near-optimal or the edge climbs as the cap
+  tightens toward full equalization (RoR → equal-weight mean-R).
+
+## Turn — breakeven-TRAIL exit lever (candidate A) (2026-07-12) — plan 2026-07-11-001
+
+- **Verdict: REVERT v25 — the trailing-stop variant is FALSIFIED. It BINDS exactly as
+  designed (books partial wins on the give-back cohort) but the winner-cutting cost
+  dominates: expectancy collapses −67% vs v23. Baseline STAYS v23 (flat breakeven move).
+  A binding-but-worse falsification (R5), not insufficient-evidence — the mechanism is
+  proven to work and proven not to pay.** A CODE turn (add a default-off trailing arm on
+  top of the kept breakeven ratchet in `orb.rs`) followed by its single flip `trail_frac_r`
+  0.0 → **0.25** (= ½·median of v23's breakeven-armed `stop_hit` cohort peak-MFE 0.524).
+  Pre-registered value + keep rule + bind signature before the run (R3,
+  `data/turn4-fresh/PRE-REGISTER-vNEXT-breakeven-trail.md`).
+- **The code change.** Once the breakeven ratchet has ARMED (`high_water ≥ entry +
+  round(0.41·R)`, the sweep-confirmed trigger, untouched), for SUBSEQUENT bars the stop
+  trails: `stop = max(prior_stop, entry, high_water − round(trail_frac_r·R))` — floored at
+  entry, only ever tightens. So a runner that peaks well past the trigger then reverts
+  books a **partial win** at the trailed stop, not just a scratch at breakeven. Respects
+  **KTD5** (reads only folded `high_water`) and **KTD2** (never applies the tightened trail
+  on the bar that raised `high_water`). Off (`trail_frac_r == 0.0`) the trail term would be
+  `high_water` (too tight), so OFF is an explicit `trail_frac_r > 0` gate that falls back to
+  the flat breakeven — outcome-identical to v23. A round-to-zero give-back is also treated
+  as flat breakeven. `validate()` rejects a negative trail. A new telemetry `realized_r`
+  rides every exit envelope (booked R) so the bind check reads give-back-cohort realized-R
+  directly. Pre-flip code review (correctness + adversarial, both session-model) found **no
+  correctness defect**; one doc-precision fix (off-path is outcome-identical, not
+  `decisions.jsonl`-byte-identical). 315 lab tests pass (306 + 9 new trail tests).
+- **Type: CODE turn.** `strategy_code_hash a5521c3e…` → **`fd5125c2…`**. Re-baselined via
+  seed-and-rerun (KTD2): v24 seeded from v23, `trail_frac_r=0.0`, `strategy_version=24`.
+  `performance.json` (trades + equity_curve + summary) vs v23 **reconciled 1:1**
+  (expectancy 44,046.41, PF 1.620, 167 closed — identical) — the trail is verifiably
+  default-off. Re-baseline signal: `runs compare` param mode (v23 → v24) **FAILs**
+  `strategy_code_hash differs`, param diff `["strategy_version"]` (KTD3 — the FAIL *is* the
+  evidence). The flip off the `0.0` sentinel is seed-and-rerun, not a governed turn
+  (`0.0 → 0.25` is an infinite relative change; `PROPOSAL_BOUNDS_CAP` 0.5 fail-closes).
+- **AE2 attribution:** `runs compare` param mode (**v24 → v25**) **PASS**, diff exactly
+  `{trail_frac_r, strategy_version}` — clean single-lever flip on the re-baselined code
+  (v24 and v25 share `fd5125c2…`).
+- **Bind check — mechanism BINDS (pre-registered signature validated):** the breakeven-armed
+  `stop_hit` cohort's realized exit-R shifts UP off scratch **−0.034R → +0.242R** (median);
+  **97% (99/102)** of the armed cohort now books a positive partial (`realized_r > 0`; v23
+  had ≈none). But the **winner-cutting cost is severe**: `target` runners collapse **50 →
+  11** (the 0.25R trail stops 39 of v23's 50 would-be 1.0R winners short, re-booking them as
+  ~0.24R partials). Exit mix `stop_hit`/`time_exit`/`target`: v23 `77/57/50` → v25
+  `131/52/11`.
+- **Edge gate (`EdgeEvaluation`, unchanged): `is_edge = yes`** (positive expectancy,
+  dominance **9.2%** ≤ 40%), but the keep rule (is_edge AND expectancy > +44,046.41 AND
+  dominance ≤ 40%) **FAILS on the middle clause**: expectancy **+14,737.28** KRW/trade
+  (v23 +44,046.41 — a **−67%** collapse), pnl_total **2,549,550** (v23 6,739,100), WR 62.5%,
+  176 closed. → **REVERT.**
+- **Read — the trail works but does not pay.** Converting the peaked-then-reverted give-back
+  scratches into ~0.24R partials (99 of them) does not compensate for surrendering ~0.76R
+  apiece on 39 would-be-target winners: the 0.25R give-back is **too tight** relative to the
+  winners' intraday pullback structure — they routinely dip past 0.25R below an interim high
+  on the way to 1.0R and get trailed out. A looser trail would cut fewer winners but (per the
+  pre-register) degenerate toward v23's flat breakeven. The pessimistic bar-low fill leaves
+  14,737 a lower bound, but the gap to v23 is far too wide to close.
+- **Queue re-rank (R6) — exit block now WELL-CHARACTERIZED; baseline unchanged at v23.**
+  Three exit-block probes: breakeven **trigger** sweep-confirmed near-optimal (0.41),
+  flat-breakeven **move** KEPT (v23), **trail** FALSIFIED (this turn). Still THREE kept
+  levers across TWO classes (entry quality ×2 + exit timing ×1 = the flat breakeven move).
+  Trailing joins the falsified set (stop geometry U7, entry timing lever 4, entry-quality
+  RVOL lever 5). The next motivated turn is a **new class — CLASS B risk/position-sizing**
+  (needs `/ce-plan` for a normalized edge metric), not another exit-block probe.
+- **Provenance:** baseline `20260712T045403Z-backtest-orb-v23` (registry head, restored),
+  re-baseline `20260712T054957Z-backtest-orb-v24` (`trail_frac_r=0.0`, reconciled 1:1),
+  flip `20260712T055143Z-backtest-orb-v25` (`trail_frac_r=0.25`) — both archived under
+  `data/turn4-fresh/trail-archive/` so v23 stays head (home `data/turn4-fresh`, gitignored).
+  Offline, no gateway.
+
 ## Turn — breakeven-trigger governed sweep / confirm-or-deny (2026-07-12) — plan 2026-07-11-001
 
 - **Verdict: CONFIRM v23 — the sweep confirms the pre-registered `breakeven_trigger_r
