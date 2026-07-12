@@ -551,8 +551,16 @@ impl OrbState {
                 self.r_denom = self.entry_r_denom(px, self.stop_price, params);
                 // The entry bar's above-entry wick is not provably post-fill (KTD6 /
                 // stop-first pessimism): no target and no fold from it. Only the
-                // stop can still fire same-bar (whipsaw / same-bar stop-first).
-                if low <= self.stop_price {
+                // stop can still fire same-bar (whipsaw / same-bar stop-first) — but
+                // only in wick-touch mode, where the fill sits mid-bar at the range
+                // high and a lower tick could follow it. In close-confirm mode the
+                // fill is anchored at the bar CLOSE (the bar's last event), so the
+                // stop-touching low is provably PRE-fill: the position was not open
+                // when the low printed. Skip the same-bar stop there (symmetric with
+                // not folding the entry bar's high) — a deliberate deviation from
+                // KTD6's wick-entry "stop-first wins". The stop still binds from the
+                // next bar on.
+                if !params.close_confirm_entry() && low <= self.stop_price {
                     acts.push(OrbAction::Exit { limit_price: low, reason: ExitReason::Stop });
                     self.phase = Phase::Done;
                 }
@@ -600,17 +608,21 @@ impl OrbState {
     /// session failing more than one gate records only the first (KTD7). Every
     /// active gate that needs data it lacks fails closed (never a silent pass).
     fn session_gate_reject(&self, params: &OrbParams) -> Option<OrbAction> {
-        // 1. ATR-mode stop needs prior ATR (KTD5, AE5); missing → fail closed
-        //    (never a silent range-low fallback — that would mix stop modes in one
-        //    run, breaking R8).
-        if params.stop_placement() == StopMode::Atr && self.prior_atr.is_none() {
+        // 1. ATR-mode stop needs a *positive* prior ATR (KTD5, AE5). A missing ATR
+        //    OR a non-positive one (flat / halted priors dedup to `Some(0.0)`, the
+        //    gappier small-cap tiers this strategy reaches) fails closed — never a
+        //    silent range-low fallback (that would mix stop modes in one run,
+        //    breaking R8) and never an ATR distance that rounds to 0 and collapses
+        //    the stop onto the entry (a fabricated same-bar stop-out).
+        if params.stop_placement() == StopMode::Atr && self.prior_atr.filter(|a| *a > 0.0).is_none() {
             return Some(session_reject("atr_unavailable", vec![("atr_window", params.atr_window)]));
         }
         // 2. OR-width sanity gate (lever 3, KTD7): reject when range-R exceeds
-        //    `or_width_max_atr · ATR`. Needs ATR; missing ATR fails closed
-        //    (`atr_unavailable`) — a missing input never passes a gate.
+        //    `or_width_max_atr · ATR`. Needs a positive ATR; a missing or
+        //    non-positive ATR fails closed (`atr_unavailable`) — a missing input
+        //    never passes a gate.
         if params.or_width_max_atr > 0.0 {
-            let Some(atr) = self.prior_atr else {
+            let Some(atr) = self.prior_atr.filter(|a| *a > 0.0) else {
                 return Some(session_reject("atr_unavailable", vec![("atr_window", params.atr_window)]));
             };
             let range_r = (self.range_high - self.range_low) as f64;
@@ -650,8 +662,10 @@ impl OrbState {
     /// The stop price fixed at entry for `stop_mode` (KTD1/KTD4/KTD5): range low
     /// (v9), the rounded OR midpoint, or `entry − round(stop_atr_mult · ATR)`
     /// clamped never wider than the range low (ATR only ever narrows the stop).
-    /// ATR availability is guaranteed by [`OrbState::session_gate_reject`], so the
-    /// ATR arm's `unwrap_or` is an unreachable fail-safe.
+    /// A *positive* ATR is guaranteed by [`OrbState::session_gate_reject`], so the
+    /// ATR arm's `unwrap_or` is an unreachable fail-safe; the distance is floored
+    /// at 1 so a tiny `mult · ATR` can never round to 0 and collapse the stop onto
+    /// the entry (which would zero trade-R and force a same-bar stop-out).
     fn stop_for_entry(&self, entry_price: i64, params: &OrbParams) -> i64 {
         match params.stop_placement() {
             StopMode::RangeLow => self.range_low,
@@ -660,7 +674,7 @@ impl OrbState {
             }
             StopMode::Atr => {
                 let atr = self.prior_atr.unwrap_or(0.0);
-                let dist = (params.stop_atr_mult * atr).round() as i64;
+                let dist = ((params.stop_atr_mult * atr).round() as i64).max(1);
                 (entry_price - dist).max(self.range_low)
             }
         }

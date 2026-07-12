@@ -4,6 +4,56 @@ Committed record of each loop turn's verdict + the bar conditions it held. The
 full artifacts (`analysis.md`, manifests, performance) live in the gitignored data
 home; this file is the durable, reviewable outcome trail.
 
+## Turn — lever 2: close-confirmed entry (2026-07-12) — plan 2026-07-11-001
+
+- **Verdict: KEEP (lever 2 clears the edge gate — the loop's first positive edge).**
+  `entry_confirm` 0.0 → 1.0 (wick-touch → close-confirmed) as a single-param
+  seed-and-rerun flip from the v15 all-off baseline, riding the F1/F2 flip-precondition
+  fixes landed this same code turn.
+- **Code turn — two flip-preconditions landed** (`docs/solutions/logic-errors/orb-atr-and-close-confirm-flip-preconditions.md`),
+  re-baselining `strategy_code_hash` to `fa7733f6df76ca39…` (was `e3812d4f…`):
+  - **F1 (mechanical):** non-positive prior ATR (`Some(0.0)` from flat/halted priors)
+    treated as unavailable in **both** the ATR-stop and OR-width arms of
+    `session_gate_reject`; ATR stop distance floored at 1 (`.max(1)`) so a tiny
+    `mult·ATR` can't round to 0 and collapse the stop onto the entry.
+  - **F2 (decision, approved):** in close-confirm mode the fill is close-anchored, so
+    the entry bar's stop-touching low is provably **pre-fill** — the same-bar stop check
+    is skipped there (wick mode unchanged). A deliberate deviation from KTD6's
+    wick-entry "same-bar stop-first wins"; without it the flip books phantom same-bar
+    stops on confirm bars and the verdict biases toward revert.
+- **Re-baseline (v15, all-off) — verdict-neutral:** seed-and-rerun from v13 (KTD2),
+  all gates off, `strategy_version = 15`. Per-trade ledger vs `…-v9` is **166/166
+  byte-identical**; summary EQUAL on every field (`num_trades 162`,
+  `Expectancy −3157.547`, `WR 0.4691`, `PF 0.9729`, `pnl_total −502050`,
+  `max_drawdown 9149100`). The F1/F2 fixes touch only the ATR/close-confirm paths, so
+  the all-off baseline is unchanged. Re-baseline signal captured: `runs compare`
+  param mode (v9 → v15) FAILs `strategy_code_hash differs`, `param diff
+  ["strategy_version"]` (KTD3 — the FAIL *is* the evidence).
+- **AE2 attribution:** `runs compare` param mode (v15 → v16) **PASS**, diff exactly
+  `{entry_confirm, strategy_version}`. v15 and v16 share `strategy_code_hash
+  fa7733f6…` — a pure param flip (F1/F2 in both, verdict-neutral for all-off).
+- **Edge gate (`EdgeEvaluation`, unchanged): CLEARED (`is_edge = true`).** Expectancy
+  **+4,812.74** KRW/trade (baseline −3,157.55), WR 49.4% (+2.4 pp), PF **1.044**
+  (from 0.973), pnl_total **+755,600** (from −502,050), Sharpe +0.45 / Sortino +0.75.
+  Dominance **11.5%** (≤ 40%), top-|P&L| symbol is a *loser* (`034730.XKRX`
+  −1,865,000) — the edge is not one-winner-carried. Trades 162 → 158: close-confirm
+  trims only 4 wick-only breakouts yet flips aggregate P&L positive — those entries
+  were net-losing fakes. R-metrics range-R (stop_mode 0, per `report mfe`).
+- **Read:** the mirror of the U7 midpoint-stop falsification — these breakouts pull
+  back through the OR mid before running, so tightening the *stop* converts winners to
+  losses, but tightening the *entry* (demanding a confirmed close) avoids the fakes
+  without surrendering the runners. Entry quality, not stop geometry, is the lever.
+- **Queue re-rank (R6):** baseline advances to **v16** (`entry_confirm = 1.0`; future
+  turns seed from it). The kept entry-quality lever validates the entry-quality class
+  over stop-geometry. New head = **lever 4 (entry cutoff)** — the `report mfe`
+  `time_exit` bucket (n=88, median give-back 0.40R) is the give-back-to-flat cohort a
+  cutoff targets; then lever 3 (OR-width, now ATR-hardened by F1), lever 5 (RVOL).
+  Lever 1 leg 2 (ATR-scaled stop) stays **demoted** (a stop-narrowing sibling of the
+  falsified midpoint), though F1 now makes it runnable.
+- **Provenance:** baseline run `20260712T022149Z-backtest-orb-v15`, flip run
+  `20260712T022255Z-backtest-orb-v16` (home `data/turn4-fresh`, gitignored). Zero
+  `orb.rs` edits after the v15 baseline run (KTD8). Offline, no gateway.
+
 ## Turn — mechanism-harness all-off baseline (2026-07-12) — plan 2026-07-11-001 (U6)
 
 - **Verdict: re-baseline PASS (reconciled to v9).** The harness code turn adds
