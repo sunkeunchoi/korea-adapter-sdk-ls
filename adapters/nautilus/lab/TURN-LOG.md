@@ -4,6 +4,46 @@ Committed record of each loop turn's verdict + the bar conditions it held. The
 full artifacts (`analysis.md`, manifests, performance) live in the gitignored data
 home; this file is the durable, reviewable outcome trail.
 
+## Turn — lever 4: entry cutoff (2026-07-12) — plan 2026-07-11-001
+
+- **Verdict: REVERT (lever 4 fails the edge gate — expectancy turns negative).**
+  `entry_cutoff_min` 0.0 → 120.0 (11:00 KST = range_open 09:00 + 120) as a
+  single-param seed-and-rerun flip from the v16 baseline. Pre-registered value +
+  keep rule before the run (R3).
+- **Type: PARAM turn, not a code turn.** `strategy_code_hash fa7733f6df76ca39…`
+  unchanged between baseline and flip; zero `orb.rs` edits (hash lock, KTD8). The
+  entry-cutoff gate already shipped in the harness code turn (#121); this only
+  moves the param. Seed-and-rerun (not a governed `LS_TURN_PARAM` turn) because the
+  0.0 → 120.0 move is an infinite relative change off the 0.0 sentinel and the
+  proposal guardrail (PROPOSAL_BOUNDS_CAP 0.5) fail-closes it.
+- **AE2 attribution:** `runs compare` param mode (v16 → v17) **PASS**, diff exactly
+  `{entry_cutoff_min, strategy_version}` — clean single-lever attribution, code hash
+  identical.
+- **Bind check — BINDS (not inert):** v17 `decisions.jsonl` carries **350**
+  `filter:"entry_cutoff"` SessionReject decisions (v16: 0). Closed trades 158 → 123
+  — the cutoff removed 35 entries. Real selectivity, not an inert filter.
+- **Edge gate (`EdgeEvaluation`, unchanged): NOT cleared (`is_edge = false`).**
+  Expectancy **−2,658.54** KRW/trade (v16 baseline +4,812.74), PF 0.979 (from
+  1.044), pnl_total **−327,000** (from +755,600), Sharpe −0.15 / Sortino −0.23.
+  Dominance 6.76% (≤ 40% passes, but moot — expectancy is negative). Win rate ticks
+  *up* 49.4% → 50.4% even as expectancy falls.
+- **Read — the removed late entries were net winners (falsification):** the cutoff
+  did shrink the targeted cohort — `report mfe` `time_exit` bucket 88 → 60 — but
+  aggregate P&L swung −1,082,600 over only 35 fewer trades, so the ~35
+  late-triggering (post-11:00) entries carried ~+1.08M of net profit. The late
+  breakouts were disproportionately the productive runners, not the give-back
+  drifters the MFE read implied; refusing them throws out winners with losers.
+  Entry *timing* joins stop *geometry* (U7) as a falsified dimension; entry
+  *quality* (close-confirm, v16) is still the only kept lever.
+- **Queue re-rank (R6):** baseline **stays v16** (revert; future turns seed from
+  v16). New head = **lever 3 (OR-width sanity, `or_width_max_atr`)** — an
+  entry-quality sibling of the kept close-confirm lever, ATR-hardened by F1, and the
+  class the loop has evidence for; then lever 5 (RVOL). Both are 0.0-sentinel moves
+  → seed-and-rerun. Lever 1 leg 2 (ATR-scaled stop) stays **demoted**.
+- **Provenance:** baseline run `20260712T022255Z-backtest-orb-v16`, flip run
+  `20260712T031104Z-backtest-orb-v17` (home `data/turn4-fresh`, gitignored). Offline,
+  no gateway.
+
 ## Turn — lever 2: close-confirmed entry (2026-07-12) — plan 2026-07-11-001
 
 - **Verdict: KEEP (lever 2 clears the edge gate — the loop's first positive edge).**
