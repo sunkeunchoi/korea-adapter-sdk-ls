@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>리팩터링 전략 &amp; 아키텍처 적합성 분석 — korea-adapter-sdk-ls</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1a1d21; --muted: #5b6570; --border: #e2e6ea;
+    --card: #f7f9fb; --code-bg: #f2f4f7; --code-fg: #1a1d21;
+    --accent: #2b6cb0; --accent-soft: #e8f1fb;
+    --good: #1a7f4b; --good-bg: #e6f4ec; --warn: #b7791f; --warn-bg: #fdf3e3;
+    --bad: #c02a2a; --bad-bg: #fbeaea; --neutral: #4a5568;
+    --th: #eef2f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0f1216; --fg: #e6e9ec; --muted: #9aa5b1; --border: #262c33;
+      --card: #161b21; --code-bg: #12171d; --code-fg: #e6e9ec;
+      --accent: #6fb0f0; --accent-soft: #14202e;
+      --good: #56c98a; --good-bg: #10231a; --warn: #e0b055; --warn-bg: #241d0f;
+      --bad: #ef8080; --bad-bg: #24100f; --neutral: #b7c0cc;
+      --th: #1a2129;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo",
+      "Noto Sans KR", Roboto, Helvetica, Arial, sans-serif;
+    line-height: 1.7; font-size: 16px;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 48px 24px 96px; }
+  header.doc { border-bottom: 2px solid var(--border); padding-bottom: 20px; margin-bottom: 8px; }
+  header.doc h1 { font-size: 1.9rem; line-height: 1.3; margin: 0 0 12px; letter-spacing: -0.01em; }
+  .meta { color: var(--muted); font-size: 0.9rem; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+  .meta b { color: var(--fg); font-weight: 600; }
+  h2 { font-size: 1.35rem; margin: 44px 0 14px; padding-top: 8px; letter-spacing: -0.01em; }
+  h3 { font-size: 1.08rem; margin: 26px 0 8px; }
+  p, li { color: var(--fg); }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { font-family: "SF Mono", "JetBrains Mono", "Fira Code", ui-monospace, Menlo, Consolas, monospace;
+    font-size: 0.85em; background: var(--code-bg); color: var(--code-fg);
+    padding: 0.12em 0.4em; border-radius: 5px; }
+  pre { background: var(--code-bg); color: var(--code-fg); border: 1px solid var(--border);
+    border-radius: 10px; padding: 16px 18px; overflow-x: auto; font-size: 0.82rem; line-height: 1.55; }
+  pre code { background: none; padding: 0; font-size: inherit; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 0.92rem; }
+  th, td { border: 1px solid var(--border); padding: 9px 12px; text-align: left; vertical-align: top; }
+  th { background: var(--th); font-weight: 650; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  blockquote { border-left: 3px solid var(--accent); margin: 16px 0; padding: 4px 16px;
+    color: var(--muted); background: var(--accent-soft); border-radius: 0 8px 8px 0; }
+  blockquote p { color: var(--fg); }
+  .toc { background: var(--card); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 22px; margin: 24px 0 8px; }
+  .toc ol { margin: 6px 0 0; padding-left: 20px; columns: 2; column-gap: 32px; }
+  .toc li { margin: 3px 0; }
+  .callouts { display: grid; gap: 14px; margin: 18px 0; }
+  .callout { border-radius: 12px; padding: 16px 18px; border: 1px solid var(--border); }
+  .callout .k { font-weight: 700; font-size: 0.78rem; text-transform: uppercase; letter-spacing: 0.05em;
+    display: inline-block; margin-bottom: 6px; }
+  .callout.good { background: var(--good-bg); border-color: color-mix(in srgb, var(--good) 35%, transparent); }
+  .callout.good .k { color: var(--good); }
+  .callout.warn { background: var(--warn-bg); border-color: color-mix(in srgb, var(--warn) 35%, transparent); }
+  .callout.warn .k { color: var(--warn); }
+  .callout.bad  { background: var(--bad-bg);  border-color: color-mix(in srgb, var(--bad) 35%, transparent); }
+  .callout.bad .k { color: var(--bad); }
+  .verdict { font-weight: 700; white-space: nowrap; }
+  .v-no { color: var(--bad); } .v-yes { color: var(--good); } .v-mid { color: var(--warn); } .v-have { color: var(--neutral); }
+  .pill { display: inline-block; font-size: 0.72rem; font-weight: 700; padding: 2px 8px; border-radius: 999px;
+    background: var(--accent-soft); color: var(--accent); vertical-align: middle; }
+  footer.doc { margin-top: 56px; padding-top: 18px; border-top: 1px solid var(--border);
+    color: var(--muted); font-size: 0.85rem; }
+  hr { border: none; border-top: 1px solid var(--border); margin: 36px 0; }
+  .lever { border: 1px solid var(--border); border-radius: 12px; padding: 4px 20px 14px; margin: 14px 0; background: var(--card); }
+  .lever h3 { margin-top: 16px; }
+  ul.tight li { margin: 4px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="doc">
+  <h1>리팩터링 전략 &amp; 아키텍처 적합성 분석</h1>
+  <div class="meta">
+    <span><b>작성일</b> 2026-07-02</span>
+    <span><b>분석 모델</b> Opus 4.8</span>
+    <span><b>대상</b> korea-adapter-sdk-ls (LS증권 Open API Rust SDK)</span>
+  </div>
+</header>
+
+<p style="margin-top:18px">세 가지 질문에 답한다: ① 분석은 Opus 4.8 · 계획/실행은 Fable 분리가 맞는가?
+② "코드가 너무 길다"를 Clean / Hexagonal / Vertical Slice로 풀어야 하는가?
+③ 이 프로젝트에 그런 패러다임이 애초에 <b>필요한가</b>?</p>
+
+<nav class="toc">
+  <b>목차</b>
+  <ol>
+    <li><a href="#s0">결론 3개 (TL;DR)</a></li>
+    <li><a href="#s1">현재 코드베이스 실측</a></li>
+    <li><a href="#s2">"길이" 문제의 진짜 정체</a></li>
+    <li><a href="#s3">현재 아키텍처 평가</a></li>
+    <li><a href="#s4">패러다임 적합성 판정</a></li>
+    <li><a href="#s5">권장 리팩터링 레버</a></li>
+    <li><a href="#s6">모델 선택 전략</a></li>
+    <li><a href="#s7">리스크 &amp; 제약</a></li>
+    <li><a href="#s8">추천 실행 순서</a></li>
+    <li><a href="#s9">계획 프롬프트</a></li>
+  </ol>
+</nav>
+
+<h2 id="s0">0. 결론 3개 — TL;DR</h2>
+<div class="callouts">
+  <div class="callout good">
+    <span class="k">결론 1 · 모델 분리는 맞다</span>
+    <p style="margin:0">분석은 Opus 4.8(=이 문서)로 끝내고, 계획+실행은 Fable로. 분석은 <b>짧고·고레버리지·오류가 하류로 전파</b>되는 단계라 무거운 추론 모델에 투자하는 게 이득이고, 산출물이 <b>문서</b>라 모델 교체 시 컨텍스트 손실이 없다(문서=공유 컨텍스트). 덤으로 "분석 모델 ≠ 계획 모델"은 이 레포가 이미 애용하는 <b>교차-모델 검증</b>을 공짜로 얻는다. (§6)</p>
+  </div>
+  <div class="callout bad">
+    <span class="k">결론 2 · Clean/Hexagonal 통짜 도입 = 범주 오류</span>
+    <p style="margin:0">그 패러다임들은 <b>의존성 방향</b>과 <b>비즈니스 로직 격리</b>를 푸는 도구다. 그런데 이 코드의 "길이"는 그 문제가 아니다. 이건 <b>라이브러리(SDK)</b>이고 로직은 이미 <code>ls-core</code>에 얇게 격리돼 있다. 길이의 정체는 <b>320개 TR × 기계적 DTO 보일러플레이트</b>다. Clean/Hexagonal을 올려도 이 물량은 한 줄도 안 줄고 ceremony만 는다. (§2, §4)</p>
+  </div>
+  <div class="callout good">
+    <span class="k">결론 3 · 진짜 레버 = 메타데이터 기반 codegen</span>
+    <p style="margin:0">이 프로젝트는 이미 320개 TR의 wire-shape를 <b>구조화된 형태로 보유</b>한다(<code>normalized/trs/*.json</code> + <code>metadata/trs/*.yaml</code>). 이미 그걸로 <b>문서를 생성</b>한다(<code>ls-docgen</code>). DTO 스켈레톤 생성은 그 자연스러운 확장이자 이 프로젝트에만 열린 고유 수단이다. 우선순위: <b>codegen &gt; 선언적 매크로 &gt; 모듈 분해 계속 &gt; vertical-slice 형식화</b>. (§5)</p>
+  </div>
+</div>
+
+<h2 id="s1">1. 현재 코드베이스 실측 <span class="pill">2026-07-02 측정</span></h2>
+<p>Cargo workspace(<code>resolver = "2"</code>), 6개 크레이트.</p>
+<table>
+  <thead><tr><th>크레이트</th><th class="num">LOC</th><th class="num">파일</th><th>역할</th></tr></thead>
+  <tbody>
+    <tr><td><b><code>ls-sdk</code></b></td><td class="num"><b>61,362</b></td><td class="num"><b>100</b></td><td>공개 SDK: TR별 request/response 구조체 + facade 핸들</td></tr>
+    <tr><td><code>ls-trackers</code></td><td class="num">13,189</td><td class="num">13</td><td>API-drift / spec 트래커 (툴링)</td></tr>
+    <tr><td><code>ls-core</code></td><td class="num">12,100</td><td class="num">24</td><td>런타임: dispatch, endpoint policy, rate limiter, auth, preflight</td></tr>
+    <tr><td><code>ls-metadata</code></td><td class="num">2,955</td><td class="num">8</td><td>메타데이터 스키마 + validator</td></tr>
+    <tr><td><code>ls-docgen</code></td><td class="num">1,896</td><td class="num">3</td><td>메타데이터 → docs/ 투영</td></tr>
+    <tr><td><code>ls-sdk-test-support</code></td><td class="num">464</td><td class="num">4</td><td>wiremock 오프라인 테스트 헬퍼</td></tr>
+  </tbody>
+</table>
+<ul class="tight">
+  <li>TR 개수 <b>320</b> (<code>metadata/trs/*.yaml</code> 320 = <code>normalized/trs/*.json</code> 320, 1:1)</li>
+  <li><code>ls-sdk/src</code> 내 <code>pub struct</code> <b>210개</b>, serde 속성 <b>211개</b> — 구조체당 거의 1개꼴 wire-type 관용 처리</li>
+  <li>이미 분해된 대형 파일들(PR #72/#78): <code>market_session/mod.rs</code> 11,789→1,157 · <code>frame.rs</code> 4,977→1,471 · <code>account</code> 2,406→316 · <code>endpoint_policy</code> 5,077→396+6서브. 기법은 <code>pub use submod::*;</code> 순수 relocation(count·crosscheck 무변경)</li>
+</ul>
+<blockquote><p>"파일이 길다" 축은 이미 상당히 손봤다. 남은 건 파일 개수가 아니라 <b>줄 수의 총량</b>이고, 그 총량은 <code>ls-sdk</code>에 몰려 있다.</p></blockquote>
+
+<h2 id="s2">2. "길이" 문제의 진짜 정체</h2>
+<p><code>ls-sdk</code>가 61k LOC인 이유는 <b>아키텍처 얽힘이 아니라 형식적 DTO의 물량</b>이다. 증거물로 <code>t8425</code>(전체테마, 가장 단순한 read)를 보자:</p>
+<pre><code>#[derive(Serialize, Debug, Clone)]
+pub struct T8425InBlock { pub dummy: String }        // 요청 필드 목록
+
+#[derive(Serialize, Debug, Clone)]
+pub struct T8425Request {                            // "t8425InBlock" 키로 감싸는 봉투
+    #[serde(rename = "t8425InBlock")] pub inblock: T8425InBlock,
+}
+impl T8425Request { pub fn new() -&gt; Self { /* ... */ } }
+impl Default for T8425Request { /* ... */ }
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+#[serde(default)]
+pub struct T8425OutBlock {                            // 응답 한 행
+    #[serde(deserialize_with = "ls_core::string_or_number")] pub tmname: String,
+    #[serde(deserialize_with = "ls_core::string_or_number")] pub tmcode: String,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Default)]
+pub struct T8425Response {                            // 봉투 + rsp_cd/rsp_msg + 배열-혹은-단일
+    #[serde(default)] pub rsp_cd: String,
+    #[serde(default)] pub rsp_msg: String,
+    #[serde(rename = "t8425OutBlock", default, deserialize_with = "ls_core::de_vec_or_single")]
+    pub outblock: Vec&lt;T8425OutBlock&gt;,
+}</code></pre>
+<p>이 ~90줄(주석 포함) 중 <b>구조적으로 결정되는 부분</b>은 이미 프로젝트가 구조화해 보유한다:</p>
+<pre><code>// normalized/trs/t8425.json — 필드-레벨 wire shape (이미 존재)
+{ "direction":"request", "block_name":"...", "field_name":"tr_cd",
+  "korean_name":"거래 CD", "type":"String", "length":10, "required":true }</code></pre>
+<ul class="tight">
+  <li><code>InBlock</code>/<code>OutBlock</code>의 필드명·타입·length·required → <b>baseline JSON에 있음</b></li>
+  <li>Request 봉투, <code>new()</code>, <code>Default</code>, <code>rsp_cd</code>/<code>rsp_msg</code> + <code>de_vec_or_single</code> → <b>모든 TR 동일 패턴</b></li>
+  <li>배열-vs-단일, self-pagination, rate bucket, protocol → <b><code>metadata/trs/*.yaml</code> facets에 있음</b></li>
+</ul>
+<blockquote><p><b>320벌 × ~90줄의 대부분은 프로젝트가 이미 들고 있는 구조화 데이터의 손번역본이다.</b> 그러므로 길이의 해법은 "구조를 바꾸는 것"이 아니라 "물량을 생성으로 대체하는 것"이다. 아키텍처 패러다임은 물량 문제를 못 푼다.</p></blockquote>
+
+<h2 id="s3">3. 현재 아키텍처 평가 — 이미 꽤 좋다</h2>
+<pre><code>                    ┌─────────────────────────────────────────┐
+   호출자 (앱)  ──▶ │  ls-sdk  (Driving Adapter / 공개 API)     │
+                    │  LsSdk facade → 도메인별 핸들:            │
+                    │   standalone · market_session · paginated │
+                    │   account · orders · fo_orders · realtime │
+                    └───────────────┬─────────────────────────┘
+                                    │  Arc&lt;Inner&gt; (공유 런타임)
+                    ┌───────────────▼─────────────────────────┐
+                    │  ls-core  (Application Core / 런타임)     │
+                    │   Inner::post / post_paginated / post_order│
+                    │   endpoint_policy/{market_data, order,     │
+                    │     realtime_md, realtime_order, auth, ...} │
+                    │   rate_limiter · auth · preflight · error  │
+                    └───────────────┬─────────────────────────┘
+                                    │  HTTP / WebSocket → LS 게이트웨이
+
+  ┌──────── 메타데이터/툴링 평면 (Source of Truth) ────────┐
+  │ metadata/*.yaml + normalized/*.json → ls-docgen → docs/ │
+  │ ls-metadata (validator) · ls-trackers (drift/freshness) │
+  └─────────────────────────────────────────────────────────┘</code></pre>
+<ul class="tight">
+  <li><b>관심사 분리는 이미 크레이트 경계로.</b> transport(<code>ls-core</code>) ↔ 공개 API(<code>ls-sdk</code>) ↔ 메타데이터/툴링. 서로 다른 축의 변경이 서로를 오염시키지 않는다.</li>
+  <li><b>Hexagonal 골격이 이미 있다.</b> <code>ls-core</code>=도메인-무관 코어(hexagon), <code>endpoint_policy/*</code>=도메인별 정책 포트, facade 핸들=driving adapter, 게이트웨이=driven side.</li>
+  <li><b>Vertical Slice도 이미 사실상 적용됨.</b> <code>market_session / paginated / account / orders / realtime</code>는 레이어가 아니라 <b>의존성-클래스(feature) 슬라이스</b>. <code>lib.rs</code> 주석: <i>"Dependency classes are modules ... tests routed by metadata facet, not by module boundary."</i> — vertical slice 그 자체.</li>
+</ul>
+<blockquote><p>사용자가 "도입할까" 고민 중인 셋 중 둘(Hexagonal 코어/어댑터 분리, Vertical Slice)은 <b>이미 코드에 내재</b>해 있다. 남은 건 "도입"이 아니라 "형식화/일관화"다.</p></blockquote>
+
+<h2 id="s4">4. 패러다임 적합성 판정</h2>
+<table>
+  <thead><tr><th>패러다임</th><th>무엇을 푸는가</th><th>이 프로젝트에 필요한가</th><th>판정</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><b>Clean Architecture</b></td>
+      <td>엔티티/유스케이스를 동심원으로, 의존성이 안쪽으로만</td>
+      <td>이 SDK엔 유스케이스/엔티티 계층이 없다. 로직은 dispatch 정책뿐이고 이미 <code>ls-core</code>에 격리됨. 계층을 올리면 320 TR마다 빈 껍데기만 늘어남</td>
+      <td class="verdict v-no">❌ 도입 금지<br><span style="font-weight:400;font-size:0.85em">물량 미해결 + ceremony 폭증</span></td>
+    </tr>
+    <tr>
+      <td><b>Hexagonal</b></td>
+      <td>코어 로직을 I/O(어댑터)와 분리</td>
+      <td>골격이 이미 있음(<code>ls-core</code>=코어, facade=어댑터). "정식 hexagonal"로 리네이밍/추상화할 실익 적음</td>
+      <td class="verdict v-have">🟡 이미 있음<br><span style="font-weight:400;font-size:0.85em">용어/경계 문서화만</span></td>
+    </tr>
+    <tr>
+      <td><b>Vertical Slice</b></td>
+      <td>레이어 아닌 기능(슬라이스) 단위 조직</td>
+      <td>이미 dependency-class 모듈 = 슬라이스, 테스트도 facet 기반</td>
+      <td class="verdict v-mid">🟢 이미 채택<br><span style="font-weight:400;font-size:0.85em">"완성/형식화"만</span></td>
+    </tr>
+    <tr>
+      <td><b>메타데이터 Codegen</b></td>
+      <td>구조화된 명세로부터 반복 코드 생성</td>
+      <td>320 TR × 기계적 DTO = 정확히 이 문제. 명세(baseline+yaml)와 생성 인프라(docgen) 이미 보유</td>
+      <td class="verdict v-yes">✅ 이게 정답<br><span style="font-weight:400;font-size:0.85em">유일하게 길이를 실제 공격</span></td>
+    </tr>
+  </tbody>
+</table>
+<blockquote><p><b>한 문장:</b> 후보로 든 셋은 <i>앱 아키텍처</i> 도구인데 이 프로젝트의 통증은 <i>라이브러리의 DTO 물량</i>이다. 셋 중 유효한 부분은 이미 코드에 있고, 진짜 해법(codegen)은 후보에 없었다.</p></blockquote>
+
+<h2 id="s5">5. 권장 리팩터링 레버 (우선순위순)</h2>
+
+<div class="lever">
+  <h3>레버 1 — 메타데이터 기반 DTO codegen <span class="pill">⭐ 최고 레버리지</span></h3>
+  <ul class="tight">
+    <li><b>무엇</b>: <code>normalized/trs/*.json</code> + <code>metadata/trs/*.yaml</code>로부터 <code>InBlock/Request/new/Default/OutBlock/Response</code> 스켈레톤 생성. <code>ls-docgen</code> 확장 또는 형제 <code>ls-sdk-gen</code>.</li>
+    <li><b>이 프로젝트에서만 가능한 이유</b>: source of truth가 이미 구조화돼 있고, <code>make docs</code>/<code>docs-check</code>로 "생성물==커밋" 검증 파이프라인도 이미 있음. 같은 파이프라인에 태우면 됨.</li>
+    <li><b>효과</b>: 신규 TR 손코딩 ≈ 0 · wire drift 자동 전파 · 기계적 부분 일회 대폭 축소.</li>
+  </ul>
+  <div class="callout warn" style="margin-top:8px">
+    <span class="k">⚠️ 반드시 하이브리드 (프로젝트 기존 교훈 반영)</span>
+    <ul class="tight" style="margin:0">
+      <li><b>Response/OutBlock</b>: baseline이 응답 shape의 권위 → 자신 있게 생성.</li>
+      <li><b>Request/InBlock</b>: baseline은 request 블록을 <b>과소보고할 수 있고, live-certified 손작성 구조체가 이긴다</b>(<code>docs/solutions/conventions/normalized-baseline-can-underreport-request-block.md</code>). 생성물은 <b>시작 스켈레톤</b>, override 가능해야 함. 눈 감고 전량 생성 금지.</li>
+      <li><b>doc 주석</b>: 사람이 쓴 산문은 생성 불가 → 사실 기반 stub만.</li>
+      <li>숫자 request 필드 = <code>string_as_number</code>(JSON 숫자, 아니면 <code>IGW40011</code>). F/O 가격 소수 = <code>string_as_decimal</code>.</li>
+    </ul>
+  </div>
+  <p style="margin:8px 0 0"><b>정직한 기대치</b>: "61k줄 삭제"가 아니라 <b>성장 멈춤 + 기계적 부분 축소</b>. doc-heavy 파일은 0으로 안 줄어든다. <b>비용/리스크 中.</b></p>
+</div>
+
+<div class="lever">
+  <h3>레버 2 — 선언적 매크로 <code>tr!</code> <span class="pill">경량 대안/디딤돌</span></h3>
+  <ul class="tight">
+    <li>Request 봉투 + <code>new</code> + <code>Default</code> + Response 동일 패턴을 <code>macro_rules!</code>로. 선례: <code>rank_screen.rs</code>의 <code>rank_row!</code>/<code>idx_summary!</code>.</li>
+    <li>각 TR의 ~40%(봉투/impl 반복) 흡수. baseline override 문제 안 건드림. codegen이 부담되면 여기부터, 나중에 승격. <b>비용/리스크 低.</b></li>
+  </ul>
+</div>
+
+<div class="lever">
+  <h3>레버 3 — 모듈 분해 계속 <span class="pill">검증된 패턴</span></h3>
+  <ul class="tight">
+    <li>남은 대형 파일(<code>chart.rs</code> 2,304 등)을 <code>pub use submod::*;</code> 순수 relocation으로 계속 쪼갬. count·crosscheck 무변경.</li>
+    <li><b>주의</b>: relocation은 <b>실패가 조용함</b> → 검증은 컴파일러가 아니라 <code>--list</code> 테스트명 스냅샷 diff(PR #78 교훈). <b>비용/리스크 低.</b></li>
+  </ul>
+</div>
+
+<div class="lever">
+  <h3>레버 4 — Vertical slice 형식화 <span class="pill">구조 아님, 규칙</span></h3>
+  <ul class="tight">
+    <li>신규 TR이 항상 owner_class(facet) → 올바른 슬라이스로 떨어지도록 <code>track-tr</code>/<code>implement-tr</code> 레시피에 명문화. 이미 사실상 지켜지니 "규칙 고정"만.</li>
+  </ul>
+</div>
+
+<div class="callout bad">
+  <span class="k">하지 말 것</span>
+  <p style="margin:0">Clean/Hexagonal 대공사(빅뱅 재설계) — 물량 미해결 + gate 결합(§7) 대규모 파손 위험. 메타데이터 source-of-truth나 test crosscheck 리스트와 싸우는 어떤 변경도 금지.</p>
+</div>
+
+<h2 id="s6">6. 모델 선택 전략 — 왜 "Opus 분석 / Fable 계획·실행"인가</h2>
+<blockquote><p><b>결정 규칙</b>: 짧고 고레버리지인 사고는 가장 무거운 추론 모델에, 길고 기계적인 실행은 가장 효율적인 최신 모델에. 그리고 각 단계를 상대 모델로 교차 검증.</p></blockquote>
+<table>
+  <thead><tr><th>단계</th><th>성격</th><th>권장 모델</th><th>이유</th></tr></thead>
+  <tbody>
+    <tr><td><b>분석 (지금)</b></td><td>짧음·고레버리지·오류가 전 하류로 전파</td><td><b>Opus 4.8</b></td><td>방향을 정하는 단계. 여기서 틀리면 계획·실행이 통째로 틀림. 산출물이 <b>문서</b>라 모델 교체 시 컨텍스트 손실 0</td></tr>
+    <tr><td><b>계획</b></td><td>다수 모듈에 걸친 설계</td><td><b>Fable</b></td><td>물량 작업. + 분석(Opus)과 다른 모델이라 <b>교차-모델 검증</b>이 공짜로 붙음</td></tr>
+    <tr><td><b>실행</b></td><td>100개 파일 편집·생성 반복</td><td><b>Fable</b></td><td>처리량이 곧 비용. 최신·효율 모델의 throughput이 복리로 이득</td></tr>
+    <tr><td><b>리뷰</b></td><td>계획/코드 검증</td><td>상대 모델</td><td>이 레포는 이미 "cross-model Codex 리뷰"를 상시 사용(메모리 다수). 관성과 일치</td></tr>
+  </tbody>
+</table>
+<p><b>"전부 Fable로" 대안은 언제 맞나</b>: 단일 모델 일관성·낮은 비용을 교차검증보다 더 칠 때, 또는 실사용에서 Fable의 아키텍처 추론이 Opus와 대등하다고 느낄 때. 이 경우 손실은 "교차-모델 다양성"뿐이고, 산출물이 문서라 컨텍스트 연속성은 어차피 문제되지 않는다.</p>
+<div class="callout good">
+  <span class="k">추천</span>
+  <p style="margin:0">분석은 이미 Opus로 확정(=이 문서). 계획·실행은 Fable. 그리고 <b>Fable의 계획을 Opus로 1회 리뷰</b>(§7을 체크리스트로). 짧은 고가치 사고엔 비싼 모델, 긴 기계 작업엔 효율 모델 — 이 프로젝트의 phase 구조와 정확히 맞는다.</p>
+</div>
+
+<h2 id="s7">7. 리스크 &amp; 제약 (계획 모델에 반드시 전달)</h2>
+<p>이 레포는 gate 머신러리가 현재 구조에 <b>강하게 결합</b>돼 있다. 존중하지 않으면 green gate가 대량 파손된다.</p>
+<ol>
+  <li><b>Count 리터럴 결합</b>: <code>ls-docgen/src/lib.rs</code>의 <code>reference.len()</code>(현 280)·<code>banner_trs</code>, <code>ls-trackers/src/cli.rs</code> count 리터럴은 <code>make docs</code>로 안 잡히고 <b><code>cargo test</code>로만</b> 잡힘.</li>
+  <li><b>Crosscheck 이원화</b>: 신규 REST <code>{TR}_POLICY</code>는 <b>두 리스트 모두</b>에. WS policy(<code>owner_class: realtime</code>)는 crosscheck에만, <code>slice_rest_policies_are_non_order_rest</code>엔 절대 금지.</li>
+  <li><b>순수 relocation 트릭</b>: <code>pub use submod::*;</code>로 공개 경로 불변. <code>use super::*</code>가 부모의 <i>private</i> import까지 glob으로 끌어와 순수 이동이 컴파일됨 — codegen 출력도 이 관례 준수.</li>
+  <li><b>Baseline 과소보고</b>: request 블록에서 baseline &lt; 실제 가능. certified 손작성 구조체 우선(§5 레버1).</li>
+  <li><b>숫자 request 필드</b>: <code>string_as_number</code> 안 쓰면 <code>IGW40011</code>. F/O 가격 소수 = <code>string_as_decimal</code>.</li>
+  <li><b><code>ls-trackers</code> 포맷 금지</b>: <code>main</code>이 의도적으로 unformatted. 전체 <code>cargo fmt</code> = 거대한 헛디프.</li>
+  <li><b>분해 실패는 조용함</b>: 검증은 컴파일이 아니라 <code>--list</code> 스냅샷 diff. 한국어 문자열 테스트는 locale 트랩(<code>LC_ALL=C</code> 고정).</li>
+  <li><b>MEMORY.md 초과</b>: 현재 29.3KB &gt; 24.4KB 한도. 이 작업 기록을 memory에 넣으려면 index 한 줄로만.</li>
+</ol>
+
+<h2 id="s8">8. 추천 실행 순서 (phased, Fable 담당)</h2>
+<ul class="tight">
+  <li><b>Phase 0 (설계, Opus 리뷰 대상)</b>: codegen 스코프 확정 — Response 전량 / Request 스켈레톤+override 경계 / doc stub 정책. gate 결합(§7) 대응.</li>
+  <li><b>Phase 1 (PoC)</b>: 대표 TR 3~5개(단순 read t8425 · paginated · 배열형 · request 있는 것 · order 계열)에 codegen 적용, "생성물==커밋" 검증(docs-check 방식) 붙이기. gate green 증명.</li>
+  <li><b>Phase 2 (확대)</b>: read 계열로 확대. 파일별 순수 relocation 병행.</li>
+  <li><b>Phase 3 (경계 케이스)</b>: certified override 필요한 request/order 계열 신중히. baseline 과소보고 대조.</li>
+  <li><b>Phase 4 (형식화)</b>: 신규 TR이 codegen+올바른 슬라이스로 떨어지도록 레시피 갱신.</li>
+</ul>
+<p>각 Phase = 독립 PR + <code>cargo test</code>/<code>docs-check</code>/<code>lane-check</code> green + ce-code-review(레포 관례).</p>
+
+<h2 id="s9">9. 계획 프롬프트 (Fable 세션용)</h2>
+<p>전문은 별도 파일: <code>docs/brainstorms/2026-07-02-refactoring-planning-prompt.md</code> (변형 A/B 포함). 아래는 본체.</p>
+<pre><code>[역할] 너는 korea-adapter-sdk-ls (LS증권 Open API Rust SDK) 리팩터링 계획을
+수립하는 시니어 Rust 아키텍트다. 실행이 아니라 "구현 가능한 계획"을 만든다.
+
+[확정된 방향 — 재논의 금지]
+- 이건 라이브러리(SDK)다. Clean/Hexagonal 통짜 도입은 하지 않는다(범주 오류).
+  Hexagonal 코어/어댑터 분리와 Vertical Slice는 이미 코드에 내재 → "형식화"만.
+- "길이" 문제의 정체는 320개 TR × 기계적 DTO 보일러플레이트다(아키텍처 얽힘 아님).
+- 채택 레버 우선순위: (1) 메타데이터 기반 DTO codegen  (2) 선언적 tr! 매크로
+  (3) 모듈 분해 계속(pub use submod::*)  (4) vertical-slice 규칙 형식화.
+  근거: docs/brainstorms/2026-07-02-refactoring-strategy-and-architecture-analysis.md
+
+[목표] 레버 (1)을 중심으로 단계별(PoC→확대→경계→형식화) 구현 계획을 작성.
+각 단계는 독립 PR 단위, gate green 유지, 롤백 가능해야 한다.
+
+[반드시 반영할 제약 (틀리면 gate 파손)]
+1. codegen 소스: crates/ls-trackers/baselines/api-drift/normalized/trs/&lt;tr&gt;.json
+   + metadata/trs/&lt;tr&gt;.yaml. ls-docgen이 이미 이 소스로 문서 생성 중 →
+   같은 파이프라인/검증(make docs, docs-check)에 태울 것.
+2. 하이브리드 생성:
+   - Response/OutBlock: baseline이 권위 → 전량 생성.
+   - Request/InBlock: baseline 과소보고 가능. live-certified 손작성 구조체 우선
+     (docs/solutions/.../normalized-baseline-can-underreport-request-block.md).
+     생성물은 시작 스켈레톤. 눈 감고 전량 생성 금지.
+   - doc 주석 산문은 생성 불가 → 사실 기반 stub만.
+   - 숫자 request 필드 = string_as_number(아니면 IGW40011). F/O 가격 = string_as_decimal.
+3. Count/crosscheck 결합: reference.len()·banner_trs·cli.rs count 리터럴은
+   make docs로 안 잡히고 cargo test로만. 신규 REST {TR}_POLICY는 두 crosscheck
+   리스트 모두에, WS policy는 crosscheck에만.
+4. 순수 relocation은 pub use submod::*; + use super::*; 관례 유지. 분해 검증은
+   컴파일이 아니라 cargo test --list 스냅샷 diff. 한국어 문자열은 LC_ALL=C.
+5. ls-trackers 크레이트는 cargo fmt 금지(main이 의도적으로 unformatted).
+
+[산출물] 단계별 계획(Phase 0~4). 각 Phase: 목표/변경 파일/검증/롤백/리스크.
+Phase 1은 대표 TR 3~5개 PoC + "생성물==커밋" 검증 구체안.
+gate: make docs / cargo test / cargo test -p ls-core / make docs-check / make lane-check.
+정직한 기대치: "61k줄 삭제"가 아니라 "성장 멈춤 + 기계적 부분 축소".
+
+[먼저 할 일 — 추측 금지] ls-docgen/src/lib.rs의 생성 방식 / normalized json 블록 스키마 /
+대표 TR 파일 3~5개 실제 패턴 / track-tr·implement-tr 레시피를 실제로 확인.
+
+계획 완성 시 docs/plans/2026-07-02-XXX-refactor-metadata-codegen-plan.md 로 저장.</code></pre>
+
+<footer class="doc">
+  <p>생성: Opus 4.8 · 2026-07-02 · 대상 <code>korea-adapter-sdk-ls</code> @ <code>main</code>.
+  동반 파일: <code>2026-07-02-refactoring-strategy-and-architecture-analysis.md</code>(동일 내용) ·
+  <code>2026-07-02-refactoring-planning-prompt.md</code>(계획 프롬프트).</p>
+</footer>
+
+</div>
+</body>
+</html>
