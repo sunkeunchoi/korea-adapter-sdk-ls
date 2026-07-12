@@ -1737,6 +1737,34 @@ promotion + the three reopen fixes above are the staged follow-up.
 fix the `tr_cont`→`cts_ordno` single-page guard for the order quartet; (5) clear the stranded
 005930 order. (2)–(4) each need an attended in-window re-probe before their flip.
 
+**Addendum (2026-07-12, recert-wave-3 offline prep — plan `2026-07-12-003`).** Two of the reason-C
+/ reason-A follow-ups above are RESOLVED in code; only their attended live re-probe remains, so an
+operator scoping the Monday KRX-open window (issue #117) should NOT re-do them:
+
+- **Follow-up (4) — the `tr_cont`→`cts_ordno` single-page guard fix (reason C) LANDED in PR #106
+  (`a9974a9`, 2026-07-07).** See §28 U1: both `scan_symbol_working_orders` twins
+  (`crates/ls-sdk/tests/negative_probe.rs` + the `crates/ls-sdk/tests/order_smoke.rs` twin) now gate
+  single-page terminality on the response **`cts_ordno` body cursor** via the pure
+  `scan_page_is_terminal(cts_ordno)` (terminal on empty / `" "` / numeric-default `"0"`; a real
+  order-number continuation cursor = paginated → fail-closed), not the `tr_cont` header. The offline
+  terminality twins (`scan_page_terminality_keys_on_the_cts_ordno_body_cursor_not_tr_cont`) are
+  present and green in both files. The remaining reason-C work is the **attended Monday live
+  re-probe** of `CSPAT00601`/`00701`/`00801` — and, per §29, that re-probe already ran once
+  (2026-07-07) and UNMASKED a *separate* constraint-schema required-ness divergence (`BnsTpCode` /
+  `IsuNo`), which is §29's follow-up, not a guard defect.
+- **Follow-up (3) — the t8412 standalone-loop pacing (reason A) LANDED offline in this wave.**
+  `live_smoke_t8412_negative` now delegates to the shared U6-paced `run_inblock_negative_probe`
+  (`T8412_PROBE_PACE = 250 ms`, non-zero market-data-sized), so it no longer self-inflicts the
+  `IGW00201` throttle that masked all 11 variants as a false `Clean`. Offline proof
+  `t8412_probe_is_paced` asserts the non-zero pace; the true anti-throttle behavior is confirmed by
+  the Monday in-window re-probe (the leg is `#[ignore]`, so offline-green = landed-but-UNCERTIFIED).
+- **Follow-up (5) — the stranded 005930 band-floor buy was already cleared** (§28 U2, 2026-07-07:
+  a `chegb="2"` t0425 scan returned the empty/flat signature, zero owned resting rows).
+
+Net: of §27's reason-A/-C follow-ups, only the **attended live re-probes** (3)+(4) remain, plus the
+independent §29 required-ness divergence. Follow-ups (1) `t1102` promotion and (2) the
+`medosu`/`BalCreTp` operator decision are unchanged and still open.
+
 ## 28. Nautilus open-window SC certification wave — SC CERTIFIED live; U6 authorized (2026-07-07)
 
 Plan `docs/plans/2026-07-07-001-feat-nautilus-open-window-sc-certify-wave-plan.md`. A mixed

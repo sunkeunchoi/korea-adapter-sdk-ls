@@ -109,6 +109,26 @@ fn negative_probe_offline_twin() {
     assert_eq!(classify_probe(true, false), ProbeOutcome::Divergent);
 }
 
+#[test]
+fn t8412_probe_is_paced() {
+    // §27 reason A / #117 item 3: the t8412 live differential probe must carry a
+    // NON-ZERO inter-dispatch pace so it does not self-inflict an `IGW00201`
+    // throttle that masks every variant as a false `Clean`. This offline proxy
+    // asserts the structural property (the pace is present and market-data-sized);
+    // the true anti-throttle behavior is only observable in the Monday in-window
+    // re-probe (the leg is `#[ignore]`).
+    assert!(
+        !T8412_PROBE_PACE.is_zero(),
+        "t8412 probe must be paced (non-zero) so it does not self-throttle (§27 reason A)"
+    );
+    // At least the 10/s market-data bucket period (100 ms) — a meaningfully sized
+    // pace, not a token sub-millisecond value.
+    assert!(
+        T8412_PROBE_PACE >= Duration::from_millis(100),
+        "t8412 pace should be at least the 10/s market-data bucket period (100 ms)"
+    );
+}
+
 /// `true` if a gateway response classifies as a read success (control passes).
 fn is_success(rsp_cd: &str) -> bool {
     matches!(rsp_cd, "" | "00000" | "00136" | "00707")
@@ -150,113 +170,42 @@ fn reported_outcome(
     }
 }
 
+/// Inter-dispatch pace for the t8412 live differential probe (§27 reason A / #117
+/// item 3). t8412 fires ~12 calls (control + 11 variants); with no pace they
+/// collided in the market-data bucket and every variant read a self-inflicted
+/// `IGW00201` throttle — which classifies as a rejection → false `Clean`, so the
+/// differential was never evaluated on merits. `IGW00201` is a warm-sensitive
+/// *cumulative* budget, NOT a pure rate (see the `igw00201-budget-characterization`
+/// learning), so t8412's higher call count trips it where the lower-count sibling
+/// market-data legs (t1101 / t1102, `Duration::ZERO`) do not — and, because the
+/// budget is cumulative, no per-dispatch pace can *guarantee* it stays cool. 250 ms
+/// (well under the 10/s bucket rate, ~3 s total, and below the 1500 ms account-lane
+/// pace) is therefore a pragmatic STARTING pace that spaces dispatches to let the
+/// budget refill between calls; its sufficiency against a warm budget is confirmed
+/// by the Monday in-window re-probe (KTD-2 / risk R-2 — the operator can bump this
+/// single named const in-window). Offline only the non-zero property is asserted
+/// (`t8412_probe_is_paced`); a residual throttle would still read as `Clean`, which
+/// is why the true anti-throttle proof is the live re-probe, not this const.
+const T8412_PROBE_PACE: Duration = Duration::from_millis(250);
+
 #[tokio::test]
 #[ignore = "live probe: needs real LS paper credentials + in-window session; run via `make live-smoke-t8412-negative`"]
 async fn live_smoke_t8412_negative() {
-    paper_guard().expect("paper guard must pass");
-    let config = LsConfig::from_env().expect("config from env");
-    let sdk = LsSdk::new(config.clone()).expect("sdk builds");
-
-    let token = match sdk.standalone().token().await {
-        Ok(t) if !t.is_empty() => t,
-        _ => {
-            eprintln!("NEG-PROBE-FAIL target=t8412-negative token acquisition failed (not evidence)");
-            panic!("negative probe could not acquire an OAuth token");
-        }
-    };
-
-    let base = ls_core::config::Environment::resolve_base_url(&config);
-    let url = format!("{base}/stock/chart");
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(30))
-        .build()
-        .expect("probe client builds");
-
-    // Fire one raw t8412 request. Returns `Some((http_status, rsp_cd))` when the
-    // gateway ANSWERED, or `None` on a transport failure (timeout / connection /
-    // body-read error) — never rsp_msg or body content. A transport failure is
-    // NOT a gateway rejection: collapsing it to a rejection would let a network
-    // blip on an invalid variant print a false CLEAN and certify a constraint the
-    // gateway never actually enforced.
-    async fn fire(
-        client: &reqwest::Client,
-        url: &str,
-        token: &str,
-        inblock: &serde_json::Value,
-    ) -> Option<(u16, String)> {
-        let body = serde_json::json!({ "t8412InBlock": inblock }).to_string();
-        let resp = client
-            .post(url)
-            .bearer_auth(token)
-            .header("tr_cd", "t8412")
-            .header("tr_cont", "N")
-            .header("tr_cont_key", "")
-            .header("content-type", "application/json; charset=utf-8")
-            .body(body)
-            .send()
-            .await
-            .ok()?;
-        let status = resp.status().as_u16();
-        let text = resp.text().await.ok()?;
-        let rsp_cd = serde_json::from_str::<serde_json::Value>(&text)
-            .ok()
-            .and_then(|v| v.get("rsp_cd").and_then(|c| c.as_str()).map(String::from))
-            .unwrap_or_default();
-        Some((status, rsp_cd))
-    }
-
-    let responded_ok = |r: &Option<(u16, String)>| {
-        matches!(r, Some((http, cd)) if *http >= 200 && *http < 300 && is_success(cd))
-    };
-
-    let seed = valid_seed();
-    let schema = t8412_schema();
-
-    // Valid control, same session.
-    let control = fire(&client, &url, &token, &seed).await;
-    let control_ok = responded_ok(&control);
-    match &control {
-        Some((http, cd)) => println!(
-            "NEG-PROBE target=t8412-negative control=[http={http} rsp_cd={cd} ok={control_ok}]"
-        ),
-        None => println!("NEG-PROBE target=t8412-negative control=[transport-failure ok=false]"),
-    }
-
-    // Each mechanically-generated invalid variant.
-    for variant in generate_invalid_variants(&schema, &seed) {
-        let field = &variant.field;
-        let class = &variant.class;
-        match fire(&client, &url, &token, &variant.request).await {
-            Some((http, rsp_cd)) => {
-                // The gateway answered: a non-success response is a rejection.
-                let variant_rejected = !(http >= 200 && http < 300 && is_success(&rsp_cd));
-                let outcome = classify_probe(control_ok, variant_rejected);
-                // U2/KTD4: a Divergent on a `gateway_tolerant` (field, class) is an
-                // expected-tolerant, non-blocking outcome. t8412 carries the most
-                // tolerant pairs (shcode/required + sdate/edate/format) and does NOT
-                // route through the shared helper, so the downgrade is wired here too.
-                let label = reported_outcome(&schema, field, class, outcome);
-                println!(
-                    "NEG-PROBE target=t8412-negative variant field={field} class={class} result=[http={http} rsp_cd={rsp_cd}] outcome={label}"
-                );
-            }
-            None => {
-                // Transport failure on the variant: inconclusive, NOT a rejection.
-                // Never certify (CLEAN) a constraint the gateway never judged.
-                println!(
-                    "NEG-PROBE target=t8412-negative variant field={field} class={class} result=[transport-failure] outcome=Held"
-                );
-            }
-        }
-    }
-
-    if !control_ok {
-        eprintln!(
-            "NEG-PROBE target=t8412-negative HELD: valid control failed \
-             (session-closed / stale seed / env / transport) — inconclusive, not a divergence"
-        );
-    }
+    // The last read leg to leave its bespoke inline loop for the shared U6-paced
+    // helper (§27 reason A / #117 item 3, KTD-1). Delegating inherits the
+    // inter-dispatch pace (`T8412_PROBE_PACE`, above) AND the `reported_outcome`
+    // gateway_tolerant downgrade the inline loop used to re-wire by hand — so the
+    // duplicated `fire` + classification are gone (R2). Header parity with the old
+    // inline `fire` holds: `fire_inblock` posts the same `{"t8412InBlock": …}` body
+    // with `tr_cd` / `tr_cont: "N"` / `tr_cont_key: ""` (KTD-3).
+    run_inblock_negative_probe(
+        "t8412",
+        "/stock/chart",
+        "t8412InBlock",
+        valid_seed(),
+        T8412_PROBE_PACE,
+    )
+    .await;
 }
 
 // ===========================================================================
