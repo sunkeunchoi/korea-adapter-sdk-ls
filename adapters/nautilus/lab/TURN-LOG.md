@@ -4,6 +4,67 @@ Committed record of each loop turn's verdict + the bar conditions it held. The
 full artifacts (`analysis.md`, manifests, performance) live in the gitignored data
 home; this file is the durable, reviewable outcome trail.
 
+## Turn — breakeven-trigger governed sweep / confirm-or-deny (2026-07-12) — plan 2026-07-11-001
+
+- **Verdict: CONFIRM v23 — the sweep confirms the pre-registered `breakeven_trigger_r
+  = 0.41` (p50) is near-optimal; NEITHER percentile neighbor beats it. Baseline STAYS
+  v23. A confirm turn, not a failure (R5) — it de-risks the exit block before the next
+  code turn.** A GOVERNED PARAM TURN (candidate B), **not a code turn**: two governed
+  `LS_TURN_PARAM` sweeps of the kept breakeven-move trigger, each a single admissible
+  step off `0.41` (both inside `PROPOSAL_BOUNDS_CAP = 0.5`). No re-baseline, no
+  seed-and-rerun, no pre-flip code review. Pre-registered values + directional
+  hypotheses + keep rule + monotone bind signature before the run (R3,
+  `data/turn4-fresh/PRE-REGISTER-vNEXT-breakeven-sweep.md`).
+- **The two points (percentile neighbors of the kept p50, not a fit).** Anchored on the
+  v21 (pre-lever) `time_exit` cohort peak-MFE distribution (n=76, recomputed this turn):
+  **LOWER `0.25`** (p33 0.2517; −39.0% off 0.41) and **HIGHER `0.52`** (p66 0.5167;
+  +26.8% off 0.41). Each is its own governed turn; the two form a **fan-out** around
+  v23, not a chain — the bounds cap is measured against the *immediate* base, so
+  `0.25 → 0.52` (+108%) is refused, proving the neighbors must each seed from v23 (both
+  therefore nominally "v24", distinguished by run_id + trigger value; archived under
+  `data/turn4-fresh/sweep-archive/`).
+- **Type: PARAM turn.** `strategy_code_hash a5521c3e…` **unchanged** across v23 and both
+  sweep runs (zero `orb.rs` edits, hash lock). **AE2 attribution:** `runs compare` param
+  mode **v23 → each sweep run** **PASS**, diff exactly `{breakeven_trigger_r,
+  strategy_version}` — clean single-lever, code hash identical (the FAIL-on-code-turn is
+  absent because there is no code turn).
+- **Bind check — BOTH bind monotonically as pre-registered.** As the trigger rises
+  `0.25 → 0.41 → 0.52`: `time_exit` **45 → 57 → 64** (monotone ↑), `stop_hit` **111 → 77
+  → 56** (↓), breakeven-armed `stop_hit` **92 → 52 → 28** (↓), `target` **36 → 50 → 56**
+  (↑), closed trades **174 → 167 → 160** (↓). LOWER arms MORE (protects more give-backs,
+  cuts more marginal winners); HIGHER arms FEWER (cuts fewer winners, surrenders the
+  p50–p66 give-back band to the 15:00 flat exit). Both directional hypotheses confirmed.
+- **Edge gate — both neighbors clear `is_edge` but NEITHER beats v23.** Expectancy is
+  **concave with an interior maximum exactly at p50 = 0.41**:
+
+  | trigger | expectancy (KRW/trade) | vs v23 | PF | WR | dominance | closed |
+  |---|---|---|---|---|---|---|
+  | 0.25 (LOWER, p33) | +29,991.45 | **−14,055** | 1.504 | 47.7% | 9.5% | 174 |
+  | **0.41 (v23, p50)** | **+44,046.41** | **— (peak)** | **1.620** | **50.3%** | **9.5%** | **167** |
+  | 0.52 (HIGHER, p66) | +39,167.79 | **−4,878** | 1.456 | 51.3% | 9.2% | 160 |
+
+  Keep rule (is_edge AND expectancy > +44,046.41 AND dominance ≤ 40%): **both FAIL on
+  the middle clause** — positive edges, dominance capped, but sub-v23. → **CONFIRM.**
+- **Read — 0.41 sits at the give-back / marginal-winner trade-off optimum.** Below it
+  (0.25) the ratchet over-arms: the extra winner-scratching (target 50 → 36) outweighs
+  the extra give-back protection. Above it (0.52) it under-arms: it cuts fewer winners
+  but hands the p50–p66 give-back band back to the flat exit. The pre-registered
+  percentile (median of the untreated give-back cohort) lands on the interior maximum —
+  the sweep validates the *selection method*, not just the value. The pessimistic
+  bar-low fill leaves this a lower bound at every trigger.
+- **Queue re-rank (R6) — exit-timing trigger is DE-RISKED; baseline unchanged at v23.**
+  Still THREE kept levers across TWO classes (entry quality ×2 + exit timing ×1). The
+  breakeven trigger is now sweep-confirmed near-optimal, so the next motivated turn is
+  **not** another breakeven-trigger param flip (that would be a fit) — it is a **new
+  mechanism**: (a) CLASS A **trailing** variant (trail a fraction of R above breakeven
+  once armed — books partial wins, not just scratches — a CODE turn); or (c) CLASS B
+  **risk/position-sizing** (needs `/ce-plan` for a normalized edge metric). Candidate B
+  (governed trigger sweep) is now **spent**.
+- **Provenance:** baseline `20260712T045403Z-backtest-orb-v23` (registry head, restored),
+  LOWER `20260712T051236Z-backtest-orb-v24` (0.25), HIGHER `20260712T051604Z-backtest-orb-v24`
+  (0.52) — both archived under `data/turn4-fresh/sweep-archive/` so v23 stays the head
+  (home `data/turn4-fresh`, gitignored). Offline, no gateway.
+
 ## Turn — breakeven-move exit lever (2026-07-12) — plan 2026-07-11-001
 
 - **Verdict: KEEP (the breakeven-move exit lever clears the edge gate and MORE THAN
