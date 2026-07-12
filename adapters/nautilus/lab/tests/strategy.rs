@@ -441,6 +441,195 @@ fn close_confirm_same_bar_stop_first_wins() {
 }
 
 // ---------------------------------------------------------------------------
+// U4 entry-quality gates: OR-width, RVOL, cutoff (KTD7/KTD10). Each off (default)
+// is a no-op; on, each rejects done-for-day with one canonical recorded filter.
+// ---------------------------------------------------------------------------
+
+/// Drive the opening-range window with a per-bar volume so the RVOL numerator
+/// (today's opening-window volume) accumulates.
+fn set_range_vol(st: &mut OrbState, p: &OrbParams, high: i64, low: i64, vol_per_bar: f64) {
+    st.on_bar(t(9, 0), high, low, high, vol_per_bar, p);
+    st.on_bar(t(9, 10), high, low, high, vol_per_bar, p);
+}
+
+#[test]
+fn or_width_gate_off_is_a_no_op() {
+    let p = OrbParams::default(); // or_width_max_atr 0.0
+    let mut st = OrbState::with_priors(Some(100.0), None);
+    set_range(&mut st, &p, 61_500, 60_000); // a wide range
+    assert_eq!(
+        st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p),
+        vec![OrbAction::Enter { limit_price: 62_000 }],
+        "gate off → enters regardless of width"
+    );
+}
+
+#[test]
+fn or_width_gate_rejects_a_wide_range() {
+    let mut p = OrbParams::default();
+    p.or_width_max_atr = 5.0; // range-R must be ≤ 5 × ATR = 500
+    let mut st = OrbState::with_priors(Some(100.0), None);
+    set_range(&mut st, &p, 61_500, 60_000); // range-R 1500 > 500
+    let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
+    assert_eq!(
+        acts,
+        vec![OrbAction::SessionReject {
+            filter: "or_width_atr",
+            values: vec![("range_r", 1500.0), ("atr", 100.0), ("or_width_max_atr", 5.0)],
+        }]
+    );
+    assert_eq!(st.phase(), Phase::Done);
+}
+
+#[test]
+fn or_width_gate_passes_a_tight_range() {
+    let mut p = OrbParams::default();
+    p.or_width_max_atr = 5.0; // threshold 500
+    let mut st = OrbState::with_priors(Some(100.0), None);
+    set_range(&mut st, &p, 60_300, 60_000); // range-R 300 ≤ 500 → pass
+    assert_eq!(
+        st.on_bar(t(9, 20), 60_800, 60_100, 60_500, 0.0, &p),
+        vec![OrbAction::Enter { limit_price: 60_800 }]
+    );
+}
+
+#[test]
+fn or_width_gate_fails_closed_without_atr() {
+    let mut p = OrbParams::default();
+    p.or_width_max_atr = 5.0;
+    let mut st = OrbState::with_priors(None, None); // ATR unavailable
+    set_range(&mut st, &p, 61_500, 60_000);
+    let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
+    assert_eq!(
+        acts,
+        vec![OrbAction::SessionReject { filter: "atr_unavailable", values: vec![("atr_window", 14.0)] }],
+        "missing ATR never passes a gate"
+    );
+}
+
+#[test]
+fn rvol_gate_off_is_a_no_op() {
+    let p = OrbParams::default(); // rvol_min 0.0
+    let mut st = OrbState::with_priors(None, Some(1_000.0));
+    set_range_vol(&mut st, &p, 61_500, 60_000, 1.0); // trivial volume
+    assert_eq!(
+        st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p),
+        vec![OrbAction::Enter { limit_price: 62_000 }]
+    );
+}
+
+#[test]
+fn rvol_gate_rejects_low_participation() {
+    let mut p = OrbParams::default();
+    p.rvol_min = 1.0;
+    let mut st = OrbState::with_priors(None, Some(1_000.0)); // prior mean 1000
+    set_range_vol(&mut st, &p, 61_500, 60_000, 400.0); // today 800 < 1.0 × 1000
+    let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
+    assert_eq!(
+        acts,
+        vec![OrbAction::SessionReject {
+            filter: "rvol_min",
+            values: vec![("open_window_vol", 800.0), ("prior_open_vol_mean", 1_000.0), ("rvol_min", 1.0)],
+        }]
+    );
+}
+
+#[test]
+fn rvol_gate_passes_high_participation() {
+    let mut p = OrbParams::default();
+    p.rvol_min = 1.0;
+    let mut st = OrbState::with_priors(None, Some(1_000.0));
+    set_range_vol(&mut st, &p, 61_500, 60_000, 600.0); // today 1200 ≥ 1000
+    assert_eq!(
+        st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p),
+        vec![OrbAction::Enter { limit_price: 62_000 }]
+    );
+}
+
+#[test]
+fn rvol_gate_fails_closed_without_history() {
+    let mut p = OrbParams::default();
+    p.rvol_min = 1.0;
+    let mut st = OrbState::with_priors(None, None); // no prior mean
+    set_range_vol(&mut st, &p, 61_500, 60_000, 600.0);
+    let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
+    assert_eq!(
+        acts,
+        vec![OrbAction::SessionReject {
+            filter: "rvol_insufficient_history",
+            values: vec![("rvol_min_history", 5.0)],
+        }]
+    );
+}
+
+#[test]
+fn rvol_gate_fails_closed_on_zero_prior_mean() {
+    let mut p = OrbParams::default();
+    p.rvol_min = 1.0;
+    let mut st = OrbState::with_priors(None, Some(0.0)); // zero prior mean
+    set_range_vol(&mut st, &p, 61_500, 60_000, 600.0);
+    let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
+    assert_eq!(
+        acts,
+        vec![OrbAction::SessionReject {
+            filter: "rvol_insufficient_history",
+            values: vec![("rvol_min_history", 5.0)],
+        }],
+        "a zero prior mean fails closed, never divides"
+    );
+}
+
+#[test]
+fn gate_order_records_or_width_before_rvol() {
+    let mut p = OrbParams::default();
+    p.or_width_max_atr = 5.0; // fails: wide range
+    p.rvol_min = 1.0; // would also fail: low volume
+    let mut st = OrbState::with_priors(Some(100.0), Some(1_000.0)); // threshold 500
+    set_range_vol(&mut st, &p, 61_500, 60_000, 100.0); // today 200 < 1000 too
+    let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
+    assert_eq!(acts.len(), 1, "one canonical filter, not both");
+    assert!(
+        matches!(&acts[0], OrbAction::SessionReject { filter, .. } if *filter == "or_width_atr"),
+        "the first failing gate (OR-width) wins: {:?}",
+        acts[0]
+    );
+}
+
+#[test]
+fn entry_cutoff_rejects_at_or_after_the_cutoff_time() {
+    let mut p = OrbParams::default();
+    p.entry_cutoff_min = 30.0; // cutoff 09:30
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000);
+    // A breakout bar exactly at the cutoff (09:30) is rejected (≥ boundary).
+    let acts = st.on_bar(t(9, 30), 62_000, 61_000, 61_500, 0.0, &p);
+    assert_eq!(
+        acts,
+        vec![OrbAction::SessionReject { filter: "entry_cutoff", values: vec![("entry_cutoff_min", 30.0)] }]
+    );
+    assert_eq!(st.phase(), Phase::Done);
+    // Done thereafter — one envelope, never one per bar.
+    assert!(st.on_bar(t(9, 40), 62_500, 61_000, 62_000, 0.0, &p).is_empty());
+    assert!(st.on_bar(t(10, 0), 63_000, 61_000, 62_500, 0.0, &p).is_empty());
+}
+
+#[test]
+fn entry_before_cutoff_enters_and_open_position_is_untouched() {
+    let mut p = OrbParams::default();
+    p.entry_cutoff_min = 30.0; // cutoff 09:30
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000);
+    // 09:20 < 09:30 → a normal entry.
+    assert_eq!(
+        st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p),
+        vec![OrbAction::Enter { limit_price: 62_000 }]
+    );
+    // The open long is untouched by the cutoff — it exits at the time-flat bell.
+    let acts = st.on_bar(t(15, 0), 62_200, 62_000, 62_100, 0.0, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 62_000, reason: ExitReason::TimeFlat }]);
+}
+
+// ---------------------------------------------------------------------------
 // Breakout strength (Turn 10 / v12 band-pass, R2 / KTD6)
 // ---------------------------------------------------------------------------
 

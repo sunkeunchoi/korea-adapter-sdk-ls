@@ -109,6 +109,12 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
     start: DateTime<Utc>,
     before_finalize: F,
 ) -> anyhow::Result<RunOutcome> {
+    // Fail fast on an invalid gate configuration (KTD10) — before any catalog
+    // work, so a misconfigured cutoff never lands a partial run.
+    cfg.params
+        .validate()
+        .map_err(|e| anyhow::anyhow!("invalid ORB gate configuration: {e}"))?;
+
     let catalog_path = cfg.data_home.join("catalog");
     if !catalog_path.exists() {
         anyhow::bail!("no catalog at {} — ingest first", catalog_path.display());

@@ -229,6 +229,12 @@ fn vals(pairs: &[(&str, f64)]) -> BTreeMap<String, f64> {
     pairs.iter().map(|(k, v)| (k.to_string(), *v)).collect()
 }
 
+/// Build a per-session gate rejection action (KTD7): the canonical filter name
+/// plus the operative gate inputs for the rejection envelope's `values` map.
+fn session_reject(filter: &'static str, values: Vec<(&'static str, f64)>) -> OrbAction {
+    OrbAction::SessionReject { filter, values }
+}
+
 /// Breakout strength in R-multiples: `(breakout_price − range_high) / R`, where
 /// `R = range_high − range_low` (turn 10, R2/KTD6). `None` for a degenerate
 /// range (`R ≤ 0`): the division would be `x/0`, and the q3 evidence carved
@@ -588,18 +594,55 @@ impl OrbState {
     }
 
     /// The per-session gates evaluated once at range fix (KTD7): the first failing
-    /// gate returns a [`OrbAction::SessionReject`] naming its canonical filter and
-    /// ends the day. `None` when every active gate passes (the all-off default).
-    /// ATR-mode availability is enforced here so a missing ATR never silently falls
-    /// back to the range-low stop (KTD5, AE5); OR-width and RVOL (U4) evaluate after.
+    /// gate returns a [`OrbAction::SessionReject`] naming its single canonical
+    /// filter and ends the day. `None` when every active gate passes (the all-off
+    /// default). Order is pinned — ATR availability, then OR-width, then RVOL — so a
+    /// session failing more than one gate records only the first (KTD7). Every
+    /// active gate that needs data it lacks fails closed (never a silent pass).
     fn session_gate_reject(&self, params: &OrbParams) -> Option<OrbAction> {
-        // ATR-mode stop needs prior ATR; missing → fail closed (never a silent
-        // range-low fallback — that would mix stop modes in one run, breaking R8).
+        // 1. ATR-mode stop needs prior ATR (KTD5, AE5); missing → fail closed
+        //    (never a silent range-low fallback — that would mix stop modes in one
+        //    run, breaking R8).
         if params.stop_placement() == StopMode::Atr && self.prior_atr.is_none() {
-            return Some(OrbAction::SessionReject {
-                filter: "atr_unavailable",
-                values: vec![("atr_window", params.atr_window)],
-            });
+            return Some(session_reject("atr_unavailable", vec![("atr_window", params.atr_window)]));
+        }
+        // 2. OR-width sanity gate (lever 3, KTD7): reject when range-R exceeds
+        //    `or_width_max_atr · ATR`. Needs ATR; missing ATR fails closed
+        //    (`atr_unavailable`) — a missing input never passes a gate.
+        if params.or_width_max_atr > 0.0 {
+            let Some(atr) = self.prior_atr else {
+                return Some(session_reject("atr_unavailable", vec![("atr_window", params.atr_window)]));
+            };
+            let range_r = (self.range_high - self.range_low) as f64;
+            let max_width = params.or_width_max_atr * atr;
+            if range_r > max_width {
+                return Some(session_reject(
+                    "or_width_atr",
+                    vec![("range_r", range_r), ("atr", atr), ("or_width_max_atr", params.or_width_max_atr)],
+                ));
+            }
+        }
+        // 3. Opening-window RVOL gate (lever 5, KTD7/KTD9): reject when today's
+        //    opening-window volume is below `rvol_min · prior mean`. A missing or
+        //    non-positive prior mean fails closed with the insufficient-history
+        //    filter (short history / zero-mean guard, KTD7).
+        if params.rvol_min > 0.0 {
+            let Some(mean) = self.prior_open_vol_mean.filter(|m| *m > 0.0) else {
+                return Some(session_reject(
+                    "rvol_insufficient_history",
+                    vec![("rvol_min_history", params.rvol_min_history)],
+                ));
+            };
+            if self.open_window_vol < params.rvol_min * mean {
+                return Some(session_reject(
+                    "rvol_min",
+                    vec![
+                        ("open_window_vol", self.open_window_vol),
+                        ("prior_open_vol_mean", mean),
+                        ("rvol_min", params.rvol_min),
+                    ],
+                ));
+            }
         }
         None
     }

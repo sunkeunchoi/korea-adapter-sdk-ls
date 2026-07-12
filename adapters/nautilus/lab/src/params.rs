@@ -218,6 +218,32 @@ impl OrbParams {
         self.range_open + chrono::Duration::minutes(self.range_minutes)
     }
 
+    /// Validate the gate configuration at backtest start (KTD10). A configured
+    /// entry cutoff must land strictly after the range end and no later than the
+    /// time-flat deadline (`range_end < cutoff ≤ flat_time`); an out-of-range
+    /// cutoff is a config error, not a silently-inert gate. Returns the offending
+    /// message on failure. Off-sentinel gates (`0.0`) impose no constraint.
+    pub fn validate(&self) -> Result<(), String> {
+        if let Some(cutoff) = self.entry_cutoff_time() {
+            let range_end = self.range_end();
+            if cutoff <= range_end {
+                return Err(format!(
+                    "entry_cutoff_min {} places the cutoff at {} ≤ the range end {} — no \
+                     trading window before the cutoff (KTD10)",
+                    self.entry_cutoff_min, cutoff, range_end
+                ));
+            }
+            if cutoff > self.flat_time {
+                return Err(format!(
+                    "entry_cutoff_min {} places the cutoff at {} > flat_time {} — the cutoff \
+                     can never bind (KTD10)",
+                    self.entry_cutoff_min, cutoff, self.flat_time
+                ));
+            }
+        }
+        Ok(())
+    }
+
     /// The decoded stop-placement mode (KTD1): `1.0` → OR-midpoint, `2.0` → ATR,
     /// anything else (default `0.0`) → the v9 range-low stop.
     pub fn stop_placement(&self) -> StopMode {
@@ -357,6 +383,25 @@ mod tests {
         assert!(!p.close_confirm_entry());
         assert!(!p.cutoff_active());
         assert_eq!(p.entry_cutoff_time(), None);
+    }
+
+    #[test]
+    fn validate_accepts_off_and_in_bounds_cutoff() {
+        // Off by default → no constraint.
+        assert!(OrbParams::default().validate().is_ok());
+        // range_end 09:15 < 12:00 ≤ flat 15:00 → valid.
+        let p = OrbParams { entry_cutoff_min: 180.0, ..Default::default() };
+        assert!(p.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_out_of_bounds_cutoff() {
+        // Cutoff at/inside the range end (09:00 + 5 = 09:05 ≤ 09:15) → error.
+        let too_early = OrbParams { entry_cutoff_min: 5.0, ..Default::default() };
+        assert!(too_early.validate().is_err(), "cutoff ≤ range end must be rejected");
+        // Cutoff after flat_time (09:00 + 400 = 15:40 > 15:00) → error.
+        let too_late = OrbParams { entry_cutoff_min: 400.0, ..Default::default() };
+        assert!(too_late.validate().is_err(), "cutoff > flat_time must be rejected");
     }
 
     #[test]
