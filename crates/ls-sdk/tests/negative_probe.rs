@@ -1088,6 +1088,44 @@ fn is_order_placement_success(http: u16, rsp_cd: &str) -> bool {
         )
 }
 
+/// The disposition of a fired variant whose gateway ANSWERED (`fire_inblock` →
+/// `Some((http, rsp_cd, ..))`). The transport-failure (`None`) arm is separate and
+/// always may-rest.
+#[derive(Debug, PartialEq, Eq)]
+enum FiredVariantOutcome {
+    /// The request placed nothing — a non-ack business rejection (any non-success
+    /// 2xx/4xx) OR a gateway INGRESS input-validation reject (`IGW40011`-at-500).
+    /// Classify Clean and CONTINUE firing variants.
+    PlacedNothing,
+    /// The gateway may have accepted before failing (a non-`IGW40011` 5xx) — HALT,
+    /// reconcile, fail-closed (KTD3).
+    MayHaveRested,
+    /// A 2xx order-acceptance ack — a malformed variant was ACCEPTED → WAVE BLOCKED.
+    Accepted,
+}
+
+/// Classify a fired variant's answered `(http, rsp_cd)` (KTD3). Pure so the offline
+/// twin can assert the exemption without a live fire.
+///
+/// The subtlety this encodes: order endpoints CAN place, so the order probe treats a
+/// `5xx` as may-have-rested by default (unlike the read probe, which has no may-rest
+/// arm). But `IGW40011` — a numeric request field sent as a string — is a gateway
+/// **ingress** input-validation reject that arrives as `http=500`; it is refused BEFORE
+/// routing to the exchange, so it structurally placed nothing and the differential can
+/// CONTINUE. That "which code is a placed-nothing ingress reject" decision is the shared
+/// `ls_core::is_ingress_validation_reject` source of truth, so this probe and the live
+/// order path (`ls_core::inner::dispatch_once`) can never disagree. Every OTHER `5xx`
+/// stays may-rest/halt; a 2xx ack trips the WAVE-BLOCKED tripwire, unchanged.
+fn classify_fired_variant(http: u16, rsp_cd: &str) -> FiredVariantOutcome {
+    if is_order_placement_success(http, rsp_cd) {
+        FiredVariantOutcome::Accepted
+    } else if http >= 500 && !ls_core::is_ingress_validation_reject(rsp_cd) {
+        FiredVariantOutcome::MayHaveRested
+    } else {
+        FiredVariantOutcome::PlacedNothing
+    }
+}
+
 /// Render an `LsError` credential-free for a probe log line. For an `ApiError` /
 /// `AmbiguousOrder` the `Display` is `"API error {code}: {message}"` where
 /// `message` is the raw broker `rsp_msg` — localized text that can echo account
@@ -1427,23 +1465,26 @@ async fn run_order_negative_probe(
                 order_reconcile_teardown(&sdk, symbol, &owned, false).await;
                 return;
             }
-            // A 5xx is also MAY-REST — the gateway may have accepted before failing.
-            Some((http, rsp_cd, _)) if http >= 500 => {
-                println!(
-                    "NEG-PROBE target={tr_cd}-negative variant field={} class={} \
-                     result=[http={http} rsp_cd={rsp_cd}] outcome=Held-may-rest halt=true",
-                    v.field, v.class
-                );
-                order_reconcile_teardown(&sdk, symbol, &owned, false).await;
-                return;
-            }
-            Some((http, rsp_cd, ord_no)) => {
-                if is_order_placement_success(http, &rsp_cd) {
-                    // A malformed variant was ACCEPTED — do NOT classify; teardown + block.
-                    // R3/R4: surface the accepted OrdNo into the owned set so teardown
-                    // cancels exactly it (AE4). If the body yielded no OrdNo the owned set
-                    // is incomplete → force the cancel-every-resting-row fallback so the
-                    // accepted-but-unsurfaced order is never stranded.
+            Some((http, rsp_cd, ord_no)) => match classify_fired_variant(http, &rsp_cd) {
+                // A non-IGW40011 5xx is MAY-REST — the gateway may have accepted before
+                // failing. IGW40011-at-500 is exempt (an ingress input-validation reject
+                // that placed nothing) and routes to `PlacedNothing` below, so the type
+                // variant no longer false-halts the differential (KTD1/KTD2).
+                FiredVariantOutcome::MayHaveRested => {
+                    println!(
+                        "NEG-PROBE target={tr_cd}-negative variant field={} class={} \
+                         result=[http={http} rsp_cd={rsp_cd}] outcome=Held-may-rest halt=true",
+                        v.field, v.class
+                    );
+                    order_reconcile_teardown(&sdk, symbol, &owned, false).await;
+                    return;
+                }
+                // A malformed variant was ACCEPTED — do NOT classify; teardown + block.
+                // R3/R4: surface the accepted OrdNo into the owned set so teardown
+                // cancels exactly it (AE4). If the body yielded no OrdNo the owned set
+                // is incomplete → force the cancel-every-resting-row fallback so the
+                // accepted-but-unsurfaced order is never stranded.
+                FiredVariantOutcome::Accepted => {
                     let owned_fully_constructed = match &ord_no {
                         Some(o) => {
                             owned.insert(o.clone());
@@ -1462,14 +1503,16 @@ async fn run_order_negative_probe(
                     order_reconcile_teardown(&sdk, symbol, &owned, owned_fully_constructed).await;
                     return;
                 }
-                // The normal case: a non-success rsp_cd = the variant placed nothing = Clean.
-                let outcome = classify_probe(control_ok, true);
-                println!(
-                    "NEG-PROBE target={tr_cd}-negative variant field={} class={} \
-                     result=[http={http} rsp_cd={rsp_cd}] outcome={outcome:?}",
-                    v.field, v.class
-                );
-            }
+                // Placed nothing (a non-success rsp_cd, incl. IGW40011-at-500) = Clean.
+                FiredVariantOutcome::PlacedNothing => {
+                    let outcome = classify_probe(control_ok, true);
+                    println!(
+                        "NEG-PROBE target={tr_cd}-negative variant field={} class={} \
+                         result=[http={http} rsp_cd={rsp_cd}] outcome={outcome:?}",
+                        v.field, v.class
+                    );
+                }
+            },
         }
     }
 
@@ -1779,6 +1822,47 @@ fn scan_page_terminality_keys_on_the_cts_ordno_body_cursor_not_tr_cont() {
         "a real order-number continuation cursor must be treated as paginated (fail-closed)"
     );
     assert!(!scan_page_is_terminal(" 12345 "), "a trimmed real cursor is still paginated");
+}
+
+#[test]
+fn classify_fired_variant_exempts_igw40011_at_500_but_holds_other_5xx() {
+    // R1/R2/R3/KTD2: the order type-variant differential must CONTINUE past an
+    // IGW40011-at-500 (a gateway ingress input-validation reject that placed nothing),
+    // while every OTHER 5xx stays may-rest/halt and a 2xx ack still trips WAVE-BLOCKED.
+    // IGW40011-at-500 → placed nothing → Clean, continue (the fix).
+    assert_eq!(
+        classify_fired_variant(500, "IGW40011"),
+        FiredVariantOutcome::PlacedNothing
+    );
+    // Any OTHER 5xx → may-rest → halt (fail-closed default preserved).
+    assert_eq!(
+        classify_fired_variant(500, "IGW50008"),
+        FiredVariantOutcome::MayHaveRested
+    );
+    assert_eq!(
+        classify_fired_variant(503, "IGW00201"),
+        FiredVariantOutcome::MayHaveRested
+    );
+    // Adversarial precedence: a 5xx that happens to carry an order-ack code is NOT an
+    // acceptance (ack requires a 2xx) — it stays may-rest/halt, fail-closed.
+    assert_eq!(
+        classify_fired_variant(500, "00040"),
+        FiredVariantOutcome::MayHaveRested
+    );
+    // A 2xx order-acceptance ack → a malformed variant was ACCEPTED → WAVE BLOCKED.
+    assert_eq!(
+        classify_fired_variant(200, "00040"),
+        FiredVariantOutcome::Accepted
+    );
+    // A non-ack business rejection (2xx or 4xx) → placed nothing → Clean, continue.
+    assert_eq!(
+        classify_fired_variant(200, "40510"),
+        FiredVariantOutcome::PlacedNothing
+    );
+    assert_eq!(
+        classify_fired_variant(400, "40510"),
+        FiredVariantOutcome::PlacedNothing
+    );
 }
 
 #[test]

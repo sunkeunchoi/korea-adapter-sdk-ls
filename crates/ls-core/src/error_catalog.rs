@@ -66,6 +66,23 @@ pub fn kind(code: &str) -> Option<&'static str> {
     catalog().codes.get(code).map(|e| e.kind.as_str())
 }
 
+/// `true` if `rsp_cd` is a gateway **ingress input-validation** rejection — the
+/// gateway refused the request at ingress *before* routing it to the exchange, so
+/// it structurally **placed nothing**. This is the single source of truth consumed
+/// by both the live order path (`inner::dispatch_once`, which surfaces it as a clean
+/// `ApiError` rejection rather than an `AmbiguousOrder` may-rest) and the offline
+/// order negative-probe (`crates/ls-sdk/tests/negative_probe.rs`, which classifies it
+/// Clean-and-continue rather than may-rest-halt), so the two can never drift.
+///
+/// Deliberately narrow: **only `IGW40011`** (a numeric request field sent as a quoted
+/// string — see AGENTS.md and the `request_shape` catalog entry). It is NOT the
+/// rate-limit code (`IGW00201`) and NOT a generic hard gateway failure (`IGW40013`,
+/// `IGW50008`), which may have reached the exchange and stay may-rest/reconcile. Add a
+/// sibling code here only with per-code evidence that it, too, is a pre-routing reject.
+pub fn is_ingress_validation_reject(rsp_cd: &str) -> bool {
+    rsp_cd == "IGW40011"
+}
+
 /// Every catalog code with its entry, ordered by code. Used by docgen to project
 /// the reachable-code table onto the Reference page (R11).
 pub fn entries() -> impl Iterator<Item = (&'static str, &'static CatalogEntry)> {
@@ -97,6 +114,22 @@ mod tests {
     fn explain_returns_mapped_text_for_known_codes() {
         assert!(explain("01900").unwrap().contains("모의투자"));
         assert!(explain("IGW40011").unwrap().to_lowercase().contains("number"));
+    }
+
+    #[test]
+    fn ingress_validation_reject_is_igw40011_only() {
+        // R6/KTD2: the single source of truth for "placed nothing at ingress" is
+        // deliberately narrow — only IGW40011 (numeric field sent as a string).
+        assert!(is_ingress_validation_reject("IGW40011"));
+        // The rate-limit code, hard gateway failures, business rejects, and
+        // successes are NOT ingress rejects — they may have rested / are handled
+        // elsewhere, and must stay may-rest/reconcile on the order path.
+        for code in ["IGW00201", "IGW40013", "IGW40014", "IGW50008", "40510", "00040", "00000", ""] {
+            assert!(
+                !is_ingress_validation_reject(code),
+                "`{code}` must NOT be treated as a placed-nothing ingress reject"
+            );
+        }
     }
 
     #[test]

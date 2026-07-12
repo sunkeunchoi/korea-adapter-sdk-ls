@@ -331,10 +331,31 @@ impl Inner {
             // an order is *ambiguous* regardless of the body — the order may or
             // may not have reached the exchange. Never collapse it to a clean
             // rejection; fail toward Unknown so the caller reconciles via
-            // `t0425` rather than blindly resubmitting (order-safety §1/§3).
+            // `t0425` rather than blindly resubmitting (order-safety §1/§3). The
+            // sole exception is an INGRESS input-validation reject (IGW40011),
+            // rejected before routing to the exchange — see the branch below.
             if policy.is_order {
                 if !code.is_empty() {
                     span.record("rsp_cd", code);
+                }
+                // Narrow exemption to the "non-2xx order = always ambiguous" rule:
+                // an INGRESS input-validation reject (IGW40011 — a numeric request
+                // field sent as a string) is refused at ingress BEFORE routing to the
+                // exchange, so it structurally placed nothing. Surface it as a clean
+                // `ApiError` rejection (→ `SubmitAction::Reject`, placed-nothing) rather
+                // than `AmbiguousOrder` (→ may-rest reconcile). Every OTHER non-2xx
+                // order outcome stays ambiguous — it may or may not have reached the
+                // exchange, so fail toward Unknown → reconcile (order-safety §1/§3).
+                if crate::error_catalog::is_ingress_validation_reject(code) {
+                    tracing::debug!(
+                        status = %status,
+                        rsp_cd = %code,
+                        "dispatch_once: order ingress-validation reject (placed nothing) -> ApiError"
+                    );
+                    return Err(LsError::ApiError {
+                        code: code.to_string(),
+                        message,
+                    });
                 }
                 tracing::debug!(
                     status = %status,
@@ -1604,6 +1625,91 @@ mod tests {
         // A rejection is never cached: a corrected resubmission must reach the
         // exchange. Both attempts dispatched.
         assert_eq!(hits.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn post_order_igw40011_at_500_is_apierror_placed_nothing() {
+        // R4: the LIVE gateway returns IGW40011 (numeric field sent as a string) as
+        // http=500. That non-2xx status is an INGRESS input-validation reject —
+        // refused before routing to the exchange, so it placed nothing. It must
+        // surface as a clean `ApiError` rejection (→ SubmitAction::Reject), NOT as
+        // `AmbiguousOrder` (→ may-rest reconcile). Regression for the type-variant
+        // differential blocker on the CSPAT00601/00701/00801 order quartet.
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        Mock::given(method("POST"))
+            .and(path("/order/path"))
+            .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                "rsp_cd": "IGW40011",
+                "rsp_msg": "rejected"
+            })))
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        let req = serde_json::json!({"OrdQty": 1});
+        let err = inner
+            .post_order::<_, EchoRes>(&order_policy(), &req)
+            .await
+            .expect_err("ingress reject");
+        match err {
+            LsError::ApiError { code, .. } => assert_eq!(code, "IGW40011"),
+            other => panic!("IGW40011@500 must be a placed-nothing ApiError, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn post_order_non_igw40011_5xx_stays_ambiguous_may_rest() {
+        // R5: every OTHER non-2xx order outcome is ambiguous — the order may or may
+        // not have reached the exchange, so it stays `AmbiguousOrder` (→ may-rest
+        // reconcile). The IGW40011 exemption must not widen to sibling gateway codes.
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        Mock::given(method("POST"))
+            .and(path("/order/path"))
+            .respond_with(ResponseTemplate::new(500).set_body_json(serde_json::json!({
+                "rsp_cd": "IGW50008",
+                "rsp_msg": "gateway failure"
+            })))
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        let req = serde_json::json!({"OrdQty": 1});
+        let err = inner
+            .post_order::<_, EchoRes>(&order_policy(), &req)
+            .await
+            .expect_err("ambiguous");
+        assert!(
+            matches!(err, LsError::AmbiguousOrder { .. }),
+            "a non-IGW40011 5xx order outcome must stay AmbiguousOrder (may-rest), got {err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn post_order_empty_body_5xx_stays_ambiguous_may_rest() {
+        // R5 fail-closed default: a raw 5xx with no parseable rsp_cd (empty code) is the
+        // most ambiguous outcome of all — the order may have reached the exchange. It must
+        // stay AmbiguousOrder; the IGW40011 exemption keys on the exact code and an empty
+        // code is never an ingress reject.
+        let server = MockServer::start().await;
+        mount_token(&server).await;
+        Mock::given(method("POST"))
+            .and(path("/order/path"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("upstream unavailable"))
+            .mount(&server)
+            .await;
+
+        let inner = Inner::new(mock_config(&server.uri())).expect("valid config");
+        let req = serde_json::json!({"OrdQty": 1});
+        let err = inner
+            .post_order::<_, EchoRes>(&order_policy(), &req)
+            .await
+            .expect_err("ambiguous");
+        assert!(
+            matches!(err, LsError::AmbiguousOrder { .. }),
+            "a bodyless/unparseable 5xx order outcome must stay AmbiguousOrder (may-rest), got {err:?}"
+        );
     }
 
     #[tokio::test]

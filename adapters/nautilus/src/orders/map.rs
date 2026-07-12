@@ -130,6 +130,22 @@ mod tests {
         assert_eq!(classify_submit_error(&LsError::PaginationLimit(3)), Pending);
     }
 
+    /// End-to-end seam: a live IGW40011 (numeric field sent as a string) is an ingress
+    /// input-validation reject that `ls-core` `dispatch_once` now surfaces as `ApiError`
+    /// (placed nothing) instead of `AmbiguousOrder`. This pins that it therefore maps to
+    /// `Reject` (placed-nothing), NOT `Pending` (may-rest) — the whole point of fixing the
+    /// classification at the dispatch variant-selection seam rather than here.
+    #[test]
+    fn igw40011_apierror_maps_to_reject_not_pending() {
+        assert_eq!(
+            classify_submit_error(&LsError::ApiError {
+                code: "IGW40011".into(),
+                message: "rejected".into()
+            }),
+            SubmitAction::Reject
+        );
+    }
+
     /// AE1 core: an ambiguous/transport (5xx) submit is NEVER a rejection — it must
     /// go to pending + reconcile.
     #[test]

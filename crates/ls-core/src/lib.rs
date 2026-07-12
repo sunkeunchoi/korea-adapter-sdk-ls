@@ -25,7 +25,7 @@ pub use config::{Environment, LsConfig, RateLimitConfig, WsOverflowPolicy};
 pub use config_resolve::{ResolvedConfig, ResolvedRateLimits};
 pub use endpoint_policy::{EndpointPolicy, Protocol};
 pub use error::{LsError, LsResult};
-pub use error_catalog::{explain, explain_or_default, CatalogEntry};
+pub use error_catalog::{explain, explain_or_default, is_ingress_validation_reject, CatalogEntry};
 pub use preflight::{
     classify_probe, generate_invalid_variants, preflight_request, schema_for, validate_request,
     ConstraintSchema, CrossFieldRule, EnumRule, FieldConstraint, FieldType, FormatKind, FormatRule,
