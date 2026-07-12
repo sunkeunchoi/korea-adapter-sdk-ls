@@ -16,10 +16,17 @@ fn t(h: u32, m: u32) -> NaiveTime {
     NaiveTime::from_hms_opt(h, m, 0).unwrap()
 }
 
+/// Feed a bar under the v9 default path: `close == high`, zero volume. The
+/// default-path (wick-touch, no RVOL) tests do not depend on `close` or `volume`,
+/// so this keeps them as characterization of v9 behavior under the new signature.
+fn bar(st: &mut OrbState, tm: NaiveTime, high: i64, low: i64, p: &OrbParams) -> Vec<OrbAction> {
+    st.on_bar(tm, high, low, high, 0.0, p)
+}
+
 /// Drive the opening-range window (09:00–09:14) so a range of [low..high] is fixed.
 fn set_range(st: &mut OrbState, params: &OrbParams, high: i64, low: i64) {
-    assert!(st.on_bar(t(9, 0), high, low, params).is_empty());
-    assert!(st.on_bar(t(9, 10), high, low, params).is_empty());
+    assert!(bar(st, t(9, 0), high, low, params).is_empty());
+    assert!(bar(st, t(9, 10), high, low, params).is_empty());
     assert_eq!(st.range(), Some((high, low)));
     assert_eq!(st.phase(), Phase::InRange);
 }
@@ -34,15 +41,15 @@ fn clean_breakout_enters_once_and_time_exits() {
 
     // A breakout bar above the range high → one entry at a marketable limit (the
     // breakout bar's high).
-    let acts = st.on_bar(t(9, 20), 62_000, 61_000, &p);
+    let acts = bar(&mut st, t(9, 20), 62_000, 61_000, &p);
     assert_eq!(acts, vec![OrbAction::Enter { limit_price: 62_000 }]);
     assert_eq!(st.phase(), Phase::Long);
 
     // A later bar that stays above the stop → no action.
-    assert!(st.on_bar(t(10, 0), 62_500, 61_800, &p).is_empty());
+    assert!(bar(&mut st, t(10, 0), 62_500, 61_800, &p).is_empty());
 
     // The time-flat deadline closes the position at a marketable limit.
-    let acts = st.on_bar(t(15, 0), 62_200, 62_000, &p);
+    let acts = bar(&mut st, t(15, 0), 62_200, 62_000, &p);
     assert_eq!(acts, vec![OrbAction::Exit { limit_price: 62_000, reason: ExitReason::TimeFlat }]);
     assert_eq!(st.phase(), Phase::Done);
 }
@@ -54,9 +61,9 @@ fn stop_exit_fires_on_range_low_breach() {
     let p = OrbParams::default();
     let mut st = OrbState::new();
     set_range(&mut st, &p, 61_500, 60_000);
-    assert_eq!(st.on_bar(t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    assert_eq!(bar(&mut st, t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
     // Next bar breaches the stop → marketable sell at the breaching bar's low.
-    let acts = st.on_bar(t(9, 30), 61_800, 59_900, &p);
+    let acts = bar(&mut st, t(9, 30), 61_800, 59_900, &p);
     assert_eq!(acts, vec![OrbAction::Exit { limit_price: 59_900, reason: ExitReason::Stop }]);
     assert_eq!(st.phase(), Phase::Done);
 }
@@ -68,10 +75,10 @@ fn no_breakout_is_a_time_flat_no_op() {
     let mut st = OrbState::new();
     set_range(&mut st, &p, 61_500, 60_000);
     // Bars never exceed the range high.
-    assert!(st.on_bar(t(10, 0), 61_400, 60_500, &p).is_empty());
-    assert!(st.on_bar(t(12, 0), 61_499, 60_800, &p).is_empty());
+    assert!(bar(&mut st, t(10, 0), 61_400, 60_500, &p).is_empty());
+    assert!(bar(&mut st, t(12, 0), 61_499, 60_800, &p).is_empty());
     // Time-flat with no position → no exit.
-    assert!(st.on_bar(t(15, 0), 61_200, 60_900, &p).is_empty());
+    assert!(bar(&mut st, t(15, 0), 61_200, 60_900, &p).is_empty());
     assert_eq!(st.phase(), Phase::Done);
 }
 
@@ -82,7 +89,7 @@ fn whipsaw_bar_enters_then_stops_same_bar() {
     let p = OrbParams::default();
     let mut st = OrbState::new();
     set_range(&mut st, &p, 61_500, 60_000);
-    let acts = st.on_bar(t(9, 20), 62_000, 59_000, &p);
+    let acts = bar(&mut st, t(9, 20), 62_000, 59_000, &p);
     assert_eq!(
         acts,
         vec![
@@ -100,7 +107,7 @@ fn missing_opening_range_never_trades() {
     let p = OrbParams::default();
     let mut st = OrbState::new();
     // First bar is at 09:20 — the range window was never observed.
-    assert!(st.on_bar(t(9, 20), 62_000, 61_000, &p).is_empty());
+    assert!(bar(&mut st, t(9, 20), 62_000, 61_000, &p).is_empty());
     assert_eq!(st.phase(), Phase::Done);
     assert_eq!(st.range(), None);
 }
@@ -111,8 +118,8 @@ fn session_extremes_track_high_and_low() {
     let p = OrbParams::default();
     let mut st = OrbState::new();
     set_range(&mut st, &p, 61_500, 60_000);
-    st.on_bar(t(9, 20), 63_000, 61_000, &p);
-    st.on_bar(t(11, 0), 62_000, 58_500, &p);
+    bar(&mut st, t(9, 20), 63_000, 61_000, &p);
+    bar(&mut st, t(11, 0), 62_000, 58_500, &p);
     assert_eq!(st.session_extremes(), Some((63_000, 58_500)));
 }
 
@@ -129,9 +136,9 @@ fn target_exit_fires_at_the_target_price() {
     let mut st = OrbState::new();
     set_range(&mut st, &p, 61_500, 60_000); // R = 1500
     // Entry at the breakout high → entry_price 62_000, target = 62_000 + 1.0*1500.
-    assert_eq!(st.on_bar(t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    assert_eq!(bar(&mut st, t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
     // A later bar whose high clears the 63_500 target (and does not breach the stop).
-    let acts = st.on_bar(t(10, 0), 63_600, 62_500, &p);
+    let acts = bar(&mut st, t(10, 0), 63_600, 62_500, &p);
     assert_eq!(acts, vec![OrbAction::Exit { limit_price: 63_500, reason: ExitReason::Target }]);
     assert_eq!(st.phase(), Phase::Done);
 }
@@ -143,11 +150,11 @@ fn approach_then_revert_stops_never_targets() {
     let p = OrbParams::default();
     let mut st = OrbState::new();
     set_range(&mut st, &p, 61_500, 60_000); // R = 1500, target 63_500
-    assert_eq!(st.on_bar(t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    assert_eq!(bar(&mut st, t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
     // Nears the target (63_400 < 63_500) but does not reach it → no action.
-    assert!(st.on_bar(t(9, 30), 63_400, 61_200, &p).is_empty());
+    assert!(bar(&mut st, t(9, 30), 63_400, 61_200, &p).is_empty());
     // A later bar breaches the stop → Stop, not Target.
-    let acts = st.on_bar(t(9, 40), 61_000, 59_900, &p);
+    let acts = bar(&mut st, t(9, 40), 61_000, 59_900, &p);
     assert_eq!(acts, vec![OrbAction::Exit { limit_price: 59_900, reason: ExitReason::Stop }]);
     assert_eq!(st.phase(), Phase::Done);
 }
@@ -159,10 +166,10 @@ fn same_bar_target_and_stop_resolves_to_stop() {
     let p = OrbParams::default();
     let mut st = OrbState::new();
     set_range(&mut st, &p, 61_500, 60_000); // R = 1500, target 63_500
-    assert_eq!(st.on_bar(t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    assert_eq!(bar(&mut st, t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
     // One bar clears the target (high 63_600 ≥ 63_500) AND breaches the stop
     // (low 59_900 ≤ 60_000) → Stop wins.
-    let acts = st.on_bar(t(9, 30), 63_600, 59_900, &p);
+    let acts = bar(&mut st, t(9, 30), 63_600, 59_900, &p);
     assert_eq!(acts, vec![OrbAction::Exit { limit_price: 59_900, reason: ExitReason::Stop }]);
     assert_eq!(st.phase(), Phase::Done);
 }
@@ -176,9 +183,9 @@ fn mfe_r_reports_post_entry_excursion() {
     assert_eq!(st.mfe_r(), 0.0, "no excursion before a range/entry");
     set_range(&mut st, &p, 61_500, 60_000); // R = 1500
     assert_eq!(st.mfe_r(), 0.0, "no excursion before an entry");
-    st.on_bar(t(9, 20), 62_000, 61_000, &p); // entry_price 62_000
+    bar(&mut st, t(9, 20), 62_000, 61_000, &p); // entry_price 62_000
     // A bar peaking at 63_000 (below the 63_500 target) sets the high-water mark.
-    assert!(st.on_bar(t(10, 0), 63_000, 61_500, &p).is_empty());
+    assert!(bar(&mut st, t(10, 0), 63_000, 61_500, &p).is_empty());
     // (63_000 − 62_000) / 1500 = 0.6667.
     assert!((st.mfe_r() - (1_000.0 / 1_500.0)).abs() < 1e-9, "mfe_r = {}", st.mfe_r());
     assert_eq!(st.entry_price(), 62_000);
@@ -192,11 +199,11 @@ fn profit_target_r_scales_the_target_level() {
     p.profit_target_r = 1.5;
     let mut st = OrbState::new();
     set_range(&mut st, &p, 61_500, 60_000); // R = 1500, target = 62_000 + 1.5*1500 = 64_250
-    assert_eq!(st.on_bar(t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    assert_eq!(bar(&mut st, t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
     // 63_600 would trip a 1.0R target but not the 1.5R one → held.
-    assert!(st.on_bar(t(10, 0), 63_600, 62_500, &p).is_empty());
+    assert!(bar(&mut st, t(10, 0), 63_600, 62_500, &p).is_empty());
     // 64_300 clears 64_250 → Target at the wider level.
-    let acts = st.on_bar(t(11, 0), 64_300, 63_000, &p);
+    let acts = bar(&mut st, t(11, 0), 64_300, 63_000, &p);
     assert_eq!(acts, vec![OrbAction::Exit { limit_price: 64_250, reason: ExitReason::Target }]);
 }
 
@@ -207,11 +214,11 @@ fn timeflat_mfe_includes_the_flat_bar_high() {
     let p = OrbParams::default();
     let mut st = OrbState::new();
     set_range(&mut st, &p, 61_500, 60_000); // R = 1500, target 63_500
-    st.on_bar(t(9, 20), 62_000, 61_000, &p); // entry_price 62_000
+    bar(&mut st, t(9, 20), 62_000, 61_000, &p); // entry_price 62_000
     // A mid-hold peak below the target.
-    assert!(st.on_bar(t(10, 0), 63_000, 61_500, &p).is_empty());
+    assert!(bar(&mut st, t(10, 0), 63_000, 61_500, &p).is_empty());
     // The 15:00 flat bar prints a NEW high (still below the target) then closes flat.
-    let acts = st.on_bar(t(15, 0), 63_200, 62_000, &p);
+    let acts = bar(&mut st, t(15, 0), 63_200, 62_000, &p);
     assert_eq!(acts, vec![OrbAction::Exit { limit_price: 62_000, reason: ExitReason::TimeFlat }]);
     // MFE reflects the flat bar's 63_200 high, not the earlier 63_000 peak.
     assert!((st.mfe_r() - (1_200.0 / 1_500.0)).abs() < 1e-9, "mfe_r = {}", st.mfe_r());
@@ -227,12 +234,12 @@ fn non_positive_profit_target_r_never_fires() {
     let mut st = OrbState::new();
     set_range(&mut st, &p, 61_500, 60_000);
     // Entry bar emits ONLY an Enter — no same-bar breakeven Target exit.
-    assert_eq!(st.on_bar(t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    assert_eq!(bar(&mut st, t(9, 20), 62_000, 61_000, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
     assert_eq!(st.phase(), Phase::Long);
     // A bar far above any conceivable target still does not exit.
-    assert!(st.on_bar(t(10, 0), 70_000, 61_000, &p).is_empty());
+    assert!(bar(&mut st, t(10, 0), 70_000, 61_000, &p).is_empty());
     // The position holds to the time-flat backstop.
-    let acts = st.on_bar(t(15, 0), 69_000, 68_000, &p);
+    let acts = bar(&mut st, t(15, 0), 69_000, 68_000, &p);
     assert_eq!(acts, vec![OrbAction::Exit { limit_price: 68_000, reason: ExitReason::TimeFlat }]);
 }
 
@@ -252,12 +259,12 @@ fn stop_exit_excludes_the_stop_bar_high_from_mfe() {
     let p = OrbParams::default(); // profit_target_r 1.0
     let mut st = OrbState::new();
     set_range(&mut st, &p, 61_500, 60_000); // R = 1500, target 63_500, stop 60_000
-    st.on_bar(t(9, 20), 62_000, 61_000, &p); // entry 62_000
+    bar(&mut st, t(9, 20), 62_000, 61_000, &p); // entry 62_000
     // A mid-hold peak below the target fixes the high-water at 63_000.
-    assert!(st.on_bar(t(9, 30), 63_000, 61_000, &p).is_empty());
+    assert!(bar(&mut st, t(9, 30), 63_000, 61_000, &p).is_empty());
     // A stop bar whose HIGH (63_400) tops all prior highs but whose LOW breaches
     // the stop → Stop exit, and the bar high is excluded from MFE.
-    let acts = st.on_bar(t(9, 40), 63_400, 59_900, &p);
+    let acts = bar(&mut st, t(9, 40), 63_400, 59_900, &p);
     assert_eq!(acts, vec![OrbAction::Exit { limit_price: 59_900, reason: ExitReason::Stop }]);
     // MFE stays at the 63_000 peak, not the 63_400 stop-bar high.
     assert!((st.mfe_r() - (1_000.0 / 1_500.0)).abs() < 1e-9, "stop bar high excluded: {}", st.mfe_r());
@@ -271,9 +278,9 @@ fn target_exit_caps_mfe_at_profit_target_r() {
     let p = OrbParams::default(); // profit_target_r 1.0 → cap at 1.0R
     let mut st = OrbState::new();
     set_range(&mut st, &p, 61_500, 60_000); // R = 1500, entry→target 63_500
-    st.on_bar(t(9, 20), 62_000, 61_000, &p); // entry 62_000
+    bar(&mut st, t(9, 20), 62_000, 61_000, &p); // entry 62_000
     // A target-exit bar with a wick far above the 63_500 target (high 64_800).
-    let acts = st.on_bar(t(10, 0), 64_800, 62_500, &p);
+    let acts = bar(&mut st, t(10, 0), 64_800, 62_500, &p);
     assert_eq!(acts, vec![OrbAction::Exit { limit_price: 63_500, reason: ExitReason::Target }]);
     // MFE caps at exactly 1.0R — the above-target wick is excluded.
     assert!((st.mfe_r() - 1.0).abs() < 1e-9, "mfe caps at profit_target_r: {}", st.mfe_r());
@@ -286,14 +293,380 @@ fn degenerate_range_trade_reports_zero_mfe() {
     let p = OrbParams::default();
     let mut st = OrbState::new();
     // A flat opening range (high == low) → R = 0.
-    assert!(st.on_bar(t(9, 0), 61_000, 61_000, &p).is_empty());
+    assert!(bar(&mut st, t(9, 0), 61_000, 61_000, &p).is_empty());
     assert_eq!(st.range(), Some((61_000, 61_000)));
     // Breakout above the flat range → entry (no target with R ≤ 0).
-    st.on_bar(t(9, 20), 62_000, 61_500, &p);
+    bar(&mut st, t(9, 20), 62_000, 61_500, &p);
     // A higher bar folds into high_water, but the degenerate range makes mfe_r
     // report 0.0 via the sentinel guard.
-    st.on_bar(t(10, 0), 63_000, 61_800, &p);
+    bar(&mut st, t(10, 0), 63_000, 61_800, &p);
     assert_eq!(st.mfe_r(), 0.0, "degenerate range → mfe_r 0.0");
+}
+
+// ---------------------------------------------------------------------------
+// U3 lever queue: stop modes (KTD4/KTD5) + close-confirmed entry (KTD6)
+// ---------------------------------------------------------------------------
+
+/// Midpoint stop mode: the stop sits at the rounded OR midpoint, a pullback into
+/// the lower half stops out (intended failed-break semantics), and both target
+/// and MFE denominate by trade-R = entry − midpoint.
+#[test]
+fn midpoint_stop_mode_places_stop_at_midpoint_and_rescales_r() {
+    let mut p = OrbParams::default();
+    p.stop_mode = 1.0; // OR-midpoint
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000); // midpoint = round(60_750) = 60_750
+    // Entry at the wick break → entry 62_000; trade-R = 62_000 − 60_750 = 1_250.
+    assert_eq!(st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    // A pullback into the lower half (low 60_700 ≤ 60_750 midpoint, but well above
+    // the 60_000 range low) stops out — the v9 range-low stop would NOT have fired.
+    let acts = st.on_bar(t(9, 30), 61_800, 60_700, 61_000, 0.0, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 60_700, reason: ExitReason::Stop }]);
+    assert_eq!(st.phase(), Phase::Done);
+}
+
+/// Midpoint mode: target = entry + profit_target_r × trade-R (trade-R = entry −
+/// midpoint), strictly tighter than the v9 range-R target.
+#[test]
+fn midpoint_stop_mode_target_uses_trade_r() {
+    let mut p = OrbParams::default(); // profit_target_r 1.0
+    p.stop_mode = 1.0;
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000); // midpoint 60_750
+    // entry 62_000, trade-R = 1_250 → target = 62_000 + 1_250 = 63_250.
+    assert_eq!(st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    // A bar clearing 63_250 (but below the v9 63_500 range-R target) banks Target.
+    let acts = st.on_bar(t(10, 0), 63_300, 62_800, 63_000, 0.0, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 63_250, reason: ExitReason::Target }]);
+    // MFE caps at trade-R (1.0R of the tighter denominator).
+    assert!((st.mfe_r() - 1.0).abs() < 1e-9, "mfe_r = {}", st.mfe_r());
+}
+
+/// ATR stop mode: stop = entry − round(stop_atr_mult × ATR) when that is above the
+/// range low; trade-R and MFE re-scale to it.
+#[test]
+fn atr_stop_mode_places_stop_below_entry_by_atr() {
+    let mut p = OrbParams::default();
+    p.stop_mode = 2.0; // ATR
+    p.stop_atr_mult = 2.0;
+    let mut st = OrbState::with_priors(Some(300.0), None); // 2 × 300 = 600 below entry
+    set_range(&mut st, &p, 61_500, 60_000);
+    // entry 62_000 → stop = max(62_000 − 600, 60_000) = 61_400; trade-R = 600.
+    // The entry bar's low (61_600) stays above the ATR stop → clean entry.
+    assert_eq!(st.on_bar(t(9, 20), 62_000, 61_600, 61_500, 0.0, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    // A bar dipping to 61_390 ≤ 61_400 stops out (the range-low stop would hold).
+    let acts = st.on_bar(t(9, 30), 61_900, 61_390, 61_600, 0.0, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 61_390, reason: ExitReason::Stop }]);
+}
+
+/// ATR mode clamps the stop to the range low when the ATR distance would be wider
+/// than the v9 stop — ATR only ever narrows the stop (KTD5), never widens it.
+#[test]
+fn atr_stop_mode_clamps_to_range_low_when_wider() {
+    let mut p = OrbParams::default();
+    p.stop_mode = 2.0;
+    p.stop_atr_mult = 2.0;
+    // 2 × 5_000 = 10_000 below entry (62_000 − 10_000 = 52_000) is far below the
+    // 60_000 range low → clamp to 60_000 (the v9 stop).
+    let mut st = OrbState::with_priors(Some(5_000.0), None);
+    set_range(&mut st, &p, 61_500, 60_000);
+    assert_eq!(st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
+    // A dip to 60_100 (above the 60_000 clamped stop) does NOT stop out.
+    assert!(st.on_bar(t(9, 30), 61_800, 60_100, 61_000, 0.0, &p).is_empty());
+    // A dip to 59_900 ≤ 60_000 does.
+    let acts = st.on_bar(t(9, 40), 61_000, 59_900, 60_500, 0.0, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 59_900, reason: ExitReason::Stop }]);
+}
+
+/// ATR mode: `mfe_r` denominates by trade-R (`entry − stop`), distinct from the
+/// range-R the v9 mode-0 path uses (KTD4).
+#[test]
+fn atr_stop_mode_mfe_denominates_by_trade_r() {
+    let mut p = OrbParams::default();
+    p.stop_mode = 2.0;
+    p.stop_atr_mult = 2.0;
+    let mut st = OrbState::with_priors(Some(300.0), None); // stop 600 below entry
+    set_range(&mut st, &p, 61_500, 60_000); // range-R 1500 (NOT the denominator here)
+    // entry 62_000, stop 61_400, trade-R = 600.
+    st.on_bar(t(9, 20), 62_000, 61_600, 61_500, 0.0, &p);
+    // A peak at 62_300 (below the 62_600 target) folds high-water; no stop (low > 61_400).
+    assert!(st.on_bar(t(9, 30), 62_300, 61_700, 62_200, 0.0, &p).is_empty());
+    // mfe = (62_300 − 62_000) / 600 = 0.5 — trade-R, not (300/1500 = 0.2) range-R.
+    assert!((st.mfe_r() - 0.5).abs() < 1e-9, "mfe denominated by trade-R 600: {}", st.mfe_r());
+}
+
+/// KTD4 decoupling: breakout strength keys on range-R (a degenerate range → `None`
+/// → the band is bypassed), while the midpoint stop's trade-R is separately
+/// well-defined and denominates MFE. Mode 0 would report `mfe_r = 0.0` here; the
+/// non-default mode does not, because its denominator is trade-R, not range-R.
+#[test]
+fn degenerate_range_midpoint_defines_trade_r_while_strength_stays_none() {
+    let mut p = OrbParams::default();
+    p.stop_mode = 1.0; // midpoint
+    let mut st = OrbState::new();
+    assert!(st.on_bar(t(9, 0), 61_000, 61_000, 61_000, 0.0, &p).is_empty()); // flat range
+    // Enter at 62_000; midpoint stop = round((61_000+61_000)/2) = 61_000, trade-R = 1_000.
+    assert_eq!(
+        st.on_bar(t(9, 20), 62_000, 61_500, 61_800, 0.0, &p),
+        vec![OrbAction::Enter { limit_price: 62_000 }]
+    );
+    // Peak 62_500 (< the 63_000 target) folds; mfe = 500/1_000 = 0.5 (trade-R defined).
+    assert!(st.on_bar(t(9, 30), 62_500, 61_500, 62_200, 0.0, &p).is_empty());
+    assert!((st.mfe_r() - 0.5).abs() < 1e-9, "trade-R defined despite degenerate range: {}", st.mfe_r());
+    // Strength itself keys on range-R and stays None on the degenerate range — the
+    // band-bypass invariant, independent of the well-defined trade-R.
+    assert_eq!(breakout_strength(62_000, 61_000, 61_000), None);
+}
+
+/// AE5: ATR mode with no prior ATR fails closed at range fix — one recorded
+/// `atr_unavailable` reject, done-for-day, never a silent range-low fallback.
+#[test]
+fn atr_stop_mode_fails_closed_without_atr() {
+    let mut p = OrbParams::default();
+    p.stop_mode = 2.0;
+    let mut st = OrbState::with_priors(None, None); // ATR unavailable
+    set_range(&mut st, &p, 61_500, 60_000);
+    // The first trading-window bar fixes the range → the gate rejects immediately.
+    let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
+    assert_eq!(
+        acts,
+        vec![OrbAction::SessionReject { filter: "atr_unavailable", values: vec![("atr_window", 14.0)] }]
+    );
+    assert_eq!(st.phase(), Phase::Done);
+    // No entry ever — a later strong break takes no trade.
+    assert!(st.on_bar(t(10, 0), 70_000, 69_000, 69_500, 0.0, &p).is_empty());
+}
+
+/// AE4: close-confirmed entry — a wick above the range high whose CLOSE is at or
+/// inside it does NOT enter (stays Armed); a later bar closing strictly above does,
+/// at that close, with the high-water seeded at the close (the wick not folded).
+#[test]
+fn close_confirm_entry_waits_for_close_above_range() {
+    let mut p = OrbParams::default();
+    p.entry_confirm = 1.0; // close-confirmed
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000);
+    // Wick above the range high (62_000) but close inside (61_400 ≤ 61_500) → no
+    // entry, still Armed.
+    assert!(st.on_bar(t(9, 20), 62_000, 61_000, 61_400, 0.0, &p).is_empty());
+    assert_eq!(st.phase(), Phase::Armed);
+    // A later bar closes strictly above the range high → enter at that close.
+    let acts = st.on_bar(t(9, 30), 62_400, 61_600, 61_800, 0.0, &p);
+    assert_eq!(acts, vec![OrbAction::Enter { limit_price: 61_800 }]);
+    assert_eq!(st.entry_price(), 61_800, "entry at the confirm close, not the wick high");
+    // The confirm bar's above-close wick (62_400) is NOT folded into MFE.
+    // range-R stop mode 0 → R = 1500; mfe from a later flat bar stays at entry.
+    assert!(st.on_bar(t(9, 40), 61_800, 61_700, 61_750, 0.0, &p).is_empty());
+    assert_eq!(st.mfe_r(), 0.0, "wick not folded → no excursion above the close entry");
+}
+
+/// KTD6: a close-confirm bar that both confirms the break and breaches the stop
+/// resolves Stop-first in the same bar.
+#[test]
+fn close_confirm_same_bar_stop_first_wins() {
+    let mut p = OrbParams::default();
+    p.entry_confirm = 1.0;
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000);
+    // Close 61_800 > 61_500 confirms entry; low 59_900 ≤ 60_000 breaches the stop.
+    let acts = st.on_bar(t(9, 20), 62_000, 59_900, 61_800, 0.0, &p);
+    assert_eq!(
+        acts,
+        vec![
+            OrbAction::Enter { limit_price: 61_800 },
+            OrbAction::Exit { limit_price: 59_900, reason: ExitReason::Stop },
+        ]
+    );
+    assert_eq!(st.phase(), Phase::Done);
+}
+
+// ---------------------------------------------------------------------------
+// U4 entry-quality gates: OR-width, RVOL, cutoff (KTD7/KTD10). Each off (default)
+// is a no-op; on, each rejects done-for-day with one canonical recorded filter.
+// ---------------------------------------------------------------------------
+
+/// Drive the opening-range window with a per-bar volume so the RVOL numerator
+/// (today's opening-window volume) accumulates.
+fn set_range_vol(st: &mut OrbState, p: &OrbParams, high: i64, low: i64, vol_per_bar: f64) {
+    st.on_bar(t(9, 0), high, low, high, vol_per_bar, p);
+    st.on_bar(t(9, 10), high, low, high, vol_per_bar, p);
+}
+
+#[test]
+fn or_width_gate_off_is_a_no_op() {
+    let p = OrbParams::default(); // or_width_max_atr 0.0
+    let mut st = OrbState::with_priors(Some(100.0), None);
+    set_range(&mut st, &p, 61_500, 60_000); // a wide range
+    assert_eq!(
+        st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p),
+        vec![OrbAction::Enter { limit_price: 62_000 }],
+        "gate off → enters regardless of width"
+    );
+}
+
+#[test]
+fn or_width_gate_rejects_a_wide_range() {
+    let mut p = OrbParams::default();
+    p.or_width_max_atr = 5.0; // range-R must be ≤ 5 × ATR = 500
+    let mut st = OrbState::with_priors(Some(100.0), None);
+    set_range(&mut st, &p, 61_500, 60_000); // range-R 1500 > 500
+    let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
+    assert_eq!(
+        acts,
+        vec![OrbAction::SessionReject {
+            filter: "or_width_atr",
+            values: vec![("range_r", 1500.0), ("atr", 100.0), ("or_width_max_atr", 5.0)],
+        }]
+    );
+    assert_eq!(st.phase(), Phase::Done);
+}
+
+#[test]
+fn or_width_gate_passes_a_tight_range() {
+    let mut p = OrbParams::default();
+    p.or_width_max_atr = 5.0; // threshold 500
+    let mut st = OrbState::with_priors(Some(100.0), None);
+    set_range(&mut st, &p, 60_300, 60_000); // range-R 300 ≤ 500 → pass
+    assert_eq!(
+        st.on_bar(t(9, 20), 60_800, 60_100, 60_500, 0.0, &p),
+        vec![OrbAction::Enter { limit_price: 60_800 }]
+    );
+}
+
+#[test]
+fn or_width_gate_fails_closed_without_atr() {
+    let mut p = OrbParams::default();
+    p.or_width_max_atr = 5.0;
+    let mut st = OrbState::with_priors(None, None); // ATR unavailable
+    set_range(&mut st, &p, 61_500, 60_000);
+    let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
+    assert_eq!(
+        acts,
+        vec![OrbAction::SessionReject { filter: "atr_unavailable", values: vec![("atr_window", 14.0)] }],
+        "missing ATR never passes a gate"
+    );
+}
+
+#[test]
+fn rvol_gate_off_is_a_no_op() {
+    let p = OrbParams::default(); // rvol_min 0.0
+    let mut st = OrbState::with_priors(None, Some(1_000.0));
+    set_range_vol(&mut st, &p, 61_500, 60_000, 1.0); // trivial volume
+    assert_eq!(
+        st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p),
+        vec![OrbAction::Enter { limit_price: 62_000 }]
+    );
+}
+
+#[test]
+fn rvol_gate_rejects_low_participation() {
+    let mut p = OrbParams::default();
+    p.rvol_min = 1.0;
+    let mut st = OrbState::with_priors(None, Some(1_000.0)); // prior mean 1000
+    set_range_vol(&mut st, &p, 61_500, 60_000, 400.0); // today 800 < 1.0 × 1000
+    let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
+    assert_eq!(
+        acts,
+        vec![OrbAction::SessionReject {
+            filter: "rvol_min",
+            values: vec![("open_window_vol", 800.0), ("prior_open_vol_mean", 1_000.0), ("rvol_min", 1.0)],
+        }]
+    );
+}
+
+#[test]
+fn rvol_gate_passes_high_participation() {
+    let mut p = OrbParams::default();
+    p.rvol_min = 1.0;
+    let mut st = OrbState::with_priors(None, Some(1_000.0));
+    set_range_vol(&mut st, &p, 61_500, 60_000, 600.0); // today 1200 ≥ 1000
+    assert_eq!(
+        st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p),
+        vec![OrbAction::Enter { limit_price: 62_000 }]
+    );
+}
+
+#[test]
+fn rvol_gate_fails_closed_without_history() {
+    let mut p = OrbParams::default();
+    p.rvol_min = 1.0;
+    let mut st = OrbState::with_priors(None, None); // no prior mean
+    set_range_vol(&mut st, &p, 61_500, 60_000, 600.0);
+    let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
+    assert_eq!(
+        acts,
+        vec![OrbAction::SessionReject {
+            filter: "rvol_insufficient_history",
+            values: vec![("rvol_min_history", 5.0)],
+        }]
+    );
+}
+
+#[test]
+fn rvol_gate_fails_closed_on_zero_prior_mean() {
+    let mut p = OrbParams::default();
+    p.rvol_min = 1.0;
+    let mut st = OrbState::with_priors(None, Some(0.0)); // zero prior mean
+    set_range_vol(&mut st, &p, 61_500, 60_000, 600.0);
+    let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
+    assert_eq!(
+        acts,
+        vec![OrbAction::SessionReject {
+            filter: "rvol_insufficient_history",
+            values: vec![("rvol_min_history", 5.0)],
+        }],
+        "a zero prior mean fails closed, never divides"
+    );
+}
+
+#[test]
+fn gate_order_records_or_width_before_rvol() {
+    let mut p = OrbParams::default();
+    p.or_width_max_atr = 5.0; // fails: wide range
+    p.rvol_min = 1.0; // would also fail: low volume
+    let mut st = OrbState::with_priors(Some(100.0), Some(1_000.0)); // threshold 500
+    set_range_vol(&mut st, &p, 61_500, 60_000, 100.0); // today 200 < 1000 too
+    let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
+    assert_eq!(acts.len(), 1, "one canonical filter, not both");
+    assert!(
+        matches!(&acts[0], OrbAction::SessionReject { filter, .. } if *filter == "or_width_atr"),
+        "the first failing gate (OR-width) wins: {:?}",
+        acts[0]
+    );
+}
+
+#[test]
+fn entry_cutoff_rejects_at_or_after_the_cutoff_time() {
+    let mut p = OrbParams::default();
+    p.entry_cutoff_min = 30.0; // cutoff 09:30
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000);
+    // A breakout bar exactly at the cutoff (09:30) is rejected (≥ boundary).
+    let acts = st.on_bar(t(9, 30), 62_000, 61_000, 61_500, 0.0, &p);
+    assert_eq!(
+        acts,
+        vec![OrbAction::SessionReject { filter: "entry_cutoff", values: vec![("entry_cutoff_min", 30.0)] }]
+    );
+    assert_eq!(st.phase(), Phase::Done);
+    // Done thereafter — one envelope, never one per bar.
+    assert!(st.on_bar(t(9, 40), 62_500, 61_000, 62_000, 0.0, &p).is_empty());
+    assert!(st.on_bar(t(10, 0), 63_000, 61_000, 62_500, 0.0, &p).is_empty());
+}
+
+#[test]
+fn entry_before_cutoff_enters_and_open_position_is_untouched() {
+    let mut p = OrbParams::default();
+    p.entry_cutoff_min = 30.0; // cutoff 09:30
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000);
+    // 09:20 < 09:30 → a normal entry.
+    assert_eq!(
+        st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p),
+        vec![OrbAction::Enter { limit_price: 62_000 }]
+    );
+    // The open long is untouched by the cutoff — it exits at the time-flat bell.
+    let acts = st.on_bar(t(15, 0), 62_200, 62_000, 62_100, 0.0, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 62_000, reason: ExitReason::TimeFlat }]);
 }
 
 // ---------------------------------------------------------------------------
@@ -331,6 +704,8 @@ fn candidate(sym: &str, prior_close: f64, today_open: f64, turnover: f64) -> Uni
         today_open,
         prior_turnover: turnover,
         meta: CandidateMeta::Untagged,
+        prior_atr: None,
+        prior_open_vol_mean: None,
     }
 }
 
@@ -425,6 +800,8 @@ fn tagged(
         today_open,
         prior_turnover: turnover,
         meta: CandidateMeta::Tagged { tradable, tags: tags(market, cap) },
+        prior_atr: None,
+        prior_open_vol_mean: None,
     }
 }
 

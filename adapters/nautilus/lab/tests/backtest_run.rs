@@ -397,6 +397,77 @@ async fn sizing_veto_rejects_and_records_the_decision() {
     assert_eq!(perf.summary["num_trades"], 0.0, "no trade on a vetoed entry");
 }
 
+/// U4 cutoff gate (KTD10): a cutoff after the range end but before the 09:20
+/// breakout suppresses the entry done-for-day — one `entry_cutoff` reject, no
+/// trade — while the same fixture with the gate off trades normally.
+#[tokio::test]
+async fn entry_cutoff_gate_suppresses_a_late_breakout() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path(), false).await;
+
+    let mut c = cfg(dir.path());
+    c.params.entry_cutoff_min = 18.0; // cutoff 09:18: after range end 09:15, before 09:20
+    let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
+    let outcome = run(c, start).await.unwrap();
+
+    let decisions = std::fs::read_to_string(outcome.run_dir.join(DECISIONS_FILE)).unwrap();
+    assert!(decisions.contains("entry_cutoff"), "the cutoff filter is recorded");
+    assert!(!decisions.contains("order_placed"), "no entry after the cutoff");
+    assert_eq!(read_perf(&outcome.run_dir).summary["num_trades"], 0.0);
+}
+
+/// U4 OR-width gate: on with only two prior dailies (ATR unavailable), the gate
+/// fails closed — one `atr_unavailable` reject, no trade — never a silent pass.
+#[tokio::test]
+async fn or_width_gate_fails_closed_without_atr_history() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path(), false).await;
+
+    let mut c = cfg(dir.path());
+    c.params.or_width_max_atr = 5.0; // needs ATR(14); fixture has 2 dailies → None
+    let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
+    let outcome = run(c, start).await.unwrap();
+
+    let decisions = std::fs::read_to_string(outcome.run_dir.join(DECISIONS_FILE)).unwrap();
+    assert!(decisions.contains("atr_unavailable"), "missing ATR fails the gate closed");
+    assert!(!decisions.contains("order_placed"), "no entry when the gate cannot evaluate");
+    assert_eq!(read_perf(&outcome.run_dir).summary["num_trades"], 0.0);
+}
+
+/// U4 RVOL gate: on for the first in-range session (no prior opening-window
+/// samples), the gate fails closed — one `rvol_insufficient_history` reject.
+#[tokio::test]
+async fn rvol_gate_fails_closed_on_first_session() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path(), false).await;
+
+    let mut c = cfg(dir.path());
+    c.params.rvol_min = 1.0; // needs prior opening-window history; the one session has none
+    let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
+    let outcome = run(c, start).await.unwrap();
+
+    let decisions = std::fs::read_to_string(outcome.run_dir.join(DECISIONS_FILE)).unwrap();
+    assert!(decisions.contains("rvol_insufficient_history"), "no prior history fails closed");
+    assert!(!decisions.contains("order_placed"), "no entry on insufficient RVOL history");
+    assert_eq!(read_perf(&outcome.run_dir).summary["num_trades"], 0.0);
+}
+
+/// U4 / KTD10: a misconfigured cutoff (≤ the range end) refuses to start the
+/// backtest — a config error, never a silently-inert gate or a partial run.
+#[tokio::test]
+async fn misconfigured_cutoff_refuses_to_start() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path(), false).await;
+
+    let mut c = cfg(dir.path());
+    c.params.entry_cutoff_min = 5.0; // 09:05 ≤ range end 09:15 → invalid
+    let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
+    let err = run(c, start).await.unwrap_err().to_string();
+    assert!(err.contains("gate configuration"), "config error surfaced: {err}");
+    // No registry residue from a refused run.
+    assert!(list_runs(dir.path()).is_empty(), "no run landed");
+}
+
 /// R15 co-location: the committed fixture `analysis.md` placed into a finalized run
 /// dir is reported by the registry (the agent's analysis lives beside the runs it
 /// analyzed).
