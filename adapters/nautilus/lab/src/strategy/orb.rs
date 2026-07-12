@@ -32,7 +32,7 @@ use crate::agent::envelope::{
     Decision, DecisionDetail, DecisionEnvelope, DecisionTrigger, SignalKind,
 };
 use crate::agent::sink::DecisionSink;
-use crate::params::OrbParams;
+use crate::params::{OrbParams, StopMode};
 
 /// Convert a UTC unix-nanosecond timestamp to a KST wall-clock time (KST is a fixed
 /// UTC+09:00 with no DST — the adapter's `KST_UTC_OFFSET_HOURS`).
@@ -298,12 +298,18 @@ pub enum ExitReason {
 }
 
 /// An action the state machine asks the strategy to take on a bar.
-#[derive(Debug, Clone, PartialEq, Eq)]
+// Not `Eq`: `SessionReject` carries `f64` gate values for the rejection envelope.
+#[derive(Debug, Clone, PartialEq)]
 pub enum OrbAction {
-    /// Enter long via a marketable limit at `limit_price` (the range high).
+    /// Enter long via a marketable limit at `limit_price` (the breakout fill).
     Enter { limit_price: i64 },
     /// Exit the long position via a marketable limit at `limit_price`.
     Exit { limit_price: i64, reason: ExitReason },
+    /// A per-session gate rejected the symbol done-for-day before any entry
+    /// (KTD7): no order is placed, one rejection envelope naming `filter` is
+    /// recorded, and the symbol takes no trade that session. `values` are the
+    /// operative gate inputs for the envelope's `values` map.
+    SessionReject { filter: &'static str, values: Vec<(&'static str, f64)> },
 }
 
 /// Per-symbol opening-range-breakout state (pure — no engine, no I/O).
@@ -321,6 +327,18 @@ pub struct OrbState {
     /// The post-entry high-water mark, updated each Long bar — the basis for
     /// per-trade MFE (KTD4). Zero before an entry.
     high_water: i64,
+    /// The stop price fixed at entry by `stop_mode` (KTD1/KTD4/KTD5): range low
+    /// (v9), rounded OR-midpoint, or ATR-clamped. Zero before an entry. The Long
+    /// exit checks `low ≤ stop_price` — at mode 0 this equals the v9
+    /// `low ≤ range_low`, so the default path is byte-identical.
+    stop_price: i64,
+    /// The R-denominator fixed at entry for the target and MFE (KTD4): range-R
+    /// (`range_high − range_low`) at mode 0 (v9-verbatim), else trade-R
+    /// (`entry_price − stop_price`). Zero before an entry.
+    r_denom: i64,
+    /// Today's accumulated opening-window (`[range_open, range_end)`) volume
+    /// (KTD9) — the RVOL gate's numerator. Inert unless the RVOL gate is on.
+    open_window_vol: f64,
     /// The prior-daily ATR for this symbol-session (KTD5), threaded from the
     /// candidate seam (U2). `None` when fewer than `atr_window`+1 priors — the
     /// ATR stop / OR-width gate fail closed rather than silently fall back.
@@ -341,6 +359,9 @@ impl Default for OrbState {
             session_low: i64::MAX,
             entry_price: 0,
             high_water: 0,
+            stop_price: 0,
+            r_denom: 0,
+            open_window_vol: 0.0,
             prior_atr: None,
             prior_open_vol_mean: None,
         }
@@ -351,6 +372,12 @@ impl OrbState {
     /// A fresh state for one symbol's session.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// A fresh state seeded with the candidate-seam priors (U2): the prior-daily
+    /// ATR and the prior opening-window volume mean the gates read (KTD5, KTD9).
+    pub fn with_priors(prior_atr: Option<f64>, prior_open_vol_mean: Option<f64>) -> Self {
+        OrbState { prior_atr, prior_open_vol_mean, ..Self::default() }
     }
 
     /// Whether a long position is currently held.
@@ -381,17 +408,19 @@ impl OrbState {
     }
 
     /// Per-trade maximum-favorable-excursion in R-multiples (R5, KTD4):
-    /// `(high_water − entry_price) / R`, where `R = range_high − range_low`.
-    /// Returns `0.0` before an entry or when the range is degenerate (`R ≤ 0`).
+    /// `(high_water − entry_price) / R`, where `R` is the entry-fixed
+    /// `r_denom` — range-R at the v9 range-low stop (byte-identical to the old
+    /// `range_high − range_low`), trade-R (`entry − stop`) in the non-default
+    /// stop modes (KTD4). Returns `0.0` before an entry (`r_denom` is `0`), before
+    /// a range (`saw_range` false), or on a degenerate `R ≤ 0`.
     pub fn mfe_r(&self) -> f64 {
         if !self.saw_range {
             return 0.0; // range sentinels are unset — never subtract them
         }
-        let r = self.range_high - self.range_low;
-        if r <= 0 {
+        if self.r_denom <= 0 {
             return 0.0;
         }
-        (self.high_water - self.entry_price) as f64 / r as f64
+        (self.high_water - self.entry_price) as f64 / self.r_denom as f64
     }
 
     /// Force the symbol flat/done — used by the strategy when the sizing gate vetoes
@@ -400,10 +429,23 @@ impl OrbState {
         self.phase = Phase::Done;
     }
 
-    /// Feed one bar (KST wall-clock `t`, integer KRW `high`/`low`), returning the
-    /// actions to take. Usually 0 or 1; a whipsaw bar (breakout that also breaches the
-    /// stop) returns both an [`OrbAction::Enter`] and an [`OrbAction::Exit`].
-    pub fn on_bar(&mut self, t: NaiveTime, high: i64, low: i64, params: &OrbParams) -> Vec<OrbAction> {
+    /// Feed one bar (KST wall-clock `t`, integer KRW `high`/`low`/`close`, and the
+    /// bar `volume`), returning the actions to take. Usually 0 or 1; a whipsaw bar
+    /// (breakout that also breaches the stop) returns both an [`OrbAction::Enter`]
+    /// and an [`OrbAction::Exit`]; a per-session gate reject returns a single
+    /// [`OrbAction::SessionReject`]. `close`/`volume` drive the lever-queue gates
+    /// (close-confirmed entry, RVOL); at the filter-off defaults they are unread by
+    /// the entry decision (only `volume` accumulates, inertly), so the wick-touch
+    /// path is byte-identical to v9 (KTD6, R3).
+    pub fn on_bar(
+        &mut self,
+        t: NaiveTime,
+        high: i64,
+        low: i64,
+        close: i64,
+        volume: f64,
+        params: &OrbParams,
+    ) -> Vec<OrbAction> {
         // Track session extremes on every bar.
         self.session_high = self.session_high.max(high);
         self.session_low = self.session_low.min(low);
@@ -417,7 +459,8 @@ impl OrbState {
 
         let range_end = params.range_end();
         if t < range_end {
-            // Inside the opening-range window: accumulate the range.
+            // Inside the opening-range window: accumulate the range and today's
+            // opening-window volume (the RVOL gate numerator, KTD9 — inert off).
             if self.saw_range {
                 self.range_high = self.range_high.max(high);
                 self.range_low = self.range_low.min(low);
@@ -426,6 +469,7 @@ impl OrbState {
                 self.range_low = low;
                 self.saw_range = true;
             }
+            self.open_window_vol += volume;
             self.phase = Phase::InRange;
             return Vec::new();
         }
@@ -452,40 +496,82 @@ impl OrbState {
         }
 
         // Trading window (range_end ≤ t < flat_time).
-        if self.phase == Phase::InRange {
-            self.phase = Phase::Armed;
-        }
         let mut acts = Vec::new();
-        if self.phase == Phase::Armed && high > self.range_high {
-            // Enter with a *marketable* buy limit at the breakout bar's high (the
-            // range high is the trigger; the fill price must be marketable, KTD6).
-            acts.push(OrbAction::Enter { limit_price: high });
-            self.phase = Phase::Long;
-            // The fill price is the target's reference (KTD1); seed the high-water
-            // mark so MFE starts at the entry (R5, KTD4).
-            self.entry_price = high;
-            self.high_water = high;
+        if self.phase == Phase::InRange {
+            // Range just fixed → arm, then evaluate the per-session gates (KTD7).
+            // A gate rejection ends the day before any entry can occur.
+            self.phase = Phase::Armed;
+            if let Some(reject) = self.session_gate_reject(params) {
+                self.phase = Phase::Done;
+                acts.push(reject);
+                return acts;
+            }
+        }
+
+        // Entry cutoff (lever 4, KTD10): once the cutoff time is reached, an Armed
+        // symbol takes no new entry — one done-for-day transition, no per-bar spam.
+        // Open positions are untouched (they exit at stop/target/flat as today).
+        if self.phase == Phase::Armed {
+            if let Some(cutoff) = params.entry_cutoff_time() {
+                if t >= cutoff {
+                    self.phase = Phase::Done;
+                    acts.push(OrbAction::SessionReject {
+                        filter: "entry_cutoff",
+                        values: vec![("entry_cutoff_min", params.entry_cutoff_min)],
+                    });
+                    return acts;
+                }
+            }
+        }
+
+        // Entry trigger, mode-dependent (KTD6). Wick-touch (default) enters on the
+        // bar HIGH exceeding the range high — the v9 path, byte-identical.
+        // Close-confirmed enters on the bar CLOSE strictly above the range high, at
+        // that close (the confirm bar's above-close wick is not folded into MFE).
+        if self.phase == Phase::Armed {
+            let entry_price = if params.close_confirm_entry() {
+                (close > self.range_high).then_some(close)
+            } else {
+                (high > self.range_high).then_some(high)
+            };
+            if let Some(px) = entry_price {
+                acts.push(OrbAction::Enter { limit_price: px });
+                self.phase = Phase::Long;
+                // The fill price is the target's reference (KTD1); seed the
+                // high-water mark so MFE starts at the entry (R5, KTD4).
+                self.entry_price = px;
+                self.high_water = px;
+                self.stop_price = self.stop_for_entry(px, params);
+                self.r_denom = self.entry_r_denom(px, self.stop_price, params);
+                // The entry bar's above-entry wick is not provably post-fill (KTD6 /
+                // stop-first pessimism): no target and no fold from it. Only the
+                // stop can still fire same-bar (whipsaw / same-bar stop-first).
+                if low <= self.stop_price {
+                    acts.push(OrbAction::Exit { limit_price: low, reason: ExitReason::Stop });
+                    self.phase = Phase::Done;
+                }
+                return acts;
+            }
         }
         if self.phase == Phase::Long {
             // Determine the exit BEFORE folding the bar into the high-water mark
             // (turn 10, R6 / KTD5): MFE folds only the excursion provably observed
             // while the position was open.
-            if low <= self.range_low {
+            if low <= self.stop_price {
                 // Stop first (KTD2 / R4): when a bar breaches both the stop and the
                 // target, Stop wins — intrabar order is unknowable, so fail toward
-                // the conservative side (matches KTD6's pessimistic fills). This is
-                // also the whipsaw same-bar enter+stop path (R3), unchanged. The
-                // stop bar's high is NOT folded — under stop-first pessimism it is
-                // not provably pre-stop (KTD5).
+                // the conservative side (matches KTD6's pessimistic fills). The stop
+                // bar's high is NOT folded — under stop-first pessimism it is not
+                // provably pre-stop (KTD5). At mode 0 `stop_price == range_low`, so
+                // this is the v9 `low ≤ range_low` check verbatim.
                 acts.push(OrbAction::Exit { limit_price: low, reason: ExitReason::Stop });
                 self.phase = Phase::Done;
             } else if let Some(target) = self.target_price(params) {
                 if high >= target {
                     // Bank the move at the target price — a favorable limit, not the
-                    // bar wick (R1). The entry bar can never reach here: its high
-                    // equals entry_price < target. Fold capped at the target: price
-                    // provably reached it, but the above-target wick is not provably
-                    // pre-exit (KTD5), so MFE right-censors at profit_target_r·R.
+                    // bar wick (R1). Fold capped at the target: price provably reached
+                    // it, but the above-target wick is not provably pre-exit (KTD5),
+                    // so MFE right-censors at profit_target_r·R.
                     self.high_water = self.high_water.max(target);
                     acts.push(OrbAction::Exit { limit_price: target, reason: ExitReason::Target });
                     self.phase = Phase::Done;
@@ -501,17 +587,61 @@ impl OrbState {
         acts
     }
 
+    /// The per-session gates evaluated once at range fix (KTD7): the first failing
+    /// gate returns a [`OrbAction::SessionReject`] naming its canonical filter and
+    /// ends the day. `None` when every active gate passes (the all-off default).
+    /// ATR-mode availability is enforced here so a missing ATR never silently falls
+    /// back to the range-low stop (KTD5, AE5); OR-width and RVOL (U4) evaluate after.
+    fn session_gate_reject(&self, params: &OrbParams) -> Option<OrbAction> {
+        // ATR-mode stop needs prior ATR; missing → fail closed (never a silent
+        // range-low fallback — that would mix stop modes in one run, breaking R8).
+        if params.stop_placement() == StopMode::Atr && self.prior_atr.is_none() {
+            return Some(OrbAction::SessionReject {
+                filter: "atr_unavailable",
+                values: vec![("atr_window", params.atr_window)],
+            });
+        }
+        None
+    }
+
+    /// The stop price fixed at entry for `stop_mode` (KTD1/KTD4/KTD5): range low
+    /// (v9), the rounded OR midpoint, or `entry − round(stop_atr_mult · ATR)`
+    /// clamped never wider than the range low (ATR only ever narrows the stop).
+    /// ATR availability is guaranteed by [`OrbState::session_gate_reject`], so the
+    /// ATR arm's `unwrap_or` is an unreachable fail-safe.
+    fn stop_for_entry(&self, entry_price: i64, params: &OrbParams) -> i64 {
+        match params.stop_placement() {
+            StopMode::RangeLow => self.range_low,
+            StopMode::OrMidpoint => {
+                ((self.range_high + self.range_low) as f64 / 2.0).round() as i64
+            }
+            StopMode::Atr => {
+                let atr = self.prior_atr.unwrap_or(0.0);
+                let dist = (params.stop_atr_mult * atr).round() as i64;
+                (entry_price - dist).max(self.range_low)
+            }
+        }
+    }
+
+    /// The R-denominator fixed at entry for target + MFE (KTD4): range-R at mode 0
+    /// (v9-verbatim so the R3 reconcile holds), trade-R (`entry − stop`) otherwise.
+    fn entry_r_denom(&self, entry_price: i64, stop_price: i64, params: &OrbParams) -> i64 {
+        match params.stop_placement() {
+            StopMode::RangeLow => self.range_high - self.range_low,
+            StopMode::OrMidpoint | StopMode::Atr => entry_price - stop_price,
+        }
+    }
+
     /// The fixed profit-target price `entry_price + round(profit_target_r · R)`
-    /// (R1, KTD1), or `None` when the range is degenerate (`R ≤ 0`) or the target
-    /// size is non-positive — either way the entry bar can never trip the target
-    /// (a `profit_target_r ≤ 0` from a hand-seeded manifest must not fire an
-    /// immediate same-bar breakeven exit).
+    /// (R1, KTD1/KTD4), where `R` is the entry-fixed `r_denom` (range-R at mode 0,
+    /// trade-R otherwise). `None` when `R ≤ 0` or the target size is non-positive —
+    /// either way the entry bar can never trip the target (a `profit_target_r ≤ 0`
+    /// from a hand-seeded manifest must not fire an immediate breakeven exit).
     fn target_price(&self, params: &OrbParams) -> Option<i64> {
-        let r = self.range_high - self.range_low;
-        if r <= 0 || params.profit_target_r <= 0.0 {
+        if self.r_denom <= 0 || params.profit_target_r <= 0.0 {
             return None;
         }
-        Some(self.entry_price + (params.profit_target_r * r as f64).round() as i64)
+        Some(self.entry_price + (params.profit_target_r * self.r_denom as f64).round() as i64)
     }
 }
 
@@ -587,12 +717,7 @@ impl OrbStrategy {
         // mean (U2 candidate seam) onto its fresh state for the gates to read.
         let states = selected
             .iter()
-            .map(|s| {
-                let mut st = OrbState::new();
-                st.prior_atr = s.prior_atr;
-                st.prior_open_vol_mean = s.prior_open_vol_mean;
-                (s.instrument_id, st)
-            })
+            .map(|s| (s.instrument_id, OrbState::with_priors(s.prior_atr, s.prior_open_vol_mean)))
             .collect();
         OrbStrategy {
             core: StrategyCore::new(base),
@@ -763,6 +888,19 @@ impl OrbStrategy {
                     ));
                     self.entered_qty.remove(&id);
                 }
+                OrbAction::SessionReject { filter, values } => {
+                    // A per-session gate rejected the symbol done-for-day before any
+                    // breakout (KTD7): no order, one recorded rejection envelope
+                    // naming the canonical filter. The state already rolled to Done.
+                    self.emit_market_data(id, ts, DecisionDetail {
+                        kind: SignalKind::OrderRejectedSizing,
+                        symbol: symbol.clone(),
+                        decision: None,
+                        filter: Some(filter.to_string()),
+                        values: values.into_iter().map(|(k, v)| (k.to_string(), v)).collect(),
+                        tags: None,
+                    });
+                }
             }
         }
         Ok(())
@@ -801,8 +939,11 @@ impl DataActor for OrbStrategy {
         let t = kst_time_from_nanos(bar.ts_event.as_u64());
         let high = bar.high.as_f64() as i64;
         let low = bar.low.as_f64() as i64;
+        let close = bar.close.as_f64() as i64;
+        let volume = bar.volume.as_f64();
         let params = self.params.clone();
-        let actions = self.states.get_mut(&id).expect("state present").on_bar(t, high, low, &params);
+        let actions =
+            self.states.get_mut(&id).expect("state present").on_bar(t, high, low, close, volume, &params);
         if actions.is_empty() {
             return Ok(());
         }
