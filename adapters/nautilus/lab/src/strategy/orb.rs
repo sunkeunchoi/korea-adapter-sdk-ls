@@ -737,7 +737,13 @@ impl OrbState {
         if params.breakeven_trigger_r <= 0.0 || self.r_denom <= 0 {
             return None;
         }
-        Some(self.entry_price + (params.breakeven_trigger_r * self.r_denom as f64).round() as i64)
+        // A tiny positive trigger whose rounded offset is 0 would place the trigger AT
+        // the entry price — and `high_water` seeds at entry and only rises, so it would
+        // arm on the FIRST held bar (an instant breakeven), the exact degenerate the
+        // `validate()` negative guard rejects. Require the effective (rounded) trigger
+        // to sit strictly ABOVE entry, so a round-to-zero offset is treated as off.
+        let offset = (params.breakeven_trigger_r * self.r_denom as f64).round() as i64;
+        (offset > 0).then_some(self.entry_price + offset)
     }
 }
 

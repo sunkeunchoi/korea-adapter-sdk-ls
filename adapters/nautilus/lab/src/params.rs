@@ -125,9 +125,12 @@ pub struct OrbParams {
     /// Breakeven-move exit lever (lever 6, KTD1/KTD11): once a held long's
     /// provably-observed MFE reaches `breakeven_trigger_r · R` (R = the entry-fixed
     /// `r_denom`), the stop ratchets up to the entry price for *subsequent* bars —
-    /// so a runner that peaks then gives it back books at breakeven instead of
-    /// decaying to the 15:00 time-flat exit (the largest give-back cohort in v21's
-    /// `report mfe`). The ratchet never applies on the bar that triggers it
+    /// so a runner that peaks then gives it back books at-or-near breakeven instead
+    /// of decaying to the 15:00 time-flat exit (the largest give-back cohort in v21's
+    /// `report mfe`). The exit still fills at the pessimistic bar low (the strategy's
+    /// marketable-limit convention, as every stop), so a gap-through books slightly
+    /// below entry — conservative: the lever can only under-state, never over-state,
+    /// its own expectancy. The ratchet never applies on the bar that triggers it
     /// (same-bar stop-first pessimism, KTD2) and only ever tightens the stop
     /// (entry > every stop-mode's initial level). Sentinel `0.0` = off
     /// (byte-identical to v21); legacy manifests deserialize with it.
