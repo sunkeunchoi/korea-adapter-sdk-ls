@@ -307,6 +307,43 @@ fn degenerate_range_trade_reports_zero_mfe() {
 // U3 lever queue: stop modes (KTD4/KTD5) + close-confirmed entry (KTD6)
 // ---------------------------------------------------------------------------
 
+/// U4 sizing precondition: the entry-fixed stop is populated on the state at the
+/// moment the `Enter` action is returned, so `risk_per_share = entry − stop` is
+/// available for `position_qty_risked` when the strategy handles the action on the
+/// same bar (the Implementation-Time Unknown the plan flags). Verified across all
+/// three stop modes.
+#[test]
+fn stop_and_risk_per_share_are_set_at_entry_across_stop_modes() {
+    // v9 range-low: entry 62_000, stop = range low 60_000 → risk_per_share 2_000.
+    let p = OrbParams::default();
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000);
+    assert_eq!(
+        st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p),
+        vec![OrbAction::Enter { limit_price: 62_000 }]
+    );
+    assert_eq!(st.stop_price(), 60_000, "range-low stop set at entry");
+    assert_eq!(st.risk_per_share(), 2_000, "entry − stop available at Enter time");
+
+    // OR-midpoint: entry 62_000, stop = round((61_500+60_000)/2) = 60_750 → 1_250.
+    let mut p_mid = OrbParams::default();
+    p_mid.stop_mode = 1.0;
+    let mut mid = OrbState::new();
+    set_range(&mut mid, &p_mid, 61_500, 60_000);
+    assert_eq!(
+        mid.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p_mid),
+        vec![OrbAction::Enter { limit_price: 62_000 }]
+    );
+    assert_eq!(mid.stop_price(), 60_750);
+    assert_eq!(mid.risk_per_share(), 1_250);
+
+    // Before any entry the accessors are zero/non-positive → sizing falls back to
+    // notional (never a spurious tiny-stop blow-up).
+    let fresh = OrbState::new();
+    assert_eq!(fresh.stop_price(), 0);
+    assert!(fresh.risk_per_share() <= 0);
+}
+
 /// Midpoint stop mode: the stop sits at the rounded OR midpoint, a pullback into
 /// the lower half stops out (intended failed-break semantics), and both target
 /// and MFE denominate by trade-R = entry − midpoint.

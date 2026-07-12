@@ -998,6 +998,29 @@ pub fn analyze_scaffold(cfg: &ScaffoldConfig) -> anyhow::Result<ScaffoldOutcome>
     let win_rate_display = fmt_opt(edge.win_rate);
     let expectancy_display = fmt_opt(edge.expectancy);
 
+    // Size-invariant edge metrics (CLASS B, R1/R2/R3): return-on-risk is the KEEP
+    // crux under variable sizing, mean-R the size-invariant diagnostic invariant, and
+    // risk-capital share the decisional dominance gate. `n/a` on a legacy / pre-risk
+    // run whose closed trades carry no `risk_capital` (the verdict then reads the
+    // P&L-share dominance above). RoR/expectancy share sign, so a positive RoR is the
+    // size-honest restatement of a positive expectancy (KRW/trade is size-contaminated
+    // once the sizing lever is on).
+    let ror_display = fmt_opt(edge.return_on_risk);
+    let mean_r_display = fmt_opt(edge.mean_realized_r);
+    let risk_dom_display = if edge.degenerate_zero_risk {
+        "undefined (zero deployed risk)".to_string()
+    } else {
+        match edge.max_risk_capital_share {
+            Some(s) => format!("{:.1}%", s * 100.0),
+            None => "n/a (no risk info — verdict on P&L share)".to_string(),
+        }
+    };
+    let risk_dom_pf = match edge.risk_dominance_pass {
+        Some(true) => "PASS",
+        Some(false) => "FAIL",
+        None => "n/a",
+    };
+
     let mut params_rows = String::new();
     for (k, v) in manifest.params.numeric_summary() {
         params_rows.push_str(&format!("- `{k}`: {v:.4}\n"));
@@ -1061,10 +1084,24 @@ pub fn analyze_scaffold(cfg: &ScaffoldConfig) -> anyhow::Result<ScaffoldOutcome>
          The edge stats below are read from this run's `performance.json` summary (KTD-4).\n\
          \n\
          - **Win rate:** `{win_rate}`\n\
-         - **Expectancy (KRW/trade):** `{expectancy}`\n\
+         - **Expectancy (KRW/trade, size-contaminated once sizing is on — diagnostic):** `{expectancy}`\n\
          - **Total realized P&L (KRW):** `{pnl_total:.4}`\n\
          - **Closed trades:** `{num_trades:.0}`\n\
-         - **(c) single-symbol dominance (≤ {dom_cap:.0}% of aggregate |P&L|):** `{dom_share}` → **{c_pf}**\n\
+         - **(c) single-symbol dominance (≤ {dom_cap:.0}% of aggregate |P&L|) — diagnostic:** `{dom_share}` → **{c_pf}**\n\
+         \n\
+         ### Size-invariant edge (CLASS B, R1/R2/R3)\n\
+         \n\
+         Once a position-sizing lever varies per-trade notional, KRW/trade expectancy stops\n\
+         being a size-invariant edge measure. **Return-on-risk** = `Σrealized_pnl /\n\
+         Σrisk_capital` is the KEEP crux (R6): flat under a uniform size-up, responsive to\n\
+         risk reallocation. **Risk-capital share** is the decisional dominance gate (R3).\n\
+         `n/a` means this run carried no per-trade `risk_capital` (a legacy / pre-CLASS-B\n\
+         run — the P&L-share dominance above is then the gate).\n\
+         \n\
+         - **Return-on-risk (Σpnl / Σrisk_capital) — KEEP crux:** `{ror}`\n\
+         - **Equal-weight mean-R (size-invariant diagnostic invariant):** `{mean_r}`\n\
+         - **Total deployed risk_capital (KRW):** `{risk_total}`\n\
+         - **Risk-capital dominance (≤ {dom_cap:.0}% of Σrisk_capital) — decisional:** `{risk_dom_share}` → **{risk_dom_pf}**\n\
          \n\
          | Symbol | Trades | Realized P&L (KRW) | abs P&L share |\n\
          |---|---|---|---|\n\
@@ -1093,6 +1130,11 @@ pub fn analyze_scaffold(cfg: &ScaffoldConfig) -> anyhow::Result<ScaffoldOutcome>
         dom_cap = crate::artifacts::performance::bar::DOMINANCE_CAP * 100.0,
         dom_share = dom_display,
         c_pf = pf(edge.dominance_pass),
+        ror = ror_display,
+        mean_r = mean_r_display,
+        risk_total = fmt_opt(edge.risk_capital_total),
+        risk_dom_share = risk_dom_display,
+        risk_dom_pf = risk_dom_pf,
         edge_rows = edge_rows.trim_end(),
         is_edge = if edge.is_edge { "yes" } else { "no" },
         edge_notes = edge_notes,

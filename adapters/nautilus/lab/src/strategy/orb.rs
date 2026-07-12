@@ -15,7 +15,7 @@ use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, NaiveTime, Utc};
 use nautilus_model::data::{Bar, BarType};
@@ -32,6 +32,7 @@ use crate::agent::envelope::{
     Decision, DecisionDetail, DecisionEnvelope, DecisionTrigger, SignalKind,
 };
 use crate::agent::sink::DecisionSink;
+use crate::artifacts::performance::EntryRisk;
 use crate::params::{OrbParams, StopMode};
 
 /// Convert a UTC unix-nanosecond timestamp to a KST wall-clock time (KST is a fixed
@@ -411,6 +412,20 @@ impl OrbState {
     /// entry.
     pub fn entry_price(&self) -> i64 {
         self.entry_price
+    }
+
+    /// The entry-fixed stop price set by `stop_mode` at the Long transition (KTD1).
+    /// Zero before an entry.
+    pub fn stop_price(&self) -> i64 {
+        self.stop_price
+    }
+
+    /// The entry-fixed **per-share risk** used by the `risk_per_trade_krw` sizing
+    /// lever (R5): `entry_price − stop_price` (the initial stop distance — the money
+    /// lost per share if stopped at entry). Zero/non-positive before an entry or on a
+    /// degenerate stop, which the sizing path treats as "fall back to notional".
+    pub fn risk_per_share(&self) -> i64 {
+        self.entry_price - self.stop_price
     }
 
     /// Per-trade maximum-favorable-excursion in R-multiples (R5, KTD4):
@@ -818,6 +833,34 @@ impl Default for EmissionGate {
     }
 }
 
+/// A shared, cloneable ledger of the entry-fixed risk captured at each order
+/// placement (R4/U1). The nautilus engine owns the strategy (and consumes it), so —
+/// exactly like [`DecisionSink`] — the runner holds a clone and reads it after the
+/// engine run to join `risk_capital`/`realized_r` into the trade ledger. Keyed by
+/// [`InstrumentId`]: ORB holds at most one open leg per symbol per session, so a
+/// per-session symbol key is unambiguous (the runner joins per session).
+#[derive(Debug, Clone, Default)]
+pub struct EntryRiskLedger(Arc<Mutex<HashMap<InstrumentId, EntryRisk>>>);
+
+impl EntryRiskLedger {
+    /// A fresh, empty ledger.
+    pub fn new() -> Self {
+        EntryRiskLedger::default()
+    }
+
+    /// Record the entry-fixed risk for `id` (last write wins — one entry per symbol
+    /// per session).
+    pub fn record(&self, id: InstrumentId, risk: EntryRisk) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).insert(id, risk);
+    }
+
+    /// A snapshot of the captured entry risks (the runner joins this to the session's
+    /// positions by instrument id).
+    pub fn snapshot(&self) -> HashMap<InstrumentId, EntryRisk> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+}
+
 /// A selected symbol and the bar series the strategy trades it on.
 #[derive(Debug, Clone)]
 pub struct SelectedSymbol {
@@ -845,6 +888,7 @@ pub struct OrbStrategy {
     entered_qty: HashMap<InstrumentId, i64>,
     decisions: DecisionSink,
     emission: EmissionGate,
+    entry_risk: EntryRiskLedger,
 }
 
 impl OrbStrategy {
@@ -869,6 +913,7 @@ impl OrbStrategy {
             entered_qty: HashMap::new(),
             decisions,
             emission: EmissionGate::open(),
+            entry_risk: EntryRiskLedger::new(),
         }
     }
 
@@ -876,6 +921,12 @@ impl OrbStrategy {
     /// late signal places no order (KTD7).
     pub fn emission_gate(&self) -> EmissionGate {
         self.emission.clone()
+    }
+
+    /// A clone of the entry-risk ledger (U1) — the runner reads it after the engine
+    /// run to join per-trade `risk_capital`/`realized_r` into the ledger.
+    pub fn entry_risk_ledger(&self) -> EntryRiskLedger {
+        self.entry_risk.clone()
     }
 
     /// The number of symbols currently holding a long position, excluding `except`.
@@ -935,7 +986,14 @@ impl OrbStrategy {
             match action {
                 OrbAction::Enter { limit_price } => {
                     let open = self.open_positions_excluding(&id);
-                    let qty = self.params.position_qty(limit_price as f64);
+                    // Risk-based sizing (R5): the transition already set the entry-fixed
+                    // stop on this symbol's state (it is read later by `mfe_r`), so
+                    // `risk_per_share = entry − stop` is available now. Off-sentinel →
+                    // notional sizing (byte-identical to v23); a degenerate stop falls
+                    // back to notional inside `position_qty_risked`.
+                    let risk_per_share =
+                        self.states.get(&id).map(|s| s.risk_per_share() as f64).unwrap_or(0.0);
+                    let qty = self.params.position_qty_risked(limit_price as f64, risk_per_share);
                     let range = self.states.get(&id).and_then(|s| s.range()).unwrap_or((0, 0));
                     // Breakout strength = (breakout_price − range_high) / R (R2,
                     // KTD3). `None` for a degenerate range (R ≤ 0), which bypasses
@@ -1000,11 +1058,23 @@ impl OrbStrategy {
                         continue;
                     }
                     self.entered_qty.insert(id, qty);
+                    // Capture the entry-fixed risk for the ledger join (U1):
+                    // risk_capital = qty · risk_per_share. `risk_per_share ≤ 0`
+                    // (degenerate) records a zero that `joined_risk` maps to `None`.
+                    self.entry_risk.record(id, EntryRisk { risk_per_share, qty: qty as f64 });
                     self.place(id, OrderSide::Buy, limit_price, qty, false)?;
+                    // The OrderPlaced envelope carries the sizing basis (R5) so a
+                    // post-run bind check can read whether the qty distribution shifted
+                    // (tight-stop entries sized up, wide-stop down) without re-joining.
                     self.emit_market_data(id, ts, DecisionDetail::transition(
                         symbol.clone(),
                         SignalKind::OrderPlaced,
-                        vals(&[("qty", qty as f64), ("price", limit_price as f64)]),
+                        vals(&[
+                            ("qty", qty as f64),
+                            ("price", limit_price as f64),
+                            ("risk_per_share", risk_per_share),
+                            ("risk_per_trade_krw", self.params.risk_per_trade_krw),
+                        ]),
                     ));
                 }
                 OrbAction::Exit { limit_price, reason } => {

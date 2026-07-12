@@ -38,7 +38,7 @@ use crate::artifacts::data_quality::{
 use crate::artifacts::manifest::{
     hash_bytes, range_fingerprint, universe_sequence_hash, DataRange, Manifest,
 };
-use crate::artifacts::performance::PerformanceReport;
+use crate::artifacts::performance::{EntryRisk, PerformanceReport};
 use crate::artifacts::{run_id, RunSource, RunWriter};
 use crate::agent::sink::DecisionSink;
 use crate::params::OrbParams;
@@ -229,7 +229,11 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
 
     // Assemble artifacts over the union ledger.
     let checkpoint = load_checkpoint(&catalog_path);
-    let performance = PerformanceReport::from_positions(&loop_out.positions, cfg.starting_balance);
+    let performance = PerformanceReport::from_positions_with_risk(
+        &loop_out.positions,
+        &loop_out.position_risks,
+        cfg.starting_balance,
+    );
     let selected_union = loop_out.selected_union.clone();
     // R7: report DETECTED per-symbol shifts — the checkpoint's unhealed shifted
     // marks intersected with this run's selected universe (the union across
@@ -320,6 +324,9 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
 /// (the universe snapshot + shift-mark intersection), and the coverage-gap symbols.
 struct SessionLoop {
     positions: Vec<Position>,
+    /// Entry-fixed risk per position, index-aligned with `positions` (U1) — the
+    /// join input for `risk_capital`/`realized_r` at ledger assembly.
+    position_risks: Vec<Option<EntryRisk>>,
     selection_sequence: Vec<(NaiveDate, Vec<String>)>,
     selected_union: Vec<String>,
     missing: Vec<String>,
@@ -411,6 +418,7 @@ fn run_sessions(
         .collect();
 
     let mut positions: Vec<Position> = Vec::new();
+    let mut position_risks: Vec<Option<EntryRisk>> = Vec::new();
     let mut selection_sequence: Vec<(NaiveDate, Vec<String>)> = Vec::new();
     let mut selected_union: BTreeSet<String> = BTreeSet::new();
     let mut ever_candidate: BTreeSet<String> = BTreeSet::new();
@@ -480,7 +488,7 @@ fn run_sessions(
             .filter(|i| selected.iter().any(|s| s.instrument_id == i.id()))
             .cloned()
             .collect();
-        let session_positions = run_engine(
+        let (session_positions, session_risks) = run_engine(
             selected_instruments,
             minute_bars,
             params.clone(),
@@ -489,6 +497,7 @@ fn run_sessions(
             starting_balance,
         )?;
         positions.extend(session_positions);
+        position_risks.extend(session_risks);
     }
 
     // Coverage-gap symbols (KTD5, R8; U2 "no spurious global gap"): a symbol with
@@ -499,6 +508,7 @@ fn run_sessions(
 
     Ok(SessionLoop {
         positions,
+        position_risks,
         selection_sequence,
         selected_union: selected_union.into_iter().collect(),
         missing,
@@ -671,7 +681,10 @@ fn shcode_of(symbol: &str) -> &str {
     symbol.split('.').next().unwrap_or(symbol)
 }
 
-/// Build + run the engine, returning the finished positions (cloned).
+/// Build + run the engine, returning the finished positions (cloned) each paired
+/// with the entry-fixed risk the strategy captured for that symbol this session (U1).
+/// The pairing is by instrument id and unambiguous — ORB holds at most one open leg
+/// per symbol per session — so `risks[i]` belongs to `positions[i]`.
 fn run_engine(
     instruments: Vec<InstrumentAny>,
     bars: Vec<Bar>,
@@ -679,7 +692,7 @@ fn run_engine(
     selected: Vec<SelectedSymbol>,
     sink: DecisionSink,
     starting_balance: f64,
-) -> anyhow::Result<Vec<Position>> {
+) -> anyhow::Result<(Vec<Position>, Vec<Option<EntryRisk>>)> {
     let mut engine = BacktestEngine::new(BacktestEngineConfig {
         bypass_logging: true,
         ..Default::default()
@@ -698,7 +711,11 @@ fn run_engine(
     for inst in &instruments {
         engine.add_instrument(inst)?;
     }
-    engine.add_strategy(OrbStrategy::new(params, selected, sink))?;
+    let strategy = OrbStrategy::new(params, selected, sink);
+    // Clone the entry-risk ledger BEFORE the engine consumes the strategy (U1) —
+    // the same shared-handle pattern as the decision sink.
+    let risk_ledger = strategy.entry_risk_ledger();
+    engine.add_strategy(strategy)?;
 
     if !bars.is_empty() {
         let mut sorted = bars;
@@ -709,12 +726,18 @@ fn run_engine(
     }
 
     let cache = engine.kernel().cache.borrow();
-    let positions = cache
+    let positions: Vec<Position> = cache
         .positions(None, None, None, None, None)
         .into_iter()
         .map(|p| p.cloned())
         .collect();
-    Ok(positions)
+    // Join the captured entry risk to each position by instrument id (unambiguous
+    // within a session). A position with no captured risk (should not occur — every
+    // position starts from an OrderPlaced) resolves to `None` → the legacy P&L path.
+    let risks_by_symbol = risk_ledger.snapshot();
+    let risks: Vec<Option<EntryRisk>> =
+        positions.iter().map(|p| risks_by_symbol.get(&p.instrument_id).copied()).collect();
+    Ok((positions, risks))
 }
 
 fn collect_gaps(checkpoint: Option<&Checkpoint>, missing: &[String]) -> Vec<CoverageGapRecord> {

@@ -154,6 +154,19 @@ pub struct OrbParams {
     /// manifests deserialize with it.
     #[serde(default)]
     pub trail_frac_r: f64,
+    /// First risk-based **position-sizing** lever (CLASS B, R5): a fixed KRW risk
+    /// budget per trade. Sentinel `0.0` = off — sizing stays the fixed
+    /// `notional_per_position` qty (`floor(notional / entry)`), byte/outcome-identical
+    /// to v23. When `> 0`, the entry quantity is
+    /// `min( floor(risk_per_trade_krw / risk_per_share), floor(notional / entry) )`,
+    /// where `risk_per_share = entry_price − stop_price` (the entry-fixed initial
+    /// stop); the second term is a **notional ceiling** so the lever can only *shift*
+    /// size across setups within the existing capital envelope (a clean reallocation),
+    /// never blow it up on a tiny-stop setup. Self-contained (no account/equity seam,
+    /// KTD-C). `#[serde(default)]` so legacy `data/turn4-fresh` manifests deserialize
+    /// with it off; `validate()` rejects a negative value.
+    #[serde(default)]
+    pub risk_per_trade_krw: f64,
 }
 
 /// The back-compat default for [`OrbParams::profit_target_r`] (R2, KTD3): a v8
@@ -231,6 +244,7 @@ impl Default for OrbParams {
             rvol_min_history: default_rvol_min_history(),
             breakeven_trigger_r: 0.0,
             trail_frac_r: 0.0,
+            risk_per_trade_krw: 0.0,
         }
     }
 }
@@ -341,6 +355,17 @@ impl OrbParams {
                 self.trail_frac_r
             ));
         }
+        // Risk-based sizing lever (CLASS B, R5): 0.0 disables it (fixed notional), a
+        // positive KRW budget enables it. A negative budget is a config error — there
+        // is no meaningful "negative risk per trade", and it would floor to a negative
+        // qty that the sizing gate reads as an instant rejection rather than "off".
+        if self.risk_per_trade_krw < 0.0 {
+            return Err(format!(
+                "risk_per_trade_krw {} is negative — use 0.0 to disable risk sizing (fixed \
+                 notional), a positive KRW budget to size each trade to that risk (R5)",
+                self.risk_per_trade_krw
+            ));
+        }
         Ok(())
     }
 
@@ -384,6 +409,28 @@ impl OrbParams {
             return 0;
         }
         (self.notional_per_position / price).floor() as i64
+    }
+
+    /// Whether risk-based position sizing is active (CLASS B, R5): a positive
+    /// `risk_per_trade_krw`. The sentinel `0.0` keeps the fixed-notional v23 sizing.
+    pub fn risk_sizing_active(&self) -> bool {
+        self.risk_per_trade_krw > 0.0
+    }
+
+    /// The entry quantity under the risk-based sizing lever (R5): when the lever is
+    /// off (or the per-share risk is non-positive — a degenerate stop the risk path
+    /// can't divide by), this is exactly [`OrbParams::position_qty`] (the fixed
+    /// `notional_per_position` qty, byte-identical to v23). When active with a
+    /// positive `risk_per_share = entry_price − stop_price`, it is
+    /// `min( floor(risk_per_trade_krw / risk_per_share), floor(notional / price) )` —
+    /// the risk-budget qty capped at the fixed-notional qty (the capital ceiling, so
+    /// a tiny stop can only *shift* size within the envelope, never blow it up).
+    pub fn position_qty_risked(&self, price: f64, risk_per_share: f64) -> i64 {
+        if !self.risk_sizing_active() || risk_per_share <= 0.0 {
+            return self.position_qty(price);
+        }
+        let risked = (self.risk_per_trade_krw / risk_per_share).floor() as i64;
+        risked.min(self.position_qty(price))
     }
 
     /// Whether a new position may be opened given the current open-position count
@@ -480,11 +527,13 @@ mod tests {
         assert_eq!(p.rvol_min_history, 5.0);
         assert_eq!(p.breakeven_trigger_r, 0.0, "breakeven move off");
         assert_eq!(p.trail_frac_r, 0.0, "breakeven trail off");
+        assert_eq!(p.risk_per_trade_krw, 0.0, "risk sizing off");
         // The decoded helpers agree with the filter-off defaults.
         assert_eq!(p.stop_placement(), StopMode::RangeLow);
         assert!(!p.close_confirm_entry());
         assert!(!p.cutoff_active());
         assert_eq!(p.entry_cutoff_time(), None);
+        assert!(!p.risk_sizing_active());
     }
 
     #[test]
@@ -669,6 +718,7 @@ mod tests {
         assert_eq!(p.rvol_min_history, 5.0);
         assert_eq!(p.breakeven_trigger_r, 0.0);
         assert_eq!(p.trail_frac_r, 0.0);
+        assert_eq!(p.risk_per_trade_krw, 0.0);
         // Empty param_diff proxy: the deserialized legacy set's numeric summary
         // equals a freshly-defaulted set carrying the same version — no gate key
         // diverges, so a pre-field manifest yields no spurious param_diff (KTD1).
@@ -698,6 +748,7 @@ mod tests {
             "rvol_min_history",
             "breakeven_trigger_r",
             "trail_frac_r",
+            "risk_per_trade_krw",
         ] {
             assert!(summary.contains_key(key), "numeric_summary missing {key}");
         }
@@ -719,6 +770,7 @@ mod tests {
             rvol_min_history: 3.0,
             breakeven_trigger_r: 0.5,
             trail_frac_r: 0.25,
+            risk_per_trade_krw: 500_000.0,
             ..Default::default()
         };
         let back: OrbParams = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
@@ -776,6 +828,91 @@ mod tests {
         assert_eq!(p.position_qty(0.0), 0);
         p.notional_per_position = 100.0;
         assert_eq!(p.position_qty(60_000.0), 0, "price above notional → zero shares");
+    }
+
+    #[test]
+    fn position_qty_risked_off_matches_notional_sizing() {
+        // R5: with the lever off (0.0), risk sizing is byte-identical to the fixed
+        // notional qty for a range of prices/stops (→ v23 exactly).
+        let p = OrbParams::default(); // notional 10M, risk_per_trade_krw 0.0
+        for (price, rps) in [(60_000.0, 3_000.0), (12_345.0, 500.0), (100.0, 10.0)] {
+            assert_eq!(
+                p.position_qty_risked(price, rps),
+                p.position_qty(price),
+                "off-sentinel sizing == notional sizing"
+            );
+        }
+    }
+
+    #[test]
+    fn position_qty_risked_scales_qty_inversely_with_stop_distance() {
+        // R5: budget 300000 / risk_per_share 3000 → 100 shares; a tighter stop
+        // (rps 1500) → 200 shares — capped at the notional ceiling.
+        let p = OrbParams {
+            risk_per_trade_krw: 300_000.0,
+            notional_per_position: 100_000_000.0, // high ceiling so the cap doesn't bind
+            ..Default::default()
+        };
+        assert_eq!(p.position_qty_risked(60_000.0, 3_000.0), 100, "300k/3k = 100");
+        assert_eq!(p.position_qty_risked(60_000.0, 1_500.0), 200, "tighter stop → larger qty");
+    }
+
+    #[test]
+    fn position_qty_risked_notional_cap_binds_on_a_tiny_stop() {
+        // A tiny per-share risk makes the risk-budget qty enormous; the notional
+        // ceiling clamps it to floor(notional / price) (R5 / KTD-C).
+        let p = OrbParams {
+            risk_per_trade_krw: 1_000_000.0,
+            notional_per_position: 10_000_000.0,
+            ..Default::default()
+        };
+        // risk-budget qty = 1_000_000 / 10 = 100_000; notional cap = 10M/60k = 166.
+        assert_eq!(p.position_qty_risked(60_000.0, 10.0), 166, "clamped to notional qty");
+        assert_eq!(p.position_qty_risked(60_000.0, 10.0), p.position_qty(60_000.0));
+    }
+
+    #[test]
+    fn position_qty_risked_degenerate_stop_falls_back_to_notional() {
+        // A non-positive per-share risk cannot be divided by — fall back to notional
+        // sizing rather than divide by zero / go infinite (R5).
+        let p = OrbParams { risk_per_trade_krw: 300_000.0, ..Default::default() };
+        assert_eq!(p.position_qty_risked(60_000.0, 0.0), p.position_qty(60_000.0));
+        assert_eq!(p.position_qty_risked(60_000.0, -5.0), p.position_qty(60_000.0));
+    }
+
+    #[test]
+    fn validate_risk_per_trade_krw_rejects_negative_arms_positive() {
+        // 0.0 (off) and a positive KRW budget both validate; a negative budget is a
+        // config error, not the off sentinel.
+        assert!(OrbParams::default().validate().is_ok(), "off by default");
+        let armed = OrbParams { risk_per_trade_krw: 500_000.0, ..Default::default() };
+        assert!(armed.validate().is_ok(), "a positive risk budget is valid");
+        assert!(armed.risk_sizing_active());
+        let neg = OrbParams { risk_per_trade_krw: -1.0, ..Default::default() };
+        assert!(neg.validate().is_err(), "negative risk_per_trade_krw must be rejected");
+    }
+
+    #[test]
+    fn risk_per_trade_krw_deserializes_from_pre_field_manifest() {
+        // A pre-CLASS-B manifest predates the field — it must deserialize to 0.0 (off)
+        // so every prior run in `data/turn4-fresh` keeps resolving unchanged.
+        let legacy = serde_json::json!({
+            "strategy_id": "orb",
+            "strategy_version": 23,
+            "gap_min_pct": 0.6,
+            "universe_top_n": 40,
+            "max_concurrent": 7,
+            "range_open": "09:00:00",
+            "range_minutes": 20,
+            "flat_time": "15:00:00",
+            "notional_per_position": 10_000_000.0,
+            "profit_target_r": 1.0,
+            "breakeven_trigger_r": 0.41,
+        })
+        .to_string();
+        let p: OrbParams = serde_json::from_str(&legacy).unwrap();
+        assert_eq!(p.risk_per_trade_krw, 0.0, "missing key defaults to off");
+        assert_eq!(p.numeric_summary().get("risk_per_trade_krw"), Some(&0.0));
     }
 
     #[test]
