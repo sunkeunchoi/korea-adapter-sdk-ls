@@ -38,6 +38,10 @@ home; this file is the durable, reviewable outcome trail.
 - **Queue re-rank (R6):** the tighter-stop hypothesis is falsified, demoting the sibling
   ATR-scaled stop (leg 2, also narrows the stop). New head = **lever 2 (close-confirmed entry)**,
   an orthogonal entry-quality mechanism the midpoint result implicates. Baseline stays v13 (== v9).
+- **Flip preconditions (post-review):** code review found two latent modeling bugs in the
+  default-off ATR-stop and close-confirm paths (unreachable by v13/v14) that must be fixed —
+  riding their flip's re-baseline — before those levers run, or the flip verdict is biased.
+  See `docs/solutions/logic-errors/orb-atr-and-close-confirm-flip-preconditions.md`.
 - **Provenance:** run `20260712T012616Z-backtest-orb-v14` (gitignored). Falsified run retained.
 
 ## Turn 3 — broaden-sample data turn (2026-07-07) — plan 2026-07-07-003

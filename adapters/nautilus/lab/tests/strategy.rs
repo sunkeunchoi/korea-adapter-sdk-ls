@@ -378,6 +378,46 @@ fn atr_stop_mode_clamps_to_range_low_when_wider() {
     assert_eq!(acts, vec![OrbAction::Exit { limit_price: 59_900, reason: ExitReason::Stop }]);
 }
 
+/// ATR mode: `mfe_r` denominates by trade-R (`entry − stop`), distinct from the
+/// range-R the v9 mode-0 path uses (KTD4).
+#[test]
+fn atr_stop_mode_mfe_denominates_by_trade_r() {
+    let mut p = OrbParams::default();
+    p.stop_mode = 2.0;
+    p.stop_atr_mult = 2.0;
+    let mut st = OrbState::with_priors(Some(300.0), None); // stop 600 below entry
+    set_range(&mut st, &p, 61_500, 60_000); // range-R 1500 (NOT the denominator here)
+    // entry 62_000, stop 61_400, trade-R = 600.
+    st.on_bar(t(9, 20), 62_000, 61_600, 61_500, 0.0, &p);
+    // A peak at 62_300 (below the 62_600 target) folds high-water; no stop (low > 61_400).
+    assert!(st.on_bar(t(9, 30), 62_300, 61_700, 62_200, 0.0, &p).is_empty());
+    // mfe = (62_300 − 62_000) / 600 = 0.5 — trade-R, not (300/1500 = 0.2) range-R.
+    assert!((st.mfe_r() - 0.5).abs() < 1e-9, "mfe denominated by trade-R 600: {}", st.mfe_r());
+}
+
+/// KTD4 decoupling: breakout strength keys on range-R (a degenerate range → `None`
+/// → the band is bypassed), while the midpoint stop's trade-R is separately
+/// well-defined and denominates MFE. Mode 0 would report `mfe_r = 0.0` here; the
+/// non-default mode does not, because its denominator is trade-R, not range-R.
+#[test]
+fn degenerate_range_midpoint_defines_trade_r_while_strength_stays_none() {
+    let mut p = OrbParams::default();
+    p.stop_mode = 1.0; // midpoint
+    let mut st = OrbState::new();
+    assert!(st.on_bar(t(9, 0), 61_000, 61_000, 61_000, 0.0, &p).is_empty()); // flat range
+    // Enter at 62_000; midpoint stop = round((61_000+61_000)/2) = 61_000, trade-R = 1_000.
+    assert_eq!(
+        st.on_bar(t(9, 20), 62_000, 61_500, 61_800, 0.0, &p),
+        vec![OrbAction::Enter { limit_price: 62_000 }]
+    );
+    // Peak 62_500 (< the 63_000 target) folds; mfe = 500/1_000 = 0.5 (trade-R defined).
+    assert!(st.on_bar(t(9, 30), 62_500, 61_500, 62_200, 0.0, &p).is_empty());
+    assert!((st.mfe_r() - 0.5).abs() < 1e-9, "trade-R defined despite degenerate range: {}", st.mfe_r());
+    // Strength itself keys on range-R and stays None on the degenerate range — the
+    // band-bypass invariant, independent of the well-defined trade-R.
+    assert_eq!(breakout_strength(62_000, 61_000, 61_000), None);
+}
+
 /// AE5: ATR mode with no prior ATR fails closed at range fix — one recorded
 /// `atr_unavailable` reject, done-for-day, never a silent range-low fallback.
 #[test]

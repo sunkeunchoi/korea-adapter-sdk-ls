@@ -939,6 +939,22 @@ mod tests {
     }
 
     #[test]
+    fn report_labels_atr_stop_mode() {
+        // U5: stop_mode 2.0 → the report prints the atr label and a trade-R denominator.
+        let tmp = tempfile::tempdir().unwrap();
+        let d = ts_kst(2026, 6, 1);
+        let envs = vec![
+            breakout("A.XKRX", d, 100.0, 90.0, 101.0),
+            exit("A.XKRX", d + 1, SignalKind::TimeExit, 0.5, 100.0),
+        ];
+        write_run_stop_mode(tmp.path(), "run-atr", 2.0, &envs);
+        let out = report_mfe(&cfg(tmp.path(), "run-atr")).unwrap();
+        let mode_line = out.lines.iter().find(|l| l.starts_with("stop mode:")).unwrap();
+        assert!(mode_line.contains("atr"), "{mode_line}");
+        assert!(mode_line.contains("trade-R"), "trade-R denominator: {mode_line}");
+    }
+
+    #[test]
     fn candidate_in_band_is_runnable() {
         // Source target 1.5 (v10-like): band [0.75, 2.25]. Positive MFE sample
         // with p70 = 1.23 → rounds to 1.25, in-band, not within 0.05 of 1.5.

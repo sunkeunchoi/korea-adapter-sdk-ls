@@ -223,7 +223,22 @@ impl OrbParams {
     /// time-flat deadline (`range_end < cutoff ≤ flat_time`); an out-of-range
     /// cutoff is a config error, not a silently-inert gate. Returns the offending
     /// message on failure. Off-sentinel gates (`0.0`) impose no constraint.
+    ///
+    /// Also rejects a companion window that would make an *active* gate silently
+    /// trade nothing (review hardening): a non-positive `atr_window` /
+    /// `stop_atr_mult` under ATR mode or the OR-width gate, or a non-positive
+    /// `rvol_window_sessions` / `rvol_min_history` under the RVOL gate, otherwise
+    /// fails *every* session closed with no config error — a whole run of zero
+    /// trades that reads as a real result. A negative `entry_cutoff_min` is a
+    /// config error, not the `0.0`-off sentinel.
     pub fn validate(&self) -> Result<(), String> {
+        if self.entry_cutoff_min < 0.0 {
+            return Err(format!(
+                "entry_cutoff_min {} is negative — use 0.0 to disable the cutoff, a positive \
+                 minute offset to enable it (KTD10)",
+                self.entry_cutoff_min
+            ));
+        }
         if let Some(cutoff) = self.entry_cutoff_time() {
             let range_end = self.range_end();
             if cutoff <= range_end {
@@ -240,6 +255,30 @@ impl OrbParams {
                     self.entry_cutoff_min, cutoff, self.flat_time
                 ));
             }
+        }
+        // ATR is consumed by the ATR stop mode and by the OR-width gate; its
+        // window must be positive or every session fails closed on `atr_unavailable`.
+        let atr_active = self.stop_placement() == StopMode::Atr || self.or_width_max_atr > 0.0;
+        if atr_active && self.atr_window <= 0.0 {
+            return Err(format!(
+                "atr_window {} must be positive when an ATR-consuming gate is active \
+                 (stop_mode=ATR or or_width_max_atr>0) — else every session fails atr_unavailable",
+                self.atr_window
+            ));
+        }
+        if self.stop_placement() == StopMode::Atr && self.stop_atr_mult <= 0.0 {
+            return Err(format!(
+                "stop_atr_mult {} must be positive under ATR stop mode — a non-positive \
+                 multiplier collapses the stop onto the entry (an instant stop-out)",
+                self.stop_atr_mult
+            ));
+        }
+        if self.rvol_min > 0.0 && (self.rvol_window_sessions <= 0.0 || self.rvol_min_history <= 0.0) {
+            return Err(format!(
+                "rvol_window_sessions {} and rvol_min_history {} must both be positive under \
+                 the RVOL gate — else every session fails rvol_insufficient_history",
+                self.rvol_window_sessions, self.rvol_min_history
+            ));
         }
         Ok(())
     }
@@ -402,6 +441,38 @@ mod tests {
         // Cutoff after flat_time (09:00 + 400 = 15:40 > 15:00) → error.
         let too_late = OrbParams { entry_cutoff_min: 400.0, ..Default::default() };
         assert!(too_late.validate().is_err(), "cutoff > flat_time must be rejected");
+        // A negative cutoff is a config error, not the 0.0-off sentinel.
+        let neg = OrbParams { entry_cutoff_min: -10.0, ..Default::default() };
+        assert!(neg.validate().is_err(), "negative cutoff must be rejected");
+    }
+
+    #[test]
+    fn validate_rejects_companion_windows_that_zero_out_an_active_gate() {
+        // ATR window must be positive when ATR is consumed (stop mode or OR-width).
+        let atr_stop_zero_window =
+            OrbParams { stop_mode: 2.0, atr_window: 0.0, ..Default::default() };
+        assert!(atr_stop_zero_window.validate().is_err(), "ATR mode needs a positive window");
+        let or_width_zero_window =
+            OrbParams { or_width_max_atr: 3.0, atr_window: 0.0, ..Default::default() };
+        assert!(or_width_zero_window.validate().is_err(), "OR-width gate needs a positive ATR window");
+        // A non-positive ATR multiplier collapses the stop onto the entry.
+        let bad_mult = OrbParams { stop_mode: 2.0, stop_atr_mult: 0.0, ..Default::default() };
+        assert!(bad_mult.validate().is_err(), "non-positive stop_atr_mult must be rejected");
+        let neg_mult = OrbParams { stop_mode: 2.0, stop_atr_mult: -1.0, ..Default::default() };
+        assert!(neg_mult.validate().is_err(), "negative stop_atr_mult must be rejected");
+        // RVOL companions must be positive when the gate is active.
+        let rvol_zero_window =
+            OrbParams { rvol_min: 1.0, rvol_window_sessions: 0.0, ..Default::default() };
+        assert!(rvol_zero_window.validate().is_err(), "RVOL gate needs a positive window");
+        let rvol_zero_history =
+            OrbParams { rvol_min: 1.0, rvol_min_history: 0.0, ..Default::default() };
+        assert!(rvol_zero_history.validate().is_err(), "RVOL gate needs positive min history");
+        // Inert companions (gate off) impose no constraint even at 0.0.
+        let inert = OrbParams { atr_window: 0.0, rvol_window_sessions: 0.0, ..Default::default() };
+        assert!(inert.validate().is_ok(), "companions inert when their gate is off");
+        // A valid ATR / RVOL config passes.
+        let ok = OrbParams { stop_mode: 2.0, rvol_min: 1.0, ..Default::default() };
+        assert!(ok.validate().is_ok(), "default companions are valid when gates are on");
     }
 
     #[test]
