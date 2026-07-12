@@ -4,6 +4,64 @@ Committed record of each loop turn's verdict + the bar conditions it held. The
 full artifacts (`analysis.md`, manifests, performance) live in the gitignored data
 home; this file is the durable, reviewable outcome trail.
 
+## Turn — breakeven-move exit lever (2026-07-12) — plan 2026-07-11-001
+
+- **Verdict: KEEP (the breakeven-move exit lever clears the edge gate and MORE THAN
+  DOUBLES expectancy over v21 — the loop's FIRST non-entry / exit-timing kept lever).**
+  A CODE turn (add a default-off breakeven-move ratchet to `orb.rs`) followed by its
+  single flip `breakeven_trigger_r` 0.0 → **0.41** (p50 of the v21 time_exit cohort's
+  peak-MFE). Pre-registered value + keep rule + bind signature before the run (R3,
+  `data/turn4-fresh/PRE-REGISTER-vNEXT-breakeven-move.md`).
+- **The code change.** Once a held long's provably-observed MFE (`high_water`) reaches
+  `entry_price + round(breakeven_trigger_r · R)`, the stop ratchets up to `entry_price`
+  for **subsequent** bars — a runner that peaks then reverts books at-or-near breakeven
+  instead of decaying to the 15:00 flat exit (v21's largest give-back cohort: n=76,
+  median 0.41R MFE). Respects **KTD5** (folds only provably-observed MFE, ratchet read
+  post-fold) and **KTD2** (never books on the bar that arms it — the low that would hit
+  the new stop may precede the high that triggered it). Only ever tightens; arms once;
+  `breakeven_trigger_price` requires the rounded R-offset > 0 so a round-to-zero trigger
+  is off. Pre-flip code review (correctness + adversarial, both session-model) found **no
+  correctness/same-bar/fold defect**; two P3 advisories addressed. 306 lab tests pass.
+- **Type: CODE turn.** `strategy_code_hash f8a0f2bf…` → **`a5521c3e…`**. Re-baselined via
+  seed-and-rerun (KTD2): v22 seeded from v21, `breakeven_trigger_r=0.0`, `strategy_version=22`.
+  Per-trade ledger vs v21 **157/157 byte-identical**; summary byte-identical — the ratchet
+  is verifiably default-off. Re-baseline signal: `runs compare` param mode (v21 → v22)
+  **FAILs** `strategy_code_hash differs`, param diff `["strategy_version"]` (KTD3 — the FAIL
+  *is* the evidence). Baseline advanced to v22 (== v21 behavior, new hash).
+- **AE2 attribution:** `runs compare` param mode (**v22 → v23**) **PASS**, diff exactly
+  `{breakeven_trigger_r, strategy_version}` — clean single-lever flip on the re-baselined
+  code (v22 and v23 share the new hash).
+- **Bind check — mechanism BINDS (pre-registered signature validated):** v23
+  `decisions.jsonl` shows `time_exit` **76 → 57** (the pre-registered shrink) and a
+  breakeven-armed `stop_hit` cohort (mfe_r ≥ 0.41) **11 → 52** (`stop_hit` total 35 → 77,
+  median mfe_r 0.286 → 0.458 — the new exits are the high-prior-MFE peaked-then-reverted
+  trades). `time_exit` median MFE falls 0.41 → 0.21 (only the low-peak tail that never
+  reached the trigger remains). `target` 58 → 50 (−8 winner-cutting cost); total exits
+  169 → 184, closed trades 153 → 167 (the pre-registered `max_concurrent` re-admission).
+- **Edge gate (`EdgeEvaluation`, unchanged): CLEARED (`is_edge = true`).** Expectancy
+  **+44,046.41** KRW/trade (v21 +20,690.73 — **2.13×**), PF **1.620** (from 1.204),
+  pnl_total **+6,739,100** (from +3,124,300), Sharpe **+4.49** / Sortino **+9.07**, WR
+  50.30%. Max drawdown **HALVED** (6,005,700 → 3,171,350). Dominance **9.5%** (≤ 40%),
+  top-|P&L| symbol `035420.XKRX` a **winner** (+1,570,200). Keep rule (is_edge AND
+  expectancy > +20,690.73 AND dominance ≤ 40%): **all three cleared.**
+- **Read — capturing the give-back beats cutting the winners, decisively.** The 19 fewer
+  time_exits and their avoided give-back losses (avg loser −218,935 → −169,209, drawdown
+  halved) far outweigh the 8 would-be targets the breakeven stop cut short. The
+  `max_concurrent` re-admission (153 → 167) did not drown the benefit (unlike the U7
+  midpoint stop). The pessimistic bar-low fill makes this a *lower bound* on the edge.
+- **Queue re-rank (R6) — exit-timing is a PROVEN new dimension.** Baseline advances to
+  **v23** (`breakeven_trigger_r=0.41`). THREE kept levers now, across TWO classes: entry
+  quality (close-confirm v16, decoupled OR-width v21) + **exit timing (breakeven-move v23,
+  the first non-entry lever)**. Falsified/exhausted: stop geometry (U7 + demoted leg-2),
+  entry timing (lever 4), entry quality via RVOL (lever 5, inverted). Strongest next
+  turns: (a) a **trailing** variant (trail a fraction of R above breakeven once armed —
+  could book partial wins, not just scratches); (b) a **governed breakeven-trigger sweep**
+  (now off the 0.41 sentinel); (c) CLASS B **risk/position-sizing** (via `/ce-plan` for a
+  normalized edge metric).
+- **Provenance:** baseline `20260712T041102Z-backtest-orb-v21`, re-baseline
+  `20260712T045306Z-backtest-orb-v22` (157/157 reconcile), flip
+  `20260712T045403Z-backtest-orb-v23` (home `data/turn4-fresh`, gitignored). Offline.
+
 ## Turn — OR-width decoupled from ATR availability (2026-07-12) — plan 2026-07-11-001
 
 - **Verdict: KEEP (decoupled OR-width clears the edge gate and improves expectancy 4.3×
