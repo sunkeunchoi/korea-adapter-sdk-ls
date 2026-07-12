@@ -29,6 +29,7 @@ use crate::agent::envelope::{Decision, DecisionEnvelope, SignalKind};
 use crate::agent::replay::read_envelopes;
 use crate::artifacts::manifest::Manifest;
 use crate::artifacts::DECISIONS_FILE;
+use crate::params::StopMode;
 use crate::runner::research::{latest_finalized_run, read_manifest, PROPOSAL_BOUNDS_CAP};
 
 /// The candidate rounding step (KTD6): the empirical p70 is rounded to the
@@ -599,6 +600,18 @@ pub fn report_mfe(cfg: &ReportConfig) -> anyhow::Result<ReportOutcome> {
         manifest.strategy_version,
         if defaulted { " [defaulted: latest finalized]" } else { "" }
     ));
+    // R8 / KTD4 / AE3: state the run's stop mode and the MFE denominator it
+    // implies, so R-denominated percentiles are never compared across modes
+    // unlabeled. Old manifests (no stop_mode key) deserialize to range-low (v9).
+    let (stop_mode_label, mfe_denom_label) = match manifest.params.stop_placement() {
+        StopMode::RangeLow => ("range-low (v9)", "range-R"),
+        StopMode::OrMidpoint => ("or-midpoint", "trade-R (entry − stop)"),
+        StopMode::Atr => ("atr", "trade-R (entry − stop)"),
+    };
+    lines.push(format!(
+        "stop mode: {stop_mode_label} — MFE denominated by {mfe_denom_label} (KTD4); \
+         compare R-metrics only within one stop mode"
+    ));
     // The governance band below is anchored on THIS run's target, but a next
     // `turn` proposes off the LATEST finalized run's params — when they differ,
     // say so rather than letting the band read as the guardrail's answer.
@@ -808,6 +821,24 @@ mod tests {
         std::fs::write(dir.join(DECISIONS_FILE), to_jsonl(envelopes).unwrap()).unwrap();
     }
 
+    /// Write a synthetic finalized run whose manifest carries a non-default
+    /// `stop_mode` (U5), for the report's stop-mode labeling tests.
+    fn write_run_stop_mode(
+        data_home: &Path,
+        run_id: &str,
+        stop_mode: f64,
+        envelopes: &[DecisionEnvelope],
+    ) {
+        write_run(data_home, run_id, 1.0, envelopes);
+        // Rewrite the manifest with the stop_mode set — the only field the
+        // labeling reads; the decisions are untouched.
+        let dir = data_home.join("runs").join(run_id);
+        let mut manifest: Manifest =
+            serde_json::from_str(&std::fs::read_to_string(dir.join(MANIFEST_FILE)).unwrap()).unwrap();
+        manifest.params.stop_mode = stop_mode;
+        std::fs::write(dir.join(MANIFEST_FILE), serde_json::to_string(&manifest).unwrap()).unwrap();
+    }
+
     fn cfg(data_home: &Path, run_id: &str) -> ReportConfig {
         ReportConfig {
             data_home: data_home.to_path_buf(),
@@ -871,6 +902,40 @@ mod tests {
         let te_line = out.lines.iter().find(|l| l.trim_start().starts_with("time_exit")).unwrap();
         assert!(te_line.contains("n=2"), "{te_line}");
         assert!(te_line.contains("median 0.50"), "nearest-rank p50 of [0.5, 0.7]: {te_line}");
+    }
+
+    #[test]
+    fn report_labels_range_low_default_for_old_manifest() {
+        // U5 / AE3: a v9-era manifest has no stop_mode key → serde default 0.0 →
+        // the report prints the range-low label and a range-R MFE denominator.
+        let tmp = tempfile::tempdir().unwrap();
+        let d = ts_kst(2026, 6, 1);
+        let envs = vec![
+            breakout("A.XKRX", d, 100.0, 90.0, 101.0),
+            exit("A.XKRX", d + 1, SignalKind::TimeExit, 0.5, 100.0),
+        ];
+        write_run(tmp.path(), "run-v9", 1.0, &envs);
+        let out = report_mfe(&cfg(tmp.path(), "run-v9")).unwrap();
+        let mode_line = out.lines.iter().find(|l| l.starts_with("stop mode:")).unwrap();
+        assert!(mode_line.contains("range-low (v9)"), "{mode_line}");
+        assert!(mode_line.contains("range-R"), "range-R denominator: {mode_line}");
+    }
+
+    #[test]
+    fn report_labels_midpoint_stop_mode() {
+        // U5 / AE3: stop_mode 1.0 → the report prints the or-midpoint label and a
+        // trade-R MFE denominator, so cross-mode R-metrics can't be compared blind.
+        let tmp = tempfile::tempdir().unwrap();
+        let d = ts_kst(2026, 6, 1);
+        let envs = vec![
+            breakout("A.XKRX", d, 100.0, 90.0, 101.0),
+            exit("A.XKRX", d + 1, SignalKind::TimeExit, 0.5, 100.0),
+        ];
+        write_run_stop_mode(tmp.path(), "run-mid", 1.0, &envs);
+        let out = report_mfe(&cfg(tmp.path(), "run-mid")).unwrap();
+        let mode_line = out.lines.iter().find(|l| l.starts_with("stop mode:")).unwrap();
+        assert!(mode_line.contains("or-midpoint"), "{mode_line}");
+        assert!(mode_line.contains("trade-R"), "trade-R denominator: {mode_line}");
     }
 
     #[test]
