@@ -70,6 +70,56 @@ pub struct OrbParams {
     /// deserialize unchanged.
     #[serde(default)]
     pub turnover_floor_krw: f64,
+    /// Stop-placement mode (lever 1, KTD1). `f64`-encoded so `turn()` /
+    /// `param_diff` / `numeric_summary` all see it: `0.0` = range-low (v9
+    /// default), `1.0` = OR-midpoint, `2.0` = ATR-scaled. Filter-off default
+    /// `0.0` reproduces v9 exactly; legacy manifests deserialize with it.
+    #[serde(default)]
+    pub stop_mode: f64,
+    /// Entry-confirmation mode (lever 2, KTD1/KTD6): `0.0` = wick-touch (v9
+    /// default — enter when a bar's high exceeds the range high), `1.0` =
+    /// close-confirmed (enter only when a bar *closes* strictly above the range
+    /// high). Filter-off default `0.0` preserves v9 entry.
+    #[serde(default)]
+    pub entry_confirm: f64,
+    /// ATR-stop multiplier (companion to `stop_mode` 2.0, KTD1/KTD5): the
+    /// ATR-mode stop sits `stop_atr_mult · ATR` below entry, clamped never wider
+    /// than the range low. Inert unless `stop_mode` is 2.0. Default 2.0.
+    #[serde(default = "default_stop_atr_mult")]
+    pub stop_atr_mult: f64,
+    /// ATR lookback in prior daily sessions (companion, KTD1/KTD5): ATR is
+    /// computed from the deduped daily slice strictly before the session; a
+    /// symbol-session with fewer than `atr_window`+1 priors fails closed
+    /// (`atr_unavailable`) in ATR mode. Inert unless `stop_mode` is 2.0. Default 14.0.
+    #[serde(default = "default_atr_window")]
+    pub atr_window: f64,
+    /// OR-width sanity gate (lever 3, KTD1/KTD7): reject the session done-for-day
+    /// when range-R > `or_width_max_atr · ATR`. Sentinel `0.0` = off. Needs ATR;
+    /// when ATR is unavailable the gate fails closed (`atr_unavailable`).
+    #[serde(default)]
+    pub or_width_max_atr: f64,
+    /// Entry cutoff in minutes after range open (lever 4, KTD1/KTD10): no new
+    /// entries once a bar's KST time reaches `range_open + entry_cutoff_min`.
+    /// Sentinel `0.0` = off. A configured cutoff must satisfy
+    /// `range_end < cutoff ≤ flat_time` (validated at backtest start).
+    #[serde(default)]
+    pub entry_cutoff_min: f64,
+    /// Opening-window relative-volume floor (lever 5, KTD1/KTD9): reject the
+    /// session done-for-day when today's opening-window volume is below
+    /// `rvol_min ·` the prior-session mean over the same window. Sentinel
+    /// `0.0` = off.
+    #[serde(default)]
+    pub rvol_min: f64,
+    /// RVOL prior-session window (companion, KTD1/KTD9): how many prior in-range
+    /// sessions are averaged for the RVOL baseline. Inert unless `rvol_min` > 0.0.
+    /// Default 14.0.
+    #[serde(default = "default_rvol_window_sessions")]
+    pub rvol_window_sessions: f64,
+    /// RVOL minimum history (companion, KTD1/KTD9): fewer than this many prior
+    /// opening-window samples fails closed (`rvol_insufficient_history`) rather
+    /// than passing on thin history. Inert unless `rvol_min` > 0.0. Default 5.0.
+    #[serde(default = "default_rvol_min_history")]
+    pub rvol_min_history: f64,
 }
 
 /// The back-compat default for [`OrbParams::profit_target_r`] (R2, KTD3): a v8
@@ -94,6 +144,30 @@ fn default_breakout_strength_max() -> f64 {
     f64::MAX
 }
 
+/// The companion default for [`OrbParams::stop_atr_mult`] (KTD1/KTD5): inert at
+/// 2.0 unless `stop_mode` selects ATR. A pre-field manifest deserializes with it.
+fn default_stop_atr_mult() -> f64 {
+    2.0
+}
+
+/// The companion default for [`OrbParams::atr_window`] (KTD1/KTD5): 14 prior
+/// dailies. Inert unless a gate consumes ATR; legacy manifests deserialize with it.
+fn default_atr_window() -> f64 {
+    14.0
+}
+
+/// The companion default for [`OrbParams::rvol_window_sessions`] (KTD1/KTD9): 14
+/// prior in-range sessions. Inert unless `rvol_min` > 0.0.
+fn default_rvol_window_sessions() -> f64 {
+    14.0
+}
+
+/// The companion default for [`OrbParams::rvol_min_history`] (KTD1/KTD9): 5
+/// prior opening-window samples. Inert unless `rvol_min` > 0.0.
+fn default_rvol_min_history() -> f64 {
+    5.0
+}
+
 impl Default for OrbParams {
     fn default() -> Self {
         OrbParams {
@@ -111,14 +185,69 @@ impl Default for OrbParams {
             breakout_strength_min: default_breakout_strength_min(),
             breakout_strength_max: default_breakout_strength_max(),
             turnover_floor_krw: 0.0,
+            // Lever-queue gates (KTD1) — all filter-off so v9 behavior is exact.
+            stop_mode: 0.0,
+            entry_confirm: 0.0,
+            stop_atr_mult: default_stop_atr_mult(),
+            atr_window: default_atr_window(),
+            or_width_max_atr: 0.0,
+            entry_cutoff_min: 0.0,
+            rvol_min: 0.0,
+            rvol_window_sessions: default_rvol_window_sessions(),
+            rvol_min_history: default_rvol_min_history(),
         }
     }
+}
+
+/// The decoded stop-placement mode (KTD1). Any unrecognized `stop_mode` value
+/// falls back to the v9 range-low stop — an out-of-set float never silently
+/// picks a non-default stop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StopMode {
+    /// v9: stop at the opening-range low.
+    RangeLow,
+    /// Lever 1: stop at the rounded OR midpoint.
+    OrMidpoint,
+    /// Lever 1: stop `stop_atr_mult · ATR` below entry, clamped to range low.
+    Atr,
 }
 
 impl OrbParams {
     /// The opening-range window end (KST): `range_open + range_minutes`.
     pub fn range_end(&self) -> NaiveTime {
         self.range_open + chrono::Duration::minutes(self.range_minutes)
+    }
+
+    /// The decoded stop-placement mode (KTD1): `1.0` → OR-midpoint, `2.0` → ATR,
+    /// anything else (default `0.0`) → the v9 range-low stop.
+    pub fn stop_placement(&self) -> StopMode {
+        if self.stop_mode == 1.0 {
+            StopMode::OrMidpoint
+        } else if self.stop_mode == 2.0 {
+            StopMode::Atr
+        } else {
+            StopMode::RangeLow
+        }
+    }
+
+    /// Whether close-confirmed entry is active (lever 2, KTD6): `entry_confirm`
+    /// `1.0` = enter only on a bar close strictly above the range high. The
+    /// filter-off default `0.0` keeps v9 wick-touch entry.
+    pub fn close_confirm_entry(&self) -> bool {
+        self.entry_confirm == 1.0
+    }
+
+    /// Whether the entry cutoff gate is active (lever 4, KTD10): a positive
+    /// `entry_cutoff_min`. The sentinel `0.0` disables it.
+    pub fn cutoff_active(&self) -> bool {
+        self.entry_cutoff_min > 0.0
+    }
+
+    /// The wall-clock entry cutoff (`range_open + entry_cutoff_min`), or `None`
+    /// when the gate is off (KTD10). No new entry is taken at/after this time.
+    pub fn entry_cutoff_time(&self) -> Option<NaiveTime> {
+        self.cutoff_active()
+            .then(|| self.range_open + chrono::Duration::minutes(self.entry_cutoff_min as i64))
     }
 
     /// The number of shares to buy for a `notional_per_position` budget at `price`
@@ -213,6 +342,43 @@ mod tests {
         // Turn 10: filter-off band defaults leave entry behavior unchanged.
         assert_eq!(p.breakout_strength_min, 0.0);
         assert_eq!(p.breakout_strength_max, f64::MAX);
+        // Lever-queue gates (KTD1): every gate default-off, companions inert.
+        assert_eq!(p.stop_mode, 0.0, "stop mode defaults to v9 range-low");
+        assert_eq!(p.entry_confirm, 0.0, "entry defaults to v9 wick-touch");
+        assert_eq!(p.stop_atr_mult, 2.0);
+        assert_eq!(p.atr_window, 14.0);
+        assert_eq!(p.or_width_max_atr, 0.0, "OR-width gate off");
+        assert_eq!(p.entry_cutoff_min, 0.0, "cutoff off");
+        assert_eq!(p.rvol_min, 0.0, "RVOL gate off");
+        assert_eq!(p.rvol_window_sessions, 14.0);
+        assert_eq!(p.rvol_min_history, 5.0);
+        // The decoded helpers agree with the filter-off defaults.
+        assert_eq!(p.stop_placement(), StopMode::RangeLow);
+        assert!(!p.close_confirm_entry());
+        assert!(!p.cutoff_active());
+        assert_eq!(p.entry_cutoff_time(), None);
+    }
+
+    #[test]
+    fn stop_placement_decodes_ktd1_encoding() {
+        let mut p = OrbParams::default();
+        assert_eq!(p.stop_placement(), StopMode::RangeLow);
+        p.stop_mode = 1.0;
+        assert_eq!(p.stop_placement(), StopMode::OrMidpoint);
+        p.stop_mode = 2.0;
+        assert_eq!(p.stop_placement(), StopMode::Atr);
+        // An out-of-set value never silently selects a non-default stop.
+        p.stop_mode = 3.0;
+        assert_eq!(p.stop_placement(), StopMode::RangeLow);
+    }
+
+    #[test]
+    fn entry_cutoff_time_is_range_open_plus_minutes_when_active() {
+        let mut p = OrbParams::default(); // range_open 09:00
+        assert_eq!(p.entry_cutoff_time(), None, "off by default");
+        p.entry_cutoff_min = 180.0; // 09:00 + 180min = 12:00
+        assert!(p.cutoff_active());
+        assert_eq!(p.entry_cutoff_time(), NaiveTime::from_hms_opt(12, 0, 0));
     }
 
     #[test]
@@ -268,6 +434,87 @@ mod tests {
         assert_eq!(p.breakout_strength_min, 0.0, "missing floor defaults to 0.0");
         assert_eq!(p.breakout_strength_max, f64::MAX, "missing ceiling defaults to f64::MAX");
         assert_eq!(p.strategy_version, 9);
+    }
+
+    #[test]
+    fn gate_params_deserialize_from_pre_field_manifest() {
+        // R2 / KTD1: a v9-era manifest predates every lever-queue gate field. Its
+        // JSON has none of the keys, yet must deserialize to the exact filter-off
+        // defaults so pre-field runs in `data/turn4-fresh` produce no param_diff
+        // (the numeric_summary is what param_diff diffs — proved equal below).
+        let legacy = serde_json::json!({
+            "strategy_id": "orb",
+            "strategy_version": 9,
+            "gap_min_pct": 0.6,
+            "universe_top_n": 40,
+            "max_concurrent": 7,
+            "range_open": "09:00:00",
+            "range_minutes": 20,
+            "flat_time": "15:00:00",
+            "notional_per_position": 10_000_000.0,
+            "profit_target_r": 1.0,
+        })
+        .to_string();
+        let p: OrbParams = serde_json::from_str(&legacy).unwrap();
+        assert_eq!(p.stop_mode, 0.0);
+        assert_eq!(p.entry_confirm, 0.0);
+        assert_eq!(p.stop_atr_mult, 2.0);
+        assert_eq!(p.atr_window, 14.0);
+        assert_eq!(p.or_width_max_atr, 0.0);
+        assert_eq!(p.entry_cutoff_min, 0.0);
+        assert_eq!(p.rvol_min, 0.0);
+        assert_eq!(p.rvol_window_sessions, 14.0);
+        assert_eq!(p.rvol_min_history, 5.0);
+        // Empty param_diff proxy: the deserialized legacy set's numeric summary
+        // equals a freshly-defaulted set carrying the same version — no gate key
+        // diverges, so a pre-field manifest yields no spurious param_diff (KTD1).
+        let mut fresh = OrbParams { strategy_version: 9, ..Default::default() };
+        // Match the legacy set's genuinely-set (non-gate) fields.
+        fresh.gap_min_pct = 0.6;
+        fresh.universe_top_n = 40;
+        fresh.max_concurrent = 7;
+        fresh.range_minutes = 20;
+        assert_eq!(p.numeric_summary(), fresh.numeric_summary());
+    }
+
+    #[test]
+    fn numeric_summary_includes_gate_fields() {
+        // KTD1: every gate param is f64-typed so the serde value-walk surfaces it —
+        // a governed turn reads them to flip; an Option/enum would vanish.
+        let summary = OrbParams::default().numeric_summary();
+        for key in [
+            "stop_mode",
+            "entry_confirm",
+            "stop_atr_mult",
+            "atr_window",
+            "or_width_max_atr",
+            "entry_cutoff_min",
+            "rvol_min",
+            "rvol_window_sessions",
+            "rvol_min_history",
+        ] {
+            assert!(summary.contains_key(key), "numeric_summary missing {key}");
+        }
+    }
+
+    #[test]
+    fn gate_params_round_trip_explicit_values() {
+        // Guards the serde default fns from shadowing real manifest values: a
+        // fully-flipped set serializes and deserializes each field unchanged.
+        let p = OrbParams {
+            stop_mode: 2.0,
+            entry_confirm: 1.0,
+            stop_atr_mult: 1.5,
+            atr_window: 10.0,
+            or_width_max_atr: 3.0,
+            entry_cutoff_min: 180.0,
+            rvol_min: 1.2,
+            rvol_window_sessions: 20.0,
+            rvol_min_history: 3.0,
+            ..Default::default()
+        };
+        let back: OrbParams = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
+        assert_eq!(back, p);
     }
 
     #[test]
