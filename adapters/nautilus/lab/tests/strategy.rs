@@ -455,21 +455,24 @@ fn atr_stop_mode_treats_zero_atr_as_unavailable() {
     assert_eq!(st.phase(), Phase::Done);
 }
 
-/// F1 flip-precondition: the OR-width gate shares the ATR-availability arm, so a
-/// non-positive ATR (`Some(0.0)`) also fails it closed with `atr_unavailable` — a
-/// missing input never passes a gate (KTD7).
+/// OR-width/ATR decouple (code turn): the OR-width gate is genuinely OPTIONAL for a
+/// session that lacks a positive prior ATR — a non-positive ATR (`Some(0.0)` from
+/// flat / halted priors) SKIPS the width gate and lets the session proceed, rather
+/// than failing closed as `atr_unavailable`. This isolates the width signal from the
+/// ATR-coverage cull (lever 3's confound); the ATR-STOP arm keeps its fail-closed
+/// reject (a stop needs its ATR — see `atr_stop_mode_treats_zero_atr_as_unavailable`).
 #[test]
-fn or_width_gate_treats_zero_atr_as_unavailable() {
+fn or_width_gate_skips_when_atr_non_positive() {
     let mut p = OrbParams::default();
-    p.or_width_max_atr = 5.0; // gate on
+    p.or_width_max_atr = 5.0; // gate on, but no positive ATR to normalize against
     let mut st = OrbState::with_priors(Some(0.0), None); // flat priors → ATR 0.0
-    set_range(&mut st, &p, 61_500, 60_000);
-    let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
+    set_range(&mut st, &p, 61_500, 60_000); // a wide range — would fail a live width gate
     assert_eq!(
-        acts,
-        vec![OrbAction::SessionReject { filter: "atr_unavailable", values: vec![("atr_window", 14.0)] }]
+        st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p),
+        vec![OrbAction::Enter { limit_price: 62_000 }],
+        "no positive ATR → width gate skipped, session proceeds"
     );
-    assert_eq!(st.phase(), Phase::Done);
+    assert_eq!(st.phase(), Phase::Long);
 }
 
 /// F1 flip-precondition: a tiny-but-positive ATR whose `stop_atr_mult · ATR`
@@ -647,18 +650,23 @@ fn or_width_gate_passes_a_tight_range() {
     );
 }
 
+/// OR-width/ATR decouple (code turn): a session with NO prior ATR (`None`) SKIPS the
+/// width gate and proceeds — the gate is optional when there is no ATR to normalize
+/// against. (Before the decouple this failed closed as `atr_unavailable`, which
+/// conflated "no ATR history" with "too-wide range" and swamped lever 3's clean width
+/// signal with a winner-rich coverage cull.)
 #[test]
-fn or_width_gate_fails_closed_without_atr() {
+fn or_width_gate_skips_when_atr_missing() {
     let mut p = OrbParams::default();
     p.or_width_max_atr = 5.0;
     let mut st = OrbState::with_priors(None, None); // ATR unavailable
     set_range(&mut st, &p, 61_500, 60_000);
-    let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
     assert_eq!(
-        acts,
-        vec![OrbAction::SessionReject { filter: "atr_unavailable", values: vec![("atr_window", 14.0)] }],
-        "missing ATR never passes a gate"
+        st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p),
+        vec![OrbAction::Enter { limit_price: 62_000 }],
+        "missing ATR → width gate skipped, session proceeds"
     );
+    assert_eq!(st.phase(), Phase::Long);
 }
 
 #[test]

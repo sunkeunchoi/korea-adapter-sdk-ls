@@ -605,8 +605,11 @@ impl OrbState {
     /// gate returns a [`OrbAction::SessionReject`] naming its single canonical
     /// filter and ends the day. `None` when every active gate passes (the all-off
     /// default). Order is pinned — ATR availability, then OR-width, then RVOL — so a
-    /// session failing more than one gate records only the first (KTD7). Every
-    /// active gate that needs data it lacks fails closed (never a silent pass).
+    /// session failing more than one gate records only the first (KTD7). A gate whose
+    /// input is REQUIRED and missing fails closed (never a silent pass): the ATR-stop
+    /// arm and the RVOL-history arm. The OR-width arm is the deliberate exception — its
+    /// ATR normalizer is optional, so a no-ATR session is skipped, not rejected (see
+    /// the arm's comment).
     fn session_gate_reject(&self, params: &OrbParams) -> Option<OrbAction> {
         // 1. ATR-mode stop needs a *positive* prior ATR (KTD5, AE5). A missing ATR
         //    OR a non-positive one (flat / halted priors dedup to `Some(0.0)`, the
@@ -617,21 +620,27 @@ impl OrbState {
         if params.stop_placement() == StopMode::Atr && self.prior_atr.filter(|a| *a > 0.0).is_none() {
             return Some(session_reject("atr_unavailable", vec![("atr_window", params.atr_window)]));
         }
-        // 2. OR-width sanity gate (lever 3, KTD7): reject when range-R exceeds
-        //    `or_width_max_atr · ATR`. Needs a positive ATR; a missing or
-        //    non-positive ATR fails closed (`atr_unavailable`) — a missing input
-        //    never passes a gate.
+        // 2. OR-width sanity gate (lever 3, KTD7), DECOUPLED from ATR availability
+        //    (code turn): reject when range-R exceeds `or_width_max_atr · ATR`. Unlike
+        //    the ATR-STOP arm above — where a stop *needs* its ATR, so a missing one
+        //    must fail closed — the width gate is genuinely OPTIONAL for a session
+        //    that lacks a positive prior ATR: with nothing to normalize against, the
+        //    session is simply not width-gated (SKIP, not reject). This is deliberate:
+        //    coupling the width test to ATR availability conflated "too-wide opening
+        //    range" with "no ATR history" and swamped the clean width signal with a
+        //    winner-rich coverage cull (lever 3 / v18 was reverted for exactly this).
+        //    The KTD7 "missing input never silently passes a REQUIRED gate" invariant
+        //    is preserved — here the gate is not required when its input is absent.
         if params.or_width_max_atr > 0.0 {
-            let Some(atr) = self.prior_atr.filter(|a| *a > 0.0) else {
-                return Some(session_reject("atr_unavailable", vec![("atr_window", params.atr_window)]));
-            };
-            let range_r = (self.range_high - self.range_low) as f64;
-            let max_width = params.or_width_max_atr * atr;
-            if range_r > max_width {
-                return Some(session_reject(
-                    "or_width_atr",
-                    vec![("range_r", range_r), ("atr", atr), ("or_width_max_atr", params.or_width_max_atr)],
-                ));
+            if let Some(atr) = self.prior_atr.filter(|a| *a > 0.0) {
+                let range_r = (self.range_high - self.range_low) as f64;
+                let max_width = params.or_width_max_atr * atr;
+                if range_r > max_width {
+                    return Some(session_reject(
+                        "or_width_atr",
+                        vec![("range_r", range_r), ("atr", atr), ("or_width_max_atr", params.or_width_max_atr)],
+                    ));
+                }
             }
         }
         // 3. Opening-window RVOL gate (lever 5, KTD7/KTD9): reject when today's

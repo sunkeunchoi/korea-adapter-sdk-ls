@@ -94,8 +94,10 @@ pub struct OrbParams {
     #[serde(default = "default_atr_window")]
     pub atr_window: f64,
     /// OR-width sanity gate (lever 3, KTD1/KTD7): reject the session done-for-day
-    /// when range-R > `or_width_max_atr · ATR`. Sentinel `0.0` = off. Needs ATR;
-    /// when ATR is unavailable the gate fails closed (`atr_unavailable`).
+    /// when range-R > `or_width_max_atr · ATR`. Sentinel `0.0` = off. The ATR
+    /// normalizer is OPTIONAL — a session with no positive prior ATR is simply not
+    /// width-gated (SKIP, not `atr_unavailable`): the gate is decoupled from ATR
+    /// availability so the width signal is not confounded by ATR coverage.
     #[serde(default)]
     pub or_width_max_atr: f64,
     /// Entry cutoff in minutes after range open (lever 4, KTD1/KTD10): no new
@@ -256,13 +258,16 @@ impl OrbParams {
                 ));
             }
         }
-        // ATR is consumed by the ATR stop mode and by the OR-width gate; its
-        // window must be positive or every session fails closed on `atr_unavailable`.
+        // ATR is consumed by the ATR stop mode and by the OR-width gate; its window
+        // must be positive or ATR is never available — every ATR-stop session then
+        // fails closed on `atr_unavailable`, and the OR-width gate silently skips every
+        // session (inert). Reject the misconfiguration either way.
         let atr_active = self.stop_placement() == StopMode::Atr || self.or_width_max_atr > 0.0;
         if atr_active && self.atr_window <= 0.0 {
             return Err(format!(
                 "atr_window {} must be positive when an ATR-consuming gate is active \
-                 (stop_mode=ATR or or_width_max_atr>0) — else every session fails atr_unavailable",
+                 (stop_mode=ATR or or_width_max_atr>0) — else ATR is never available \
+                 (ATR-stop fails closed / OR-width never fires)",
                 self.atr_window
             ));
         }

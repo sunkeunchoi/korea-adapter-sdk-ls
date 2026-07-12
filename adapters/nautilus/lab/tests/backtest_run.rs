@@ -416,22 +416,25 @@ async fn entry_cutoff_gate_suppresses_a_late_breakout() {
     assert_eq!(read_perf(&outcome.run_dir).summary["num_trades"], 0.0);
 }
 
-/// U4 OR-width gate: on with only two prior dailies (ATR unavailable), the gate
-/// fails closed — one `atr_unavailable` reject, no trade — never a silent pass.
+/// U4 OR-width gate (decoupled from ATR availability): on with only two prior dailies
+/// (ATR unavailable), the width gate is SKIPPED — no `atr_unavailable` reject, no
+/// `or_width_atr` reject, the session trades exactly as if the gate were off. The
+/// decouple isolates the width signal from the ATR-coverage cull (lever 3's confound).
 #[tokio::test]
-async fn or_width_gate_fails_closed_without_atr_history() {
+async fn or_width_gate_skips_without_atr_history() {
     let dir = tempdir().unwrap();
     build_fixture(dir.path(), false).await;
 
     let mut c = cfg(dir.path());
-    c.params.or_width_max_atr = 5.0; // needs ATR(14); fixture has 2 dailies → None
+    c.params.or_width_max_atr = 5.0; // needs ATR(14); fixture has 2 dailies → None → skip
     let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
     let outcome = run(c, start).await.unwrap();
 
     let decisions = std::fs::read_to_string(outcome.run_dir.join(DECISIONS_FILE)).unwrap();
-    assert!(decisions.contains("atr_unavailable"), "missing ATR fails the gate closed");
-    assert!(!decisions.contains("order_placed"), "no entry when the gate cannot evaluate");
-    assert_eq!(read_perf(&outcome.run_dir).summary["num_trades"], 0.0);
+    assert!(!decisions.contains("atr_unavailable"), "no-ATR session is not failed closed");
+    assert!(!decisions.contains("or_width_atr"), "no ATR → width gate cannot fire either");
+    assert!(decisions.contains("order_placed"), "the session trades as if the gate were off");
+    assert_eq!(read_perf(&outcome.run_dir).summary["num_trades"], 1.0);
 }
 
 /// U4 RVOL gate: on for the first in-range session (no prior opening-window
