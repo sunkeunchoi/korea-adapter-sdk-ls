@@ -175,13 +175,17 @@ fn reported_outcome(
 /// collided in the market-data bucket and every variant read a self-inflicted
 /// `IGW00201` throttle — which classifies as a rejection → false `Clean`, so the
 /// differential was never evaluated on merits. `IGW00201` is a warm-sensitive
-/// *cumulative* budget (see the `igw00201-budget-characterization` learning), so
-/// t8412's higher call count trips it where the lower-count sibling market-data
-/// legs (t1101 / t1102, `Duration::ZERO`) do not. 250 ms (2.5× the 10/s bucket
-/// period, ~3 s total) is ample headroom under 10/s and well below the 1500 ms
-/// account-lane pace. The FINAL value is confirmed by the Monday in-window
-/// re-probe (KTD-2); offline only the non-zero property is asserted
-/// (`t8412_probe_is_paced`).
+/// *cumulative* budget, NOT a pure rate (see the `igw00201-budget-characterization`
+/// learning), so t8412's higher call count trips it where the lower-count sibling
+/// market-data legs (t1101 / t1102, `Duration::ZERO`) do not — and, because the
+/// budget is cumulative, no per-dispatch pace can *guarantee* it stays cool. 250 ms
+/// (well under the 10/s bucket rate, ~3 s total, and below the 1500 ms account-lane
+/// pace) is therefore a pragmatic STARTING pace that spaces dispatches to let the
+/// budget refill between calls; its sufficiency against a warm budget is confirmed
+/// by the Monday in-window re-probe (KTD-2 / risk R-2 — the operator can bump this
+/// single named const in-window). Offline only the non-zero property is asserted
+/// (`t8412_probe_is_paced`); a residual throttle would still read as `Clean`, which
+/// is why the true anti-throttle proof is the live re-probe, not this const.
 const T8412_PROBE_PACE: Duration = Duration::from_millis(250);
 
 #[tokio::test]
