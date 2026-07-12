@@ -437,6 +437,71 @@ fn atr_stop_mode_fails_closed_without_atr() {
     assert!(st.on_bar(t(10, 0), 70_000, 69_000, 69_500, 0.0, &p).is_empty());
 }
 
+/// F1 flip-precondition: a non-positive prior ATR (`Some(0.0)` — flat / halted
+/// priors dedup to zero range) is treated as unavailable in ATR stop mode, failing
+/// closed at range fix rather than passing the gate and collapsing the stop onto
+/// the entry (which would fabricate a same-bar full-range loss).
+#[test]
+fn atr_stop_mode_treats_zero_atr_as_unavailable() {
+    let mut p = OrbParams::default();
+    p.stop_mode = 2.0; // ATR
+    let mut st = OrbState::with_priors(Some(0.0), None); // flat priors → ATR 0.0
+    set_range(&mut st, &p, 61_500, 60_000);
+    let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
+    assert_eq!(
+        acts,
+        vec![OrbAction::SessionReject { filter: "atr_unavailable", values: vec![("atr_window", 14.0)] }]
+    );
+    assert_eq!(st.phase(), Phase::Done);
+}
+
+/// F1 flip-precondition: the OR-width gate shares the ATR-availability arm, so a
+/// non-positive ATR (`Some(0.0)`) also fails it closed with `atr_unavailable` — a
+/// missing input never passes a gate (KTD7).
+#[test]
+fn or_width_gate_treats_zero_atr_as_unavailable() {
+    let mut p = OrbParams::default();
+    p.or_width_max_atr = 5.0; // gate on
+    let mut st = OrbState::with_priors(Some(0.0), None); // flat priors → ATR 0.0
+    set_range(&mut st, &p, 61_500, 60_000);
+    let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
+    assert_eq!(
+        acts,
+        vec![OrbAction::SessionReject { filter: "atr_unavailable", values: vec![("atr_window", 14.0)] }]
+    );
+    assert_eq!(st.phase(), Phase::Done);
+}
+
+/// F1 flip-precondition: a tiny-but-positive ATR whose `stop_atr_mult · ATR`
+/// rounds to 0 has its stop distance floored at 1, so the stop sits one tick below
+/// entry (trade-R = 1) instead of collapsing onto it. Without the floor the stop
+/// would equal the entry (`dist = 0`), zeroing trade-R (no target) and forcing a
+/// guaranteed same-bar stop-out at the bar low. Verified via a flat entry bar (the
+/// only wick-mode bar a one-tick stop survives): the position enters clean and a
+/// later bar reaches the now-defined one-tick target.
+#[test]
+fn atr_stop_distance_floored_at_one_never_collapses_onto_entry() {
+    let mut p = OrbParams::default();
+    p.stop_mode = 2.0; // ATR
+    p.stop_atr_mult = 2.0;
+    // ATR 0.1 → 2 × 0.1 = 0.2 → round = 0 → floored to 1 (dist = 1 tick).
+    let mut st = OrbState::with_priors(Some(0.1), None);
+    set_range(&mut st, &p, 61_500, 61_000);
+    // A flat entry bar (high = low = close = 62_000) breaks the range high. Stop =
+    // max(62_000 − 1, 61_000) = 61_999; the entry bar low 62_000 > 61_999 → no
+    // phantom same-bar stop. Without the floor: stop = 62_000 = entry → same-bar stop.
+    assert_eq!(
+        st.on_bar(t(9, 20), 62_000, 62_000, 62_000, 0.0, &p),
+        vec![OrbAction::Enter { limit_price: 62_000 }]
+    );
+    assert_eq!(st.phase(), Phase::Long, "floored stop leaves the entry open");
+    // trade-R = 1 → target = 62_000 + round(1.0 × 1) = 62_001, now reachable (a
+    // collapsed stop would give r_denom 0 and no target at all). The next bar's low
+    // (62_000) stays above the 61_999 stop, so the target — not a stop — fires.
+    let acts = st.on_bar(t(9, 30), 62_500, 62_000, 62_400, 0.0, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 62_001, reason: ExitReason::Target }]);
+}
+
 /// AE4: close-confirmed entry — a wick above the range high whose CLOSE is at or
 /// inside it does NOT enter (stays Armed); a later bar closing strictly above does,
 /// at that close, with the high-water seeded at the close (the wick not folded).
@@ -460,20 +525,69 @@ fn close_confirm_entry_waits_for_close_above_range() {
     assert_eq!(st.mfe_r(), 0.0, "wick not folded → no excursion above the close entry");
 }
 
-/// KTD6: a close-confirm bar that both confirms the break and breaches the stop
-/// resolves Stop-first in the same bar.
+/// F2 flip-precondition: a close-confirm bar whose low touches the stop does NOT
+/// book a same-bar stop. The fill is anchored at the bar close (the bar's last
+/// event), so the stop-touching low printed BEFORE the position existed — it is
+/// provably pre-fill. This deliberately deviates from KTD6's wick-entry
+/// "same-bar stop-first wins": the low is only foldable in wick mode, where the
+/// fill sits mid-bar. The stop still binds from the next bar onward.
 #[test]
-fn close_confirm_same_bar_stop_first_wins() {
+fn close_confirm_skips_same_bar_pre_fill_stop() {
     let mut p = OrbParams::default();
     p.entry_confirm = 1.0;
     let mut st = OrbState::new();
     set_range(&mut st, &p, 61_500, 60_000);
-    // Close 61_800 > 61_500 confirms entry; low 59_900 ≤ 60_000 breaches the stop.
+    // Close 61_800 > 61_500 confirms entry; low 59_900 ≤ 60_000 would breach the
+    // stop, but that low is pre-fill in close-confirm mode → no same-bar stop.
+    let acts = st.on_bar(t(9, 20), 62_000, 59_900, 61_800, 0.0, &p);
+    assert_eq!(acts, vec![OrbAction::Enter { limit_price: 61_800 }]);
+    assert_eq!(st.phase(), Phase::Long, "position stays open — the low was pre-fill");
+    // From the NEXT bar the stop binds normally: a low ≤ the range-low stop exits.
+    let acts = st.on_bar(t(9, 30), 61_000, 59_800, 60_500, 0.0, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 59_800, reason: ExitReason::Stop }]);
+    assert_eq!(st.phase(), Phase::Done);
+}
+
+/// F2 value path: a close-confirm entry bar whose low breaches the stop is NOT
+/// stopped same-bar (the low is pre-fill), and the position is then free to run to
+/// the TARGET on a later bar — the winner that wick mode (or the old close-confirm
+/// stop-first) would have booked as a loss. This is the mechanism behind the flip's
+/// expectancy lift: F2 converts phantom same-bar stop-outs into surviving trades.
+#[test]
+fn close_confirm_carried_entry_can_reach_target() {
+    let mut p = OrbParams::default();
+    p.entry_confirm = 1.0; // close-confirmed
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000);
+    // Confirm entry at close 61_800; low 59_900 ≤ range-low stop 60_000 is pre-fill
+    // → skipped. Old behavior (wick / stop-first) would exit Stop at 59_900 here.
+    assert_eq!(
+        st.on_bar(t(9, 20), 62_000, 59_900, 61_800, 0.0, &p),
+        vec![OrbAction::Enter { limit_price: 61_800 }]
+    );
+    assert_eq!(st.phase(), Phase::Long);
+    // Range-low stop mode → r_denom = range-R = 1_500; target = 61_800 + 1_500 =
+    // 63_300. A later bar rises to the target (low stays above the 60_000 stop) →
+    // the carried-through trade banks a WIN, not the phantom same-bar loss.
+    let acts = st.on_bar(t(9, 30), 63_400, 61_000, 63_200, 0.0, &p);
+    assert_eq!(acts, vec![OrbAction::Exit { limit_price: 63_300, reason: ExitReason::Target }]);
+    assert_eq!(st.phase(), Phase::Done);
+}
+
+/// Wick-touch entry is unchanged by the F2 close-confirm carve-out: a wick-mode
+/// bar that both breaks the range high and breaches the stop still resolves
+/// Stop-first same-bar (the fill sits mid-bar, so a lower tick can follow it).
+#[test]
+fn wick_entry_still_stops_first_same_bar() {
+    let p = OrbParams::default(); // entry_confirm 0.0 → wick-touch
+    let mut st = OrbState::new();
+    set_range(&mut st, &p, 61_500, 60_000);
+    // High 62_000 breaks the range; low 59_900 ≤ 60_000 breaches the stop same bar.
     let acts = st.on_bar(t(9, 20), 62_000, 59_900, 61_800, 0.0, &p);
     assert_eq!(
         acts,
         vec![
-            OrbAction::Enter { limit_price: 61_800 },
+            OrbAction::Enter { limit_price: 62_000 },
             OrbAction::Exit { limit_price: 59_900, reason: ExitReason::Stop },
         ]
     );
