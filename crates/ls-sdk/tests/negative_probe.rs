@@ -2148,6 +2148,7 @@ fn read_throttle_inconclusive_reads_held_not_clean() {
     // fired against a PASSING control must NOT read a false `Clean`.
     let t1101 = ls_core::schema_for("t1101").expect("t1101 schema"); // unmarked → no tolerance noise
     let t0425 = ls_core::schema_for("t0425").expect("t0425 schema");
+    let t8412 = ls_core::schema_for("t8412").expect("t8412 schema"); // carries the marked cross_field
 
     // The motivating §27 reason-A case: an IGW00201 throttle on a passing control was
     // false-`Clean` before U1/U2; it now reads `Held`, rendered `Held-throttle`.
@@ -2177,12 +2178,50 @@ fn read_throttle_inconclusive_reads_held_not_clean() {
         "Clean",
         "§30 t0425 sortgb/required → IGW40013 → Clean anchor preserved"
     );
+    // t1101's certified CLEAN chain rejects `shcode/required` with the BUSINESS code
+    // 00009 (error-coverage/t1101.yaml, attended 2026-07-06), not an IGW code — the
+    // merits allowlist must carry it or this recommended TR regresses Clean → Held.
+    assert_eq!(
+        read_variant_verdict(200, "00009"),
+        VariantVerdict::Rejected,
+        "00009 is a business merits reject regardless of HTTP status"
+    );
+    assert_eq!(
+        read_reported_label(t1101, "shcode", "required", true, 200, "00009"),
+        "Clean",
+        "t1101 shcode/required → 00009 → Clean anchor preserved"
+    );
 
     // An accepted invalid variant (2xx success) is still a Divergent — unchanged.
     assert_eq!(
         read_reported_label(t1101, "shcode", "required", true, 200, "00000"),
         "Divergent",
         "an accepted invalid variant is a divergence"
+    );
+
+    // Accepted requires 2xx AND is_success: a control-success code (00000) arriving
+    // at a NON-2xx status is NOT an acceptance — it is inconclusive (the gateway did
+    // not deliver a 2xx), so it reads Held, never Divergent. Pins the http half of
+    // the Accepted gate so dropping it would fail here.
+    assert_eq!(
+        read_variant_verdict(500, "00000"),
+        VariantVerdict::Inconclusive,
+        "a success code at non-2xx is not an acceptance"
+    );
+    assert_eq!(
+        read_reported_label(t1101, "shcode", "required", true, 500, "00000"),
+        "Held",
+        "success code at non-2xx → inconclusive Held, not Divergent"
+    );
+
+    // The gateway_tolerant (KTD4) downgrade must still fire THROUGH the shared
+    // `read_reported_label` (not only via `reported_outcome` in isolation): a marked
+    // cross_field divergence downgrades to expected-tolerant even after the
+    // throttle-label layer. (§30 t8412 sdate/edate.)
+    assert_eq!(
+        read_reported_label(t8412, "sdate/edate", "cross_field", true, 200, "00000"),
+        "expected-tolerant",
+        "a marked-tolerant divergence downgrades through the shared read helper"
     );
 
     // Strict inversion: an UNKNOWN read reject code is now inconclusive (`Held`), not
@@ -2208,6 +2247,7 @@ fn read_throttle_inconclusive_reads_held_not_clean() {
     // The seed predicate itself.
     assert!(is_read_merits_reject("IGW40011"));
     assert!(is_read_merits_reject("IGW40013"));
+    assert!(is_read_merits_reject("00009"));
     assert!(!is_read_merits_reject("IGW00201"));
     assert!(!is_read_merits_reject("00000"));
     assert!(!is_read_merits_reject("40510"));
@@ -2224,6 +2264,13 @@ fn token_throttle_inconclusive_reads_held_not_clean() {
     assert_eq!(
         token_variant_verdict("IGW00201", false),
         VariantVerdict::Inconclusive
+    );
+    // Noneval is checked BEFORE the ok arm: a catalogued throttle stays Inconclusive
+    // even if the response somehow carried a token (ok=true). Pins that branch order.
+    assert_eq!(
+        token_variant_verdict("IGW00201", true),
+        VariantVerdict::Inconclusive,
+        "noneval short-circuits before the ok→Accepted arm"
     );
     assert_eq!(
         token_reported_label(true, "IGW00201", false),

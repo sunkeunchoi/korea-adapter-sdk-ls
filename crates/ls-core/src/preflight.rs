@@ -551,6 +551,14 @@ pub fn is_noneval_code(rsp_cd: &str) -> bool {
 /// - `IGW40013` — the t0425 `sortgb/required → IGW40013 → Clean` gateway-enforced
 ///   negative anchor (ledger §30, lines 1699/1996). It **must** stay in this set
 ///   or that certified anchor regresses `Clean → Held`.
+/// - `00009` — a **business** merits-reject ("조회할 자료 없음" / invalid query key).
+///   The t1101 live differential probe (`metadata/error-coverage/t1101.yaml`,
+///   attended 2026-07-06) recorded `shcode/required → rsp_cd=00009` as a distinct
+///   rejection in its certified CLEAN chain; a *recommended* TR. It **must** be in
+///   this set or t1101's `shcode/required` anchor regresses `Clean → Held`. Unlike
+///   the two IGW codes, `00009` is an exchange **business** reject, not a gateway
+///   ingress code — the gateway routed the request and the exchange refused a blank
+///   `shcode` on merits, which is still a merits evaluation for probe purposes.
 ///
 /// Note the deliberate split from [`crate::error_catalog`], whose catalog groups
 /// `IGW40013` with the hard-gateway `IGW50008` as one category: on the *read*
@@ -559,7 +567,9 @@ pub fn is_noneval_code(rsp_cd: &str) -> bool {
 /// seed by reading it as a hard-gateway code. Add a sibling only with per-code
 /// evidence that it, too, is a genuine read merits reject.
 pub fn is_read_merits_reject(rsp_cd: &str) -> bool {
-    crate::error_catalog::is_ingress_validation_reject(rsp_cd) || rsp_cd == "IGW40013"
+    crate::error_catalog::is_ingress_validation_reject(rsp_cd)
+        || rsp_cd == "IGW40013"
+        || rsp_cd == "00009"
 }
 
 fn registry() -> &'static BTreeMap<String, ConstraintSchema> {
@@ -1105,13 +1115,16 @@ cross_field:
     }
 
     #[test]
-    fn is_read_merits_reject_is_igw40011_and_igw40013() {
-        // KTD3: the read merits-reject allowlist is exactly {IGW40011, IGW40013}.
-        // IGW40013 MUST be present (the t0425 sortgb Clean anchor, §30). A throttle,
-        // a success code, the hard-gateway IGW50008, and unknown codes are NOT
-        // merits rejects — they surface Inconclusive (Held), the fail-safe direction.
+    fn is_read_merits_reject_is_igw40011_igw40013_and_00009() {
+        // KTD3: the read merits-reject allowlist is exactly {IGW40011, IGW40013,
+        // 00009}. IGW40013 MUST be present (the t0425 sortgb Clean anchor, §30) and
+        // 00009 MUST be present (the t1101 shcode/required Clean anchor,
+        // error-coverage/t1101.yaml). A throttle, a success code, the hard-gateway
+        // IGW50008, and unknown codes are NOT merits rejects — they surface
+        // Inconclusive (Held), the fail-safe direction.
         assert!(is_read_merits_reject("IGW40011"));
         assert!(is_read_merits_reject("IGW40013"));
+        assert!(is_read_merits_reject("00009"));
         for code in ["", "00000", "00136", "IGW00201", "IGW40014", "IGW50008", "40510"] {
             assert!(
                 !is_read_merits_reject(code),
