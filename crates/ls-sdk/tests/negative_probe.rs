@@ -270,6 +270,44 @@ fn read_reported_label(
     })
 }
 
+/// Derive the TOKEN-leg [`VariantVerdict`] from a token response (KTD2 token arm /
+/// KTD5 shared derivation). The token endpoint fails *structurally differently*
+/// from the InBlock reads (`auth.rs`): a genuine OAuth refusal is a non-2xx HTTP
+/// status or a 2xx carrying a non-success `{code,message}` envelope — both already
+/// collapsed into `ok` by `token_fire` (`ok = 2xx && has access_token`). So the
+/// token guard is a **noneval carve-out**, not a merits allowlist:
+///
+/// - `is_noneval_code(rsp_cd)` (`{IGW00201}`) → `Inconclusive` → `Held` (a throttle
+///   the gateway never evaluated).
+/// - `ok` → `Accepted` (the gateway accepted an invalid variant — a divergence).
+/// - otherwise → `Rejected` (a genuine OAuth refusal — `Clean`).
+///
+/// Weaker by design than the read allowlist (it catches only catalogued noneval
+/// codes) because token's OAuth-refusal vocabulary cannot be allowlisted and is
+/// not the throttle-masking motivating case — recorded, accepted (KTD2). Transport
+/// failure (`None`) is handled at the call site as an `Inconclusive`.
+fn token_variant_verdict(rsp_cd: &str, ok: bool) -> VariantVerdict {
+    if is_noneval_code(rsp_cd) {
+        VariantVerdict::Inconclusive
+    } else if ok {
+        VariantVerdict::Accepted
+    } else {
+        VariantVerdict::Rejected
+    }
+}
+
+/// The full TOKEN-leg render label for one variant result (KTD5): derive the
+/// verdict, classify it against the control, and render. A catalogued noneval code
+/// on a passing control renders `Held-throttle` (via the shared `throttle_label`);
+/// every other case renders the verbatim outcome label (token carries no schema,
+/// so there is no `gateway_tolerant` downgrade). Both the live loop and the
+/// offline proxy call THIS function so the branch ordering cannot drift.
+fn token_reported_label(control_ok: bool, rsp_cd: &str, ok: bool) -> &'static str {
+    let verdict = token_variant_verdict(rsp_cd, ok);
+    throttle_label(control_ok, rsp_cd)
+        .unwrap_or_else(|| outcome_label(classify_probe(control_ok, verdict)))
+}
+
 /// Inter-dispatch pace for the t8412 live differential probe (§27 reason A / #117
 /// item 3). t8412 fires ~12 calls (control + 11 variants); with no pace they
 /// collided in the market-data bucket and every variant read a self-inflicted
@@ -676,15 +714,13 @@ async fn live_smoke_token_negative() {
     for (field, class, pairs, as_json) in &variants {
         match token_fire(&client, &url, pairs, *as_json).await {
             Some((http, code, ok)) => {
-                let verdict = if ok {
-                    VariantVerdict::Accepted
-                } else {
-                    VariantVerdict::Rejected
-                };
-                let outcome = classify_probe(control_ok, verdict);
+                // U3/KTD2/KTD5: token noneval carve-out via the shared
+                // `token_reported_label` — an IGW00201 throttle renders Held-throttle;
+                // a genuine OAuth refusal (non-2xx / non-success envelope) stays Clean.
+                let label = token_reported_label(control_ok, &code, ok);
                 println!(
                     "NEG-PROBE target=token-negative variant field={field} class={class} \
-                     result=[http={http} rsp_cd={code}] outcome={outcome:?}"
+                     result=[http={http} rsp_cd={code}] outcome={label}"
                 );
             }
             None => println!(
@@ -2175,6 +2211,53 @@ fn read_throttle_inconclusive_reads_held_not_clean() {
     assert!(!is_read_merits_reject("IGW00201"));
     assert!(!is_read_merits_reject("00000"));
     assert!(!is_read_merits_reject("40510"));
+}
+
+#[test]
+fn token_throttle_inconclusive_reads_held_not_clean() {
+    // U3/KTD2: the token noneval carve-out, twinned offline through the SAME
+    // `token_reported_label` the token loop calls (KTD5). Token's genuine-refusal
+    // signal (non-2xx / non-success envelope) is collapsed into `ok` by
+    // `token_fire`; the only diversion is a catalogued noneval code.
+
+    // A throttle on a passing control is inconclusive → Held-throttle (was Clean).
+    assert_eq!(
+        token_variant_verdict("IGW00201", false),
+        VariantVerdict::Inconclusive
+    );
+    assert_eq!(
+        token_reported_label(true, "IGW00201", false),
+        "Held-throttle",
+        "an IGW00201 token throttle is now visible, not a false-Clean"
+    );
+
+    // A genuine OAuth refusal (ok=false, non-noneval code — e.g. the IGW00121 /
+    // IGW00002 auth-reject candidates, OQ1) stays Clean — the certified token
+    // disposition does not regress.
+    assert_eq!(
+        token_variant_verdict("IGW00121", false),
+        VariantVerdict::Rejected
+    );
+    assert_eq!(
+        token_reported_label(true, "IGW00121", false),
+        "Clean",
+        "a genuine OAuth refusal is unchanged Clean"
+    );
+
+    // An invalid token variant that was ACCEPTED (ok=true) is a divergence — unchanged.
+    assert_eq!(token_variant_verdict("00000", true), VariantVerdict::Accepted);
+    assert_eq!(
+        token_reported_label(true, "00000", true),
+        "Divergent",
+        "an accepted invalid token variant is a divergence"
+    );
+
+    // A control-fail Held is a plain Held, never Held-throttle (throttle detail moot).
+    assert_eq!(
+        token_reported_label(false, "IGW00201", false),
+        "Held",
+        "control-fail dominates — a plain Held, not Held-throttle"
+    );
 }
 
 #[test]
