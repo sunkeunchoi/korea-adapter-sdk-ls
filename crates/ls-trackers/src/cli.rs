@@ -2373,17 +2373,18 @@ mod tests {
     fn freshness_check_over_recommended_set_counts_and_finds_none_under_backstop() {
         // The re-cert wave (plan 2026-07-06-001 U4) restored the Recommended set from
         // its post-demotion empty state: token/t1101/S3_ promoted on clean live
-        // differential chains dated 2026-07-06. Evaluated at 2026-10-01 that evidence
-        // is 87 days old — under the 90-day age backstop — so the run counts the three
-        // Recommended TRs but finds nothing stale and exits zero; the cli's
-        // validate→evaluate→exit wiring is exercised over a NON-empty set. The
+        // differential chains dated 2026-07-06; re-cert wave 3 (ledger §30) added
+        // CSPAQ12200 dated 2026-07-13. Evaluated at 2026-10-01 all four are under the
+        // 90-day age backstop (t1101/token/S3_ 87 days, CSPAQ12200 80 days) — so the run
+        // counts the four Recommended TRs but finds nothing stale and exits zero; the
+        // cli's validate→evaluate→exit wiring is exercised over a NON-empty set. The
         // stale→findings machinery is covered by `freshness::tests` over a synthetic
         // recommended fixture.
         let root = scratch("freshness-recommended-set");
         let paths = real_metadata_paths(&root);
         let result = run_freshness_check(&paths, chrono::NaiveDate::from_ymd_opt(2026, 10, 1).unwrap());
         let report = result.as_ref().unwrap();
-        assert_eq!(report.recommended_count, 3);
+        assert_eq!(report.recommended_count, 4);
         assert!(report.findings.is_empty());
         // Advisory — stale evidence never gates (nothing is past the backstop here).
         assert_eq!(freshness_exit_for(&result), Exit::Ok);

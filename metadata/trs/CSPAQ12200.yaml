@@ -18,7 +18,18 @@ dependencies:
 support:
   tracked: true
   implemented: true
-  recommended: false
+  recommended: true
 maintenance:
   source_spec_hash: d4e5f6a1b2c3
-  last_reviewed: 2026-06-22
+  last_reviewed: 2026-07-13
+recommendation:
+  behavior: Paper read-only 예수금/주문가능금액/총평가 balance inquiry for the token-bound account (single BalCreTp=1 round-trip)
+  evidence_ref: evidence/CSPAQ12200.yaml
+  excludes:
+    - Order- or position-mutating account state (read-only inquiry only)
+    - Production-credential account inquiries (evidence is paper only)
+    - Balance-value correctness beyond a successful inquiry round-trip
+    - Gateway-side rejection of an omitted BalCreTp — preflight enforces this locally, the gateway tolerates its absence (gateway_tolerant; the differential probe reads the accepted removal as expected-tolerant)
+    - Stronger freshness automation than the stated policy (no enforcement in code today)
+constraints_ref: constraints/CSPAQ12200.yaml
+error_coverage_ref: error-coverage/CSPAQ12200.yaml

@@ -40,7 +40,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `COSAT00311` | 미국시장정정주문 (overseas US-stock order modify) | `orders` | tracked | [COSAT00311](./COSAT00311.md) |
 | `COSAT00400` | 해외주식 예약주문 등록 및 취소 (overseas US-stock reserved order reg/cancel) | `orders` | tracked | [COSAT00400](./COSAT00400.md) |
 | `COSMT00300` | 해외증권 매도상환주문(미국) (overseas US-stock sell/redemption) | `orders` | tracked | [COSMT00300](./COSMT00300.md) |
-| `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | implemented | [CSPAQ12200](./CSPAQ12200.md) |
+| `CSPAQ12200` | 현물계좌 예수금/주문가능금액/총평가 조회 | `account` | recommended | [CSPAQ12200](./CSPAQ12200.md) |
 | `CSPAQ12300` | BEP단가조회 | `account` | implemented | [CSPAQ12300](./CSPAQ12300.md) |
 | `CSPAQ22200` | 현물계좌예수금 주문가능금액 총평가2 | `account` | implemented | [CSPAQ22200](./CSPAQ22200.md) |
 | `CSPAT00601` | 현물 정규주문 (cash equity order submission) | `orders` | implemented | [CSPAT00601](./CSPAT00601.md) |
