@@ -11,6 +11,7 @@ fields:
   - name: BalCreTp
     type: string          # baseline: String, required (balance-creation distinction).
     required: true
+    gateway_tolerant: [required]   # gateway accepts removal → merits 00136 (§30 live re-probe); preflight still enforces (certified new() requires the arg).
     enum: { applicable: false }
     range: { applicable: false }
     format: { applicable: false }

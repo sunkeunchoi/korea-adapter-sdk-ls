@@ -46,6 +46,7 @@ fields:
   - name: nday
     type: string          # baseline: String, required (0=intraday, 1=daily)
     required: true
+    gateway_tolerant: [required]   # gateway accepts removal (§30 live re-probe, unmasked once paced); preflight still enforces (certified struct sends it).
     enum: { applicable: true, values: ["0", "1"], confirmed: false }
     range: { applicable: false }
     format: { applicable: false }

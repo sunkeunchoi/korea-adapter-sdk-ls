@@ -17,8 +17,10 @@ fields:
     range: { applicable: false }
     format: { applicable: false }
   - name: IsuNo
-    type: string          # baseline: String, required (종목번호).
-    required: true
+    type: string          # baseline: String, required on the wire — but a CANCEL is
+    required: false        # keyed by OrgOrdNo; §30 live re-probe accepted removal
+                          # (00463 clean cancel ack) → genuine over-claim, corrected
+                          # to caller-optional (permissive direction; struct still sends it).
     enum: { applicable: false }
     range: { applicable: false }
     format: { applicable: true, kind: symbol, confirmed: false }

@@ -1917,3 +1917,89 @@ merits** — it is not a promotion, and the WAVE BLOCKED is downstream of it, no
 IGW40011 halt. That divergence is a **separate follow-up** (raw-probe A/B on `CSPAT00601 BnsTpCode`;
 relax `CSPAT00701`/`00801` `IsuNo` to `required: false`; re-probe), and promotion via the
 `promote-tr` recipe is that follow-up's tail — not this entry's.
+
+## 30. Re-cert wave 3 — attended live re-probe of the §27/§29 follow-ups (2026-07-13)
+
+Issue #117 / ledger §27 follow-ups, run **attended, open-KRX (Mon 2026-07-13, regular window)**,
+with `LS_TRADING_ENV=paper` sourced from `.env.domestic`. The offline prep (plan `2026-07-12-003`,
+PR #130: t8412 pacing via the shared helper; §27 bookkeeping) landed first; this section is the
+live-result disposition. **The read differentials were run by the agent (no order autonomy guard);
+the order legs were run by the attending operator at a TTY** (`autonomy_guard` refuses non-TTY,
+`negative_probe.rs:705`).
+
+**Outcome: 3 CERTIFY CLEAN (t0425, CSPAQ12200, CSPAT00801), 3 stay HELD (t8412, CSPAT00601,
+CSPAT00701) — each HELD for a real, newly-characterized finding, not a session artifact.**
+
+**Item 1 — t8412 pacing VALIDATED; the paced differential unmasked two hidden divergences.**
+The shared-helper pacing (PR #130) works: at the committed `250 ms` two variants still tripped
+`IGW00201`, and at `500 ms` two *different* variants tripped — the throttle **moved, not cleared**,
+confirming the *cumulative warm-budget* model (`igw00201-budget-characterization`; no per-dispatch
+pace guarantees cool). An in-window bump to **`1000 ms` (10× the market-data bucket period, ~12 s
+total) cleared the throttle entirely** — the authoritative zero-throttle read. `T8412_PROBE_PACE` is
+now `1000 ms`. That clean read **unmasked two genuine divergences §27's throttle-mask had hidden**:
+`nday/required` → `00000` accepted, and `sdate/edate` (date_order) cross_field → `00000` accepted.
+`nday/required` is dispositioned `gateway_tolerant:[required]` (operator decision; a `0/1` mode
+selector, sibling of `chegb`/`medosu`; the certified `chart.rs` struct sends it). The
+`sdate/edate` cross_field divergence has **no downgrade path** — `is_gateway_tolerant`
+(`negative_probe.rs:142`) only matches per-field `(field, class)` pairs, and the cross_field variant
+`field="sdate/edate"` matches no schema field. **t8412 stays HELD**; the cross_field-tolerance
+mechanism is a follow-up. The pacing fix itself stands on its merits.
+
+**Item 3 — required-ness decisions (read legs), re-probed CLEAN.** Both divergences were the gateway
+defaulting a mode/filter field the schema marks required. Grounded in the certified request structs
+(the struct wins on disagreement): `t0425` `for_symbol` sends `medosu:"0"` (sibling of `chegb`, which
+is already `gateway_tolerant:[required]`); `CSPAQ12200` `new(balcretp)` requires `BalCreTp` as a
+constructor arg. Both marked **`gateway_tolerant:[required]`** (preflight still enforces as a caller
+contract; the probe reads accepted removal as `expected-tolerant`) — precedent-consistent with
+`chegb`/`exchgubun`, **not** `required:false`. Live re-probe after the edit:
+- **`t0425`** — `medosu/required` → `00000` **`expected-tolerant`**; `chegb`/`sortgb`/enum all
+  Clean/tolerant → **full differential CLEAN**.
+- **`CSPAQ12200`** — `BalCreTp/required` → `00136` **`expected-tolerant`** → **CLEAN**.
+
+**Item 2 — order quartet re-probe (operator-run, attended TTY).** The `cts_ordno` single-page guard
+(PR #106) is **CONFIRMED live**: every leg placed and tore down its control with no `tr_cont=0`
+pagination HELD. The §29 `IGW40011`-as-placed-nothing fix is **re-confirmed** (`OrdQty`/`OrdPrc`
+type+required → `IGW40011` Clean; differentials complete instead of halting). But two legs stay HELD
+on findings the earlier halts had hidden:
+- **`CSPAT00801`** (cancel) — `IsuNo/required` corrected to `required:false` (§29 over-claim: a cancel
+  is keyed by `OrgOrdNo`; live removal → `00463` clean cancel ack). Re-probe: the variant no longer
+  fires; all `OrgOrdNo`/`OrdQty` variants Clean; control `canceled+flat=confirmed`, owned-only
+  teardown → **CLEAN**.
+- **`CSPAT00701`** (modify) — `IsuNo/required` likewise corrected to `required:false` (live removal →
+  `00462` clean modify ack). But removing the `IsuNo` halt let the differential run **further than it
+  ever had**, and it hit a **new wall**: `OrdprcPtnCode/required` → `http=500 rsp_cd=IGW00000` →
+  `Held-may-rest halt=true` (fallback swept `ordno=18372`, no stranded order). `IGW00000` is
+  **undocumented** — absent from `metadata/error-catalog.yaml` and the entire codebase; surfaced live
+  for the first time here. Not the `IGW40011` ingress-reject, so `is_ingress_validation_reject`
+  correctly does **not** exempt it → conservative may-rest halt. **CSPAT00701 stays HELD** pending an
+  `IGW00000` characterization (placed-nothing vs may-rest; raw-probe A/B) and, if placed-nothing, a
+  narrowed `is_ingress_validation_reject` extension.
+- **`CSPAT00601`** (submit) — `IsuNo/required` → `01407` **rejected** (the gateway *does* enforce the
+  symbol for a submit — correctly `required:true`, unchanged). But `BnsTpCode/required` (buy/sell
+  direction) → `00000` accepted with the ordno unsurfaced, and the owned-set-incomplete fallback swept
+  a resting row (`ordno=17093`) — i.e. **removing the direction did not cleanly reject; an order
+  rested**. `BnsTpCode` **stays `required:true`, unmarked** — a direction field whose removal silently
+  places a direction-defaulted order must **never** be blessed `gateway_tolerant`. **CSPAT00601 stays
+  HELD**; a raw-probe A/B (definitive placement + side) remains the §29 follow-up, but the safe
+  disposition holds regardless.
+
+**Schema + code edits landed (offline, this wave).** `metadata/constraints/`: `t0425.medosu`,
+`CSPAQ12200.BalCreTp`, `t8412.nday` → `gateway_tolerant:[required]`; `CSPAT00701.IsuNo`,
+`CSPAT00801.IsuNo` → `required:false` (permissive direction; the certified structs still send them).
+`negative_probe.rs`: `T8412_PROBE_PACE` `250 → 1000 ms` (in-window finding); the
+`gateway_tolerant_downgrade_fires_only_on_marked_class` pin updated for the three new tolerant pairs
+(with `t0425.sortgb` as the still-unmarked, gateway-enforced negative anchor). Offline gate green
+(`ls-core` 153, `negative_probe` 22, `order_smoke` 49).
+
+**Count tally.** **0 support-tier flips in this entry** — like §27/§29, the ledger records the live
+re-cert; the tier flips are the `promote-tr` tail. `recommended` stays 3 (`t1101`/`token`/`S3_`),
+count sites unchanged.
+
+**Follow-up (staged).** (1) Promote the three CLEAN certs — `t0425`, `CSPAQ12200`, `CSPAT00801` —
+via `promote-tr` (t0425/CSPAT00801 promotion smokes are TTY-gated order smokes, operator-run;
+CSPAQ12200's `live-smoke-account` is non-TTY); the long-open §27 follow-up (1) `t1102` promotion
+folds in. (2) Build the cross_field-tolerance mechanism so `t8412`'s `sdate/edate` divergence can
+downgrade, then re-probe → promote. (3) Characterize `IGW00000` (raw-probe A/B on
+`CSPAT00701 OrdprcPtnCode`); if placed-nothing, narrow-extend `is_ingress_validation_reject` → the
+§29 seam. (4) Raw-probe A/B on `CSPAT00601 BnsTpCode` (safety-relevant; disposition already
+HELD/`required:true` regardless).

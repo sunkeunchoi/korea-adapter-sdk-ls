@@ -178,15 +178,17 @@ fn reported_outcome(
 /// *cumulative* budget, NOT a pure rate (see the `igw00201-budget-characterization`
 /// learning), so t8412's higher call count trips it where the lower-count sibling
 /// market-data legs (t1101 / t1102, `Duration::ZERO`) do not — and, because the
-/// budget is cumulative, no per-dispatch pace can *guarantee* it stays cool. 250 ms
-/// (well under the 10/s bucket rate, ~3 s total, and below the 1500 ms account-lane
-/// pace) is therefore a pragmatic STARTING pace that spaces dispatches to let the
-/// budget refill between calls; its sufficiency against a warm budget is confirmed
-/// by the Monday in-window re-probe (KTD-2 / risk R-2 — the operator can bump this
-/// single named const in-window). Offline only the non-zero property is asserted
+/// budget is cumulative, no per-dispatch pace can *guarantee* it stays cool. The
+/// 2026-07-13 in-window re-cert (ledger §30) confirmed this empirically: at 250 ms two
+/// variants tripped `IGW00201`, and at 500 ms two *different* variants tripped — the
+/// throttle MOVED, not cleared. Only **1000 ms** (10× the 10/s bucket period, ~12 s
+/// total, still well below the 1500 ms account-lane pace) produced a zero-throttle
+/// authoritative read. Offline only the non-zero property is asserted
 /// (`t8412_probe_is_paced`); a residual throttle would still read as `Clean`, which
-/// is why the true anti-throttle proof is the live re-probe, not this const.
-const T8412_PROBE_PACE: Duration = Duration::from_millis(250);
+/// is why the true anti-throttle proof is the live re-probe, not this const (the
+/// operator can still bump this single named const further in-window if a warm
+/// budget ever needs it — KTD-2 / risk R-2).
+const T8412_PROBE_PACE: Duration = Duration::from_millis(1000);
 
 #[tokio::test]
 #[ignore = "live probe: needs real LS paper credentials + in-window session; run via `make live-smoke-t8412-negative`"]
@@ -1920,13 +1922,22 @@ fn gateway_tolerant_downgrade_fires_only_on_marked_class() {
     assert!(is_gateway_tolerant(t8412, "edate", "format"));
     // ncnt carries no facet → never downgrades.
     assert!(!is_gateway_tolerant(t8412, "ncnt", "required"));
+    // nday marked [required] (§30 live re-probe unmasked it once paced — the gateway
+    // accepts its removal; preflight still enforces as a caller contract).
+    assert!(is_gateway_tolerant(t8412, "nday", "required"));
     // t1102 shcode + exchgubun required; t0425 chegb required (R10).
     let t1102 = ls_core::schema_for("t1102").expect("t1102 schema");
     assert!(is_gateway_tolerant(t1102, "shcode", "required"));
     assert!(is_gateway_tolerant(t1102, "exchgubun", "required"));
     let t0425 = ls_core::schema_for("t0425").expect("t0425 schema");
     assert!(is_gateway_tolerant(t0425, "chegb", "required"));
-    assert!(!is_gateway_tolerant(t0425, "medosu", "required"), "medosu is not marked");
+    // medosu marked [required] (§30 live re-probe: sibling of chegb, gateway accepts removal).
+    assert!(is_gateway_tolerant(t0425, "medosu", "required"));
+    // sortgb stays unmarked — the gateway genuinely enforces it (IGW40013 on removal).
+    assert!(!is_gateway_tolerant(t0425, "sortgb", "required"), "sortgb is gateway-enforced");
+    // CSPAQ12200 BalCreTp marked [required] (§30 live re-probe: merits 00136 on removal).
+    let cspaq12200 = ls_core::schema_for("CSPAQ12200").expect("CSPAQ12200 schema");
+    assert!(is_gateway_tolerant(cspaq12200, "BalCreTp", "required"));
     // An unmarked TR never downgrades (unchanged behavior for every other TR).
     let t1101 = ls_core::schema_for("t1101").expect("t1101 schema");
     assert!(!is_gateway_tolerant(t1101, "shcode", "required"));
