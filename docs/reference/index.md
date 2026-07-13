@@ -145,7 +145,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t0424` | 주식잔고2 | `account` | implemented, not yet recommended |
 | `t0425` | 주식체결/미체결 (stock filled/unfilled order inquiry) | `paginated` | implemented, not yet recommended |
 | `t1101` | 주식 현재가호가 조회 | `market_session` | recommended |
-| `t1102` | 주식 현재가(시세) 조회 | `market_session` | implemented, not yet recommended |
+| `t1102` | 주식 현재가(시세) 조회 | `market_session` | recommended |
 | `t1104` | 주식현재가시세메모 | `market_session` | implemented, not yet recommended |
 | `t1105` | 주식피봇/디마크조회 | `market_session` | implemented, not yet recommended |
 | `t1301` | 주식시간대별체결조회 | `paginated` | implemented, not yet recommended |

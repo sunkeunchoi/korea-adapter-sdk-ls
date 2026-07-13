@@ -167,7 +167,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t0425` | 주식체결/미체결 (stock filled/unfilled order inquiry) | `paginated` | implemented | [t0425](./t0425.md) |
 | `t0441` | 선물/옵션잔고평가(이동평균) | `account` | tracked | [t0441](./t0441.md) |
 | `t1101` | 주식 현재가호가 조회 | `market_session` | recommended | [t1101](./t1101.md) |
-| `t1102` | 주식 현재가(시세) 조회 | `market_session` | implemented | [t1102](./t1102.md) |
+| `t1102` | 주식 현재가(시세) 조회 | `market_session` | recommended | [t1102](./t1102.md) |
 | `t1104` | 주식현재가시세메모 | `market_session` | implemented | [t1104](./t1104.md) |
 | `t1105` | 주식피봇/디마크조회 | `market_session` | implemented | [t1105](./t1105.md) |
 | `t1109` | 시간외체결량 | `paginated` | tracked | [t1109](./t1109.md) |
