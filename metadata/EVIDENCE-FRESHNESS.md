@@ -113,11 +113,15 @@ freshness evaluator. The advisory spec-doc point (2) holds by construction. Only
   reconciliation read) back to Implemented. The badge now means "this call fails
   gracefully," and each TR re-promotes only after passing the differential-probe
   gate (operator-run across live windows). The re-cert wave (plan 2026-07-06-001 U4,
-  attended open-KRX session 2026-07-06) restored **3 Recommended TRs** — `token`
-  (auth), `t1101` (market_session), and `S3_` (realtime) — spanning 3 owner classes,
-  each on a clean live differential chain (except `S3_`, whose realtime subscribe has
-  no differential and rests on the lifecycle-scoped substitute). `t1102` + `t8412`
-  stayed HELD (Divergent probe: the gateway accepts a removed-required / malformed
-  field), `CSPAQ12200` HELD (its sole variant only throttled), and the order quartet
-  HELD. Per-class tightening (e.g. a shorter window for the `orders` class) stays
-  deferred and becomes actionable as more TRs re-promote.
+  attended open-KRX session 2026-07-06) restored 3 Recommended TRs; re-cert wave 3
+  (ledger §30, attended open-KRX session 2026-07-13) promoted `CSPAQ12200` on a CLEAN
+  Account-bucket-paced differential, bringing the total to **4 Recommended TRs** —
+  `token` (auth), `t1101` (market_session), `S3_` (realtime), and `CSPAQ12200`
+  (account) — spanning 4 owner classes, each on a clean live differential chain
+  (except `S3_`, whose realtime subscribe has no differential and rests on the
+  lifecycle-scoped substitute). `CSPAQ12200`'s sole `BalCreTp/required` variant read
+  `expected-tolerant` under the 1500 ms Account-bucket pace (plan 2026-07-06-002 U6) —
+  previously HELD when it only throttled. `t1102` + `t8412` stayed HELD (Divergent
+  probe: the gateway accepts a removed-required / malformed field) and the order
+  quartet HELD. Per-class tightening (e.g. a shorter window for the `orders` class)
+  stays deferred and becomes actionable as more TRs re-promote.

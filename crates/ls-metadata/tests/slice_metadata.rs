@@ -79,11 +79,13 @@ fn authored_slice_metadata_validates_clean() {
 /// promoted under the old happy-path gate back to Implemented; each re-promotes
 /// only after passing the differential-probe gate (operator-run across live
 /// windows). The re-cert wave (plan 2026-07-06-001 U4, attended open-KRX session
-/// 2026-07-06) re-certified `S3_`, `t1101`, and `token` on clean live chains — the
-/// ONLY three currently allowed to carry the Recommended badge. The remaining seven
-/// stayed HELD (t1102/t8412 Divergent, CSPAQ12200 throttled-only, the order quartet
-/// operator-run in a later leg). This test guards against an accidental
-/// re-promotion of any of those seven that skips the gate.
+/// 2026-07-06) re-certified `S3_`, `t1101`, and `token` on clean live chains;
+/// re-cert wave 3 (ledger §30, attended open-KRX session 2026-07-13) then promoted
+/// `CSPAQ12200` on a CLEAN Account-bucket-paced differential (`BalCreTp/required`
+/// expected-tolerant). These four are the ONLY ones currently allowed to carry the
+/// Recommended badge. The remaining HELD TRs (t1102/t8412 Divergent, the order
+/// quartet operator-run in a later leg) stay Implemented. This test guards against
+/// an accidental re-promotion of any of those that skips the gate.
 #[test]
 fn recommended_set_is_exactly_the_recert_wave_certified_reads() {
     let report = validate_dir(&metadata_root()).expect("slice metadata validates");
@@ -96,7 +98,7 @@ fn recommended_set_is_exactly_the_recert_wave_certified_reads() {
     recommended.sort_unstable();
     assert_eq!(
         recommended,
-        ["S3_", "t1101", "token"],
+        ["CSPAQ12200", "S3_", "t1101", "token"],
         "only the re-cert-wave-certified reads may be Recommended; any other TR must \
          first pass the differential-probe gate"
     );
