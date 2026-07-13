@@ -36,6 +36,7 @@ fields:
   - name: medosu
     type: string          # baseline: String, required (매매구분: "0" all/"1" sell/"2" buy).
     required: true
+    gateway_tolerant: [required]   # gateway accepts removal (§30 live re-probe); preflight still enforces (sibling of chegb, certified struct sends "0").
     enum: { applicable: true, values: ["0", "1", "2"], confirmed: false }
     range: { applicable: false }
     format: { applicable: false }
