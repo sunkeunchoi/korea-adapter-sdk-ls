@@ -481,19 +481,59 @@ pub enum ProbeOutcome {
     Divergent,
 }
 
-/// Classify one differential probe result (R10). `control_succeeded` is whether
-/// the valid control request came back a success; `variant_rejected` is whether
-/// the injected invalid variant was rejected by the gateway. A failed control is
-/// HELD regardless of the variant — the injected violation is not what the
-/// response reflects.
-pub fn classify_probe(control_succeeded: bool, variant_rejected: bool) -> ProbeOutcome {
+/// The gateway's verdict on one injected invalid variant (R10, KTD1). Three-way
+/// because a rejection code is not self-evidently a *merits* rejection: the
+/// gateway may have accepted the variant, rejected it on merits, or never
+/// evaluated it at all (a throttle, a transport failure, or an unknown code). The
+/// last case is inconclusive and must fail safe to `Held`, not be read as a
+/// confirmation — see [`classify_probe`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VariantVerdict {
+    /// The gateway evaluated the variant and ACCEPTED it (a success response) —
+    /// the declared bound diverges from observed behavior (`Divergent`).
+    Accepted,
+    /// The gateway evaluated the variant on merits and REJECTED it — the injected
+    /// violation is what the response reflects, so the declared bound is confirmed
+    /// (`Clean`).
+    Rejected,
+    /// The gateway did NOT evaluate the variant on merits — an `IGW00201` throttle
+    /// (see [`is_noneval_code`]), a transport failure, or an unknown/unclassified
+    /// code. The probe carries no signal about the injected constraint, so it is
+    /// inconclusive (`Held`) and must be re-run, never read as a confirmation.
+    Inconclusive,
+}
+
+/// Classify one differential probe result (R10, KTD1). `control_succeeded` is
+/// whether the valid control request came back a success; `verdict` is the
+/// gateway's three-way verdict on the injected invalid variant. A failed control
+/// is HELD regardless of the variant — the injected violation is not what the
+/// response reflects. On a passing control: `Accepted → Divergent`,
+/// `Rejected → Clean`, `Inconclusive → Held` (a throttle / non-evaluation fails
+/// safe to inconclusive rather than false-`Clean`).
+pub fn classify_probe(control_succeeded: bool, verdict: VariantVerdict) -> ProbeOutcome {
     if !control_succeeded {
-        ProbeOutcome::Held
-    } else if variant_rejected {
-        ProbeOutcome::Clean
-    } else {
-        ProbeOutcome::Divergent
+        return ProbeOutcome::Held;
     }
+    match verdict {
+        VariantVerdict::Accepted => ProbeOutcome::Divergent,
+        VariantVerdict::Rejected => ProbeOutcome::Clean,
+        VariantVerdict::Inconclusive => ProbeOutcome::Held,
+    }
+}
+
+/// `true` if `rsp_cd` is a gateway code that means the request was **never
+/// evaluated on merits** — the gateway refused to route/process it, so it carries
+/// no signal about any injected constraint and a differential probe seeing it is
+/// inconclusive ([`VariantVerdict::Inconclusive`] → `Held`), not a confirmation.
+///
+/// Deliberately narrow: **only `IGW00201`** — a warm-sensitive *cumulative*
+/// throttle (see the `igw00201-budget-characterization` learning). It is NOT a
+/// merits reject (`IGW40011` / `IGW40013`) and NOT a success code. Add a sibling
+/// code here only with per-code evidence that it, too, is a non-evaluation,
+/// mirroring [`crate::error_catalog::is_ingress_validation_reject`]'s
+/// one-code-with-evidence discipline.
+pub fn is_noneval_code(rsp_cd: &str) -> bool {
+    rsp_cd == "IGW00201"
 }
 
 fn registry() -> &'static BTreeMap<String, ConstraintSchema> {
@@ -996,11 +1036,45 @@ cross_field:
 
     #[test]
     fn differential_classifier_distinguishes_held_clean_divergent() {
-        // AE2: control fails → HELD regardless of variant; control ok + variant
-        // rejected → Clean; control ok + variant accepted → Divergent.
-        assert_eq!(classify_probe(false, true), ProbeOutcome::Held);
-        assert_eq!(classify_probe(false, false), ProbeOutcome::Held);
-        assert_eq!(classify_probe(true, true), ProbeOutcome::Clean);
-        assert_eq!(classify_probe(true, false), ProbeOutcome::Divergent);
+        // AE2 / KTD1: control fails → HELD regardless of the variant verdict;
+        // control ok maps Accepted → Divergent, Rejected → Clean, and (the new
+        // fail-safe arm) Inconclusive → Held.
+        assert_eq!(
+            classify_probe(false, VariantVerdict::Rejected),
+            ProbeOutcome::Held
+        );
+        assert_eq!(
+            classify_probe(false, VariantVerdict::Accepted),
+            ProbeOutcome::Held
+        );
+        assert_eq!(
+            classify_probe(false, VariantVerdict::Inconclusive),
+            ProbeOutcome::Held
+        );
+        assert_eq!(
+            classify_probe(true, VariantVerdict::Accepted),
+            ProbeOutcome::Divergent
+        );
+        assert_eq!(
+            classify_probe(true, VariantVerdict::Rejected),
+            ProbeOutcome::Clean
+        );
+        assert_eq!(
+            classify_probe(true, VariantVerdict::Inconclusive),
+            ProbeOutcome::Held
+        );
+    }
+
+    #[test]
+    fn is_noneval_code_is_igw00201_only() {
+        // KTD3: the non-evaluation seed is deliberately one code. A throttle is
+        // inconclusive; success codes and merits rejects are NOT non-evaluations.
+        assert!(is_noneval_code("IGW00201"));
+        for code in ["", "00000", "00136", "IGW40011", "IGW40013", "IGW40014", "IGW50008"] {
+            assert!(
+                !is_noneval_code(code),
+                "`{code}` is not a non-evaluation code"
+            );
+        }
     }
 }

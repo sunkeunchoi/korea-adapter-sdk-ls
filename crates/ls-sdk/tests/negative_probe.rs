@@ -24,7 +24,7 @@ use std::time::Duration;
 
 use ls_core::{
     classify_probe, generate_invalid_variants, ConstraintSchema, CrossFieldRule, InvalidVariant,
-    LsConfig, LsError, LsResult, ProbeOutcome,
+    LsConfig, LsError, LsResult, ProbeOutcome, VariantVerdict,
 };
 use ls_sdk::market_session::T1102Request;
 use ls_sdk::orders::{
@@ -103,10 +103,19 @@ fn negative_probe_offline_twin() {
     let again = generate_invalid_variants(&schema, &seed);
     assert_eq!(variants, again, "variant generation is deterministic");
 
-    // Differential comparator (AE2).
-    assert_eq!(classify_probe(false, true), ProbeOutcome::Held);
-    assert_eq!(classify_probe(true, true), ProbeOutcome::Clean);
-    assert_eq!(classify_probe(true, false), ProbeOutcome::Divergent);
+    // Differential comparator (AE2 / KTD1, 3-way verdict).
+    assert_eq!(
+        classify_probe(false, VariantVerdict::Rejected),
+        ProbeOutcome::Held
+    );
+    assert_eq!(
+        classify_probe(true, VariantVerdict::Rejected),
+        ProbeOutcome::Clean
+    );
+    assert_eq!(
+        classify_probe(true, VariantVerdict::Accepted),
+        ProbeOutcome::Divergent
+    );
 }
 
 #[test]
@@ -375,7 +384,12 @@ async fn run_inblock_negative_probe(
         match fire_inblock(&client, &url, &token, tr_cd, inblock_key, &variant.request).await {
             Some((http, rsp_cd, _)) => {
                 let variant_rejected = !(http >= 200 && http < 300 && is_success(&rsp_cd));
-                let outcome = classify_probe(control_ok, variant_rejected);
+                let verdict = if variant_rejected {
+                    VariantVerdict::Rejected
+                } else {
+                    VariantVerdict::Accepted
+                };
+                let outcome = classify_probe(control_ok, verdict);
                 // U2/KTD4: downgrade a Divergent on a gateway_tolerant (field, class)
                 // to the non-blocking expected-tolerant outcome.
                 let label = reported_outcome(&schema, field, class, outcome);
@@ -595,7 +609,12 @@ async fn live_smoke_token_negative() {
     for (field, class, pairs, as_json) in &variants {
         match token_fire(&client, &url, pairs, *as_json).await {
             Some((http, code, ok)) => {
-                let outcome = classify_probe(control_ok, !ok);
+                let verdict = if ok {
+                    VariantVerdict::Accepted
+                } else {
+                    VariantVerdict::Rejected
+                };
+                let outcome = classify_probe(control_ok, verdict);
                 println!(
                     "NEG-PROBE target=token-negative variant field={field} class={class} \
                      result=[http={http} rsp_cd={code}] outcome={outcome:?}"
@@ -1474,7 +1493,7 @@ async fn run_order_negative_probe(
                 }
                 // Placed nothing (a non-success rsp_cd, incl. IGW40011-at-500) = Clean.
                 FiredVariantOutcome::PlacedNothing => {
-                    let outcome = classify_probe(control_ok, true);
+                    let outcome = classify_probe(control_ok, VariantVerdict::Rejected);
                     println!(
                         "NEG-PROBE target={tr_cd}-negative variant field={} class={} \
                          result=[http={http} rsp_cd={rsp_cd}] outcome={outcome:?}",
