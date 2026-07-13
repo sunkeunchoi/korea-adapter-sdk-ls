@@ -1,0 +1,64 @@
+# Error-coverage evidence for t0425 (주식체결/미체결 — order fill/unfilled
+# reconciliation read). Records the per-(field, class) coverage derived from
+# constraints/t0425.yaml and the reachable gateway codes the Reference page
+# explains from the shared catalog. t0425 is a READ (is_order: false); its
+# negative probe fires every applicable class (not the restricted order-TR set).
+#
+# PROBED: this artifact is backed by a live differential negative probe
+# (`make live-smoke-t0425-negative`, R10) on the 1500 ms Account-bucket pace,
+# re-run in the attended re-cert wave 3 session (ledger §30, 2026-07-13). The valid
+# control (the certified `T0425InBlock` `for_symbol` query) succeeded and the
+# working-order book read correctly across the same window's
+# `live-smoke-order-chain` rows. The `chegb/required` variant was ACCEPTED by the
+# gateway (§26) and the `medosu/required` variant re-probed ACCEPTED in §30 — both
+# genuine caller contracts the SDK still enforces at preflight, so each is marked
+# `gateway_tolerant:[required]` in the constraint schema and the probe downgrades
+# the acceptance to `expected-tolerant` (non-blocking, plan 2026-07-06-002) — a
+# CLEAN chain. The recommendation therefore does NOT assert gateway-side rejection
+# of an omitted chegb/medosu (see the TR's `excludes`).
+#
+# `status` legend: declared = authored offline, not yet probed; confirmed = the
+# differential probe confirmed the bound (rejected distinctly); tolerant = the
+# gateway accepted the injected violation but the SDK enforces it at preflight as a
+# caller contract (gateway_tolerant, expected-tolerant — non-blocking); held =
+# inconclusive; divergent = observed behavior disagreed with the declaration;
+# n_a = the class does not apply to the field.
+tr_code: t0425
+probe_status: clean
+seed: "expcode= chegb=2 medosu=0 sortgb=0 cts_ordno= "
+input_classes:
+  - { field: expcode, class: type, status: n_a }           # string field — no type-mutation variant is generated
+  - { field: expcode, class: required, status: n_a }        # caller-optional (empty = all symbols); no required variant generated
+  - { field: expcode, class: enum, status: n_a }
+  - { field: expcode, class: range, status: n_a }
+  - { field: expcode, class: format, status: n_a }
+  - { field: chegb, class: type, status: n_a }              # string field — no type-mutation variant is generated
+  - { field: chegb, class: required, status: tolerant }     # omit accepted (§26); preflight still enforces (gateway_tolerant, expected-tolerant)
+  - { field: chegb, class: enum, status: declared }         # {0,1,2} authored offline; not confirmed by a distinct rejection
+  - { field: chegb, class: range, status: n_a }
+  - { field: chegb, class: format, status: n_a }
+  - { field: medosu, class: type, status: n_a }             # string field — no type-mutation variant is generated
+  - { field: medosu, class: required, status: tolerant }    # omit accepted (§30 live re-probe); preflight still enforces (gateway_tolerant, expected-tolerant)
+  - { field: medosu, class: enum, status: declared }        # {0,1,2} authored offline; not confirmed by a distinct rejection
+  - { field: medosu, class: range, status: n_a }
+  - { field: medosu, class: format, status: n_a }
+  - { field: sortgb, class: type, status: n_a }             # string field — no type-mutation variant is generated
+  - { field: sortgb, class: required, status: confirmed }   # required sort flag (not gateway_tolerant); omit rejected distinctly
+  - { field: sortgb, class: enum, status: n_a }
+  - { field: sortgb, class: range, status: n_a }
+  - { field: sortgb, class: format, status: n_a }
+  - { field: cts_ordno, class: type, status: n_a }          # string field — no type-mutation variant is generated
+  - { field: cts_ordno, class: required, status: n_a }      # pagination cursor (" " first page); caller-optional, no required variant
+  - { field: cts_ordno, class: enum, status: n_a }
+  - { field: cts_ordno, class: range, status: n_a }
+  - { field: cts_ordno, class: format, status: n_a }
+# Reachable gateway codes for this read TR, explained once from the shared catalog
+# (R8/R9). Environment/entitlement codes are not reproduced per TR — they point at
+# the same catalog entries.
+gateway_codes:
+  - "00000"
+  - "00136"
+  - "00707"
+  - "904"
+  - "01900"
+  - IGW40011

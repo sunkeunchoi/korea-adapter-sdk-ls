@@ -30,7 +30,18 @@ support:
   # account was positively confirmed flat after the run.
   tracked: true
   implemented: true
-  recommended: false
+  recommended: true
 maintenance:
   source_spec_hash: be317c823cc5
-  last_reviewed: 2026-06-30
+  last_reviewed: 2026-07-13
+recommendation:
+  behavior: Paper cash-equity order cancel of a caller-owned resting order (single OrgOrdNo teardown leg of the submit→modify→cancel chain)
+  evidence_ref: evidence/CSPAT00801.yaml
+  excludes:
+    - Cancellation of orders the caller does not own (the smoke cancels only its own resting OrgOrdNo)
+    - Production-credential order cancels (evidence is paper only)
+    - Fill / settlement or resulting-balance correctness beyond a successful cancel-accepted round-trip
+    - Cancel behavior on partially-filled or already-terminal orders beyond the resting-order teardown exercised
+    - Stronger freshness automation than the stated policy (no enforcement in code today)
+constraints_ref: constraints/CSPAT00801.yaml
+error_coverage_ref: error-coverage/CSPAT00801.yaml

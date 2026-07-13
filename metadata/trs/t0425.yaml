@@ -30,7 +30,19 @@ support:
   # order legs it reconciles.
   tracked: true
   implemented: true
-  recommended: false
+  recommended: true
 maintenance:
   source_spec_hash: e6eff49b1783
-  last_reviewed: 2026-06-30
+  last_reviewed: 2026-07-13
+recommendation:
+  behavior: Paper read-only order fill/unfilled reconciliation read of the working-order book for the token-bound account (self-continued on the cts_ordno cursor; the reconciliation companion to the CSPAT00601 submit)
+  evidence_ref: evidence/t0425.yaml
+  excludes:
+    - Order- or position-mutating state (read-only reconciliation inquiry only)
+    - Production-credential order-book reads (evidence is paper only)
+    - Multi-page cts_ordno continuation correctness beyond the pages the order-chain run observed
+    - Order-status / field correctness beyond a successful reconciliation round-trip
+    - Gateway-side rejection of an omitted chegb/medosu — preflight enforces these locally, the gateway tolerates their absence (gateway_tolerant; the differential probe reads the accepted removal as expected-tolerant)
+    - Stronger freshness automation than the stated policy (no enforcement in code today)
+constraints_ref: constraints/t0425.yaml
+error_coverage_ref: error-coverage/t0425.yaml
