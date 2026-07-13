@@ -77,7 +77,14 @@ fields:
     range: { applicable: false }
     format: { applicable: false }
 cross_field:
+  # §30 live re-probe (2026-07-13, once paced): the gateway ACCEPTS a start>end
+  # (sdate>edate) date_order violation (rsp_cd 00000) — it defaults the empty range
+  # rather than rejecting. Marked gateway-tolerant so the differential probe reads
+  # the accepted violation as `expected-tolerant`, not `Divergent` (the
+  # cross_field analogue of a field's `gateway_tolerant` list). Preflight is
+  # unaffected: the rule stays `confirmed: false` (non-blocking) either way.
   - kind: date_order
     start: sdate
     end: edate
     confirmed: false
+    gateway_tolerant: true

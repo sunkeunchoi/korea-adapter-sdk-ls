@@ -23,8 +23,8 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use ls_core::{
-    classify_probe, generate_invalid_variants, ConstraintSchema, InvalidVariant, LsConfig, LsError,
-    LsResult, ProbeOutcome,
+    classify_probe, generate_invalid_variants, ConstraintSchema, CrossFieldRule, InvalidVariant,
+    LsConfig, LsError, LsResult, ProbeOutcome,
 };
 use ls_sdk::market_session::T1102Request;
 use ls_sdk::orders::{
@@ -136,16 +136,34 @@ fn is_success(rsp_cd: &str) -> bool {
 
 /// `true` if the gateway is known to tolerate an accepted violation of `class` on
 /// `field` for this schema — the `gateway_tolerant` facet (U2/KTD4). A pure lookup
-/// so the per-class downgrade is offline-twinnable without a live call. A field the
-/// schema does not carry (e.g. a `"<start>/<end>"` cross-field pseudo-field) is
-/// never tolerant.
+/// so the per-class downgrade is offline-twinnable without a live call.
+///
+/// Two tolerance sources, both marked in the schema: a per-field `(field, class)`
+/// pair (a field's `gateway_tolerant` list), and — for the `cross_field` class — a
+/// combination rule flagged `gateway_tolerant` (§30, t8412 `sdate/edate`). The
+/// cross_field variant is generated with the pseudo-field `"<start>/<end>"`, which
+/// the per-field lookup never matches, so it is resolved against the schema's
+/// `cross_field` rules instead. A pseudo-field with no marked rule stays
+/// non-tolerant.
 fn is_gateway_tolerant(schema: &ConstraintSchema, field: &str, class: &str) -> bool {
-    schema
-        .fields
-        .iter()
-        .find(|f| f.name == field)
-        .map(|f| f.gateway_tolerant.iter().any(|c| c == class))
-        .unwrap_or(false)
+    // Per-field (field, class) tolerance.
+    if let Some(f) = schema.fields.iter().find(|f| f.name == field) {
+        return f.gateway_tolerant.iter().any(|c| c == class);
+    }
+    // Cross-field tolerance: a `cross_field` variant's pseudo-field is
+    // `"<start>/<end>"`; a rule flagged `gateway_tolerant` downgrades its accepted
+    // violation just like a per-field pair.
+    if class == "cross_field" {
+        return schema.cross_field.iter().any(|rule| match rule {
+            CrossFieldRule::DateOrder {
+                start,
+                end,
+                gateway_tolerant,
+                ..
+            } => *gateway_tolerant && format!("{start}/{end}") == field,
+        });
+    }
+    false
 }
 
 /// The reported outcome LABEL for one differential probe result (U2/KTD4). Pure
@@ -1925,6 +1943,16 @@ fn gateway_tolerant_downgrade_fires_only_on_marked_class() {
     // nday marked [required] (§30 live re-probe unmasked it once paced — the gateway
     // accepts its removal; preflight still enforces as a caller contract).
     assert!(is_gateway_tolerant(t8412, "nday", "required"));
+    // sdate/edate cross_field marked gateway_tolerant (§30: gateway accepts start>end).
+    // The pseudo-field the per-field lookup never carries resolves via the cross_field
+    // rule instead.
+    assert!(
+        is_gateway_tolerant(t8412, "sdate/edate", "cross_field"),
+        "§30: the marked sdate/edate date_order rule downgrades its accepted violation"
+    );
+    // A per-field date class on sdate is unmarked → not tolerant (only the joint
+    // ordering is, not either endpoint's own format/required).
+    assert!(!is_gateway_tolerant(t8412, "sdate/edate", "required"), "only the cross_field class");
     // t1102 shcode + exchgubun required; t0425 chegb required (R10).
     let t1102 = ls_core::schema_for("t1102").expect("t1102 schema");
     assert!(is_gateway_tolerant(t1102, "shcode", "required"));
@@ -1962,6 +1990,32 @@ fn gateway_tolerant_downgrade_fires_only_on_marked_class() {
         reported_outcome(t1101, "shcode", "required", ProbeOutcome::Divergent),
         "Divergent",
         "an unmarked TR's divergence is never downgraded"
+    );
+
+    // Cross-field tolerance (§30): the marked t8412 sdate/edate ordering downgrades a
+    // Divergent to expected-tolerant, exactly like a per-field pair.
+    assert_eq!(
+        reported_outcome(t8412, "sdate/edate", "cross_field", ProbeOutcome::Divergent),
+        "expected-tolerant"
+    );
+    // Negative anchor: the SAME date_order rule with the flag OFF still reports
+    // Divergent — the downgrade fires only on the marked rule, never on cross_field
+    // as a class.
+    let unmarked = ConstraintSchema {
+        tr_code: "TEST".into(),
+        fields: vec![],
+        cross_field: vec![CrossFieldRule::DateOrder {
+            start: "sdate".into(),
+            end: "edate".into(),
+            confirmed: false,
+            gateway_tolerant: false,
+        }],
+    };
+    assert!(!is_gateway_tolerant(&unmarked, "sdate/edate", "cross_field"));
+    assert_eq!(
+        reported_outcome(&unmarked, "sdate/edate", "cross_field", ProbeOutcome::Divergent),
+        "Divergent",
+        "an unmarked cross_field rule's divergence is never downgraded"
     );
 }
 
