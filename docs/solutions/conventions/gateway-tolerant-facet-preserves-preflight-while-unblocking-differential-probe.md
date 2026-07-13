@@ -106,5 +106,12 @@ text; no promotion may imply the gateway enforces a tolerant pair.
 - `crates/ls-metadata/src/schema.rs` — the mirrored `CrossFieldRule::DateOrder::gateway_tolerant`.
 - `metadata/constraints/{t1102,t8412,t0425}.yaml` — the live-observed tolerant pairs; t8412's
   `sdate/edate` cross-field rule carries the cross-field flag (§30).
+- Sibling learning — the **reject-side** counterpart of this same probe-side verdict layer:
+  [`merits-reject-allowlist-seed-from-certified-evidence.md`](./merits-reject-allowlist-seed-from-certified-evidence.md).
+  This doc downgrades an *accepted* violation (`Divergent → expected-tolerant`); the sibling governs
+  a *rejected* code (`Clean` vs `Held`, with a `Held-throttle` non-evaluation case). `classify_probe`
+  now consumes a 3-way `VariantVerdict` input as well as producing its 3-way `ProbeOutcome`, but the
+  tolerance layer (`reported_outcome`, reached via the shared `read_reported_label`) still sits
+  entirely outside it — the invariant this doc's property 2 asserts is unchanged.
 - Plan `docs/plans/2026-07-06-002-feat-recert-wave-reopen-held-trs-plan.md` (KTD2–KTD5); §30
   follow-up shipped in PR #135 (cross-field extension + the paper-reset `01458` messaging polish).
