@@ -1,0 +1,48 @@
+# Error-coverage evidence for t1102 (주식현재가시세 — snapshot current-price
+# quote). Records the per-(field, class) coverage derived from
+# constraints/t1102.yaml and the reachable gateway codes the Reference page
+# explains from the shared catalog.
+#
+# PROBED: this artifact is backed by a live differential negative probe
+# (`make live-smoke-t1102-negative`, R10) run in the attended re-cert wave 3
+# session (ledger §27, 2026-07-13). The valid control (shcode=005930,
+# exchgubun=K — the certified `T1102Request::new(symbol, "K")` shape) succeeded;
+# the `shcode/required` and `exchgubun/required` variants were both ACCEPTED by
+# the gateway (rsp_cd=00000), while the `shcode/format` variant was rejected
+# distinctly (IGW40011) — a CLEAN chain. Because `shcode` and `exchgubun` are
+# genuine caller contracts the SDK still enforces at preflight, both `required`
+# pairs are marked `gateway_tolerant:[required]` in the constraint schema and the
+# probe downgrades their acceptance to `expected-tolerant` (non-blocking,
+# plan 2026-07-06-002). The recommendation therefore does NOT assert gateway-side
+# rejection of an omitted shcode/exchgubun (see the TR's `excludes`).
+#
+# `status` legend: declared = authored offline, not yet probed; confirmed = the
+# differential probe confirmed the bound (rejected distinctly); tolerant = the
+# gateway accepted the injected violation but the SDK enforces it at preflight as a
+# caller contract (gateway_tolerant, expected-tolerant — non-blocking); held =
+# inconclusive; divergent = observed behavior disagreed with the declaration;
+# n_a = the class does not apply to the field.
+tr_code: t1102
+probe_status: clean
+seed: "shcode=005930 exchgubun=K"
+input_classes:
+  - { field: shcode, class: type, status: n_a }          # string field — no type-mutation variant is generated
+  - { field: shcode, class: required, status: tolerant }  # omit accepted → 00000; preflight still enforces (gateway_tolerant, expected-tolerant)
+  - { field: shcode, class: enum, status: n_a }
+  - { field: shcode, class: range, status: n_a }
+  - { field: shcode, class: format, status: confirmed }   # malformed short code rejected distinctly (IGW40011)
+  - { field: exchgubun, class: type, status: n_a }         # string field — no type-mutation variant is generated
+  - { field: exchgubun, class: required, status: tolerant }# omit accepted → 00000; preflight still enforces (gateway_tolerant, expected-tolerant)
+  - { field: exchgubun, class: enum, status: n_a }
+  - { field: exchgubun, class: range, status: n_a }
+  - { field: exchgubun, class: format, status: n_a }
+# Reachable gateway codes for this read TR, explained once from the shared catalog
+# (R8/R9). Environment/entitlement codes are not reproduced per TR — they point at
+# the same catalog entries.
+gateway_codes:
+  - "00000"
+  - "00136"
+  - "00707"
+  - "904"
+  - "01900"
+  - IGW40011

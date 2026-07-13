@@ -18,7 +18,18 @@ dependencies:
 support:
   tracked: true
   implemented: true
-  recommended: false
+  recommended: true
 maintenance:
   source_spec_hash: c3d4e5f6a1b2
-  last_reviewed: 2026-06-22
+  last_reviewed: 2026-07-13
+recommendation:
+  behavior: Paper current-price (시세) snapshot quote for one symbol (single shcode=005930, exchgubun=K round-trip)
+  evidence_ref: evidence/t1102.yaml
+  excludes:
+    - Production-credential quotes (evidence is paper only)
+    - Fields outside the modeled price/quote subset
+    - Quote correctness on halts/VI days or outside KRX regular session
+    - Gateway-side rejection of an omitted shcode/exchgubun — preflight enforces these locally, the gateway tolerates their absence (gateway_tolerant; the differential probe reads the accepted removal as expected-tolerant)
+    - Stronger freshness automation than the stated policy (no enforcement in code today)
+constraints_ref: constraints/t1102.yaml
+error_coverage_ref: error-coverage/t1102.yaml
