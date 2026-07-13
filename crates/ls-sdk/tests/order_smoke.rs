@@ -43,7 +43,7 @@
 #![allow(dead_code)] // helpers are exercised by offline tests + the ignored live run.
 
 use ls_core::{LsConfig, LsError, LsResult};
-use ls_sdk::account::{T0441OutBlock1, T0441Request};
+use ls_sdk::account::{T0424OutBlock1, T0424Request, T0441OutBlock1, T0441Request};
 use ls_sdk::market_session::{T1102Request, T2111Request, T8467Request};
 use ls_sdk::orders::{
     CFOAT00100Request, CFOAT00200Request, CFOAT00300Request, CSPAT00601Request, CSPAT00701Request,
@@ -383,6 +383,16 @@ impl Band {
     /// price-limit rejection.
     fn out_of_band_buy_price(&self) -> u64 {
         self.dnlmt.saturating_sub(tick(self.dnlmt)).max(1)
+    }
+    /// A MARKETABLE SELL price — at the floor (`dnlmtprice`): a limit priced at the
+    /// bottom of the band crosses the book DOWNWARD, filling against resting bids.
+    /// The exact opposite of [`resting_sell_price`] and the mirror of the matrix's
+    /// marketable BUY (which prices at the ceiling). `paper-reset` uses this to
+    /// FLATTEN a long position rather than rest — matching the F/O
+    /// `marketable_sell_price` (`fo.rs`) and the domestic `Scenario::Marketable`
+    /// aggressive-limit pattern (`OrdprcPtnCode="00"`, priced at the band edge).
+    fn marketable_sell_price(&self) -> u64 {
+        self.dnlmt
     }
 }
 
@@ -768,6 +778,103 @@ async fn scan_symbol_working_orders(
     }
 }
 
+// ---------------------------------------------------------------------------
+// paper-reset — flatten the domestic paper book (cancel resting + close longs)
+//
+// A gated, attended, PAPER-ONLY remediation utility. The order smokes can leave a
+// resting order and, when a marketable scenario fills, a real long position that
+// teardown cannot unwind — so the operator otherwise resets the paper book by hand.
+// `paper_reset` (the `#[ignore]` live run in `order/chain.rs`) reuses the ENTIRE
+// order-smoke fail-closed chain (`autonomous_order_smoke_sdk`: U1 nonce + no-TTY, U2
+// paper-resolved) and these pure helpers, extracted so the flatten logic is
+// offline-testable without placing any live order.
+//
+// The flatten is: (a) cancel every resting working order (`t0425` chegb="2",
+// account-wide) via `CSPAT00801`; (b) for every holding with sellable qty
+// (`t0424.mdposqt > 0`) place a MARKETABLE `CSPAT00601` SELL (`BnsTpCode="1"`) at
+// the band floor (`Band::marketable_sell_price`); (c) re-read and positively confirm
+// flat (no resting + zero sellable), bounded-retry then report `flat=not-yet`.
+// ---------------------------------------------------------------------------
+
+/// A planned marketable SELL close derived from a `t0424` holdings row: the position
+/// symbol and the sellable quantity to flatten. Domestic cash-equity positions are
+/// LONG-ONLY, so a flatten is always a SELL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CloseOrder {
+    symbol: String,
+    qty: u64,
+}
+
+/// Derive the set of marketable SELL closes from a `t0424` holdings read.
+///
+/// Keys on `mdposqt` (매도가능수량 / sellable quantity), NEVER `janqty`: only the
+/// currently-sellable portion can be flattened this instant (a T+2 unsettled holding
+/// carries `janqty > 0` but `mdposqt == 0` and cannot be sold now). A position with
+/// zero (or unparseable → `0` via [`parse_qty`]) sellable qty contributes no close.
+/// Domestic cash equity is long-only, so every close is a SELL of `mdposqt` shares.
+fn holdings_to_sells(rows: &[T0424OutBlock1]) -> Vec<CloseOrder> {
+    rows.iter()
+        .filter_map(|r| {
+            let qty = parse_qty(&r.mdposqt);
+            if qty == 0 {
+                return None;
+            }
+            Some(CloseOrder {
+                symbol: r.expcode.trim().to_string(),
+                qty,
+            })
+        })
+        .collect()
+}
+
+/// The paper-reset flat predicate: the book is flat ONLY when BOTH the working-order
+/// set is positively [`FlatVerdict::Flat`] (no resting, no fill) AND no holding
+/// carries sellable qty. Positive confirmation only — a partial fill (surfaced as
+/// `FlatVerdict::Fill`) or any sellable remainder reads as NOT flat.
+fn book_is_flat(working: &[T0425OutBlock1], holdings: &[T0424OutBlock1]) -> bool {
+    matches!(flat_verdict(working), FlatVerdict::Flat) && holdings_to_sells(holdings).is_empty()
+}
+
+/// Name what remains unflat, as bare public identifiers for the witness line (order
+/// numbers and 6-digit symbols are NOT secrets — like [`loud_failure`]'s verbatim
+/// `ordnos`, they are printed as-is so the operator can act, never through
+/// [`scrub_secrets`] which would mask a 6-digit symbol). Empty when the book is flat.
+fn describe_remaining(working: &[T0425OutBlock1], holdings: &[T0424OutBlock1]) -> Vec<String> {
+    let mut out = Vec::new();
+    match flat_verdict(working) {
+        FlatVerdict::Flat => {}
+        FlatVerdict::Resting(ordnos) => {
+            out.extend(ordnos.into_iter().map(|o| format!("ord:{o}")))
+        }
+        FlatVerdict::Fill(ordnos) => out.extend(ordnos.into_iter().map(|o| format!("fill:{o}"))),
+    }
+    for c in holdings_to_sells(holdings) {
+        out.push(format!("pos:{}x{}", c.symbol, c.qty));
+    }
+    out
+}
+
+/// Build a MARKETABLE `CSPAT00601` SELL to flatten a long: a limit order
+/// (`OrdprcPtnCode="00"`, via [`CSPAT00601Request::limit`]) priced AT the band floor
+/// so it crosses the book downward and fills. `BnsTpCode="1"` is SELL; `qty` is the
+/// sellable share count; `OrdQty`/`OrdPrc` serialize as JSON numbers (IGW40011
+/// otherwise). Mirrors the certified `Scenario::Marketable` shape (aggressive limit at
+/// the band edge), never a guessed market-order pattern code.
+fn build_marketable_sell(
+    symbol: &str,
+    qty: u64,
+    band: &Band,
+    member_no: &str,
+) -> CSPAT00601Request {
+    CSPAT00601Request::limit(
+        symbol,
+        qty.to_string(),
+        band.marketable_sell_price().to_string(),
+        "1", // BnsTpCode "1" = SELL
+        member_no,
+    )
+}
+
 // ===========================================================================
 // Offline fail-closed tests (run in the normal suite)
 // ===========================================================================
@@ -1142,6 +1249,112 @@ fn evidence_is_credential_free_and_states_production_not_run() {
     assert!(nc.production_not_run);
     let p = OrderEvidence::pending("resting_buy", "account not order-capable");
     assert_eq!(p.certification, Certification::Pending);
+}
+
+// ---- paper-reset: pure flatten logic (runs in CI; NO live order) --------
+
+/// A `t0424OutBlock1` holdings-row helper for the paper-reset tests.
+fn holding_row(expcode: &str, janqty: &str, mdposqt: &str) -> T0424OutBlock1 {
+    T0424OutBlock1 {
+        expcode: expcode.into(),
+        janqty: janqty.into(),
+        mdposqt: mdposqt.into(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn paper_reset_holdings_to_sells_derives_sell_qty_from_mdposqt() {
+    // Each holding with sellable qty (mdposqt > 0) yields one SELL of that qty; the
+    // symbol is the row expcode. Domestic cash equity is long-only → always a SELL.
+    let rows = [
+        holding_row("005930", "10", "10"),
+        holding_row("000660", "5", "3"), // partially sellable (T+2): sell only mdposqt
+    ];
+    assert_eq!(
+        holdings_to_sells(&rows),
+        vec![
+            CloseOrder { symbol: "005930".into(), qty: 10 },
+            CloseOrder { symbol: "000660".into(), qty: 3 },
+        ]
+    );
+}
+
+#[test]
+fn paper_reset_holdings_to_sells_skips_zero_or_unsellable_positions() {
+    // mdposqt == 0 contributes no close even when janqty > 0 (unsettled / non-sellable);
+    // an unparseable mdposqt parses to 0 and is likewise skipped (never a guessed qty).
+    let rows = [
+        holding_row("005930", "7", "0"), // held but nothing sellable now
+        holding_row("000660", "0", "0"), // net-zero lingering row
+        holding_row("035420", "1", "x"), // unparseable sellable → 0 → skipped
+    ];
+    assert!(holdings_to_sells(&rows).is_empty());
+    // An empty holdings block is trivially no close.
+    assert!(holdings_to_sells(&[]).is_empty());
+}
+
+#[test]
+fn paper_reset_flat_requires_empty_working_and_zero_sellable() {
+    // Flat only when BOTH halves are clean: no working orders AND no sellable qty.
+    assert!(book_is_flat(&[], &[]), "empty book is flat");
+    assert!(
+        book_is_flat(&[], &[holding_row("005930", "3", "0")]),
+        "a held-but-unsellable position (mdposqt==0) is flat by the sellable criterion"
+    );
+    // A resting working order → NOT flat (even with no holdings).
+    assert!(
+        !book_is_flat(&[flat_row("84005", "접수", "0", "2")], &[]),
+        "a resting order is not flat"
+    );
+    // A sellable holding → NOT flat (even with no resting orders).
+    assert!(
+        !book_is_flat(&[], &[holding_row("005930", "10", "10")]),
+        "a sellable long is not flat"
+    );
+    // A partial fill among the working orders → NOT flat (Fill outranks Flat).
+    assert!(
+        !book_is_flat(&[flat_row("84005", "체결", "1", "1")], &[]),
+        "a partial fill is not flat"
+    );
+}
+
+#[test]
+fn paper_reset_empty_book_is_a_noop_success() {
+    // The zero/empty-book case: nothing to cancel, nothing to close, and it is already
+    // flat with nothing named as remaining — a clean no-op success.
+    assert!(holdings_to_sells(&[]).is_empty(), "no closes to place");
+    assert!(book_is_flat(&[], &[]), "already flat");
+    assert!(describe_remaining(&[], &[]).is_empty(), "nothing remains");
+}
+
+#[test]
+fn paper_reset_describe_remaining_names_resting_orders_and_positions_verbatim() {
+    // The witness's remaining list names resting order numbers and 6-digit position
+    // symbols verbatim (public identifiers, not secrets) so the operator can act.
+    let remaining = describe_remaining(
+        &[flat_row("84005", "접수", "0", "2")],
+        &[holding_row("005930", "10", "10")],
+    );
+    assert!(remaining.contains(&"ord:84005".to_string()), "names the resting order: {remaining:?}");
+    assert!(remaining.contains(&"pos:005930x10".to_string()), "names the position: {remaining:?}");
+    // A flat book names nothing.
+    assert!(describe_remaining(&[], &[]).is_empty());
+}
+
+#[test]
+fn paper_reset_marketable_sell_prices_at_the_band_floor() {
+    // The flatten SELL is a marketable limit at the band FLOOR (crosses downward to
+    // fill) — the mirror of the matrix's marketable BUY at the ceiling.
+    let band = validate_band("54600", "29400").unwrap();
+    assert_eq!(band.marketable_sell_price(), 29_400, "sell at the floor");
+    let req = build_marketable_sell("005930", 10, &band, "NXT");
+    assert_eq!(req.inblock.bnstpcode, "1", "SELL side");
+    assert_eq!(req.inblock.ordqty, "10", "sell the sellable qty");
+    assert_eq!(req.inblock.ordprc, "29400", "priced at the floor");
+    assert_eq!(req.inblock.ordprcptncode, "00", "aggressive limit (matches the marketable scenario)");
+    assert_eq!(req.inblock.isuno, "005930");
+    assert_eq!(req.inblock.mbrno, "NXT");
 }
 
 // ===========================================================================
