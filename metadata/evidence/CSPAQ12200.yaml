@@ -23,7 +23,7 @@
 # a 01900 paper-incompatible refusal. The claim is read-only: no order- or
 # position-mutating account state is exercised.
 tr_code: CSPAQ12200
-date: 2026-06-22
+date: 2026-07-13
 env: paper
 target: live-smoke-account
 line: "LIVE-SMOKE target=live-smoke-account inputs=[balcretp=1] result=[rsp_cd=00136 reccnt=1]"

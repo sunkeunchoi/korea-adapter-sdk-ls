@@ -1405,10 +1405,19 @@ mod tests {
             // "fails gracefully". Each carries the not-recommended banner until
             // re-certified through the differential-probe gate. The re-cert wave (plan
             // 2026-07-06-001 U4) promoted token/t1101/S3_ on clean live chains (moved to
-            // recommended_no_banner below); t1102 + t8412 stayed HELD (Divergent probe),
-            // CSPAQ12200 HELD (throttled-only variant), and the order quartet HELD.
-            "t1102", "t8412", "CSPAQ12200", "CSPAT00601",
-            "CSPAT00701", "CSPAT00801", "t0425",
+            // recommended_no_banner below); the re-cert wave 3 (ledger §30, 2026-07-13)
+            // then promoted CSPAQ12200 on a CLEAN differential (BalCreTp/required
+            // expected-tolerant, Account-bucket-paced) and, in its §30 tail, t1102 on a
+            // CLEAN differential (shcode+exchgubun/required expected-tolerant,
+            // shcode/format IGW40011-rejected) — both moved below. The §30 promotion
+            // tail then added t0425 (order-reconcile read, CLEAN chegb+medosu/required
+            // expected-tolerant) and CSPAT00801 (cancel, CLEAN differential; 00463 ack)
+            // — both moved below. t8412 stayed HELD (Divergent probe) and the order
+            // submit/modify legs CSPAT00601 + CSPAT00701 stayed HELD (§30 negative
+            // differentials held: 00601 direction-defaulted BnsTpCode, 00701 IGW00000
+            // may-rest halt).
+            "t8412", "CSPAT00601",
+            "CSPAT00701",
         ];
         for tr in banner_trs {
             let page = reference
@@ -1422,10 +1431,15 @@ mod tests {
 
         // The re-cert wave (plan 2026-07-06-001 U4) restored the Recommended set from
         // its post-demotion empty state: token/t1101/S3_ promoted on clean live
-        // differential chains (an attended open-KRX session, 2026-07-06). Their
-        // reference pages must OMIT the not-recommended banner. Re-promotion of the
-        // remaining seven is operator-gated across later live windows.
-        let recommended_no_banner: [&str; 3] = ["token", "t1101", "S3_"];
+        // differential chains (an attended open-KRX session, 2026-07-06); re-cert wave 3
+        // (ledger §30, 2026-07-13) added CSPAQ12200 on a CLEAN Account-bucket-paced
+        // differential and, in its §30 tail, t1102 on a CLEAN market-data differential,
+        // then in the §30 promotion tail t0425 (order-reconcile read) and CSPAT00801
+        // (cancel) on CLEAN differentials.
+        // Their reference pages must OMIT the not-recommended banner. Re-promotion of the
+        // remaining HELD TRs is operator-gated across later windows.
+        let recommended_no_banner: [&str; 7] =
+            ["token", "t1101", "S3_", "CSPAQ12200", "t1102", "t0425", "CSPAT00801"];
         for rec in recommended_no_banner {
             let page = reference
                 .get(Path::new(&format!("docs/reference/{rec}.md")))

@@ -21,10 +21,10 @@
 # miss (which fails the test) and not a 01900 paper-incompatible refusal (which
 # would Err before recording).
 tr_code: t1102
-date: 2026-06-22
+date: 2026-07-13
 env: paper
 target: live-smoke
-line: "LIVE-SMOKE target=live-smoke inputs=[env=paper symbol=005930 date=2026-06-22] result=[token_len=380 rsp_cd=00000 price=357000]"
+line: "LIVE-SMOKE target=live-smoke inputs=[env=paper symbol=005930 date=2026-07-13] result=[token_len=380 rsp_cd=00000 price=258750]"
 
 attested_normalizer_version: 2
 attested_shape:

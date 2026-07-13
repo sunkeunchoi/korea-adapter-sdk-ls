@@ -1,0 +1,44 @@
+# Error-coverage evidence for CSPAQ12200 (현물계좌 예수금/주문가능금액/총평가 —
+# read-only deposit / order-capacity balance inquiry). Records the per-(field,
+# class) coverage derived from constraints/CSPAQ12200.yaml and the reachable
+# gateway codes the Reference page explains from the shared catalog.
+#
+# PROBED: this artifact is backed by a live differential negative probe
+# (`make live-smoke-cspaq12200-negative`, R10) run in the attended re-cert wave 3
+# session (ledger §30, 2026-07-13) with the 1500 ms Account-bucket pace
+# (plan 2026-07-06-002 U6) so the sole variant is graded on its merits, not a
+# self-inflicted IGW00201 throttle. The valid control succeeded and the single
+# invalid variant — `BalCreTp/required` (omit the balance-creation distinction) —
+# was ACCEPTED by the gateway (`rsp_cd=00136`). Because `BalCreTp` is a genuine
+# caller contract the SDK still enforces at preflight (the certified `new(balcretp)`
+# constructor requires it), the pair is marked `gateway_tolerant:[required]` in the
+# constraint schema and the probe downgrades the acceptance to `expected-tolerant`
+# (non-blocking, plan 2026-07-06-002) — a CLEAN chain. The recommendation therefore
+# does NOT assert gateway-side rejection of an omitted `BalCreTp` (see the TR's
+# `excludes`).
+#
+# `status` legend: declared = authored offline, not yet probed; confirmed = the
+# differential probe confirmed the bound (rejected distinctly); tolerant = the
+# gateway accepted the injected violation but the SDK enforces it at preflight as a
+# caller contract (gateway_tolerant, expected-tolerant — non-blocking); held =
+# inconclusive; divergent = observed behavior disagreed with the declaration;
+# n_a = the class does not apply to the field.
+tr_code: CSPAQ12200
+probe_status: clean
+seed: "balcretp=1"
+input_classes:
+  - { field: BalCreTp, class: type, status: n_a }        # string field — no type-mutation variant is generated
+  - { field: BalCreTp, class: required, status: tolerant } # omit accepted → 00136; preflight still enforces (gateway_tolerant, expected-tolerant)
+  - { field: BalCreTp, class: enum, status: n_a }
+  - { field: BalCreTp, class: range, status: n_a }
+  - { field: BalCreTp, class: format, status: n_a }
+# Reachable gateway codes for this read TR, explained once from the shared catalog
+# (R8/R9). Environment/entitlement codes are not reproduced per TR — they point at
+# the same catalog entries.
+gateway_codes:
+  - "00000"
+  - "00136"
+  - "00707"
+  - "904"
+  - "01900"
+  - IGW40011
