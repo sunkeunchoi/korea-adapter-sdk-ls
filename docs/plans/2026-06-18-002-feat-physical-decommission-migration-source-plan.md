@@ -157,12 +157,15 @@ present-tense instruction to consult it for ordinary maintenance).
     otherwise trip KTD-3's absolute-path pattern. This is the one R9-extending
     exclusion the broadened patterns actually require.
   - The agent-harness dirs `.claude/**`, `.agents/**`, `.compound-engineering/**`
-    sit **outside** the allowlist, so they are already unscanned — listing them as
-    "exclusions" is redundant. The honest framing: the guard intentionally does
-    **not** cover the agent harness. That is a **known residual gap**, because a
-    future automation hardcoding `~/dev/korea-broker-sdk-ls` or instructing "consult
-    korea-broker-sdk-ls" would most plausibly live there. Whether to extend the
-    scan to the harness is an Open Question.
+    were originally **outside** the allowlist, leaving a known residual gap: a
+    future automation hardcoding `~/dev/korea-broker-sdk-ls` or instructing
+    "consult korea-broker-sdk-ls" would most plausibly live there. **Closed in
+    #19 (KTD-4 closure):** the three dirs are now in the allowlist, minus a
+    retained-evidence exclusion for the one-shot audit machinery
+    (`.agents/skills/audit-row/**`, `.agents/skills/audit-carried-rows/**`, and
+    `.claude/agents/decommission-row-auditor.md`) that legitimately names and
+    instructs reading the old source while it still exists — mirroring the
+    existing `docs/migration-source/audit/` exclusion.
 
 - **KTD-5. Guard lives in the existing `decommission_audit.rs`, no new deps.** Per
   R7 the guard is added to the existing file, reusing `workspace_root()`,
@@ -180,10 +183,10 @@ The guard's decision flow, applied per git-tracked file then per line:
 ```
 git ls-files  (new enumeration; parse stdout)
    │
-   ├─ in allowlist?  (crates/** non-`/tests/`, docs/**, root *.md)      ── no ─▶ skip
-   │      └─ minus ledger (retained evidence).  harness dirs            ── no ─▶ skip
-   │         (.claude/ .agents/ .compound-engineering/) are already
-   │         outside the allowlist — known residual gap, not scanned.
+   ├─ in allowlist?  (crates/** non-`/tests/`, docs/**, root *.md,       ── no ─▶ skip
+   │      harness dirs .claude/ .agents/ .compound-engineering/)
+   │      └─ minus retained evidence (ledger + the one-shot audit         ── no ─▶ skip
+   │         machinery under the harness dirs; #19 closed KTD-4).
    ▼
 per line ──┬─ physical line is a `Provenance:` citation? ──────────────── yes ─▶ skip line
            │   (wrapped continuation lines are NOT skipped — see Risks)
@@ -471,12 +474,15 @@ surface (proven via fixtures), and passes on the real tree after U1 + U3.
 ## Open Questions
 
 - **Should the guard scan the agent-harness dirs (`.claude/`, `.agents/`,
-  `.compound-engineering/`)?** As planned (KTD-4) the scan domain is the maintained
-  product surface and the harness is a known residual gap — yet that is the most
-  plausible place a future automation would hardcode `~/dev/korea-broker-sdk-ls` or
-  an instruction to consult the old source, the exact reintroduction vector R8
-  exists to stop. Extending coverage there (with whole-word matching and an
-  exclusion for the audit-machinery files that legitimately name the old source) is
-  a real option; the trade-off is added calibration surface against transient run
-  state. Default if unresolved: leave as a documented gap and revisit if a future
-  change adds product logic under those dirs.
+  `.compound-engineering/`)?** **Resolved — yes, closed in #19 (KTD-4 closure).**
+  These dirs are the most plausible place a future automation would hardcode
+  `~/dev/korea-broker-sdk-ls` or an instruction to consult the old source, the
+  exact reintroduction vector R8 exists to stop. The guard now scans all three
+  (reusing the existing whole-word matching and live-path/consult predicates),
+  with a retained-evidence exclusion for the one-shot audit machinery
+  (`.agents/skills/audit-row/**`, `.agents/skills/audit-carried-rows/**`,
+  `.claude/agents/decommission-row-auditor.md`) that legitimately names the old
+  source — mirroring the `docs/migration-source/audit/` exclusion. Proven by a new
+  fixture test (a planted live path / consult instruction under `.claude/` /
+  `.agents/` trips; a clean line and the real audit-machinery lines pass) and the
+  real-tree assertion, which stays green over the broadened scan.
