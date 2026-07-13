@@ -10,19 +10,29 @@
 # harness flat-assertion positively confirmed the account flat
 # (`ORDER-CHAIN flat=confirmed-after-cleanup`).
 #
-# Source note: the in-window order-chain run (2026-06-30) is the canonical
-# evidence source for the four order TRs (it is also where the Implemented gate
-# certified them, plan -005). The `live-smoke-order` matrix is not used for the
-# autonomous wave (marketable fill leaves a position needing a paper reset).
+# Re-cert wave 3 (ledger §30 promotion tail, attended TTY 2026-07-13): the operator
+# re-ran `make live-smoke-order-chain` this window. It ran GREEN end-to-end — a full
+# submit → modify → cancel lifecycle (rsp_cd 00040 / 00462 / 00463, each
+# `cert=certified`) with `flat=confirmed-after-cleanup` afterward. CSPAT00801
+# promotes on its own CLEAN differential (the §30 re-probe accepted an omitted IsuNo
+# with a clean 00463 cancel ack — a genuine over-claim corrected to caller-optional
+# in the constraint schema, permissive direction) plus this green gate-2 chain. Its
+# sibling submit/modify legs CSPAT00601 + CSPAT00701 stay Implemented (their §30
+# negative differentials are HELD) — an intentional tier split.
 #
-# Secret-safety: response code + a public 5-digit order number + the gateway's
-# Korean success text only — never a token, appkey, secret, or account number.
-# `rsp_cd=00463` is the cancel-accepted code.
+# Source note: the in-window order-chain run is the canonical evidence source for the
+# order TRs (it is also where the Implemented gate certified them, plan -005). The
+# `live-smoke-order` matrix is not used for the autonomous wave (marketable fill
+# leaves a position needing a paper reset).
+#
+# Secret-safety: response code + a public 5-digit order number only — never a token,
+# appkey, secret, account number, or localized `rsp_msg`. `rsp_cd=00463` is the
+# cancel-accepted code.
 tr_code: CSPAT00801
-date: 2026-06-30
+date: 2026-07-13
 env: paper
 target: live-smoke-order-chain
-line: "ORDER-SMOKE tr=CSPAT00801 scenario=cancel_teardown cert=certified rsp_cd=00463 order_no=22131 recon=unknown production_not_run=true msg=[모의투자 취소주문이 완료 되었습니다.]"
+line: "ORDER-SMOKE tr=CSPAT00801 scenario=cancel_teardown cert=certified rsp_cd=00463 order_no=28487 production_not_run=true (live-smoke-order-chain, 2026-07-13); chain flat=confirmed"
 
 attested_normalizer_version: 2
 attested_shape:

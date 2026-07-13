@@ -116,16 +116,26 @@ freshness evaluator. The advisory spec-doc point (2) holds by construction. Only
   attended open-KRX session 2026-07-06) restored 3 Recommended TRs; re-cert wave 3
   (ledger §30, attended open-KRX session 2026-07-13) promoted `CSPAQ12200` on a CLEAN
   Account-bucket-paced differential and, in its §30 tail, `t1102` on a CLEAN
-  market-data differential, bringing the total to **5 Recommended TRs** — `token`
-  (auth), `t1101` + `t1102` (market_session), `S3_` (realtime), and `CSPAQ12200`
-  (account) — spanning 4 owner classes, each on a clean live differential chain
-  (except `S3_`, whose realtime subscribe has no differential and rests on the
-  lifecycle-scoped substitute). `CSPAQ12200`'s sole `BalCreTp/required` variant read
-  `expected-tolerant` under the 1500 ms Account-bucket pace (plan 2026-07-06-002 U6) —
-  previously HELD when it only throttled. `t1102`'s `shcode`+`exchgubun`/required
-  variants both read `expected-tolerant` (gateway accepts the removal; preflight still
-  enforces) while `shcode/format` was rejected distinctly (IGW40011) — a CLEAN chain.
-  `t8412` stayed HELD (Divergent probe: the gateway accepts a removed-required /
-  malformed field) and the order quartet HELD. Per-class tightening (e.g. a shorter
-  window for the `orders` class) stays deferred and becomes actionable as more TRs
-  re-promote.
+  market-data differential, then in its §30 promotion tail `t0425` (order-reconcile
+  read) and `CSPAT00801` (cancel) on CLEAN differentials, bringing the total to
+  **7 Recommended TRs** — `token` (auth), `t1101` + `t1102` (market_session), `S3_`
+  (realtime), `CSPAQ12200` (account), `t0425` (paginated), and `CSPAT00801` (orders)
+  — spanning 6 owner classes, each on a clean live differential chain (except `S3_`,
+  whose realtime subscribe has no differential and rests on the lifecycle-scoped
+  substitute). `CSPAQ12200`'s sole `BalCreTp/required` variant read `expected-tolerant`
+  under the 1500 ms Account-bucket pace (plan 2026-07-06-002 U6) — previously HELD when
+  it only throttled. `t1102`'s `shcode`+`exchgubun`/required variants both read
+  `expected-tolerant` (gateway accepts the removal; preflight still enforces) while
+  `shcode/format` was rejected distinctly (IGW40011) — a CLEAN chain. `t0425`'s
+  `chegb`+`medosu`/required variants both read `expected-tolerant` on the same
+  Account-bucket pace (the `medosu` leg re-probed clean in §30) and its working-order
+  book read correctly across the live `live-smoke-order-chain` rows. `CSPAT00801`
+  certified on a green `submit→modify→cancel` chain (00463 cancel ack,
+  flat=confirmed-after-cleanup) with a CLEAN own differential. `t8412` stayed HELD
+  (Divergent probe: the gateway accepts a removed-required / malformed field) and the
+  order **submit/modify** legs `CSPAT00601` + `CSPAT00701` stayed HELD (§30 negative
+  differentials held: `CSPAT00601`'s `BnsTpCode` places a direction-defaulted order,
+  `CSPAT00701`'s `OrdprcPtnCode` reaches an undocumented `IGW00000` may-rest halt) —
+  an intentional tier split within the order quartet, not an oversight. Per-class
+  tightening (e.g. a shorter window for the `orders` class) stays deferred and becomes
+  actionable as more TRs re-promote.

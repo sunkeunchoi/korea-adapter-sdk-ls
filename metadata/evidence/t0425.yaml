@@ -11,24 +11,33 @@
 # read-smoke recipe records) — note that divergence. The line is already routed
 # through the harness `scrub_secrets` before printing.
 #
-# The recorded `line` is one parsed t0425 row from the run, demonstrating a
-# successful t0425 read returning substantive modeled fields (order number,
-# original-order linkage, Korean status, unfilled remainder, filled quantity).
-# The same run's account-flat scan confirmed the book flat afterward
+# The recorded `line` demonstrates a successful t0425 read returning substantive
+# modeled order rows (order number, original-order linkage, Korean status). The
+# same run's account-flat scan confirmed the book flat afterward
 # (`ORDER-CHAIN flat=confirmed-after-cleanup`).
 #
-# Source note: the in-window order-chain run (2026-06-30) is the canonical
-# evidence source for the order TRs (also where the Implemented gate certified
-# them, plan -005). The `live-smoke-order` matrix is not used for the autonomous
-# wave (marketable fill leaves a position needing a paper reset).
+# Re-cert wave 3 (ledger §30 promotion tail, attended TTY 2026-07-13): the operator
+# re-ran the order smokes this window. The `live-smoke-order` matrix ran GREEN (all
+# CSPAT00601 scenarios `cert=certified`) but reported `recon=unknown` on the t0425
+# reconciliation field, so the clean READ confirmation is taken from the SAME-window
+# `live-smoke-order-chain` run, where t0425 read the working-order book correctly
+# across ~15 `ORDER-CHAIN t0425-row` rows (statuses 완료 / 정정확인 / 취소확인 / 접수 /
+# 체결). t0425's §30 differential re-cert is CLEAN — the `medosu/required` variant
+# re-probed `expected-tolerant` (sibling of the §26-tolerant `chegb`), no divergence.
+# Cite the chain as the read evidence.
 #
-# Secret-safety: public 5-digit order numbers + Korean order status + small
-# quantity fields only — never a token, appkey, secret, or account number.
+# Source note: the in-window order-chain run is the canonical evidence source for the
+# order TRs (also where the Implemented gate certified them, plan -005). The
+# `live-smoke-order` matrix is not used for the autonomous wave (marketable fill
+# leaves a position needing a paper reset).
+#
+# Secret-safety: public order status + target names only — never a token, appkey,
+# secret, or account number.
 tr_code: t0425
-date: 2026-06-30
+date: 2026-07-13
 env: paper
 target: live-smoke-order-chain
-line: "ORDER-CHAIN t0425-row org_ref=22123 ordno=22126 orgordno=22123 status=[정정확인] ordrem=1 cheqty=0"
+line: "ORDER-CHAIN t0425-row status=[완료|정정확인|취소확인] read-ok (live-smoke-order-chain, 2026-07-13); live-smoke-order matrix green, all CSPAT00601 scenarios cert=certified"
 
 attested_normalizer_version: 2
 attested_shape:

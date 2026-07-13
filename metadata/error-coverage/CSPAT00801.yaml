@@ -1,0 +1,57 @@
+# Error-coverage evidence for CSPAT00801 (현물취소주문 — cash-equity order CANCEL).
+# Records the per-(field, class) coverage derived from constraints/CSPAT00801.yaml
+# and the reachable gateway codes the Reference page explains from the shared
+# catalog. Per KTD3 the order-TR negative probe fires ONLY the type/required
+# classes (it never places a spurious priced order); enum/range/format are not
+# generated for order TRs.
+#
+# PROBED: this artifact is backed by a live differential negative probe run against
+# a still-resting control OrgOrdNo in the attended re-cert wave 3 session (ledger
+# §30 promotion tail, 2026-07-13), inside the same green `live-smoke-order-chain`
+# window that certified the submit → modify → cancel lifecycle (rsp_cd 00040 /
+# 00462 / 00463, flat=confirmed-after-cleanup). The valid control (the certified
+# `CSPAT00801InBlock1::new()` cancel) succeeded with a clean 00463 ack. The numeric
+# `OrgOrdNo` / `OrdQty` type+required variants were rejected distinctly; the §30
+# re-probe ACCEPTED an omitted `IsuNo` (00463 clean cancel ack) — a cancel is keyed
+# by OrgOrdNo, so this was a genuine over-claim corrected to `required: false`
+# (caller-optional, permissive direction; the certified struct still sends it)
+# rather than a `gateway_tolerant` marker — a CLEAN chain. The recommendation does
+# NOT rest on gateway-side enforcement of IsuNo.
+#
+# `status` legend: declared = authored offline, not yet probed; confirmed = the
+# differential probe confirmed the bound (rejected distinctly); tolerant = the
+# gateway accepted the injected violation but the SDK enforces it at preflight as a
+# caller contract (gateway_tolerant, expected-tolerant — non-blocking); held =
+# inconclusive; divergent = observed behavior disagreed with the declaration;
+# n_a = the class does not apply to the field (or is not fired by the order-TR probe).
+tr_code: CSPAT00801
+probe_status: clean
+seed: "OrgOrdNo=<resting control> IsuNo=005930 OrdQty=<control qty>"
+input_classes:
+  - { field: OrgOrdNo, class: type, status: confirmed }    # numeric field — a quoted string is rejected distinctly (IGW40011)
+  - { field: OrgOrdNo, class: required, status: confirmed } # the cancel key; omit rejected distinctly
+  - { field: OrgOrdNo, class: enum, status: n_a }
+  - { field: OrgOrdNo, class: range, status: n_a }
+  - { field: OrgOrdNo, class: format, status: n_a }
+  - { field: IsuNo, class: type, status: n_a }             # string field — no type-mutation variant is generated
+  - { field: IsuNo, class: required, status: n_a }          # §30 re-probe accepted removal → corrected to caller-optional (required: false); no required variant fired
+  - { field: IsuNo, class: enum, status: n_a }
+  - { field: IsuNo, class: range, status: n_a }
+  - { field: IsuNo, class: format, status: n_a }            # symbol format declared in the schema but not fired by the order-TR probe (type/required only, KTD3)
+  - { field: OrdQty, class: type, status: confirmed }       # numeric field — a quoted string is rejected distinctly (IGW40011)
+  - { field: OrdQty, class: required, status: confirmed }   # cancel quantity; omit rejected distinctly
+  - { field: OrdQty, class: enum, status: n_a }
+  - { field: OrdQty, class: range, status: n_a }
+  - { field: OrdQty, class: format, status: n_a }
+# Reachable gateway codes for this order TR, explained once from the shared catalog
+# (R8/R9). Environment/entitlement codes (session-closed 904, paper-incompatible
+# 01900, account-not-order-capable 01491) are not reproduced per TR — they point at
+# the same catalog entries. The 00463 cancel-accepted ack is a success code recorded
+# in the Focused Evidence line, not a catalog error entry.
+gateway_codes:
+  - "00000"
+  - "904"
+  - "01900"
+  - "01491"
+  - IGW40011
+  - IGW40013
