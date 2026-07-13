@@ -4,7 +4,7 @@ date: 2026-07-06
 category: conventions
 module: "ls-core preflight (crates/ls-core/src/preflight.rs), ls-metadata schema, ls-sdk negative_probe"
 problem_type: convention
-tags: [constraint-schema, preflight, negative-probe, differential, gateway_tolerant, re-cert, split-facet]
+tags: [constraint-schema, preflight, negative-probe, differential, gateway_tolerant, re-cert, split-facet, cross-field]
 ---
 
 ## Problem
@@ -53,18 +53,38 @@ When the field is *not* a real caller contract, correct the schema to `required:
 do not paper over a mis-declared field with the facet, or the differential probe loses its
 drift-detection value on that field.
 
-## Known limitation — cross-field pseudo-fields
+## Cross-field extension (§30, PR #135) — same downgrade, keyed on the rule not a field
 
-The facet is per-field: `is_gateway_tolerant` matches a real schema field, so a
-**cross-field** variant (whose `field` is a pseudo-name like `"sdate/edate"`) can
-never be marked tolerant. If a gateway that tolerates a field-level violation also
-accepts the cross-field variant (e.g. ignoring malformed dates → ignoring their
-ordering), that cross-field result stays `Divergent` with no way to downgrade it.
-This is deferred by design: the plan's rule is to handle a *newly-observed* tolerant
-pair when the live probe surfaces it, not to pre-mark speculatively. A validated
-class-consistency test (`gateway_tolerant_classes_are_real_generatable_classes`)
-guards the per-field case; extend the facet to cross-field rules only when a live
-probe actually exhibits the case.
+The facet started per-field only: `is_gateway_tolerant` matched a real schema field, so a
+**cross-field** variant (whose `field` is a pseudo-name like `"sdate/edate"`) could never be
+marked tolerant. The §30 t8412 live re-probe (once paced past its `IGW00201` throttle) exhibited
+exactly the deferred case — the gateway accepts a start>end `date_order` violation (`rsp_cd 00000`,
+defaulting the empty range), so `sdate/edate` read `Divergent` with no downgrade path. That was the
+sole reason t8412 stayed HELD after its `nday/required` divergence was resolved.
+
+The extension mirrors the per-field mechanism exactly, keyed on the **rule** instead of a `(field,
+class)` pair:
+
+- `CrossFieldRule::DateOrder` gains a `gateway_tolerant: bool` (`#[serde(default)]`), mirrored in
+  the ls-core `preflight` copy **and** the ls-metadata `schema` copy (the two are deliberately
+  duplicated — ls-core cannot depend on ls-metadata at runtime).
+- `is_gateway_tolerant` falls through to the `cross_field` rules **only** for `class ==
+  "cross_field"`: it reconstructs each rule's pseudo-field as `format!("{start}/{end}")` and
+  matches the *same* string `generate_invalid_variants` emits, so a marked rule downgrades **only**
+  its own accepted violation — never another rule, and never either endpoint's own
+  `required`/`format` class (a negative anchor test pins this).
+- Preflight is still untouched: `validate_cross_field` binds `gateway_tolerant: _` and ignores it,
+  so a `confirmed` ordering still blocks locally regardless of tolerance. Tolerance is probe-side
+  only — identical invariant to the per-field case.
+- Docgen renders the note in the "Errors & validation" section (a `gateway-tolerant (preflight
+  enforces; gateway does not)` clause on the cross-field line), keeping the audit surface.
+
+The decision criterion above still governs: mark a cross-field rule tolerant **only** when a live
+probe actually exhibits the accepted violation (t8412 did in §30), never speculatively. A field
+whose *own* class is tolerant does not imply its cross-field rule is — the §30 probe confirmed the
+ordering pair independently. **Promotion still requires a live in-window re-probe** confirming the
+downgrade reads `expected-tolerant` on merits; the offline mechanism alone does not promote (t8412
+remained HELD after PR #135 pending that re-probe).
 
 ## Certification-claim scope
 
@@ -76,9 +96,15 @@ text; no promotion may imply the gateway enforces a tolerant pair.
 
 ## References
 
-- `crates/ls-core/src/preflight.rs` — the `FieldConstraint::gateway_tolerant` field; preflight is
-  provably unchanged (`gateway_tolerant_does_not_weaken_preflight`).
+- `crates/ls-core/src/preflight.rs` — the `FieldConstraint::gateway_tolerant` field and the
+  `CrossFieldRule::DateOrder::gateway_tolerant` bool; preflight is provably unchanged
+  (`gateway_tolerant_does_not_weaken_preflight`) and the cross-field flag round-trips from embedded
+  metadata (`cross_field_gateway_tolerant_flag_round_trips_from_embedded_t8412`).
 - `crates/ls-sdk/tests/negative_probe.rs` — `is_gateway_tolerant` / `reported_outcome` +
-  `gateway_tolerant_downgrade_fires_only_on_marked_class`.
-- `metadata/constraints/{t1102,t8412,t0425}.yaml` — the live-observed tolerant pairs.
-- Plan `docs/plans/2026-07-06-002-feat-recert-wave-reopen-held-trs-plan.md` (KTD2–KTD5).
+  `gateway_tolerant_downgrade_fires_only_on_marked_class` (covers both the per-field pairs and the
+  cross-field rule, with an unmarked negative anchor).
+- `crates/ls-metadata/src/schema.rs` — the mirrored `CrossFieldRule::DateOrder::gateway_tolerant`.
+- `metadata/constraints/{t1102,t8412,t0425}.yaml` — the live-observed tolerant pairs; t8412's
+  `sdate/edate` cross-field rule carries the cross-field flag (§30).
+- Plan `docs/plans/2026-07-06-002-feat-recert-wave-reopen-held-trs-plan.md` (KTD2–KTD5); §30
+  follow-up shipped in PR #135 (cross-field extension + the paper-reset `01458` messaging polish).

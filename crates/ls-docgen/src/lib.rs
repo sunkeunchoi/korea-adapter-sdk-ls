@@ -560,12 +560,19 @@ fn render_errors_and_validation(
                     start,
                     end,
                     confirmed,
+                    gateway_tolerant,
                 } => {
-                    let suffix = if *confirmed {
-                        "enforced"
+                    let mut suffix = if *confirmed {
+                        "enforced".to_string()
                     } else {
-                        "permissive until confirmed"
+                        "permissive until confirmed".to_string()
                     };
+                    // Gateway-tolerant ordering (§30): the gateway accepts an
+                    // out-of-order range, so the SDK's rule is a caller contract
+                    // preflight enforces locally, not a gateway-enforced bound.
+                    if *gateway_tolerant {
+                        suffix.push_str("; gateway-tolerant (preflight enforces; gateway does not)");
+                    }
                     out.push_str(&format!(
                         "- cross-field: `{start}` must not be after `{end}` ({suffix})\n"
                     ));

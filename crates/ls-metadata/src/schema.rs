@@ -271,6 +271,13 @@ pub enum CrossFieldRule {
         end: String,
         #[serde(default)]
         confirmed: bool,
+        /// Whether the gateway tolerates an accepted violation of this ordering
+        /// (the `cross_field` analogue of a field's `gateway_tolerant` list).
+        /// Consumed by the differential probe (an accepted start>end is expected,
+        /// not divergent) and surfaced in docgen; does **not** relax preflight.
+        /// Empty/absent = false (backward-compatible default). See §30.
+        #[serde(default)]
+        gateway_tolerant: bool,
     },
 }
 

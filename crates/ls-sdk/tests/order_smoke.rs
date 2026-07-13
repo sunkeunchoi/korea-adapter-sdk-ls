@@ -875,6 +875,20 @@ fn build_marketable_sell(
     )
 }
 
+/// The paper-reset market-closed sentinel: rsp_cd `01458` (모의투자 장종료 / paper
+/// session closed). The marketable-sell close is rejected with this code when KRX is
+/// closed — a session-timing condition, NOT a remediation failure.
+const PAPER_SESSION_CLOSED_CODE: &str = "01458";
+
+/// `true` if a submit error is the paper session-closed rejection (`01458`) — the
+/// close could not place because the market is closed, so the operator should retry
+/// at the next open rather than treat it as a failed reset. A pure classifier over
+/// the structured [`LsError::ApiError`] `code` (the gateway rsp_cd); any other error
+/// variant or code is NOT market-closed.
+fn is_market_closed(err: &LsError) -> bool {
+    matches!(err, LsError::ApiError { code, .. } if code == PAPER_SESSION_CLOSED_CODE)
+}
+
 // ===========================================================================
 // Offline fail-closed tests (run in the normal suite)
 // ===========================================================================
@@ -1261,6 +1275,29 @@ fn holding_row(expcode: &str, janqty: &str, mdposqt: &str) -> T0424OutBlock1 {
         mdposqt: mdposqt.into(),
         ..Default::default()
     }
+}
+
+#[test]
+fn paper_reset_market_closed_classifier_detects_01458_only() {
+    // §30 follow-up (observed live 2026-07-13): a marketable-sell close rejected with
+    // rsp_cd 01458 (모의투자 장종료) is a session-timing condition, not a remediation
+    // failure — the classifier flags it so the operator reads "retry at next open".
+    let closed = LsError::ApiError {
+        code: "01458".into(),
+        message: "모의투자 장종료 입니다.".into(),
+    };
+    assert!(is_market_closed(&closed), "01458 is the market-closed sentinel");
+    // A different gateway rejection is a REAL remediation failure, not market-closed.
+    let other = LsError::ApiError {
+        code: "40510".into(),
+        message: "주문가능수량을 초과하였습니다.".into(),
+    };
+    assert!(!is_market_closed(&other), "a non-01458 rejection is not market-closed");
+    // A non-ApiError variant (config/transport) is likewise not market-closed.
+    assert!(
+        !is_market_closed(&LsError::Config("no session".into())),
+        "a non-ApiError error is not market-closed"
+    );
 }
 
 #[test]

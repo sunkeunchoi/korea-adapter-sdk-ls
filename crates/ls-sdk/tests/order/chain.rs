@@ -461,6 +461,11 @@ async fn paper_reset() {
         ),
     };
     let mut closed = 0usize;
+    // §30 follow-up: set when a close is rejected `01458` (모의투자 장종료 / paper session
+    // closed) — the reset is well-formed but KRX is closed, so the operator should retry
+    // at the next open. Surfaced in the witness so "market closed" is distinguishable from
+    // a real remediation failure. Not a hard-fail: the flat re-scan still runs best-effort.
+    let mut market_closed = false;
     for close in holdings_to_sells(&holdings) {
         // Price the marketable sell off THIS symbol's daily band (floor). A degenerate
         // band (halted / limit-locked / newly-listed) cannot be priced safely, so skip
@@ -500,6 +505,13 @@ async fn paper_reset() {
                     close.symbol,
                     close.qty,
                     resp.order_no()
+                );
+            }
+            Err(e) if is_market_closed(&e) => {
+                market_closed = true;
+                println!(
+                    "PAPER-RESET close symbol={} qty={} skipped=[market-closed 01458 — retry at next open]",
+                    close.symbol, close.qty
                 );
             }
             Err(e) => println!(
@@ -555,8 +567,12 @@ async fn paper_reset() {
     if flat {
         println!("PAPER-RESET canceled={canceled} closed={closed} flat=confirmed");
     } else {
+        // A market-closed close is a session-timing condition, not a failure — name it
+        // so the operator reads "retry at next open" rather than a broken reset. not-yet
+        // stays a pass (best-effort, no hard-fail).
+        let reason = if market_closed { " reason=market-closed" } else { "" };
         println!(
-            "PAPER-RESET canceled={canceled} closed={closed} flat=not-yet remaining=[{}]",
+            "PAPER-RESET canceled={canceled} closed={closed} flat=not-yet{reason} remaining=[{}]",
             remaining.join(",")
         );
     }

@@ -143,6 +143,14 @@ pub enum CrossFieldRule {
         /// Whether the ordering is positively confirmed (R10).
         #[serde(default)]
         confirmed: bool,
+        /// Whether the gateway is known to tolerate an accepted violation of this
+        /// cross-field ordering (the `cross_field` analogue of a field's
+        /// `gateway_tolerant` list). The differential probe treats an accepted
+        /// start>end as an expected outcome, not a divergence — it does **not**
+        /// relax preflight (a `confirmed` ordering still blocks locally). Defaults
+        /// to `false` (backward-compatible). See §30 (t8412 `sdate/edate`).
+        #[serde(default)]
+        gateway_tolerant: bool,
     },
 }
 
@@ -332,6 +340,9 @@ fn validate_cross_field(
             start,
             end,
             confirmed,
+            // Tolerance is a probe-side concern, not a preflight one: a confirmed
+            // ordering still blocks locally regardless of gateway tolerance.
+            gateway_tolerant: _,
         } => {
             if !confirmed {
                 return Ok(());
@@ -661,6 +672,7 @@ mod tests {
                 start: "sdate".into(),
                 end: "edate".into(),
                 confirmed: true,
+                gateway_tolerant: false,
             }],
         };
         let err =
@@ -797,6 +809,48 @@ fields:
     }
 
     #[test]
+    fn cross_field_gateway_tolerant_flag_round_trips_from_embedded_t8412() {
+        // U1 (§30): the t8412 `sdate/edate` date_order rule is marked
+        // `gateway_tolerant: true` in the embedded metadata and round-trips
+        // build+load with the flag set. Preflight is unaffected — the rule stays
+        // `confirmed: false` (non-blocking); tolerance is a probe-side concern only.
+        let schema = schema_for("t8412").expect("t8412 carries an embedded schema");
+        let tolerant = schema
+            .cross_field
+            .iter()
+            .find_map(|r| match r {
+                CrossFieldRule::DateOrder {
+                    start,
+                    end,
+                    gateway_tolerant,
+                    ..
+                } => (start == "sdate" && end == "edate").then_some(*gateway_tolerant),
+            })
+            .expect("t8412 declares an sdate/edate date_order rule");
+        assert!(tolerant, "the sdate/edate rule is marked gateway_tolerant (§30)");
+    }
+
+    #[test]
+    fn cross_field_gateway_tolerant_defaults_false_when_absent() {
+        // Backward-compat: a date_order rule with no `gateway_tolerant` key parses
+        // with the flag off — existing schemas round-trip unchanged.
+        let yaml = r#"
+tr_code: TEST
+fields: []
+cross_field:
+  - kind: date_order
+    start: sdate
+    end: edate
+    confirmed: false
+"#;
+        let schema: ConstraintSchema = serde_yaml::from_str(yaml).expect("parses");
+        let CrossFieldRule::DateOrder {
+            gateway_tolerant, ..
+        } = &schema.cross_field[0];
+        assert!(!gateway_tolerant, "absent key defaults to false");
+    }
+
+    #[test]
     fn gateway_tolerant_classes_are_real_generatable_classes() {
         // A `gateway_tolerant` entry that names a class the field never generates
         // (a typo like `Required`, or `[required]` on a `required:false` field) is a
@@ -883,6 +937,7 @@ fields:
                 start: "sdate".into(),
                 end: "edate".into(),
                 confirmed: false,
+                gateway_tolerant: false,
             }],
         }
     }
