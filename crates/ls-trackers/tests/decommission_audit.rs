@@ -1372,14 +1372,22 @@ fn consult_hit(line: &str) -> bool {
 }
 
 /// The maintained product-surface allowlist (KTD-4): `crates/**` (excluding any
-/// `/tests/` path), `docs/**`, and root-level `*.md` — minus the retained
+/// `/tests/` path), `docs/**`, root-level `*.md`, and the agent-harness dirs
+/// (`.claude/`, `.agents/`, `.compound-engineering/`) — minus the retained
 /// evidence and history that legitimately names the old source (R9). The
 /// `/tests/` exclusion keeps the guard file's own fixtures out of scope. The
-/// agent-harness dirs (`.claude/`, `.agents/`, `.compound-engineering/`) sit
-/// OUTSIDE the allowlist and are a known, documented residual gap — not scanned.
+/// harness dirs were added in #19 (KTD-4 closure): they are the most plausible
+/// place a future automation would hardcode `~/dev/korea-broker-sdk-ls` or an
+/// instruction to consult the old source, so they are now scanned — except the
+/// one-shot audit machinery that legitimately names the old source (it reads it
+/// while it still exists), which is retained-evidence-excluded like the
+/// `docs/migration-source/audit/` tree.
 fn in_scan_domain(rel: &str) -> bool {
     let in_allowlist = (rel.starts_with("crates/") && !rel.contains("/tests/"))
         || rel.starts_with("docs/")
+        || rel.starts_with(".claude/")
+        || rel.starts_with(".agents/")
+        || rel.starts_with(".compound-engineering/")
         || (!rel.contains('/') && rel.ends_with(".md"));
     if !in_allowlist {
         return false;
@@ -1389,7 +1397,15 @@ fn in_scan_domain(rel: &str) -> bool {
         || rel.starts_with("docs/brainstorms/")
         || rel.starts_with("docs/migration-source/audit/")
         || rel == "docs/migration-source/tr-dependencies-2026-06-14.json"
-        || rel == "docs/migration-source-extraction-ledger.md";
+        || rel == "docs/migration-source-extraction-ledger.md"
+        // One-shot audit machinery under the harness dirs: the audit-row /
+        // audit-carried-rows recipes and the decommission-row-auditor worker
+        // legitimately name (and instruct reading) the old source while it still
+        // exists. Retained like the `docs/migration-source/audit/` tree so the
+        // guard does not self-trip on its own audit apparatus (R9).
+        || rel.starts_with(".agents/skills/audit-row/")
+        || rel.starts_with(".agents/skills/audit-carried-rows/")
+        || rel == ".claude/agents/decommission-row-auditor.md";
     !excluded
 }
 
@@ -1638,9 +1654,54 @@ fn guard_fixture_scan_domain_allowlist_shape() {
     assert!(in_scan_domain("docs/design/order-safety-design.md"));
     assert!(in_scan_domain("docs/migration-source/README.md")); // the marker IS scanned
     assert!(in_scan_domain("README.md"));
+    // Agent-harness dirs are now scanned (KTD-4 closure, #19).
+    assert!(in_scan_domain(".claude/agents/tr-promoter.md"));
+    assert!(in_scan_domain(".agents/skills/implement-tr/SKILL.md"));
+    assert!(in_scan_domain(".compound-engineering/config.local.example.yaml"));
     // Outside the allowlist.
     assert!(!in_scan_domain("crates/ls-trackers/tests/decommission_audit.rs")); // /tests/
-    assert!(!in_scan_domain(".claude/agents/decommission-row-auditor.md")); // harness
-    assert!(!in_scan_domain(".agents/skills/audit-row/SKILL.md")); // harness
     assert!(!in_scan_domain("Cargo.toml")); // root non-md
+    // One-shot audit machinery under the harness dirs is retained-evidence
+    // excluded (R9) so its legitimate old-source references do not self-trip.
+    assert!(!in_scan_domain(".claude/agents/decommission-row-auditor.md"));
+    assert!(!in_scan_domain(".agents/skills/audit-row/SKILL.md"));
+    assert!(!in_scan_domain(".agents/skills/audit-carried-rows/SKILL.md"));
+}
+
+#[test]
+fn guard_fixture_harness_dirs_scanned_and_trip_on_planted_reference() {
+    // KTD-4 closure (#19): the agent-harness dirs are in scan domain, so a
+    // planted live path or consult instruction under them now trips the guard —
+    // the exact reintroduction vector R8 exists to stop.
+    let claude = ".claude/agents/tr-promoter.md";
+    let agents = ".agents/skills/implement-tr/SKILL.md";
+    assert!(in_scan_domain(claude));
+    assert!(in_scan_domain(agents));
+
+    // A planted live filesystem path (the hardcoded `~/dev/…` form) trips.
+    assert_eq!(
+        line_violation(claude, "See ~/dev/korea-broker-sdk-ls/scripts/fetch_ls_specs.py"),
+        Some("live old-source filesystem path")
+    );
+    // A planted consult instruction trips.
+    assert_eq!(
+        line_violation(agents, "consult korea-broker-sdk-ls before changing this"),
+        Some("live instruction to consult the old source")
+    );
+    // A clean line under the same harness dir passes.
+    assert_eq!(
+        line_violation(agents, "Author the request struct per the normalized baseline."),
+        None
+    );
+
+    // The one-shot audit machinery under these dirs stays excluded (retained
+    // audit evidence, R9): its real line naming the old source does not trip.
+    assert!(!in_scan_domain(".agents/skills/audit-row/SKILL.md"));
+    assert_eq!(
+        line_violation(
+            ".agents/skills/audit-row/SKILL.md",
+            "- the old-source path(s) in `korea-broker-sdk-ls` (the sibling checkout — R10),"
+        ),
+        None
+    );
 }

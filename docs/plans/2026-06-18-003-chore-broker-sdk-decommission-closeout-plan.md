@@ -346,9 +346,14 @@ cleanup.
 ### Deferred to Follow-Up Work
 
 - **Extend the decommission guard to scan the agent-harness dirs** (`.claude/`,
-  `.agents/`, `.compound-engineering/`). Per origin Outstanding Questions, the
+  `.agents/`, `.compound-engineering/`). ~~Per origin Outstanding Questions, the
   default is to leave KTD-4 as a documented/tracked gap (U4) and revisit only if
-  product logic is added under those dirs. Not part of this closeout.
+  product logic is added under those dirs.~~ **Done — #19 closed KTD-4:** the guard
+  now scans the three harness dirs (retaining a `docs/migration-source/audit/`-style
+  exclusion for the one-shot audit machinery that legitimately names the old
+  source), so a future hardcoded `~/dev/korea-broker-sdk-ls` path or "consult the
+  old source" instruction added under them now trips the live-dependency check. No
+  longer deferred.
 
 ---
 
