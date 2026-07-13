@@ -536,6 +536,32 @@ pub fn is_noneval_code(rsp_cd: &str) -> bool {
     rsp_cd == "IGW00201"
 }
 
+/// `true` if `rsp_cd` is a code the gateway returns after evaluating a **READ**
+/// variant on merits and REJECTING it — the injected violation is what the
+/// response reflects, so the differential probe reads `Clean`
+/// ([`VariantVerdict::Rejected`]). The read leg's merits-reject vocabulary is
+/// small and fully characterized, so it is realized as a positive allowlist
+/// (strict inversion): a read reject code NOT in this set is treated as a
+/// non-evaluation ([`VariantVerdict::Inconclusive`] → `Held`) and re-probed,
+/// never silently read as `Clean`.
+///
+/// Seeded from observed live evidence, deliberately narrow:
+/// - `IGW40011` — an ingress input-validation reject (delegated to
+///   [`crate::error_catalog::is_ingress_validation_reject`]).
+/// - `IGW40013` — the t0425 `sortgb/required → IGW40013 → Clean` gateway-enforced
+///   negative anchor (ledger §30, lines 1699/1996). It **must** stay in this set
+///   or that certified anchor regresses `Clean → Held`.
+///
+/// Note the deliberate split from [`crate::error_catalog`], whose catalog groups
+/// `IGW40013` with the hard-gateway `IGW50008` as one category: on the *read*
+/// path they are split by evidence — `IGW40013` is a merits reject (`Clean`),
+/// while `IGW50008` stays inconclusive (`Held`). Do not drop `IGW40013` from this
+/// seed by reading it as a hard-gateway code. Add a sibling only with per-code
+/// evidence that it, too, is a genuine read merits reject.
+pub fn is_read_merits_reject(rsp_cd: &str) -> bool {
+    crate::error_catalog::is_ingress_validation_reject(rsp_cd) || rsp_cd == "IGW40013"
+}
+
 fn registry() -> &'static BTreeMap<String, ConstraintSchema> {
     static REGISTRY: OnceLock<BTreeMap<String, ConstraintSchema>> = OnceLock::new();
     REGISTRY.get_or_init(|| {
@@ -1074,6 +1100,22 @@ cross_field:
             assert!(
                 !is_noneval_code(code),
                 "`{code}` is not a non-evaluation code"
+            );
+        }
+    }
+
+    #[test]
+    fn is_read_merits_reject_is_igw40011_and_igw40013() {
+        // KTD3: the read merits-reject allowlist is exactly {IGW40011, IGW40013}.
+        // IGW40013 MUST be present (the t0425 sortgb Clean anchor, §30). A throttle,
+        // a success code, the hard-gateway IGW50008, and unknown codes are NOT
+        // merits rejects — they surface Inconclusive (Held), the fail-safe direction.
+        assert!(is_read_merits_reject("IGW40011"));
+        assert!(is_read_merits_reject("IGW40013"));
+        for code in ["", "00000", "00136", "IGW00201", "IGW40014", "IGW50008", "40510"] {
+            assert!(
+                !is_read_merits_reject(code),
+                "`{code}` is not a read merits reject"
             );
         }
     }

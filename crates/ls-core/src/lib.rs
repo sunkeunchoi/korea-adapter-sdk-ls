@@ -27,9 +27,10 @@ pub use endpoint_policy::{EndpointPolicy, Protocol};
 pub use error::{LsError, LsResult};
 pub use error_catalog::{explain, explain_or_default, is_ingress_validation_reject, CatalogEntry};
 pub use preflight::{
-    classify_probe, generate_invalid_variants, is_noneval_code, preflight_request, schema_for,
-    validate_request, ConstraintSchema, CrossFieldRule, EnumRule, FieldConstraint, FieldType,
-    FormatKind, FormatRule, InvalidVariant, PreflightError, ProbeOutcome, RangeRule, VariantVerdict,
+    classify_probe, generate_invalid_variants, is_noneval_code, is_read_merits_reject,
+    preflight_request, schema_for, validate_request, ConstraintSchema, CrossFieldRule, EnumRule,
+    FieldConstraint, FieldType, FormatKind, FormatRule, InvalidVariant, PreflightError,
+    ProbeOutcome, RangeRule, VariantVerdict,
 };
 pub use inner::{
     is_paper_incompatible, is_paper_order_incapable, Inner, PAPER_INCOMPATIBLE_CODE,

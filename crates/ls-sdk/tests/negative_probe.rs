@@ -23,8 +23,9 @@ use std::collections::BTreeSet;
 use std::time::Duration;
 
 use ls_core::{
-    classify_probe, generate_invalid_variants, ConstraintSchema, CrossFieldRule, InvalidVariant,
-    LsConfig, LsError, LsResult, ProbeOutcome, VariantVerdict,
+    classify_probe, generate_invalid_variants, is_noneval_code, is_read_merits_reject,
+    ConstraintSchema, CrossFieldRule, InvalidVariant, LsConfig, LsError, LsResult, ProbeOutcome,
+    VariantVerdict,
 };
 use ls_sdk::market_session::T1102Request;
 use ls_sdk::orders::{
@@ -190,11 +191,83 @@ fn reported_outcome(
     if outcome == ProbeOutcome::Divergent && is_gateway_tolerant(schema, field, class) {
         return "expected-tolerant";
     }
+    outcome_label(outcome)
+}
+
+/// The verbatim render label for a raw `ProbeOutcome` (no tolerance/throttle
+/// qualifier). Shared by `reported_outcome` (reads, which layer the
+/// `expected-tolerant` downgrade on top) and the token leg (which has no schema
+/// and renders verbatim), so the base three labels cannot drift between legs.
+fn outcome_label(outcome: ProbeOutcome) -> &'static str {
     match outcome {
         ProbeOutcome::Clean => "Clean",
         ProbeOutcome::Held => "Held",
         ProbeOutcome::Divergent => "Divergent",
     }
+}
+
+/// The reason-qualified `Held-throttle` label for a non-EVALUATION (KTD1) — a
+/// variant whose `rsp_cd` is a catalogued noneval code (`is_noneval_code`,
+/// `{IGW00201}`) fired against a PASSING control. Returns `None` when the result
+/// is not a throttle-`Held`, so the caller renders its normal label.
+///
+/// Deliberately keyed on `is_noneval_code`, NOT on `VariantVerdict::Inconclusive`
+/// in general: an *unknown* reject code is also `Inconclusive` (strict inversion),
+/// but it renders as a plain `Held` distinguished by its printed `rsp_cd` — only a
+/// catalogued throttle earns the reason-qualified `Held-throttle` label. A
+/// control-fail `Held` is likewise NOT a throttle-`Held` (the throttle detail is
+/// moot when the control itself failed). Mirrors the order path's `Held-may-rest`
+/// reason-qualified label; shared by the read and token legs so the throttle label
+/// cannot drift between them (KTD5).
+fn throttle_label(control_ok: bool, rsp_cd: &str) -> Option<&'static str> {
+    (control_ok && is_noneval_code(rsp_cd)).then_some("Held-throttle")
+}
+
+/// Derive the READ-leg [`VariantVerdict`] from a gateway response (KTD2 read arm /
+/// KTD5 shared derivation). Strict merits-allowlist inversion, in this order:
+///
+/// - `2xx && is_success(rsp_cd)` → `Accepted` (the gateway accepted the invalid
+///   variant — a divergence).
+/// - `is_read_merits_reject(rsp_cd)` (`{IGW40011, IGW40013}`) → `Rejected` (the
+///   gateway evaluated it on merits and refused — `Clean`).
+/// - everything else (an `IGW00201` throttle, a hard-gateway `IGW50008`, an
+///   unknown code) → `Inconclusive` → `Held`, so a non-merits read surfaces loud
+///   and re-probeable rather than a silent false-`Clean`.
+///
+/// The `rsp_cd` carries the merits signal independent of HTTP status — a genuine
+/// `IGW40011` ingress reject arrives `http=500` (CONCEPTS "Ambiguous order
+/// outcome") — so `Rejected` keys on `rsp_cd`, not the 2xx gate; only `Accepted`
+/// requires 2xx. Transport failure (`None`) is handled at the call site as an
+/// `Inconclusive` by construction (it never reaches this helper).
+fn read_variant_verdict(http: u16, rsp_cd: &str) -> VariantVerdict {
+    if (200..300).contains(&http) && is_success(rsp_cd) {
+        VariantVerdict::Accepted
+    } else if is_read_merits_reject(rsp_cd) {
+        VariantVerdict::Rejected
+    } else {
+        VariantVerdict::Inconclusive
+    }
+}
+
+/// The full READ-leg render label for one variant result (KTD5): derive the 3-way
+/// verdict, classify it against the control, and render. A noneval `Inconclusive`
+/// on a passing control renders `Held-throttle`; every other case falls through
+/// to the tolerance layer (a `Divergent` on a `gateway_tolerant` (field, class)
+/// downgrades to `expected-tolerant`, KTD4). Both the live loop and the offline
+/// proxy call THIS function, so the branch ordering — not just the code sets —
+/// cannot drift between them.
+fn read_reported_label(
+    schema: &ConstraintSchema,
+    field: &str,
+    class: &str,
+    control_ok: bool,
+    http: u16,
+    rsp_cd: &str,
+) -> &'static str {
+    let verdict = read_variant_verdict(http, rsp_cd);
+    throttle_label(control_ok, rsp_cd).unwrap_or_else(|| {
+        reported_outcome(schema, field, class, classify_probe(control_ok, verdict))
+    })
 }
 
 /// Inter-dispatch pace for the t8412 live differential probe (§27 reason A / #117
@@ -383,16 +456,10 @@ async fn run_inblock_negative_probe(
         pace_dispatch().await;
         match fire_inblock(&client, &url, &token, tr_cd, inblock_key, &variant.request).await {
             Some((http, rsp_cd, _)) => {
-                let variant_rejected = !(http >= 200 && http < 300 && is_success(&rsp_cd));
-                let verdict = if variant_rejected {
-                    VariantVerdict::Rejected
-                } else {
-                    VariantVerdict::Accepted
-                };
-                let outcome = classify_probe(control_ok, verdict);
-                // U2/KTD4: downgrade a Divergent on a gateway_tolerant (field, class)
-                // to the non-blocking expected-tolerant outcome.
-                let label = reported_outcome(&schema, field, class, outcome);
+                // U2/KTD2/KTD5: merits-allowlist inversion via the shared
+                // `read_reported_label` — a non-merits variant (IGW00201 throttle,
+                // hard-gateway, unknown) renders Held-throttle, not a false-Clean.
+                let label = read_reported_label(&schema, field, class, control_ok, http, &rsp_cd);
                 println!(
                     "NEG-PROBE target={tr_cd}-negative variant field={field} class={class} \
                      result=[http={http} rsp_cd={rsp_cd}] outcome={label}"
@@ -2036,6 +2103,78 @@ fn gateway_tolerant_downgrade_fires_only_on_marked_class() {
         "Divergent",
         "an unmarked cross_field rule's divergence is never downgraded"
     );
+}
+
+#[test]
+fn read_throttle_inconclusive_reads_held_not_clean() {
+    // U2/KTD2/KTD3: the read-leg merits-allowlist inversion, twinned offline through
+    // the SAME `read_reported_label` the live loop calls (KTD5). A non-merits variant
+    // fired against a PASSING control must NOT read a false `Clean`.
+    let t1101 = ls_core::schema_for("t1101").expect("t1101 schema"); // unmarked → no tolerance noise
+    let t0425 = ls_core::schema_for("t0425").expect("t0425 schema");
+
+    // The motivating §27 reason-A case: an IGW00201 throttle on a passing control was
+    // false-`Clean` before U1/U2; it now reads `Held`, rendered `Held-throttle`.
+    assert_eq!(
+        read_variant_verdict(500, "IGW00201"),
+        VariantVerdict::Inconclusive
+    );
+    assert_eq!(
+        classify_probe(true, read_variant_verdict(500, "IGW00201")),
+        ProbeOutcome::Held,
+        "a throttle on a passing control is inconclusive, not Clean"
+    );
+    assert_eq!(
+        read_reported_label(t1101, "shcode", "required", true, 500, "IGW00201"),
+        "Held-throttle",
+        "§27 reason A: the throttle is now visible as Held-throttle, not false-Clean"
+    );
+
+    // Merits rejects stay `Clean` — no certified disposition regresses.
+    assert_eq!(
+        read_reported_label(t1101, "shcode", "required", true, 500, "IGW40011"),
+        "Clean",
+        "IGW40011 is a merits reject — Clean preserved"
+    );
+    assert_eq!(
+        read_reported_label(t0425, "sortgb", "required", true, 500, "IGW40013"),
+        "Clean",
+        "§30 t0425 sortgb/required → IGW40013 → Clean anchor preserved"
+    );
+
+    // An accepted invalid variant (2xx success) is still a Divergent — unchanged.
+    assert_eq!(
+        read_reported_label(t1101, "shcode", "required", true, 200, "00000"),
+        "Divergent",
+        "an accepted invalid variant is a divergence"
+    );
+
+    // Strict inversion: an UNKNOWN read reject code is now inconclusive (`Held`), not
+    // `Clean` — but it renders plain `Held` (distinguished by its printed rsp_cd),
+    // NOT `Held-throttle`, which is reserved for a catalogued noneval code.
+    assert_eq!(
+        read_variant_verdict(500, "40510"),
+        VariantVerdict::Inconclusive
+    );
+    assert_eq!(
+        read_reported_label(t1101, "shcode", "required", true, 500, "40510"),
+        "Held",
+        "an unknown read reject is inconclusive (Held), not false-Clean and not Held-throttle"
+    );
+
+    // The `Held-throttle` label fires ONLY for a noneval Inconclusive on a passing
+    // control — never for a control-fail Held (the throttle detail is moot then).
+    assert_eq!(throttle_label(true, "IGW00201"), Some("Held-throttle"));
+    assert_eq!(throttle_label(false, "IGW00201"), None, "control-fail is a plain Held");
+    assert_eq!(throttle_label(true, "40510"), None, "unknown code is not a throttle");
+    assert_eq!(throttle_label(true, "IGW40011"), None, "a merits reject is not a throttle");
+
+    // The seed predicate itself.
+    assert!(is_read_merits_reject("IGW40011"));
+    assert!(is_read_merits_reject("IGW40013"));
+    assert!(!is_read_merits_reject("IGW00201"));
+    assert!(!is_read_merits_reject("00000"));
+    assert!(!is_read_merits_reject("40510"));
 }
 
 #[test]
