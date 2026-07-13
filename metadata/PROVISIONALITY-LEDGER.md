@@ -1978,10 +1978,15 @@ on findings the earlier halts had hidden:
   symbol for a submit — correctly `required:true`, unchanged). But `BnsTpCode/required` (buy/sell
   direction) → `00000` accepted with the ordno unsurfaced, and the owned-set-incomplete fallback swept
   a resting row (`ordno=17093`) — i.e. **removing the direction did not cleanly reject; an order
-  rested**. `BnsTpCode` **stays `required:true`, unmarked** — a direction field whose removal silently
-  places a direction-defaulted order must **never** be blessed `gateway_tolerant`. **CSPAT00601 stays
-  HELD**; a raw-probe A/B (definitive placement + side) remains the §29 follow-up, but the safe
-  disposition holds regardless.
+  rested**. **Operator order-book confirmation (in-window):** `ordno=17093` was a **real directional
+  order** the `BnsTpCode`-removed submit placed (005930 confirmed flat after the fallback cancel). So
+  the §29 ambiguity is now **resolved definitively**: `BnsTpCode`-removed does NOT fail closed — the
+  gateway defaults the direction and **places a real order**. `BnsTpCode` therefore **stays
+  `required:true`, unmarked and never `gateway_tolerant`** — a direction field whose removal silently
+  places a direction-defaulted order is precisely the case a hard caller contract exists for.
+  **CSPAT00601 stays HELD** and is **not certifiable via this probe** (the `required` variant places a
+  live order rather than being rejected); any future revisit is a probe-design question, not a schema
+  relaxation.
 
 **Schema + code edits landed (offline, this wave).** `metadata/constraints/`: `t0425.medosu`,
 `CSPAQ12200.BalCreTp`, `t8412.nday` → `gateway_tolerant:[required]`; `CSPAT00701.IsuNo`,
@@ -2001,5 +2006,7 @@ CSPAQ12200's `live-smoke-account` is non-TTY); the long-open §27 follow-up (1) 
 folds in. (2) Build the cross_field-tolerance mechanism so `t8412`'s `sdate/edate` divergence can
 downgrade, then re-probe → promote. (3) Characterize `IGW00000` (raw-probe A/B on
 `CSPAT00701 OrdprcPtnCode`); if placed-nothing, narrow-extend `is_ingress_validation_reject` → the
-§29 seam. (4) Raw-probe A/B on `CSPAT00601 BnsTpCode` (safety-relevant; disposition already
-HELD/`required:true` regardless).
+§29 seam. (4) `CSPAT00601 BnsTpCode` — **RESOLVED this window** by the operator order-book
+confirmation (removal places a real directional order; `required:true` permanent). No raw-probe A/B
+needed; the only open question is whether the probe should stop firing a live-order-placing `required`
+variant for direction fields at all (a probe-design follow-up, not a schema change).
