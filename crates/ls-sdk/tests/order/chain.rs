@@ -374,3 +374,190 @@ async fn order_chained_smoke() {
          traded-symbol working-order flat assertion confirms no order remains resting]"
     );
 }
+
+/// PAPER-RESET (attended, PAPER-ONLY): flatten the domestic paper book — cancel every
+/// resting order and close every long stock position — then positively confirm flat.
+///
+/// This exists because the order smokes can leave a resting order and, when a marketable
+/// scenario fills, a real long position that teardown cannot unwind; without this the
+/// operator resets the paper book by hand. It places REAL paper orders (marketable
+/// sells), so it reuses the EXACT order-smoke fail-closed chain — NOT a looser one:
+/// `autonomous_order_smoke_sdk` layers U1 (no CI/no-TTY marker + a FRESH per-wave human
+/// nonce within TTL) and U2 (paper-resolved after credential load) ahead of the standing
+/// `LS_TRADING_ENV=paper` + `LS_ORDER_SMOKE=1` double opt-in; U4 installs the fail-closed
+/// dispatch-log suppressor and every output line is scrubbed. A refusal on any gate
+/// places nothing.
+///
+/// Order of operations (fail-closed, positive confirmation only):
+///  a. CANCEL: account-wide `t0425` (chegb="2", unfilled) → `CSPAT00801` each resting
+///     remainder (`ordrem > 0`). A cancel that fails is logged (scrubbed) and the flat
+///     re-scan catches whatever remains.
+///  b. CLOSE: `t0424` holdings → for each sellable position (`mdposqt > 0`) fetch its
+///     `t1102` band and place a MARKETABLE `CSPAT00601` SELL at the floor.
+///  c. VERIFY: bounded re-scan of `t0425` + `t0424`; `PAPER-RESET ... flat=confirmed`
+///     when both are clean, else `flat=not-yet remaining=[...]` naming what is left
+///     (never loops forever). A failed scan is treated as NOT flat.
+///
+/// `#[ignore]` — runs only via `make paper-reset` in an attended PTY with a fresh nonce.
+#[tokio::test]
+#[ignore = "guarded PAPER-ONLY book reset: places real marketable sells; needs credentials + LS_ORDER_SMOKE=1 + a fresh LS_ORDER_SMOKE_NONCE; run via `make paper-reset`"]
+async fn paper_reset() {
+    // U4: suppress the unscrubbed ls_core dispatch debug events BEFORE any dispatch.
+    if let Err(e) = install_dispatch_log_suppressor() {
+        panic!("{}", scrub_secrets(&e.to_string()));
+    }
+
+    // The member-firm number for the flatten SELL (same default as the order smokes).
+    let member_no = std::env::var("LS_ORDER_SMOKE_MBRNO").unwrap_or_else(|_| "NXT".into());
+    if member_no.trim().is_empty() {
+        panic!("paper-reset refuses: empty member number (set LS_ORDER_SMOKE_MBRNO)");
+    }
+
+    // U1 + U2: the SAME fail-closed autonomy chain as the order legs (nonce + no-TTY +
+    // paper-resolved). A refusal places nothing and emits only the scrubbed reason.
+    let sdk = match autonomous_order_smoke_sdk() {
+        Ok(s) => s,
+        Err(e) => panic!("{}", scrub_secrets(&e.to_string())),
+    };
+
+    // ---- (a) Cancel every resting working order (account-wide, unfilled). ----
+    // Reuse the order-chain working-order scan with an EMPTY symbol filter → all symbols;
+    // chegb="2" keeps the set to the currently-unfilled (resting) orders, and the scan
+    // fails CLOSED on a paginated cursor. A failed scan is fatal (positive confirmation
+    // only — we must know the resting set before placing any sell).
+    let working = match scan_symbol_working_orders(&sdk, "").await {
+        Ok(rows) => rows,
+        Err(e) => panic!("{}", loud_failure("paper-reset-scan-failed", &[], &e)),
+    };
+    let mut canceled = 0usize;
+    for r in working
+        .iter()
+        .filter(|r| parse_qty(&r.ordrem) > 0)
+    {
+        let cancel = CSPAT00801Request::new(r.ordno.trim(), r.expcode.trim(), r.ordrem.trim());
+        match sdk.orders().cancel(&cancel).await {
+            Ok(_) => {
+                canceled += 1;
+                println!("PAPER-RESET cancel ordno={} result=acked", r.ordno.trim());
+            }
+            Err(e) => println!(
+                "PAPER-RESET cancel ordno={} result=[{}]",
+                r.ordno.trim(),
+                scrub_secrets(&e.to_string())
+            ),
+        }
+    }
+
+    // ---- (b) Close every sellable long via a marketable SELL. ----
+    let holdings = match sdk
+        .account()
+        .stock_balance(&T0424Request::new("1", "0", "0", "0"))
+        .await
+    {
+        Ok(resp) => resp.outblock1,
+        Err(e) => panic!(
+            "{}",
+            loud_failure("paper-reset-holdings-failed", &[], &e.to_string())
+        ),
+    };
+    let mut closed = 0usize;
+    for close in holdings_to_sells(&holdings) {
+        // Price the marketable sell off THIS symbol's daily band (floor). A degenerate
+        // band (halted / limit-locked / newly-listed) cannot be priced safely, so skip
+        // it — the flat re-scan will report it as still-remaining rather than place on a
+        // bad band.
+        let band = match sdk
+            .market_session()
+            .quote(&T1102Request::new(&close.symbol, "K"))
+            .await
+        {
+            Ok(resp) => match validate_band(&resp.outblock.uplmtprice, &resp.outblock.dnlmtprice) {
+                Ok(b) => b,
+                Err(e) => {
+                    println!(
+                        "PAPER-RESET close symbol={} skipped=[degenerate band: {}]",
+                        close.symbol,
+                        scrub_secrets(&e)
+                    );
+                    continue;
+                }
+            },
+            Err(e) => {
+                println!(
+                    "PAPER-RESET close symbol={} skipped=[band fetch failed: {}]",
+                    close.symbol,
+                    scrub_secrets(&e.to_string())
+                );
+                continue;
+            }
+        };
+        let req = build_marketable_sell(&close.symbol, close.qty, &band, &member_no);
+        match sdk.orders().submit(&req).await {
+            Ok(resp) => {
+                closed += 1;
+                println!(
+                    "PAPER-RESET close symbol={} qty={} ordno={} result=acked",
+                    close.symbol,
+                    close.qty,
+                    resp.order_no()
+                );
+            }
+            Err(e) => println!(
+                "PAPER-RESET close symbol={} qty={} result=[{}]",
+                close.symbol,
+                close.qty,
+                scrub_secrets(&e.to_string())
+            ),
+        }
+    }
+
+    // ---- (c) Verify flat: bounded re-scan of t0425 + t0424 (never loops forever). ----
+    const MAX_VERIFY_ATTEMPTS: usize = 3;
+    let mut flat = false;
+    let mut remaining: Vec<String> = Vec::new();
+    for attempt in 1..=MAX_VERIFY_ATTEMPTS {
+        // A short settle so a just-placed marketable sell can fill / a cancel can clear
+        // before the confirming read (the scan itself also paces the t0425 budget).
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        let w = scan_symbol_working_orders(&sdk, "").await;
+        let h = sdk
+            .account()
+            .stock_balance(&T0424Request::new("1", "0", "0", "0"))
+            .await;
+        match (w, h) {
+            (Ok(w), Ok(h)) => {
+                if book_is_flat(&w, &h.outblock1) {
+                    flat = true;
+                    break;
+                }
+                remaining = describe_remaining(&w, &h.outblock1);
+                println!(
+                    "PAPER-RESET verify attempt={attempt} flat=not-yet remaining=[{}]",
+                    remaining.join(",")
+                );
+            }
+            (w, h) => {
+                // A failed scan is NOT flat (positive confirmation only). Record a
+                // scrubbed reason and keep the remaining note honest.
+                let why = match (&w, &h) {
+                    (Err(e), _) => format!("t0425 scan failed: {}", scrub_secrets(&e.to_string())),
+                    (_, Err(e)) => format!("t0424 read failed: {}", scrub_secrets(&e.to_string())),
+                    _ => "unknown".into(),
+                };
+                remaining = vec![format!("scan:{why}")];
+                println!("PAPER-RESET verify attempt={attempt} flat=not-yet {why}");
+            }
+        }
+    }
+
+    // ONE credential-free witness line (no token/appkey/secret/account/rsp_msg): counts +
+    // flat status, and on not-yet the bare remaining identifiers (public, not secrets).
+    if flat {
+        println!("PAPER-RESET canceled={canceled} closed={closed} flat=confirmed");
+    } else {
+        println!(
+            "PAPER-RESET canceled={canceled} closed={closed} flat=not-yet remaining=[{}]",
+            remaining.join(",")
+        );
+    }
+}
