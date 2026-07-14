@@ -3,7 +3,7 @@
 # A durable, credential-free record of a genuine Paper Live Smoke that fetched a
 # single chart page for a real trading day. The `line` below is captured
 # VERBATIM from the `LIVE-SMOKE` stdout of
-# `make live-smoke-chart LS_LIVE_SMOKE_T8412_DATE=20260617`
+# `make live-smoke-chart LS_LIVE_SMOKE_T8412_DATE=20260714`
 # (crates/ls-sdk/tests/live_smoke.rs::live_smoke_chart). The `record()` line
 # drops `rsp_msg` (localized, account-identifying text) and carries only the
 # numeric `rsp_cd` plus a public structural `rows` count — so a verbatim capture
@@ -14,15 +14,26 @@
 # ticker; `date` is a public trading day; `rows` is a page row count.
 #
 # Integrity of THIS record: `rsp_cd=00000` (gateway success) plus a non-empty
-# `rows` count confirm a genuine single-page chart round-trip on a real trading
-# day — a non-trading day would Err with a gateway 01715 before recording. This
-# proves single-page reachability only; multi-page `chart_all` correctness is
-# explicitly out of the recommendation scope.
+# `rows=31` count confirm a genuine single-page chart round-trip on a real trading
+# day (2026-07-14, a KRX trading day) — a non-trading day would Err with a gateway
+# 01715 before recording. This proves single-page reachability only; multi-page
+# `chart_all` correctness is explicitly out of the recommendation scope.
+#
+# Differential re-cert (ledger §30, in-window 2026-07-14 re-probe): the error-
+# resilience gate (`make live-smoke-t8412-negative`) ran CLEAN in-window on the
+# real paper gateway. Every variant read either `Clean` (genuine IGW40011 reject:
+# shcode/format, ncnt/type+required, qrycnt/type+required, nday/enum) or
+# `expected-tolerant` (gateway-tolerant, non-blocking: shcode/required,
+# nday/required, sdate/format, edate/format, and the sdate/edate cross_field
+# date_order). Zero Held, zero Divergent, no residual IGW00201 throttle. This
+# closes the last HELD reason (§30 cross_field date_order, pending.13 #2): the
+# cross_field gateway-tolerant downgrade (PR #135) unmasked the accepted violation
+# as expected-tolerant rather than Divergent, now confirmed live.
 tr_code: t8412
-date: 2026-06-22
+date: 2026-07-14
 env: paper
 target: live-smoke-chart
-line: "LIVE-SMOKE target=live-smoke-chart inputs=[symbol=005930 date=20260619] result=[rsp_cd=00000 rows=381]"
+line: "LIVE-SMOKE target=live-smoke-chart inputs=[symbol=005930 date=20260714] result=[rsp_cd=00000 rows=31]"
 
 attested_normalizer_version: 2
 attested_shape:

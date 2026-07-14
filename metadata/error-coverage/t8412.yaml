@@ -2,51 +2,65 @@
 #
 # Records the per-(field, class) coverage derived from constraints/t8412.yaml and
 # the reachable gateway codes the Reference page explains from the shared catalog.
-# This artifact is OFFLINE-authored: `probe_status: not_probed`. The differential
-# negative probe (`make live-smoke-t8412-negative`, R10) confirms the declared
-# bounds against paper and flips per-class status to `confirmed` / `held` /
-# `divergent`; that probe gates re-promotion to Recommended (U8), never this
-# offline gate.
 #
-# `status` legend: declared = authored offline, not yet probed; confirmed = the
-# differential probe confirmed the bound; held = inconclusive (session-closed /
+# PROBED: this artifact is backed by a live differential negative probe
+# (`make live-smoke-t8412-negative`, R10) run in-window on the real paper gateway
+# (ledger §30 re-cert, 2026-07-14 — a KRX trading day). The valid control
+# succeeded (rsp_cd=00000); every injected invalid variant read either `Clean`
+# (a genuine IGW40011 reject: shcode/format, ncnt/type, ncnt/required,
+# qrycnt/type, qrycnt/required, nday/enum) or `expected-tolerant` (the gateway
+# accepts the violation but the SDK enforces it at preflight as a caller contract
+# — gateway_tolerant, plan 2026-07-06-002: shcode/required, nday/required,
+# sdate/format, edate/format, and the sdate/edate cross_field date_order). Zero
+# Held, zero Divergent, no residual IGW00201 throttle — a CLEAN chain. The
+# cross_field date_order acceptance now reads `expected-tolerant` (not Divergent)
+# via the cross_field gateway-tolerant downgrade (PR #135), closing the last §30
+# HELD reason (pending.13 #2). The recommendation therefore does NOT assert
+# gateway-side rejection of the tolerant pairs (see the TR's `excludes`).
+#
+# `status` legend: confirmed = the differential probe confirmed the bound
+# (rejected distinctly, IGW40011); tolerant = the gateway accepted the injected
+# violation but preflight enforces it as a caller contract (gateway_tolerant,
+# expected-tolerant — non-blocking); held = inconclusive (session-closed /
 # unfunded / stale seed / paper-incompatible); divergent = observed behavior
-# disagreed with the declaration; n_a = the class does not apply to the field.
+# disagreed with the declaration; n_a = the class does not apply / no variant is
+# generated (e.g. string fields get no type-mutation variant; required-omission
+# variants fire only for required:true fields).
 tr_code: t8412
-probe_status: not_probed
+probe_status: clean
 seed: "shcode=005930 nday=1 sdate/edate=a recent trading week"
 input_classes:
-  - { field: shcode, class: type, status: declared }
-  - { field: shcode, class: required, status: declared }
+  - { field: shcode, class: type, status: n_a }            # string field — no type-mutation variant is generated
+  - { field: shcode, class: required, status: tolerant }    # omit accepted → 00000; preflight still enforces (gateway_tolerant, expected-tolerant)
   - { field: shcode, class: enum, status: n_a }
   - { field: shcode, class: range, status: n_a }
-  - { field: shcode, class: format, status: declared }
-  - { field: ncnt, class: type, status: declared }
-  - { field: ncnt, class: required, status: declared }
+  - { field: shcode, class: format, status: confirmed }     # malformed short code rejected distinctly (IGW40011)
+  - { field: ncnt, class: type, status: confirmed }         # non-numeric ncnt rejected (IGW40011)
+  - { field: ncnt, class: required, status: confirmed }     # omit rejected (IGW40011)
   - { field: ncnt, class: enum, status: n_a }
   - { field: ncnt, class: range, status: n_a }
   - { field: ncnt, class: format, status: n_a }
-  - { field: qrycnt, class: type, status: declared }
-  - { field: qrycnt, class: required, status: declared }
+  - { field: qrycnt, class: type, status: confirmed }       # non-numeric qrycnt rejected (IGW40011)
+  - { field: qrycnt, class: required, status: confirmed }   # omit rejected (IGW40011)
   - { field: qrycnt, class: enum, status: n_a }
   - { field: qrycnt, class: range, status: n_a }
   - { field: qrycnt, class: format, status: n_a }
-  - { field: nday, class: type, status: declared }
-  - { field: nday, class: required, status: declared }
-  - { field: nday, class: enum, status: declared }
+  - { field: nday, class: type, status: n_a }               # string field — no type-mutation variant is generated
+  - { field: nday, class: required, status: tolerant }      # omit accepted → 00000; preflight still enforces (gateway_tolerant, expected-tolerant)
+  - { field: nday, class: enum, status: confirmed }         # off-enum nday rejected distinctly (IGW40011)
   - { field: nday, class: range, status: n_a }
   - { field: nday, class: format, status: n_a }
-  - { field: sdate, class: type, status: declared }
-  - { field: sdate, class: required, status: declared }
+  - { field: sdate, class: type, status: n_a }              # string field — no type-mutation variant is generated
+  - { field: sdate, class: required, status: n_a }          # caller-optional (required:false) — no required-omission variant is generated
   - { field: sdate, class: enum, status: n_a }
   - { field: sdate, class: range, status: n_a }
-  - { field: sdate, class: format, status: declared }
-  - { field: edate, class: type, status: declared }
-  - { field: edate, class: required, status: declared }
+  - { field: sdate, class: format, status: tolerant }       # malformed date accepted → 00000; preflight still enforces (gateway_tolerant, expected-tolerant)
+  - { field: edate, class: type, status: n_a }              # string field — no type-mutation variant is generated
+  - { field: edate, class: required, status: n_a }          # caller-optional (required:false) — no required-omission variant is generated
   - { field: edate, class: enum, status: n_a }
   - { field: edate, class: range, status: n_a }
-  - { field: edate, class: format, status: declared }
-  - { field: "sdate/edate", class: cross_field, status: declared }
+  - { field: edate, class: format, status: tolerant }       # malformed date accepted → 00000; preflight still enforces (gateway_tolerant, expected-tolerant)
+  - { field: "sdate/edate", class: cross_field, status: tolerant }  # start>end date_order accepted → 00000; cross_field gateway_tolerant (PR #135, expected-tolerant)
 # Reachable gateway codes for this read TR, explained once from the shared catalog
 # (R8/R9). Environment/entitlement codes are not reproduced per TR — they point at
 # the same catalog entries.

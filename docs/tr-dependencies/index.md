@@ -291,7 +291,7 @@ Maintainer- and operator-facing projection of TR maintenance metadata: owner cla
 | `t8407` | API용주식멀티현재가조회 | `market_session` | implemented | [t8407](./t8407.md) |
 | `t8410` | API전용주식차트(일주월년) | `paginated` | implemented | [t8410](./t8410.md) |
 | `t8411` | 주식차트(틱/n틱) | `paginated` | implemented | [t8411](./t8411.md) |
-| `t8412` | 주식 차트(N분봉) 조회 | `paginated` | implemented | [t8412](./t8412.md) |
+| `t8412` | 주식 차트(N분봉) 조회 | `paginated` | recommended | [t8412](./t8412.md) |
 | `t8417` | 업종차트(틱/n틱) | `paginated` | implemented | [t8417](./t8417.md) |
 | `t8418` | 업종차트(N분) | `paginated` | implemented | [t8418](./t8418.md) |
 | `t8419` | 업종차트(일주월) | `paginated` | implemented | [t8419](./t8419.md) |

@@ -256,7 +256,7 @@ Minimal user-facing reference for the implemented TRs. Tracked-but-unimplemented
 | `t8407` | API용주식멀티현재가조회 | `market_session` | implemented, not yet recommended |
 | `t8410` | API전용주식차트(일주월년) | `paginated` | implemented, not yet recommended |
 | `t8411` | 주식차트(틱/n틱) | `paginated` | implemented, not yet recommended |
-| `t8412` | 주식 차트(N분봉) 조회 | `paginated` | implemented, not yet recommended |
+| `t8412` | 주식 차트(N분봉) 조회 | `paginated` | recommended |
 | `t8417` | 업종차트(틱/n틱) | `paginated` | implemented, not yet recommended |
 | `t8418` | 업종차트(N분) | `paginated` | implemented, not yet recommended |
 | `t8419` | 업종차트(일주월) | `paginated` | implemented, not yet recommended |
