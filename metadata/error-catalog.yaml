@@ -51,6 +51,17 @@ codes:
       The market session required for this TR is closed. An environment
       condition, not a request defect: the same request succeeds inside the
       correct trading window. Retry in-session.
+  IGW00000:
+    kind: gateway_error
+    explanation: >-
+      An undocumented, success-SHAPED gateway code (`00000`/`00136` are the
+      success families, so the code alone cannot classify the outcome) observed at
+      http=500 on CSPAT00701's `OrdprcPtnCode`-omitted modify variant (re-cert wave
+      3, 2026-07-13). Characterized by an attended seed/fire/teardown A/B as a
+      placed-nothing reject for that scoped modify variant only. It is NOT globally
+      admitted to `is_ingress_validation_reject`: the runtime still treats it as
+      may-rest and reconciles via t0425. See
+      docs/solutions/integration-issues/igw00000-cspat00701-placed-nothing-ab-probe.md.
   IGW40011:
     kind: request_shape
     explanation: >-

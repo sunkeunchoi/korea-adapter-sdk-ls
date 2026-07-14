@@ -124,7 +124,13 @@ mod tests {
         // The rate-limit code, hard gateway failures, business rejects, and
         // successes are NOT ingress rejects — they may have rested / are handled
         // elsewhere, and must stay may-rest/reconcile on the order path.
-        for code in ["IGW00201", "IGW40013", "IGW40014", "IGW50008", "40510", "00040", "00000", ""] {
+        // `IGW00000` (Route B, plan 2026-07-14-001) is admitted as placed-nothing
+        // only by the SCOPED order-probe allowlist, NEVER by this runtime seam
+        // (KTD4) — the probe/runtime divergence is intentional and documented.
+        for code in [
+            "IGW00201", "IGW40013", "IGW40014", "IGW50008", "40510", "00040", "00000", "IGW00000",
+            "",
+        ] {
             assert!(
                 !is_ingress_validation_reject(code),
                 "`{code}` must NOT be treated as a placed-nothing ingress reject"

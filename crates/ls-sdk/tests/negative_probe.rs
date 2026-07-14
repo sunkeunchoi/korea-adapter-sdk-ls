@@ -1217,6 +1217,64 @@ fn classify_fired_variant(http: u16, rsp_cd: &str) -> FiredVariantOutcome {
     }
 }
 
+/// `true` if `schema` declares — for this exact `(field, class, rsp_cd)` triple —
+/// that the fired variant **placed nothing** (Route B, plan 2026-07-14-001). The
+/// order-path analogue of [`is_gateway_tolerant`]: a pure per-triple lookup over a
+/// field's `placed_nothing_codes` map, so the scoped may-rest→placed-nothing
+/// downgrade is offline-twinnable without a live fire.
+///
+/// Deliberately narrow — it fires ONLY for the exact triple a constraint file
+/// declares (a different code, class, or field all miss). It intentionally breaks
+/// the line-1206 "probe and live path can never disagree" invariant in the **safe**
+/// direction: the probe reads a declared variant placed-nothing (lenient, after a
+/// controlled seed+teardown A/B), while the runtime seam
+/// (`ls_core::is_ingress_validation_reject`) is **unchanged** and still treats the
+/// same code as may-rest (`AmbiguousOrder → reconcile via t0425`). The break — and
+/// its bounded sensor-blinding cost (this variant reads CLEAN forever, so a future
+/// gateway change to actually-rest this code is undetectable here) — is stated
+/// explicitly per the plan's Route B section, not left implicit.
+fn order_code_placed_nothing(
+    schema: &ConstraintSchema,
+    field: &str,
+    class: &str,
+    rsp_cd: &str,
+) -> bool {
+    schema
+        .fields
+        .iter()
+        .find(|f| f.name == field)
+        .and_then(|f| f.placed_nothing_codes.get(class))
+        .is_some_and(|codes| codes.iter().any(|c| c == rsp_cd))
+}
+
+/// Resolve a fired order variant's disposition (Route B, plan 2026-07-14-001): the
+/// pure composition of the untouched [`classify_fired_variant`] with the scoped
+/// [`order_code_placed_nothing`] override. When `classify_fired_variant` yields
+/// `MayHaveRested` **and** the schema declares this exact `(field, class, rsp_cd)`
+/// a placed-nothing triple, the outcome is downgraded to `PlacedNothing`; every
+/// other case defers verbatim to `classify_fired_variant` (Accepted / PlacedNothing
+/// / an undeclared MayHaveRested all pass through). Keeping this a pure resolver
+/// (rather than inlining the override in the async fire loop) makes the Route-B
+/// routing offline-twinnable without a live gateway — resolving the fire-site
+/// integration-test gap. `classify_fired_variant` stays pure and untouched (KTD1);
+/// the runtime seam stays untouched (KTD4).
+fn resolve_fired_outcome(
+    schema: &ConstraintSchema,
+    field: &str,
+    class: &str,
+    http: u16,
+    rsp_cd: &str,
+) -> FiredVariantOutcome {
+    match classify_fired_variant(http, rsp_cd) {
+        FiredVariantOutcome::MayHaveRested
+            if order_code_placed_nothing(schema, field, class, rsp_cd) =>
+        {
+            FiredVariantOutcome::PlacedNothing
+        }
+        other => other,
+    }
+}
+
 /// Render an `LsError` credential-free for a probe log line. For an `ApiError` /
 /// `AmbiguousOrder` the `Display` is `"API error {code}: {message}"` where
 /// `message` is the raw broker `rsp_msg` — localized text that can echo account
@@ -1239,6 +1297,13 @@ fn safe_err(e: &LsError) -> String {
 /// The order-TR negative-probe class filter (KTD3): fire ONLY type/required
 /// variants against a live order endpoint; enum/range/format are recorded `held`.
 /// The single shared definition used by both the live leg and the offline test.
+///
+/// Note this filter says only WHICH classes fire — not WHICH order TRs are safe to
+/// fire a live `required`-omit variant against. That is the modify-vs-submit policy
+/// (`docs/solutions/conventions/order-negative-probe-modify-vs-submit-policy.md`,
+/// resolves pending.13 #5): a modify leg (seed + teardown → reversible/observable)
+/// is probeable; a submit leg with a booking-determining field (the `BnsTpCode`
+/// class → an uncontrolled resting order, no seed to snapshot) is permanently HELD.
 fn order_probe_classes(v: &InvalidVariant) -> bool {
     v.class == "type" || v.class == "required"
 }
@@ -1556,11 +1621,23 @@ async fn run_order_negative_probe(
                 order_reconcile_teardown(&sdk, symbol, &owned, false).await;
                 return;
             }
-            Some((http, rsp_cd, ord_no)) => match classify_fired_variant(http, &rsp_cd) {
+            Some((http, rsp_cd, ord_no)) => match resolve_fired_outcome(
+                &schema, &v.field, &v.class, http, &rsp_cd,
+            ) {
                 // A non-IGW40011 5xx is MAY-REST — the gateway may have accepted before
                 // failing. IGW40011-at-500 is exempt (an ingress input-validation reject
                 // that placed nothing) and routes to `PlacedNothing` below, so the type
                 // variant no longer false-halts the differential (KTD1/KTD2).
+                //
+                // Route B (plan 2026-07-14-001): `resolve_fired_outcome` additionally
+                // downgrades a MayHaveRested to PlacedNothing when the schema declares
+                // this exact `(field, class, rsp_cd)` a scoped placed-nothing triple
+                // (`order_code_placed_nothing`). This DELIBERATELY breaks the line-1206
+                // "probe and live path can never disagree" invariant in the SAFE
+                // direction — the probe is lenient (after the attended seed+teardown A/B
+                // proved placed-nothing) while the runtime seam is untouched (still
+                // may-rest/reconcile, KTD4). No triple is declared today (dormant); the
+                // CSPAT00701 `OrdprcPtnCode` annotation lands only post-verdict (U6).
                 FiredVariantOutcome::MayHaveRested => {
                     println!(
                         "NEG-PROBE target={tr_cd}-negative variant field={} class={} \
@@ -1953,6 +2030,108 @@ fn classify_fired_variant_exempts_igw40011_at_500_but_holds_other_5xx() {
     assert_eq!(
         classify_fired_variant(400, "40510"),
         FiredVariantOutcome::PlacedNothing
+    );
+}
+
+/// A synthetic order-constraint fixture declaring the **intended CSPAT00701
+/// annotation shape** (Route B, plan 2026-07-14-001): `OrdprcPtnCode`'s
+/// `required`-class violation answering `IGW00000` placed nothing. Built through the
+/// real `ConstraintSchema` deserialize path (same serde derive as the embedded
+/// YAML), so these offline tests prove the live `InvalidVariant.field` / `v.class`
+/// string binding matches the annotation key BEFORE the U6 metadata edit lands
+/// (KTD3) — it must NOT depend on the not-yet-authored embedded CSPAT00701 schema.
+fn placed_nothing_fixture_schema() -> ConstraintSchema {
+    serde_json::from_value(serde_json::json!({
+        "tr_code": "FIXTURE",
+        "fields": [
+            {
+                "name": "OrdprcPtnCode",
+                "type": "string",
+                "required": true,
+                "placed_nothing_codes": { "required": ["IGW00000"] },
+                "enum": { "applicable": false },
+                "range": { "applicable": false },
+                "format": { "applicable": false }
+            },
+            {
+                "name": "OrgOrdNo",
+                "type": "integer",
+                "required": true,
+                "enum": { "applicable": false },
+                "range": { "applicable": false },
+                "format": { "applicable": false }
+            }
+        ]
+    }))
+    .expect("fixture schema deserializes")
+}
+
+#[test]
+fn order_code_placed_nothing_is_scoped_to_the_exact_field_class_code_triple() {
+    // Route B (plan 2026-07-14-001): the scoped placed-nothing predicate fires ONLY
+    // for the exact declared `(field, class, code)` triple — a different code, class,
+    // or field all miss, and an empty/absent declaration is never placed-nothing.
+    let schema = placed_nothing_fixture_schema();
+    assert!(order_code_placed_nothing(&schema, "OrdprcPtnCode", "required", "IGW00000"));
+    // Same field+class, a DIFFERENT code → false (scoped to the declared code).
+    assert!(!order_code_placed_nothing(&schema, "OrdprcPtnCode", "required", "IGW50008"));
+    // Same field, a DIFFERENT class → false (scoped to the declared class).
+    assert!(!order_code_placed_nothing(&schema, "OrdprcPtnCode", "type", "IGW00000"));
+    // A DIFFERENT declared field with no annotation → false (scoped to the field).
+    assert!(!order_code_placed_nothing(&schema, "OrgOrdNo", "required", "IGW00000"));
+    // An unknown field → false.
+    assert!(!order_code_placed_nothing(&schema, "Nonexistent", "required", "IGW00000"));
+}
+
+#[test]
+fn resolve_fired_outcome_downgrades_only_a_declared_mayrest_triple() {
+    // Resolver twin: the pure Route-B routing is offline-twinnable. Only a declared
+    // (field, class, code) MayHaveRested downgrades to PlacedNothing; Accepted,
+    // PlacedNothing, and an undeclared MayHaveRested all pass through unchanged.
+    let schema = placed_nothing_fixture_schema();
+    // The declared (field, class) with IGW00000-at-500 → downgraded to PlacedNothing.
+    assert_eq!(
+        resolve_fired_outcome(&schema, "OrdprcPtnCode", "required", 500, "IGW00000"),
+        FiredVariantOutcome::PlacedNothing
+    );
+    // The SAME code on an UNDECLARED (field, class) → stays MayHaveRested (fail-closed).
+    assert_eq!(
+        resolve_fired_outcome(&schema, "OrgOrdNo", "required", 500, "IGW00000"),
+        FiredVariantOutcome::MayHaveRested
+    );
+    // A 2xx order-acceptance ack is never downgraded → Accepted (WAVE-BLOCKED, unchanged).
+    assert_eq!(
+        resolve_fired_outcome(&schema, "OrdprcPtnCode", "required", 200, "00040"),
+        FiredVariantOutcome::Accepted
+    );
+    // The pre-existing IGW40011-at-500 ingress exemption is unchanged by the resolver.
+    assert_eq!(
+        resolve_fired_outcome(&schema, "OrdprcPtnCode", "required", 500, "IGW40011"),
+        FiredVariantOutcome::PlacedNothing
+    );
+    // A generic non-ack business reject stays PlacedNothing, unchanged.
+    assert_eq!(
+        resolve_fired_outcome(&schema, "OrgOrdNo", "required", 400, "40510"),
+        FiredVariantOutcome::PlacedNothing
+    );
+}
+
+#[test]
+fn placed_nothing_binding_matches_the_live_invalidvariant_field_and_class_strings() {
+    // Real-binding round-trip (de-risks the attended window, KTD3): the live fire
+    // loop keys `order_code_placed_nothing` on `v.field` / `v.class` produced by
+    // `generate_invalid_variants`. Generate the OrdprcPtnCode required-omit variant
+    // from the fixture and assert its generated (field, class) strings resolve the
+    // annotation — proving the offline binding before the U6 metadata edit.
+    let schema = placed_nothing_fixture_schema();
+    let seed = serde_json::json!({ "OrdprcPtnCode": "00", "OrgOrdNo": "12345" });
+    let variant = generate_invalid_variants(&schema, &seed)
+        .into_iter()
+        .find(|v| v.field == "OrdprcPtnCode" && v.class == "required")
+        .expect("OrdprcPtnCode required-omit variant is generated");
+    assert!(
+        order_code_placed_nothing(&schema, &variant.field, &variant.class, "IGW00000"),
+        "the generated variant's field/class strings must resolve the annotation key"
     );
 }
 

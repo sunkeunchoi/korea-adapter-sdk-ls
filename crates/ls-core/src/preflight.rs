@@ -126,6 +126,21 @@ pub struct FieldConstraint {
     /// (backward-compatible default). See plan 2026-07-06-002 / KTD2-KTD3.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub gateway_tolerant: Vec<String>,
+    /// Per-input-class → gateway-code **placed-nothing** allowlist for the ORDER
+    /// negative probe (Route B, plan 2026-07-14-001). A field may declare that a
+    /// given class's violation, when the gateway answers a specific `rsp_cd` at
+    /// `http=500`, structurally **placed nothing** — admitting an undocumented,
+    /// success-shaped code (`IGW00000`) as a placed-nothing reject for that exact
+    /// `(field, class, code)` triple only. The order-path analogue of
+    /// [`Self::gateway_tolerant`], but on the may-rest→placed-nothing axis rather
+    /// than the divergence axis. Deliberately scoped and dormant: it is consulted
+    /// only at the order-probe fire site (`negative_probe.rs`), and it does **not**
+    /// touch the runtime seam ([`crate::error_catalog::is_ingress_validation_reject`]),
+    /// so a live caller still gets the may-rest `AmbiguousOrder → reconcile via
+    /// t0425` treatment (KTD4). Empty/absent = none (backward-compatible default);
+    /// every existing constraint file deserializes unchanged.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub placed_nothing_codes: BTreeMap<String, Vec<String>>,
 }
 
 /// A cross-field / combination-invalidity rule (R7): fields individually valid
@@ -664,6 +679,7 @@ mod tests {
                 confirmed: false,
             },
             gateway_tolerant: vec![],
+            placed_nothing_codes: BTreeMap::new(),
         }
     }
 
@@ -875,6 +891,65 @@ fields:
         let err = validate_request(&schema, &serde_json::json!({"shcode": ""}))
             .expect_err("omitted required field must still reject");
         assert_eq!(err.field, "shcode");
+    }
+
+    #[test]
+    fn placed_nothing_codes_round_trip_through_yaml() {
+        // Route B (plan 2026-07-14-001): a field carrying a `placed_nothing_codes`
+        // per-class → code map parses with the map present on the field.
+        let yaml = r#"
+tr_code: TEST
+fields:
+  - name: OrdprcPtnCode
+    type: string
+    required: true
+    placed_nothing_codes:
+      required: [IGW00000]
+    enum: {applicable: false}
+    range: {applicable: false}
+    format: {applicable: false}
+"#;
+        let schema: ConstraintSchema = serde_yaml::from_str(yaml).expect("parses");
+        assert_eq!(
+            schema.fields[0].placed_nothing_codes.get("required"),
+            Some(&vec!["IGW00000".to_string()])
+        );
+    }
+
+    #[test]
+    fn missing_placed_nothing_codes_key_defaults_empty() {
+        // Backward-compat: a schema with no `placed_nothing_codes` key parses with
+        // an empty map — every existing constraint file round-trips unchanged.
+        let yaml = r#"
+tr_code: TEST
+fields:
+  - name: shcode
+    type: string
+    required: true
+    enum: {applicable: false}
+    range: {applicable: false}
+    format: {applicable: false}
+"#;
+        let schema: ConstraintSchema = serde_yaml::from_str(yaml).expect("parses");
+        assert!(schema.fields[0].placed_nothing_codes.is_empty());
+    }
+
+    #[test]
+    fn placed_nothing_codes_does_not_weaken_preflight() {
+        // KTD4 analogue: a `required: true` field that also declares
+        // `placed_nothing_codes: {required: [IGW00000]}` still fails preflight when
+        // omitted — the facet only informs the order probe, never preflight.
+        let mut f = field("OrdprcPtnCode", FieldType::String, true);
+        f.placed_nothing_codes
+            .insert("required".into(), vec!["IGW00000".into()]);
+        let schema = ConstraintSchema {
+            tr_code: "TEST".into(),
+            fields: vec![f],
+            cross_field: vec![],
+        };
+        let err = validate_request(&schema, &serde_json::json!({"OrdprcPtnCode": ""}))
+            .expect_err("omitted required field must still reject");
+        assert_eq!(err.field, "OrdprcPtnCode");
     }
 
     #[test]
