@@ -86,11 +86,14 @@ fn authored_slice_metadata_validates_clean() {
 /// differential (`shcode`+`exchgubun`/required expected-tolerant, `shcode/format`
 /// IGW40011-rejected); the §30 promotion tail then added `t0425` (order-reconcile
 /// read, CLEAN `chegb`+`medosu`/required expected-tolerant) and `CSPAT00801`
-/// (cancel, CLEAN differential; 00463 cancel ack). These seven are the ONLY ones
+/// (cancel, CLEAN differential; 00463 cancel ack); the §30 tail's in-window
+/// re-probe (2026-07-14, a KRX trading day) then promoted `t8412` (paginated
+/// N-minute chart) on a CLEAN differential once the cross_field date_order
+/// gateway-tolerant downgrade (PR #135) unmasked the accepted start>end as
+/// expected-tolerant (closing pending.13 #2). These eight are the ONLY ones
 /// currently allowed to carry the Recommended badge. The order submit/modify legs
-/// `CSPAT00601` + `CSPAT00701` stay Implemented (HELD §30 negative differentials),
-/// as does t8412 (Divergent). This test guards against an accidental re-promotion
-/// of any of those that skips the gate.
+/// `CSPAT00601` + `CSPAT00701` stay Implemented (HELD §30 negative differentials).
+/// This test guards against an accidental re-promotion of any TR that skips the gate.
 #[test]
 fn recommended_set_is_exactly_the_recert_wave_certified_reads() {
     let report = validate_dir(&metadata_root()).expect("slice metadata validates");
@@ -103,7 +106,7 @@ fn recommended_set_is_exactly_the_recert_wave_certified_reads() {
     recommended.sort_unstable();
     assert_eq!(
         recommended,
-        ["CSPAQ12200", "CSPAT00801", "S3_", "t0425", "t1101", "t1102", "token"],
+        ["CSPAQ12200", "CSPAT00801", "S3_", "t0425", "t1101", "t1102", "t8412", "token"],
         "only the re-cert-wave-certified reads may be Recommended; any other TR must \
          first pass the differential-probe gate"
     );

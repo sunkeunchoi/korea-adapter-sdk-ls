@@ -117,11 +117,13 @@ freshness evaluator. The advisory spec-doc point (2) holds by construction. Only
   (ledger §30, attended open-KRX session 2026-07-13) promoted `CSPAQ12200` on a CLEAN
   Account-bucket-paced differential and, in its §30 tail, `t1102` on a CLEAN
   market-data differential, then in its §30 promotion tail `t0425` (order-reconcile
-  read) and `CSPAT00801` (cancel) on CLEAN differentials, bringing the total to
-  **7 Recommended TRs** — `token` (auth), `t1101` + `t1102` (market_session), `S3_`
-  (realtime), `CSPAQ12200` (account), `t0425` (paginated), and `CSPAT00801` (orders)
-  — spanning 6 owner classes, each on a clean live differential chain (except `S3_`,
-  whose realtime subscribe has no differential and rests on the lifecycle-scoped
+  read) and `CSPAT00801` (cancel) on CLEAN differentials, and finally — on an
+  in-window re-probe (2026-07-14, a KRX trading day) — `t8412` (paginated N-minute
+  chart), bringing the total to
+  **8 Recommended TRs** — `token` (auth), `t1101` + `t1102` (market_session), `S3_`
+  (realtime), `CSPAQ12200` (account), `t0425` + `t8412` (paginated), and `CSPAT00801`
+  (orders) — spanning 6 owner classes, each on a clean live differential chain (except
+  `S3_`, whose realtime subscribe has no differential and rests on the lifecycle-scoped
   substitute). `CSPAQ12200`'s sole `BalCreTp/required` variant read `expected-tolerant`
   under the 1500 ms Account-bucket pace (plan 2026-07-06-002 U6) — previously HELD when
   it only throttled. `t1102`'s `shcode`+`exchgubun`/required variants both read
@@ -131,8 +133,13 @@ freshness evaluator. The advisory spec-doc point (2) holds by construction. Only
   Account-bucket pace (the `medosu` leg re-probed clean in §30) and its working-order
   book read correctly across the live `live-smoke-order-chain` rows. `CSPAT00801`
   certified on a green `submit→modify→cancel` chain (00463 cancel ack,
-  flat=confirmed-after-cleanup) with a CLEAN own differential. `t8412` stayed HELD
-  (Divergent probe: the gateway accepts a removed-required / malformed field) and the
+  flat=confirmed-after-cleanup) with a CLEAN own differential. `t8412` was HELD in the
+  attended §30 window (Divergent probe: the gateway accepts a removed-required /
+  malformed field, and the `sdate/edate` cross_field date_order had no downgrade path)
+  but re-probed **CLEAN** on the in-window 2026-07-14 re-run once the cross_field
+  gateway-tolerant downgrade (PR #135) unmasked the accepted start>end as
+  expected-tolerant — every variant Clean or expected-tolerant, zero Held/Divergent,
+  no residual IGW00201 throttle — so it promoted (closing pending.13 #2). The
   order **submit/modify** legs `CSPAT00601` + `CSPAT00701` stayed HELD (§30 negative
   differentials held: `CSPAT00601`'s `BnsTpCode` places a direction-defaulted order,
   `CSPAT00701`'s `OrdprcPtnCode` reaches an undocumented `IGW00000` may-rest halt) —

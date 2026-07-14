@@ -1208,9 +1208,10 @@ mod tests {
         assert!(page.contains("Owner class: `paginated`"));
         assert!(page.contains("- Tracked: yes"));
         assert!(page.contains("- Implemented: yes"));
-        // Demoted to Implemented by the error-resilience gate (plan 2026-07-01-004,
-        // R12); re-promotes only after passing the new differential-probe gate (U8).
-        assert!(page.contains("- Recommended: no"));
+        // Re-promoted to Recommended (ledger §30, 2026-07-14): the differential
+        // probe ran CLEAN in-window on the real paper gateway, closing the last
+        // §30 cross_field date_order HELD reason (pending.13 #2).
+        assert!(page.contains("- Recommended: yes"));
         assert!(page.contains("Venue / session: `krx_regular`"));
         assert!(page.contains("Date sensitive: yes"));
         assert!(page.contains("Self-paginated: yes"));
@@ -1419,11 +1420,15 @@ mod tests {
             // shcode/format IGW40011-rejected) — both moved below. The §30 promotion
             // tail then added t0425 (order-reconcile read, CLEAN chegb+medosu/required
             // expected-tolerant) and CSPAT00801 (cancel, CLEAN differential; 00463 ack)
-            // — both moved below. t8412 stayed HELD (Divergent probe) and the order
+            // — both moved below. The §30 tail's in-window re-probe (2026-07-14) then
+            // promoted t8412 on a CLEAN differential — every variant Clean or
+            // expected-tolerant once the cross_field date_order downgrade (PR #135)
+            // unmasked the accepted start>end as expected-tolerant, closing the last
+            // §30 cross_field HELD reason (pending.13 #2) — moved below. The order
             // submit/modify legs CSPAT00601 + CSPAT00701 stayed HELD (§30 negative
             // differentials held: 00601 direction-defaulted BnsTpCode, 00701 IGW00000
             // may-rest halt).
-            "t8412", "CSPAT00601",
+            "CSPAT00601",
             "CSPAT00701",
         ];
         for tr in banner_trs {
@@ -1442,11 +1447,13 @@ mod tests {
         // (ledger §30, 2026-07-13) added CSPAQ12200 on a CLEAN Account-bucket-paced
         // differential and, in its §30 tail, t1102 on a CLEAN market-data differential,
         // then in the §30 promotion tail t0425 (order-reconcile read) and CSPAT00801
-        // (cancel) on CLEAN differentials.
+        // (cancel) on CLEAN differentials, and finally t8412 (paginated N-minute chart)
+        // on a CLEAN in-window re-probe (2026-07-14) once the cross_field date_order
+        // gateway-tolerant downgrade (PR #135) closed the last §30 HELD reason.
         // Their reference pages must OMIT the not-recommended banner. Re-promotion of the
         // remaining HELD TRs is operator-gated across later windows.
-        let recommended_no_banner: [&str; 7] =
-            ["token", "t1101", "S3_", "CSPAQ12200", "t1102", "t0425", "CSPAT00801"];
+        let recommended_no_banner: [&str; 8] =
+            ["token", "t1101", "S3_", "CSPAQ12200", "t1102", "t0425", "CSPAT00801", "t8412"];
         for rec in recommended_no_banner {
             let page = reference
                 .get(Path::new(&format!("docs/reference/{rec}.md")))
