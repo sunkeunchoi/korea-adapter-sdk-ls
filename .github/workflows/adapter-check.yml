@@ -1,0 +1,55 @@
+# Standalone nautilus adapter workspace gate.
+#
+# The `adapters/nautilus/` workspace opts out of the root Cargo workspace (its own
+# Cargo.toml, pinned to nautilus's Rust 1.96 / edition 2024 toolchain via
+# rust-toolchain.toml), so the root `cargo test` NEVER touches it. That gap means
+# an SDK-side change — e.g. a constraint-schema/preflight edit under crates/ or
+# metadata/ — can redden the adapter's build or tests invisibly. This workflow
+# closes that gap: it runs the adapter workspace's own `cargo test --workspace`
+# (adapter + its `lab`) on every push and PR so the regression fails loudly here.
+#
+# Posture: offline in the LS sense (no LS API call, no LS credentials) — the only
+# network is crates.io for dependency resolution. No secret is referenced.
+
+name: Adapter check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Read-only: build and test the checkout. No issues/contents write, no secret.
+permissions:
+  contents: read
+
+# One run per ref; a new push cancels an in-flight run for the same branch.
+concurrency:
+  group: adapter-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  adapter-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Provide rustup (matches the repo's freshness-cadence workflow). The
+      # actual adapter toolchain is pinned by adapters/nautilus/rust-toolchain.toml
+      # (channel 1.96.0) — rustup auto-installs it on the first `cargo` invocation
+      # inside that directory, so the workspace always builds on its pinned
+      # version regardless of the default channel installed here.
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      # Cache the adapter workspace's build artifacts + registry. Unlike the
+      # monthly freshness cadence (which skips caching by design), this gate runs
+      # per push/PR, so a warm cache materially cuts the nautilus build time.
+      - name: Cache adapter build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: adapters/nautilus
+
+      - name: Test adapter workspace (offline)
+        run: cargo test --workspace
+        working-directory: adapters/nautilus

@@ -30,9 +30,18 @@ cargo test           # workspace
 cargo test -p ls-core  # metadata validation + policy index cross-check
 make docs-check      # assert generated docs match committed
 make lane-check      # smoke-harness fail-fast lane guard (offline; no gateway)
+make adapter-check   # standalone nautilus adapter workspace (offline; only if a touched file reaches it)
 ```
 
 Keep the tree green; never commit with a red gate.
+
+`make adapter-check` (`cd adapters/nautilus && cargo test --workspace`) covers the
+**standalone** `adapters/nautilus/` workspace, which opts out of the root Cargo
+workspace (its own `Cargo.toml`, pinned to nautilus's Rust 1.96 toolchain) so the
+root `cargo test` never touches it. Run it whenever a change can reach the adapter
+— any `ls-sdk`/`ls-core` edit the adapter builds on (a constraint-schema/preflight
+change can redden the adapter invisibly), or any edit under `adapters/nautilus/`.
+It also runs on push/PR in CI (`.github/workflows/adapter-check.yml`).
 
 ## TR support lifecycle
 
