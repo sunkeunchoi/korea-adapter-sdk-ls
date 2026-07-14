@@ -137,6 +137,15 @@ smoke chain and has no visibility into `adapters/`.
   edits in `adapters/`, suspect a preflight/constraint-schema change from the
   root repo first.
 
+**Now automated (PR #143, commit `0dbd522`).** The blind spot is no longer
+detected only by manual triage: `make adapter-check`
+(`cd adapters/nautilus && cargo test --workspace`) is a documented root-gate
+step (see AGENTS.md "Gate"), and `.github/workflows/adapter-check.yml` runs the
+full unfiltered adapter workspace test on every push/PR. Guidance #2 above
+("longer-term, fold the adapter gate into the root gate or CI") is now done. The
+manual triage above is a backstop for when the gate is skipped locally, not the
+primary detector.
+
 ## Examples
 
 - **`CSPAT00601.MbrNo`** (this case) — `metadata/constraints/CSPAT00601.yaml`,

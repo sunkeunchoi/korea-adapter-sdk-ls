@@ -185,8 +185,22 @@ pages.
   broken drive that re-serves page 1 can satisfy a count-based assertion while
   silently returning duplicates — key the mock's page-2 response on the full
   cursor tuple and assert the returned bars are distinct.
-- **SDK follow-up (not yet done):** either port the body-cursor-plus-header
-  drive into `chart_all` itself, or update `crates/ls-sdk/src/paginated/chart.rs`'s
-  module doc to state plainly that `chart_all` is unsafe for multi-page
-  `t8412` pulls and that `chart_page` driven manually (as the adapter now does)
-  is the only safe multi-page primitive.
+- **SDK follow-up (RESOLVED — PR #142, commit `899497b`):** `chart_all` was
+  ported off the generic header-driven `collect_all` onto a hand-rolled body
+  `cts_date`/`cts_time` cursor loop (mirroring this adapter's
+  `fetch_minute_chunk`): it completes on an empty `cts_date`, threads
+  `tr_cont: Y` + `tr_cont_key` per continuation, and fails closed to
+  `PaginationLimit` on a repeated cursor / zero-row live-cursor page / max_pages.
+  `chart_all` is now the safe multi-page primitive — direct SDK callers no longer
+  have to hand-drive `chart_page`. The new offline tests in
+  `crates/ls-sdk/tests/paginated/chart.rs` follow this doc's own prevention
+  guidance ("assert bar *content*, not counts — key the mock on the full cursor
+  tuple"): they pin body-cursor termination (stop-on-empty-despite-`tr_cont:Y`,
+  continue-past-early-`tr_cont:N`, header+cursor threading) and the three
+  fail-closed paths.
+  - **Pacing caveat still stands:** `chart_all` fires its continuation pages
+    back-to-back with no pacing of its own (Defect A above), so it remains
+    exposed to the 1/s per-TR `IGW00201` cap on bulk pulls. The adapter's paced
+    `fetch_minute_chunk` (a pacer `acquire()` per page) is still the
+    IGW00201-safe path for large backfills, and any direct SDK caller pulling
+    more than a couple of pages must self-pace.
