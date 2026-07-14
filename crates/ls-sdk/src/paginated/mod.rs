@@ -1,8 +1,12 @@
 //! Paginated dependency class — two distinct continuation shapes, plus the facade.
 //!
-//! 1. **`t8412` — header-cursor pagination (multi-page).** Threads an LS
-//!    continuation through the `tr_cont`/`tr_cont_key` HTTP headers and walks pages
-//!    via `chart_all`. See [`chart`].
+//! 1. **`t8412` — body-cursor pagination (multi-page).** Walks pages via
+//!    `chart_all` on the BODY `cts_date`/`cts_time` cursor the summary out-block
+//!    echoes, threading `tr_cont: Y` + `tr_cont_key` on each continuation. The
+//!    live gateway terminates the transport `tr_cont` header after page one while
+//!    in-range rows remain, so the generic header-only `collect_all` walk silently
+//!    truncates the range — `chart_all` drives the body cursor instead. See
+//!    [`chart`].
 //! 2. **Body-`idx` rank/screen TRs — walked single-page by default.** `t1452`,
 //!    `t1403`, `t1441`, `t1463`, `t1466`, `t1489`, `t1492` carry a request-BODY
 //!    `idx` continuation cursor and are promoted at single-page scope. `ls-core`'s
@@ -88,28 +92,62 @@ impl Paginated {
             .await
     }
 
-    /// Fetch the FULL range of the `t8412` chart, walking every page.
+    /// Fetch the FULL range of the `t8412` chart, walking every page on the
+    /// **body `cts_date`/`cts_time` cursor** (NOT the `tr_cont` HTTP header).
     ///
-    /// Drives [`ls_core::Inner::collect_all`], which loops until the response
-    /// `tr_cont` header is empty/`"N"` or `max_pages` is hit (returning
-    /// [`ls_core::LsError::PaginationLimit`] at the cap). Each page's `tr_cont`/
-    /// `tr_cont_key` are copied onto the next request. Returns the accumulated
-    /// pages in order; callers concatenate `outblock1` across them.
-    pub async fn chart_all(&self, req: T8412Request) -> LsResult<Vec<T8412Response>> {
-        let inner = Arc::clone(&self.inner);
-        self.inner
-            .collect_all(req, move |r| {
-                let inner = Arc::clone(&inner);
-                async move {
-                    inner
-                        .post_paginated::<T8412Request, T8412Response>(
-                            &ls_core::endpoint_policy::T8412_POLICY,
-                            &r,
-                        )
-                        .await
-                }
-            })
-            .await
+    /// t8412 self-paginates on the body cursor the summary out-block echoes:
+    /// live, the gateway terminates the `tr_cont`/`tr_cont_key` transport headers
+    /// after page one while more in-range rows remain, so the generic
+    /// header-driven [`ls_core::Inner::collect_all`] walk silently truncates the
+    /// range to its newest page. This drive mirrors the live-verified minute
+    /// fetcher in the nautilus adapter (and [`Paginated::market_cap_top_all`]'s
+    /// body-`idx` walk): each continuation threads the echoed `cts_date`/
+    /// `cts_time` onto the next request's in-block **and** sets `tr_cont: Y` +
+    /// `tr_cont_key` — live, the gateway re-serves the newest page when the header
+    /// is absent even with the body cursor threaded, so a continuation needs both.
+    ///
+    /// A genuinely empty `cts_date` is the only clean completion. A zero-row page
+    /// with a still-live cursor (the gateway serves transiently empty pages
+    /// off-hours) or a re-served/repeated cursor is treated as suspect truncation
+    /// and fails closed with [`ls_core::LsError::PaginationLimit`] — as does
+    /// exhausting `max_pages` while the cursor is still advancing. Returns the
+    /// accumulated pages in order; callers concatenate `outblock1` across them.
+    pub async fn chart_all(&self, mut req: T8412Request) -> LsResult<Vec<T8412Response>> {
+        let max = self.inner.config.max_pages;
+        let mut pages: Vec<T8412Response> = Vec::new();
+        let mut seen: std::collections::HashSet<(String, String)> =
+            std::collections::HashSet::new();
+        for _ in 0..max {
+            let page: T8412Response = self
+                .inner
+                .post_paginated(&ls_core::endpoint_policy::T8412_POLICY, &req)
+                .await?;
+            // Read the body cursor + transport key before the page is moved.
+            let next_date = page.outblock.cts_date.trim().to_string();
+            let next_time = page.outblock.cts_time.trim().to_string();
+            let next_key = page.tr_cont_key().to_string();
+            let empty_rows = page.outblock1.is_empty();
+            if next_date.is_empty() {
+                // Exhausted body cursor — the ONLY clean completion, regardless of
+                // what the `tr_cont` header says (it is not the continuation signal).
+                pages.push(page);
+                return Ok(pages);
+            }
+            if empty_rows || !seen.insert((next_date.clone(), next_time.clone())) {
+                // Suspect truncation, fail closed: a zero-row page with a live
+                // cursor, or a re-served page (cursor echo — its rows would
+                // duplicate already-collected ones, so it is NOT pushed).
+                // Surfacing PaginationLimit keeps a caller from treating a
+                // silently-truncated range as complete.
+                return Err(ls_core::LsError::PaginationLimit(max));
+            }
+            pages.push(page);
+            req.inblock.cts_date = next_date;
+            req.inblock.cts_time = next_time;
+            req.set_tr_cont("Y".to_string());
+            req.set_tr_cont_key(next_key);
+        }
+        Err(ls_core::LsError::PaginationLimit(max))
     }
 
     /// Fetch a SINGLE page of the `t1452` top-volume rank screen.

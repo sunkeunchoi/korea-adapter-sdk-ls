@@ -107,9 +107,11 @@ fn sdk_with_max_pages(server: &MockServer, max_pages: usize) -> LsSdk {
     LsSdk::from_inner(inner)
 }
 
-/// Two-page responder: page 1 returns `tr_cont: Y` + a `tr_cont_key`, page 2
-/// returns `tr_cont: N`. Sequential by hit count (mirrors the `ls-core`
-/// pagination test pattern).
+/// Two-page BODY-CURSOR responder: page 1 echoes a live `cts_date`/`cts_time`
+/// cursor in its out-block (driving a second page), page 2 echoes an EMPTY
+/// `cts_date` (the exhausted-cursor clean completion). The `tr_cont` headers ride
+/// along (page 1 `Y` + a key, page 2 `N`) but do NOT drive the walk — `chart_all`
+/// terminates on the body cursor. Sequential by hit count.
 struct TwoPageResponder {
     hits: Arc<AtomicUsize>,
 }
@@ -123,7 +125,8 @@ impl Respond for TwoPageResponder {
                 .insert_header("tr_cont_key", "page2key")
                 .set_body_json(serde_json::json!({
                     "rsp_cd": "00000",
-                    "t8412OutBlock": { "shcode": "078020", "cts_date": "20240105" },
+                    // Live cursor → drives page 2.
+                    "t8412OutBlock": { "shcode": "078020", "cts_date": "20240104", "cts_time": "153000" },
                     "t8412OutBlock1": [
                         { "date": "20240105", "time": "090100", "close": 4540 },
                         { "date": "20240105", "time": "090200", "close": 4550 }
@@ -135,7 +138,8 @@ impl Respond for TwoPageResponder {
                 .insert_header("tr_cont_key", "")
                 .set_body_json(serde_json::json!({
                     "rsp_cd": "00000",
-                    "t8412OutBlock": { "shcode": "078020", "cts_date": "20240105" },
+                    // Empty cts_date → exhausted cursor → clean completion.
+                    "t8412OutBlock": { "shcode": "078020", "cts_date": "", "cts_time": "" },
                     "t8412OutBlock1": [
                         { "date": "20240105", "time": "090300", "close": 4560 }
                     ]
@@ -144,13 +148,37 @@ impl Respond for TwoPageResponder {
     }
 }
 
-/// Never-stopping responder: always returns `tr_cont: Y`, so `collect_all` runs to
-/// the `max_pages` cap.
+/// Never-stopping responder: always returns a live, ADVANCING body cursor (a
+/// distinct `cts_time` per hit so the repeat-guard never trips) with `tr_cont: Y`,
+/// so `chart_all` runs to the `max_pages` cap and surfaces `PaginationLimit`.
 struct NeverStopResponder {
     hits: Arc<AtomicUsize>,
 }
 
 impl Respond for NeverStopResponder {
+    fn respond(&self, _req: &Request) -> ResponseTemplate {
+        let n = self.hits.fetch_add(1, Ordering::SeqCst);
+        // Advance the cursor each page so it is never empty and never repeats.
+        let cts_time = format!("{:06}", 153000 - n as i64);
+        ResponseTemplate::new(200)
+            .insert_header("tr_cont", "Y")
+            .insert_header("tr_cont_key", "more")
+            .set_body_json(serde_json::json!({
+                "rsp_cd": "00000",
+                "t8412OutBlock": { "shcode": "078020", "cts_date": "20240105", "cts_time": cts_time },
+                "t8412OutBlock1": [ { "date": "20240105", "time": "090100", "close": 4540 } ]
+            }))
+    }
+}
+
+/// Header-says-more responder: every page carries `tr_cont: Y` (a header-driven
+/// walk would loop) but an EMPTY body `cts_date`. Proves `chart_all` gates on the
+/// body cursor, not the header — it must stop after a single page.
+struct HeaderMoreButCursorDoneResponder {
+    hits: Arc<AtomicUsize>,
+}
+
+impl Respond for HeaderMoreButCursorDoneResponder {
     fn respond(&self, _req: &Request) -> ResponseTemplate {
         self.hits.fetch_add(1, Ordering::SeqCst);
         ResponseTemplate::new(200)
@@ -158,8 +186,140 @@ impl Respond for NeverStopResponder {
             .insert_header("tr_cont_key", "more")
             .set_body_json(serde_json::json!({
                 "rsp_cd": "00000",
-                "t8412OutBlock": { "shcode": "078020", "cts_date": "20240105" },
+                "t8412OutBlock": { "shcode": "078020", "cts_date": "", "cts_time": "" },
                 "t8412OutBlock1": [ { "date": "20240105", "time": "090100", "close": 4540 } ]
+            }))
+    }
+}
+
+/// One captured request: the threaded body cursor (`cts_date`/`cts_time`, read
+/// from the in-block) plus the transport continuation headers (`tr_cont`/
+/// `tr_cont_key`) — a continuation needs BOTH, so a test asserts both.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CapturedRequest {
+    cts_date: String,
+    cts_time: String,
+    tr_cont: String,
+    tr_cont_key: String,
+}
+
+/// Cursor-capture responder: records each request's threaded `cts_date`/`cts_time`
+/// body cursor AND its `tr_cont`/`tr_cont_key` headers so a test can assert the
+/// continuation carries both. Page 1 echoes a live cursor; page 2 exhausts it.
+struct CursorCaptureResponder {
+    hits: Arc<AtomicUsize>,
+    seen: Arc<std::sync::Mutex<Vec<CapturedRequest>>>,
+}
+
+impl Respond for CursorCaptureResponder {
+    fn respond(&self, req: &Request) -> ResponseTemplate {
+        let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap_or_default();
+        let ib = &body["t8412InBlock"];
+        let header = |name: &str| {
+            req.headers
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default()
+                .to_string()
+        };
+        self.seen.lock().expect("cursor log mutex").push(CapturedRequest {
+            cts_date: ib["cts_date"].as_str().unwrap_or_default().to_string(),
+            cts_time: ib["cts_time"].as_str().unwrap_or_default().to_string(),
+            tr_cont: header("tr_cont"),
+            tr_cont_key: header("tr_cont_key"),
+        });
+
+        let n = self.hits.fetch_add(1, Ordering::SeqCst);
+        if n == 0 {
+            ResponseTemplate::new(200)
+                .insert_header("tr_cont", "Y")
+                .insert_header("tr_cont_key", "page2key")
+                .set_body_json(serde_json::json!({
+                    "rsp_cd": "00000",
+                    "t8412OutBlock": { "shcode": "078020", "cts_date": "20240104", "cts_time": "120000" },
+                    "t8412OutBlock1": [ { "date": "20240105", "time": "090100", "close": 4540 } ]
+                }))
+        } else {
+            ResponseTemplate::new(200)
+                .insert_header("tr_cont", "N")
+                .set_body_json(serde_json::json!({
+                    "rsp_cd": "00000",
+                    "t8412OutBlock": { "shcode": "078020", "cts_date": "", "cts_time": "" },
+                    "t8412OutBlock1": [ { "date": "20240105", "time": "090200", "close": 4550 } ]
+                }))
+        }
+    }
+}
+
+/// Early-header-terminal responder: page 1 returns `tr_cont: N` (the header the
+/// live gateway sends early, while in-range rows remain) BUT a still-live body
+/// `cts_date`; page 2 exhausts the cursor. `chart_all` must keep walking on the
+/// body cursor and NOT stop on the early header — the exact live truncation the
+/// generic `collect_all` walk suffered.
+struct EarlyHeaderTerminalLiveCursorResponder {
+    hits: Arc<AtomicUsize>,
+}
+
+impl Respond for EarlyHeaderTerminalLiveCursorResponder {
+    fn respond(&self, _req: &Request) -> ResponseTemplate {
+        let n = self.hits.fetch_add(1, Ordering::SeqCst);
+        if n == 0 {
+            ResponseTemplate::new(200)
+                .insert_header("tr_cont", "N") // early terminal header...
+                .set_body_json(serde_json::json!({
+                    "rsp_cd": "00000",
+                    // ...but the body cursor is still live → keep walking.
+                    "t8412OutBlock": { "shcode": "078020", "cts_date": "20240104", "cts_time": "153000" },
+                    "t8412OutBlock1": [ { "date": "20240105", "time": "090100", "close": 4540 } ]
+                }))
+        } else {
+            ResponseTemplate::new(200)
+                .insert_header("tr_cont", "N")
+                .set_body_json(serde_json::json!({
+                    "rsp_cd": "00000",
+                    "t8412OutBlock": { "shcode": "078020", "cts_date": "", "cts_time": "" },
+                    "t8412OutBlock1": [ { "date": "20240105", "time": "090200", "close": 4550 } ]
+                }))
+        }
+    }
+}
+
+/// Fail-closed responder: always re-serves the SAME live cursor (`tr_cont: Y`).
+/// The repeat-guard must trip and surface `PaginationLimit` rather than looping.
+struct RepeatCursorResponder {
+    hits: Arc<AtomicUsize>,
+}
+
+impl Respond for RepeatCursorResponder {
+    fn respond(&self, _req: &Request) -> ResponseTemplate {
+        self.hits.fetch_add(1, Ordering::SeqCst);
+        ResponseTemplate::new(200)
+            .insert_header("tr_cont", "Y")
+            .insert_header("tr_cont_key", "more")
+            .set_body_json(serde_json::json!({
+                "rsp_cd": "00000",
+                "t8412OutBlock": { "shcode": "078020", "cts_date": "20240104", "cts_time": "153000" },
+                "t8412OutBlock1": [ { "date": "20240105", "time": "090100", "close": 4540 } ]
+            }))
+    }
+}
+
+/// Fail-closed responder: a ZERO-row page with a still-live cursor (`tr_cont: Y`).
+/// A transiently-empty page mid-range is suspect truncation, not completion.
+struct EmptyRowsLiveCursorResponder {
+    hits: Arc<AtomicUsize>,
+}
+
+impl Respond for EmptyRowsLiveCursorResponder {
+    fn respond(&self, _req: &Request) -> ResponseTemplate {
+        self.hits.fetch_add(1, Ordering::SeqCst);
+        ResponseTemplate::new(200)
+            .insert_header("tr_cont", "Y")
+            .insert_header("tr_cont_key", "more")
+            .set_body_json(serde_json::json!({
+                "rsp_cd": "00000",
+                "t8412OutBlock": { "shcode": "078020", "cts_date": "20240104", "cts_time": "153000" },
+                "t8412OutBlock1": []
             }))
     }
 }

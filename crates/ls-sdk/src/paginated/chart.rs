@@ -1,29 +1,28 @@
-//! `t8412` 주식차트(N분) — header-cursor pagination (multi-page).
+//! `t8412` 주식차트(N분) — body-cursor pagination (multi-page).
 //!
-//! SELF-paginated market-data that threads an LS continuation through the
-//! `tr_cont`/`tr_cont_key` HTTP headers. `t8412` returns a chart whose candle rows
-//! (`t8412OutBlock1[]`) span more pages than fit one response; the gateway signals
-//! "more rows available" via the `tr_cont`/`tr_cont_key` HTTP response headers, and
-//! the caller walks pages until that header goes empty.
+//! SELF-paginated market-data whose continuation is the BODY `cts_date`/`cts_time`
+//! cursor the summary out-block echoes. `t8412` returns a chart whose candle rows
+//! (`t8412OutBlock1[]`) span more pages than fit one response; the caller threads
+//! the echoed `cts_date`/`cts_time` onto the next request and walks pages until the
+//! cursor is exhausted (empty `cts_date`). [`Paginated::chart_all`] drives this.
 //!
-//! ## Continuation rides as HTTP headers, never in the body
+//! ## The body cursor drives the walk; the header is a co-signal, not the gate
 //!
-//! The continuation tokens are transport headers, surfaced through the
-//! [`ls_core::HasPagination`] trait implemented on [`T8412Request`]. The wrapper
-//! carries `tr_cont`/`tr_cont_key` as `#[serde(skip)]` fields so they NEVER
-//! serialize into the request body — `dispatch_once` reads them via the trait and
-//! injects them as `tr_cont`/`tr_cont_key` HTTP request headers. `collect_all`
-//! reads the matching RESPONSE headers (injected into the JSON by `dispatch_once`)
-//! and copies them onto the next page request.
+//! `cts_date`/`cts_time` are BODY fields the server echoes in both the in-block and
+//! the summary out-block — they are the continuation. The transport
+//! `tr_cont`/`tr_cont_key` HTTP headers are a REQUIRED co-signal on each
+//! continuation (`tr_cont: Y`): live, the gateway re-serves the newest page when
+//! the header is absent even with the body cursor threaded. But the header is NOT
+//! the termination signal — the live gateway terminates the response `tr_cont`
+//! header after page one while in-range rows remain, so a header-driven walk
+//! (`collect_all`) silently truncates the range to its newest page. `chart_all`
+//! therefore gates completion on the exhausted body cursor, not the header.
 //!
-//! ## `cts_*` body fields vs. `tr_cont`/`tr_cont_key` headers — distinct
-//!
-//! These are two unrelated continuation mechanisms and the port keeps them apart:
-//!
-//! - `cts_date`/`cts_time` are BODY fields the server echoes in both the in-block
-//!   and the summary out-block. They are part of the TR's own query semantics.
-//! - `tr_cont`/`tr_cont_key` are the TRANSPORT continuation, carried as HTTP
-//!   headers, and are what `collect_all` walks. They never touch the body.
+//! The continuation tokens are surfaced through the [`ls_core::HasPagination`]
+//! trait implemented on [`T8412Request`]. The wrapper carries
+//! `tr_cont`/`tr_cont_key` as `#[serde(skip)]` fields so they NEVER serialize into
+//! the request body — `dispatch_once` reads them via the trait and injects them as
+//! HTTP request headers.
 //!
 //! ## Pin an explicit trading day
 //!

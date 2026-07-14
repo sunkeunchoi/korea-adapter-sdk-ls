@@ -101,11 +101,11 @@ async fn chart_page_deserializes_spec_fixture() {
     assert_eq!(resp.outblock1[1].close, "4550");
 }
 
-/// Happy path: `collect_all` walks TWO pages via the response `tr_cont`/
-/// `tr_cont_key` headers and concatenates rows. Page 1's `tr_cont: Y` header drives
-/// a second call; page 2's `tr_cont: N` stops the loop.
+/// Happy path: `chart_all` walks TWO pages on the BODY `cts_date`/`cts_time`
+/// cursor and concatenates rows. Page 1 echoes a live cursor (driving page 2);
+/// page 2 echoes an EMPTY `cts_date` (the exhausted-cursor clean completion).
 #[tokio::test]
-async fn chart_all_walks_two_pages_via_response_headers() {
+async fn chart_all_walks_two_pages_on_body_cursor() {
     let server = MockServer::start().await;
     mount_token(&server).await;
     let hits = Arc::new(AtomicUsize::new(0));
@@ -120,15 +120,10 @@ async fn chart_all_walks_two_pages_via_response_headers() {
         .paginated()
         .chart_all(pinned_req())
         .await
-        .expect("collect_all should walk two pages");
+        .expect("chart_all should walk two pages on the body cursor");
 
     assert_eq!(pages.len(), 2, "two pages collected");
     assert_eq!(hits.load(Ordering::SeqCst), 2, "exactly two HTTP calls");
-
-    // Page 1's continuation header was injected into the JSON so the getter works.
-    assert_eq!(pages[0].tr_cont, "Y");
-    assert_eq!(pages[0].tr_cont_key, "page2key");
-    assert_eq!(pages[1].tr_cont, "N");
 
     // Rows concatenate across the pages.
     let rows: Vec<&T8412OutBlock1> = pages.iter().flat_map(|p| p.outblock1.iter()).collect();
@@ -136,6 +131,172 @@ async fn chart_all_walks_two_pages_via_response_headers() {
     assert_eq!(rows[0].close, "4540");
     assert_eq!(rows[1].close, "4550");
     assert_eq!(rows[2].close, "4560");
+}
+
+/// The load-bearing body-cursor guarantee: every page carries `tr_cont: Y` (a
+/// header-driven walk would keep going) but an EMPTY body `cts_date`. `chart_all`
+/// must stop after ONE page — it gates completion on the exhausted body cursor,
+/// not the transport header the live gateway truncates early.
+#[tokio::test]
+async fn chart_all_stops_on_empty_body_cursor_ignoring_tr_cont_header() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    let hits = Arc::new(AtomicUsize::new(0));
+    Mock::given(method("POST"))
+        .and(path(T8412_PATH))
+        .respond_with(HeaderMoreButCursorDoneResponder { hits: hits.clone() })
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let pages = sdk
+        .paginated()
+        .chart_all(pinned_req())
+        .await
+        .expect("empty body cursor is the clean completion");
+
+    assert_eq!(pages.len(), 1, "one page: the body cursor was already exhausted");
+    assert_eq!(
+        hits.load(Ordering::SeqCst),
+        1,
+        "no second call despite tr_cont: Y — the header does not drive the walk"
+    );
+    // The single page's rows are returned.
+    assert_eq!(pages[0].outblock1.len(), 1);
+    assert_eq!(pages[0].outblock1[0].close, "4540");
+}
+
+/// Continuation threads the echoed body cursor onto the next request's in-block
+/// AND sets the `tr_cont: Y` + `tr_cont_key` transport headers (a continuation
+/// needs both — the gateway re-serves the newest page when the header is absent).
+/// Page 1's request is the empty first-page cursor with a `tr_cont: N` header;
+/// page 2's request carries page 1's echoed `cts_date`/`cts_time` and key.
+#[tokio::test]
+async fn chart_all_threads_body_cursor_and_headers_onto_next_request() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    let hits = Arc::new(AtomicUsize::new(0));
+    let seen = Arc::new(std::sync::Mutex::new(Vec::new()));
+    Mock::given(method("POST"))
+        .and(path(T8412_PATH))
+        .respond_with(CursorCaptureResponder {
+            hits: hits.clone(),
+            seen: seen.clone(),
+        })
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let pages = sdk
+        .paginated()
+        .chart_all(pinned_req())
+        .await
+        .expect("chart_all should thread the body cursor");
+
+    assert_eq!(pages.len(), 2, "two pages collected");
+    let reqs = seen.lock().expect("cursor log mutex");
+    assert_eq!(reqs.len(), 2, "two requests issued");
+    // First page: the caller's empty first-page cursor; dispatch sends tr_cont: N.
+    assert_eq!(reqs[0].cts_date, "");
+    assert_eq!(reqs[0].cts_time, "");
+    assert_eq!(reqs[0].tr_cont, "N", "first page is not a continuation");
+    // Second page: page 1's echoed cursor threaded onto the in-block, WITH the
+    // tr_cont: Y + tr_cont_key headers the continuation requires.
+    assert_eq!(reqs[1].cts_date, "20240104");
+    assert_eq!(reqs[1].cts_time, "120000");
+    assert_eq!(reqs[1].tr_cont, "Y", "continuation must set tr_cont: Y");
+    assert_eq!(
+        reqs[1].tr_cont_key, "page2key",
+        "continuation must thread the echoed tr_cont_key"
+    );
+}
+
+/// The other half of the body-cursor guarantee: the live gateway sends
+/// `tr_cont: N` EARLY (page 1) while in-range rows remain. `chart_all` must keep
+/// walking on the still-live body cursor and NOT stop on the header — the exact
+/// silent truncation the generic header-driven `collect_all` walk suffered.
+#[tokio::test]
+async fn chart_all_continues_past_early_tr_cont_n_while_cursor_live() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    let hits = Arc::new(AtomicUsize::new(0));
+    Mock::given(method("POST"))
+        .and(path(T8412_PATH))
+        .respond_with(EarlyHeaderTerminalLiveCursorResponder { hits: hits.clone() })
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let pages = sdk
+        .paginated()
+        .chart_all(pinned_req())
+        .await
+        .expect("a live body cursor keeps the walk going past an early tr_cont: N");
+
+    assert_eq!(
+        pages.len(),
+        2,
+        "page 1's early tr_cont: N is ignored while its body cursor is live"
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 2, "two calls — the body cursor drove page 2");
+    let rows: Vec<&T8412OutBlock1> = pages.iter().flat_map(|p| p.outblock1.iter()).collect();
+    assert_eq!(rows.len(), 2, "rows from both pages concatenate");
+    assert_eq!(rows[0].close, "4540");
+    assert_eq!(rows[1].close, "4550");
+}
+
+/// Fail-closed: a re-served (repeated) cursor cannot be walked forever — the
+/// repeat-guard surfaces `PaginationLimit` rather than looping to the cap.
+#[tokio::test]
+async fn chart_all_fails_closed_on_repeated_cursor() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    let hits = Arc::new(AtomicUsize::new(0));
+    Mock::given(method("POST"))
+        .and(path(T8412_PATH))
+        .respond_with(RepeatCursorResponder { hits: hits.clone() })
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_with_max_pages(&server, 8);
+    let err = sdk
+        .paginated()
+        .chart_all(pinned_req())
+        .await
+        .expect_err("a repeated cursor is suspect truncation");
+    assert!(
+        matches!(err, LsError::PaginationLimit(_)),
+        "expected PaginationLimit, got {err:?}"
+    );
+    // Page 1 collected + page 2 detected as a repeat: exactly two calls, well
+    // short of the cap.
+    assert_eq!(hits.load(Ordering::SeqCst), 2, "stops at the repeat, not the cap");
+}
+
+/// Fail-closed: a zero-row page with a still-live cursor is suspect truncation,
+/// not completion — surface `PaginationLimit` on the first such page.
+#[tokio::test]
+async fn chart_all_fails_closed_on_empty_page_with_live_cursor() {
+    let server = MockServer::start().await;
+    mount_token(&server).await;
+    let hits = Arc::new(AtomicUsize::new(0));
+    Mock::given(method("POST"))
+        .and(path(T8412_PATH))
+        .respond_with(EmptyRowsLiveCursorResponder { hits: hits.clone() })
+        .mount(&server)
+        .await;
+
+    let sdk = sdk_for(&server);
+    let err = sdk
+        .paginated()
+        .chart_all(pinned_req())
+        .await
+        .expect_err("a zero-row page with a live cursor fails closed");
+    assert!(
+        matches!(err, LsError::PaginationLimit(_)),
+        "expected PaginationLimit, got {err:?}"
+    );
+    assert_eq!(hits.load(Ordering::SeqCst), 1, "fails on the first suspect page");
 }
 
 /// Edge: `t8412OutBlock1` arriving as a SINGLE object (not an array) deserializes
@@ -164,8 +325,8 @@ fn out_block1_single_object_deserializes_to_one_element_vec() {
 }
 
 /// Edge: truncation at `max_pages` returns `LsError::PaginationLimit`. The mock
-/// config's `max_pages` is overridden to 2; the server never stops, so the loop
-/// hits the cap.
+/// config's `max_pages` is overridden to 2; the server always advances the body
+/// cursor (never exhausts, never repeats), so the loop hits the cap.
 #[tokio::test]
 async fn chart_all_truncates_at_max_pages() {
     let server = MockServer::start().await;
