@@ -6,9 +6,9 @@ requirement for the deferred `lab-research` CLI (or a named owner).
 
 **Status:** items 1–6 and 9–11 shipped in the `lab-research` CLI wave (plan
 `docs/plans/2026-07-04-002`) — retired below with a pointer to the command that
-addresses each. Items 7–8 stay open with their named residual owners.
-Credential-free by construction: no run ids, dates, account or symbol-embedded
-values appear here.
+addresses each. Items 7–8 shipped this session (PRs #142 and #143) and are
+retired below with their closing pointers. Credential-free by construction: no
+run ids, dates, account or symbol-embedded values appear here.
 
 ## Retired — shipped in the `lab-research` CLI
 
@@ -40,24 +40,33 @@ values appear here.
    that has bars but lacks the prior session's daily still reports; the universe
    snapshot still documents the full instrument count.
 
-## Fixed during the first cycle — residual owners remain (7–8)
+## Retired — shipped (residual owners closed, 7–8)
 
 7. **t8412 minute pagination was doubly broken** (fixed in the adapter's
-   `SdkFetcher`): the SDK's `chart_all` fires continuation pages back-to-back —
+   `SdkFetcher`): the SDK's `chart_all` fired continuation pages back-to-back —
    tripping the 1/s per-TR gateway cap (`IGW00201`) because the runtime limiter
-   is per-category — and walks the `tr_cont` HTTP headers, which the live
-   gateway terminates after page one while in-range rows remain. **Residual
-   owner: the SDK** — `chart_all` remains unsafe for multi-page t8412 use, and
-   the chart module docs still describe header-driven continuation; port the
-   body-cursor + `tr_cont: Y` drive (or document `chart_page` as the only safe
-   primitive).
+   is per-category — and walked the `tr_cont` HTTP headers, which the live
+   gateway terminates after page one while in-range rows remain. → **PR #142**
+   (commit `899497b`): `chart_all` was ported off the generic header-driven
+   `collect_all` onto a hand-rolled body `cts_date`/`cts_time` cursor loop
+   (mirroring this adapter's `fetch_minute_chunk`) — completes on an empty
+   `cts_date`, threads `tr_cont: Y` + `tr_cont_key` per page, fails closed to
+   `PaginationLimit` on a repeated cursor / zero-row live-cursor page / max_pages,
+   with offline tests keyed on the full cursor tuple. `chart_all` is now the safe
+   multi-page primitive. Residual pacing caveat: `chart_all` still bursts pages,
+   so the adapter's paced `fetch_minute_chunk` remains the IGW00201-safe path for
+   bulk pulls.
 
 8. **Constraint-schema preflight false-rejected the adapter's order path**
    (fixed in metadata): the order-submit schema required a member-number field
-   the adapter's KRX submit legitimately sends empty — struct wins. **Residual
-   owner: repo process** — the adapter workspace sits outside the root gate, so
-   an SDK-side preflight change can redden the adapter invisibly; add the
-   adapter's `cargo test --workspace` to the gate or CI.
+   the adapter's KRX submit legitimately sends empty — struct wins. The residual
+   owner was repo process: the adapter workspace sits outside the root gate, so
+   an SDK-side preflight change can redden the adapter invisibly. → **PR #143**
+   (commit `0dbd522`): added the `make adapter-check` gate step
+   (`cd adapters/nautilus && cargo test --workspace`, documented under AGENTS.md
+   "Gate") plus `.github/workflows/adapter-check.yml` running the full unfiltered
+   adapter workspace test on push/PR. Manual triage is now a backstop, not the
+   primary detector.
 
 ## Found + fixed during turn-2 certification
 
