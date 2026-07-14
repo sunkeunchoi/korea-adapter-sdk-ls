@@ -1217,6 +1217,173 @@ fn classify_fired_variant(http: u16, rsp_cd: &str) -> FiredVariantOutcome {
     }
 }
 
+/// `true` if `schema` declares — for this exact `(field, class, rsp_cd)` triple —
+/// that the fired variant **placed nothing** (Route B, plan 2026-07-14-001). The
+/// order-path analogue of [`is_gateway_tolerant`]: a pure per-triple lookup over a
+/// field's `placed_nothing_codes` map, so the scoped may-rest→placed-nothing
+/// downgrade is offline-twinnable without a live fire.
+///
+/// Deliberately narrow — it fires ONLY for the exact triple a constraint file
+/// declares (a different code, class, or field all miss). It intentionally breaks
+/// the line-1206 "probe and live path can never disagree" invariant in the **safe**
+/// direction: the probe reads a declared variant placed-nothing (lenient, after a
+/// controlled seed+teardown A/B), while the runtime seam
+/// (`ls_core::is_ingress_validation_reject`) is **unchanged** and still treats the
+/// same code as may-rest (`AmbiguousOrder → reconcile via t0425`). The break — and
+/// its bounded sensor-blinding cost (this variant reads CLEAN forever, so a future
+/// gateway change to actually-rest this code is undetectable here) — is stated
+/// explicitly per the plan's Route B section, not left implicit.
+fn order_code_placed_nothing(
+    schema: &ConstraintSchema,
+    field: &str,
+    class: &str,
+    rsp_cd: &str,
+) -> bool {
+    schema
+        .fields
+        .iter()
+        .find(|f| f.name == field)
+        .and_then(|f| f.placed_nothing_codes.get(class))
+        .is_some_and(|codes| codes.iter().any(|c| c == rsp_cd))
+}
+
+/// Resolve a fired order variant's disposition (Route B, plan 2026-07-14-001): the
+/// pure composition of the untouched [`classify_fired_variant`] with the scoped
+/// [`order_code_placed_nothing`] override. When `classify_fired_variant` yields
+/// `MayHaveRested` **and** the schema declares this exact `(field, class, rsp_cd)`
+/// a placed-nothing triple, the outcome is downgraded to `PlacedNothing`; every
+/// other case defers verbatim to `classify_fired_variant` (Accepted / PlacedNothing
+/// / an undeclared MayHaveRested all pass through). Keeping this a pure resolver
+/// (rather than inlining the override in the async fire loop) makes the Route-B
+/// routing offline-twinnable without a live gateway — resolving the fire-site
+/// integration-test gap. `classify_fired_variant` stays pure and untouched (KTD1);
+/// the runtime seam stays untouched (KTD4).
+fn resolve_fired_outcome(
+    schema: &ConstraintSchema,
+    field: &str,
+    class: &str,
+    http: u16,
+    rsp_cd: &str,
+) -> FiredVariantOutcome {
+    match classify_fired_variant(http, rsp_cd) {
+        FiredVariantOutcome::MayHaveRested
+            if order_code_placed_nothing(schema, field, class, rsp_cd) =>
+        {
+            FiredVariantOutcome::PlacedNothing
+        }
+        other => other,
+    }
+}
+
+// ===========================================================================
+// IGW00000 A/B characterization (plan 2026-07-14-001 U5). A one-shot attended
+// seed → snapshot → fire → re-snapshot → cancel cycle that classifies the
+// undocumented, success-SHAPED `IGW00000` on CSPAT00701's `OrdprcPtnCode`-omitted
+// modify variant as placed-nothing vs may-rest — the U3 runbook encapsulated as a
+// deterministic, re-runnable leg. Probe-only: the runtime seam is untouched.
+// ===========================================================================
+
+/// A snapshot of the seed/control order's mutable fields, taken from a **trap-free
+/// `chegb="2"` working-orders scan** (NOT the fill-inclusive `chegb="0"` query,
+/// which paginates on a traded symbol and false-HELDs — see
+/// `docs/solutions/logic-errors/order-probe-fill-inclusive-scan-paginates-false-held.md`).
+/// Fill-inclusiveness is realized instead by the post-fire cancel disposition: a
+/// fully-filled seed vanishes from `chegb="2"` but its cancel is gateway-rejected
+/// (`ControlDisposition::Filled`), the plan's named defense-in-depth.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct SeedSnapshot {
+    present: bool,
+    price: String,
+    qty: String,
+    cheqty: String,
+    ordrem: String,
+}
+
+/// Build the `SeedSnapshot` for `ordno` from a working-orders scan (pure). Matches
+/// on `normalize_ordno` so a JSON-number/zero-padded-string representation mismatch
+/// between submit and scan never mis-reads the seed as absent.
+fn seed_snapshot_from(rows: &[T0425OutBlock1], ordno: &str) -> SeedSnapshot {
+    let want = normalize_ordno(ordno);
+    match rows.iter().find(|r| normalize_ordno(&r.ordno) == want) {
+        Some(r) => SeedSnapshot {
+            present: true,
+            price: r.price.trim().to_string(),
+            qty: r.qty.trim().to_string(),
+            cheqty: r.cheqty.trim().to_string(),
+            ordrem: r.ordrem.trim().to_string(),
+        },
+        None => SeedSnapshot::default(),
+    }
+}
+
+/// `true` if the scan carries a RESTING order that is NOT the seed `ordno` — a
+/// phantom the fired variant may have conjured (pure). Resting = `cheqty==0 &&
+/// ordrem>0` (the same predicate teardown uses).
+fn has_new_resting_order(rows: &[T0425OutBlock1], ordno: &str) -> bool {
+    let want = normalize_ordno(ordno);
+    rows.iter().any(|r| {
+        normalize_ordno(&r.ordno) != want && parse_qty(&r.cheqty) == 0 && parse_qty(&r.ordrem) > 0
+    })
+}
+
+/// The IGW00000 A/B verdict (plan 2026-07-14-001 U5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AbVerdict {
+    /// fire=`500/IGW00000`, the seed is present & byte-identical, no new order, and it
+    /// canceled cleanly → the omitted-pattern modify placed nothing.
+    PlacedNothing,
+    /// The seed filled, mutated, vanished, or a new order rested → the modify (may
+    /// have) taken effect at the exchange.
+    MayRest,
+    /// An untrusted read (throttle/scan failure), an un-snapshottable pre-state, or a
+    /// fire that is not the characterized `500/IGW00000` surface → stays HELD, re-run.
+    /// Per #137 an untrusted read is NEVER read as placed-nothing.
+    Inconclusive,
+}
+
+/// Classify the IGW00000 A/B from the fire result, the before/after seed snapshots,
+/// whether a NEW order rested, and the post-fire cancel disposition (the
+/// fill-inclusive defense). Pure so the bind signature is offline-twinnable. Tested
+/// in the plan's bind-signature order: any decisive may-rest signal wins over a
+/// placed-nothing read, and anything ambiguous fails safe to `Inconclusive` — a
+/// false `PlacedNothing` (the only dangerous error) is structurally impossible.
+fn classify_igw00000_ab(
+    fire_http: u16,
+    fire_rsp_cd: &str,
+    reads_trusted: bool,
+    s_pre: &SeedSnapshot,
+    s_post: &SeedSnapshot,
+    new_resting_order: bool,
+    post_fire_disposition: &ControlDisposition,
+) -> AbVerdict {
+    // Untrusted read, or a control we could not even snapshot pre-fire → inconclusive
+    // (never placed-nothing, #137).
+    if !reads_trusted || !s_pre.present {
+        return AbVerdict::Inconclusive;
+    }
+    // Decisive may-rest — the seed filled (partial in scan, or cancel gateway-rejected
+    // on a flat book): the omitted-pattern modify became marketable and executed.
+    if matches!(post_fire_disposition, ControlDisposition::Filled(_)) {
+        return AbVerdict::MayRest;
+    }
+    // Decisive may-rest — a NEW order rested, the seed vanished from a trusted S_post
+    // (a vanished seed is may-rest, never inconclusive — plan bind signature), or the
+    // seed mutated (any of price/qty/cheqty/ordrem changed).
+    if new_resting_order || !s_post.present || s_post != s_pre {
+        return AbVerdict::MayRest;
+    }
+    // Positive placed-nothing: the characterized surface, seed byte-identical & still
+    // resting, no new order, and it canceled cleanly (was genuinely just resting).
+    if fire_http == 500
+        && fire_rsp_cd == "IGW00000"
+        && matches!(post_fire_disposition, ControlDisposition::CleanlyCanceled)
+    {
+        AbVerdict::PlacedNothing
+    } else {
+        AbVerdict::Inconclusive
+    }
+}
+
 /// Render an `LsError` credential-free for a probe log line. For an `ApiError` /
 /// `AmbiguousOrder` the `Display` is `"API error {code}: {message}"` where
 /// `message` is the raw broker `rsp_msg` — localized text that can echo account
@@ -1239,6 +1406,13 @@ fn safe_err(e: &LsError) -> String {
 /// The order-TR negative-probe class filter (KTD3): fire ONLY type/required
 /// variants against a live order endpoint; enum/range/format are recorded `held`.
 /// The single shared definition used by both the live leg and the offline test.
+///
+/// Note this filter says only WHICH classes fire — not WHICH order TRs are safe to
+/// fire a live `required`-omit variant against. That is the modify-vs-submit policy
+/// (`docs/solutions/conventions/order-negative-probe-modify-vs-submit-policy.md`,
+/// resolves pending.13 #5): a modify leg (seed + teardown → reversible/observable)
+/// is probeable; a submit leg with a booking-determining field (the `BnsTpCode`
+/// class → an uncontrolled resting order, no seed to snapshot) is permanently HELD.
 fn order_probe_classes(v: &InvalidVariant) -> bool {
     v.class == "type" || v.class == "required"
 }
@@ -1543,6 +1717,18 @@ async fn run_order_negative_probe(
         );
     }
 
+    // Route B teardown-trust (plan 2026-07-14-001, review P2). A scoped
+    // placed-nothing downgrade admits an undocumented, success-shaped code as
+    // "placed nothing" on what `classify_fired_variant` alone calls MayHaveRested.
+    // The may-rest arm reconciles with the untrusted cancel-EVERY-row fallback; a
+    // downgrade skips that and continues to the owned-only post-loop teardown. If
+    // the scoped tolerance is ever wrong and the variant rests a NEW (non-owned)
+    // order, owned-only teardown would surface-but-not-cancel it. So a wave that
+    // used any downgrade forces the post-loop residue teardown back to cancel-all —
+    // preserving the may-rest halt's auto-reconcile net for exactly the wave that
+    // leaned on the tolerance, while keeping the probe's Clean verdict lenient.
+    let mut used_scoped_downgrade = false;
+
     for v in variants.iter().filter(|v| order_probe_classes(v)) {
         match fire_inblock(&client, &url, &token, tr_cd, inblock_key, &v.request).await {
             // Transport failure / timeout = MAY-REST: stop, reconcile, halt (KTD3). The
@@ -1556,11 +1742,23 @@ async fn run_order_negative_probe(
                 order_reconcile_teardown(&sdk, symbol, &owned, false).await;
                 return;
             }
-            Some((http, rsp_cd, ord_no)) => match classify_fired_variant(http, &rsp_cd) {
+            Some((http, rsp_cd, ord_no)) => match resolve_fired_outcome(
+                &schema, &v.field, &v.class, http, &rsp_cd,
+            ) {
                 // A non-IGW40011 5xx is MAY-REST — the gateway may have accepted before
                 // failing. IGW40011-at-500 is exempt (an ingress input-validation reject
                 // that placed nothing) and routes to `PlacedNothing` below, so the type
                 // variant no longer false-halts the differential (KTD1/KTD2).
+                //
+                // Route B (plan 2026-07-14-001): `resolve_fired_outcome` additionally
+                // downgrades a MayHaveRested to PlacedNothing when the schema declares
+                // this exact `(field, class, rsp_cd)` a scoped placed-nothing triple
+                // (`order_code_placed_nothing`). This DELIBERATELY breaks the line-1206
+                // "probe and live path can never disagree" invariant in the SAFE
+                // direction — the probe is lenient (after the attended seed+teardown A/B
+                // proved placed-nothing) while the runtime seam is untouched (still
+                // may-rest/reconcile, KTD4). No triple is declared today (dormant); the
+                // CSPAT00701 `OrdprcPtnCode` annotation lands only post-verdict (U6).
                 FiredVariantOutcome::MayHaveRested => {
                     println!(
                         "NEG-PROBE target={tr_cd}-negative variant field={} class={} \
@@ -1596,6 +1794,19 @@ async fn run_order_negative_probe(
                 }
                 // Placed nothing (a non-success rsp_cd, incl. IGW40011-at-500) = Clean.
                 FiredVariantOutcome::PlacedNothing => {
+                    // Detect a Route B scoped downgrade (review P2): `resolve_fired_outcome`
+                    // ONLY ever rewrites MayHaveRested→PlacedNothing, so a raw MayHaveRested
+                    // reaching this arm means the schema's `placed_nothing_codes` tolerance
+                    // fired. Flag it so the post-loop teardown falls back to cancel-all.
+                    if classify_fired_variant(http, &rsp_cd) == FiredVariantOutcome::MayHaveRested {
+                        used_scoped_downgrade = true;
+                        println!(
+                            "NEG-PROBE target={tr_cd}-negative variant field={} class={} \
+                             note=[Route B scoped placed-nothing downgrade — post-loop teardown \
+                             will cancel-all (untrusted owned set) this wave]",
+                            v.field, v.class
+                        );
+                    }
                     let outcome = classify_probe(control_ok, VariantVerdict::Rejected);
                     println!(
                         "NEG-PROBE target={tr_cd}-negative variant field={} class={} \
@@ -1606,6 +1817,12 @@ async fn run_order_negative_probe(
             },
         }
     }
+
+    // Post-loop residue teardown trust (review P2): owned-only normally, but
+    // cancel-EVERY-row if any variant used a Route B scoped placed-nothing downgrade
+    // this wave (the owned set can no longer be trusted to enumerate a stranded
+    // order the tolerated variant might have rested).
+    let owned_trustworthy = !used_scoped_downgrade;
 
     // Variants fired against the LIVE control. Now CANCEL the control and run the
     // bounded post-cancel fill-check (KTD1): `classify_control_disposition` combines
@@ -1642,7 +1859,7 @@ async fn run_order_negative_probe(
                      canceled; reset the paper book — reconciling",
                     f.join(",")
                 );
-                order_reconcile_teardown(&sdk, symbol, &owned, true).await;
+                order_reconcile_teardown(&sdk, symbol, &owned, owned_trustworthy).await;
                 return;
             }
             ControlDisposition::StillResting(_) => {
@@ -1650,7 +1867,7 @@ async fn run_order_negative_probe(
                     "NEG-PROBE target={tr_cd}-negative HELD: control not positively flat after \
                      cancel — reconciling"
                 );
-                order_reconcile_teardown(&sdk, symbol, &owned, true).await;
+                order_reconcile_teardown(&sdk, symbol, &owned, owned_trustworthy).await;
                 return;
             }
         },
@@ -1659,7 +1876,7 @@ async fn run_order_negative_probe(
                 "NEG-PROBE target={tr_cd}-negative HELD: control flat-verify failed [{e}] — \
                  reconciling"
             );
-            order_reconcile_teardown(&sdk, symbol, &owned, true).await;
+            order_reconcile_teardown(&sdk, symbol, &owned, owned_trustworthy).await;
             return;
         }
     }
@@ -1668,12 +1885,16 @@ async fn run_order_negative_probe(
     // teardown (R4/AE4): the control (owned) was just canceled so it is gone; any
     // remaining owned row is canceled, and a FOREIGN row that arrived mid-probe is left
     // untouched. The owned set is fully constructed on this path — a WAVE-BLOCKED accept
-    // or a may-rest outcome would have returned early with its own teardown.
-    order_reconcile_teardown(&sdk, symbol, &owned, true).await;
+    // or a may-rest outcome would have returned early with its own teardown. Exception
+    // (review P2): a wave that used a Route B scoped downgrade drops to the cancel-all
+    // fallback (`owned_trustworthy=false`) so a stranded order from the tolerated variant
+    // is still auto-canceled, not merely surfaced.
+    order_reconcile_teardown(&sdk, symbol, &owned, owned_trustworthy).await;
     println!(
         "NEG-PROBE target={tr_cd}-negative teardown=done \
          note=[variants fired against live control; control canceled+flat-verified post-variants; \
-         residue reconciled owned-only]"
+         residue reconciled {}]",
+        if owned_trustworthy { "owned-only" } else { "cancel-all (Route B downgrade this wave)" }
     );
 }
 
@@ -1705,6 +1926,256 @@ async fn live_smoke_cspat00801_negative() {
         order_seed_00801(ordno)
     })
     .await;
+}
+
+/// The attended IGW00000 A/B leg (plan 2026-07-14-001 U5). Seeds a resting control,
+/// snapshots it, fires the `OrdprcPtnCode`-omitted CSPAT00701 modify, re-snapshots,
+/// cancels, and prints ONE credential-free `IGW00000-AB … verdict=…` line. Reuses
+/// the negative-probe safety spine (autonomy/paper guards, pre-assert-flat, the
+/// `chegb="2"` scan, `classify_control_disposition`, `order_reconcile_teardown`);
+/// never leaves a resting order. The runtime seam is untouched (probe-only).
+async fn run_igw00000_ab_probe() {
+    let tag = "IGW00000-AB target=CSPAT00701";
+    if let Err(e) = install_dispatch_log_suppressor() {
+        panic!("{}", scrub_secrets(&e.to_string()));
+    }
+    if let Err(e) = autonomy_guard() {
+        panic!("{}", scrub_secrets(&e.to_string()));
+    }
+    if let Err(e) = order_smoke_guard() {
+        panic!("{}", scrub_secrets(&e.to_string()));
+    }
+    let config = match LsConfig::from_env() {
+        Ok(c) => c,
+        Err(e) => panic!("{}", scrub_secrets(&e.to_string())),
+    };
+    if let Err(e) = assert_resolved_paper(&config.environment) {
+        panic!("{}", scrub_secrets(&e.to_string()));
+    }
+    let sdk = match LsSdk::new(config.clone()) {
+        Ok(s) => s,
+        Err(e) => panic!("{}", scrub_secrets(&e.to_string())),
+    };
+
+    let symbol = "005930";
+    let member = "NXT";
+
+    // Daily band + three DISTINCT non-marketable prices near the floor:
+    // P0 (control placed) < P1 (valid control modify) < P2 (violation OrdPrc). P2 != P1
+    // is what makes a took-effect mutation observable as a price change in S_post.
+    let band = match sdk
+        .market_session()
+        .quote(&T1102Request::new(symbol, "K"))
+        .await
+    {
+        Ok(resp) => match validate_band(&resp.outblock.uplmtprice, &resp.outblock.dnlmtprice) {
+            Ok(b) => b,
+            Err(e) => {
+                println!("{tag} verdict=inconclusive [band: {e}] — no placement");
+                return;
+            }
+        },
+        Err(e) => {
+            println!(
+                "{tag} verdict=inconclusive [band fetch failed: {}] — no placement",
+                safe_err(&e)
+            );
+            return;
+        }
+    };
+    let t = tick(band.dnlmt);
+    let p0 = band.dnlmt;
+    let p1 = band.dnlmt.saturating_add(t).min(band.uplmt);
+    let p2 = band.dnlmt.saturating_add(t.saturating_mul(2)).min(band.uplmt);
+    if p1 <= p0 || p2 <= p1 {
+        println!("{tag} verdict=inconclusive [band too narrow for 3 distinct A/B prices]");
+        return;
+    }
+
+    let token = match sdk.standalone().token().await {
+        Ok(t) if !t.is_empty() => t,
+        _ => {
+            println!("{tag} verdict=inconclusive [token acquisition failed]");
+            return;
+        }
+    };
+    let base = ls_core::config::Environment::resolve_base_url(&config);
+    let url = format!("{base}/stock/order");
+    let client = probe_client();
+
+    let mut owned: BTreeSet<String> = BTreeSet::new();
+
+    // PRE-ASSERT-FLAT: refuse unless the symbol is flat & fill-free — a foreign or
+    // stranded row would poison the owned-teardown soundness (do NOT teardown here).
+    match scan_symbol_working_orders(&sdk, symbol).await {
+        Ok(rows) => match require_flat_and_fill_free(&rows) {
+            Ok(()) => {}
+            Err(NotClear::Resting(o)) => {
+                println!(
+                    "{tag} verdict=inconclusive [pre-assert-flat: resting ordnos=[{}]; clear the \
+                     book] — no placement",
+                    o.join(",")
+                );
+                return;
+            }
+            Err(NotClear::Fill(f)) => {
+                println!(
+                    "{tag} verdict=inconclusive [pre-assert-flat: fill ordnos=[{}]; paper-reset] — \
+                     no placement",
+                    f.join(",")
+                );
+                return;
+            }
+        },
+        Err(e) => {
+            println!("{tag} verdict=inconclusive [pre-assert-flat scan failed: {e}] — no placement");
+            return;
+        }
+    }
+
+    // (1) SEED — place the resting control at P0 (band floor, non-marketable).
+    let control_req = CSPAT00601Request::limit(symbol, "1", p0.to_string(), "2", member);
+    let ordno = match sdk.orders().submit(&control_req).await {
+        Ok(resp) => resp.order_no().trim().to_string(),
+        Err(e) => {
+            println!(
+                "{tag} verdict=inconclusive [seed submit failed/ambiguous: {}] — reconciling",
+                safe_err(&e)
+            );
+            order_reconcile_teardown(&sdk, symbol, &owned, false).await;
+            return;
+        }
+    };
+    if ordno.is_empty() || ordno == "0" {
+        println!("{tag} verdict=inconclusive [seed returned no usable order number] — reconciling");
+        order_reconcile_teardown(&sdk, symbol, &owned, false).await;
+        return;
+    }
+    owned.insert(ordno.clone());
+
+    // (2) CONTROL leg — a VALID modify (OrdprcPtnCode present) to P1 → expect an ack
+    // (00462). Proves this session can modify at all, so an omitted-pattern IGW00000 is
+    // the field's surface, not a session where every modify fails. A non-ack here is
+    // itself inconclusive.
+    let control_body = order_seed_00701(&ordno, p1);
+    match fire_inblock(&client, &url, &token, "CSPAT00701", "CSPAT00701InBlock1", &control_body).await
+    {
+        Some((http, rsp_cd, _)) if is_order_placement_success(http, &rsp_cd) => {
+            println!("{tag} control-modify=[ok http={http} rsp_cd={rsp_cd}]");
+        }
+        Some((http, rsp_cd, _)) => {
+            println!(
+                "{tag} verdict=inconclusive [control modify not acked: http={http} rsp_cd={rsp_cd} \
+                 — session cannot modify] — reconciling"
+            );
+            order_reconcile_teardown(&sdk, symbol, &owned, false).await;
+            return;
+        }
+        None => {
+            println!(
+                "{tag} verdict=inconclusive [control modify transport-failure — may-rest] — reconciling"
+            );
+            order_reconcile_teardown(&sdk, symbol, &owned, false).await;
+            return;
+        }
+    }
+
+    // (3) S_pre — snapshot the control after the valid modify (price should be P1).
+    let s_pre = match scan_symbol_working_orders(&sdk, symbol).await {
+        Ok(rows) => seed_snapshot_from(&rows, &ordno),
+        Err(e) => {
+            println!("{tag} verdict=inconclusive [S_pre scan failed: {e}] — reconciling");
+            order_reconcile_teardown(&sdk, symbol, &owned, false).await;
+            return;
+        }
+    };
+
+    // (4) FIRE variant B — the SAME modify with OrdprcPtnCode OMITTED, at P2 (!= P1) so
+    // a took-effect mutation shows as a price change (or a fill).
+    let mut violation = order_seed_00701(&ordno, p2);
+    if let Some(m) = violation.as_object_mut() {
+        m.insert("OrdprcPtnCode".to_string(), serde_json::json!(""));
+    }
+    let (fire_http, fire_rsp_cd) =
+        match fire_inblock(&client, &url, &token, "CSPAT00701", "CSPAT00701InBlock1", &violation).await
+        {
+            Some((http, rsp_cd, _)) => (http, rsp_cd),
+            None => {
+                // Transport failure on the fire is MAY-REST — the variant may have rested.
+                println!(
+                    "{tag} verdict=may-rest [fire transport-failure — cannot confirm placed-nothing] \
+                     — reconciling"
+                );
+                order_reconcile_teardown(&sdk, symbol, &owned, false).await;
+                return;
+            }
+        };
+    println!("{tag} fire=[http={fire_http} rsp_cd={fire_rsp_cd}] (OrdprcPtnCode omitted)");
+
+    // (5) S_post — paced re-snapshot + new-order check. The 1000ms pace keeps S_post
+    // from self-throttling into a false untrusted read (§27 / #137).
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    let (s_post, new_order, reads_trusted) = match scan_symbol_working_orders(&sdk, symbol).await {
+        Ok(rows) => (
+            seed_snapshot_from(&rows, &ordno),
+            has_new_resting_order(&rows, &ordno),
+            true,
+        ),
+        Err(e) => {
+            println!("{tag} S_post scan failed [{e}] — untrusted read");
+            (SeedSnapshot::default(), false, false)
+        }
+    };
+
+    // (6) TEARDOWN — cancel the seed + the bounded fill-check (the fill-inclusive
+    // defense: a fully-filled seed vanished from S_post surfaces here as Filled).
+    let cancel = CSPAT00801Request::new(&ordno, symbol, "1");
+    let cancel_gateway_rejected = match sdk.orders().cancel(&cancel).await {
+        Ok(_) => false,
+        Err(e) => {
+            let rejected = matches!(e, LsError::ApiError { .. });
+            println!(
+                "{tag} seed-cancel error [{}] (gateway_rejected={rejected}) — bounded fill-check decides",
+                safe_err(&e)
+            );
+            rejected
+        }
+    };
+    let disposition = match scan_symbol_working_orders(&sdk, symbol).await {
+        Ok(rows) => classify_control_disposition(cancel_gateway_rejected, &rows),
+        // An untrusted post-cancel scan is NOT CleanlyCanceled → the verdict cannot
+        // reach placed-nothing (fails safe to inconclusive/reconcile).
+        Err(_) => ControlDisposition::StillResting(vec![]),
+    };
+
+    let verdict = classify_igw00000_ab(
+        fire_http,
+        &fire_rsp_cd,
+        reads_trusted,
+        &s_pre,
+        &s_post,
+        new_order,
+        &disposition,
+    );
+    let label = match verdict {
+        AbVerdict::PlacedNothing => "placed-nothing",
+        AbVerdict::MayRest => "may-rest",
+        AbVerdict::Inconclusive => "inconclusive",
+    };
+
+    // Final reconcile — never leave a resting order. Cancel-all (untrusted owned set)
+    // because this wave deliberately fired a possibly-resting variant.
+    order_reconcile_teardown(&sdk, symbol, &owned, false).await;
+    println!(
+        "{tag} verdict={label} [fire http={fire_http} rsp_cd={fire_rsp_cd}] \
+         (credential-free; U6 if placed-nothing, U7 if may-rest)"
+    );
+}
+
+#[tokio::test]
+#[ignore = "live probe: attended IGW00000 A/B; needs real LS paper ORDER-account + open KRX window + LS_ORDER_SMOKE=1 + a fresh LS_ORDER_SMOKE_NONCE (attended TTY); run via `make live-smoke-cspat00701-igw00000-ab`"]
+async fn live_smoke_cspat00701_igw00000_ab() {
+    run_igw00000_ab_probe().await;
 }
 
 // ===========================================================================
@@ -1953,6 +2424,213 @@ fn classify_fired_variant_exempts_igw40011_at_500_but_holds_other_5xx() {
     assert_eq!(
         classify_fired_variant(400, "40510"),
         FiredVariantOutcome::PlacedNothing
+    );
+}
+
+/// A synthetic order-constraint fixture declaring the **intended CSPAT00701
+/// annotation shape** (Route B, plan 2026-07-14-001): `OrdprcPtnCode`'s
+/// `required`-class violation answering `IGW00000` placed nothing. Built through the
+/// real `ConstraintSchema` deserialize path (same serde derive as the embedded
+/// YAML), so these offline tests prove the live `InvalidVariant.field` / `v.class`
+/// string binding matches the annotation key BEFORE the U6 metadata edit lands
+/// (KTD3) — it must NOT depend on the not-yet-authored embedded CSPAT00701 schema.
+fn placed_nothing_fixture_schema() -> ConstraintSchema {
+    serde_json::from_value(serde_json::json!({
+        "tr_code": "FIXTURE",
+        "fields": [
+            {
+                "name": "OrdprcPtnCode",
+                "type": "string",
+                "required": true,
+                "placed_nothing_codes": { "required": ["IGW00000"] },
+                "enum": { "applicable": false },
+                "range": { "applicable": false },
+                "format": { "applicable": false }
+            },
+            {
+                "name": "OrgOrdNo",
+                "type": "integer",
+                "required": true,
+                "enum": { "applicable": false },
+                "range": { "applicable": false },
+                "format": { "applicable": false }
+            }
+        ]
+    }))
+    .expect("fixture schema deserializes")
+}
+
+#[test]
+fn order_code_placed_nothing_is_scoped_to_the_exact_field_class_code_triple() {
+    // Route B (plan 2026-07-14-001): the scoped placed-nothing predicate fires ONLY
+    // for the exact declared `(field, class, code)` triple — a different code, class,
+    // or field all miss, and an empty/absent declaration is never placed-nothing.
+    let schema = placed_nothing_fixture_schema();
+    assert!(order_code_placed_nothing(&schema, "OrdprcPtnCode", "required", "IGW00000"));
+    // Same field+class, a DIFFERENT code → false (scoped to the declared code).
+    assert!(!order_code_placed_nothing(&schema, "OrdprcPtnCode", "required", "IGW50008"));
+    // Same field, a DIFFERENT class → false (scoped to the declared class).
+    assert!(!order_code_placed_nothing(&schema, "OrdprcPtnCode", "type", "IGW00000"));
+    // A DIFFERENT declared field with no annotation → false (scoped to the field).
+    assert!(!order_code_placed_nothing(&schema, "OrgOrdNo", "required", "IGW00000"));
+    // An unknown field → false.
+    assert!(!order_code_placed_nothing(&schema, "Nonexistent", "required", "IGW00000"));
+}
+
+#[test]
+fn resolve_fired_outcome_downgrades_only_a_declared_mayrest_triple() {
+    // Resolver twin: the pure Route-B routing is offline-twinnable. Only a declared
+    // (field, class, code) MayHaveRested downgrades to PlacedNothing; Accepted,
+    // PlacedNothing, and an undeclared MayHaveRested all pass through unchanged.
+    let schema = placed_nothing_fixture_schema();
+    // The declared (field, class) with IGW00000-at-500 → downgraded to PlacedNothing.
+    assert_eq!(
+        resolve_fired_outcome(&schema, "OrdprcPtnCode", "required", 500, "IGW00000"),
+        FiredVariantOutcome::PlacedNothing
+    );
+    // The SAME code on an UNDECLARED (field, class) → stays MayHaveRested (fail-closed).
+    assert_eq!(
+        resolve_fired_outcome(&schema, "OrgOrdNo", "required", 500, "IGW00000"),
+        FiredVariantOutcome::MayHaveRested
+    );
+    // A 2xx order-acceptance ack is never downgraded → Accepted (WAVE-BLOCKED, unchanged).
+    assert_eq!(
+        resolve_fired_outcome(&schema, "OrdprcPtnCode", "required", 200, "00040"),
+        FiredVariantOutcome::Accepted
+    );
+    // The pre-existing IGW40011-at-500 ingress exemption is unchanged by the resolver.
+    assert_eq!(
+        resolve_fired_outcome(&schema, "OrdprcPtnCode", "required", 500, "IGW40011"),
+        FiredVariantOutcome::PlacedNothing
+    );
+    // A generic non-ack business reject stays PlacedNothing, unchanged.
+    assert_eq!(
+        resolve_fired_outcome(&schema, "OrgOrdNo", "required", 400, "40510"),
+        FiredVariantOutcome::PlacedNothing
+    );
+}
+
+#[test]
+fn placed_nothing_binding_matches_the_live_invalidvariant_field_and_class_strings() {
+    // Real-binding round-trip (de-risks the attended window, KTD3): the live fire
+    // loop keys `order_code_placed_nothing` on `v.field` / `v.class` produced by
+    // `generate_invalid_variants`. Generate the OrdprcPtnCode required-omit variant
+    // from the fixture and assert its generated (field, class) strings resolve the
+    // annotation — proving the offline binding before the U6 metadata edit.
+    let schema = placed_nothing_fixture_schema();
+    let seed = serde_json::json!({ "OrdprcPtnCode": "00", "OrgOrdNo": "12345" });
+    let variant = generate_invalid_variants(&schema, &seed)
+        .into_iter()
+        .find(|v| v.field == "OrdprcPtnCode" && v.class == "required")
+        .expect("OrdprcPtnCode required-omit variant is generated");
+    assert!(
+        order_code_placed_nothing(&schema, &variant.field, &variant.class, "IGW00000"),
+        "the generated variant's field/class strings must resolve the annotation key"
+    );
+}
+
+// --- IGW00000 A/B offline twins (plan 2026-07-14-001 U5) -------------------
+
+fn t0425_row(ordno: &str, price: &str, qty: &str, cheqty: &str, ordrem: &str) -> T0425OutBlock1 {
+    T0425OutBlock1 {
+        ordno: ordno.into(),
+        price: price.into(),
+        qty: qty.into(),
+        cheqty: cheqty.into(),
+        ordrem: ordrem.into(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn seed_snapshot_from_finds_the_seed_by_normalized_ordno_else_absent() {
+    // The snapshot matches the seed on `normalize_ordno` (a zero-padded scan ordno vs
+    // a numeric submit ordno still resolves) and records its mutable fields; a seed
+    // absent from the scan yields the default (present=false).
+    let rows = vec![
+        t0425_row("0000012345", "50000", "1", "0", "1"),
+        t0425_row("999", "60000", "2", "0", "2"),
+    ];
+    let snap = seed_snapshot_from(&rows, "12345");
+    assert!(snap.present && snap.price == "50000" && snap.qty == "1");
+    assert!(!seed_snapshot_from(&rows, "77777").present, "absent seed → default");
+}
+
+#[test]
+fn has_new_resting_order_ignores_the_seed_and_non_resting_rows() {
+    // A foreign RESTING row (cheqty==0, ordrem>0) that is not the seed is a phantom;
+    // the seed itself and any filled/partial row are not counted.
+    let seed = "12345";
+    assert!(!has_new_resting_order(&[t0425_row("12345", "50000", "1", "0", "1")], seed), "only the seed rests");
+    assert!(
+        has_new_resting_order(&[t0425_row("12345", "50000", "1", "0", "1"), t0425_row("99", "51000", "1", "0", "1")], seed),
+        "a foreign resting row is a new order"
+    );
+    assert!(
+        !has_new_resting_order(&[t0425_row("12345", "50000", "1", "0", "1"), t0425_row("99", "51000", "1", "1", "0")], seed),
+        "a foreign FILLED row (ordrem==0) is not a new resting order"
+    );
+}
+
+#[test]
+fn classify_igw00000_ab_covers_every_bind_signature_arm() {
+    let present = |price: &str| SeedSnapshot {
+        present: true,
+        price: price.into(),
+        qty: "1".into(),
+        cheqty: "0".into(),
+        ordrem: "1".into(),
+    };
+    let s_pre = present("51000");
+    let clean = ControlDisposition::CleanlyCanceled;
+
+    // placed-nothing: fire=500/IGW00000, seed present & byte-identical, no new order,
+    // clean cancel.
+    assert_eq!(
+        classify_igw00000_ab(500, "IGW00000", true, &s_pre, &present("51000"), false, &clean),
+        AbVerdict::PlacedNothing
+    );
+    // may-rest — the seed MUTATED (price changed).
+    assert_eq!(
+        classify_igw00000_ab(500, "IGW00000", true, &s_pre, &present("52000"), false, &clean),
+        AbVerdict::MayRest
+    );
+    // may-rest — the seed VANISHED from a trusted S_post (plan: vanished is may-rest).
+    assert_eq!(
+        classify_igw00000_ab(500, "IGW00000", true, &s_pre, &SeedSnapshot::default(), false, &clean),
+        AbVerdict::MayRest
+    );
+    // may-rest — the seed FILLED (cancel gateway-rejected on a flat book).
+    assert_eq!(
+        classify_igw00000_ab(500, "IGW00000", true, &s_pre, &present("51000"), false, &ControlDisposition::Filled(vec![])),
+        AbVerdict::MayRest
+    );
+    // may-rest — a NEW order rested.
+    assert_eq!(
+        classify_igw00000_ab(500, "IGW00000", true, &s_pre, &present("51000"), true, &clean),
+        AbVerdict::MayRest
+    );
+    // inconclusive — untrusted read (throttle/scan failure) is NEVER placed-nothing (#137).
+    assert_eq!(
+        classify_igw00000_ab(500, "IGW00000", false, &s_pre, &present("51000"), false, &clean),
+        AbVerdict::Inconclusive
+    );
+    // inconclusive — could not snapshot the control pre-fire.
+    assert_eq!(
+        classify_igw00000_ab(500, "IGW00000", true, &SeedSnapshot::default(), &present("51000"), false, &clean),
+        AbVerdict::Inconclusive
+    );
+    // inconclusive — the fire is NOT the characterized 500/IGW00000 surface, even with
+    // an otherwise-clean seed.
+    assert_eq!(
+        classify_igw00000_ab(500, "IGW50008", true, &s_pre, &present("51000"), false, &clean),
+        AbVerdict::Inconclusive
+    );
+    // inconclusive — seed byte-identical but it did NOT cancel cleanly (StillResting):
+    // cannot positively conclude placed-nothing.
+    assert_eq!(
+        classify_igw00000_ab(500, "IGW00000", true, &s_pre, &present("51000"), false, &ControlDisposition::StillResting(vec![])),
+        AbVerdict::Inconclusive
     );
 }
 
