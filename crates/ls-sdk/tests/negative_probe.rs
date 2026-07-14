@@ -1608,6 +1608,18 @@ async fn run_order_negative_probe(
         );
     }
 
+    // Route B teardown-trust (plan 2026-07-14-001, review P2). A scoped
+    // placed-nothing downgrade admits an undocumented, success-shaped code as
+    // "placed nothing" on what `classify_fired_variant` alone calls MayHaveRested.
+    // The may-rest arm reconciles with the untrusted cancel-EVERY-row fallback; a
+    // downgrade skips that and continues to the owned-only post-loop teardown. If
+    // the scoped tolerance is ever wrong and the variant rests a NEW (non-owned)
+    // order, owned-only teardown would surface-but-not-cancel it. So a wave that
+    // used any downgrade forces the post-loop residue teardown back to cancel-all —
+    // preserving the may-rest halt's auto-reconcile net for exactly the wave that
+    // leaned on the tolerance, while keeping the probe's Clean verdict lenient.
+    let mut used_scoped_downgrade = false;
+
     for v in variants.iter().filter(|v| order_probe_classes(v)) {
         match fire_inblock(&client, &url, &token, tr_cd, inblock_key, &v.request).await {
             // Transport failure / timeout = MAY-REST: stop, reconcile, halt (KTD3). The
@@ -1673,6 +1685,19 @@ async fn run_order_negative_probe(
                 }
                 // Placed nothing (a non-success rsp_cd, incl. IGW40011-at-500) = Clean.
                 FiredVariantOutcome::PlacedNothing => {
+                    // Detect a Route B scoped downgrade (review P2): `resolve_fired_outcome`
+                    // ONLY ever rewrites MayHaveRested→PlacedNothing, so a raw MayHaveRested
+                    // reaching this arm means the schema's `placed_nothing_codes` tolerance
+                    // fired. Flag it so the post-loop teardown falls back to cancel-all.
+                    if classify_fired_variant(http, &rsp_cd) == FiredVariantOutcome::MayHaveRested {
+                        used_scoped_downgrade = true;
+                        println!(
+                            "NEG-PROBE target={tr_cd}-negative variant field={} class={} \
+                             note=[Route B scoped placed-nothing downgrade — post-loop teardown \
+                             will cancel-all (untrusted owned set) this wave]",
+                            v.field, v.class
+                        );
+                    }
                     let outcome = classify_probe(control_ok, VariantVerdict::Rejected);
                     println!(
                         "NEG-PROBE target={tr_cd}-negative variant field={} class={} \
@@ -1683,6 +1708,12 @@ async fn run_order_negative_probe(
             },
         }
     }
+
+    // Post-loop residue teardown trust (review P2): owned-only normally, but
+    // cancel-EVERY-row if any variant used a Route B scoped placed-nothing downgrade
+    // this wave (the owned set can no longer be trusted to enumerate a stranded
+    // order the tolerated variant might have rested).
+    let owned_trustworthy = !used_scoped_downgrade;
 
     // Variants fired against the LIVE control. Now CANCEL the control and run the
     // bounded post-cancel fill-check (KTD1): `classify_control_disposition` combines
@@ -1719,7 +1750,7 @@ async fn run_order_negative_probe(
                      canceled; reset the paper book — reconciling",
                     f.join(",")
                 );
-                order_reconcile_teardown(&sdk, symbol, &owned, true).await;
+                order_reconcile_teardown(&sdk, symbol, &owned, owned_trustworthy).await;
                 return;
             }
             ControlDisposition::StillResting(_) => {
@@ -1727,7 +1758,7 @@ async fn run_order_negative_probe(
                     "NEG-PROBE target={tr_cd}-negative HELD: control not positively flat after \
                      cancel — reconciling"
                 );
-                order_reconcile_teardown(&sdk, symbol, &owned, true).await;
+                order_reconcile_teardown(&sdk, symbol, &owned, owned_trustworthy).await;
                 return;
             }
         },
@@ -1736,7 +1767,7 @@ async fn run_order_negative_probe(
                 "NEG-PROBE target={tr_cd}-negative HELD: control flat-verify failed [{e}] — \
                  reconciling"
             );
-            order_reconcile_teardown(&sdk, symbol, &owned, true).await;
+            order_reconcile_teardown(&sdk, symbol, &owned, owned_trustworthy).await;
             return;
         }
     }
@@ -1745,12 +1776,16 @@ async fn run_order_negative_probe(
     // teardown (R4/AE4): the control (owned) was just canceled so it is gone; any
     // remaining owned row is canceled, and a FOREIGN row that arrived mid-probe is left
     // untouched. The owned set is fully constructed on this path — a WAVE-BLOCKED accept
-    // or a may-rest outcome would have returned early with its own teardown.
-    order_reconcile_teardown(&sdk, symbol, &owned, true).await;
+    // or a may-rest outcome would have returned early with its own teardown. Exception
+    // (review P2): a wave that used a Route B scoped downgrade drops to the cancel-all
+    // fallback (`owned_trustworthy=false`) so a stranded order from the tolerated variant
+    // is still auto-canceled, not merely surfaced.
+    order_reconcile_teardown(&sdk, symbol, &owned, owned_trustworthy).await;
     println!(
         "NEG-PROBE target={tr_cd}-negative teardown=done \
          note=[variants fired against live control; control canceled+flat-verified post-variants; \
-         residue reconciled owned-only]"
+         residue reconciled {}]",
+        if owned_trustworthy { "owned-only" } else { "cancel-all (Route B downgrade this wave)" }
     );
 }
 
