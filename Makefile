@@ -1061,6 +1061,25 @@ $(eval $(call NEG_PROBE_TARGET,cspat00801,live_smoke_cspat00801_negative))
 
 .PHONY: live-smoke-t1101-negative live-smoke-t1102-negative live-smoke-cspaq12200-negative live-smoke-t0425-negative live-smoke-token-negative live-smoke-cspat00601-negative live-smoke-cspat00701-negative live-smoke-cspat00801-negative
 
+## Attended IGW00000 A/B characterization (plan 2026-07-14-001 U5): a one-shot
+## seed -> snapshot -> fire (OrdprcPtnCode omitted) -> re-snapshot -> cancel cycle
+## that prints ONE credential-free line:
+##   IGW00000-AB target=CSPAT00701 ... verdict=placed-nothing|may-rest|inconclusive
+## OPERATOR-RUN, in-window; refuses on CI/no-TTY/stale nonce (fail-closed autonomy
+## chain) and places REAL paper orders, so a bare `make` invocation reports "0/failed"
+## and this target exits non-zero — it never places autonomously. The verdict feeds
+## U6 (placed-nothing -> promote CSPAT00701) or U7 (may-rest -> permanent-HELD).
+##   LS_ORDER_SMOKE=1 LS_ORDER_SMOKE_NONCE=$$(date +%s) make live-smoke-cspat00701-igw00000-ab
+.PHONY: live-smoke-cspat00701-igw00000-ab
+live-smoke-cspat00701-igw00000-ab:
+	@lane="$(LS_SMOKE_LANE)"; [ -n "$$lane" ] || lane="domestic"; \
+	lane_file=".env.$$lane"; \
+	[ -f "$$lane_file" ] || { echo "FAIL: cspat00701-igw00000-ab: lane file $$lane_file missing (LS_SMOKE_LANE=$$lane); refusing to fall back to .env (wrong-account hazard)"; exit 1; }; \
+	set -a; . "./$$lane_file"; set +a; \
+	out=$$(cargo test -p ls-sdk --test negative_probe -- --ignored --exact --nocapture live_smoke_cspat00701_igw00000_ab 2>&1); \
+	echo "$$out"; \
+	echo "$$out" | grep -q "1 passed" || { echo "FAIL: cspat00701-igw00000-ab probe did not run (0 tests) or did not pass"; exit 1; }
+
 .PHONY: lane-check
 
 ## Offline regression check for the fail-fast lane guard (plan 2026-07-01-002,

@@ -1275,6 +1275,115 @@ fn resolve_fired_outcome(
     }
 }
 
+// ===========================================================================
+// IGW00000 A/B characterization (plan 2026-07-14-001 U5). A one-shot attended
+// seed → snapshot → fire → re-snapshot → cancel cycle that classifies the
+// undocumented, success-SHAPED `IGW00000` on CSPAT00701's `OrdprcPtnCode`-omitted
+// modify variant as placed-nothing vs may-rest — the U3 runbook encapsulated as a
+// deterministic, re-runnable leg. Probe-only: the runtime seam is untouched.
+// ===========================================================================
+
+/// A snapshot of the seed/control order's mutable fields, taken from a **trap-free
+/// `chegb="2"` working-orders scan** (NOT the fill-inclusive `chegb="0"` query,
+/// which paginates on a traded symbol and false-HELDs — see
+/// `docs/solutions/logic-errors/order-probe-fill-inclusive-scan-paginates-false-held.md`).
+/// Fill-inclusiveness is realized instead by the post-fire cancel disposition: a
+/// fully-filled seed vanishes from `chegb="2"` but its cancel is gateway-rejected
+/// (`ControlDisposition::Filled`), the plan's named defense-in-depth.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct SeedSnapshot {
+    present: bool,
+    price: String,
+    qty: String,
+    cheqty: String,
+    ordrem: String,
+}
+
+/// Build the `SeedSnapshot` for `ordno` from a working-orders scan (pure). Matches
+/// on `normalize_ordno` so a JSON-number/zero-padded-string representation mismatch
+/// between submit and scan never mis-reads the seed as absent.
+fn seed_snapshot_from(rows: &[T0425OutBlock1], ordno: &str) -> SeedSnapshot {
+    let want = normalize_ordno(ordno);
+    match rows.iter().find(|r| normalize_ordno(&r.ordno) == want) {
+        Some(r) => SeedSnapshot {
+            present: true,
+            price: r.price.trim().to_string(),
+            qty: r.qty.trim().to_string(),
+            cheqty: r.cheqty.trim().to_string(),
+            ordrem: r.ordrem.trim().to_string(),
+        },
+        None => SeedSnapshot::default(),
+    }
+}
+
+/// `true` if the scan carries a RESTING order that is NOT the seed `ordno` — a
+/// phantom the fired variant may have conjured (pure). Resting = `cheqty==0 &&
+/// ordrem>0` (the same predicate teardown uses).
+fn has_new_resting_order(rows: &[T0425OutBlock1], ordno: &str) -> bool {
+    let want = normalize_ordno(ordno);
+    rows.iter().any(|r| {
+        normalize_ordno(&r.ordno) != want && parse_qty(&r.cheqty) == 0 && parse_qty(&r.ordrem) > 0
+    })
+}
+
+/// The IGW00000 A/B verdict (plan 2026-07-14-001 U5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AbVerdict {
+    /// fire=`500/IGW00000`, the seed is present & byte-identical, no new order, and it
+    /// canceled cleanly → the omitted-pattern modify placed nothing.
+    PlacedNothing,
+    /// The seed filled, mutated, vanished, or a new order rested → the modify (may
+    /// have) taken effect at the exchange.
+    MayRest,
+    /// An untrusted read (throttle/scan failure), an un-snapshottable pre-state, or a
+    /// fire that is not the characterized `500/IGW00000` surface → stays HELD, re-run.
+    /// Per #137 an untrusted read is NEVER read as placed-nothing.
+    Inconclusive,
+}
+
+/// Classify the IGW00000 A/B from the fire result, the before/after seed snapshots,
+/// whether a NEW order rested, and the post-fire cancel disposition (the
+/// fill-inclusive defense). Pure so the bind signature is offline-twinnable. Tested
+/// in the plan's bind-signature order: any decisive may-rest signal wins over a
+/// placed-nothing read, and anything ambiguous fails safe to `Inconclusive` — a
+/// false `PlacedNothing` (the only dangerous error) is structurally impossible.
+fn classify_igw00000_ab(
+    fire_http: u16,
+    fire_rsp_cd: &str,
+    reads_trusted: bool,
+    s_pre: &SeedSnapshot,
+    s_post: &SeedSnapshot,
+    new_resting_order: bool,
+    post_fire_disposition: &ControlDisposition,
+) -> AbVerdict {
+    // Untrusted read, or a control we could not even snapshot pre-fire → inconclusive
+    // (never placed-nothing, #137).
+    if !reads_trusted || !s_pre.present {
+        return AbVerdict::Inconclusive;
+    }
+    // Decisive may-rest — the seed filled (partial in scan, or cancel gateway-rejected
+    // on a flat book): the omitted-pattern modify became marketable and executed.
+    if matches!(post_fire_disposition, ControlDisposition::Filled(_)) {
+        return AbVerdict::MayRest;
+    }
+    // Decisive may-rest — a NEW order rested, the seed vanished from a trusted S_post
+    // (a vanished seed is may-rest, never inconclusive — plan bind signature), or the
+    // seed mutated (any of price/qty/cheqty/ordrem changed).
+    if new_resting_order || !s_post.present || s_post != s_pre {
+        return AbVerdict::MayRest;
+    }
+    // Positive placed-nothing: the characterized surface, seed byte-identical & still
+    // resting, no new order, and it canceled cleanly (was genuinely just resting).
+    if fire_http == 500
+        && fire_rsp_cd == "IGW00000"
+        && matches!(post_fire_disposition, ControlDisposition::CleanlyCanceled)
+    {
+        AbVerdict::PlacedNothing
+    } else {
+        AbVerdict::Inconclusive
+    }
+}
+
 /// Render an `LsError` credential-free for a probe log line. For an `ApiError` /
 /// `AmbiguousOrder` the `Display` is `"API error {code}: {message}"` where
 /// `message` is the raw broker `rsp_msg` — localized text that can echo account
@@ -1819,6 +1928,256 @@ async fn live_smoke_cspat00801_negative() {
     .await;
 }
 
+/// The attended IGW00000 A/B leg (plan 2026-07-14-001 U5). Seeds a resting control,
+/// snapshots it, fires the `OrdprcPtnCode`-omitted CSPAT00701 modify, re-snapshots,
+/// cancels, and prints ONE credential-free `IGW00000-AB … verdict=…` line. Reuses
+/// the negative-probe safety spine (autonomy/paper guards, pre-assert-flat, the
+/// `chegb="2"` scan, `classify_control_disposition`, `order_reconcile_teardown`);
+/// never leaves a resting order. The runtime seam is untouched (probe-only).
+async fn run_igw00000_ab_probe() {
+    let tag = "IGW00000-AB target=CSPAT00701";
+    if let Err(e) = install_dispatch_log_suppressor() {
+        panic!("{}", scrub_secrets(&e.to_string()));
+    }
+    if let Err(e) = autonomy_guard() {
+        panic!("{}", scrub_secrets(&e.to_string()));
+    }
+    if let Err(e) = order_smoke_guard() {
+        panic!("{}", scrub_secrets(&e.to_string()));
+    }
+    let config = match LsConfig::from_env() {
+        Ok(c) => c,
+        Err(e) => panic!("{}", scrub_secrets(&e.to_string())),
+    };
+    if let Err(e) = assert_resolved_paper(&config.environment) {
+        panic!("{}", scrub_secrets(&e.to_string()));
+    }
+    let sdk = match LsSdk::new(config.clone()) {
+        Ok(s) => s,
+        Err(e) => panic!("{}", scrub_secrets(&e.to_string())),
+    };
+
+    let symbol = "005930";
+    let member = "NXT";
+
+    // Daily band + three DISTINCT non-marketable prices near the floor:
+    // P0 (control placed) < P1 (valid control modify) < P2 (violation OrdPrc). P2 != P1
+    // is what makes a took-effect mutation observable as a price change in S_post.
+    let band = match sdk
+        .market_session()
+        .quote(&T1102Request::new(symbol, "K"))
+        .await
+    {
+        Ok(resp) => match validate_band(&resp.outblock.uplmtprice, &resp.outblock.dnlmtprice) {
+            Ok(b) => b,
+            Err(e) => {
+                println!("{tag} verdict=inconclusive [band: {e}] — no placement");
+                return;
+            }
+        },
+        Err(e) => {
+            println!(
+                "{tag} verdict=inconclusive [band fetch failed: {}] — no placement",
+                safe_err(&e)
+            );
+            return;
+        }
+    };
+    let t = tick(band.dnlmt);
+    let p0 = band.dnlmt;
+    let p1 = band.dnlmt.saturating_add(t).min(band.uplmt);
+    let p2 = band.dnlmt.saturating_add(t.saturating_mul(2)).min(band.uplmt);
+    if p1 <= p0 || p2 <= p1 {
+        println!("{tag} verdict=inconclusive [band too narrow for 3 distinct A/B prices]");
+        return;
+    }
+
+    let token = match sdk.standalone().token().await {
+        Ok(t) if !t.is_empty() => t,
+        _ => {
+            println!("{tag} verdict=inconclusive [token acquisition failed]");
+            return;
+        }
+    };
+    let base = ls_core::config::Environment::resolve_base_url(&config);
+    let url = format!("{base}/stock/order");
+    let client = probe_client();
+
+    let mut owned: BTreeSet<String> = BTreeSet::new();
+
+    // PRE-ASSERT-FLAT: refuse unless the symbol is flat & fill-free — a foreign or
+    // stranded row would poison the owned-teardown soundness (do NOT teardown here).
+    match scan_symbol_working_orders(&sdk, symbol).await {
+        Ok(rows) => match require_flat_and_fill_free(&rows) {
+            Ok(()) => {}
+            Err(NotClear::Resting(o)) => {
+                println!(
+                    "{tag} verdict=inconclusive [pre-assert-flat: resting ordnos=[{}]; clear the \
+                     book] — no placement",
+                    o.join(",")
+                );
+                return;
+            }
+            Err(NotClear::Fill(f)) => {
+                println!(
+                    "{tag} verdict=inconclusive [pre-assert-flat: fill ordnos=[{}]; paper-reset] — \
+                     no placement",
+                    f.join(",")
+                );
+                return;
+            }
+        },
+        Err(e) => {
+            println!("{tag} verdict=inconclusive [pre-assert-flat scan failed: {e}] — no placement");
+            return;
+        }
+    }
+
+    // (1) SEED — place the resting control at P0 (band floor, non-marketable).
+    let control_req = CSPAT00601Request::limit(symbol, "1", p0.to_string(), "2", member);
+    let ordno = match sdk.orders().submit(&control_req).await {
+        Ok(resp) => resp.order_no().trim().to_string(),
+        Err(e) => {
+            println!(
+                "{tag} verdict=inconclusive [seed submit failed/ambiguous: {}] — reconciling",
+                safe_err(&e)
+            );
+            order_reconcile_teardown(&sdk, symbol, &owned, false).await;
+            return;
+        }
+    };
+    if ordno.is_empty() || ordno == "0" {
+        println!("{tag} verdict=inconclusive [seed returned no usable order number] — reconciling");
+        order_reconcile_teardown(&sdk, symbol, &owned, false).await;
+        return;
+    }
+    owned.insert(ordno.clone());
+
+    // (2) CONTROL leg — a VALID modify (OrdprcPtnCode present) to P1 → expect an ack
+    // (00462). Proves this session can modify at all, so an omitted-pattern IGW00000 is
+    // the field's surface, not a session where every modify fails. A non-ack here is
+    // itself inconclusive.
+    let control_body = order_seed_00701(&ordno, p1);
+    match fire_inblock(&client, &url, &token, "CSPAT00701", "CSPAT00701InBlock1", &control_body).await
+    {
+        Some((http, rsp_cd, _)) if is_order_placement_success(http, &rsp_cd) => {
+            println!("{tag} control-modify=[ok http={http} rsp_cd={rsp_cd}]");
+        }
+        Some((http, rsp_cd, _)) => {
+            println!(
+                "{tag} verdict=inconclusive [control modify not acked: http={http} rsp_cd={rsp_cd} \
+                 — session cannot modify] — reconciling"
+            );
+            order_reconcile_teardown(&sdk, symbol, &owned, false).await;
+            return;
+        }
+        None => {
+            println!(
+                "{tag} verdict=inconclusive [control modify transport-failure — may-rest] — reconciling"
+            );
+            order_reconcile_teardown(&sdk, symbol, &owned, false).await;
+            return;
+        }
+    }
+
+    // (3) S_pre — snapshot the control after the valid modify (price should be P1).
+    let s_pre = match scan_symbol_working_orders(&sdk, symbol).await {
+        Ok(rows) => seed_snapshot_from(&rows, &ordno),
+        Err(e) => {
+            println!("{tag} verdict=inconclusive [S_pre scan failed: {e}] — reconciling");
+            order_reconcile_teardown(&sdk, symbol, &owned, false).await;
+            return;
+        }
+    };
+
+    // (4) FIRE variant B — the SAME modify with OrdprcPtnCode OMITTED, at P2 (!= P1) so
+    // a took-effect mutation shows as a price change (or a fill).
+    let mut violation = order_seed_00701(&ordno, p2);
+    if let Some(m) = violation.as_object_mut() {
+        m.insert("OrdprcPtnCode".to_string(), serde_json::json!(""));
+    }
+    let (fire_http, fire_rsp_cd) =
+        match fire_inblock(&client, &url, &token, "CSPAT00701", "CSPAT00701InBlock1", &violation).await
+        {
+            Some((http, rsp_cd, _)) => (http, rsp_cd),
+            None => {
+                // Transport failure on the fire is MAY-REST — the variant may have rested.
+                println!(
+                    "{tag} verdict=may-rest [fire transport-failure — cannot confirm placed-nothing] \
+                     — reconciling"
+                );
+                order_reconcile_teardown(&sdk, symbol, &owned, false).await;
+                return;
+            }
+        };
+    println!("{tag} fire=[http={fire_http} rsp_cd={fire_rsp_cd}] (OrdprcPtnCode omitted)");
+
+    // (5) S_post — paced re-snapshot + new-order check. The 1000ms pace keeps S_post
+    // from self-throttling into a false untrusted read (§27 / #137).
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    let (s_post, new_order, reads_trusted) = match scan_symbol_working_orders(&sdk, symbol).await {
+        Ok(rows) => (
+            seed_snapshot_from(&rows, &ordno),
+            has_new_resting_order(&rows, &ordno),
+            true,
+        ),
+        Err(e) => {
+            println!("{tag} S_post scan failed [{e}] — untrusted read");
+            (SeedSnapshot::default(), false, false)
+        }
+    };
+
+    // (6) TEARDOWN — cancel the seed + the bounded fill-check (the fill-inclusive
+    // defense: a fully-filled seed vanished from S_post surfaces here as Filled).
+    let cancel = CSPAT00801Request::new(&ordno, symbol, "1");
+    let cancel_gateway_rejected = match sdk.orders().cancel(&cancel).await {
+        Ok(_) => false,
+        Err(e) => {
+            let rejected = matches!(e, LsError::ApiError { .. });
+            println!(
+                "{tag} seed-cancel error [{}] (gateway_rejected={rejected}) — bounded fill-check decides",
+                safe_err(&e)
+            );
+            rejected
+        }
+    };
+    let disposition = match scan_symbol_working_orders(&sdk, symbol).await {
+        Ok(rows) => classify_control_disposition(cancel_gateway_rejected, &rows),
+        // An untrusted post-cancel scan is NOT CleanlyCanceled → the verdict cannot
+        // reach placed-nothing (fails safe to inconclusive/reconcile).
+        Err(_) => ControlDisposition::StillResting(vec![]),
+    };
+
+    let verdict = classify_igw00000_ab(
+        fire_http,
+        &fire_rsp_cd,
+        reads_trusted,
+        &s_pre,
+        &s_post,
+        new_order,
+        &disposition,
+    );
+    let label = match verdict {
+        AbVerdict::PlacedNothing => "placed-nothing",
+        AbVerdict::MayRest => "may-rest",
+        AbVerdict::Inconclusive => "inconclusive",
+    };
+
+    // Final reconcile — never leave a resting order. Cancel-all (untrusted owned set)
+    // because this wave deliberately fired a possibly-resting variant.
+    order_reconcile_teardown(&sdk, symbol, &owned, false).await;
+    println!(
+        "{tag} verdict={label} [fire http={fire_http} rsp_cd={fire_rsp_cd}] \
+         (credential-free; U6 if placed-nothing, U7 if may-rest)"
+    );
+}
+
+#[tokio::test]
+#[ignore = "live probe: attended IGW00000 A/B; needs real LS paper ORDER-account + open KRX window + LS_ORDER_SMOKE=1 + a fresh LS_ORDER_SMOKE_NONCE (attended TTY); run via `make live-smoke-cspat00701-igw00000-ab`"]
+async fn live_smoke_cspat00701_igw00000_ab() {
+    run_igw00000_ab_probe().await;
+}
+
 // ===========================================================================
 // D. Offline twins (these RUN in CI — no network)
 // ===========================================================================
@@ -2167,6 +2526,111 @@ fn placed_nothing_binding_matches_the_live_invalidvariant_field_and_class_string
     assert!(
         order_code_placed_nothing(&schema, &variant.field, &variant.class, "IGW00000"),
         "the generated variant's field/class strings must resolve the annotation key"
+    );
+}
+
+// --- IGW00000 A/B offline twins (plan 2026-07-14-001 U5) -------------------
+
+fn t0425_row(ordno: &str, price: &str, qty: &str, cheqty: &str, ordrem: &str) -> T0425OutBlock1 {
+    T0425OutBlock1 {
+        ordno: ordno.into(),
+        price: price.into(),
+        qty: qty.into(),
+        cheqty: cheqty.into(),
+        ordrem: ordrem.into(),
+        ..Default::default()
+    }
+}
+
+#[test]
+fn seed_snapshot_from_finds_the_seed_by_normalized_ordno_else_absent() {
+    // The snapshot matches the seed on `normalize_ordno` (a zero-padded scan ordno vs
+    // a numeric submit ordno still resolves) and records its mutable fields; a seed
+    // absent from the scan yields the default (present=false).
+    let rows = vec![
+        t0425_row("0000012345", "50000", "1", "0", "1"),
+        t0425_row("999", "60000", "2", "0", "2"),
+    ];
+    let snap = seed_snapshot_from(&rows, "12345");
+    assert!(snap.present && snap.price == "50000" && snap.qty == "1");
+    assert!(!seed_snapshot_from(&rows, "77777").present, "absent seed → default");
+}
+
+#[test]
+fn has_new_resting_order_ignores_the_seed_and_non_resting_rows() {
+    // A foreign RESTING row (cheqty==0, ordrem>0) that is not the seed is a phantom;
+    // the seed itself and any filled/partial row are not counted.
+    let seed = "12345";
+    assert!(!has_new_resting_order(&[t0425_row("12345", "50000", "1", "0", "1")], seed), "only the seed rests");
+    assert!(
+        has_new_resting_order(&[t0425_row("12345", "50000", "1", "0", "1"), t0425_row("99", "51000", "1", "0", "1")], seed),
+        "a foreign resting row is a new order"
+    );
+    assert!(
+        !has_new_resting_order(&[t0425_row("12345", "50000", "1", "0", "1"), t0425_row("99", "51000", "1", "1", "0")], seed),
+        "a foreign FILLED row (ordrem==0) is not a new resting order"
+    );
+}
+
+#[test]
+fn classify_igw00000_ab_covers_every_bind_signature_arm() {
+    let present = |price: &str| SeedSnapshot {
+        present: true,
+        price: price.into(),
+        qty: "1".into(),
+        cheqty: "0".into(),
+        ordrem: "1".into(),
+    };
+    let s_pre = present("51000");
+    let clean = ControlDisposition::CleanlyCanceled;
+
+    // placed-nothing: fire=500/IGW00000, seed present & byte-identical, no new order,
+    // clean cancel.
+    assert_eq!(
+        classify_igw00000_ab(500, "IGW00000", true, &s_pre, &present("51000"), false, &clean),
+        AbVerdict::PlacedNothing
+    );
+    // may-rest — the seed MUTATED (price changed).
+    assert_eq!(
+        classify_igw00000_ab(500, "IGW00000", true, &s_pre, &present("52000"), false, &clean),
+        AbVerdict::MayRest
+    );
+    // may-rest — the seed VANISHED from a trusted S_post (plan: vanished is may-rest).
+    assert_eq!(
+        classify_igw00000_ab(500, "IGW00000", true, &s_pre, &SeedSnapshot::default(), false, &clean),
+        AbVerdict::MayRest
+    );
+    // may-rest — the seed FILLED (cancel gateway-rejected on a flat book).
+    assert_eq!(
+        classify_igw00000_ab(500, "IGW00000", true, &s_pre, &present("51000"), false, &ControlDisposition::Filled(vec![])),
+        AbVerdict::MayRest
+    );
+    // may-rest — a NEW order rested.
+    assert_eq!(
+        classify_igw00000_ab(500, "IGW00000", true, &s_pre, &present("51000"), true, &clean),
+        AbVerdict::MayRest
+    );
+    // inconclusive — untrusted read (throttle/scan failure) is NEVER placed-nothing (#137).
+    assert_eq!(
+        classify_igw00000_ab(500, "IGW00000", false, &s_pre, &present("51000"), false, &clean),
+        AbVerdict::Inconclusive
+    );
+    // inconclusive — could not snapshot the control pre-fire.
+    assert_eq!(
+        classify_igw00000_ab(500, "IGW00000", true, &SeedSnapshot::default(), &present("51000"), false, &clean),
+        AbVerdict::Inconclusive
+    );
+    // inconclusive — the fire is NOT the characterized 500/IGW00000 surface, even with
+    // an otherwise-clean seed.
+    assert_eq!(
+        classify_igw00000_ab(500, "IGW50008", true, &s_pre, &present("51000"), false, &clean),
+        AbVerdict::Inconclusive
+    );
+    // inconclusive — seed byte-identical but it did NOT cancel cleanly (StillResting):
+    // cannot positively conclude placed-nothing.
+    assert_eq!(
+        classify_igw00000_ab(500, "IGW00000", true, &s_pre, &present("51000"), false, &ControlDisposition::StillResting(vec![])),
+        AbVerdict::Inconclusive
     );
 }
 
