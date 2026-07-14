@@ -1089,6 +1089,20 @@ live-smoke-cspat00701-igw00000-ab:
 lane-check:
 	@scripts/lane-fail-fast-check.sh
 
+.PHONY: adapter-check
+
+## Offline gate step for the STANDALONE nautilus adapter workspace
+## (adapters/nautilus/). That workspace opts out of the root Cargo workspace
+## (its own Cargo.toml, pinned to nautilus's Rust 1.96 / edition 2024 toolchain
+## via rust-toolchain.toml), so the root `cargo test` never touches it — an
+## SDK-side change (e.g. a constraint-schema/preflight edit) can redden the
+## adapter's build or tests invisibly. This runs the adapter workspace's own
+## `cargo test --workspace` (adapter + its `lab`) so that regression surfaces in
+## the offline gate. No credentials, no gateway (offline); rustup resolves the
+## pinned 1.96 toolchain from the workspace's rust-toolchain.toml on first use.
+adapter-check:
+	cd adapters/nautilus && cargo test --workspace
+
 # ---------------------------------------------------------------------------
 # Docs generation — ls-docgen projects TR Dependency Docs and SDK Reference
 # Docs from ls-metadata. These targets need no credentials, so (unlike the
