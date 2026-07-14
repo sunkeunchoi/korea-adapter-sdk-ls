@@ -100,7 +100,7 @@ mod tests {
     fn catalog_parses_and_covers_every_known_code() {
         // The codes the plan (U1) names must all be present.
         for code in [
-            "00000", "00136", "00707", "01900", "01491", "904", "IGW40011", "IGW40013",
+            "00000", "00136", "00707", "01900", "01491", "904", "01458", "IGW40011", "IGW40013",
             "IGW40014", "IGW50008",
         ] {
             assert!(

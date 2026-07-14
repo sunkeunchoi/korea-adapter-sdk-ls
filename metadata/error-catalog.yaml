@@ -8,9 +8,10 @@
 #   - `ls-docgen` reads the same file to project the per-TR "Errors & validation"
 #     Reference section (R11).
 #
-# Environment / entitlement codes (session-closed 904, paper-incompatible 01900,
-# account-not-order-capable 01491) are explained here ONCE (R9) and never
-# reproduced per TR — they are unsummonable on demand and unpreflightable.
+# Environment / entitlement codes (session-closed 904, order-session-closed 01458,
+# paper-incompatible 01900, account-not-order-capable 01491) are explained here
+# ONCE (R9) and never reproduced per TR — they are unsummonable on demand and
+# unpreflightable.
 #
 # `kind` classifies each code for grouping/rendering; `explanation` is the
 # user-facing reason. Success codes are included for completeness so the catalog
@@ -51,6 +52,14 @@ codes:
       The market session required for this TR is closed. An environment
       condition, not a request defect: the same request succeeds inside the
       correct trading window. Retry in-session.
+  "01458":
+    kind: session_closed
+    explanation: >-
+      The order session is closed (모의투자 장종료 / paper order session closed).
+      Reads and quotes still flow after the KRX order-window close, but an order
+      submit is rejected with this code. A session-timing environment condition,
+      not a request defect: the same order succeeds inside the KRX order window.
+      Retry at the next open.
   IGW00000:
     kind: gateway_error
     explanation: >-
