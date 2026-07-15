@@ -4,6 +4,83 @@ Committed record of each loop turn's verdict + the bar conditions it held. The
 full artifacts (`analysis.md`, manifests, performance) live in the gitignored data
 home; this file is the durable, reviewable outcome trail.
 
+## Turn — session-granular realized-equity compounding sizing (CLASS B lever 2, candidate (c)): Phase-A DUAL GO, built + flipped, REVERT (2026-07-15) — plan 2026-07-15-001
+
+- **Verdict: REVERT — the equity-compounding lever `equity_compound_frac` is material
+  (both Phase-A gates GO, the flip binds) but does NOT improve the size-invariant RoR
+  crux; v26 stays head** (hash `d199d124`, RoR **0.1171**). The final deferred CLASS B
+  sizing candidate: scale the per-trade risk budget by the **session-open realized-equity
+  multiplier** `m = 1 + Σ(prior-session realized P&L)/starting_balance`, flipped to the
+  fixed-fractional identity `equity_compound_frac = 1.0`. Kelly-fraction sizing (candidate
+  (b)) is **retired** this turn with the recorded four-class examination (plan KD1). Unlike
+  the ATR turn (candidate (a), which STOPPED at Phase A), this one **passed** the dual gate
+  and was built through the flip — the honest outcome of measuring rather than assuming.
+- **Phase A — pre-code DUAL gate (frozen before any reading,
+  `data/turn4-fresh/PRE-REGISTER-vNEXT-equity-compounding.md`; adversarially re-verified by
+  an independent-recompute twin).** Over v26's 167 closed trades (sum realized P&L
+  +5,229,150 KRW vs 100M `starting_balance` → multiplier span 1.000–1.0557):
+
+  | gate | reading | rule | result |
+  |---|---|---|---|
+  | **Collinearity** `r(m, risk_per_share)` | **−0.0175** (R² 0.0003; Spearman −0.0508, 10%-trim −0.0824) | `\|r\| < 0.70` | **GO** (near-orthogonal — the *opposite* failure mode from ATR's 0.9593) |
+  | **Materiality (a)** predicted RoR shift | **0.002078** (RoR 0.11714 → RoR′ 0.11506) | `≥ 0.00065` | **GO** (3.2×) |
+  | **Materiality (b)** integer qty-change frac | **0.3293** (55/167) | `≥ 0.05` | **GO** (6.6×) |
+
+  The materiality gate — added precisely to catch the near-constant-axis blind spot a plain
+  collinearity gate misses — reads the axis **material** despite the ~5.6% span: a small
+  multiplier still reallocates a third of integer position sizes. Note the predicted shift
+  was **negative** (RoR′ < RoR), foreshadowing the flip's degradation. Both gate scripts +
+  the independent twin agree bit-for-bit (multiplier max\|Δ\| = 0; `prior_atr`
+  `23232.142857` matches u5). Piggybacked R6 ratio-axis reading (evidence only):
+  `r(prior_atr/avg_px_open, risk_per_share) = 0.2949` (Spearman 0.4579) — the
+  cross-sectionally-normalized ATR is far more orthogonal than the absolute-KRW ATR
+  (0.9593), carried as the live direction for the next CLASS B re-rank.
+- **Phase B — built (default-off `equity_compound_frac`, runner accumulator, threaded
+  scalar) and flipped via seed-and-rerun.**
+  - **v27 re-baseline** (`equity_compound_frac: 0.0` seeded on v26, rerun, seed removed):
+    `performance.json` reconciles **1:1** to v26 (trades, equity_curve, every summary key);
+    `strategy_code_hash` moved `d199d124…` → `023b8087…`; `runs compare` v26→v27
+    **FAIL** (`param diff ["strategy_version"]`, `strategy_code_hash differs`) — the
+    intended re-baseline evidence.
+  - **v28 flip** (`equity_compound_frac: 1.0` seeded on v27, rerun): `runs compare` v27→v28
+    **PASS**, diff exactly `{equity_compound_frac, strategy_version}`.
+- **The flip result (v28 vs v27, n = 167 closed, KEEP rule R13: `is_edge` AND
+  `RoR > 0.1171` AND risk-dominance ≤ 0.40).**
+
+  | metric | v27 (=v26) | v28 (flip) | KEEP gate |
+  |---|---|---|---|
+  | **Return-on-risk** (the crux) | 0.117140 | **0.116304** | **FAIL** (≤ 0.1171, strict) |
+  | equal-weight mean-R (invariant) | 0.112946 | 0.112946 | unchanged (size-invariant) |
+  | Σ risk_capital | 44,640,250 | 45,548,050 (+2.0%) | — |
+  | risk-capital dominance | 0.0545 | 0.0544 | PASS (≤ 0.40) |
+  | pnl_total (KRW) | 5,229,150 | 5,297,400 | non-decisional |
+  | expectancy (KRW/trade) | — | 34,624 (> 0) | `is_edge` TRUE |
+
+- **Bind — CONFIRMED material (R14, read from v28 `decisions.jsonl`).** Per-session
+  `equity_multiplier` spans 23 distinct values 1.000000 → 1.056465 (22/23 sessions > 1);
+  effective risk budget varies 299,340 → 316,242; **59/184 = 32% of order placements shift
+  integer qty** vs v27 (matching Phase-A's 33% prediction). The lever is **not** inert — it
+  reallocates — so this is an **edge verdict, not INERT**.
+- **Why REVERT (the crux).** `is_edge` holds (positive expectancy, risk-dominance capped),
+  but RoR slips 0.1171 → **0.1163**, failing the strict-inequality KEEP gate. Compounding
+  sizes **up** later, higher-equity sessions whose average per-trade R is marginally lower,
+  so total P&L rises (+68,250 KRW) while the *size-invariant* return-on-risk falls — a
+  larger book earning a slightly worse rate. mean-R is unchanged (0.112946), confirming a
+  pure sizing reweight with no edge change. Fixed-fractional compounding is real but
+  **RoR-negative** on this sample; there is no operator override (softening the KEEP gate
+  after seeing 0.1163 is the forbidden overfit).
+- **Registry state.** Head unchanged: **v26** (`20260712T080054Z-backtest-orb-v26`, hash
+  `d199d124`, RoR 0.1171). The lever ships default-off (`equity_compound_frac: 0.0`
+  sentinel, byte-identical to v26) and stays in the code as a sweepable param
+  (`numeric_summary`), but is **not** activated. v27 + v28 archived under
+  `data/turn4-fresh/sizing-archive/` (non-KEEP, per FAN-OUT); Phase-A diagnostic +
+  independent twin under `sizing-archive/equity-compounding-diagnostic/`; frozen gate and
+  full decision in `PRE-REGISTER-vNEXT-equity-compounding.md`. Offline throughout; no gateway.
+- **CLASS B family status.** Candidate (a) ATR-vol-target: STOPPED (collinear). Candidate
+  (b) Kelly: RETIRED (KD1). Candidate (c) equity-compounding: BUILT + REVERTED (RoR-negative).
+  The sizing-budget axis is sweep-settled. The only live direction left is the
+  **ratio-ATR** (ATR/price, `r = 0.2949`) recorded above — a future re-rank, not this turn.
+
 ## Turn — ATR volatility-target sizing (CLASS B lever 2): PREDICTED-INERT at the Phase-A gate, NO-BUILD (2026-07-14) — plan 2026-07-14-002
 
 - **Verdict: PREDICTED-INERT — STOP at the pre-code Phase-A collinearity gate; no lever

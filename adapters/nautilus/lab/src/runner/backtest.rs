@@ -428,6 +428,17 @@ fn run_sessions(
         // this session's open so decisions.jsonl carries one scan per session date.
         let session_ts = kst_to_unix_nanos(*date, KRX_REGULAR_OPEN)?.as_u64();
 
+        // Session-open realized-equity multiplier (CLASS B lever 2, R2/R9/KTD-1): the
+        // `positions` accumulator is extended only AFTER each session's `run_engine`
+        // below, so at loop-top it holds exactly the prior sessions' positions — the
+        // session-open semantics fall out of the existing structure. Sum only closed
+        // positions' realized P&L (mirroring `build_equity_curve`'s closed-trade
+        // semantics), divide by the read-only `starting_balance` (R10). The lever-off
+        // (and pre-first-session) multiplier is exactly 1.0, so a non-compounding run is
+        // untouched. The strategy carries no account state (R9) — it receives this scalar.
+        let session_equity_multiplier =
+            equity_multiplier(params, &positions, starting_balance);
+
         let candidates =
             build_candidates(instruments, &daily_by_inst, &open_vol_by_inst, params, *date, metadata);
         for c in &candidates {
@@ -495,6 +506,7 @@ fn run_sessions(
             selected,
             sink.clone(),
             starting_balance,
+            session_equity_multiplier,
         )?;
         positions.extend(session_positions);
         position_risks.extend(session_risks);
@@ -681,10 +693,47 @@ fn shcode_of(symbol: &str) -> &str {
     symbol.split('.').next().unwrap_or(symbol)
 }
 
+/// The session-open realized-equity multiplier (CLASS B lever 2, R2/R9/R10/KTD-1):
+/// `1 + (Σ realized_pnl of closed prior-session positions) / starting_balance` when the
+/// compounding lever is active, else exactly `1.0`. `prior_positions` are the positions
+/// accumulated from strictly-earlier sessions (the runner's loop-top invariant); only
+/// closed positions contribute (a position with a close timestamp carries realized P&L),
+/// mirroring `build_equity_curve`'s closed-trade semantics. `starting_balance` is
+/// read-only (R10) — the compounding denominator, never mutated. A non-positive
+/// `starting_balance` (degenerate) yields `1.0` rather than a divide artifact. Pure
+/// function of the prior positions + `starting_balance` (deterministic).
+fn equity_multiplier(params: &OrbParams, prior_positions: &[Position], starting_balance: f64) -> f64 {
+    if !params.equity_compounding_active() {
+        return 1.0;
+    }
+    let realized: f64 = prior_positions
+        .iter()
+        .filter(|p| p.ts_closed.is_some())
+        .map(|p| p.realized_pnl.map(|m| m.as_f64()).unwrap_or(0.0))
+        .sum();
+    multiplier_from_realized(realized, starting_balance)
+}
+
+/// The pure equity-multiplier arithmetic (CLASS B lever 2, R2/KTD-1): `1 +
+/// realized_pnl / starting_balance`, with a non-positive `starting_balance` yielding
+/// `1.0` rather than a divide artifact. Split from [`equity_multiplier`] so the
+/// accumulator arithmetic is unit-testable without constructing engine `Position`s
+/// (the closed-position sum is exercised end-to-end by the strategy-wiring + re-baseline
+/// units).
+fn multiplier_from_realized(realized_pnl: f64, starting_balance: f64) -> f64 {
+    if starting_balance <= 0.0 {
+        return 1.0;
+    }
+    1.0 + realized_pnl / starting_balance
+}
+
 /// Build + run the engine, returning the finished positions (cloned) each paired
 /// with the entry-fixed risk the strategy captured for that symbol this session (U1).
 /// The pairing is by instrument id and unambiguous — ORB holds at most one open leg
-/// per symbol per session — so `risks[i]` belongs to `positions[i]`.
+/// per symbol per session — so `risks[i]` belongs to `positions[i]`. The
+/// `session_equity_multiplier` is the CLASS B lever 2 session-open scalar (R2/KTD-1),
+/// `1.0` when the lever is off — passed to `OrbStrategy::new` as construction-time state.
+#[allow(clippy::too_many_arguments)]
 fn run_engine(
     instruments: Vec<InstrumentAny>,
     bars: Vec<Bar>,
@@ -692,6 +741,7 @@ fn run_engine(
     selected: Vec<SelectedSymbol>,
     sink: DecisionSink,
     starting_balance: f64,
+    session_equity_multiplier: f64,
 ) -> anyhow::Result<(Vec<Position>, Vec<Option<EntryRisk>>)> {
     let mut engine = BacktestEngine::new(BacktestEngineConfig {
         bypass_logging: true,
@@ -711,7 +761,7 @@ fn run_engine(
     for inst in &instruments {
         engine.add_instrument(inst)?;
     }
-    let strategy = OrbStrategy::new(params, selected, sink);
+    let strategy = OrbStrategy::new(params, selected, sink, session_equity_multiplier);
     // Clone the entry-risk ledger BEFORE the engine consumes the strategy (U1) —
     // the same shared-handle pattern as the decision sink.
     let risk_ledger = strategy.entry_risk_ledger();
@@ -1056,6 +1106,71 @@ mod tests {
         let per_date: BTreeMap<NaiveDate, f64> = [(jan1, 100.0)].into_iter().collect();
         assert_eq!(prior_open_window_vol_mean(Some(&per_date), session, 5, 1), None, "first session");
         assert_eq!(prior_open_window_vol_mean(None, session, 5, 1), None, "no minute index");
+    }
+
+    // -- U3: session-open equity-compounding accumulator (CLASS B lever 2) --------
+
+    /// Fold a chronological sequence of per-session realized-P&L totals into the
+    /// session-open multiplier applied to EACH session — the pure-arithmetic twin of
+    /// the runner loop (which accumulates the same sum from live `positions` at
+    /// loop-top). Session k is sized on the cumulative realized P&L of sessions `< k`.
+    fn multiplier_sequence(per_session_pnl: &[f64], starting_balance: f64) -> Vec<f64> {
+        let mut cum = 0.0;
+        let mut out = Vec::with_capacity(per_session_pnl.len());
+        for pnl in per_session_pnl {
+            out.push(multiplier_from_realized(cum, starting_balance));
+            cum += pnl;
+        }
+        out
+    }
+
+    #[test]
+    fn accumulator_multipliers_match_hand_computation() {
+        // Three sessions, starting_balance 100M. Session 0 sees no prior P&L → 1.0;
+        // session 1 sees +5M → 1.05; session 2 sees +5M − 2M = +3M → 1.03. A loss path
+        // drives the multiplier below 1.0.
+        let seq = multiplier_sequence(&[5_000_000.0, -2_000_000.0, 4_000_000.0], 100_000_000.0);
+        assert_eq!(seq.len(), 3);
+        assert!((seq[0] - 1.0).abs() < 1e-12, "first session no prior P&L → 1.0");
+        assert!((seq[1] - 1.05).abs() < 1e-12, "after +5M → 1.05 (profit path > 1)");
+        assert!((seq[2] - 1.03).abs() < 1e-12, "after +3M net → 1.03");
+        // A pure loss path: −4M then −1M more → 0.96, 0.95 (< 1).
+        let loss = multiplier_sequence(&[-4_000_000.0, -1_000_000.0], 100_000_000.0);
+        assert!((loss[0] - 1.0).abs() < 1e-12);
+        assert!((loss[1] - 0.96).abs() < 1e-12, "loss path < 1");
+    }
+
+    #[test]
+    fn multiplier_from_realized_guards_nonpositive_balance() {
+        // A non-positive starting_balance yields 1.0 (no divide artifact), never Inf/NaN.
+        assert_eq!(multiplier_from_realized(5_000_000.0, 0.0), 1.0);
+        assert_eq!(multiplier_from_realized(5_000_000.0, -1.0), 1.0);
+        assert!((multiplier_from_realized(0.0, 100_000_000.0) - 1.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn equity_multiplier_off_and_first_session_are_one() {
+        // Lever off: exactly 1.0 regardless of prior positions (the empty-slice + off
+        // path). First session (no prior positions) with the lever ON: also exactly 1.0.
+        let off = OrbParams::default(); // equity_compound_frac 0.0
+        assert_eq!(equity_multiplier(&off, &[], 100_000_000.0), 1.0, "off → 1.0");
+        let on = OrbParams {
+            equity_compound_frac: 1.0,
+            risk_per_trade_krw: 299_340.0,
+            ..Default::default()
+        };
+        assert_eq!(equity_multiplier(&on, &[], 100_000_000.0), 1.0, "first session → 1.0");
+    }
+
+    #[test]
+    fn accumulator_is_deterministic() {
+        // Same inputs → identical multiplier sequence (a pure function of prior P&L +
+        // starting_balance).
+        let pnl = [1_234_567.0, -890_123.0, 456_789.0, -12_345.0];
+        assert_eq!(
+            multiplier_sequence(&pnl, 100_000_000.0),
+            multiplier_sequence(&pnl, 100_000_000.0),
+        );
     }
 
     #[test]

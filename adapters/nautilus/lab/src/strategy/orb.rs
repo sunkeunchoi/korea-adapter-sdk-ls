@@ -889,12 +889,26 @@ pub struct OrbStrategy {
     decisions: DecisionSink,
     emission: EmissionGate,
     entry_risk: EntryRiskLedger,
+    /// The session-open realized-equity multiplier (CLASS B lever 2, R2/R8/KTD-1):
+    /// construction-time state supplied by the runner from prior sessions' realized
+    /// P&L. `1.0` when the compounding lever is off or on the first session (no prior
+    /// P&L) — the value that makes off-sentinel sizing byte-identical to v26. The
+    /// strategy holds NO account state (R9): this scalar is all it needs to size.
+    session_equity_multiplier: f64,
 }
 
 impl OrbStrategy {
     /// Build the strategy for a resolved universe + parameter set, writing its
-    /// per-decision telemetry envelopes into `decisions`.
-    pub fn new(params: OrbParams, selected: Vec<SelectedSymbol>, decisions: DecisionSink) -> Self {
+    /// per-decision telemetry envelopes into `decisions`. `session_equity_multiplier`
+    /// is the CLASS B lever 2 session-open scalar (R2/KTD-1): the runner computes it
+    /// from prior sessions' realized equity and passes `1.0` when the lever is off, so
+    /// an off-sentinel run sizes exactly as v26.
+    pub fn new(
+        params: OrbParams,
+        selected: Vec<SelectedSymbol>,
+        decisions: DecisionSink,
+        session_equity_multiplier: f64,
+    ) -> Self {
         let base = StrategyConfig {
             strategy_id: Some(StrategyId::from(strategy_id_str(&params).as_str())),
             ..Default::default()
@@ -914,6 +928,7 @@ impl OrbStrategy {
             decisions,
             emission: EmissionGate::open(),
             entry_risk: EntryRiskLedger::new(),
+            session_equity_multiplier,
         }
     }
 
@@ -993,7 +1008,15 @@ impl OrbStrategy {
                     // back to notional inside `position_qty_risked`.
                     let risk_per_share =
                         self.states.get(&id).map(|s| s.risk_per_share() as f64).unwrap_or(0.0);
-                    let qty = self.params.position_qty_risked(limit_price as f64, risk_per_share);
+                    // Equity-compounding lever (CLASS B lever 2, R8/KTD-1/KTD-2): scale
+                    // the risk budget by the session-open realized-equity multiplier
+                    // before the same risk/notional sizing. Off-sentinel (or m = 1.0)
+                    // → factor 1.0 → byte-identical to the uncompounded
+                    // `position_qty_risked` (v26). The notional ceiling and every
+                    // downstream guard are unchanged; a clamped-to-zero budget flows
+                    // into the qty ≤ 0 rejection below.
+                    let m = self.session_equity_multiplier;
+                    let qty = self.params.position_qty_risked_at(limit_price as f64, risk_per_share, m);
                     let range = self.states.get(&id).and_then(|s| s.range()).unwrap_or((0, 0));
                     // Breakout strength = (breakout_price − range_high) / R (R2,
                     // KTD3). `None` for a degenerate range (R ≤ 0), which bypasses
@@ -1066,6 +1089,14 @@ impl OrbStrategy {
                     // The OrderPlaced envelope carries the sizing basis (R5) so a
                     // post-run bind check can read whether the qty distribution shifted
                     // (tight-stop entries sized up, wide-stop down) without re-joining.
+                    // The effective (compounded) risk budget the qty was sized on
+                    // (CLASS B lever 2, R14/KTD-5): `risk_per_trade_krw ·
+                    // equity_compound_factor(m)`. Rides the envelope alongside the
+                    // session `equity_multiplier` so the post-run bind check reads the
+                    // per-session budget path + the qty-distribution shift directly from
+                    // decisions.jsonl (no re-join). Off-sentinel: factor 1.0, m 1.0.
+                    let effective_risk_budget_krw =
+                        self.params.risk_per_trade_krw * self.params.equity_compound_factor(m);
                     self.emit_market_data(id, ts, DecisionDetail::transition(
                         symbol.clone(),
                         SignalKind::OrderPlaced,
@@ -1074,6 +1105,8 @@ impl OrbStrategy {
                             ("price", limit_price as f64),
                             ("risk_per_share", risk_per_share),
                             ("risk_per_trade_krw", self.params.risk_per_trade_krw),
+                            ("equity_multiplier", m),
+                            ("effective_risk_budget_krw", effective_risk_budget_krw),
                         ]),
                     ));
                 }
