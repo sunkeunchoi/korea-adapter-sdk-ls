@@ -989,6 +989,42 @@ impl OrbStrategy {
         );
     }
 
+    /// The entry quantity for `id` breaking out at `limit_price`, under the full sizing
+    /// stack: the R5 fixed-KRW risk budget, the CLASS B lever-2 session-open equity
+    /// multiplier, and the plan-2026-07-15-002 ratio-ATR budget tilt. All three inputs are
+    /// read here so the wiring is unit-testable (KTD-4):
+    ///
+    /// - `risk_per_share = entry − stop` from this symbol's state (the transition set the
+    ///   entry-fixed stop before returning the `Enter` action); a non-positive value falls
+    ///   back to notional sizing inside the params helper.
+    /// - the session-open equity multiplier (`1.0` when the compounding lever is off).
+    /// - the ratio-ATR weight `w`, computed inline from the symbol's threaded `prior_atr`
+    ///   and `limit_price`: `v = prior_atr / limit_price` is a *relative* volatility, so the
+    ///   tilt enters the budget numerator only and cannot collapse to the dead absolute-ATR
+    ///   lever. An absent / `Some(0.0)` `prior_atr` or a non-positive price fails closed to
+    ///   `w = 1.0` (skip-not-reject).
+    ///
+    /// With every lever off-sentinel this is byte-identical to v26. `risk_per_share` and
+    /// the session-open equity `multiplier` are passed in (the caller also emits them as
+    /// sizing telemetry); the ratio-ATR weight is read here from the symbol's threaded
+    /// `prior_atr` so the tilt wiring is unit-testable.
+    fn entry_qty(
+        &self,
+        id: &InstrumentId,
+        limit_price: i64,
+        risk_per_share: f64,
+        multiplier: f64,
+    ) -> i64 {
+        let prior_atr = self.states.get(id).and_then(|s| s.prior_atr);
+        let weight = self.params.ratio_atr_weight(prior_atr, limit_price as f64);
+        self.params.position_qty_risked_tilted(
+            limit_price as f64,
+            risk_per_share,
+            multiplier,
+            weight,
+        )
+    }
+
     /// Translate one bar's state-machine actions into orders + telemetry envelopes.
     fn handle_actions(
         &mut self,
@@ -1008,15 +1044,16 @@ impl OrbStrategy {
                     // back to notional inside `position_qty_risked`.
                     let risk_per_share =
                         self.states.get(&id).map(|s| s.risk_per_share() as f64).unwrap_or(0.0);
-                    // Equity-compounding lever (CLASS B lever 2, R8/KTD-1/KTD-2): scale
-                    // the risk budget by the session-open realized-equity multiplier
-                    // before the same risk/notional sizing. Off-sentinel (or m = 1.0)
-                    // → factor 1.0 → byte-identical to the uncompounded
-                    // `position_qty_risked` (v26). The notional ceiling and every
-                    // downstream guard are unchanged; a clamped-to-zero budget flows
-                    // into the qty ≤ 0 rejection below.
+                    // Equity-compounding lever (CLASS B lever 2, R8/KTD-1/KTD-2): the
+                    // session-open realized-equity multiplier scales the risk budget.
                     let m = self.session_equity_multiplier;
-                    let qty = self.params.position_qty_risked_at(limit_price as f64, risk_per_share, m);
+                    // Full sizing (R5 budget × equity multiplier × plan 2026-07-15-002
+                    // ratio-ATR tilt): `entry_qty` folds in the tilt weight, computed from
+                    // this symbol's threaded prior-daily ATR + the limit price. Off-sentinel
+                    // (or absent/`Some(0.0)` ATR) → weight 1.0 → byte-identical to v26. The
+                    // notional ceiling and `risk_per_share` denominator are untouched; a
+                    // clamped-to-zero budget flows into the qty ≤ 0 rejection below.
+                    let qty = self.entry_qty(&id, limit_price, risk_per_share, m);
                     let range = self.states.get(&id).and_then(|s| s.range()).unwrap_or((0, 0));
                     // Breakout strength = (breakout_price − range_high) / R (R2,
                     // KTD3). `None` for a degenerate range (R ≤ 0), which bypasses
@@ -1236,5 +1273,134 @@ impl DataActor for OrbStrategy {
             );
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod ratio_atr_wiring_tests {
+    //! Strategy-level coverage for the ratio-ATR budget tilt wiring at the Enter handler
+    //! (plan 2026-07-15-002 U3): `entry_qty` reads the symbol's threaded `prior_atr` + the
+    //! entry-fixed stop from state and composes the R5 budget × equity multiplier × tilt.
+    use super::*;
+    use nautilus_ls::ingest::BarKind;
+
+    fn tm(h: u32, m: u32) -> NaiveTime {
+        NaiveTime::from_hms_opt(h, m, 0).unwrap()
+    }
+
+    /// The frozen pre-registered ratio-ATR values (armed), with a slack notional ceiling
+    /// so the risk budget binds (isolating the tilt) unless a test overrides it.
+    fn armed_params() -> OrbParams {
+        OrbParams {
+            risk_per_trade_krw: 299_340.0,
+            notional_per_position: 1_000_000_000.0,
+            ratio_atr_alpha: 1.0,
+            ratio_atr_ref: 0.073_157_64,
+            ratio_atr_w_lo: 0.702_697_55,
+            ratio_atr_w_hi: 1.445_489_56,
+            ..Default::default()
+        }
+    }
+
+    /// Build a one-symbol strategy with `prior_atr` threaded onto the symbol, drive its
+    /// state through the opening range into a clean 62_000 breakout (range-low stop 60_000
+    /// → risk_per_share 2_000), and return it ready for `entry_qty(&id, 62_000)`.
+    fn strategy_at_entry(
+        params: OrbParams,
+        prior_atr: Option<f64>,
+        m: f64,
+    ) -> (OrbStrategy, InstrumentId) {
+        let id = InstrumentId::from("005930.XKRX");
+        let selected = vec![SelectedSymbol {
+            instrument_id: id,
+            bar_type: BarKind::Minute(1).bar_type(id).unwrap(),
+            prior_atr,
+            prior_open_vol_mean: None,
+        }];
+        let mut strategy = OrbStrategy::new(params, selected, DecisionSink::new(), m);
+        let p = strategy.params.clone();
+        {
+            let st = strategy.states.get_mut(&id).unwrap();
+            assert!(st.on_bar(tm(9, 0), 61_500, 60_000, 61_500, 0.0, &p).is_empty());
+            assert!(st.on_bar(tm(9, 10), 61_500, 60_000, 61_500, 0.0, &p).is_empty());
+            let acts = st.on_bar(tm(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
+            assert_eq!(acts, vec![OrbAction::Enter { limit_price: 62_000 }]);
+            assert_eq!(st.risk_per_share(), 2_000, "range-low stop → rps 2_000");
+        }
+        (strategy, id)
+    }
+
+    #[test]
+    fn entry_qty_off_sentinel_is_byte_identical_to_v26() {
+        // Covers AE1: with the tilt off, entry_qty matches the untilted risk-sizing path for
+        // ANY prior_atr (present, absent, or the Some(0.0) trap) across a spread of equity
+        // multipliers — the sentinel decouples the wiring entirely.
+        let mut off = armed_params();
+        off.ratio_atr_alpha = 0.0;
+        for prior_atr in [None, Some(6_000.0), Some(0.0)] {
+            for m in [0.95, 1.0, 1.05] {
+                let (s, id) = strategy_at_entry(off.clone(), prior_atr, m);
+                assert_eq!(
+                    s.entry_qty(&id, 62_000, 2_000.0, m),
+                    off.position_qty_risked_at(62_000.0, 2_000.0, m),
+                    "off sentinel (prior_atr={prior_atr:?}, m={m}) == untilted"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn entry_qty_no_prior_atr_sizes_untilted_with_lever_on() {
+        // Covers AE2: a symbol with no prior_atr sizes untilted even with the lever armed
+        // (skip-not-reject) — the trade is not dropped, just not tilted.
+        let p = armed_params();
+        let (s, id) = strategy_at_entry(p.clone(), None, 1.0);
+        assert_eq!(
+            s.entry_qty(&id, 62_000, 2_000.0, 1.0),
+            p.position_qty_risked_at(62_000.0, 2_000.0, 1.0),
+            "no-ATR trade sizes untilted"
+        );
+    }
+
+    #[test]
+    fn entry_qty_zero_prior_atr_fails_closed_untilted() {
+        // KTD-5 at the strategy level: Some(0.0) (flat deduped dailies) fails closed to the
+        // neutral weight, not v = 0 → w = ∞.
+        let p = armed_params();
+        let (s, id) = strategy_at_entry(p.clone(), Some(0.0), 1.0);
+        assert_eq!(
+            s.entry_qty(&id, 62_000, 2_000.0, 1.0),
+            p.position_qty_risked_at(62_000.0, 2_000.0, 1.0),
+            "Some(0.0) prior_atr sizes untilted"
+        );
+    }
+
+    #[test]
+    fn entry_qty_downsizes_high_vol_relative_to_low_vol() {
+        // Covers AE4 / F1: two entries with identical stop distance but v at the untreated
+        // p90 (high vol) vs p10 (low vol). prior_atr = v · limit_price. The high-v trade is
+        // downweighted below, the low-v above, the untilted qty — strictly.
+        let p = armed_params();
+        let (hi, id_h) = strategy_at_entry(p.clone(), Some(0.104_109_72 * 62_000.0), 1.0);
+        let (lo, id_l) = strategy_at_entry(p.clone(), Some(0.050_610_98 * 62_000.0), 1.0);
+        let q_high = hi.entry_qty(&id_h, 62_000, 2_000.0, 1.0);
+        let q_low = lo.entry_qty(&id_l, 62_000, 2_000.0, 1.0);
+        let untilted = p.position_qty_risked_at(62_000.0, 2_000.0, 1.0);
+        assert!(q_high < q_low, "high-v qty {q_high} strictly below low-v qty {q_low}");
+        assert!(q_high < untilted, "high-v {q_high} downsized below untilted {untilted}");
+        assert!(q_low > untilted, "low-v {q_low} upsized above untilted {untilted}");
+    }
+
+    #[test]
+    fn entry_qty_tilt_still_capped_by_notional_ceiling() {
+        // An upweighted (deep low-v → w_hi) entry is still bounded by the notional ceiling:
+        // the min(risk_qty, floor(notional / price)) cap binds exactly as before the tilt.
+        let p = OrbParams { notional_per_position: 10_000_000.0, ..armed_params() };
+        let (s, id) = strategy_at_entry(p.clone(), Some(0.02 * 62_000.0), 1.0);
+        assert_eq!(
+            s.entry_qty(&id, 62_000, 2_000.0, 1.0),
+            p.position_qty(62_000.0),
+            "notional ceiling binds even when upweighted"
+        );
     }
 }

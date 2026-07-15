@@ -4,6 +4,80 @@ Committed record of each loop turn's verdict + the bar conditions it held. The
 full artifacts (`analysis.md`, manifests, performance) live in the gitignored data
 home; this file is the durable, reviewable outcome trail.
 
+## Turn — cross-sectionally-normalized ATR budget tilt (CLASS B, ratio-ATR axis): Phase-A DUAL GO, built + flipped, KEEP → v30 (2026-07-15) — plan 2026-07-15-002
+
+- **Verdict: KEEP — the ratio-ATR budget tilt `ratio_atr_alpha` improves the size-invariant
+  RoR crux; v30 is the new head** (hash `6ae7b9f1`, RoR **0.1262**, `ratio_atr_alpha = 1.0`).
+  The one CLASS B sizing direction the prior post-mortems left live — a **dimensionless**
+  inverse-ratio tilt `w = clamp((v_ref/v)^alpha, w_lo, w_hi)` on `v = prior_atr/entry_price`
+  that multiplies the per-trade risk **budget** (numerator only, so it cannot collapse to the
+  dead absolute-ATR lever), downweighting high relative-vol names. Absolute-ATR vol-target
+  (candidate (a)) STOPPED collinear, Kelly (b) RETIRED, equity-compounding (c) REVERTED
+  RoR-negative; this is the **first CLASS B sizing lever to raise RoR** — the honest outcome
+  of measuring rather than assuming the family was closed.
+- **Phase A — pre-code DUAL gate (frozen before any reading,
+  `data/turn4-fresh/PRE-REGISTER-vNEXT-ratio-atr-budget-tilt.md`; adversarially re-verified by
+  an independent-recompute twin).** Over v26's 167 closed trades (103 ATR-available; 64 sized
+  `w = 1` skip-not-reject). Frozen derivation over the untreated `v` distribution:
+  `v_ref = median = 0.073158`, `w_lo = v_ref/p90 = 0.702698`, `w_hi = v_ref/p10 = 1.445490`,
+  `alpha = 1.0`:
+
+  | gate | reading | rule | result |
+  |---|---|---|---|
+  | **Collinearity** `r(w(v), risk_per_share)` | **−0.3617** (R² 0.1308; Spearman −0.4571, 10%-trim −0.2719) | `\|r\| < 0.70` | **GO** (near-orthogonal — the ratio escapes the price-scale collinearity that killed absolute ATR at 0.9593) |
+  | **Materiality (a)** predicted RoR shift | **0.018278** (RoR 0.11714 → RoR′ 0.13542, *positive*) | `≥ 0.00065` | **GO** (28×) |
+  | **Materiality (b)** integer qty-change frac | **0.3413** (57/167) | `≥ 0.05` | **GO** (6.8×) |
+
+  The gate re-measures this lever's exact axis `w(v)` (not the raw ratio `v`, whose evidence
+  reading `r(v, rps) = 0.2949`/ρ 0.4579 the twin reproduces). Both gate scripts + the
+  independent twin agree bit-for-bit (`v_ref`, p10/p90, clamps to 8 dp; `prior_atr(005930,
+  2026-06-12) = 23232.142857` matches u5). The first-order shift is **positive** — opposite the
+  equity lever's negative foreshadowing — and the flip confirmed the direction.
+- **Phase B — built (default-off `ratio_atr_alpha` + three frozen clamp/ref params, an inline
+  `ratio_atr_weight` at the Enter handler, no runner threading) and flipped via seed-and-rerun.**
+  - **v29 re-baseline** (`ratio_atr_alpha: 0.0`, frozen ref/clamps seeded, rerun, seed removed):
+    `performance.json` reconciles **1:1** to v26 (167 trades, per-trade qty + P&L, RoR
+    **0.1171398010** exact); `strategy_code_hash` moved `d199d124…` → `6ae7b9f1…`; `runs
+    compare` v26→v29 **FAIL** (`strategy_code_hash differs`) — the intended re-baseline evidence.
+  - **v30 flip** (`ratio_atr_alpha: 1.0` seeded on v29, rerun): `runs compare` v29→v30 **PASS**,
+    diff exactly `{ratio_atr_alpha, strategy_version}`.
+- **The flip result (v30 vs v29, n = 167 closed, KEEP rule R12: `RoR > 0.1171` strict AND
+  risk-cap dominance ≤ 0.40).**
+
+  | metric | v29 (=v26) | v30 (flip) | KEEP gate |
+  |---|---|---|---|
+  | **Return-on-risk** (the crux) | 0.1171398 | **0.1262394** | **PASS** (> 0.1171, strict; +0.0091) |
+  | equal-weight mean-R (invariant) | 0.112946 | 0.112946 | unchanged (size-invariant) |
+  | Σ risk_capital | 44,640,250 | 43,060,250 (−3.5%) | — |
+  | risk-capital dominance | 0.0545 | 0.0593 | PASS (≤ 0.40) |
+  | pnl_total (KRW) | 5,229,150 | 5,435,900 (+206,750) | non-decisional |
+  | expectancy (KRW/trade) | 31,312 | 32,550 (> 0) | `is_edge` TRUE |
+
+- **Bind — CONFIRMED material (R11, v29→v30 per-trade qty deltas matched on (symbol, session)).**
+  **57/167 = 34.1% of closed trades shift integer qty** (19 upsized, 38 downsized) — matching
+  the Phase-A 57/167 prediction. High-`v` (high relative-vol) trades downsize toward `w_lo`,
+  low-`v` upsize toward `w_hi`, exactly the frozen tilt direction. Cohort stable (167 → 167; no
+  qty→0 eliminations, consistent with the Phase-A "0 floored to 0" reading).
+- **Why KEEP (the crux).** The tilt earns **more** total P&L (+206,750 KRW) on **less**
+  deployed risk (−1.58M), so the size-invariant return-on-risk rises 0.1171 → **0.1262**.
+  mean-R is unchanged (0.112946) — the same trades at the same per-trade R, reweighted — so
+  this is a **pure sizing reallocation** that lifts the risk-adjusted rate: high relative-vol
+  names carried worse P&L-per-risk (the vol-parity / gap-through-stop thesis, frozen a-priori),
+  and downweighting them is RoR-positive. The KEEP rule fires deterministically; no operator
+  override, no threshold softening.
+- **Registry state.** New head: **v30** (`20260715T092847Z-backtest-orb-v30`, hash `6ae7b9f1`,
+  RoR 0.1262, `ratio_atr_alpha = 1.0`, `ratio_atr_ref = 0.073158`, `ratio_atr_w_lo = 0.702698`,
+  `ratio_atr_w_hi = 1.445490`). The lever's code default stays the `0.0` sentinel
+  (byte-identical to v26 for any legacy manifest); the head arms it. v29 (re-baseline) + v30
+  (armed head) are the head lineage in `runs/`; no non-KEEP runs to archive (KEEP, no fan-out).
+  Phase-A diagnostic + independent twin under `sizing-archive/ratio-atr-tilt-diagnostic/`; frozen
+  gate + full decision in `PRE-REGISTER-vNEXT-ratio-atr-budget-tilt.md`. Offline throughout; no gateway.
+- **CLASS B family status.** Candidate (a) ATR-vol-target: STOPPED (collinear). Candidate (b)
+  Kelly: RETIRED. Candidate (c) equity-compounding: BUILT + REVERTED (RoR-negative). Ratio-ATR
+  tilt: **BUILT + KEPT (RoR-positive)** — the axis the equity turn named as the live direction
+  delivered. The sizing-budget axis is sweep-settled; `ratio_atr_alpha` is now a sweepable head
+  param (a future governed turn could tune the exponent off its structural 1.0).
+
 ## Turn — session-granular realized-equity compounding sizing (CLASS B lever 2, candidate (c)): Phase-A DUAL GO, built + flipped, REVERT (2026-07-15) — plan 2026-07-15-001
 
 - **Verdict: REVERT — the equity-compounding lever `equity_compound_frac` is material

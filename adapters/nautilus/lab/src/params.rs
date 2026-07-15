@@ -183,6 +183,37 @@ pub struct OrbParams {
     /// budget it would silently do nothing, so fail fast).
     #[serde(default)]
     pub equity_compound_frac: f64,
+    /// Cross-sectionally-normalized ATR budget tilt (CLASS B, ratio-ATR axis, plan
+    /// 2026-07-15-002 R1/R2/KTD-1). Multiplies the per-trade risk **budget** by a
+    /// dimensionless inverse-ratio weight `w = clamp((ratio_atr_ref / v)^alpha, w_lo,
+    /// w_hi)` where `v = prior_atr / entry_price` — a relative (not absolute-KRW)
+    /// volatility, so the tilt enters the **numerator only** and cannot collapse to the
+    /// dead absolute-ATR lever (price never re-enters sizing through `w`). `alpha` is the
+    /// tilt strength and this lever's only flip parameter. Sentinel `0.0` = off: `w ≡ 1`,
+    /// so sizing is byte-identical to v26. `#[serde(default)]` so legacy manifests
+    /// deserialize with it off. `validate()` rejects a negative value and, when positive,
+    /// requires a positive risk budget and a valid frozen clamp band (KTD-1).
+    #[serde(default)]
+    pub ratio_atr_alpha: f64,
+    /// The frozen reference relative-volatility for the ratio-ATR tilt (plan R3/KTD-1):
+    /// `v_ref`, the pre-registered median of `v = prior_atr / entry_price` over the head's
+    /// ATR-available closed trades. A trade at `v = ratio_atr_ref` gets `w = 1` (neutral).
+    /// A pre-registered derivation rule, **not** a swept value. Ignored while
+    /// `ratio_atr_alpha == 0.0`; `validate()` requires `> 0.0` when the lever is armed.
+    #[serde(default)]
+    pub ratio_atr_ref: f64,
+    /// The frozen lower clamp on the ratio-ATR weight (plan R3/KTD-2): `w_lo = v_ref /
+    /// p90(v)`, the smallest weight (most-downweighted, highest-relative-vol trades).
+    /// A pre-registered constant, not swept. Ignored while `ratio_atr_alpha == 0.0`;
+    /// `validate()` requires `0 < w_lo ≤ 1.0` when the lever is armed.
+    #[serde(default)]
+    pub ratio_atr_w_lo: f64,
+    /// The frozen upper clamp on the ratio-ATR weight (plan R3/KTD-2): `w_hi = v_ref /
+    /// p10(v)`, the largest weight (most-upweighted, lowest-relative-vol trades).
+    /// A pre-registered constant, not swept. Ignored while `ratio_atr_alpha == 0.0`;
+    /// `validate()` requires `w_hi ≥ 1.0` when the lever is armed.
+    #[serde(default)]
+    pub ratio_atr_w_hi: f64,
 }
 
 /// The back-compat default for [`OrbParams::profit_target_r`] (R2, KTD3): a v8
@@ -262,6 +293,12 @@ impl Default for OrbParams {
             trail_frac_r: 0.0,
             risk_per_trade_krw: 0.0,
             equity_compound_frac: 0.0,
+            // Ratio-ATR budget tilt (plan 2026-07-15-002) — sentinel off; the clamp/ref
+            // companions stay 0.0 (inert while alpha == 0.0), byte-identical to v26.
+            ratio_atr_alpha: 0.0,
+            ratio_atr_ref: 0.0,
+            ratio_atr_w_lo: 0.0,
+            ratio_atr_w_hi: 0.0,
         }
     }
 }
@@ -413,6 +450,69 @@ impl OrbParams {
                 self.equity_compound_frac
             ));
         }
+        // Ratio-ATR budget tilt (CLASS B, plan 2026-07-15-002 R2/KTD-1): 0.0 disables it;
+        // a positive alpha arms the inverse-ratio tilt. A negative alpha would invert the
+        // frozen downweight-high-vol direction (out of scope). When armed the lever needs a
+        // positive risk budget (it multiplies `risk_per_trade_krw` — with none it does
+        // nothing), a positive reference `v_ref` (the ratio the weight normalizes against),
+        // and a valid clamp band straddling 1.0 (`0 < w_lo ≤ 1.0 ≤ w_hi`, since `v_ref` is
+        // the median so the neutral weight 1.0 must lie inside the band). Fail fast on an
+        // inert-by-misconfiguration run, mirroring the equity cross-guard.
+        // A non-finite alpha (NaN/±∞) would slip past the sign checks below (`NaN < 0.0`
+        // and `NaN > 0.0` are both false → neither branch) yet make `ratio_atr_weight`
+        // compute a NaN weight → a silent qty-0 book. Reject it up front so the finite
+        // sign/branch logic that follows is total. (Unreachable from a JSON manifest —
+        // serde_json rejects NaN/∞ on parse — but validate() is the safety gate.)
+        if !self.ratio_atr_alpha.is_finite() {
+            return Err(format!(
+                "ratio_atr_alpha {} is not finite — use 0.0 to disable the ratio-ATR tilt or a \
+                 finite positive exponent (R2/KTD-1)",
+                self.ratio_atr_alpha
+            ));
+        }
+        if self.ratio_atr_alpha < 0.0 {
+            return Err(format!(
+                "ratio_atr_alpha {} is negative — use 0.0 to disable the ratio-ATR tilt, a \
+                 positive exponent to downweight high relative-vol names (R2/KTD-1)",
+                self.ratio_atr_alpha
+            ));
+        }
+        if self.ratio_atr_alpha > 0.0 {
+            if self.risk_per_trade_krw <= 0.0 {
+                return Err(format!(
+                    "ratio_atr_alpha {} is active but risk_per_trade_krw is {} — the tilt scales \
+                     the risk budget, so with no budget it would silently do nothing; enable risk \
+                     sizing or disable the tilt (R2/KTD-1)",
+                    self.ratio_atr_alpha, self.risk_per_trade_krw
+                ));
+            }
+            // `is_finite()` guards below are load-bearing, not decorative: a NaN `v_ref`
+            // passes `<= 0.0` (NaN comparisons are false) → NaN weight → silent qty 0, and a
+            // NaN/∞ `w_hi` passes `< 1.0` → `raw.clamp(w_lo, w_hi)` PANICS (clamp panics on a
+            // NaN bound). `w_lo`'s compound `(> 0.0 && <= 1.0)` already rejects NaN/∞.
+            if !self.ratio_atr_ref.is_finite() || self.ratio_atr_ref <= 0.0 {
+                return Err(format!(
+                    "ratio_atr_alpha is active but ratio_atr_ref is {} — the weight normalizes \
+                     against a finite positive reference v_ref (R3/KTD-1)",
+                    self.ratio_atr_ref
+                ));
+            }
+            if !(self.ratio_atr_w_lo > 0.0 && self.ratio_atr_w_lo <= 1.0) {
+                return Err(format!(
+                    "ratio_atr_alpha is active but ratio_atr_w_lo is {} — the lower clamp must be \
+                     in (0, 1.0] (v_ref = median → the neutral weight 1.0 is the band's top-side; \
+                     R3/KTD-2)",
+                    self.ratio_atr_w_lo
+                ));
+            }
+            if !self.ratio_atr_w_hi.is_finite() || self.ratio_atr_w_hi < 1.0 {
+                return Err(format!(
+                    "ratio_atr_alpha is active but ratio_atr_w_hi is {} — the upper clamp must be \
+                     a finite value ≥ 1.0 so the neutral weight 1.0 lies inside the band (R3/KTD-2)",
+                    self.ratio_atr_w_hi
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -483,6 +583,42 @@ impl OrbParams {
         (1.0 + self.equity_compound_frac * (multiplier - 1.0)).max(0.0)
     }
 
+    /// Whether the ratio-ATR budget tilt is active (CLASS B, plan 2026-07-15-002 R2): a
+    /// positive `ratio_atr_alpha`. The sentinel `0.0` keeps the untilted v26 risk budget.
+    /// `validate()` guarantees this is only true alongside an active risk budget and a
+    /// valid frozen clamp band.
+    pub fn ratio_atr_active(&self) -> bool {
+        self.ratio_atr_alpha > 0.0
+    }
+
+    /// The dimensionless ratio-ATR budget multiplier `w` for a trade with prior-daily
+    /// `prior_atr` entering at `entry_price` (plan R1/R4/KTD-5). Computes
+    /// `w = clamp((ratio_atr_ref / v)^alpha, ratio_atr_w_lo, ratio_atr_w_hi)` on the
+    /// **relative** volatility `v = prior_atr / entry_price`, so `w` depends on price only
+    /// through the ratio — the anti-collapse property (doubling `prior_atr` and
+    /// `entry_price` together leaves `w` unchanged).
+    ///
+    /// Fails **closed** to the neutral `w = 1.0` (KTD-5) when: the lever is off
+    /// (`alpha == 0.0`, the bit-identical sentinel); `prior_atr` is `None` **or** `≤ 0.0`
+    /// (the documented `Some(0.0)` flat-deduped-dailies trap — a zero ATR must never make
+    /// `v = 0 → w = ∞`); or `entry_price ≤ 0.0`. A `None`/degenerate `prior_atr` is
+    /// skip-not-reject: the trade sizes untilted, it is not dropped.
+    pub fn ratio_atr_weight(&self, prior_atr: Option<f64>, entry_price: f64) -> f64 {
+        if self.ratio_atr_alpha == 0.0 {
+            return 1.0;
+        }
+        let atr = match prior_atr {
+            Some(a) if a > 0.0 => a,
+            _ => return 1.0,
+        };
+        if entry_price <= 0.0 {
+            return 1.0;
+        }
+        let v = atr / entry_price;
+        let raw = (self.ratio_atr_ref / v).powf(self.ratio_atr_alpha);
+        raw.clamp(self.ratio_atr_w_lo, self.ratio_atr_w_hi)
+    }
+
     /// The entry quantity under the risk-based sizing lever (R5): when the lever is
     /// off (or the per-share risk is non-positive — a degenerate stop the risk path
     /// can't divide by), this is exactly [`OrbParams::position_qty`] (the fixed
@@ -511,10 +647,34 @@ impl OrbParams {
     /// floors `floor(0 / rps) = 0`, so `min(0, notional_qty) = 0` → the existing
     /// zero-qty rejection, never a negative qty.
     pub fn position_qty_risked_at(&self, price: f64, risk_per_share: f64, multiplier: f64) -> i64 {
+        self.position_qty_risked_tilted(price, risk_per_share, multiplier, 1.0)
+    }
+
+    /// The entry quantity under risk sizing with **both** the equity-compounding
+    /// multiplier and the ratio-ATR budget tilt applied (CLASS B, plan 2026-07-15-002
+    /// R1/KTD-4). The risk budget becomes
+    /// `risk_per_trade_krw · equity_compound_factor(multiplier) · weight` before the same
+    /// `min( floor(budget / risk_per_share), floor(notional / price) )` sizing — so the
+    /// notional ceiling and the `risk_per_share` denominator are untouched (the tilt is a
+    /// numerator-only multiplicand, the anti-collapse invariant). `weight` comes from
+    /// [`OrbParams::ratio_atr_weight`]; the neutral `weight = 1.0` makes this byte-identical
+    /// to [`OrbParams::position_qty_risked_at`] (and, at `multiplier = 1.0`, to
+    /// [`OrbParams::position_qty_risked`] — the v26 path). When risk sizing is off (or the
+    /// per-share risk is non-positive) both the multiplier and the weight are irrelevant and
+    /// this falls back to the fixed-notional qty. A tilt low enough to floor the budget qty
+    /// to 0 flows into the existing zero-qty rejection (a downweighted setup freed from the
+    /// book), never a negative qty.
+    pub fn position_qty_risked_tilted(
+        &self,
+        price: f64,
+        risk_per_share: f64,
+        multiplier: f64,
+        weight: f64,
+    ) -> i64 {
         if !self.risk_sizing_active() || risk_per_share <= 0.0 {
             return self.position_qty(price);
         }
-        let budget = self.risk_per_trade_krw * self.equity_compound_factor(multiplier);
+        let budget = self.risk_per_trade_krw * self.equity_compound_factor(multiplier) * weight;
         let risked = (budget / risk_per_share).floor() as i64;
         risked.min(self.position_qty(price))
     }
@@ -615,6 +775,10 @@ mod tests {
         assert_eq!(p.trail_frac_r, 0.0, "breakeven trail off");
         assert_eq!(p.risk_per_trade_krw, 0.0, "risk sizing off");
         assert_eq!(p.equity_compound_frac, 0.0, "equity compounding off");
+        assert_eq!(p.ratio_atr_alpha, 0.0, "ratio-ATR tilt off");
+        assert_eq!(p.ratio_atr_ref, 0.0, "ratio-ATR ref unset while off");
+        assert_eq!(p.ratio_atr_w_lo, 0.0, "ratio-ATR w_lo unset while off");
+        assert_eq!(p.ratio_atr_w_hi, 0.0, "ratio-ATR w_hi unset while off");
         // The decoded helpers agree with the filter-off defaults.
         assert_eq!(p.stop_placement(), StopMode::RangeLow);
         assert!(!p.close_confirm_entry());
@@ -622,6 +786,7 @@ mod tests {
         assert_eq!(p.entry_cutoff_time(), None);
         assert!(!p.risk_sizing_active());
         assert!(!p.equity_compounding_active());
+        assert!(!p.ratio_atr_active());
     }
 
     #[test]
@@ -1166,6 +1331,238 @@ mod tests {
         assert_eq!(summary.get("equity_compound_frac"), Some(&0.0));
         let on = OrbParams { equity_compound_frac: 1.0, risk_per_trade_krw: 299_340.0, ..Default::default() };
         assert_eq!(on.numeric_summary().get("equity_compound_frac"), Some(&1.0));
+    }
+
+    // ================= ratio-ATR budget tilt (CLASS B, plan 2026-07-15-002) =================
+
+    /// An armed tilt with the frozen pre-registered values (PRE-REGISTER-vNEXT-ratio-atr-
+    /// budget-tilt.md): alpha 1.0, v_ref = median(v), clamps = v_ref/p90 .. v_ref/p10.
+    fn armed_ratio() -> OrbParams {
+        OrbParams {
+            risk_per_trade_krw: 299_340.0,
+            notional_per_position: 10_000_000.0,
+            ratio_atr_alpha: 1.0,
+            ratio_atr_ref: 0.073_157_64,
+            ratio_atr_w_lo: 0.702_697_55,
+            ratio_atr_w_hi: 1.445_489_56,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn ratio_atr_weight_off_is_exactly_one_and_sizing_unchanged() {
+        // Covers AE1 (helper layer): the 0.0 sentinel returns weight exactly 1.0 for any
+        // inputs, and the tilted sizing path is byte-identical to the untilted one across a
+        // grid of prices / stops / multipliers.
+        let p = OrbParams {
+            risk_per_trade_krw: 299_340.0,
+            notional_per_position: 10_000_000.0,
+            ratio_atr_ref: 0.07,
+            ratio_atr_w_lo: 0.7,
+            ratio_atr_w_hi: 1.4,
+            ..Default::default() // ratio_atr_alpha 0.0 (off)
+        };
+        assert!(!p.ratio_atr_active());
+        for atr in [None, Some(0.0), Some(1_000.0), Some(50_000.0)] {
+            for px in [100.0, 12_345.0, 1_752_000.0] {
+                assert_eq!(p.ratio_atr_weight(atr, px), 1.0, "off sentinel → weight 1.0");
+            }
+        }
+        for (price, rps) in [(60_000.0, 3_000.0), (12_345.0, 500.0), (100.0, 10.0)] {
+            for m in [0.95, 1.0, 1.05] {
+                assert_eq!(
+                    p.position_qty_risked_tilted(price, rps, m, 1.0),
+                    p.position_qty_risked_at(price, rps, m),
+                    "weight 1.0 tilted == untilted"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ratio_atr_weight_fails_closed_on_bad_inputs() {
+        // Covers AE2 + KTD-5: an absent, zero, or negative prior_atr (the Some(0.0)
+        // flat-deduped-dailies trap) and a non-positive entry price all fail CLOSED to the
+        // neutral weight 1.0 — a zero ATR must never make v = 0 → w = ∞.
+        let p = armed_ratio();
+        assert_eq!(p.ratio_atr_weight(None, 60_000.0), 1.0, "no prior_atr → neutral");
+        assert_eq!(p.ratio_atr_weight(Some(0.0), 60_000.0), 1.0, "Some(0.0) → neutral (trap)");
+        assert_eq!(p.ratio_atr_weight(Some(-1.0), 60_000.0), 1.0, "negative atr → neutral");
+        assert_eq!(p.ratio_atr_weight(Some(5_000.0), 0.0), 1.0, "zero price → neutral");
+        assert_eq!(p.ratio_atr_weight(Some(5_000.0), -10.0), 1.0, "negative price → neutral");
+        // AE2 at the sizing layer: an untiltable trade sizes exactly as the untilted path.
+        let w = p.ratio_atr_weight(None, 60_000.0);
+        assert_eq!(
+            p.position_qty_risked_tilted(60_000.0, 3_000.0, 1.0, w),
+            p.position_qty_risked(60_000.0, 3_000.0),
+            "no-ATR trade sizes untilted"
+        );
+    }
+
+    #[test]
+    fn ratio_atr_weight_is_one_at_the_reference() {
+        // v == v_ref → (v_ref/v)^alpha = 1 → weight exactly 1.0 for ANY alpha (inside the
+        // band, which straddles 1.0 by construction). entry_price 1.0 so v = prior_atr.
+        for alpha in [0.5, 1.0, 2.0] {
+            let p = OrbParams { ratio_atr_alpha: alpha, ..armed_ratio() };
+            let w = p.ratio_atr_weight(Some(p.ratio_atr_ref), 1.0);
+            assert!((w - 1.0).abs() < 1e-12, "v = v_ref → w = 1.0 at alpha={alpha}, got {w}");
+        }
+    }
+
+    #[test]
+    fn ratio_atr_weight_monotone_and_price_scale_invariant() {
+        // The anti-collapse regression test (KD-1): weight is non-increasing in v, and
+        // doubling BOTH prior_atr and entry_price leaves v — and thus w — unchanged (price
+        // cannot re-enter sizing through the ratio).
+        let p = armed_ratio();
+        let mut last = f64::INFINITY;
+        for i in 0..200 {
+            let v = 0.02 + (i as f64) * 0.001; // 0.02 .. 0.219, spanning the clamps
+            let w = p.ratio_atr_weight(Some(v), 1.0);
+            assert!(w <= last + 1e-15, "weight must be non-increasing in v (v={v})");
+            last = w;
+        }
+        // Price-scale invariance: (atr, px) and (2·atr, 2·px) share v, so share w.
+        for (atr, px) in [(3_000.0, 60_000.0), (500.0, 12_345.0), (90_000.0, 1_500_000.0)] {
+            let w1 = p.ratio_atr_weight(Some(atr), px);
+            let w2 = p.ratio_atr_weight(Some(2.0 * atr), 2.0 * px);
+            assert!((w1 - w2).abs() < 1e-15, "w is price-scale invariant (atr={atr}, px={px})");
+        }
+    }
+
+    #[test]
+    fn ratio_atr_weight_clamps_bind_at_system_values() {
+        // Clamps bind: v far above v_ref saturates at w_lo, far below at w_hi. Boundary
+        // inputs are DERIVED from the params (v = ref/w_lo is the exact w_lo knee), never
+        // hand literals — per the bound-comparison-at-full-float-precision learning. Asserts
+        // against the system-produced clamp fields, not decimal literals.
+        let p = armed_ratio();
+        // v well past the low knee (ref/w_lo) → raw < w_lo → clamped to w_lo.
+        let v_lo_knee = p.ratio_atr_ref / p.ratio_atr_w_lo;
+        assert_eq!(p.ratio_atr_weight(Some(v_lo_knee * 2.0), 1.0), p.ratio_atr_w_lo, "saturates at w_lo");
+        // v well below the high knee (ref/w_hi) → raw > w_hi → clamped to w_hi.
+        let v_hi_knee = p.ratio_atr_ref / p.ratio_atr_w_hi;
+        assert_eq!(p.ratio_atr_weight(Some(v_hi_knee * 0.5), 1.0), p.ratio_atr_w_hi, "saturates at w_hi");
+        // Exactly at each knee the weight equals the clamp value (system-produced).
+        assert!((p.ratio_atr_weight(Some(v_lo_knee), 1.0) - p.ratio_atr_w_lo).abs() < 1e-12);
+        assert!((p.ratio_atr_weight(Some(v_hi_knee), 1.0) - p.ratio_atr_w_hi).abs() < 1e-12);
+    }
+
+    #[test]
+    fn ratio_atr_tilt_downsizes_high_vol_relative_to_low_vol() {
+        // Covers AE4 (helper layer): two trades with equal risk_per_share but v at the
+        // untreated p90 (high vol) vs p10 (low vol). The high-v trade weights to w_lo, the
+        // low-v to w_hi, so with the notional ceiling slack the high-v qty is STRICTLY lower.
+        let p = OrbParams { notional_per_position: 1_000_000_000.0, ..armed_ratio() };
+        let p90 = 0.104_109_72; // untreated 90th pct of v (frozen reading)
+        let p10 = 0.050_610_98; // untreated 10th pct of v (frozen reading)
+        let rps = 3_000.0;
+        let w_hi_v = p.ratio_atr_weight(Some(p90), 1.0);
+        let w_lo_v = p.ratio_atr_weight(Some(p10), 1.0);
+        assert!(w_hi_v < 1.0, "high-vol trade downweighted");
+        assert!(w_lo_v > 1.0, "low-vol trade upweighted");
+        let q_high = p.position_qty_risked_tilted(60_000.0, rps, 1.0, w_hi_v);
+        let q_low = p.position_qty_risked_tilted(60_000.0, rps, 1.0, w_lo_v);
+        assert!(q_high < q_low, "high-v qty {q_high} strictly below low-v qty {q_low}");
+    }
+
+    #[test]
+    fn ratio_atr_upweighted_trade_still_capped_by_notional_ceiling() {
+        // An upweighted (w_hi) trade cannot exceed the notional ceiling: min(risk_qty,
+        // floor(notional/price)) still binds at the notional cap.
+        let p = armed_ratio(); // notional 10M
+        let w = p.ratio_atr_weight(Some(0.02), 1.0); // deep low-v → w_hi (1.4454)
+        assert_eq!(w, p.ratio_atr_w_hi, "deep low-v saturates to w_hi");
+        // rps tiny so the risk budget qty is huge → the notional ceiling must bind.
+        assert_eq!(
+            p.position_qty_risked_tilted(60_000.0, 10.0, 1.0, w),
+            p.position_qty(60_000.0),
+            "notional ceiling binds even when upweighted"
+        );
+    }
+
+    #[test]
+    fn ratio_atr_tilt_floors_to_zero_on_a_downweighted_thin_budget() {
+        // KTD-3 / R11a: a downweight low enough that floor(budget·w / rps) = 0 sizes the
+        // trade to qty 0 (the existing zero-qty rejection), never a negative qty.
+        let p = OrbParams { notional_per_position: 1_000_000_000.0, ..armed_ratio() };
+        // rps set so the untilted budget qty is 1 (budget/rps = 1.1), but w_lo·1.1 < 1
+        // (0.70·1.1 = 0.77) floors to 0.
+        let rps = p.risk_per_trade_krw / 1.1; // untilted floor(1.1) = 1
+        assert_eq!(p.position_qty_risked_tilted(60_000.0, rps, 1.0, 1.0), 1, "untilted qty 1");
+        let w = p.ratio_atr_w_lo; // 0.70 downweight → 0.70·1.1 = 0.77 → floor 0
+        assert_eq!(p.position_qty_risked_tilted(60_000.0, rps, 1.0, w), 0, "downweight floors to 0");
+    }
+
+    #[test]
+    fn validate_ratio_atr_bounds_and_couplings() {
+        // R2/KTD-1: off (0.0) validates unconditionally; armed requires a positive budget,
+        // a positive v_ref, and a clamp band straddling 1.0. Each violation is rejected.
+        assert!(OrbParams::default().validate().is_ok(), "off validates");
+        assert!(armed_ratio().validate().is_ok(), "armed with frozen values validates");
+        assert!(armed_ratio().ratio_atr_active());
+        // negative alpha
+        assert!(OrbParams { ratio_atr_alpha: -0.1, ..armed_ratio() }.validate().is_err(), "negative alpha");
+        // armed with no risk budget
+        assert!(
+            OrbParams { risk_per_trade_krw: 0.0, ..armed_ratio() }.validate().is_err(),
+            "armed with zero budget"
+        );
+        // armed with non-positive v_ref
+        assert!(OrbParams { ratio_atr_ref: 0.0, ..armed_ratio() }.validate().is_err(), "ref = 0");
+        // clamp band violations
+        assert!(OrbParams { ratio_atr_w_lo: 0.0, ..armed_ratio() }.validate().is_err(), "w_lo = 0");
+        assert!(OrbParams { ratio_atr_w_lo: 1.1, ..armed_ratio() }.validate().is_err(), "w_lo > 1.0");
+        assert!(OrbParams { ratio_atr_w_hi: 0.9, ..armed_ratio() }.validate().is_err(), "w_hi < 1.0");
+    }
+
+    #[test]
+    fn validate_ratio_atr_rejects_non_finite_params() {
+        // Non-finite armed companions must be rejected: NaN slips past `<`/`<=` (all NaN
+        // comparisons are false) and a NaN/∞ w_hi would make `raw.clamp(w_lo, w_hi)` panic.
+        // Unreachable via a JSON manifest (serde_json rejects NaN/∞) but validate() is the gate.
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(OrbParams { ratio_atr_alpha: bad, ..armed_ratio() }.validate().is_err(), "alpha {bad}");
+            assert!(OrbParams { ratio_atr_ref: bad, ..armed_ratio() }.validate().is_err(), "ref {bad}");
+            assert!(OrbParams { ratio_atr_w_lo: bad, ..armed_ratio() }.validate().is_err(), "w_lo {bad}");
+            assert!(OrbParams { ratio_atr_w_hi: bad, ..armed_ratio() }.validate().is_err(), "w_hi {bad}");
+        }
+        // And the armed head with all-finite frozen values still validates and never panics.
+        let p = armed_ratio();
+        assert!(p.validate().is_ok());
+        let _ = p.ratio_atr_weight(Some(6_000.0), 62_000.0); // no panic on the happy path
+    }
+
+    #[test]
+    fn ratio_atr_fields_deserialize_from_pre_field_manifest() {
+        // A v26-era manifest predates the four fields — they must deserialize to 0.0 (lever
+        // off, byte-identical sizing) and surface into numeric_summary for a later sweep.
+        let legacy = serde_json::json!({
+            "strategy_id": "orb",
+            "strategy_version": 26,
+            "gap_min_pct": 0.6,
+            "universe_top_n": 40,
+            "max_concurrent": 7,
+            "range_open": "09:00:00",
+            "range_minutes": 20,
+            "flat_time": "15:00:00",
+            "notional_per_position": 10_000_000.0,
+            "profit_target_r": 1.0,
+            "risk_per_trade_krw": 299_340.0,
+        })
+        .to_string();
+        let p: OrbParams = serde_json::from_str(&legacy).unwrap();
+        assert_eq!(p.ratio_atr_alpha, 0.0, "missing alpha defaults to off");
+        assert_eq!(p.ratio_atr_ref, 0.0);
+        assert_eq!(p.ratio_atr_w_lo, 0.0);
+        assert_eq!(p.ratio_atr_w_hi, 0.0);
+        assert!(!p.ratio_atr_active());
+        let s = p.numeric_summary();
+        assert_eq!(s.get("ratio_atr_alpha"), Some(&0.0));
+        assert_eq!(s.get("ratio_atr_ref"), Some(&0.0));
+        assert_eq!(s.get("ratio_atr_w_lo"), Some(&0.0));
+        assert_eq!(s.get("ratio_atr_w_hi"), Some(&0.0));
     }
 
     #[test]

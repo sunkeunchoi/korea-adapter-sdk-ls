@@ -1,6 +1,7 @@
 ---
 title: "Producing a version-labeled code-turn re-baseline run when the lab-research CLI has no version-only-bump path"
 date: 2026-07-10
+last_updated: 2026-07-15
 category: workflow-issues
 module: "adapters/nautilus/lab strategy loop — runner/research.rs turn/rerun surface + artifacts/manifest.rs strategy_code_hash; operator data home data/turn4-fresh"
 problem_type: workflow_issue
@@ -66,6 +67,24 @@ params/version authority for the next rerun.
    `param diff must be exactly {strategy_version, one param}` when the new param's default
    equals the run value (so `param_diff` shows only `["strategy_version"]`). That FAIL
    *is* the re-baseline evidence — capture it; no `runs compare` mode PASSes a code turn.
+
+   **Multi-param caveat (prior head predates the new companion params).** The clean
+   `["strategy_version"]` diff only holds when every field the seed sets already matches the
+   prior run's *resolved* params. A lever that ships several `#[serde(default)]` companions
+   (a ratio-ATR tilt's `ratio_atr_ref`/`w_lo`/`w_hi` alongside the flip param
+   `ratio_atr_alpha`; a clamp band alongside a strength param; …) breaks that when the prior
+   head **predates** those fields: the old manifest has no key for them, so `runs compare`
+   resolves them to the struct default (`0.0`), while the re-baseline seed carries their
+   frozen non-default values. The re-baseline diff then lists the companions too, e.g.
+   `param diff: ["ratio_atr_ref", "ratio_atr_w_hi", "ratio_atr_w_lo", "strategy_version"]` —
+   **still FAIL-on-`strategy_code_hash`, which is the real re-baseline evidence**; the extra
+   entries are cosmetic (they were `0.0`-by-absence before, frozen-value-by-presence now).
+   Seed the companions at their final frozen values in the re-baseline anyway (per KTD-1:
+   keep them visible in every run manifest) — then the **flip** compare `vN → vN+1` *is* the
+   clean one-param diff, because both runs share those companion values and differ only in the
+   flip param: `param diff: ["ratio_atr_alpha", "strategy_version"]`, `verdict: PASS`. Observed
+   on the 2026-07-15 ratio-ATR turn: v26 (pre-tilt) → v29 re-baseline diff carried the three
+   `ratio_atr_*` clamp/ref fields; v29 → v30 flip diff was exactly the two expected keys.
 
 ## Why This Matters
 
