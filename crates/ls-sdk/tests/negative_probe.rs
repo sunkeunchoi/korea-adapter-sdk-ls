@@ -2035,7 +2035,7 @@ async fn run_igw00000_ab_probe() {
 
     // (1) SEED — place the resting control at P0 (band floor, non-marketable).
     let control_req = CSPAT00601Request::limit(symbol, "1", p0.to_string(), "2", member);
-    let ordno = match sdk.orders().submit(&control_req).await {
+    let mut ordno = match sdk.orders().submit(&control_req).await {
         Ok(resp) => resp.order_no().trim().to_string(),
         Err(e) => {
             println!(
@@ -2060,8 +2060,33 @@ async fn run_igw00000_ab_probe() {
     let control_body = order_seed_00701(&ordno, p1);
     match fire_inblock(&client, &url, &token, "CSPAT00701", "CSPAT00701InBlock1", &control_body).await
     {
-        Some((http, rsp_cd, _)) if is_order_placement_success(http, &rsp_cd) => {
+        Some((http, rsp_cd, child_no)) if is_order_placement_success(http, &rsp_cd) => {
             println!("{tag} control-modify=[ok http={http} rsp_cd={rsp_cd}]");
+            // A modify is ABSOLUTE and creates a NEW order number (CSPAT00701
+            // OutBlock2.OrdNo; modify-cancel plan KTD4): the seed submit's number is
+            // now stale. Re-key the tracked order onto the modify child so S_pre/
+            // S_post snapshot the LIVE resting order, the violation fires against it,
+            // and the seed-cancel teardown targets it. Without this the harness holds
+            // the vanished submit number: every snapshot reads the seed absent
+            // (→ classify_igw00000_ab short-circuits to inconclusive) and the
+            // seed-cancel hits 01433 (cancel of an already-replaced order number).
+            // The child number comes from OUR modify response, so it is never a
+            // foreign order.
+            match child_no.filter(|n| !n.trim().is_empty() && n.trim() != "0") {
+                Some(child) => {
+                    owned.remove(&ordno);
+                    ordno = child.trim().to_string();
+                    owned.insert(ordno.clone());
+                }
+                None => {
+                    println!(
+                        "{tag} verdict=inconclusive [control modify acked but surfaced no child \
+                         order number — cannot re-key onto the live order] — reconciling"
+                    );
+                    order_reconcile_teardown(&sdk, symbol, &owned, false).await;
+                    return;
+                }
+            }
         }
         Some((http, rsp_cd, _)) => {
             println!(
