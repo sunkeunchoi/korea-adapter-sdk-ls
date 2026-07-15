@@ -125,7 +125,7 @@ run ids, dates, account or symbol-embedded values appear here.
 
 ## Open — reference-data universe engine (plan 2026-07-10-003 review)
 
-12. **The governed `turn` flow cannot enable a zero-defaulted gate parameter.**
+14. **The governed `turn` flow cannot enable a zero-defaulted gate parameter.**
     `OrbParams.turnover_floor_krw` defaults `0.0` (floor off), and
     `ProposalBoundsGuardrail` fail-closes any change away from an exactly-zero
     current value (relative change from zero is undefined → out of bounds, by
@@ -135,7 +135,7 @@ run ids, dates, account or symbol-embedded values appear here.
     `turnover_floor_krw` as a param leg. Owner: next code turn that enables
     the floor.
 
-13. **An `LS_BT_PARAMS_FROM_RUN` count run becomes the latest finalized run.**
+15. **An `LS_BT_PARAMS_FROM_RUN` count run becomes the latest finalized run.**
     The Turn-N count run adopts a prior identity's params and finalizes into
     the shared registry; the next `turn` resolves current params from it.
     Mitigated: the bin now requires `LS_BT_VERSION` (distinct version) and
