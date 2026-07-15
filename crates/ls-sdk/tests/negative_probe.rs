@@ -328,6 +328,22 @@ fn token_reported_label(control_ok: bool, rsp_cd: &str, ok: bool) -> &'static st
 /// budget ever needs it — KTD-2 / risk R-2).
 const T8412_PROBE_PACE: Duration = Duration::from_millis(1000);
 
+/// Inter-fire pace for the ORDER differential negative probe (`run_order_negative_probe`,
+/// CSPAT006/007/008). The order fire loop dispatches the control submit + every
+/// type/required variant against the Orders rate bucket; with no pace they collided
+/// and self-inflicted an `IGW00201` throttle mid-run — observed 2026-07-15 on the
+/// CSPAT00701 differential, where the 5th back-to-back order dispatch
+/// (`OrdQty/required`) tripped `IGW00201` and halted (classified conservatively as
+/// `Held-may-rest`) BEFORE the probe ever reached `OrdprcPtnCode` / `OrdCndiTpCode` /
+/// `OrdPrc`. Same cumulative warm-budget code and the same fix as the t8412 read leg
+/// (`T8412_PROBE_PACE` above): a 1000 ms inter-dispatch pace. Like there, the budget is
+/// cumulative so no per-dispatch pace can *guarantee* it stays cool (the live re-probe
+/// is the real proof, and the operator can bump this single named const in-window if a
+/// warm Orders budget still trips); the Orders bucket is a distinct, tighter bucket than
+/// market-data, so this stays its own const. Offline-inert: `run_order_negative_probe`
+/// only runs under the attended `#[ignore]` order legs.
+const ORDER_PROBE_PACE: Duration = Duration::from_millis(1000);
+
 #[tokio::test]
 #[ignore = "live probe: needs real LS paper credentials + in-window session; run via `make live-smoke-t8412-negative`"]
 async fn live_smoke_t8412_negative() {
@@ -1730,6 +1746,11 @@ async fn run_order_negative_probe(
     let mut used_scoped_downgrade = false;
 
     for v in variants.iter().filter(|v| order_probe_classes(v)) {
+        // Pace every order dispatch (ORDER_PROBE_PACE) so the differential does not
+        // self-inflict an `IGW00201` throttle and halt mid-run before reaching the
+        // later required-omit variants. Paces after the control submit and between
+        // every fire; the trailing pace on the final variant is negligible.
+        tokio::time::sleep(ORDER_PROBE_PACE).await;
         match fire_inblock(&client, &url, &token, tr_cd, inblock_key, &v.request).await {
             // Transport failure / timeout = MAY-REST: stop, reconcile, halt (KTD3). The
             // variant may have rested with an OrdNo we never got — force the fallback.
