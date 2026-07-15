@@ -87,6 +87,16 @@ A **valid** modify (`OrdprcPtnCode` present) → expect a clean ack (`00462`). T
 proves the harness before the violation fire. Re-snapshot so `S_pre` reflects the
 post-control (pre-violation) state.
 
+> ⚠️ **A modify is absolute and reassigns the order number** (`CSPAT00701`
+> `OutBlock2.OrdNo` is a *new* number; modify-cancel plan KTD4). After this control
+> leg, the seed's *submit* order number is **stale** — the live resting order is the
+> modify child. All subsequent legs (`S_pre`/`S_post` snapshots, the violation fire,
+> the seed-cancel teardown) must key off the **child** `OrdNo` returned here, not the
+> original submit number. The one-command harness (`run_igw00000_ab_probe`) re-keys
+> automatically from the control-modify response; keying the teardown cancel off the
+> stale submit number instead surfaces `01433` (cancel of an already-replaced order)
+> and every snapshot reads the seed absent → a spurious **inconclusive** verdict.
+
 ### 4. Fire variant B — [order, operator-run]
 
 The same modify with `OrdprcPtnCode` **omitted**, via `make raw-probe` (prints only
