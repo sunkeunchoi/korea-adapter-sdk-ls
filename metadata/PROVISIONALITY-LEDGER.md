@@ -2010,3 +2010,51 @@ downgrade, then re-probe → promote. (3) Characterize `IGW00000` (raw-probe A/B
 confirmation (removal places a real directional order; `required:true` permanent). No raw-probe A/B
 needed; the only open question is whether the probe should stop firing a live-order-placing `required`
 variant for direction fields at all (a probe-design follow-up, not a schema change).
+
+## 31. IGW00000 on CSPAT00701 characterized placed-nothing — Route B tolerance activated (2026-07-15)
+
+Closes §30 follow-up (3). The §30 re-cert (2026-07-13) left `CSPAT00701 OrdprcPtnCode/required` → an
+omitted-pattern modify hitting `http=500 rsp_cd=IGW00000` → conservative may-rest halt, HELD pending an
+`IGW00000` characterization. Per plan `2026-07-14-001` the mechanism landed as **Route B**
+(order-path-only scoped tolerance, **not** the §29 `is_ingress_validation_reject` seam — runtime stays
+may-rest, KTD4): the dormant `FieldConstraint.placed_nothing_codes` allowlist (PR #139) + the one-command
+attended A/B (`make live-smoke-cspat00701-igw00000-ab`).
+
+**Attended A/B verdict — PLACED-NOTHING (conclusive, 2026-07-15).** The seed → S_pre → valid control
+modify (`00462`) → fire `OrdprcPtnCode`-omitted → paced fill-inclusive S_post → seed-cancel teardown
+cycle returned `verdict=placed-nothing`: `fire=http=500 rsp_cd=IGW00000`, the seed **byte-identical and
+still resting** in a trusted S_post, **no new resting order**, and the seed **canceled cleanly**
+(`CleanlyCanceled`) — credential-free, symbol confirmed flat after teardown. So an omitted
+`OrdprcPtnCode` **places nothing**; the may-rest halt was conservative-correct but the ground truth is a
+placed-nothing ingress reject.
+
+> First two attended runs (2026-07-15) returned `inconclusive` from a **harness bug**, not the gateway: a
+> modify is absolute and reassigns the order number (KTD4), but `run_igw00000_ab_probe` tracked the stale
+> seed *submit* number → S_pre read the seed absent + the seed-cancel hit `01433` (cancel of a replaced
+> order). Fixed in **PR #146** (`d6a926a`) by re-keying onto the modify child `OrdNo`; the re-run then
+> concluded placed-nothing.
+
+**Landed this entry (offline).** `metadata/constraints/CSPAT00701.yaml` `OrdprcPtnCode` →
+`placed_nothing_codes: {required: [IGW00000]}` — the Route B scoped tolerance is now **active**, so the
+differential probe routes past `OrdprcPtnCode` instead of halting. **Runtime seam untouched**
+(`is_ingress_validation_reject` still excludes `IGW00000`; a real caller still gets `AmbiguousOrder →
+reconcile`). Sensor-blinding cost accepted + bounded (annotation Clears this variant forever; any
+`IGW00000` recurrence elsewhere re-triggers a CSPAT00701 re-probe) — recorded at the annotation site and
+in the A/B runbook.
+
+**CSPAT00701 stays HELD (`recommended: false`) — promotion is NOT yet earned.** The A/B proved only
+`OrdprcPtnCode`. The **downstream-variant caveat** is now the open promotion-blocker: with `OrdprcPtnCode`
+routing past its halt, the full differential probe (`make live-smoke-cspat00701-negative`) reaches
+`OrdCndiTpCode` and `OrdPrc` (required-omit variants) **for the first time** — never observed live. That
+re-probe is a TTY-gated order leg (operator-run, in-window).
+
+**Count tally.** **0 support-tier flips in this entry** — the tolerance activation + evidence capture; the
+`recommended` flip is gated on the CLEAN differential re-probe below.
+
+**Follow-up (staged).** (1) **Operator, in-window:** run `make live-smoke-cspat00701-negative` from this
+branch (rebuild embeds the annotation) → expect `OrdprcPtnCode/required` = Clean/expected-tolerant and
+capture the `OrdCndiTpCode`/`OrdPrc`/`OrgOrdNo`/`OrdQty` outcomes. (2) **If CLEAN:** author
+`error-coverage/CSPAT00701.yaml` (PROBED), flip `recommended` (8→9), docgen banner move +
+EVIDENCE-FRESHNESS bump, ledger closure. (3) **If a downstream required-omit halts on `IGW00000`:**
+A/B-characterize it (same method); if placed-nothing, annotate it too before re-probing; if it places a
+real order (a `BnsTpCode`-style booking hazard), CSPAT00701 stays permanently HELD.
