@@ -1,15 +1,16 @@
 ---
-title: "Implementing/tracking a TR is a multi-site registration checklist — miss one and the gate stays green but the TR is half-wired"
+title: "Tracking, implementing, or promoting a TR is a multi-site registration checklist — miss one and the gate stays green but the TR is half-wired"
 date: 2026-06-25
-last_updated: 2026-06-26
+last_updated: 2026-07-15
 category: conventions
-module: crates/ls-core, crates/ls-trackers, crates/ls-docgen, metadata, Makefile, .agents/skills
+module: crates/ls-core, crates/ls-trackers, crates/ls-docgen, crates/ls-metadata, metadata, Makefile, .agents/skills
 problem_type: convention
 component: tooling
 severity: high
 applies_when:
   - "Bringing a raw TR to Tracked (track-tr) — count-assertion tax + baseline projection"
   - "Flipping a Tracked TR to Implemented (implement-tr) — policy + crosscheck + smoke registration"
+  - "Promoting an Implemented TR to Recommended (promote-tr) — recommended-set sites + the silent slice_metadata allowlist"
   - "A new {TR}_POLICY const compiles and tests pass, but promote-tr later cannot discover the TR"
   - "Adding a live-smoke target that appears to run but silently no-ops"
   - "Flipping a TR that a support-aware test hard-codes as its tracked-only exemplar"
@@ -17,6 +18,7 @@ tags:
   - ls-core
   - ls-trackers
   - ls-docgen
+  - ls-metadata
   - endpoint-policy
   - cross-check
   - smoke-map
@@ -24,6 +26,8 @@ tags:
   - count-assertion
   - track-tr
   - implement-tr
+  - promote-tr
+  - recommended-set
   - support-aware
 ---
 
@@ -67,11 +71,11 @@ spurious diff.
 
 ### Implementing a TR (implement-tr) — policy, crosscheck, smoke, docgen
 
-- **`{TR}_POLICY` const** in `crates/ls-core/src/endpoint_policy.rs`.
+- **`{TR}_POLICY` const** in `crates/ls-core/src/endpoint_policy/`.
 - **Both** crosscheck lists for a non-order REST read:
   - `crates/ls-core/tests/policy_index_crosscheck.rs` — the `use` import **and**
     the `policies` array (two edits in one file).
-  - `crates/ls-core/src/endpoint_policy.rs` — the
+  - `crates/ls-core/src/endpoint_policy/` — the
     `slice_rest_policies_are_non_order_rest` test array.
   An **order** policy (`is_order: true`) or a **WebSocket** policy registers in
   the crosscheck list **only**, never in `slice_rest_policies_are_non_order_rest`.
@@ -85,6 +89,40 @@ spurious diff.
     tracked, so the maintained count is unchanged (e.g. it stays `126`). Do not go
     hunting for `cli.rs` / `api_drift.rs` count bumps on a flip; touching them is a
     bug. Only `banner_trs` (+1 per flipped TR) and `reference.len()` change.
+
+### Promoting a TR (implement → Recommended, promote-tr) — the recommended-set sites
+
+Flipping `support.recommended: false → true` (after a CLEAN differential re-probe +
+a Focused Evidence smoke) moves a TR **off** the not-recommended banner and **into**
+the recommended set. Several sites move together, and one is a hardcoded allowlist no
+different in spirit from `policy_index_crosscheck` — except it enumerates the
+**recommended set** and the gate catches it only *after* you have already flipped the
+metadata:
+
+- **`metadata/trs/<tr>.yaml`** — `recommended: true`; `maintenance.last_reviewed:
+  <today>` which **must equal** the evidence `date` (validator-enforced,
+  `EvidenceDateMismatch`); a `recommendation:` block; and `constraints_ref` +
+  `error_coverage_ref` (a recommended TR without error coverage fails validation).
+- **`metadata/evidence/<tr>.yaml`** — Focused Evidence whose `date` == `last_reviewed`
+  (refresh it to today's smoke; drop any localized `rsp_msg`);
+  **`metadata/error-coverage/<tr>.yaml`** — the PROBED per-(field,class) coverage.
+- **`crates/ls-docgen/src/lib.rs`** — the banner *render* is automatic (keyed on
+  `support.recommended`), but the banner **test** hard-codes two lists: **remove** the
+  code from `banner_trs` and **add** it to `recommended_no_banner: [&str; N]` (bump N).
+  `reference.len()` does **not** change — a promoted TR stays a rendered page.
+- **`crates/ls-metadata/tests/slice_metadata.rs`** — `recommended_set_is_exactly_the_
+  recert_wave_certified_reads` hard-codes the EXACT recommended set as `[&str; N]`. Add
+  the code and bump N. **This is the silent-until-flipped site** — the promotion
+  analogue of "register in both cross-check lists." The gate DOES catch a miss, but
+  only after the flip, and this is the one place that enumerates the recommended set.
+- **`metadata/EVIDENCE-FRESHNESS.md`** — bump the "N Recommended TRs" prose count and
+  add the TR to the list.
+- **No policy / crosscheck / smoke-map change** — the `{TR}_POLICY` was registered at
+  implement time; promotion adds none.
+
+Then `make docs` (regenerates the TR's Reference page without the banner + with the
+recommendation contract), and run the full gate. A WebSocket/realtime `{TR}_POLICY`
+lives in the crosscheck list only; that is an implement-time fact, not a promotion one.
 
 ### Ordering trick — fire the typed smoke BEFORE the registrations
 
@@ -166,6 +204,9 @@ the compiler complains about" — closes the gap up front.
 - Any `track-tr` run (the count tax + revert-refreshed + no-blanket-fmt block).
 - Any `implement-tr` run (policy + both crosschecks + smoke-map row + `.PHONY` +
   docgen banner/reference on flip).
+- Any `promote-tr` run (trs recommendation block + evidence/error-coverage +
+  docgen `banner_trs`→`recommended_no_banner` + the `slice_metadata` recommended-set
+  allowlist + EVIDENCE-FRESHNESS count — evidence `date` must equal `last_reviewed`).
 - When `cargo test` is green but you have not personally confirmed the two
   un-asserted sites — assume they are missing until you have looked.
 
