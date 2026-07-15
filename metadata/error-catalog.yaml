@@ -52,6 +52,14 @@ codes:
       The market session required for this TR is closed. An environment
       condition, not a request defect: the same request succeeds inside the
       correct trading window. Retry in-session.
+  "01401":
+    kind: request_shape
+    explanation: >-
+      A 2xx business-level order rejection (http=200 with this non-success code)
+      observed on CSPAT00701's `OrdCndiTpCode`-omitted modify variant (2026-07-15
+      differential re-probe). A required order-condition field was omitted; the
+      gateway answered on merits and placed nothing (a distinct reject, not a
+      may-rest). The caller fixes it by supplying `OrdCndiTpCode`.
   "01458":
     kind: session_closed
     explanation: >-

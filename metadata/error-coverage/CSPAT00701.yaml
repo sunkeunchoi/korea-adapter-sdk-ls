@@ -1,0 +1,94 @@
+# Error-coverage evidence for CSPAT00701 (현물정정주문 — cash-equity order MODIFY).
+# Records the per-(field, class) coverage derived from constraints/CSPAT00701.yaml
+# and the reachable gateway codes the Reference page explains from the shared
+# catalog. Per KTD3 the order-TR negative probe fires ONLY the type/required
+# classes (it never places a spurious priced order); enum/range/format are not
+# generated for order TRs.
+#
+# PROBED: this artifact is backed by a live differential negative probe run against
+# a still-resting control OrgOrdNo, in-window on 2026-07-15
+# (`make live-smoke-cspat00701-negative`, `live_smoke_cspat00701_negative`). The
+# valid CSPAT00601 control was placed and RESTING; every fired CSPAT00701 modify
+# variant was classified, then the control was canceled and the symbol positively
+# confirmed FLAT (`control=[placed+variants-fired+canceled ok=true flat=confirmed]`,
+# residue reconciled cancel-all). A CLEAN differential:
+#   - the numeric fields (OrgOrdNo / OrdQty / OrdPrc) type+required → IGW40011,
+#     rejected distinctly (ingress input-validation reject, placed nothing);
+#   - OrdprcPtnCode/required → http=500 rsp_cd=IGW00000 → PLACED-NOTHING via the
+#     Route B scoped tolerance (constraints/CSPAT00701.yaml
+#     `placed_nothing_codes: {required: [IGW00000]}`, plan 2026-07-14-001). The
+#     undocumented, success-shaped IGW00000 was characterized placed-nothing by an
+#     attended seed/fire/teardown A/B (verdict=placed-nothing, 2026-07-15) BEFORE
+#     the annotation landed; the differential now routes past it instead of the
+#     conservative may-rest halt. RUNTIME SEAM UNTOUCHED — a real caller still gets
+#     AmbiguousOrder → reconcile via t0425 (is_ingress_validation_reject excludes
+#     IGW00000). See PROVISIONALITY-LEDGER §31 and
+#     docs/solutions/integration-issues/igw00000-cspat00701-placed-nothing-ab-probe.md.
+#   - OrdCndiTpCode/required → http=200 rsp_cd=01401 → a 2xx business rejection that
+#     placed nothing (rejected distinctly on merits — NOT a may-rest, NOT annotated).
+# The §30 (2026-07-13) re-probe earlier corrected `IsuNo/required` to caller-optional
+# (`required: false`; a modify is keyed by OrgOrdNo — permissive direction, the
+# certified struct still sends it), so no IsuNo required variant fires.
+#
+# SENSOR-BLINDING NOTE (Route B, accepted+bounded): annotating (OrdprcPtnCode,
+# required, IGW00000) as placed-nothing makes this variant read CLEAN forever — a
+# future gateway change that actually RESTS an order here can no longer be detected
+# by the probe (the runtime, unchanged, still handles it safely as may-rest). Any
+# IGW00000 recurrence ELSEWHERE re-triggers a CSPAT00701 re-probe.
+#
+# `status` legend: declared = authored offline, not yet probed; confirmed = the
+# differential probe confirmed the bound (rejected distinctly); placed_nothing = a
+# scoped Route B tolerance — the gateway rejected with an undocumented success-shaped
+# code (IGW00000) that an attended A/B characterized as placing nothing, so the probe
+# routes it CLEAN while the runtime seam stays may-rest/reconcile; tolerant = the
+# gateway accepted the injected violation but the SDK enforces it at preflight as a
+# caller contract (gateway_tolerant, expected-tolerant — non-blocking); held =
+# inconclusive; divergent = observed behavior disagreed with the declaration;
+# n_a = the class does not apply to the field (or is not fired by the order-TR probe).
+tr_code: CSPAT00701
+probe_status: clean
+seed: "OrgOrdNo=<resting control> IsuNo=005930 OrdQty=<control qty> OrdprcPtnCode=00 OrdCndiTpCode=0 OrdPrc=<band-safe>"
+input_classes:
+  - { field: OrgOrdNo, class: type, status: confirmed }        # numeric field — a quoted string is rejected distinctly (IGW40011)
+  - { field: OrgOrdNo, class: required, status: confirmed }     # the modify key; omit rejected distinctly (IGW40011)
+  - { field: OrgOrdNo, class: enum, status: n_a }
+  - { field: OrgOrdNo, class: range, status: n_a }
+  - { field: OrgOrdNo, class: format, status: n_a }
+  - { field: IsuNo, class: type, status: n_a }                 # string field — no type-mutation variant is generated
+  - { field: IsuNo, class: required, status: n_a }              # §30 re-probe accepted removal → corrected to caller-optional (required: false); no required variant fired
+  - { field: IsuNo, class: enum, status: n_a }
+  - { field: IsuNo, class: range, status: n_a }
+  - { field: IsuNo, class: format, status: n_a }                # symbol format declared in the schema but not fired by the order-TR probe (type/required only, KTD3)
+  - { field: OrdQty, class: type, status: confirmed }          # numeric field — a quoted string is rejected distinctly (IGW40011)
+  - { field: OrdQty, class: required, status: confirmed }       # modify quantity; omit rejected distinctly (IGW40011)
+  - { field: OrdQty, class: enum, status: n_a }
+  - { field: OrdQty, class: range, status: n_a }
+  - { field: OrdQty, class: format, status: n_a }
+  - { field: OrdprcPtnCode, class: type, status: n_a }          # string field — no type-mutation variant is generated
+  - { field: OrdprcPtnCode, class: required, status: placed_nothing }  # omit → http=500 IGW00000 → placed-nothing via Route B scoped tolerance (A/B verdict 2026-07-15); runtime seam untouched
+  - { field: OrdprcPtnCode, class: enum, status: n_a }
+  - { field: OrdprcPtnCode, class: range, status: n_a }
+  - { field: OrdprcPtnCode, class: format, status: n_a }
+  - { field: OrdCndiTpCode, class: type, status: n_a }          # string field — no type-mutation variant is generated
+  - { field: OrdCndiTpCode, class: required, status: confirmed }  # omit → http=200 rsp_cd=01401 → 2xx business reject, placed nothing (rejected distinctly)
+  - { field: OrdCndiTpCode, class: enum, status: n_a }
+  - { field: OrdCndiTpCode, class: range, status: n_a }
+  - { field: OrdCndiTpCode, class: format, status: n_a }
+  - { field: OrdPrc, class: type, status: confirmed }          # numeric field — a quoted string is rejected distinctly (IGW40011)
+  - { field: OrdPrc, class: required, status: confirmed }       # modify price; omit rejected distinctly (IGW40011)
+  - { field: OrdPrc, class: enum, status: n_a }
+  - { field: OrdPrc, class: range, status: n_a }
+  - { field: OrdPrc, class: format, status: n_a }
+# Reachable gateway codes for this order TR, explained once from the shared catalog
+# (R8/R9). Environment/entitlement codes (session-closed 904, paper-incompatible
+# 01900, account-not-order-capable 01491) are not reproduced per TR — they point at
+# the same catalog entries. The 00462 modify-accepted ack is a success code recorded
+# in the Focused Evidence line, not a catalog error entry.
+gateway_codes:
+  - "00000"
+  - "904"
+  - "01900"
+  - "01491"
+  - "01401"
+  - IGW40011
+  - IGW00000

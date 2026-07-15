@@ -119,10 +119,14 @@ freshness evaluator. The advisory spec-doc point (2) holds by construction. Only
   market-data differential, then in its §30 promotion tail `t0425` (order-reconcile
   read) and `CSPAT00801` (cancel) on CLEAN differentials, and finally — on an
   in-window re-probe (2026-07-14, a KRX trading day) — `t8412` (paginated N-minute
-  chart), bringing the total to
-  **8 Recommended TRs** — `token` (auth), `t1101` + `t1102` (market_session), `S3_`
-  (realtime), `CSPAQ12200` (account), `t0425` + `t8412` (paginated), and `CSPAT00801`
-  (orders) — spanning 6 owner classes, each on a clean live differential chain (except
+  chart). Then on 2026-07-15 `CSPAT00701` (modify) promoted once its OrdprcPtnCode/
+  required → IGW00000 may-rest halt was characterized PLACED-NOTHING by an attended
+  A/B and the full differential re-probed CLEAN via the Route B scoped tolerance
+  (plan 2026-07-14-001, ledger §31), bringing the total to
+  **9 Recommended TRs** — `token` (auth), `t1101` + `t1102` (market_session), `S3_`
+  (realtime), `CSPAQ12200` (account), `t0425` + `t8412` (paginated), and `CSPAT00701`
+  + `CSPAT00801` (orders) — spanning 6 owner classes, each on a clean live differential
+  chain (except
   `S3_`, whose realtime subscribe has no differential and rests on the lifecycle-scoped
   substitute). `CSPAQ12200`'s sole `BalCreTp/required` variant read `expected-tolerant`
   under the 1500 ms Account-bucket pace (plan 2026-07-06-002 U6) — previously HELD when

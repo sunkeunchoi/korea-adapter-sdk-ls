@@ -1425,11 +1425,12 @@ mod tests {
             // expected-tolerant once the cross_field date_order downgrade (PR #135)
             // unmasked the accepted start>end as expected-tolerant, closing the last
             // §30 cross_field HELD reason (pending.13 #2) — moved below. The order
-            // submit/modify legs CSPAT00601 + CSPAT00701 stayed HELD (§30 negative
-            // differentials held: 00601 direction-defaulted BnsTpCode, 00701 IGW00000
-            // may-rest halt).
+            // submit leg CSPAT00601 stays HELD (§30 negative differential held:
+            // direction-defaulted BnsTpCode places a real order). The modify leg
+            // CSPAT00701 was PROMOTED (2026-07-15): its IGW00000 may-rest halt was
+            // characterized placed-nothing by an attended A/B and its full differential
+            // re-probed CLEAN via the Route B OrdprcPtnCode tolerance — moved below.
             "CSPAT00601",
-            "CSPAT00701",
         ];
         for tr in banner_trs {
             let page = reference
@@ -1449,11 +1450,15 @@ mod tests {
         // then in the §30 promotion tail t0425 (order-reconcile read) and CSPAT00801
         // (cancel) on CLEAN differentials, and finally t8412 (paginated N-minute chart)
         // on a CLEAN in-window re-probe (2026-07-14) once the cross_field date_order
-        // gateway-tolerant downgrade (PR #135) closed the last §30 HELD reason.
+        // gateway-tolerant downgrade (PR #135) closed the last §30 HELD reason. CSPAT00701
+        // (modify) promoted 2026-07-15 on a CLEAN differential via the Route B IGW00000
+        // placed-nothing tolerance (plan 2026-07-14-001, ledger §31).
         // Their reference pages must OMIT the not-recommended banner. Re-promotion of the
         // remaining HELD TRs is operator-gated across later windows.
-        let recommended_no_banner: [&str; 8] =
-            ["token", "t1101", "S3_", "CSPAQ12200", "t1102", "t0425", "CSPAT00801", "t8412"];
+        let recommended_no_banner: [&str; 9] = [
+            "token", "t1101", "S3_", "CSPAQ12200", "t1102", "t0425", "CSPAT00801", "t8412",
+            "CSPAT00701",
+        ];
         for rec in recommended_no_banner {
             let page = reference
                 .get(Path::new(&format!("docs/reference/{rec}.md")))
