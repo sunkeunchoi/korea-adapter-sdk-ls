@@ -34,6 +34,24 @@ fields:
   - name: OrdprcPtnCode
     type: string          # baseline: String, required (호가유형코드, e.g. "00" limit).
     required: true
+    # Route B scoped placed-nothing tolerance (plan 2026-07-14-001). An omitted
+    # OrdprcPtnCode surfaces the undocumented, success-shaped `IGW00000` at http=500.
+    # The attended seed→control→fire→re-snapshot→teardown A/B (2026-07-15,
+    # `make live-smoke-cspat00701-igw00000-ab`) returned verdict=placed-nothing:
+    # fire=500/IGW00000, the seed byte-identical & still resting, no new order, and it
+    # canceled cleanly. So this omit-variant PLACES NOTHING — the order-probe treats it
+    # as Clean instead of the conservative may-rest halt.
+    # RUNTIME SEAM UNTOUCHED (KTD4): `is_ingress_validation_reject` still excludes
+    # IGW00000, so a real caller still gets AmbiguousOrder → reconcile via t0425. This
+    # is a probe-only tolerance; it deliberately breaks negative_probe.rs:1206.
+    # SENSOR-BLINDING COST (accepted, bounded): the annotation makes the differential
+    # probe return Clean for this variant forever — a future gateway change that
+    # actually RESTS an order here can no longer be detected by the probe (runtime,
+    # unchanged, still handles it safely). Any IGW00000 recurrence ELSEWHERE triggers a
+    # re-probe of CSPAT00701. See docs/solutions/integration-issues/
+    # igw00000-cspat00701-placed-nothing-ab-probe.md and PROVISIONALITY-LEDGER §31.
+    placed_nothing_codes:
+      required: [IGW00000]
     enum: { applicable: false }
     range: { applicable: false }
     format: { applicable: false }
