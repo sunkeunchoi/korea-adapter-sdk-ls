@@ -23,14 +23,30 @@ dependencies:
   # "same order" action and must dedup.
   strong_order_fields: [OrgOrdNo, IsuNo, OrdQty, OrdPrc]
 support:
-  # Recommended: modify leg certified on a clean in-window guarded paper
-  # order-chain smoke (rsp_cd 00462 정정주문 완료; `make live-smoke-order-chain`,
-  # plan 2026-06-30-002), the live order-placement evidence ADR 0008 deferred the
-  # Recommended endorsement on. The account was positively confirmed flat after the
-  # run. See docs/design/order-safety-design.md.
+  # Recommended: modify leg certified on a clean in-window guarded paper order-chain
+  # smoke (rsp_cd 00462 정정주문 완료; `make live-smoke-order-chain`, plan 2026-06-30-002),
+  # the live order-placement evidence ADR 0008 deferred the Recommended endorsement on.
+  # The §30 negative differential HELD on OrdprcPtnCode/required → IGW00000 (conservative
+  # may-rest halt); an attended seed/fire/teardown A/B (2026-07-15) characterized it
+  # PLACED-NOTHING and the full differential then re-probed CLEAN via the Route B scoped
+  # tolerance (constraints/CSPAT00701.yaml placed_nothing_codes; plan 2026-07-14-001,
+  # ledger §31). The account was positively confirmed flat after the run. See
+  # docs/design/order-safety-design.md.
   tracked: true
   implemented: true
-  recommended: false
+  recommended: true
 maintenance:
   source_spec_hash: bfd073603ce2
-  last_reviewed: 2026-06-30
+  last_reviewed: 2026-07-15
+recommendation:
+  behavior: Paper cash-equity order modify of a caller-owned resting order, keyed by OrgOrdNo (absolute new target qty/price/pattern; the modify leg of the submit→modify→cancel chain)
+  evidence_ref: evidence/CSPAT00701.yaml
+  excludes:
+    - Modification of orders the caller does not own (the smoke modifies only its own resting OrgOrdNo)
+    - Production-credential order modifies (evidence is paper only)
+    - Fill / settlement or resulting-balance correctness beyond a successful modify-accepted round-trip
+    - Modify behavior on partially-filled or already-terminal orders beyond the resting-order modify exercised
+    - Gateway-side enforcement of an omitted OrdprcPtnCode — the undocumented IGW00000 reject is characterized placed-nothing for the differential PROBE only; the runtime seam still treats it as may-rest → reconcile via t0425 (Route B; is_ingress_validation_reject unchanged)
+    - Stronger freshness automation than the stated policy (no enforcement in code today)
+constraints_ref: constraints/CSPAT00701.yaml
+error_coverage_ref: error-coverage/CSPAT00701.yaml

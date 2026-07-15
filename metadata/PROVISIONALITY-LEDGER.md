@@ -2042,19 +2042,26 @@ reconcile`). Sensor-blinding cost accepted + bounded (annotation Clears this var
 `IGW00000` recurrence elsewhere re-triggers a CSPAT00701 re-probe) — recorded at the annotation site and
 in the A/B runbook.
 
-**CSPAT00701 stays HELD (`recommended: false`) — promotion is NOT yet earned.** The A/B proved only
-`OrdprcPtnCode`. The **downstream-variant caveat** is now the open promotion-blocker: with `OrdprcPtnCode`
-routing past its halt, the full differential probe (`make live-smoke-cspat00701-negative`) reaches
-`OrdCndiTpCode` and `OrdPrc` (required-omit variants) **for the first time** — never observed live. That
-re-probe is a TTY-gated order leg (operator-run, in-window).
+**CSPAT00701 PROMOTED to `recommended` (2026-07-15).** With `OrdprcPtnCode` routing past its halt via the
+Route B annotation, the full differential re-probe (`make live-smoke-cspat00701-negative`, in-window
+2026-07-15) reached the never-before-observed downstream variants and came back **CLEAN across every
+class**: `OrgOrdNo`/`OrdQty`/`OrdPrc` type+required → `IGW40011` (ingress reject, placed-nothing);
+`OrdprcPtnCode/required` → `http=500 IGW00000` → placed-nothing via the Route B downgrade; **the
+downstream caveat resolved** — `OrdCndiTpCode/required` → `http=200 rsp_cd=01401` (a 2xx business reject,
+placed-nothing, catalogued) and `OrdPrc/required` → `IGW40011`. Control placed → variants fired → canceled
+→ **flat=confirmed**. A fresh `make live-smoke-order-chain` this window re-certified the positive modify
+leg (`rsp_cd=00462`, order_no 13613; submit/modify/cancel 00040/00462/00463, flat=confirmed) as the
+Focused Evidence. Promotion applied: `error-coverage/CSPAT00701.yaml` (PROBED, `OrdprcPtnCode/required`
+status `placed_nothing`), `evidence/CSPAT00701.yaml` refreshed to 2026-07-15 (scrubbed line, Korean
+`rsp_msg` dropped), `recommended: true` + recommendation block (with the Route B scope exclusion:
+IGW00000-placed-nothing is a PROBE fact, the runtime seam is unchanged), docgen banner move, `01401` added
+to the error catalog.
 
-**Count tally.** **0 support-tier flips in this entry** — the tolerance activation + evidence capture; the
-`recommended` flip is gated on the CLEAN differential re-probe below.
+**A prerequisite harness bug + a throttle fix landed first (both to main):** the attended A/B was
+`inconclusive` twice until **PR #146** re-keyed it onto the modify child `OrdNo` (a modify reassigns the
+number, KTD4; the stale submit number hit `01433` on cancel); and the differential self-throttled at the
+5th back-to-back order fire (`IGW00201`) until **PR #148** added `ORDER_PROBE_PACE` (1000 ms inter-fire,
+the order probe had none — mirrors t8412).
 
-**Follow-up (staged).** (1) **Operator, in-window:** run `make live-smoke-cspat00701-negative` from this
-branch (rebuild embeds the annotation) → expect `OrdprcPtnCode/required` = Clean/expected-tolerant and
-capture the `OrdCndiTpCode`/`OrdPrc`/`OrgOrdNo`/`OrdQty` outcomes. (2) **If CLEAN:** author
-`error-coverage/CSPAT00701.yaml` (PROBED), flip `recommended` (8→9), docgen banner move +
-EVIDENCE-FRESHNESS bump, ledger closure. (3) **If a downstream required-omit halts on `IGW00000`:**
-A/B-characterize it (same method); if placed-nothing, annotate it too before re-probing; if it places a
-real order (a `BnsTpCode`-style booking hazard), CSPAT00701 stays permanently HELD.
+**Count tally.** **`recommended` 8 → 9** (CSPAT00701 modify joins CSPAT00801 cancel in the orders class;
+CSPAT00601 submit stays HELD — its `BnsTpCode/required` places a real directional order, §30 (4)).

@@ -8,20 +8,28 @@
 # read-smoke recipe records) — note that divergence. The line is already routed
 # through the harness `scrub_secrets` before printing.
 #
-# Source note: the in-window order-chain run (2026-06-30) is the canonical
-# evidence source for the four order TRs (it is also where the Implemented gate
-# certified them, plan -005). The `live-smoke-order` matrix is not used for the
-# autonomous wave (its marketable scenario fills on an open market and leaves a
-# position requiring an out-of-band paper reset).
+# Source note: the in-window order-chain run is the canonical evidence source for
+# the order TRs (it is also where the Implemented gate certified them, plan -005).
+# The `live-smoke-order` matrix is not used for the autonomous wave (its marketable
+# scenario fills on an open market and leaves a position requiring a paper reset).
 #
-# Secret-safety: response code + a public 5-digit order number + the gateway's
-# Korean success text only — never a token, appkey, secret, or account number.
-# `rsp_cd=00462` is the modify-accepted code.
+# Refreshed 2026-07-15 for the Recommended promotion (plan 2026-07-14-001 U6):
+# the operator re-ran `make live-smoke-order-chain` this window and it certified
+# GREEN end-to-end — submit → modify → cancel (rsp_cd 00040 / 00462 / 00463),
+# flat=confirmed after teardown. This modify leg is the positive evidence; the
+# error-resilience gate is CSPAT00701's now-CLEAN differential re-probe
+# (error-coverage/CSPAT00701.yaml, same window), which routes past OrdprcPtnCode's
+# IGW00000 via the Route B placed-nothing tolerance. See PROVISIONALITY-LEDGER §31.
+#
+# Secret-safety: response code + a public 5-digit order number only — never a
+# token, appkey, secret, account number, or the gateway's localized `rsp_msg`
+# (the harness `msg=[…]` suffix is dropped here). `rsp_cd=00462` is the
+# modify-accepted code.
 tr_code: CSPAT00701
-date: 2026-06-30
+date: 2026-07-15
 env: paper
 target: live-smoke-order-chain
-line: "ORDER-SMOKE tr=CSPAT00701 scenario=modify_resting cert=certified rsp_cd=00462 order_no=22126 recon=unknown production_not_run=true msg=[모의투자 정정주문이 완료 되었습니다.]"
+line: "ORDER-SMOKE tr=CSPAT00701 scenario=modify_resting cert=certified rsp_cd=00462 order_no=13613 recon=unknown production_not_run=true (live-smoke-order-chain, 2026-07-15); chain flat=confirmed"
 
 attested_normalizer_version: 2
 attested_shape:

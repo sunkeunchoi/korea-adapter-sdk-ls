@@ -90,9 +90,13 @@ fn authored_slice_metadata_validates_clean() {
 /// re-probe (2026-07-14, a KRX trading day) then promoted `t8412` (paginated
 /// N-minute chart) on a CLEAN differential once the cross_field date_order
 /// gateway-tolerant downgrade (PR #135) unmasked the accepted start>end as
-/// expected-tolerant (closing pending.13 #2). These eight are the ONLY ones
-/// currently allowed to carry the Recommended badge. The order submit/modify legs
-/// `CSPAT00601` + `CSPAT00701` stay Implemented (HELD §30 negative differentials).
+/// expected-tolerant (closing pending.13 #2). Then on 2026-07-15 `CSPAT00701`
+/// (modify) promoted: its `OrdprcPtnCode/required → IGW00000` may-rest halt was
+/// characterized PLACED-NOTHING by an attended A/B and its full differential
+/// re-probed CLEAN via the Route B scoped tolerance (plan 2026-07-14-001, ledger §31).
+/// These nine are the ONLY ones currently allowed to carry the Recommended badge.
+/// The order submit leg `CSPAT00601` stays Implemented (HELD §30 negative differential:
+/// direction-defaulted BnsTpCode places a real order).
 /// This test guards against an accidental re-promotion of any TR that skips the gate.
 #[test]
 fn recommended_set_is_exactly_the_recert_wave_certified_reads() {
@@ -106,7 +110,7 @@ fn recommended_set_is_exactly_the_recert_wave_certified_reads() {
     recommended.sort_unstable();
     assert_eq!(
         recommended,
-        ["CSPAQ12200", "CSPAT00801", "S3_", "t0425", "t1101", "t1102", "t8412", "token"],
+        ["CSPAQ12200", "CSPAT00701", "CSPAT00801", "S3_", "t0425", "t1101", "t1102", "t8412", "token"],
         "only the re-cert-wave-certified reads may be Recommended; any other TR must \
          first pass the differential-probe gate"
     );
