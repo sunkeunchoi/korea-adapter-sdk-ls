@@ -4,6 +4,51 @@ Committed record of each loop turn's verdict + the bar conditions it held. The
 full artifacts (`analysis.md`, manifests, performance) live in the gitignored data
 home; this file is the durable, reviewable outcome trail.
 
+## Turn — ATR volatility-target sizing (CLASS B lever 2): PREDICTED-INERT at the Phase-A gate, NO-BUILD (2026-07-14) — plan 2026-07-14-002
+
+- **Verdict: PREDICTED-INERT — STOP at the pre-code Phase-A collinearity gate; no lever
+  code written, no run, v26 stays head** (hash `d199d124`, RoR 0.1171). The R6 re-rank of
+  the deferred CLASS B sizing candidates — a second sizing lever `atr_vol_target_krw` that
+  would replace the risk denominator with an **external** prior-daily ATR instead of the
+  kept lever's **internal** stop distance (`risk_per_share = entry − stop`). The plan gated
+  the whole build on a cheap diagnostic-first probe: measure whether ATR is orthogonal to
+  the stop distance *before writing any code*. It is not.
+- **The pre-registered gate (frozen before the number was read,
+  `data/turn4-fresh/PRE-REGISTER-vNEXT-atr-vol-target.md`).** GO to Phase B iff
+  `|Pearson r(atr_price, risk_per_share)| < 0.70` (R² < 0.49 — a materially independent
+  reallocation axis); `≥ 0.70` → predicted-INERT stop. `atr_price` recomputed offline by
+  the exact `backtest.rs::prior_atr` (14-session frozen window) over v26's closed trades;
+  paired with the stop-based `risk_per_share = risk_capital / qty`.
+- **The measurement (v26, n = 103 ATR-available of 167 closed; the 64 excluded are the
+  early-range sessions with < 15 daily priors — catalog starts 2026-05-18, ATR live from
+  2026-06-12, exactly where the `or_width_max_atr = 0.666` gate is active).**
+
+  | statistic | value | role |
+  |---|---|---|
+  | **Pearson `r(atr_price, risk_per_share)`** | **0.9593** (R² **0.9202**) | **PRIMARY — the gate** |
+  | Spearman `ρ` | 0.9785 | diagnostic |
+  | top-quartile cohort Jaccard overlap | 0.7931 (23/29) | diagnostic |
+
+- **Why INERT (the crux).** `|r| = 0.9593 ≥ 0.70` fires the stop unambiguously: ATR shares
+  **92%** of its variance with the stop distance the kept lever already normalizes on, ranks
+  near-perfectly (ρ = 0.98), and de-risks a ~79%-overlapping cohort. Both quantities are
+  absolute-KRW measures dominated by the same cross-sectional price/volatility scale — a
+  prior-daily-ATR vol-target substitution merely **re-expresses v26's one-sided de-risking of
+  the wide-`risk_per_share` cohort** on a duplicate axis, so RoR cannot move. This is the
+  plan's explicitly-predicted headline risk ("Likely INERT via collinearity"), realized.
+- **No override, no tuning-to-escape.** At R² = 0.92 there is no rationale for an operator
+  override, and softening the frozen 0.70 threshold to proceed would be the forbidden overfit
+  the plan names (R2/R7). Kelly (INERT-global / P&L-fit-conditional) and mark-to-market
+  compounding (needs the deferred account seam) remain deferred CLASS B items; alternative
+  vol estimators (EWMA / realized-vol) or a **cross-sectionally-normalized** ATR (ATR/price,
+  which would break the price-scale collinearity) are the only live directions left for this
+  family — a *future* turn, not this one.
+- **Registry state.** Head unchanged: **v26** (`20260712T080054Z-backtest-orb-v26`, hash
+  `d199d124`, RoR 0.1171). No `params.rs`/`orb.rs`/`performance.rs` edit → gate untouched.
+  Diagnostic reproducer + reading archived under
+  `data/turn4-fresh/sizing-archive/u5-collinearity-diagnostic/`; the frozen threshold and
+  full decision in `PRE-REGISTER-vNEXT-atr-vol-target.md`. Offline throughout; no gateway.
+
 ## Turn — `risk_per_trade_krw` governed sweep: re-KEEP 299,340 as v26 (2026-07-12) — plan 2026-07-12-002
 
 - **Verdict: re-KEEP v26 — the sweep DENIES that 348k was near-optimal and re-KEEPs the
