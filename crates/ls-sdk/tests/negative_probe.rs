@@ -2095,6 +2095,14 @@ async fn run_igw00000_ab_probe() {
             // foreign order.
             match child_no.filter(|n| !n.trim().is_empty() && n.trim() != "0") {
                 Some(child) => {
+                    // NO-STRAND INVARIANT: `owned` here is only a teardown HINT. Every
+                    // teardown in this fn passes owned_fully_constructed=false (cancel-ALL),
+                    // so a resting order is never stranded even though after this swap
+                    // `owned` holds the child (not any took-effect fire grandchild) and the
+                    // None branch below reconciles while `owned` still holds the STALE
+                    // submit number. If any teardown here is ever switched to owned-only
+                    // (true), this swap must instead track every resting order (child +
+                    // grandchild) or a live order would be surfaced-but-not-cancelled.
                     owned.remove(&ordno);
                     ordno = child.trim().to_string();
                     owned.insert(ordno.clone());
@@ -2732,6 +2740,25 @@ fn extract_ord_no_finds_nested_outblock_key_and_skips_aux_keys() {
     assert_eq!(extract_ord_no(&serde_json::json!({ "rsp_cd": "40510" })), None);
     assert_eq!(extract_ord_no(&serde_json::json!({ "B": { "OrdNo": 0 } })), None);
     assert_eq!(extract_ord_no(&serde_json::json!({ "B": { "OrdNo": "" } })), None);
+
+    // A realistic CSPAT00701 MODIFY response: OutBlock1 echoes OrgOrdNo (the OLD/parent
+    // number), OutBlock2 carries the NEW child OrdNo plus PrntOrdNo/aux. A modify is
+    // absolute and reassigns the number (KTD4), so the A/B re-key MUST land on the child
+    // OrdNo (OutBlock2.OrdNo) — never the echoed OrgOrdNo or the parent PrntOrdNo. This
+    // locks in the "never a foreign/stale order" property the live-only re-key depends on;
+    // an extractor that matched OrgOrdNo/PrntOrdNo would re-key onto a vanished order and
+    // silently mis-verdict the A/B (see docs/solutions/logic-errors/
+    // modify-reassigns-order-number-ab-harness-must-rekey-child.md).
+    let modify = serde_json::json!({
+        "rsp_cd": "00462",
+        "CSPAT00701OutBlock1": { "RecCnt": 1, "OrgOrdNo": 22126, "IsuNo": "005930", "OrdQty": 1 },
+        "CSPAT00701OutBlock2": { "RecCnt": 1, "OrdNo": 22127, "PrntOrdNo": 22126, "SpareOrdNo": 0, "RsvOrdNo": 0 }
+    });
+    assert_eq!(
+        extract_ord_no(&modify),
+        Some("22127".to_string()),
+        "the modify re-key must select the child OrdNo (OutBlock2), not the echoed OrgOrdNo or the parent PrntOrdNo"
+    );
 }
 
 #[test]
