@@ -397,6 +397,96 @@ async fn sizing_veto_rejects_and_records_the_decision() {
     assert_eq!(perf.summary["num_trades"], 0.0, "no trade on a vetoed entry");
 }
 
+/// CLASS B lever 2 — off-sentinel handler identity + telemetry (AE3 handler layer).
+/// With `equity_compound_frac = 0.0` (the default), the OrderPlaced envelope carries a
+/// unit `equity_multiplier` and the order/exit sequence is exactly the v26 one — the
+/// off-identity the U5 re-baseline reconciles 1:1 on top of.
+#[tokio::test]
+async fn equity_compounding_off_places_unit_multiplier_and_preserves_sequence() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path(), false).await;
+    let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
+    let outcome = run(cfg(dir.path()), start).await.unwrap(); // defaults: frac 0.0, risk 0.0
+
+    let decisions_path = outcome.run_dir.join(DECISIONS_FILE);
+    let envelopes = read_envelopes(&decisions_path).unwrap();
+    let placed = find_detail_kind(&envelopes, SignalKind::OrderPlaced).expect("an order was placed");
+    // The two new telemetry values ride every placement (R14/KTD-5).
+    assert_eq!(
+        placed.values.get("equity_multiplier").copied(),
+        Some(1.0),
+        "off-sentinel → unit multiplier: {:?}",
+        placed.values
+    );
+    assert_eq!(
+        placed.values.get("effective_risk_budget_krw").copied(),
+        Some(0.0),
+        "risk sizing off (budget 0) → effective budget 0"
+    );
+    // The placed qty is the fixed-notional qty (byte-identical to v26 sizing): the
+    // notional 10M over the ~64,000 entry price.
+    let price = placed.values.get("price").copied().expect("price recorded");
+    let qty = placed.values.get("qty").copied().expect("qty recorded");
+    assert_eq!(qty, (10_000_000.0f64 / price).floor(), "notional sizing unchanged");
+    let perf = read_perf(&outcome.run_dir);
+    assert_eq!(perf.summary["num_trades"], 1.0, "the trade sequence is unchanged");
+    assert!(perf.summary["pnl_total"] > 0.0, "the winning trade is unchanged");
+}
+
+/// CLASS B lever 2 — the compounding path sizes a later session on its session-open
+/// realized equity (AE4 handler layer). On the multi-session fixture with a positive
+/// risk budget and `equity_compound_frac = 1.0`: the first session opens at a unit
+/// multiplier, a later session (after a profitable prior) opens above 1.0, and EVERY
+/// placement's qty + effective budget reconcile to the compounded formula
+/// `min(floor(risk_per_trade_krw · m / rps), floor(notional / price))`.
+#[tokio::test]
+async fn equity_compounding_scales_a_later_session_on_realized_equity() {
+    let dir = tempdir().unwrap();
+    build_multi_session_fixture(dir.path()).await;
+    let mut c = multi_cfg(dir.path());
+    // A risk budget that binds below the notional ceiling so the multiplier can move
+    // integer qty; equity compounding on at the fixed-fractional identity.
+    c.params.risk_per_trade_krw = 100_000.0;
+    c.params.equity_compound_frac = 1.0;
+    let start = Utc.with_ymd_and_hms(2024, 1, 10, 0, 0, 0).unwrap();
+    let outcome = run(c.clone(), start).await.unwrap();
+
+    let decisions_path = outcome.run_dir.join(DECISIONS_FILE);
+    let envelopes = read_envelopes(&decisions_path).unwrap();
+    let placed: Vec<&nautilus_ls_lab::agent::envelope::DecisionEnvelope> = envelopes
+        .iter()
+        .filter(|e| e.decision_detail.as_ref().is_some_and(|d| d.kind == SignalKind::OrderPlaced))
+        .collect();
+    assert!(placed.len() >= 2, "multiple sessions placed orders: {}", placed.len());
+
+    // Every placement reconciles to the compounded sizing formula + budget (R8/R14).
+    let notional = c.params.notional_per_position;
+    let mut saw_unit = false;
+    let mut saw_compounded = false;
+    for e in &placed {
+        let d = e.decision_detail.as_ref().unwrap();
+        let m = d.values.get("equity_multiplier").copied().expect("equity_multiplier");
+        let rps = d.values.get("risk_per_share").copied().expect("risk_per_share");
+        let price = d.values.get("price").copied().expect("price");
+        let qty = d.values.get("qty").copied().expect("qty");
+        let budget = d.values.get("effective_risk_budget_krw").copied().expect("effective budget");
+        // f = 1.0 → effective budget = risk_per_trade_krw · m.
+        assert!((budget - 100_000.0 * m).abs() < 1e-6, "budget = risk · m: {budget} vs {}", 100_000.0 * m);
+        let expected = (budget / rps).floor().min((notional / price).floor());
+        assert_eq!(qty, expected, "qty reconciles to the compounded formula (m={m}, rps={rps})");
+        if (m - 1.0).abs() < 1e-12 {
+            saw_unit = true;
+        } else if m > 1.0 {
+            saw_compounded = true;
+            // A compounded (m>1) budget-bound entry is at least as large as the m=1 qty.
+            let base = (100_000.0f64 / rps).floor().min((notional / price).floor());
+            assert!(qty >= base, "m>1 sizes up (or holds at the notional cap): {qty} >= {base}");
+        }
+    }
+    assert!(saw_unit, "the first session opened at a unit multiplier");
+    assert!(saw_compounded, "a later session opened above a unit multiplier on realized equity");
+}
+
 /// U4 cutoff gate (KTD10): a cutoff after the range end but before the 09:20
 /// breakout suppresses the entry done-for-day — one `entry_cutoff` reject, no
 /// trade — while the same fixture with the gate off trades normally.

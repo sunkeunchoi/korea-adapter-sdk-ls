@@ -79,7 +79,9 @@ async fn strategy_mounts_in_a_built_live_node() {
         prior_atr: None,
         prior_open_vol_mean: None,
     }];
-    let strategy = OrbStrategy::new(OrbParams::default(), selected, DecisionSink::new());
+    // Off-identity multiplier 1.0 (CLASS B lever 2, R8/KTD-1): the live-wiring smoke
+    // exercises the default (non-compounding) sizing path.
+    let strategy = OrbStrategy::new(OrbParams::default(), selected, DecisionSink::new(), 1.0);
     node.add_strategy(strategy).expect("the ORB strategy mounts in the live node");
 }
 

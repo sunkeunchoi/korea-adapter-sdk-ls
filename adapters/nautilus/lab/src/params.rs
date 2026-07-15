@@ -167,6 +167,22 @@ pub struct OrbParams {
     /// with it off; `validate()` rejects a negative value.
     #[serde(default)]
     pub risk_per_trade_krw: f64,
+    /// Session-granular realized-equity compounding lever (CLASS B lever 2, candidate
+    /// (c), plan 2026-07-15-001 R7/KTD-2). Scales the per-trade risk budget by the
+    /// **session-open realized-equity multiplier** `m` (computed by the runner from
+    /// prior sessions' realized P&L against the read-only `starting_balance` and
+    /// threaded into the strategy at construction). The effective budget becomes
+    /// `risk_per_trade_krw × max(0, 1 + equity_compound_frac · (m − 1))`; at
+    /// `equity_compound_frac = 1.0` the risked *fraction* of equity is constant — the
+    /// canonical fixed-fractional identity. Sentinel `0.0` = off: the factor collapses
+    /// to `max(0, 1) = 1.0` for any `m`, so the budget is exactly `risk_per_trade_krw`
+    /// and sizing is byte-identical to v26. `#[serde(default)]` so legacy manifests
+    /// deserialize with it off. `validate()` rejects a negative value, a value above
+    /// `1.0` (super-proportional compounding is out of scope), and a positive value
+    /// while `risk_per_trade_krw == 0` (compounding scales the risk budget — with no
+    /// budget it would silently do nothing, so fail fast).
+    #[serde(default)]
+    pub equity_compound_frac: f64,
 }
 
 /// The back-compat default for [`OrbParams::profit_target_r`] (R2, KTD3): a v8
@@ -245,6 +261,7 @@ impl Default for OrbParams {
             breakeven_trigger_r: 0.0,
             trail_frac_r: 0.0,
             risk_per_trade_krw: 0.0,
+            equity_compound_frac: 0.0,
         }
     }
 }
@@ -366,6 +383,36 @@ impl OrbParams {
                 self.risk_per_trade_krw
             ));
         }
+        // Equity-compounding lever (CLASS B lever 2, R7/KTD-2): 0.0 disables it, a
+        // positive fraction up to 1.0 enables it. A negative fraction would invert the
+        // multiplier (larger equity → smaller size); a fraction above 1.0 is
+        // super-proportional compounding, out of scope. And a positive fraction with no
+        // risk budget scales nothing — the multiplier applies to `risk_per_trade_krw`,
+        // so with a zero budget the param would silently do nothing; fail fast instead
+        // of shipping an inert-by-misconfiguration run.
+        if self.equity_compound_frac < 0.0 {
+            return Err(format!(
+                "equity_compound_frac {} is negative — use 0.0 to disable equity compounding, \
+                 a positive fraction (≤ 1.0) to scale the risk budget by session-open equity \
+                 (R7/KTD-2)",
+                self.equity_compound_frac
+            ));
+        }
+        if self.equity_compound_frac > 1.0 {
+            return Err(format!(
+                "equity_compound_frac {} exceeds 1.0 — super-proportional compounding is out of \
+                 scope; 1.0 is the fixed-fractional identity (R7/KTD-2)",
+                self.equity_compound_frac
+            ));
+        }
+        if self.equity_compound_frac > 0.0 && self.risk_per_trade_krw == 0.0 {
+            return Err(format!(
+                "equity_compound_frac {} is active but risk_per_trade_krw is 0.0 — compounding \
+                 scales the risk budget, so with no budget it would silently do nothing; enable \
+                 risk sizing or disable compounding (R7/KTD-2)",
+                self.equity_compound_frac
+            ));
+        }
         Ok(())
     }
 
@@ -417,6 +464,25 @@ impl OrbParams {
         self.risk_per_trade_krw > 0.0
     }
 
+    /// Whether the equity-compounding lever is active (CLASS B lever 2, R7/KTD-2): a
+    /// positive `equity_compound_frac`. The sentinel `0.0` keeps the flat
+    /// (non-compounding) v26 risk budget. `validate()` guarantees this is only true
+    /// alongside an active risk budget.
+    pub fn equity_compounding_active(&self) -> bool {
+        self.equity_compound_frac > 0.0
+    }
+
+    /// The session-open equity-compounding factor for a realized-equity multiplier `m`
+    /// (R8/KTD-2): `max(0, 1 + equity_compound_frac · (m − 1))`. At the off sentinel
+    /// (`equity_compound_frac = 0.0`) this is `max(0, 1) = 1.0` for **any** `m`, so a
+    /// flat budget results; at `m = 1.0` (a session with no prior realized P&L) it is
+    /// `1.0` for any fraction. The `max(0, …)` clamp floors a deep-drawdown path at a
+    /// zero budget rather than a negative one — a zero budget flows into the existing
+    /// qty-0 rejection, never a negative qty or a divide artifact.
+    pub fn equity_compound_factor(&self, multiplier: f64) -> f64 {
+        (1.0 + self.equity_compound_frac * (multiplier - 1.0)).max(0.0)
+    }
+
     /// The entry quantity under the risk-based sizing lever (R5): when the lever is
     /// off (or the per-share risk is non-positive — a degenerate stop the risk path
     /// can't divide by), this is exactly [`OrbParams::position_qty`] (the fixed
@@ -425,11 +491,31 @@ impl OrbParams {
     /// `min( floor(risk_per_trade_krw / risk_per_share), floor(notional / price) )` —
     /// the risk-budget qty capped at the fixed-notional qty (the capital ceiling, so
     /// a tiny stop can only *shift* size within the envelope, never blow it up).
+    ///
+    /// This is the equity multiplier `1.0` case of [`OrbParams::position_qty_risked_at`]
+    /// (no compounding), preserved as the v26-identical call path.
     pub fn position_qty_risked(&self, price: f64, risk_per_share: f64) -> i64 {
+        self.position_qty_risked_at(price, risk_per_share, 1.0)
+    }
+
+    /// The entry quantity under the risk-based sizing lever with the session-open
+    /// realized-equity multiplier `multiplier` applied (CLASS B lever 2, R8/KTD-2).
+    /// The risk budget is scaled by [`OrbParams::equity_compound_factor`] before the
+    /// same `min( floor(budget / risk_per_share), floor(notional / price) )` sizing —
+    /// so the notional ceiling and every downstream sizing guard are unchanged. The
+    /// off/no-prior-P&L path (`equity_compound_frac = 0.0` **or** `multiplier = 1.0`)
+    /// yields a factor of exactly `1.0`, so the budget is `risk_per_trade_krw` and this
+    /// is byte-identical to [`OrbParams::position_qty_risked`]. When risk sizing is off
+    /// (or the per-share risk is non-positive) the multiplier is irrelevant and this
+    /// falls back to the fixed-notional qty. A clamped-to-zero budget (deep drawdown)
+    /// floors `floor(0 / rps) = 0`, so `min(0, notional_qty) = 0` → the existing
+    /// zero-qty rejection, never a negative qty.
+    pub fn position_qty_risked_at(&self, price: f64, risk_per_share: f64, multiplier: f64) -> i64 {
         if !self.risk_sizing_active() || risk_per_share <= 0.0 {
             return self.position_qty(price);
         }
-        let risked = (self.risk_per_trade_krw / risk_per_share).floor() as i64;
+        let budget = self.risk_per_trade_krw * self.equity_compound_factor(multiplier);
+        let risked = (budget / risk_per_share).floor() as i64;
         risked.min(self.position_qty(price))
     }
 
@@ -528,12 +614,14 @@ mod tests {
         assert_eq!(p.breakeven_trigger_r, 0.0, "breakeven move off");
         assert_eq!(p.trail_frac_r, 0.0, "breakeven trail off");
         assert_eq!(p.risk_per_trade_krw, 0.0, "risk sizing off");
+        assert_eq!(p.equity_compound_frac, 0.0, "equity compounding off");
         // The decoded helpers agree with the filter-off defaults.
         assert_eq!(p.stop_placement(), StopMode::RangeLow);
         assert!(!p.close_confirm_entry());
         assert!(!p.cutoff_active());
         assert_eq!(p.entry_cutoff_time(), None);
         assert!(!p.risk_sizing_active());
+        assert!(!p.equity_compounding_active());
     }
 
     #[test]
@@ -771,6 +859,7 @@ mod tests {
             breakeven_trigger_r: 0.5,
             trail_frac_r: 0.25,
             risk_per_trade_krw: 500_000.0,
+            equity_compound_frac: 1.0,
             ..Default::default()
         };
         let back: OrbParams = serde_json::from_str(&serde_json::to_string(&p).unwrap()).unwrap();
@@ -913,6 +1002,170 @@ mod tests {
         let p: OrbParams = serde_json::from_str(&legacy).unwrap();
         assert_eq!(p.risk_per_trade_krw, 0.0, "missing key defaults to off");
         assert_eq!(p.numeric_summary().get("risk_per_trade_krw"), Some(&0.0));
+    }
+
+    #[test]
+    fn position_qty_risked_at_off_matches_notional_sizing() {
+        // Covers AE3 (param layer): with risk sizing off, the compounding multiplier is
+        // irrelevant — qty is the fixed-notional qty across a grid of prices/stops/m.
+        let p = OrbParams::default(); // risk_per_trade_krw 0.0, equity_compound_frac 0.0
+        for (price, rps) in [(60_000.0, 3_000.0), (12_345.0, 500.0), (100.0, 10.0)] {
+            for m in [0.90, 1.0, 1.05, 1.5] {
+                assert_eq!(
+                    p.position_qty_risked_at(price, rps, m),
+                    p.position_qty(price),
+                    "risk-off sizing == notional sizing at m={m}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn position_qty_risked_at_multiplier_one_matches_uncompounded() {
+        // Covers AE3 (param layer): m = 1.0 (a first session with no prior P&L) yields a
+        // factor of exactly 1.0 for ANY fraction, so the compounded path is byte-identical
+        // to the uncompounded position_qty_risked across a grid.
+        let p = OrbParams {
+            risk_per_trade_krw: 299_340.0,
+            notional_per_position: 10_000_000.0,
+            ..Default::default()
+        };
+        for f in [0.0, 0.5, 1.0] {
+            let pf = OrbParams { equity_compound_frac: f, ..p.clone() };
+            for (price, rps) in [(60_000.0, 3_000.0), (12_345.0, 1_500.0), (1_752_000.0, 103_000.0)] {
+                assert_eq!(
+                    pf.position_qty_risked_at(price, rps, 1.0),
+                    p.position_qty_risked(price, rps),
+                    "m=1.0 with f={f} == uncompounded"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn equity_compound_factor_interpolates() {
+        // KTD-2: factor = max(0, 1 + f·(m − 1)). f = 1.0 is the identity in (m − 1);
+        // a fractional f interpolates; the off sentinel is flat at 1.0 for any m.
+        let full = OrbParams { equity_compound_frac: 1.0, ..Default::default() };
+        assert!((full.equity_compound_factor(1.05) - 1.05).abs() < 1e-12, "f=1 → +5%");
+        assert!((full.equity_compound_factor(0.95) - 0.95).abs() < 1e-12, "f=1 → −5%");
+        let half = OrbParams { equity_compound_frac: 0.5, ..Default::default() };
+        assert!((half.equity_compound_factor(1.04) - 1.02).abs() < 1e-12, "f=0.5, m=1.04 → +2%");
+        let off = OrbParams::default(); // f = 0.0
+        for m in [0.5, 1.0, 1.05, 2.0] {
+            assert!((off.equity_compound_factor(m) - 1.0).abs() < 1e-12, "off → flat 1.0 at m={m}");
+        }
+    }
+
+    #[test]
+    fn position_qty_risked_at_scales_budget_with_the_multiplier() {
+        // R8 / AE4 (param layer): f = 1.0, budget 300_000. m = 1.05 → budget 315_000 →
+        // 105 shares at rps 3_000; m = 0.95 → 285_000 → 95 shares. Notional ceiling high
+        // so the risk budget binds.
+        let p = OrbParams {
+            risk_per_trade_krw: 300_000.0,
+            equity_compound_frac: 1.0,
+            notional_per_position: 1_000_000_000.0,
+            ..Default::default()
+        };
+        assert_eq!(p.position_qty_risked_at(60_000.0, 3_000.0, 1.0), 100, "m=1 → 300k/3k = 100");
+        assert_eq!(p.position_qty_risked_at(60_000.0, 3_000.0, 1.05), 105, "m=1.05 → +5% budget");
+        assert_eq!(p.position_qty_risked_at(60_000.0, 3_000.0, 0.95), 95, "m=0.95 → −5% budget");
+        // Still capped by the notional ceiling regardless of the multiplier.
+        let capped = OrbParams { notional_per_position: 10_000_000.0, ..p };
+        // risk-budget qty at m=1.05 = 315_000/100 = 3_150; notional cap = 10M/60k = 166.
+        assert_eq!(capped.position_qty_risked_at(60_000.0, 100.0, 1.05), 166, "notional ceiling binds");
+        assert_eq!(capped.position_qty_risked_at(60_000.0, 100.0, 1.05), capped.position_qty(60_000.0));
+    }
+
+    #[test]
+    fn position_qty_risked_at_clamps_deep_drawdown_to_zero() {
+        // KTD-2: a multiplier low enough that 1 + f·(m − 1) ≤ 0 clamps the factor (and
+        // thus the budget) to 0 → floor(0 / rps) = 0 → qty 0 (the existing zero-qty
+        // rejection), never a negative qty or a divide artifact.
+        let p = OrbParams {
+            risk_per_trade_krw: 300_000.0,
+            equity_compound_frac: 1.0,
+            notional_per_position: 1_000_000_000.0,
+            ..Default::default()
+        };
+        // m = 0.0 → factor max(0, 1 + 1·(−1)) = 0 → budget 0 → qty 0.
+        assert_eq!(p.equity_compound_factor(0.0), 0.0);
+        assert_eq!(p.position_qty_risked_at(60_000.0, 3_000.0, 0.0), 0, "zero budget → zero qty");
+        // m below zero clamps too (would be a negative factor otherwise).
+        assert_eq!(p.equity_compound_factor(-0.5), 0.0);
+        assert_eq!(p.position_qty_risked_at(60_000.0, 3_000.0, -0.5), 0);
+    }
+
+    #[test]
+    fn position_qty_risked_at_degenerate_stop_falls_back_to_notional() {
+        // A non-positive per-share risk cannot be divided by — fall back to notional
+        // sizing regardless of the multiplier (R8, mirrors position_qty_risked).
+        let p = OrbParams {
+            risk_per_trade_krw: 300_000.0,
+            equity_compound_frac: 1.0,
+            ..Default::default()
+        };
+        assert_eq!(p.position_qty_risked_at(60_000.0, 0.0, 1.05), p.position_qty(60_000.0));
+        assert_eq!(p.position_qty_risked_at(60_000.0, -5.0, 1.05), p.position_qty(60_000.0));
+    }
+
+    #[test]
+    fn validate_equity_compound_frac_bounds_and_budget_coupling() {
+        // R7 / KTD-2: 0.0 (off) and 1.0 (the fixed-fractional identity) with a positive
+        // budget both validate; a negative fraction, a fraction > 1.0, and a positive
+        // fraction with no risk budget are all config errors.
+        let base = OrbParams { risk_per_trade_krw: 299_340.0, ..Default::default() };
+        assert!(OrbParams { equity_compound_frac: 0.0, ..base.clone() }.validate().is_ok(), "off");
+        let armed = OrbParams { equity_compound_frac: 1.0, ..base.clone() };
+        assert!(armed.validate().is_ok(), "f=1.0 with a positive budget is valid");
+        assert!(armed.equity_compounding_active());
+        assert!(
+            OrbParams { equity_compound_frac: 0.5, ..base.clone() }.validate().is_ok(),
+            "a fractional f with a positive budget is valid"
+        );
+        let neg = OrbParams { equity_compound_frac: -0.1, ..base.clone() };
+        assert!(neg.validate().is_err(), "negative equity_compound_frac must be rejected");
+        let over = OrbParams { equity_compound_frac: 1.5, ..base.clone() };
+        assert!(over.validate().is_err(), "equity_compound_frac > 1.0 must be rejected");
+        // A positive fraction with no risk budget scales nothing → fail fast.
+        let no_budget = OrbParams { equity_compound_frac: 1.0, risk_per_trade_krw: 0.0, ..Default::default() };
+        assert!(no_budget.validate().is_err(), "compounding with no risk budget must be rejected");
+    }
+
+    #[test]
+    fn equity_compound_frac_deserializes_from_pre_field_manifest() {
+        // A v26-era manifest predates the field — it must deserialize to 0.0 (off) so
+        // every prior run in `data/turn4-fresh` keeps resolving unchanged, and the field
+        // surfaces into numeric_summary so a later governed sweep can move it.
+        let legacy = serde_json::json!({
+            "strategy_id": "orb",
+            "strategy_version": 26,
+            "gap_min_pct": 0.6,
+            "universe_top_n": 40,
+            "max_concurrent": 7,
+            "range_open": "09:00:00",
+            "range_minutes": 20,
+            "flat_time": "15:00:00",
+            "notional_per_position": 10_000_000.0,
+            "profit_target_r": 1.0,
+            "breakeven_trigger_r": 0.41,
+            "risk_per_trade_krw": 299_340.0,
+        })
+        .to_string();
+        let p: OrbParams = serde_json::from_str(&legacy).unwrap();
+        assert_eq!(p.equity_compound_frac, 0.0, "missing key defaults to off");
+        assert_eq!(p.numeric_summary().get("equity_compound_frac"), Some(&0.0));
+    }
+
+    #[test]
+    fn numeric_summary_includes_equity_compound_frac() {
+        // The field is f64-typed so the serde value-walk surfaces it — a later governed
+        // sweep reads it to move the lever (KTD-5).
+        let summary = OrbParams::default().numeric_summary();
+        assert_eq!(summary.get("equity_compound_frac"), Some(&0.0));
+        let on = OrbParams { equity_compound_frac: 1.0, risk_per_trade_krw: 299_340.0, ..Default::default() };
+        assert_eq!(on.numeric_summary().get("equity_compound_frac"), Some(&1.0));
     }
 
     #[test]
