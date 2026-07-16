@@ -213,6 +213,7 @@ fn report_mfe_through_the_bin_prints_the_distribution() {
         strategy_code_hash: "ch".to_string(),
         checkpoint_hash: None,
         universe_metadata_hash: None,
+        dispatch: None,
         created_utc: "2026-07-10T00:00:00+00:00".to_string(),
     };
     std::fs::write(run_dir.join(MANIFEST_FILE), serde_json::to_string(&manifest).unwrap())
@@ -1259,6 +1260,7 @@ mod report_tiers {
             strategy_code_hash: "ch".to_string(),
             checkpoint_hash: None,
             universe_metadata_hash: Some(hash),
+            dispatch: None,
             created_utc: "2026-06-30T07:00:00Z".to_string(),
         };
         std::fs::write(run_dir.join(MANIFEST_FILE), serde_json::to_string(&manifest).unwrap())

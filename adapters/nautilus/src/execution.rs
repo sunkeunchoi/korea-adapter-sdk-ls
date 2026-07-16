@@ -314,6 +314,15 @@ impl LsExecClient {
     pub fn orders_enabled(&self) -> bool {
         self.sdk.inner().orders_enabled()
     }
+
+    /// The lifetime count of order-dedup hits on this client's SDK (a within-TTL
+    /// identical re-send served from cache, or a concurrent-duplicate rejection). A
+    /// per-session safety metric the live runner persists into the run's data-quality
+    /// report; a non-zero count on a real emission is a limit event (production-ladder
+    /// R14(d)).
+    pub fn dedup_hits(&self) -> u64 {
+        self.sdk.inner().order_dedup.hit_count()
+    }
 }
 
 /// The LS `BnsTpCode` for a nautilus order side. Returns `None` for anything but a

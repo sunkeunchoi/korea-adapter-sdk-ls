@@ -69,6 +69,13 @@ pub struct OrderDeduplicator {
     /// Millis-since-`created` of the last completed sweep. The atomic the sweep
     /// winner claims via compare-exchange.
     last_sweep_millis: AtomicU64,
+    /// Count of dedup hits over this deduplicator's lifetime: a within-TTL cache hit
+    /// (an identical re-send served from cache) or a concurrent-duplicate rejection
+    /// (a second reserver of an in-flight key). Both are duplicate *emissions* the
+    /// dedup contract suppressed, so both count. Monotonic; read as a per-session
+    /// safety metric (production-ladder R14(d)) — never persisted per-key (the key
+    /// embeds the account number), only this aggregate count.
+    hits: AtomicU64,
 }
 
 /// RAII reservation for an in-flight order key. Holding it marks the key as
@@ -95,7 +102,15 @@ impl OrderDeduplicator {
             ttl,
             created: Instant::now(),
             last_sweep_millis: AtomicU64::new(0),
+            hits: AtomicU64::new(0),
         }
+    }
+
+    /// The lifetime count of dedup hits (cache hits + concurrent-duplicate
+    /// rejections). A per-session safety metric — a non-zero count on a real emission
+    /// is a limit event (production-ladder R14(d)).
+    pub fn hit_count(&self) -> u64 {
+        self.hits.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Atomically reserve `key` for an in-flight dispatch. Returns a
@@ -106,7 +121,12 @@ impl OrderDeduplicator {
     pub fn try_reserve(&self, key: &str) -> Option<ReservationGuard<'_>> {
         use dashmap::mapref::entry::Entry;
         match self.in_flight.entry(key.to_string()) {
-            Entry::Occupied(_) => None,
+            Entry::Occupied(_) => {
+                // A second reserver of an in-flight key — a concurrent duplicate the
+                // contract rejects before it can double-fill (R14(d)).
+                self.hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                None
+            }
             Entry::Vacant(v) => {
                 v.insert(());
                 Some(ReservationGuard {
@@ -152,6 +172,9 @@ impl OrderDeduplicator {
             _ => None,
         };
         if live_value.is_some() {
+            // A within-TTL identical re-send served from cache — a suppressed duplicate
+            // emission (R14(d)).
+            self.hits.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             return live_value;
         }
         // Phase 2 — evict ONLY if the entry is still expired. `remove_if` re-checks
@@ -303,6 +326,23 @@ mod tests {
         d.insert(key.clone(), serde_json::json!({"OrdNo": "123"}));
         let cached = d.get(&key).expect("a live entry is a hit");
         assert_eq!(cached, serde_json::json!({"OrdNo": "123"}));
+    }
+
+    #[test]
+    fn hit_count_tallies_cache_hits_and_concurrent_duplicates() {
+        let d = OrderDeduplicator::with_default_ttl();
+        let key = OrderDeduplicator::key("acct", "CSPAT00601", &order(1, 100)).unwrap();
+        assert_eq!(d.hit_count(), 0, "cold");
+        // A cold miss does not count; a cached re-send does (R14(d)).
+        assert!(d.get(&key).is_none());
+        assert_eq!(d.hit_count(), 0);
+        d.insert(key.clone(), serde_json::json!({"OrdNo": "123"}));
+        d.get(&key).unwrap();
+        assert_eq!(d.hit_count(), 1, "a within-TTL cache hit counts");
+        // A concurrent-duplicate rejection also counts.
+        let _guard = d.try_reserve("k2").unwrap();
+        assert!(d.try_reserve("k2").is_none(), "second reserver rejected");
+        assert_eq!(d.hit_count(), 2);
     }
 
     #[test]

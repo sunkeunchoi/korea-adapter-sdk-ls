@@ -66,8 +66,32 @@ pub struct Manifest {
     /// `serde(default)`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub universe_metadata_hash: Option<String>,
+    /// The dispatch↔run linkage (KTD3): binds this run to the dispatch that authorized
+    /// it, plus the rung metadata the reducers key on. `None` for a backtest/research
+    /// run or a pre-U5 artifact; absent from prior manifests, hence the `serde(default)`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dispatch: Option<DispatchLink>,
     /// The instant the run started (UTC, RFC3339-like stamp).
     pub created_utc: String,
+}
+
+/// The dispatch↔run linkage recorded in a live run's manifest (KTD3). Lets a reducer
+/// bind every session to its authorization and require live-lane provenance plus
+/// matching identity hashes before counting a session toward a rung.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DispatchLink {
+    /// The `dispatch_id` (session-dispatch record id) that authorized this run.
+    pub dispatch_id: String,
+    /// The chain-authorized rung this run ran at.
+    pub rung: u8,
+    /// The budget-numerator fraction applied at this rung (KTD6).
+    pub rung_fraction: f64,
+    /// The credential lane hash (SHA-256 of the appkey, spend-ledger precedent) — never
+    /// the raw key or account number.
+    pub lane: String,
+    /// The resolved trading environment (`"paper"` | `"live"`) — closes the gap where
+    /// `RunSource::Live` means paper-live today (KTD3).
+    pub trading_env: String,
 }
 
 /// Hash the catalog bar content that intersects `[start_ns, end_ns]` (inclusive) into

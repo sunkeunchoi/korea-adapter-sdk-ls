@@ -18,6 +18,7 @@ use nautilus_ls::orders::ledger::FillDelta;
 use nautilus_ls::orders::poll::DrivenOutcome;
 
 use crate::artifacts::data_quality::{DataQualityReport, ReconcileCondition, ReconcileConditionKind};
+use crate::artifacts::RunWriter;
 use crate::params::OrbParams;
 
 /// Live run configuration.
@@ -53,21 +54,52 @@ pub trait LiveSession {
     fn halt(&self);
 }
 
+/// The outcome of a fail-closed teardown (KTD7, R5). Carries the cancel-attempt count so
+/// finalize can persist the retry metric (R14(d)) even when the teardown hard-failed —
+/// [`run_teardown`] never errors, so the caller always gets the report and can finalize
+/// abnormally before bailing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TeardownReport {
+    /// Number of cancel calls made (1..=`cancel_attempts`).
+    pub cancel_attempts: u64,
+    /// Whether cancels were confirmed.
+    pub canceled: bool,
+    /// Whether flatness was POSITIVELY confirmed.
+    pub flat_confirmed: bool,
+}
+
+impl TeardownReport {
+    /// Retries beyond the first cancel attempt (0 if the first succeeded). More than one
+    /// retry is a limit event (R14(d)).
+    pub fn retries(&self) -> u64 {
+        self.cancel_attempts.saturating_sub(1)
+    }
+
+    /// Whether teardown could not positively confirm a flat account — the account must
+    /// be treated as NOT flat (never conclude flat on ambiguity).
+    pub fn hard_failed(&self) -> bool {
+        !self.canceled || !self.flat_confirmed
+    }
+}
+
 /// Run the fail-closed session teardown (KTD7). The ordering is the safety property:
 /// stop emission → cancel resting (retried) → confirm flat (retried, positive-only) →
-/// **halt after** → hard-fail if flatness could not be positively confirmed (never
-/// conclude flat on ambiguity).
+/// **halt after**. Returns a [`TeardownReport`] rather than erroring: a hard-failed
+/// teardown must still leave scannable artifacts (R5), so the caller finalizes on the
+/// report and bails afterward.
 pub async fn run_teardown<S: LiveSession>(
     session: &S,
     cancel_attempts: usize,
     flat_attempts: usize,
-) -> anyhow::Result<()> {
+) -> TeardownReport {
     // 1. Stop the strategy's order emission first.
     session.stop_emission();
 
-    // 2. Cancel all resting orders, retrying.
+    // 2. Cancel all resting orders, retrying. Count the attempts made (R14(d)).
     let mut canceled = false;
+    let mut attempts = 0u64;
     for _ in 0..cancel_attempts.max(1) {
+        attempts += 1;
         if session.cancel_all_resting().await.is_ok() {
             canceled = true;
             break;
@@ -86,12 +118,92 @@ pub async fn run_teardown<S: LiveSession>(
     // 4. Engage the kill switch AFTER the closing cancels — always, even on failure.
     session.halt();
 
-    // 5. Never conclude flat on ambiguity.
-    if !canceled || !flat {
-        anyhow::bail!(
-            "teardown could not positively confirm a flat account — kill switch engaged; the operator must reconcile the paper account"
+    TeardownReport { cancel_attempts: attempts, canceled, flat_confirmed: flat }
+}
+
+/// Finalize a run's artifacts — ALWAYS, even after a hard-failed teardown (R5): a
+/// session that carries limit events must still leave scannable artifacts. Stamps the
+/// teardown retry count and dedup-hit count into the data-quality report (the fields
+/// U9's exceedance scan reads, R10/R14(d)) and marks the run abnormal when teardown
+/// could not confirm flat. Assumes the manifest/performance/decisions are already staged
+/// into the writer's tmp dir. Consumes the writer.
+pub fn finalize_session(
+    writer: RunWriter,
+    mut dq: DataQualityReport,
+    report: &TeardownReport,
+    dedup_hits: u64,
+) -> anyhow::Result<PathBuf> {
+    dq.teardown_retries = Some(report.retries());
+    dq.dedup_hits = Some(dedup_hits);
+    if report.hard_failed() {
+        // The observation is scrubbed at write time; it is a fixed literal here.
+        dq.observations.push(
+            "ABNORMAL: teardown could not positively confirm a flat account — kill switch \
+             engaged; operator must reconcile"
+                .to_string(),
         );
     }
+    writer.write_data_quality(&dq)?;
+    writer.finalize()
+}
+
+/// Persist a safety-trip record to the dispatch chain at trip time (KTD4) — call this
+/// BEFORE any finalize/bail. The runtime kill switch is a per-process in-memory
+/// `AtomicBool`, so a fresh dispatch process would otherwise always read it disengaged
+/// and the R1 kill-switch check would be a tautology; the persisted record is what the
+/// gate reads.
+pub fn record_safety_trip(
+    chain: &DispatchChain,
+    kind: SafetyTripKind,
+    run_id: Option<&str>,
+    detail: &str,
+    now: chrono::DateTime<Utc>,
+    chain_rung: u8,
+) -> anyhow::Result<()> {
+    chain.append(
+        now,
+        chain_rung,
+        chain_rung,
+        None,
+        RecordKind::SafetyTrip(SafetyTrip {
+            trip: kind,
+            action: TripAction::Engage,
+            run_id: run_id.map(str::to_string),
+            detail: detail.to_string(),
+        }),
+    )?;
+    Ok(())
+}
+
+/// Clear a persisted kill-switch trip — an explicit, nonce-gated operator action
+/// recorded in the chain (KTD4). Re-enabling live dispatch after a safety trip is at
+/// least as consequential as a deferral, so it is behind the same fresh-nonce +
+/// no-TTY loud-refusal gate.
+///
+/// # Errors
+///
+/// Refuses (loudly) without a fresh operator nonce in an attended context; propagates a
+/// chain-append failure.
+pub fn clear_kill_switch(
+    chain: &DispatchChain,
+    gate: &OperatorGate,
+    reason: &str,
+    now: chrono::DateTime<Utc>,
+    chain_rung: u8,
+) -> anyhow::Result<()> {
+    gate.authorize("kill-switch clear").map_err(|e| anyhow::anyhow!(e))?;
+    chain.append(
+        now,
+        chain_rung,
+        chain_rung,
+        None,
+        RecordKind::SafetyTrip(SafetyTrip {
+            trip: SafetyTripKind::KillSwitch,
+            action: TripAction::Clear,
+            run_id: None,
+            detail: reason.to_string(),
+        }),
+    )?;
     Ok(())
 }
 
@@ -152,8 +264,8 @@ use chrono::{TimeZone, Utc};
 use nautilus_ls::lock::is_held;
 
 use crate::dispatch::chain::{
-    kst_trading_date, ChainStatus, DispatchChain, DispatchOutcome, RecordKind, SafetyTripKind,
-    SessionDispatch,
+    kst_trading_date, ChainStatus, DispatchChain, DispatchOutcome, RecordKind, SafetyTrip,
+    SafetyTripKind, SessionDispatch, TripAction,
 };
 use crate::dispatch::checks::{
     decide, parse_deferrals, probe_flat_start, probe_stranded_orders, run_checks, BudgetHeadroom,
@@ -550,12 +662,14 @@ mod tests {
     use std::cell::RefCell;
 
     /// A fake session recording the teardown call order + simulating still-resting /
-    /// not-flat conditions.
+    /// not-flat conditions. `cancel_fail_first` fails that many attempts before the
+    /// `cancel_ok` verdict applies, so the retry count can be exercised.
     #[derive(Default)]
     struct FakeSession {
         log: RefCell<Vec<&'static str>>,
         cancel_ok: bool,
         flat: bool,
+        cancel_fail_first: RefCell<usize>,
     }
 
     impl LiveSession for FakeSession {
@@ -564,6 +678,13 @@ mod tests {
         }
         async fn cancel_all_resting(&self) -> anyhow::Result<usize> {
             self.log.borrow_mut().push("cancel");
+            {
+                let mut fails = self.cancel_fail_first.borrow_mut();
+                if *fails > 0 {
+                    *fails -= 1;
+                    anyhow::bail!("cancel failed (transient)");
+                }
+            }
             if self.cancel_ok {
                 Ok(1)
             } else {
@@ -582,43 +703,117 @@ mod tests {
     #[tokio::test]
     async fn teardown_order_is_stop_cancel_flat_then_halt() {
         let s = FakeSession { cancel_ok: true, flat: true, ..Default::default() };
-        run_teardown(&s, 3, 3).await.unwrap();
+        let r = run_teardown(&s, 3, 3).await;
+        assert!(!r.hard_failed());
         let log = s.log.borrow();
         assert_eq!(log[0], "stop_emission", "emission stopped FIRST");
         assert_eq!(*log.last().unwrap(), "halt", "kill switch engaged LAST");
-        // A cancel and a flat check happened between.
         assert!(log.contains(&"cancel") && log.contains(&"is_flat"));
     }
 
     #[tokio::test]
     async fn teardown_hard_fails_when_not_flat_but_still_halts() {
-        // Cancels error and flatness never confirms → hard-fail, but halt still ran.
         let s = FakeSession { cancel_ok: false, flat: false, ..Default::default() };
-        let err = run_teardown(&s, 2, 2).await.unwrap_err();
-        assert!(err.to_string().contains("could not positively confirm a flat account"), "err: {err}");
+        let r = run_teardown(&s, 2, 2).await;
+        assert!(r.hard_failed(), "not flat + cancels failed -> hard fail");
         assert_eq!(*s.log.borrow().last().unwrap(), "halt", "kill switch engaged even on failure");
     }
 
     #[tokio::test]
     async fn teardown_hard_fails_when_cancels_ok_but_not_flat() {
-        // Cancels succeed but the flatness check never confirms (a fill landed during
-        // teardown, or a truncated read): the `|| !flat` term alone must hard-fail —
-        // the account is NOT concluded flat on ambiguity. Guards the flat term from
-        // silently regressing (every other failure test also fails the cancel).
+        // Cancels succeed but flatness never confirms: the account is NOT concluded flat
+        // on ambiguity. Guards the flat term from silently regressing.
         let s = FakeSession { cancel_ok: true, flat: false, ..Default::default() };
-        let err = run_teardown(&s, 2, 2).await.unwrap_err();
-        assert!(err.to_string().contains("could not positively confirm a flat account"), "err: {err}");
+        let r = run_teardown(&s, 2, 2).await;
+        assert!(r.hard_failed(), "cancels ok but not flat -> still hard fail");
+        assert!(r.canceled && !r.flat_confirmed);
         assert_eq!(*s.log.borrow().last().unwrap(), "halt", "kill switch engaged even when not flat");
     }
 
     #[tokio::test]
     async fn teardown_hard_fails_when_resting_order_remains() {
-        // A still-resting order: cancels fail but the account later reads flat is
-        // impossible here — cancel failure alone hard-fails after retries.
         let s = FakeSession { cancel_ok: false, flat: true, ..Default::default() };
-        let err = run_teardown(&s, 3, 1).await.unwrap_err();
-        assert!(err.to_string().contains("reconcile"), "err: {err}");
-        // Cancel was retried the full 3 attempts.
-        assert_eq!(s.log.borrow().iter().filter(|e| **e == "cancel").count(), 3);
+        let r = run_teardown(&s, 3, 1).await;
+        assert!(r.hard_failed(), "cancel failure hard-fails after retries");
+        assert_eq!(r.cancel_attempts, 3, "cancel was retried the full 3 attempts");
+    }
+
+    #[tokio::test]
+    async fn teardown_retry_count_is_recorded() {
+        // First cancel fails, second succeeds → 2 attempts, 1 retry (R14(d) metric).
+        let s = FakeSession {
+            cancel_ok: true,
+            flat: true,
+            cancel_fail_first: RefCell::new(1),
+            ..Default::default()
+        };
+        let r = run_teardown(&s, 3, 1).await;
+        assert!(!r.hard_failed());
+        assert_eq!(r.cancel_attempts, 2);
+        assert_eq!(r.retries(), 1);
+    }
+
+    #[tokio::test]
+    async fn finalize_runs_even_on_hard_fail_and_stamps_the_metrics() {
+        use crate::artifacts::{data_quality::DataQualityReport, RunWriter};
+        let tmp = tempfile::TempDir::new().unwrap();
+        let writer = RunWriter::new(tmp.path(), "run-abnormal").unwrap();
+        // A hard-failed teardown: finalize must STILL run and mark the run abnormal.
+        let s = FakeSession { cancel_ok: false, flat: false, ..Default::default() };
+        let report = run_teardown(&s, 2, 2).await;
+        assert!(report.hard_failed());
+        let dq = DataQualityReport::backtest(vec![], vec![]);
+        let dir = finalize_session(writer, dq, &report, 2).unwrap();
+        let text = std::fs::read_to_string(dir.join("data_quality.json")).unwrap();
+        assert!(text.contains("ABNORMAL"), "abnormal note present: {text}");
+        assert!(text.contains("teardown_retries"));
+        assert!(text.contains("\"dedup_hits\": 2"), "{text}");
+    }
+
+    #[tokio::test]
+    async fn safety_trip_is_recorded_before_finalize() {
+        use crate::dispatch::chain::{DispatchChain, RecordKind, SafetyTripKind};
+        let tmp = tempfile::TempDir::new().unwrap();
+        let chain = DispatchChain::open(tmp.path()).unwrap();
+        let now = Utc.timestamp_opt(1_752_600_000, 0).unwrap();
+        chain.append(now, 1, 1, None, RecordKind::Genesis).unwrap();
+
+        let s = FakeSession { cancel_ok: false, flat: false, ..Default::default() };
+        let report = run_teardown(&s, 2, 2).await;
+        assert!(report.hard_failed());
+        // Trip record BEFORE finalize (KTD4): a fresh dispatch process must observe it.
+        record_safety_trip(&chain, SafetyTripKind::KillSwitch, Some("run-x"), "teardown hard-fail", now, 1).unwrap();
+        let writer = RunWriter::new(tmp.path(), "run-x").unwrap();
+        finalize_session(writer, DataQualityReport::backtest(vec![], vec![]), &report, 0).unwrap();
+
+        let state = chain.load();
+        let trip = state.records.iter().any(|r| matches!(&r.body.kind,
+            RecordKind::SafetyTrip(t) if t.trip == SafetyTripKind::KillSwitch));
+        assert!(trip, "kill-switch trip persisted in the chain");
+        assert!(tmp.path().join("runs").join("run-x").exists(), "run finalized despite hard-fail");
+        assert!(state.kill_switch_engaged, "the gate would now read the kill switch engaged");
+    }
+
+    #[test]
+    fn kill_switch_clear_needs_a_fresh_nonce_and_attendance() {
+        use crate::dispatch::chain::{DispatchChain, RecordKind, TripAction, SafetyTripKind};
+        use crate::dispatch::nonce::OperatorGate;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let chain = DispatchChain::open(tmp.path()).unwrap();
+        let now = Utc.timestamp_opt(1_752_600_000, 0).unwrap();
+        chain.append(now, 1, 1, None, RecordKind::Genesis).unwrap();
+
+        // Unattended (no-TTY / CI): refused, nothing appended.
+        let unattended = OperatorGate { unattended_marker: Some("CI".into()), nonce: Some("1752600000".into()), now_unix: 1_752_600_000 };
+        assert!(clear_kill_switch(&chain, &unattended, "clear", now, 1).is_err());
+        let before = chain.load().records.len();
+
+        // Attended + fresh nonce: appends a Clear record.
+        let attended = OperatorGate { unattended_marker: None, nonce: Some("1752600000".into()), now_unix: 1_752_600_000 };
+        clear_kill_switch(&chain, &attended, "operator cleared after reconcile", now, 1).unwrap();
+        let state = chain.load();
+        assert_eq!(state.records.len(), before + 1);
+        assert!(state.records.iter().any(|r| matches!(&r.body.kind,
+            RecordKind::SafetyTrip(t) if t.trip == SafetyTripKind::KillSwitch && t.action == TripAction::Clear)));
     }
 }
