@@ -492,6 +492,7 @@ mod tests {
             catalog_fingerprint: String::new(),
             universe_hash: universe_hash(&[]),
             strategy_code_hash: crate::artifacts::manifest::strategy_code_hash(),
+            lab_src_fingerprint: None,
             checkpoint_hash: None,
             universe_metadata_hash: None,
             dispatch: Some(DispatchLink {

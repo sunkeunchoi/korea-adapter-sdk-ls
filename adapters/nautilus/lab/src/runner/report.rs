@@ -812,6 +812,7 @@ mod tests {
             catalog_fingerprint: "fp".to_string(),
             universe_hash: "uh".to_string(),
             strategy_code_hash: "ch".to_string(),
+            lab_src_fingerprint: None,
             checkpoint_hash: None,
             universe_metadata_hash: None,
             dispatch: None,

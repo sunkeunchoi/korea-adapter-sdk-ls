@@ -43,6 +43,7 @@ fn manifest(run_id: &str, source: RunSource, params: OrbParams) -> Manifest {
         catalog_fingerprint: range_fingerprint(&[], 0, u64::MAX),
         universe_hash: universe_hash(&["005930.XKRX".to_string()]),
         strategy_code_hash: String::new(),
+        lab_src_fingerprint: None,
         checkpoint_hash: None,
         universe_metadata_hash: None,
         dispatch: None,

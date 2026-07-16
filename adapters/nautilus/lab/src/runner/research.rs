@@ -46,6 +46,8 @@ use crate::artifacts::performance::PerformanceReport;
 use crate::artifacts::{list_runs, ANALYSIS_FILE, DATA_QUALITY_FILE, MANIFEST_FILE, PERFORMANCE_FILE};
 use crate::params::OrbParams;
 use crate::runner::backtest::{run as run_backtest, BacktestConfig};
+use crate::runner::diagnose::{read_gate_verdict, GateExit};
+use crate::trials::{LookKind, SampleLineage, TrialRecord, TrialsLedger};
 
 /// The committed proposal-bounds cap the CLI wires the decision pipeline with
 /// (KTD3): 0.5 relative change, the value every committed instantiation uses —
@@ -138,6 +140,19 @@ fn last_weekday_on_or_before(mut date: NaiveDate) -> NaiveDate {
 // U2 — the turn command
 // ===========================================================================
 
+/// The governed-flip binding (U6, R4/KTD1): the candidate whose recorded GO
+/// authorizes a param flip, plus the trials ledger the flip look is appended to.
+/// Populated from `LS_TURN_CANDIDATE` at the CLI seam; a param flip without one
+/// refuses ([`GateExit::UngovernedFlip`]).
+#[derive(Debug, Clone)]
+pub struct GovernedFlip {
+    /// The candidate directory (holds `candidate.json` + `gate-verdict.json`).
+    pub candidate_dir: PathBuf,
+    /// The trials ledger the flip look is recorded to (and the GO reading is
+    /// looked up in).
+    pub ledger: TrialsLedger,
+}
+
 /// The turn command's config. A turn with `override_param == None` is a
 /// no-override **rerun** (KTD3): the resolved current params re-run with no
 /// governance cycle and no version bump.
@@ -174,6 +189,18 @@ pub struct TurnConfig {
     /// with [`Self::expect_version`] to pin the seeded v3 identity (0.6) before a
     /// fresh-home rerun.
     pub expect_gap_min_pct: Option<f64>,
+    /// U2/KTD7: a code-turn native version bump. When true (and `override_param`
+    /// is `None`), the resolved current params re-run at `version + 1` with a
+    /// zero param diff — the native path that subsumes the manual
+    /// seed-manifest-and-rerun workaround. Companion-field seeding is automatic:
+    /// the resolved params already carry any newer `#[serde(default)]` field at
+    /// its default (applied at manifest-read time), and the JSON round-trip
+    /// re-serializes them into the bumped manifest.
+    pub code_bump: bool,
+    /// U6/KTD1: the governed-flip binding. A param flip (`override_param` set)
+    /// refuses without one (the guard is default-on, not opt-in). `None` for a
+    /// rerun or code-bump (which the guard does not bind).
+    pub candidate: Option<GovernedFlip>,
 }
 
 impl TurnConfig {
@@ -191,6 +218,8 @@ impl TurnConfig {
             applied_overrides: None,
             expect_version: None,
             expect_gap_min_pct: None,
+            code_bump: false,
+            candidate: None,
         }
     }
 }
@@ -208,6 +237,10 @@ pub struct TurnOutcome {
     pub approved: Option<bool>,
     /// The denial/mismatch reason when the turn ran nothing.
     pub refusal: Option<String>,
+    /// U6: the typed gate exit for a flip-guard refusal, mapped to a distinct
+    /// process exit code. `None` for a run, a rerun, or a pipeline denial (which
+    /// exits the generic non-zero).
+    pub gate_exit: Option<GateExit>,
     /// Human-facing result lines.
     pub lines: Vec<String>,
 }
@@ -215,7 +248,29 @@ pub struct TurnOutcome {
 impl TurnOutcome {
     fn refused(reason: String, mut lines: Vec<String>, approved: Option<bool>) -> Self {
         lines.push(format!("turn ran no backtest: {reason}"));
-        TurnOutcome { ran: false, run_id: None, version: None, approved, refusal: Some(reason), lines }
+        TurnOutcome {
+            ran: false,
+            run_id: None,
+            version: None,
+            approved,
+            refusal: Some(reason),
+            gate_exit: None,
+            lines,
+        }
+    }
+
+    /// A flip-guard refusal carrying a typed gate exit (U6). Runs nothing.
+    fn refused_gate(reason: String, exit: GateExit, mut lines: Vec<String>) -> Self {
+        lines.push(format!("flip refused [{exit:?}]: {reason}"));
+        TurnOutcome {
+            ran: false,
+            run_id: None,
+            version: None,
+            approved: None,
+            refusal: Some(reason),
+            gate_exit: Some(exit),
+            lines,
+        }
     }
 }
 
@@ -266,6 +321,49 @@ pub async fn turn(cfg: TurnConfig) -> anyhow::Result<TurnOutcome> {
 
     let mut lines = Vec::new();
 
+    // --- Code-turn native bump (U2/KTD7): version+1, zero param diff, no
+    // governance cycle. Subsumes the manual seed-manifest-and-rerun workaround.
+    // The compiled-in strategy source (a changed orb.rs) moves strategy_code_hash;
+    // the version label bumps so the run is `runs compare` Code-mode comparable
+    // against the prior head. ---
+    if cfg.code_bump {
+        if cfg.override_param.is_some() {
+            anyhow::bail!(
+                "LS_TURN_CODE_BUMP is a version-only bump — it cannot be combined with LS_TURN_PARAM \
+                 (a governed param turn); run one or the other"
+            );
+        }
+        let new_version = current_version + 1;
+        // Zero overrides: the round-trip re-serializes the resolved current params
+        // (companion-field seeding — any newer #[serde(default)] param the prior
+        // head predates is already at its default in current_params) and bumps
+        // only the version.
+        let new_params = apply_overrides(&current_params, &BTreeMap::new(), new_version)?;
+        // Defence-in-depth: the manifest param delta must be exactly
+        // strategy_version — nothing else may have moved.
+        let diff = param_diff(&current_params, &new_params);
+        if diff != ["strategy_version".to_string()] {
+            anyhow::bail!(
+                "code bump changed {diff:?}, expected only strategy_version — refusing before backtest"
+            );
+        }
+        lines.push(format!(
+            "code turn: strategy v{current_version} -> v{new_version}, params unchanged \
+             (new strategy_code_hash rides the compiled strategy source)"
+        ));
+        let outcome = run_one_backtest(&cfg, new_params, range).await?;
+        lines.push(format!("finalized run {}", outcome.run_id));
+        return Ok(TurnOutcome {
+            ran: true,
+            run_id: Some(outcome.run_id),
+            version: Some(new_version),
+            approved: None,
+            refusal: None,
+            gate_exit: None,
+            lines,
+        });
+    }
+
     // --- Rerun mode: no override → no governance, no version bump (KTD3). ---
     let Some(param) = cfg.override_param.clone() else {
         lines.push(format!(
@@ -279,6 +377,7 @@ pub async fn turn(cfg: TurnConfig) -> anyhow::Result<TurnOutcome> {
             version: Some(current_version),
             approved: None,
             refusal: None,
+            gate_exit: None,
             lines,
         });
     };
@@ -287,6 +386,16 @@ pub async fn turn(cfg: TurnConfig) -> anyhow::Result<TurnOutcome> {
     let target = cfg
         .override_target
         .ok_or_else(|| anyhow::anyhow!("override target is required for a param turn"))?;
+
+    // U6/KTD1: the flip guard — a pre-flight bail beside the expect-version
+    // assertion. A param flip is structurally impossible without a matching,
+    // unedited GO verdict for the exact candidate being flipped (R4, R5). Runs
+    // before the pipeline, bounds cap, and seed assertion; refusals exit through
+    // the typed gate-exit registry.
+    if let Some((reason, exit)) = flip_guard(&cfg, &param, target, prior.as_ref())? {
+        return Ok(TurnOutcome::refused_gate(reason, exit, lines));
+    }
+
     let current_numeric = current_params.numeric_summary();
     let current_value = *current_numeric.get(&param).ok_or_else(|| {
         anyhow::anyhow!("'{param}' is not a numeric OrbParams field — cannot turn it")
@@ -394,14 +503,129 @@ pub async fn turn(cfg: TurnConfig) -> anyhow::Result<TurnOutcome> {
     ));
     let outcome = run_one_backtest(&cfg, new_params, range).await?;
     lines.push(format!("finalized run {}", outcome.run_id));
+
+    // U6: the flip look is a trial. The turn (running in the fresh child under the
+    // governed orchestrator) is the single writer for the flip look, appended
+    // after the backtest finalizes.
+    if let Some(flip) = &cfg.candidate {
+        append_flip_trial(flip, prior.as_ref(), new_version, &mut lines)?;
+    }
+
     Ok(TurnOutcome {
         ran: true,
         run_id: Some(outcome.run_id),
         version: Some(new_version),
         approved: Some(true),
         refusal: None,
+        gate_exit: None,
         lines,
     })
+}
+
+/// The Phase-B flip guard (U6, R4/R5; KTD1). Returns `Some((reason, exit))` to
+/// refuse, `None` to proceed. Refuses a param flip that lacks a candidate, whose
+/// candidate has no GO verdict (or a STOP), whose pre-register was edited after
+/// its GO, whose flip target does not match the candidate, whose GO ran against a
+/// different sample than the anchor run, or whose GO has no matching gate-reading
+/// ledger record.
+fn flip_guard(
+    cfg: &TurnConfig,
+    param: &str,
+    target: f64,
+    prior: Option<&(String, Manifest)>,
+) -> anyhow::Result<Option<(String, GateExit)>> {
+    let Some(flip) = &cfg.candidate else {
+        return Ok(Some((
+            format!(
+                "param flip '{param}' -> {target:.4} without a candidate (LS_TURN_CANDIDATE) — a \
+                 governed flip requires a candidate with a recorded GO (R4)"
+            ),
+            GateExit::UngovernedFlip,
+        )));
+    };
+    let loaded = crate::candidates::load(&flip.candidate_dir)?;
+    let slug = loaded.values.slug.clone();
+
+    let Some(verdict) = read_gate_verdict(&flip.candidate_dir)? else {
+        return Ok(Some((
+            format!("candidate '{slug}' has no gate verdict — run `turn diagnose` first (R4)"),
+            GateExit::NoGoVerdict,
+        )));
+    };
+    if verdict.decision != "GO" {
+        return Ok(Some((
+            format!("candidate '{slug}' gate verdict is {} (not GO) — the flip refuses", verdict.decision),
+            GateExit::NoGoVerdict,
+        )));
+    }
+    // R5 / AE1: an edited pre-register no longer matches its verdict's recorded hash.
+    if verdict.pre_register_hash != loaded.content_hash {
+        return Ok(Some((
+            format!(
+                "candidate '{slug}' pre-register was edited after its GO (current hash {} != verdict {}) \
+                 — the flip refuses (R5)",
+                loaded.content_hash, verdict.pre_register_hash
+            ),
+            GateExit::PreRegisterHashMismatch,
+        )));
+    }
+    if !loaded.values.flip_matches(param, target) {
+        return Ok(Some((
+            format!("flip '{param}' -> {target:.4} does not match candidate '{slug}' declaration"),
+            GateExit::FlipMismatch,
+        )));
+    }
+    // The GO must have run against the same sample the flip anchors on.
+    let anchor_fp = prior.map(|(_, m)| m.catalog_fingerprint.clone()).unwrap_or_default();
+    if verdict.catalog_fingerprint != anchor_fp {
+        return Ok(Some((
+            format!(
+                "candidate '{slug}' GO ran against sample {} but the anchor run's sample is {} — \
+                 fingerprint drift, the flip refuses",
+                verdict.catalog_fingerprint, anchor_fp
+            ),
+            GateExit::FingerprintDrift,
+        )));
+    }
+    // A GO with no matching gate-reading ledger record is a re-registration that
+    // never actually diagnosed — refuse (R5).
+    let has_record = flip.ledger.read_all()?.iter().any(|r| {
+        r.candidate == slug
+            && matches!(r.look, LookKind::GateReading)
+            && r.verdict.starts_with("GO")
+            && r.lineage.catalog_fingerprint == anchor_fp
+    });
+    if !has_record {
+        return Ok(Some((
+            format!("candidate '{slug}' GO has no matching gate-reading ledger record — the flip refuses (R5)"),
+            GateExit::MissingLedgerRecord,
+        )));
+    }
+    Ok(None)
+}
+
+/// Append the flip look's trial record (U6). Called after a guarded flip's
+/// backtest finalizes.
+fn append_flip_trial(
+    flip: &GovernedFlip,
+    prior: Option<&(String, Manifest)>,
+    new_version: u32,
+    lines: &mut Vec<String>,
+) -> anyhow::Result<()> {
+    let loaded = crate::candidates::load(&flip.candidate_dir)?;
+    let anchor_fp = prior.map(|(_, m)| m.catalog_fingerprint.clone()).unwrap_or_default();
+    let trial = TrialRecord::new(
+        loaded.values.slug.clone(),
+        loaded.values.family.clone(),
+        LookKind::Flip,
+        SampleLineage { catalog_fingerprint: anchor_fp, parent_fingerprint: None },
+        BTreeMap::new(),
+        format!("flip approved v{new_version}"),
+        Utc::now().to_rfc3339(),
+    );
+    flip.ledger.append(&trial)?;
+    lines.push(format!("appended flip trial for candidate '{}'", loaded.values.slug));
+    Ok(())
 }
 
 /// Build the captured context for the turn's envelope: the latest finalized
@@ -475,6 +699,13 @@ pub enum CompareMode {
     /// fingerprint / range / universe deltas are reported and require a
     /// supplied explanation.
     Data,
+    /// The code-turn verdict (U2/KTD7): a version-only param diff with an
+    /// **expected** code-hash delta reported (not a failure), every other
+    /// identity field (fingerprint / range / universe / metadata) still
+    /// hard-checked. This is the mode that PASSes a native code-turn re-baseline,
+    /// retiring the "no `runs compare` mode PASSes a code turn" workaround where
+    /// the operator had to read a param-mode FAIL as the re-baseline evidence.
+    Code,
 }
 
 /// `runs compare` config.
@@ -651,6 +882,47 @@ pub fn compare(cfg: &CompareConfig) -> anyhow::Result<CompareOutcome> {
                         ok = false;
                     }
                 }
+            }
+            ok
+        }
+        CompareMode::Code => {
+            // A code turn bumps only the version and moves the strategy_code_hash;
+            // every other identity field must hold, so the delta is attributable
+            // to the code change alone (the v27/v29 re-baseline shape, KTD7).
+            let mut ok = true;
+            if diff != ["strategy_version".to_string()] {
+                lines.push(format!(
+                    "FAIL: code turn requires a version-only param diff, got {diff:?}"
+                ));
+                ok = false;
+            } else {
+                lines.push("version-only delta: strategy_version (code turn)".to_string());
+            }
+            // The code-hash delta is the whole point — its ABSENCE is the failure.
+            if code_equal {
+                lines.push(
+                    "FAIL: strategy_code_hash is unchanged — a code turn must move it (use param/data mode)"
+                        .to_string(),
+                );
+                ok = false;
+            } else {
+                lines.push("strategy_code_hash delta: expected (code-turn re-baseline)".to_string());
+            }
+            if !fp_equal {
+                lines.push("FAIL: catalog_fingerprint differs (in-range data drift)".to_string());
+                ok = false;
+            }
+            if !range_equal {
+                lines.push("FAIL: data_range differs".to_string());
+                ok = false;
+            }
+            if !universe_equal {
+                lines.push("FAIL: universe_hash differs".to_string());
+                ok = false;
+            }
+            if !metadata_equal {
+                lines.push("FAIL: universe_metadata_hash differs".to_string());
+                ok = false;
             }
             ok
         }
@@ -1162,7 +1434,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
 // ===========================================================================
 
 /// A usage string enumerating the valid subcommands (KTD2).
-const USAGE: &str = "usage: lab-research <turn | runs compare | replay | catalog status | catalog compact | analyze --scaffold | report mfe | report tiers>";
+const USAGE: &str = "usage: lab-research <turn | turn diagnose | turn governed | runs compare | replay | catalog status | catalog compact | analyze --scaffold | report mfe | report tiers | fingerprint | trials count | trials record>";
 
 /// Parse an optional `YYYYMMDD` range from a pair of env vars, returning `None`
 /// when neither is set and erroring when only one is.
@@ -1228,15 +1500,36 @@ fn print_lines(lines: &[String]) {
 fn dispatch() -> anyhow::Result<ExitCode> {
     let sub = std::env::args().nth(1);
     match sub.as_deref() {
-        Some("turn") => {
-            let cfg = turn_config_from_env()?;
-            let rt = tokio::runtime::Runtime::new()?;
-            let out = rt.block_on(turn(cfg))?;
-            print_lines(&out.lines);
-            // A turn that ran a backtest succeeds; a governance refusal is a
-            // non-zero exit.
-            Ok(ok_fail(out.ran))
-        }
+        Some("turn") => match std::env::args().nth(2).as_deref() {
+            // U5: the Phase-A diagnose stage as a standalone subcommand.
+            Some("diagnose") => {
+                let out = run_diagnose_cli()?;
+                print_lines(&out.lines);
+                Ok(out.exit.exit_code())
+            }
+            // U7: the one-shot governed orchestrator (parent).
+            Some("governed") => {
+                let out = crate::runner::governed::run_governed_cli()?;
+                print_lines(&out.lines);
+                Ok(out.exit.exit_code())
+            }
+            _ => {
+                // U7: the fresh child running the flip stage (the decider).
+                if std::env::var("LS_GOVERNED_CHILD").map(|v| v == "1").unwrap_or(false) {
+                    return crate::runner::governed::run_governed_child_cli();
+                }
+                let cfg = turn_config_from_env()?;
+                let rt = tokio::runtime::Runtime::new()?;
+                let out = rt.block_on(turn(cfg))?;
+                print_lines(&out.lines);
+                // A flip-guard refusal exits through its typed gate code (U6); a
+                // pipeline denial is the generic non-zero; a run succeeds.
+                match out.gate_exit {
+                    Some(exit) => Ok(exit.exit_code()),
+                    None => Ok(ok_fail(out.ran)),
+                }
+            }
+        },
         Some("runs") => match std::env::args().nth(2).as_deref() {
             Some("compare") => {
                 let out = compare(&compare_config_from_env()?)?;
@@ -1291,11 +1584,39 @@ fn dispatch() -> anyhow::Result<ExitCode> {
             }
             other => anyhow::bail!("unknown `report` subcommand {other:?} — want `report mfe` | `report tiers`\n{USAGE}"),
         },
+        Some("trials") => match std::env::args().nth(2).as_deref() {
+            Some("count") => {
+                let out = crate::trials::count_trials(&trials_ledger_from_env())?;
+                print_lines(&out.lines);
+                Ok(ExitCode::SUCCESS)
+            }
+            Some("record") => {
+                // Utc::now at the CLI seam; the library takes the stamp as a
+                // parameter so tests stay deterministic.
+                let out = crate::trials::record_from_env(
+                    &trials_ledger_from_env(),
+                    Utc::now().to_rfc3339(),
+                )?;
+                print_lines(&out.lines);
+                Ok(ExitCode::SUCCESS)
+            }
+            other => anyhow::bail!(
+                "unknown `trials` subcommand {other:?} — want `trials count` | `trials record`\n{USAGE}"
+            ),
+        },
+        Some("fingerprint") => {
+            // U1/KTD5: print the binary's embedded lab-source fingerprint. A
+            // structured line (not free-text), so it renders verbatim; the
+            // orchestrator (U7) parses `fingerprint: <hex>` from a freshly built
+            // binary and requires it to match the recomputed tree hash.
+            print_lines(&[format!("fingerprint: {}", crate::fingerprint::EMBEDDED)]);
+            Ok(ExitCode::SUCCESS)
+        }
         other => anyhow::bail!("unknown subcommand {other:?}\n{USAGE}"),
     }
 }
 
-fn turn_config_from_env() -> anyhow::Result<TurnConfig> {
+pub(crate) fn turn_config_from_env() -> anyhow::Result<TurnConfig> {
     let data_home = data_home_from_env()?;
     let mut cfg = TurnConfig::new(data_home, Utc::now());
     cfg.override_param = std::env::var("LS_TURN_PARAM").ok().filter(|s| !s.trim().is_empty());
@@ -1324,14 +1645,31 @@ fn turn_config_from_env() -> anyhow::Result<TurnConfig> {
         Err(_) => None,
     };
     cfg.expect_gap_min_pct = env_f64("LS_TURN_EXPECT_GAP")?;
+    // U2/KTD7: a code-turn native version bump (any non-empty value enables it).
+    cfg.code_bump = std::env::var("LS_TURN_CODE_BUMP")
+        .map(|v| !v.trim().is_empty() && v.trim() != "0")
+        .unwrap_or(false);
+    if cfg.code_bump && cfg.override_param.is_some() {
+        anyhow::bail!("LS_TURN_CODE_BUMP cannot be combined with LS_TURN_PARAM");
+    }
+    // U6: the governed-flip binding from LS_TURN_CANDIDATE (the guard refuses a
+    // param flip without it).
+    cfg.candidate = std::env::var("LS_TURN_CANDIDATE")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(|slug| GovernedFlip {
+            candidate_dir: candidates_home().join(&slug),
+            ledger: trials_ledger_from_env(),
+        });
     Ok(cfg)
 }
 
 fn compare_config_from_env() -> anyhow::Result<CompareConfig> {
     let mode = match std::env::var("LS_COMPARE_MODE").as_deref() {
         Ok("data") => CompareMode::Data,
+        Ok("code") => CompareMode::Code,
         Ok("param") | Err(_) => CompareMode::Param,
-        Ok(other) => anyhow::bail!("LS_COMPARE_MODE must be param | data, got {other:?}"),
+        Ok(other) => anyhow::bail!("LS_COMPARE_MODE must be param | data | code, got {other:?}"),
     };
     Ok(CompareConfig {
         data_home: data_home_from_env()?,
@@ -1385,6 +1723,80 @@ fn report_config_from_env() -> anyhow::Result<crate::runner::report::ReportConfi
         // read-only, so a default is safe.)
         run_id: std::env::var("LS_REPORT_RUN").ok().filter(|s| !s.trim().is_empty()),
     })
+}
+
+/// Resolve the git-tracked candidates home (U4/KTD2). `LS_CANDIDATES_HOME`
+/// overrides (tests point it at a fixture); otherwise the fixed
+/// `<crate>/candidates` dir baked from `CARGO_MANIFEST_DIR`.
+pub(crate) fn candidates_home() -> PathBuf {
+    std::env::var("LS_CANDIDATES_HOME")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("candidates"))
+}
+
+/// Run the `turn diagnose` stage from env (U5). Resolves the candidate by slug,
+/// runs the freeze check (a git-dirty frozen input is the `FrozenInputDirty` gate),
+/// resolves the anchor run's catalog fingerprint, and diagnoses.
+pub(crate) fn run_diagnose_cli() -> anyhow::Result<crate::runner::diagnose::DiagnoseOutcome> {
+    use crate::runner::diagnose::{diagnose, DiagnoseConfig, DiagnoseOutcome, GateExit};
+
+    let data_home = data_home_from_env()?;
+    let slug = std::env::var("LS_TURN_CANDIDATE")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("LS_TURN_CANDIDATE (the candidate slug) is required for `turn diagnose`"))?;
+    let candidate_dir = candidates_home().join(&slug);
+
+    // Freeze check (KTD2): refuse a git-dirty frozen input, capture the commit.
+    let loaded = crate::candidates::load(&candidate_dir)?;
+    let freeze = match crate::candidates::freeze_check(&loaded) {
+        Ok(f) => f,
+        Err(e) => {
+            return Ok(DiagnoseOutcome {
+                go: false,
+                exit: GateExit::FrozenInputDirty,
+                gate_verdict_path: None,
+                lines: vec![
+                    nautilus_ls::scrub::scrub_secrets(&e.to_string()),
+                    "STOP frozen-input-dirty".to_string(),
+                ],
+            });
+        }
+    };
+
+    let anchor = latest_finalized_run(&data_home)?
+        .ok_or_else(|| {
+            anyhow::anyhow!("no finalized anchor run in {} — run a baseline first", data_home.display())
+        })?
+        .1
+        .catalog_fingerprint;
+
+    let cfg = DiagnoseConfig {
+        candidate_dir,
+        ledger: trials_ledger_from_env(),
+        anchor_fingerprint: anchor,
+        parent_fingerprint: std::env::var("LS_DIAGNOSE_PARENT_FP").ok().filter(|s| !s.trim().is_empty()),
+        freeze_commit: freeze.commit,
+        recorded_utc: Utc::now().to_rfc3339(),
+    };
+    diagnose(&cfg)
+}
+
+/// Resolve the TRIALS ledger (U3/KTD2). `LS_TRIALS_LEDGER` overrides (bin-level
+/// tests point it at a tempdir); otherwise the fixed tracked home under the lab
+/// crate root (`<crate>/ledger/trials.jsonl`), baked from `CARGO_MANIFEST_DIR` so
+/// the path is stable regardless of the invoking cwd.
+pub(crate) fn trials_ledger_from_env() -> crate::trials::TrialsLedger {
+    let path = std::env::var("LS_TRIALS_LEDGER")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            Path::new(env!("CARGO_MANIFEST_DIR")).join(crate::trials::LEDGER_RELPATH)
+        });
+    crate::trials::TrialsLedger::new(path)
 }
 
 fn scaffold_config_from_env() -> anyhow::Result<ScaffoldConfig> {

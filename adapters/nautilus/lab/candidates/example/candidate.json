@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "slug": "example",
+  "family": "class-b",
+  "phase_a": "bespoke",
+  "flip_param": "ratio_atr_alpha",
+  "flip_value": 0.5,
+  "diagnostic": {
+    "argv": ["uv", "run", "--with", "pyarrow", "python3", "diagnostic.py"],
+    "file": "diagnostic.py",
+    "content_hash": "0e0839b2723c4e367618189d56c331fd484593ab3026492984cdb99545cd7134"
+  },
+  "twin": {
+    "argv": ["uv", "run", "--with", "pyarrow", "python3", "twin.py"],
+    "file": "twin.py",
+    "content_hash": "425110acc8bbb635c0cc4cd313fea2029f96ae67a7be4d8a8d5e27bb0b14f1b5"
+  },
+  "readings": {
+    "collinearity_r": { "tolerance": 0.01, "precision": 4 }
+  },
+  "thresholds": [
+    { "reading": "collinearity_r", "comparator": "lt", "value": 0.7 }
+  ],
+  "keep_anchor": "size-invariant return-on-risk strict flip PASS with risk-cap dominance <= 0.40"
+}

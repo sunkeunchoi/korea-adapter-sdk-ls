@@ -310,6 +310,28 @@ pub struct EdgeEvaluation {
     pub failing_conditions: Vec<String>,
 }
 
+impl EdgeEvaluation {
+    /// The strategy-loop KEEP crux, as ONE definition (the governed turn's verdict
+    /// reads this — never re-expresses the rule inline): a flip KEEPs iff its
+    /// size-invariant **return-on-risk strictly exceeds** the prior head's **and**
+    /// risk-cap dominance holds. When either run carries no return-on-risk (a
+    /// legacy / pre-CLASS-B head that predates the metric), fall back to the edge
+    /// flag — the size-honest RoR comparison is undefined without both sides.
+    ///
+    /// `risk_dominance_pass == None` is "risk info absent" (a legacy run, not a
+    /// failed check), so it is **not** a dominance failure here — such a run's
+    /// dominance was already gated on P&L-share inside [`Self::is_edge`]; only an
+    /// explicit `Some(false)` (a computed, tripped risk-cap dominance) blocks KEEP.
+    pub fn keeps_over(&self, prior: Option<&EdgeEvaluation>) -> bool {
+        match (self.return_on_risk, prior.and_then(|p| p.return_on_risk)) {
+            (Some(new_ror), Some(prior_ror)) => {
+                new_ror > prior_ror && self.risk_dominance_pass != Some(false)
+            }
+            _ => self.is_edge,
+        }
+    }
+}
+
 /// The performance report artifact.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct PerformanceReport {
@@ -750,6 +772,67 @@ fn max_drawdown(curve: &[EquityPoint]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An `EdgeEvaluation` with only the `keeps_over` inputs set (the rest at
+    /// harmless defaults) — for testing the KEEP crux in isolation.
+    fn edge(return_on_risk: Option<f64>, risk_dominance_pass: Option<bool>, is_edge: bool) -> EdgeEvaluation {
+        EdgeEvaluation {
+            num_trades: 1,
+            pnl_total: 0.0,
+            win_rate: None,
+            expectancy: None,
+            max_abs_pnl_share: 0.0,
+            dominance_pass: true,
+            degenerate_zero_pnl: false,
+            per_symbol: vec![],
+            return_on_risk,
+            mean_realized_r: None,
+            risk_capital_total: None,
+            max_risk_capital_share: None,
+            risk_dominance_pass,
+            degenerate_zero_risk: false,
+            is_edge,
+            failing_conditions: vec![],
+        }
+    }
+
+    #[test]
+    fn keeps_over_keeps_when_ror_strictly_beats_prior_and_dominance_holds() {
+        let new = edge(Some(0.1262), Some(true), true);
+        let prior = edge(Some(0.1171), Some(true), true);
+        assert!(new.keeps_over(Some(&prior)), "0.1262 > 0.1171 with dominance ok → KEEP");
+    }
+
+    #[test]
+    fn keeps_over_reverts_when_ror_does_not_strictly_improve() {
+        // Equal RoR is not a strict improvement → REVERT (pins the `>`, not `>=`).
+        let new = edge(Some(0.1171), Some(true), true);
+        let prior = edge(Some(0.1171), Some(true), true);
+        assert!(!new.keeps_over(Some(&prior)), "tie is not a strict beat → REVERT");
+        // Lower RoR → REVERT even though is_edge is true.
+        let lower = edge(Some(0.1100), Some(true), true);
+        assert!(!lower.keeps_over(Some(&prior)));
+    }
+
+    #[test]
+    fn keeps_over_reverts_when_risk_dominance_tripped_even_if_ror_improves() {
+        let new = edge(Some(0.20), Some(false), true); // dominance computed-and-failed
+        let prior = edge(Some(0.10), Some(true), true);
+        assert!(!new.keeps_over(Some(&prior)), "a tripped risk-cap dominance blocks KEEP");
+    }
+
+    #[test]
+    fn keeps_over_falls_back_to_is_edge_when_ror_absent() {
+        // A legacy head (no prior RoR) → decide on the edge flag, not RoR.
+        let new_edge_true = edge(None, None, true);
+        assert!(new_edge_true.keeps_over(Some(&edge(None, None, true))));
+        let new_edge_false = edge(None, None, false);
+        assert!(!new_edge_false.keeps_over(Some(&edge(Some(0.1), Some(true), true))));
+        // None-dominance (risk info absent) is NOT a failure when RoR is present on
+        // both sides.
+        let new = edge(Some(0.2), None, true);
+        assert!(new.keeps_over(Some(&edge(Some(0.1), Some(true), true))), "None dominance = risk-absent, not a fail");
+    }
 
     fn trade(symbol: &str, pnl: f64, ts_open: u64, ts_close: u64) -> TradeRecord {
         TradeRecord {
