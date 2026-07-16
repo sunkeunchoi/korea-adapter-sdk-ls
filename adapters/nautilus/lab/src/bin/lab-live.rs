@@ -1,4 +1,6 @@
-//! `lab-live` — operator-gated live paper session (U6). Never runs in the gate.
-fn main() -> anyhow::Result<()> {
+//! `lab-live` — the dispatch pre-flight gate (`--dispatch`) and chain genesis
+//! (`--genesis`); the operator-gated mounted session lands in U6. Never runs the
+//! mounted session in the commit gate.
+fn main() -> std::process::ExitCode {
     nautilus_ls_lab::runner::live::main_cli()
 }

@@ -238,6 +238,49 @@ hand-authored against it and never adjusted to the result (R3).
      cargo run --bin lab-research analyze --scaffold
    ```
 
+## Dispatch pre-flight gate (`lab-live --dispatch`)
+
+Before any session, `lab-live --dispatch` machine-checks every session precondition and
+records the attempt in the append-only, hash-chained **dispatch chain**
+(`<data_home>/dispatch/chain.jsonl`). It is useful immediately — a pre-check ahead of the
+manual recipe below — and is the frame the mounted session (U6) wires into.
+
+Register the chain once (an explicit, nonce-gated rung-1 genesis), then run the gate
+before each session:
+
+```
+# One-time chain genesis (operator-attended: a fresh nonce, a TTY):
+LS_DATA_HOME=./data LS_DISPATCH_NONCE=$(date +%s) cargo run --bin lab-live -- --genesis
+
+# Pre-flight before a session:
+LS_DATA_HOME=./data LS_TRADING_ENV=paper LS_DISPATCH_LANE=paper \
+  cargo run --bin lab-live -- --dispatch
+```
+
+The gate runs nine tiered checks (R1/R3). **Non-deferrable** reds abort with no override:
+the trading-env interlock, account flat-start (holdings), kill-switch state, and rung
+authorization. **Deferrable** reds — advisory lock, session window, catalog watermark,
+stranded resting orders, budget headroom — abort *unless* the operator records an
+explicit, named deferral with a fresh nonce:
+
+```
+LS_DISPATCH_DEFER=stranded_orders LS_DISPATCH_NONCE=$(date +%s) \
+  LS_DATA_HOME=./data ... cargo run --bin lab-live -- --dispatch
+```
+
+Every attempt against a valid chain leaves a record — a refusal is chain history, not a
+silent exit. A gateway throttle (IGW00201) exits with a distinct code (75) as a **re-run**
+and is never written as a terminal record (KTD5). Exit `0` = green (session authorized),
+non-zero = refused.
+
+**Offline-first / stubbed-binary seam.** Every check is pure and fixture-driven; the
+gateway probes (`LS_DISPATCH_STUB_PROBES=clear,clear`), catalog freshness
+(`LS_DISPATCH_STUB_CATALOG=ok|stale|empty`), budget (`LS_DISPATCH_STUB_BUDGET=ok|low|
+unmeasured`), and clock (`LS_DISPATCH_NOW_UNIX`) can be stubbed so the whole gate runs
+without a gateway. With no gateway stub set, the gate builds the resolved-lane paper
+client and does the real t0424/t0425 reads (the operator path; U6 threads the same client
+through the mounted session).
+
 ## Live paper session (operator-gated)
 
 The `lab-live` bin runs the **same** ORB against the paper gateway and emits the same

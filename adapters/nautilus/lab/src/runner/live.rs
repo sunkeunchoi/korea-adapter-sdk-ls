@@ -128,23 +128,420 @@ pub fn record_reconcile(dq: &mut DataQualityReport, outcome: &DrivenOutcome, sym
     }
 }
 
-/// CLI entry point for the operator-gated `lab-live` bin. Refuses unless
-/// `LS_TRADING_ENV=paper`; the full LiveNode session is the operator's to run per the
-/// documented recipe (`adapters/nautilus/lab/README.md`). This offline-safe stub
-/// installs the scrubber, enforces the paper interlock, and reports the staged status
-/// rather than touching the gateway from a non-operator context.
-pub fn main_cli() -> anyhow::Result<()> {
-    nautilus_ls::scrub::install();
-    if std::env::var("LS_TRADING_ENV").as_deref() != Ok("paper") {
-        anyhow::bail!("refusing to run: set LS_TRADING_ENV=paper (this adapter is paper-only)");
+// ===========================================================================
+// U3 — the `lab-live --dispatch` pre-flight gate (R1–R4).
+//
+// A standalone, offline-runnable pre-check ahead of the manual operator recipe: it
+// gathers a DispatchContext, runs the tiered checks, records the attempt in the
+// dispatch chain, and reports. Everything a machine can check before a session runs is
+// checked here; the LiveNode mount lands in U6 behind a green dispatch.
+//
+// Offline-first: the environmental probes normally read from live state are gathered
+// through override seams so the whole gate is fixture-driven and testable without a
+// gateway (the documented stubbed-binary pattern) — the gateway probes via
+// `LS_DISPATCH_STUB_PROBES`, catalog freshness via `LS_DISPATCH_STUB_CATALOG`, the
+// clock via `LS_DISPATCH_NOW_UNIX`. When no gateway stub is set the gate builds the
+// resolved-lane paper client and does the real t0424/t0425 reads (the operator path;
+// U6 threads this same client through the mounted session).
+// ===========================================================================
+
+use std::process::ExitCode;
+
+use chrono::{TimeZone, Utc};
+
+use nautilus_ls::lock::is_held;
+
+use crate::dispatch::chain::{
+    kst_trading_date, ChainStatus, DispatchChain, DispatchOutcome, RecordKind, SafetyTripKind,
+    SessionDispatch,
+};
+use crate::dispatch::checks::{
+    decide, parse_deferrals, probe_flat_start, probe_stranded_orders, run_checks, BudgetHeadroom,
+    DispatchContext, GateResult, GatewayProbe, LanePosture, WeekdayKrxCalendar, TradingCalendar,
+};
+use crate::dispatch::nonce::{detect_unattended_marker, OperatorGate};
+
+/// The dispatch gate's resolved configuration (env-gathered, but constructible directly
+/// so the library tests bypass the process environment).
+#[derive(Debug, Clone)]
+pub struct DispatchCliConfig {
+    /// The data home (chain, catalog, spend ledger, registry live here).
+    pub data_home: std::path::PathBuf,
+    /// The rung this dispatch requests (guard rail, R15).
+    pub requested_rung: u8,
+    /// The lane posture (governs rung-auth tiering).
+    pub lane: LanePosture,
+    /// The lane env-file path (present-check for the interlock).
+    pub lane_env_path: std::path::PathBuf,
+    /// `LS_TRADING_ENV`.
+    pub trading_env: Option<String>,
+    /// Named deferral items (`LS_DISPATCH_DEFER`).
+    pub deferrals: Vec<String>,
+    /// The operator nonce (`LS_DISPATCH_NONCE`).
+    pub nonce: Option<String>,
+    /// Wall-clock unix seconds (injectable for deterministic tests).
+    pub now_unix: i64,
+    /// Catalog freshness stub (`ok` | `stale` | `empty`); absent → not evaluated (red).
+    pub catalog_stub: Option<String>,
+    /// Gateway-probe stub (`flat,stranded`, each `clear` | `blocked` | `throttled`);
+    /// absent → real paper reads.
+    pub probe_stub: Option<(GatewayProbe, GatewayProbe)>,
+    /// Budget stub (`ok` | `low` | `unmeasured`); absent → `ok`.
+    pub budget_stub: Option<String>,
+    /// The per-session budget plan-ahead need (calls).
+    pub budget_plan: i64,
+    /// Library-only override of the attended/unattended detection: `Some(true)` forces
+    /// attended, `Some(false)` forces unattended, `None` detects (CI env / TTY). The
+    /// bin's env gather always leaves this `None` — it is not reachable from the
+    /// environment, so the no-TTY refusal a real operator/agent shell sees can never be
+    /// suppressed from the CLI; it exists only so a library test can exercise the
+    /// applied-deferral path (which is unreachable in a no-TTY test harness by design).
+    pub attended_override: Option<bool>,
+}
+
+/// The gate's outcome: the verdict, the report lines, and whether a record was appended.
+#[derive(Debug, Clone)]
+pub struct DispatchGateOutcome {
+    /// The gate verdict.
+    pub result: GateResult,
+    /// The report lines (verbatim, structured; free text is scrubbed at source).
+    pub lines: Vec<String>,
+    /// Whether a session-dispatch record was appended to the chain.
+    pub appended: bool,
+}
+
+fn parse_probe(s: &str) -> GatewayProbe {
+    match s.trim() {
+        "clear" => GatewayProbe::Clear,
+        "throttled" => GatewayProbe::Throttled,
+        other => GatewayProbe::Blocked(format!("stub-blocked ({other})")),
     }
-    // The live session (lock acquisition, LiveNode mount + run, fail-closed teardown,
-    // artifact finalize) is documented as an operator recipe; wiring it end-to-end
-    // requires live credentials + a KRX window and is never driven by the gate.
-    anyhow::bail!(
-        "lab-live is operator-gated: follow the recipe in adapters/nautilus/lab/README.md \
-         (live credentials + an open KRX window required)"
+}
+
+/// Gather the gate config from the process environment.
+pub fn dispatch_gate_config_from_env() -> anyhow::Result<DispatchCliConfig> {
+    let data_home = std::env::var("LS_DATA_HOME")
+        .map_err(|_| anyhow::anyhow!("LS_DATA_HOME is required"))?
+        .into();
+    let trading_env = std::env::var("LS_TRADING_ENV").ok().filter(|s| !s.trim().is_empty());
+    let lane = match std::env::var("LS_DISPATCH_LANE").as_deref() {
+        Ok("live") => LanePosture::Live,
+        Ok("paper") => LanePosture::Paper,
+        // Default: a paper trading-env is a paper pre-check (rung informational); any
+        // other resolved env is treated as a live-lane dispatch.
+        _ => {
+            if trading_env.as_deref().map(|e| e.eq_ignore_ascii_case("paper")).unwrap_or(false) {
+                LanePosture::Paper
+            } else {
+                LanePosture::Live
+            }
+        }
+    };
+    let lane_name = std::env::var("LS_LANE").unwrap_or_else(|_| "domestic".to_string());
+    let lane_env_path = std::env::var("LS_DISPATCH_LANE_ENV")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from(format!(".env.{lane_name}")));
+    let requested_rung = std::env::var("LS_DISPATCH_RUNG")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+    let now_unix = std::env::var("LS_DISPATCH_NOW_UNIX")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| Utc::now().timestamp());
+    let probe_stub = std::env::var("LS_DISPATCH_STUB_PROBES").ok().map(|raw| {
+        let mut it = raw.split(',');
+        let flat = parse_probe(it.next().unwrap_or("clear"));
+        let stranded = parse_probe(it.next().unwrap_or("clear"));
+        (flat, stranded)
+    });
+    Ok(DispatchCliConfig {
+        data_home,
+        requested_rung,
+        lane,
+        lane_env_path,
+        trading_env,
+        deferrals: parse_deferrals(std::env::var("LS_DISPATCH_DEFER").ok().as_deref()),
+        nonce: std::env::var("LS_DISPATCH_NONCE").ok().filter(|s| !s.trim().is_empty()),
+        now_unix,
+        catalog_stub: std::env::var("LS_DISPATCH_STUB_CATALOG").ok().filter(|s| !s.trim().is_empty()),
+        probe_stub,
+        budget_stub: std::env::var("LS_DISPATCH_STUB_BUDGET").ok().filter(|s| !s.trim().is_empty()),
+        budget_plan: std::env::var("LS_DISPATCH_BUDGET_PLAN").ok().and_then(|v| v.parse().ok()).unwrap_or(5),
+        // Never sourced from the environment: the no-TTY refusal cannot be suppressed
+        // from the CLI.
+        attended_override: None,
+    })
+}
+
+async fn resolve_real_probes(cfg: &DispatchCliConfig) -> anyhow::Result<(GatewayProbe, GatewayProbe)> {
+    use nautilus_model::enums::AccountType;
+    let adapter_cfg = nautilus_ls::config::LsAdapterConfig::from_lane_file(&cfg.lane_env_path);
+    let resolved = adapter_cfg.build_config().map_err(|e| anyhow::anyhow!("{e}"))?;
+    let account_no = resolved.account_no.clone();
+    let sdk = ls_sdk::LsSdk::new(resolved).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let client = nautilus_ls::execution::LsExecClient::new(
+        adapter_cfg.client_id.clone(),
+        adapter_cfg.trader_id.clone(),
+        account_no,
+        sdk,
+        AccountType::Cash,
     );
+    let flat = probe_flat_start(&client).await;
+    let stranded = probe_stranded_orders(&client).await;
+    Ok((flat, stranded))
+}
+
+fn build_context(
+    cfg: &DispatchCliConfig,
+    chain_authorized_rung: u8,
+    kill_switch_engaged: bool,
+    kill_switch_has_record: bool,
+    probes: (GatewayProbe, GatewayProbe),
+) -> DispatchContext {
+    let now_utc = Utc.timestamp_opt(cfg.now_unix, 0).single().unwrap_or_else(Utc::now);
+    let catalog = cfg.data_home.join("catalog");
+    let (watermark_fresh, bars_present) = match cfg.catalog_stub.as_deref() {
+        Some("ok") => (true, true),
+        Some("empty") => (true, false),
+        Some("stale") => (false, false),
+        _ => (false, false), // not evaluated → deferrable red
+    };
+    let budget = match cfg.budget_stub.as_deref() {
+        Some("unmeasured") => BudgetHeadroom::Unmeasured,
+        Some("low") => BudgetHeadroom::Measured { remaining: cfg.budget_plan - 1, plan: cfg.budget_plan },
+        _ => BudgetHeadroom::Measured { remaining: cfg.budget_plan + 1000, plan: cfg.budget_plan },
+    };
+    DispatchContext {
+        now_unix: cfg.now_unix,
+        today_kst: kst_trading_date(now_utc),
+        trading_env: cfg.trading_env.clone(),
+        lane_env_present: cfg.lane_env_path.exists(),
+        resolved_env_is_paper: cfg.trading_env.as_deref().map(|e| e.eq_ignore_ascii_case("paper")),
+        live_lock_held: is_held(&catalog, LockKind::Live),
+        window_open: WeekdayKrxCalendar.is_trading_session(now_utc),
+        watermark_fresh,
+        bars_present,
+        flat_start: probes.0,
+        stranded_orders: probes.1,
+        kill_switch_engaged,
+        kill_switch_has_record,
+        budget,
+        chain_authorized_rung,
+        requested_rung: cfg.requested_rung,
+        lane: cfg.lane,
+    }
+}
+
+/// Run the phase-1 dispatch gate: load the chain, gather the context, decide, record the
+/// attempt (on a valid chain, unless throttled), and report. A refusal is chain history,
+/// not a silent exit; a throttle is a re-run and is never written as a terminal record
+/// (KTD5).
+pub fn run_dispatch(cfg: &DispatchCliConfig) -> anyhow::Result<DispatchGateOutcome> {
+    let chain = DispatchChain::open(&cfg.data_home)?;
+    let state = chain.load();
+
+    // A record can only be appended onto a valid epoch. On no/defective chain, report
+    // and direct to registration — never append a session-dispatch onto a broken or
+    // unopened chain (it would violate the epoch-opens-with-a-registration invariant).
+    match &state.status {
+        ChainStatus::Valid => {}
+        ChainStatus::NoChain => {
+            return Ok(DispatchGateOutcome {
+                result: GateResult::Refused,
+                lines: vec![
+                    "DISPATCH refused: no dispatch chain (rung 0, suspended)".to_string(),
+                    "  run `lab-live --genesis` to register the chain at rung 1 first".to_string(),
+                ],
+                appended: false,
+            });
+        }
+        ChainStatus::Defective(why) => {
+            return Ok(DispatchGateOutcome {
+                result: GateResult::Refused,
+                lines: vec![
+                    format!("DISPATCH refused: dispatch chain is defective ({why}) — rung 0"),
+                    "  re-register the chain (epoch rollover) before any session".to_string(),
+                ],
+                appended: false,
+            });
+        }
+    }
+
+    let kill_switch_has_record = state
+        .records
+        .iter()
+        .any(|r| matches!(&r.body.kind, RecordKind::SafetyTrip(t) if t.trip == SafetyTripKind::KillSwitch));
+
+    let probes = match &cfg.probe_stub {
+        Some(p) => p.clone(),
+        None => {
+            let rt = tokio::runtime::Runtime::new()?;
+            rt.block_on(resolve_real_probes(cfg))?
+        }
+    };
+
+    let ctx = build_context(
+        cfg,
+        state.authorized_rung,
+        state.kill_switch_engaged,
+        kill_switch_has_record,
+        probes,
+    );
+
+    // The nonce authorizes the ACT of deferring. Without deferrals it is irrelevant.
+    let mut nonce_note: Option<String> = None;
+    let nonce_ok = if cfg.deferrals.is_empty() {
+        false
+    } else {
+        let unattended_marker = match cfg.attended_override {
+            Some(true) => None,
+            Some(false) => Some("forced unattended".to_string()),
+            None => detect_unattended_marker(),
+        };
+        let gate = OperatorGate {
+            unattended_marker,
+            nonce: cfg.nonce.clone(),
+            now_unix: cfg.now_unix,
+        };
+        match gate.authorize("deferral") {
+            Ok(()) => true,
+            Err(e) => {
+                nonce_note = Some(e);
+                false
+            }
+        }
+    };
+
+    let outcomes = run_checks(&ctx);
+    let decision = decide(&outcomes, &cfg.deferrals, nonce_ok);
+
+    let mut lines = Vec::new();
+    let header = match decision.result {
+        GateResult::Green => "DISPATCH green — session authorized",
+        GateResult::Refused => "DISPATCH refused",
+        GateResult::Throttled => "DISPATCH throttled — re-run (not recorded)",
+    };
+    lines.push(format!("{header} (rung {} requested, chain rung {})", cfg.requested_rung, state.authorized_rung));
+    for r in &decision.records {
+        let flag = if r.deferred { " [DEFERRED]" } else { "" };
+        lines.push(format!("  {:<22} {:?} {:?}{flag} — {}", r.name, r.tier, r.status, r.detail));
+    }
+    if let Some(note) = &nonce_note {
+        lines.push(format!("  deferral nonce rejected: {note}"));
+    }
+    if !decision.refused_items.is_empty() {
+        lines.push(format!("  red items: {}", decision.refused_items.join(", ")));
+    }
+
+    // A throttle is a re-run: never a terminal record (KTD5).
+    if decision.result == GateResult::Throttled {
+        return Ok(DispatchGateOutcome { result: decision.result, lines, appended: false });
+    }
+
+    let outcome = match decision.result {
+        GateResult::Green => DispatchOutcome::Green,
+        GateResult::Refused => DispatchOutcome::Refused,
+        GateResult::Throttled => unreachable!(),
+    };
+    let effective_rung = if decision.result == GateResult::Green {
+        cfg.requested_rung
+    } else {
+        state.authorized_rung
+    };
+    chain.append(
+        Utc.timestamp_opt(cfg.now_unix, 0).single().unwrap_or_else(Utc::now),
+        state.authorized_rung,
+        effective_rung,
+        None,
+        RecordKind::SessionDispatch(SessionDispatch {
+            outcome,
+            checks: decision.records.clone(),
+            deferrals: decision.deferrals.clone(),
+            readiness: None,
+        }),
+    )?;
+
+    Ok(DispatchGateOutcome { result: decision.result, lines, appended: true })
+}
+
+/// Register the dispatch chain genesis at rung 1 (an explicit, nonce-gated operator
+/// action — the chain never genesis-es implicitly, KD2).
+pub fn run_genesis(cfg: &DispatchCliConfig) -> anyhow::Result<Vec<String>> {
+    OperatorGate {
+        unattended_marker: detect_unattended_marker(),
+        nonce: cfg.nonce.clone(),
+        now_unix: cfg.now_unix,
+    }
+    .authorize("chain genesis registration")
+    .map_err(|e| anyhow::anyhow!(e))?;
+
+    let chain = DispatchChain::open(&cfg.data_home)?;
+    match chain.load().status {
+        ChainStatus::NoChain => {}
+        ChainStatus::Valid => anyhow::bail!("chain already registered — refusing to re-genesis a live chain"),
+        ChainStatus::Defective(why) => {
+            anyhow::bail!("chain is defective ({why}) — repair via re-registration, not genesis")
+        }
+    }
+    let now = Utc.timestamp_opt(cfg.now_unix, 0).single().unwrap_or_else(Utc::now);
+    let rec = chain.append(now, 1, 1, None, RecordKind::Genesis)?;
+    Ok(vec![format!(
+        "GENESIS registered — chain authorizes rung 1 (record {}, {})",
+        rec.body.record_id, rec.body.kst_trading_date
+    )])
+}
+
+/// CLI entry point for the `lab-live` bin. `--dispatch` runs the phase-1 pre-flight gate;
+/// `--genesis` registers the chain; a bare invocation points at the mount recipe (the
+/// mounted session lands in U6). Installs the scrubber first; maps the verdict to an
+/// exit code (`research.rs` shape).
+pub fn main_cli() -> ExitCode {
+    nautilus_ls::scrub::install();
+    match dispatch_main() {
+        Ok(code) => code,
+        Err(e) => {
+            eprintln!("error: {}", nautilus_ls::scrub::scrub_secrets(&e.to_string()));
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn dispatch_main() -> anyhow::Result<ExitCode> {
+    match std::env::args().nth(1).as_deref() {
+        Some("--dispatch") => {
+            let cfg = dispatch_gate_config_from_env()?;
+            let out = run_dispatch(&cfg)?;
+            for l in &out.lines {
+                println!("{l}");
+            }
+            Ok(match out.result {
+                GateResult::Green => ExitCode::SUCCESS,
+                GateResult::Refused => ExitCode::FAILURE,
+                // A throttle is a re-run, not success and not a plain failure — a
+                // distinct exit code so an operator/agent shell never mistakes it for
+                // either (never look-like-ran).
+                GateResult::Throttled => ExitCode::from(75),
+            })
+        }
+        Some("--genesis") => {
+            let cfg = dispatch_gate_config_from_env()?;
+            for l in &run_genesis(&cfg)? {
+                println!("{l}");
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        _ => {
+            if std::env::var("LS_TRADING_ENV").as_deref() != Ok("paper") {
+                anyhow::bail!("refusing to run: set LS_TRADING_ENV=paper (this adapter is paper-only)");
+            }
+            anyhow::bail!(
+                "lab-live: run `lab-live --dispatch` for the pre-flight gate (`--genesis` to \
+                 register the chain). The mounted LiveNode session lands in U6 — see \
+                 adapters/nautilus/lab/README.md"
+            )
+        }
+    }
 }
 
 #[cfg(test)]
