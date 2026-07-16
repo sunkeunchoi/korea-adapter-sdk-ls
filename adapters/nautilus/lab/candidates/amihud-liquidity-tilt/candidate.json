@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "slug": "amihud-liquidity-tilt",
+  "family": "class-b",
+  "phase_a": "bespoke",
+  "flip_param": "liquidity_tilt_alpha",
+  "flip_value": 1.0,
+  "diagnostic": {
+    "argv": ["uv", "run", "--with", "pyarrow", "python3", "diagnostic.py"],
+    "file": "diagnostic.py",
+    "content_hash": "7dc9a4ada72eb4bdce7815906d4b7d5783c77e66305cf9207c4edf9999661d23"
+  },
+  "twin": {
+    "argv": ["uv", "run", "--with", "pyarrow", "python3", "twin.py"],
+    "file": "twin.py",
+    "content_hash": "cc53b17e376d84cca52e0fb82a03daa0a9e6d70eb070522c4a5f021ade628227"
+  },
+  "readings": {
+    "collin_abs_rps": { "tolerance": 0.02, "precision": 4 },
+    "collin_abs_ratio_atr": { "tolerance": 0.02, "precision": 4 },
+    "ror_shift": { "tolerance": 0.0005, "precision": 6 },
+    "qty_change_frac": { "tolerance": 0.02, "precision": 4 }
+  },
+  "thresholds": [
+    { "reading": "collin_abs_rps", "comparator": "lt", "value": 0.7 },
+    { "reading": "collin_abs_ratio_atr", "comparator": "lt", "value": 0.7 },
+    { "reading": "ror_shift", "comparator": "ge", "value": 0.00065 },
+    { "reading": "qty_change_frac", "comparator": "ge", "value": 0.05 }
+  ],
+  "keep_anchor": "size-invariant return-on-risk strictly beats head v30 (0.1262) with risk-cap dominance <= 0.40; mean-R 0.1129 rides invariant"
+}
