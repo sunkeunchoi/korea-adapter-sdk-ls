@@ -4,6 +4,94 @@ Committed record of each loop turn's verdict + the bar conditions it held. The
 full artifacts (`analysis.md`, manifests, performance) live in the gitignored data
 home; this file is the durable, reviewable outcome trail.
 
+## Turn — Amihud liquidity budget tilt (CLASS B, liquidity axis): Phase-A DUAL GO, built + flipped via the governed command, REVERT (2026-07-16) — plan 2026-07-16-003
+
+- **Verdict: REVERT — the Amihud-illiquidity budget tilt `liquidity_tilt_alpha` is
+  material but does NOT improve the size-invariant RoR crux; v30 stays head** (hash
+  `6ae7b9f1`, RoR **0.1262**). The first candidate after CLASS B sizing closed, and the
+  **first turn driven through the governed command** that shipped in PR #155. A genuinely
+  new **dimensionless** sizing axis — Amihud illiquidity `illiq = mean over prior 14
+  sessions of |ret|/(close·volume)` — multiplying the risk **budget** by
+  `w = clamp((illiq_ref/illiq)^alpha, w_lo, w_hi)` (numerator-only, anti-collapse),
+  down-weighting illiquid breakouts. The economic thesis (illiquid names gap through the
+  stop → worse P&L-per-risk, mirroring the ratio-ATR tilt that KEPT) did **not** hold in
+  the RoR-improving direction on this sample.
+- **Phase A — pre-code DUAL gate, run through `turn diagnose` (frozen candidate
+  `adapters/nautilus/lab/candidates/amihud-liquidity-tilt/`, committed at `2b414372`
+  BEFORE the reading; twin-verified bit-for-bit).** Over v30's 167 closed trades (103
+  illiq-available, ≥15 daily priors; 64 sized `w = 1` skip-not-reject). Frozen derivation
+  over the untreated `illiq` distribution: `illiq_ref = median = 1.984881e-13`,
+  `w_lo = ref/p90 = 0.599573`, `w_hi = ref/p10 = 6.541589`, `alpha = 1.0`. The gate emits
+  **absolute-value** collinearity readings so `< 0.70` is correct on a signed statistic:
+
+  | gate | reading | rule | result |
+  |---|---|---|---|
+  | **Collinearity** vs `risk_per_share` | **\|r\| = 0.4989** (Spearman 0.3115) | `\|r\| < 0.70` | **GO** (the dimensionless Amihud escapes the price-scale collinearity that STOPPED absolute ATR at 0.9593) |
+  | **Collinearity** vs the KEPT ratio-ATR weight | **\|r\| = 0.2885** (Spearman −0.3664) | `\|r\| < 0.70` | **GO** (a genuinely new reallocation, not a re-expression of the kept tilt) |
+  | **Materiality (a)** predicted RoR shift | **0.030882** (first-order, positive) | `≥ 0.00065` | **GO** (47×) |
+  | **Materiality (b)** integer qty-change frac | **0.4491** (75/167) | `≥ 0.05` | **GO** (9×) |
+
+  Diagnostic + independent twin agree bit-for-bit (all four readings). The gate reading
+  landed in `ledger/trials.jsonl` (look `gate-reading`, verdict `GO`, fingerprint
+  `3b6be31b`), and `gate-verdict.json` records the freeze commit `2b414372` predating it.
+- **Phase B — built (default-off `liquidity_tilt_alpha` + three frozen ref/clamp companions,
+  an Amihud `prior_illiq` threaded through `UniverseCandidate → SelectedSymbol → OrbState →
+  entry_qty` with the exact `prior_atr` window discipline; 6 new lever tests) and flipped.**
+  - **v31 re-baseline via `turn governed` `LS_TURN_CODE_BUMP=1`** (the real cargo build +
+    real-child rehearsal the CI stubs skipped): `strategy_code_hash 6ae7b9f1… → d11b7a41…`;
+    `performance.json` reconciles **1:1** to v30 (167 trades, summary + per-trade
+    sym/qty/pnl/risk_capital byte-identical) — the lever is verifiably default-off. Governed
+    verdict `REVERT ror-negative` (a re-baseline reconciles → no improvement, the expected
+    identity outcome).
+  - **v32 flip (`liquidity_tilt_alpha 0.0 → 1.0`)** via seed-and-rerun: the 0→X sentinel
+    arming flip is an infinite relative change, which `ProposalBoundsGuardrail` (cap 0.5,
+    not env-configurable) fail-closes — so it cannot traverse a governed param turn (the same
+    reason the ratio-ATR/trail arming flips used seed-and-rerun). `runs compare` v31→v32
+    **PASS**, diff exactly `{liquidity_tilt_alpha, strategy_version}`.
+- **The flip result (v32 vs v31, n = 167 closed, KEEP rule = `EdgeEvaluation::keeps_over`:
+  RoR strictly beats 0.1262 AND risk-cap dominance ≤ 0.40).** Computed via the exact ported
+  `dominance_fold`/`keeps_over` logic (verified: v31 RoR = 0.1262394, matching v30's known
+  head value) because the governed command structurally cannot run the sentinel arming flip.
+
+  | metric | v31 (=v30) | v32 (flip) | KEEP gate |
+  |---|---|---|---|
+  | **Return-on-risk** (the crux) | 0.1262394 | **0.1146893** | **FAIL** (≤ 0.1262, strict; −0.0116) |
+  | equal-weight mean-R (invariant) | 0.112946 | 0.112946 | unchanged (pure reweight) |
+  | Σ risk_capital | 43,060,250 | 44,883,450 (+4.2%) | — |
+  | risk-capital dominance | 0.0593 | 0.0616 | PASS (≤ 0.40) |
+  | pnl_total (KRW) | 5,435,900 | 5,147,650 (−288,250) | — |
+
+- **Bind — material, pure reallocation.** mean-R is unchanged (0.112946), so the flip is a
+  pure sizing reweight (75/167 integer-qty changes as Phase A predicted), not an edge change.
+  But it deploys **more** risk (+1.82M) for **less** P&L (−288,250), so RoR falls hard.
+- **Why REVERT (the crux, and a KTD).** The positive first-order Phase-A prediction
+  (RoR′ 0.157) **reversed sign** at the flip because the first-order reweighting ignores the
+  **notional ceiling**: the large `w_hi = 6.54` upsizing of liquid names is clipped by
+  `floor(notional/px)`, so the predicted upside never materializes, while down-weighting the
+  illiquid cohort (which carried at/above-average P&L-per-risk here) still cuts return.
+  Net RoR-negative. There is no operator override — softening the KEEP gate after seeing
+  0.1147 is the forbidden overfit. **KTD: a numerator-only tilt with a large upper clamp is
+  notional-ceiling-bound, so the first-order Phase-A RoR shift over-predicts (even mis-signs)
+  the flip; a future Phase-A materiality gate for a wide-clamp tilt should model the ceiling.**
+- **Registry state.** Head unchanged: **v30** (`20260715T092847Z-backtest-orb-v30`, hash
+  `6ae7b9f1`, RoR 0.1262). The lever ships **default-off** (`liquidity_tilt_alpha: 0.0`
+  sentinel, byte-identical to v30; the ref/clamp companions default to their frozen values so
+  the lever is governed-flippable in one alpha turn, inert while alpha == 0.0). v31
+  (re-baseline) + v32 (flip) archived under
+  `data/turn4-fresh/sizing-archive/liquidity-tilt-archive/` so v30 stays `latest_finalized`.
+  Frozen candidate (pre-register + diagnostic + twin + gate-verdict) git-tracked at
+  `adapters/nautilus/lab/candidates/amihud-liquidity-tilt/`. Offline throughout; no gateway.
+- **CLASS B family status.** Budget axis sweep-settled; ratio-ATR tilt KEPT (v30); ATR-vol-target
+  STOPPED; Kelly retired; equity-compounding REVERTED; **Amihud liquidity tilt REVERTED
+  (RoR-negative)** — a new dimensionless axis that GATED GO but flipped negative. The
+  liquidity axis is characterized (material but RoR-negative on this sample); a future turn
+  could re-rank a ceiling-aware liquidity variant or a new mechanism class.
+- **Governed-command findings surfaced (not folded in).** This first real drive exposed two
+  structural gaps beyond the flip-guard hardening the code review flagged: (1) the sentinel
+  arming flip (0→X) cannot traverse a governed param turn (bounds cap), so a new lever's
+  merit flip still needs seed-and-rerun; (2) frozen non-default companions must be encoded as
+  serde defaults for a new lever to be governed-flippable. See the PR/handoff notes.
+
 ## Turn — cross-sectionally-normalized ATR budget tilt (CLASS B, ratio-ATR axis): Phase-A DUAL GO, built + flipped, KEEP → v30 (2026-07-15) — plan 2026-07-15-002
 
 - **Verdict: KEEP — the ratio-ATR budget tilt `ratio_atr_alpha` improves the size-invariant

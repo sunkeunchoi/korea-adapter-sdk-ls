@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "slug": "amihud-liquidity-tilt",
+  "family": "class-b",
+  "decision": "GO",
+  "diagnostic_readings": {
+    "collin_abs_ratio_atr": 0.2885,
+    "collin_abs_rps": 0.4989,
+    "qty_change_frac": 0.4491,
+    "ror_shift": 0.030882
+  },
+  "twin_readings": {
+    "collin_abs_ratio_atr": 0.2885,
+    "collin_abs_rps": 0.4989,
+    "qty_change_frac": 0.4491,
+    "ror_shift": 0.030882
+  },
+  "agreed_readings": {
+    "collin_abs_ratio_atr": 0.2885,
+    "collin_abs_rps": 0.4989,
+    "qty_change_frac": 0.4491,
+    "ror_shift": 0.030882
+  },
+  "pre_register_hash": "60dd3ea8789e613f75257e4a1d93a995ba77ef82e4cca9dbd01264abf7c9e7c1",
+  "catalog_fingerprint": "3b6be31bdf8d29a8d774d42d490020d65753455acfc1b2214a0b13f14b589200",
+  "freeze_commit": "2b414372f2a8ae2a94e0303d8d7ea74dec7cf609",
+  "flip_param": "liquidity_tilt_alpha",
+  "flip_value": 1.0,
+  "prior_trials": [],
+  "recorded_utc": "2026-07-16T07:20:53.668842+00:00"
+}
