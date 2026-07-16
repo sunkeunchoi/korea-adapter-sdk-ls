@@ -126,38 +126,47 @@ fn the_committed_backfill_ledger_parses_and_counts_cleanly() {
 
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("ledger/trials.jsonl");
     let ledger = TrialsLedger::new(&path);
-    // Parses fully — no typed per-line errors.
+    // The WHOLE committed ledger parses — no typed per-line errors — including any real
+    // (non-backfill) records that governed turns append after the historical backfill (the
+    // ledger is append-only, R10). The historical-tally assertions below therefore scope to
+    // the `backfill` subset, not the whole file, so a committed real turn never reddens them.
     let records = ledger.read_all().expect("the committed ledger parses");
+    let backfill: Vec<_> = records.iter().filter(|r| r.backfill).cloned().collect();
 
     // Hand tally from TURN-LOG: 19 statistical looks (v3→v30), including sweep
     // legs and the ATR-vol-target Phase-A STOP. Disagreement is a stop condition.
-    assert_eq!(records.len(), 19, "backfill look count matches the TURN-LOG tally");
+    assert_eq!(backfill.len(), 19, "backfill look count matches the TURN-LOG tally");
 
-    // Every backfill record carries the marker + a source pointer.
-    for r in &records {
-        assert!(r.backfill, "record is marked backfill: {r:?}");
+    // Every backfill record carries a TURN-LOG source pointer (a real appended turn does not,
+    // and is not subject to this assertion).
+    for r in &backfill {
         assert!(r.source.as_deref().is_some_and(|s| s.contains("TURN-LOG.md")), "source pointer: {r:?}");
     }
 
-    let count = count_trials(&ledger).unwrap();
-    assert_eq!(count.total, 19);
-
-    // AE4: the CLASS B family count includes the ATR-vol-target Phase-A STOP —
+    // AE4: the CLASS B family (backfill) includes the ATR-vol-target Phase-A STOP —
     // a stopped candidate that built nothing still counts as a trial.
-    assert!(*count.per_family.get("class-b").unwrap() >= 1);
     assert!(
-        records.iter().any(|r| r.family == "class-b"
+        backfill.iter().any(|r| r.family == "class-b"
             && matches!(r.look, LookKind::GateReading)
             && r.candidate == "atr-vol-target"
             && r.verdict.contains("STOP")),
         "the CLASS B family includes the ATR-vol-target STOP",
     );
 
-    // Per-lineage counts split across the declared era links: three distinct era
-    // fingerprints (166/157/167) merge, via their parent links, into ONE lineage.
+    // Count the backfill subset through the real `count_trials` path by replaying it into a
+    // fresh temp ledger — the per-lineage merge (three era fingerprints 166/157/167 linked by
+    // parent into ONE lineage of 19) is a property of the historical records, not the whole file.
+    let tmp = tempdir().unwrap();
+    let bf_ledger = TrialsLedger::new(tmp.path().join("backfill.jsonl"));
+    for r in &backfill {
+        bf_ledger.append(r).unwrap();
+    }
+    let count = count_trials(&bf_ledger).unwrap();
+    assert_eq!(count.total, 19);
+    assert!(*count.per_family.get("class-b").unwrap() >= 1);
     let distinct_fingerprints: std::collections::BTreeSet<_> =
-        records.iter().map(|r| r.lineage.catalog_fingerprint.clone()).collect();
-    assert_eq!(distinct_fingerprints.len(), 3, "three catalog eras present");
+        backfill.iter().map(|r| r.lineage.catalog_fingerprint.clone()).collect();
+    assert_eq!(distinct_fingerprints.len(), 3, "three catalog eras present in the backfill");
     assert_eq!(count.per_lineage.len(), 1, "the parent links merge the eras into one lineage");
     assert_eq!(count.per_lineage.values().next(), Some(&19), "the merged lineage counts every look");
 }

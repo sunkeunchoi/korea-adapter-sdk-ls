@@ -214,6 +214,60 @@ pub struct OrbParams {
     /// `validate()` requires `w_hi ≥ 1.0` when the lever is armed.
     #[serde(default)]
     pub ratio_atr_w_hi: f64,
+    /// Amihud-illiquidity budget tilt (CLASS B, liquidity axis, plan 2026-07-16-003
+    /// R1/KD1/KD3). Multiplies the per-trade risk **budget** by a dimensionless
+    /// inverse-illiquidity weight `w = clamp((liquidity_tilt_ref / illiq)^alpha, w_lo,
+    /// w_hi)` where `illiq = mean over prior `atr_window` sessions of |ret_k| /
+    /// (close_k · volume_k)` (the Amihud measure) — down-weighting illiquid breakouts.
+    /// `illiq` is already dimensionless-in-price (a ratio of a return to a KRW turnover),
+    /// so the tilt enters the **numerator only** and cannot collapse to the stop-based
+    /// denominator (the anti-collapse invariant). `alpha` is this lever's only flip
+    /// parameter. Sentinel `0.0` = off: `w ≡ 1`, byte-identical to v30. `#[serde(default)]`
+    /// so legacy manifests deserialize with it off. `validate()` rejects a negative value
+    /// and, when positive, requires a positive risk budget and a valid frozen clamp band.
+    #[serde(default)]
+    pub liquidity_tilt_alpha: f64,
+    /// The frozen reference illiquidity for the liquidity tilt (plan KD2): the
+    /// pre-registered median of `illiq` over the head's illiq-available closed trades.
+    /// A trade at `illiq = liquidity_tilt_ref` gets `w = 1` (neutral). A pre-registered
+    /// derivation rule, **not** a swept value. Ignored while `liquidity_tilt_alpha == 0.0`;
+    /// `validate()` requires `> 0.0` when armed. Defaults (both serde-missing and the
+    /// `Default` impl) to the frozen pre-register value so the lever is **governed-flippable
+    /// in one alpha turn**: a lever-predating head manifest (v30) resolves the frozen
+    /// clamp band, and the code-turn re-baseline carries it — inert while `alpha == 0.0`,
+    /// so byte-identical to v30 (the `default_profit_target_r` pattern).
+    #[serde(default = "default_liquidity_tilt_ref")]
+    pub liquidity_tilt_ref: f64,
+    /// The frozen lower clamp on the liquidity weight (plan KD2): `w_lo = ref / p90(illiq)`,
+    /// the smallest weight (most-downweighted, most-illiquid trades). A pre-registered
+    /// constant, not swept. Ignored while `liquidity_tilt_alpha == 0.0`; `validate()`
+    /// requires `0 < w_lo ≤ 1.0` when armed. Frozen default (see `liquidity_tilt_ref`).
+    #[serde(default = "default_liquidity_tilt_w_lo")]
+    pub liquidity_tilt_w_lo: f64,
+    /// The frozen upper clamp on the liquidity weight (plan KD2): `w_hi = ref / p10(illiq)`,
+    /// the largest weight (most-upweighted, most-liquid trades). A pre-registered constant,
+    /// not swept. Ignored while `liquidity_tilt_alpha == 0.0`; `validate()` requires
+    /// `w_hi ≥ 1.0` when armed. Frozen default (see `liquidity_tilt_ref`).
+    #[serde(default = "default_liquidity_tilt_w_hi")]
+    pub liquidity_tilt_w_hi: f64,
+}
+
+/// The frozen pre-registered reference illiquidity (plan 2026-07-16-003 KD2): the median
+/// Amihud illiquidity over head v30's illiq-available closed trades. A serde/`Default`
+/// constant (not swept) so the lever's clamp band is present in any lever-predating manifest
+/// — inert while `liquidity_tilt_alpha == 0.0`.
+fn default_liquidity_tilt_ref() -> f64 {
+    1.984_881e-13
+}
+
+/// The frozen lower clamp `w_lo = ref / p90(illiq)` (plan KD2).
+fn default_liquidity_tilt_w_lo() -> f64 {
+    0.599_572_92
+}
+
+/// The frozen upper clamp `w_hi = ref / p10(illiq)` (plan KD2).
+fn default_liquidity_tilt_w_hi() -> f64 {
+    6.541_589_27
 }
 
 /// The back-compat default for [`OrbParams::profit_target_r`] (R2, KTD3): a v8
@@ -299,6 +353,13 @@ impl Default for OrbParams {
             ratio_atr_ref: 0.0,
             ratio_atr_w_lo: 0.0,
             ratio_atr_w_hi: 0.0,
+            // Amihud liquidity budget tilt (plan 2026-07-16-003) — alpha sentinel off; the
+            // clamp/ref companions carry their frozen pre-register values (inert while alpha
+            // == 0.0, so byte-identical to v30), so the lever is governed-flippable in one turn.
+            liquidity_tilt_alpha: 0.0,
+            liquidity_tilt_ref: default_liquidity_tilt_ref(),
+            liquidity_tilt_w_lo: default_liquidity_tilt_w_lo(),
+            liquidity_tilt_w_hi: default_liquidity_tilt_w_hi(),
         }
     }
 }
@@ -513,6 +574,58 @@ impl OrbParams {
                 ));
             }
         }
+        // Amihud liquidity budget tilt (CLASS B, plan 2026-07-16-003): same shape as the
+        // ratio-ATR guard above — 0.0 disables it, a positive alpha arms the
+        // inverse-illiquidity tilt, and when armed it needs a positive risk budget, a
+        // positive reference illiquidity, and a valid clamp band straddling 1.0. The
+        // `is_finite()` guards are equally load-bearing (a NaN bound panics `clamp`).
+        if !self.liquidity_tilt_alpha.is_finite() {
+            return Err(format!(
+                "liquidity_tilt_alpha {} is not finite — use 0.0 to disable the liquidity tilt \
+                 or a finite positive exponent (KD1/KD3)",
+                self.liquidity_tilt_alpha
+            ));
+        }
+        if self.liquidity_tilt_alpha < 0.0 {
+            return Err(format!(
+                "liquidity_tilt_alpha {} is negative — use 0.0 to disable the liquidity tilt, a \
+                 positive exponent to downweight illiquid names (KD1/KD3)",
+                self.liquidity_tilt_alpha
+            ));
+        }
+        if self.liquidity_tilt_alpha > 0.0 {
+            if self.risk_per_trade_krw <= 0.0 {
+                return Err(format!(
+                    "liquidity_tilt_alpha {} is active but risk_per_trade_krw is {} — the tilt \
+                     scales the risk budget, so with no budget it would silently do nothing; \
+                     enable risk sizing or disable the tilt (KD1)",
+                    self.liquidity_tilt_alpha, self.risk_per_trade_krw
+                ));
+            }
+            if !self.liquidity_tilt_ref.is_finite() || self.liquidity_tilt_ref <= 0.0 {
+                return Err(format!(
+                    "liquidity_tilt_alpha is active but liquidity_tilt_ref is {} — the weight \
+                     normalizes against a finite positive reference illiquidity (KD2)",
+                    self.liquidity_tilt_ref
+                ));
+            }
+            if !(self.liquidity_tilt_w_lo > 0.0 && self.liquidity_tilt_w_lo <= 1.0) {
+                return Err(format!(
+                    "liquidity_tilt_alpha is active but liquidity_tilt_w_lo is {} — the lower clamp \
+                     must be in (0, 1.0] (ref = median → the neutral weight 1.0 is the band's \
+                     top-side; KD2)",
+                    self.liquidity_tilt_w_lo
+                ));
+            }
+            if !self.liquidity_tilt_w_hi.is_finite() || self.liquidity_tilt_w_hi < 1.0 {
+                return Err(format!(
+                    "liquidity_tilt_alpha is active but liquidity_tilt_w_hi is {} — the upper clamp \
+                     must be a finite value ≥ 1.0 so the neutral weight 1.0 lies inside the band \
+                     (KD2)",
+                    self.liquidity_tilt_w_hi
+                ));
+            }
+        }
         Ok(())
     }
 
@@ -617,6 +730,37 @@ impl OrbParams {
         let v = atr / entry_price;
         let raw = (self.ratio_atr_ref / v).powf(self.ratio_atr_alpha);
         raw.clamp(self.ratio_atr_w_lo, self.ratio_atr_w_hi)
+    }
+
+    /// Whether the Amihud liquidity budget tilt is active (CLASS B, plan 2026-07-16-003):
+    /// a positive `liquidity_tilt_alpha`. The sentinel `0.0` keeps the untilted v30 budget.
+    /// `validate()` guarantees this is only true alongside an active risk budget and a valid
+    /// frozen clamp band.
+    pub fn liquidity_tilt_active(&self) -> bool {
+        self.liquidity_tilt_alpha > 0.0
+    }
+
+    /// The dimensionless Amihud-liquidity budget multiplier `w` for a trade whose
+    /// prior-session illiquidity is `prior_illiq` (plan KD1/KD3). Computes
+    /// `w = clamp((liquidity_tilt_ref / illiq)^alpha, liquidity_tilt_w_lo, liquidity_tilt_w_hi)`.
+    /// `illiq` is already a ratio (a return over a KRW turnover), so `w` never re-introduces
+    /// the absolute price scale — the anti-collapse property that keeps this orthogonal to
+    /// the stop-based `risk_per_share`.
+    ///
+    /// Fails **closed** to the neutral `w = 1.0` when: the lever is off (`alpha == 0.0`, the
+    /// bit-identical sentinel); or `prior_illiq` is `None` **or** `≤ 0.0` (an under-covered
+    /// symbol-session, or a degenerate zero — a zero illiq must never make `w = ∞`). A
+    /// `None`/degenerate illiq is skip-not-reject: the trade sizes untilted, it is not dropped.
+    pub fn liquidity_tilt_weight(&self, prior_illiq: Option<f64>) -> f64 {
+        if self.liquidity_tilt_alpha == 0.0 {
+            return 1.0;
+        }
+        let illiq = match prior_illiq {
+            Some(x) if x > 0.0 => x,
+            _ => return 1.0,
+        };
+        let raw = (self.liquidity_tilt_ref / illiq).powf(self.liquidity_tilt_alpha);
+        raw.clamp(self.liquidity_tilt_w_lo, self.liquidity_tilt_w_hi)
     }
 
     /// The entry quantity under the risk-based sizing lever (R5): when the lever is
@@ -1563,6 +1707,114 @@ mod tests {
         assert_eq!(s.get("ratio_atr_ref"), Some(&0.0));
         assert_eq!(s.get("ratio_atr_w_lo"), Some(&0.0));
         assert_eq!(s.get("ratio_atr_w_hi"), Some(&0.0));
+    }
+
+    // ============= Amihud liquidity budget tilt (CLASS B, plan 2026-07-16-003) =============
+
+    /// An armed liquidity tilt with the frozen pre-registered values from the candidate's
+    /// dual-gate diagnostic: alpha 1.0, ref = median(illiq), clamps = ref/p90 .. ref/p10 over
+    /// the head v30 illiq-available cohort.
+    fn armed_liquidity() -> OrbParams {
+        OrbParams {
+            risk_per_trade_krw: 299_340.0,
+            notional_per_position: 10_000_000.0,
+            liquidity_tilt_alpha: 1.0,
+            liquidity_tilt_ref: 1.984_881e-13,
+            liquidity_tilt_w_lo: 0.599_572_92,
+            liquidity_tilt_w_hi: 6.541_589_27,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn liquidity_tilt_weight_off_is_exactly_one() {
+        // The 0.0 sentinel returns weight exactly 1.0 for any illiq (present, absent, zero) —
+        // byte-identical to v30.
+        let mut off = armed_liquidity();
+        off.liquidity_tilt_alpha = 0.0;
+        for illiq in [None, Some(1e-13), Some(0.0), Some(5e-12)] {
+            assert_eq!(off.liquidity_tilt_weight(illiq), 1.0, "off sentinel → 1.0 (illiq={illiq:?})");
+        }
+        assert!(!off.liquidity_tilt_active());
+    }
+
+    #[test]
+    fn liquidity_tilt_weight_fails_closed_on_bad_inputs() {
+        // An absent, zero, or negative illiq fails CLOSED to the neutral weight 1.0 — a zero
+        // illiq must never make ref/illiq → ∞. Skip-not-reject: the trade sizes untilted.
+        let p = armed_liquidity();
+        assert_eq!(p.liquidity_tilt_weight(None), 1.0, "no illiq → neutral");
+        assert_eq!(p.liquidity_tilt_weight(Some(0.0)), 1.0, "zero illiq → neutral");
+        assert_eq!(p.liquidity_tilt_weight(Some(-1e-13)), 1.0, "negative illiq → neutral");
+    }
+
+    #[test]
+    fn liquidity_tilt_weight_is_one_at_the_reference_and_clamps_bind() {
+        // illiq == ref → (ref/illiq)^alpha = 1 → weight exactly 1.0. Far above ref (illiquid)
+        // saturates at w_lo; far below (liquid) at w_hi. Knees derived from the params, never
+        // hand literals (bound-comparison-at-full-precision learning).
+        let p = armed_liquidity();
+        let w_ref = p.liquidity_tilt_weight(Some(p.liquidity_tilt_ref));
+        assert!((w_ref - 1.0).abs() < 1e-12, "illiq = ref → w = 1.0, got {w_ref}");
+        let lo_knee = p.liquidity_tilt_ref / p.liquidity_tilt_w_lo; // illiq past this → w_lo
+        assert_eq!(p.liquidity_tilt_weight(Some(lo_knee * 2.0)), p.liquidity_tilt_w_lo, "illiquid → w_lo");
+        let hi_knee = p.liquidity_tilt_ref / p.liquidity_tilt_w_hi; // illiq below this → w_hi
+        assert_eq!(p.liquidity_tilt_weight(Some(hi_knee * 0.5)), p.liquidity_tilt_w_hi, "liquid → w_hi");
+    }
+
+    #[test]
+    fn validate_liquidity_tilt_bounds_and_couplings() {
+        // Off validates unconditionally; armed requires a positive budget, a positive ref, and
+        // a clamp band straddling 1.0. Non-finite armed companions are rejected (a NaN bound
+        // panics `clamp`), and the armed head with frozen values validates without panic.
+        assert!(OrbParams::default().validate().is_ok(), "off validates");
+        assert!(armed_liquidity().validate().is_ok(), "armed with frozen values validates");
+        assert!(armed_liquidity().liquidity_tilt_active());
+        assert!(OrbParams { liquidity_tilt_alpha: -0.1, ..armed_liquidity() }.validate().is_err(), "negative alpha");
+        assert!(OrbParams { risk_per_trade_krw: 0.0, ..armed_liquidity() }.validate().is_err(), "zero budget");
+        assert!(OrbParams { liquidity_tilt_ref: 0.0, ..armed_liquidity() }.validate().is_err(), "ref = 0");
+        assert!(OrbParams { liquidity_tilt_w_lo: 0.0, ..armed_liquidity() }.validate().is_err(), "w_lo = 0");
+        assert!(OrbParams { liquidity_tilt_w_lo: 1.1, ..armed_liquidity() }.validate().is_err(), "w_lo > 1.0");
+        assert!(OrbParams { liquidity_tilt_w_hi: 0.9, ..armed_liquidity() }.validate().is_err(), "w_hi < 1.0");
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(OrbParams { liquidity_tilt_alpha: bad, ..armed_liquidity() }.validate().is_err(), "alpha {bad}");
+            assert!(OrbParams { liquidity_tilt_w_hi: bad, ..armed_liquidity() }.validate().is_err(), "w_hi {bad}");
+        }
+    }
+
+    #[test]
+    fn liquidity_tilt_fields_deserialize_from_pre_field_manifest() {
+        // A v30-era manifest predates the four fields — they must deserialize to 0.0 (lever
+        // off, byte-identical sizing) and surface into numeric_summary for a later sweep.
+        let legacy = serde_json::json!({
+            "strategy_id": "orb",
+            "strategy_version": 30,
+            "gap_min_pct": 0.6,
+            "universe_top_n": 40,
+            "max_concurrent": 7,
+            "range_open": "09:00:00",
+            "range_minutes": 20,
+            "flat_time": "15:00:00",
+            "notional_per_position": 10_000_000.0,
+            "profit_target_r": 1.0,
+            "risk_per_trade_krw": 299_340.0,
+        })
+        .to_string();
+        let p: OrbParams = serde_json::from_str(&legacy).unwrap();
+        // alpha defaults OFF (sentinel 0.0 → byte-identical sizing), but the clamp/ref
+        // companions resolve to their FROZEN pre-register values so a lever-predating head
+        // carries the band (the lever is governed-flippable in one alpha turn). They are inert
+        // while alpha == 0.0.
+        assert_eq!(p.liquidity_tilt_alpha, 0.0, "missing alpha defaults to off");
+        assert!(!p.liquidity_tilt_active(), "off while alpha == 0.0 despite frozen companions");
+        assert_eq!(p.liquidity_tilt_weight(Some(5e-13)), 1.0, "companions inert while alpha off");
+        let s = p.numeric_summary();
+        assert_eq!(s.get("liquidity_tilt_alpha"), Some(&0.0));
+        assert_eq!(s.get("liquidity_tilt_ref"), Some(&default_liquidity_tilt_ref()));
+        assert_eq!(s.get("liquidity_tilt_w_lo"), Some(&default_liquidity_tilt_w_lo()));
+        assert_eq!(s.get("liquidity_tilt_w_hi"), Some(&default_liquidity_tilt_w_hi()));
+        // The frozen default band is itself valid (straddles 1.0) so an armed flip validates.
+        assert!(OrbParams { liquidity_tilt_alpha: 1.0, ..p }.validate().is_ok());
     }
 
     #[test]

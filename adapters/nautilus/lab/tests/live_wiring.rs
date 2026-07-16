@@ -78,6 +78,7 @@ async fn strategy_mounts_in_a_built_live_node() {
         bar_type: BarKind::Minute(1).bar_type(id).unwrap(),
         prior_atr: None,
         prior_open_vol_mean: None,
+        prior_illiq: None,
     }];
     // Off-identity multiplier 1.0 (CLASS B lever 2, R8/KTD-1): the live-wiring smoke
     // exercises the default (non-compounding) sizing path.
@@ -384,6 +385,7 @@ fn build_live_session_node_mounts_the_strategy() {
         bar_type: BarKind::Minute(1).bar_type(InstrumentId::from("005930.XKRX")).unwrap(),
         prior_atr: None,
         prior_open_vol_mean: None,
+        prior_illiq: None,
     }];
     // The offline seam the operator command drives after a green dispatch (node.run stays
     // live-only): the node builds and the ORB strategy mounts.
