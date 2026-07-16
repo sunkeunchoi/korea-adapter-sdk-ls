@@ -12,6 +12,8 @@
 //! here.
 
 pub mod chain;
+pub mod checks;
+pub mod nonce;
 
 use serde::{Deserialize, Serialize};
 

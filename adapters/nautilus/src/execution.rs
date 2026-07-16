@@ -177,10 +177,33 @@ impl LsExecClient {
     /// The R14 flat-start gate: the account must have **no open orders** and **no
     /// holdings**, and the order inquiry must not be truncated (fail-closed).
     ///
+    /// Composes the two independently-callable legs
+    /// ([`check_stranded_orders`](Self::check_stranded_orders) then
+    /// [`check_flat_start`](Self::check_flat_start)) in the original order, so existing
+    /// callers keep the exact single-verdict behavior. The dispatch gate calls the two
+    /// legs directly instead: the composed function short-circuits on the open-orders
+    /// leg, so one call cannot yield the two differently-tiered outcomes the gate needs
+    /// — the stranded-orders leg is deferrable, the flat-start (holdings) leg is not
+    /// (R3, AE1).
+    ///
     /// # Errors
     ///
     /// [`AdapterError::Config`] with a reason if not flat (AE5).
     pub async fn verify_flat(&self) -> AdapterResult<()> {
+        self.check_stranded_orders().await?;
+        self.check_flat_start().await?;
+        Ok(())
+    }
+
+    /// The stranded-resting-order leg of the flat check (single-page t0425), split out
+    /// so the dispatch gate can tier it as **deferrable** (R3, AE1). Fail-closed on
+    /// truncation and on an unparseable remaining quantity — identical semantics to the
+    /// leg `verify_flat` used to inline.
+    ///
+    /// # Errors
+    ///
+    /// [`AdapterError::Config`] if the inquiry is truncated or any resting order remains.
+    pub async fn check_stranded_orders(&self) -> AdapterResult<()> {
         // Open-order check: single-page t0425 (fail-closed on truncation).
         let orders = self
             .sdk
@@ -213,7 +236,17 @@ impl LsExecClient {
                 open.len()
             )));
         }
+        Ok(())
+    }
 
+    /// The holdings/flat-start leg of the flat check (t0424), split out so the dispatch
+    /// gate can tier it as **non-deferrable** (R3). Fail-closed on an unparseable
+    /// balance — identical semantics to the leg `verify_flat` used to inline.
+    ///
+    /// # Errors
+    ///
+    /// [`AdapterError::Config`] if any holding row carries an open (or unparseable) balance.
+    pub async fn check_flat_start(&self) -> AdapterResult<()> {
         // Holdings check: no t0424 row may carry an OPEN balance. A same-day buy+sell
         // round-trip leaves a lingering `janqty=0` row for the symbol (net-zero position,
         // still listed for the session) — that is NOT an open holding, so gating on a
