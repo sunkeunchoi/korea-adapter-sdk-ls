@@ -656,6 +656,270 @@ fn dispatch_main() -> anyhow::Result<ExitCode> {
     }
 }
 
+// ===========================================================================
+// U6 — the LiveNode mounter behind a green dispatch (R5, R8; KTD2, KTD3; AE2).
+//
+// One operator-confirmed command takes a green, unconsumed, same-day dispatch through:
+// operator confirm (fresh nonce; no-TTY loud refusal) → the Live advisory lock, held
+// through the session so the check-then-mount TOCTOU gap is closed (KTD2) → a consumption
+// marker recording the mounted run id AT MOUNT TIME (so a session that never finalizes
+// leaves `.tmp-<run_id>` residue the de-escalation scan matches to this consumed
+// dispatch, R14(f), chain-driven) → the LiveNode build → [`node.run`, live-only] →
+// fail-closed teardown → finalize with the dispatch↔run linkage threaded into the
+// manifest (KTD3). The session's exec path records its own gateway dispatches into the
+// per-credential spend-ledger bucket so the budget-headroom check reads more than ingest
+// spend (KTD5).
+//
+// Rung authorization is the phase-2 hardcoded rung-1 stub (R5): the mounter honors the
+// chain's authorized rung, but the ladder machinery (evidence-verified escalation,
+// automatic de-escalation, the rung fraction reaching sizing) lands in U10; the fraction
+// is metadata here, not yet a sizing input. `node.run` is never driven offline (the
+// documented invariant) — offline tests stop at node construction and drive the
+// consumption/finalize/spend seams directly.
+// ===========================================================================
+
+use nautilus_common::enums::Environment;
+use nautilus_live::node::LiveNode;
+use nautilus_ls::config::LsAdapterConfig;
+use nautilus_ls::factories::{LsDataClientFactory, LsExecutionClientFactory};
+use nautilus_ls::ingest::budget::{spend_ledger_path, SpendLedger};
+use nautilus_model::identifiers::TraderId;
+
+use crate::agent::sink::DecisionSink;
+use crate::artifacts::manifest::DispatchLink;
+use crate::artifacts::RunSource;
+use crate::dispatch::chain::{Consumption, MountAuthz};
+use crate::strategy::orb::{OrbStrategy, SelectedSymbol};
+
+/// The resolved configuration for a live mount (env-gathered, but constructible directly
+/// so offline tests bypass the process environment).
+#[derive(Debug, Clone)]
+pub struct MountConfig {
+    /// The data home (chain, catalog, spend ledger, registry live here).
+    pub data_home: std::path::PathBuf,
+    /// The rung this mount requests (guard rail; must not exceed the authorized effective
+    /// rung — R15). U6 is the rung-1 stub.
+    pub requested_rung: u8,
+    /// The credential lane hash (SHA-256 of the resolved appkey; spend-ledger precedent —
+    /// never the raw key or account number).
+    pub lane_hash: String,
+    /// The resolved trading environment (`"paper"` | `"live"`), recorded in the manifest
+    /// (closes the gap where `RunSource::Live` means paper-live today, KTD3).
+    pub trading_env: String,
+    /// The budget-numerator fraction recorded for this rung (KTD6). U6 stub: `1.0` — the
+    /// prereg-driven fraction and its sizing threading land in U10; it is metadata here.
+    pub rung_fraction: f64,
+    /// The operator nonce authorizing the mount.
+    pub nonce: Option<String>,
+    /// Wall-clock unix seconds (injectable for deterministic tests).
+    pub now_unix: i64,
+    /// Library-only override of the attended/unattended detection (see
+    /// [`DispatchCliConfig::attended_override`]). The bin's env gather always leaves this
+    /// `None` — the no-TTY refusal can never be suppressed from the CLI.
+    pub attended_override: Option<bool>,
+}
+
+/// A resolved authorization to mount a live session behind a green dispatch (U6). Carries
+/// the identity a reviewer binds the run to (KTD3) and the run id the consumption marker
+/// recorded at mount time.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MountAuthorization {
+    /// The run id the session finalizes under (recorded in the consumption marker so
+    /// residue classification is chain-driven, R14(f)).
+    pub run_id: String,
+    /// The session-dispatch record id this mount consumes.
+    pub dispatch_record_id: String,
+    /// The chain-authorized rung.
+    pub chain_rung: u8,
+    /// The effective rung the session runs at (rung 1 under probation, R11).
+    pub effective_rung: u8,
+    /// The budget-numerator fraction recorded (KTD6).
+    pub rung_fraction: f64,
+    /// The credential lane hash.
+    pub lane_hash: String,
+    /// The resolved trading environment.
+    pub trading_env: String,
+}
+
+impl MountAuthorization {
+    /// The dispatch↔run linkage to thread into the mounted run's manifest (KTD3): binds
+    /// the run to its authorization plus the rung metadata reducers key on.
+    pub fn dispatch_link(&self) -> DispatchLink {
+        DispatchLink {
+            dispatch_id: self.dispatch_record_id.clone(),
+            rung: self.effective_rung,
+            rung_fraction: self.rung_fraction,
+            lane: self.lane_hash.clone(),
+            trading_env: self.trading_env.clone(),
+        }
+    }
+}
+
+/// Authorize and prepare a live mount behind a green dispatch (U6). In strict order:
+///
+/// 1. the operator nonce gate (fresh nonce, no-TTY loud refusal) — mounting a live session
+///    is at least as consequential as a deferral;
+/// 2. the chain must offer a green, unconsumed, same-day dispatch to mount
+///    ([`MountAuthz::Ready`]); a consumed / expired / absent dispatch refuses;
+/// 3. the requested rung must not exceed the authorized effective rung (R15);
+/// 4. acquire the Live advisory lock and hold it through the session (returned to the
+///    caller) — a lock held by another process between gate and mount refuses (the TOCTOU
+///    arm, KTD2);
+/// 5. append a consumption marker recording the mounted run id AT MOUNT TIME (R14(f)).
+///
+/// Returns the authorization plus the held Live lock; `node.run` and teardown are the
+/// caller's (live-only). None of the refusal arms mounts or consumes.
+///
+/// # Errors
+///
+/// A loud, typed refusal string on any failing precondition; a chain-append failure.
+pub fn authorize_mount(
+    chain: &DispatchChain,
+    cfg: &MountConfig,
+    strategy_id: &str,
+    strategy_version: u32,
+) -> anyhow::Result<(MountAuthorization, AdvisoryLock)> {
+    // 1. Operator confirm — a live mount is nonce-gated like a deferral (no-TTY loud).
+    let unattended_marker = match cfg.attended_override {
+        Some(true) => None,
+        Some(false) => Some("forced unattended".to_string()),
+        None => detect_unattended_marker(),
+    };
+    OperatorGate { unattended_marker, nonce: cfg.nonce.clone(), now_unix: cfg.now_unix }
+        .authorize("live mount")
+        .map_err(|e| anyhow::anyhow!(e))?;
+
+    // 2. The chain must offer a green, unconsumed, same-day dispatch to mount.
+    let now = Utc.timestamp_opt(cfg.now_unix, 0).single().unwrap_or_else(Utc::now);
+    let today = kst_trading_date(now);
+    let state = chain.load();
+    let (record_id, chain_rung, effective_rung) = match state.mount_authz(&today) {
+        MountAuthz::Ready { record_id, chain_rung, effective_rung } => {
+            (record_id, chain_rung, effective_rung)
+        }
+        MountAuthz::Consumed => anyhow::bail!(
+            "mount refused: the latest green dispatch is already consumed by a session — a green \
+             dispatch is single-use; re-run `--dispatch` for a fresh authorization"
+        ),
+        MountAuthz::Expired => anyhow::bail!(
+            "mount refused: the latest green dispatch is from a previous KST trading day (expired) \
+             — re-run `--dispatch` today"
+        ),
+        MountAuthz::None => anyhow::bail!(
+            "mount refused: no green dispatch available to mount (rung 0 / refused / no dispatch)"
+        ),
+    };
+
+    // 3. Guard rail: never mount above the authorized rung (R15).
+    if cfg.requested_rung > effective_rung {
+        anyhow::bail!(
+            "mount refused: requested rung {} exceeds the authorized effective rung {} — rung \
+             selection is a guard rail, not an operator feature (R15)",
+            cfg.requested_rung,
+            effective_rung
+        );
+    }
+
+    // 4. Acquire the Live lock and hold it through the session (TOCTOU close, KTD2).
+    let lock = live_guard(&cfg.data_home)?;
+
+    // 5. Consumption marker at mount time, recording the intended run id (R14(f)). The
+    //    Dispatch-lock append is permitted while holding the Live lock (KTD2: Dispatch has
+    //    no counterpart, so a lock-holding session may still record).
+    let run_identifier = crate::artifacts::run_id(now, RunSource::Live, strategy_id, strategy_version);
+    chain.append(
+        now,
+        chain_rung,
+        effective_rung,
+        state.last_prereg_hash.clone(),
+        RecordKind::Consumption(Consumption {
+            dispatch_record_id: record_id.clone(),
+            run_id: Some(run_identifier.clone()),
+        }),
+    )?;
+
+    Ok((
+        MountAuthorization {
+            run_id: run_identifier,
+            dispatch_record_id: record_id,
+            chain_rung,
+            effective_rung,
+            rung_fraction: cfg.rung_fraction,
+            lane_hash: cfg.lane_hash.clone(),
+            trading_env: cfg.trading_env.clone(),
+        },
+        lock,
+    ))
+}
+
+/// Build a `LiveNode` with the ORB strategy mounted for a live session (U6). The mount
+/// point the operator command drives after a green dispatch — offline-buildable (the repo
+/// never drives `node.run` offline), so this is exactly the seam offline wiring tests
+/// exercise. The data + exec clients resolve from the same lane config, so the session's
+/// exec path and the gate's flat-start probe read one credential. The threaded
+/// [`DecisionSink`] is the caller's handle to drain the session's decisions into the run
+/// artifacts after `node.run`.
+///
+/// The rung fraction is recorded in the manifest (KTD3) but does NOT yet reach sizing —
+/// that threading lands in U10; the strategy mounts at the default (unscaled) budget
+/// multiplier here.
+///
+/// # Errors
+///
+/// Any node-builder / client-registration / strategy-mount failure.
+pub fn build_live_session_node(
+    adapter_cfg: LsAdapterConfig,
+    params: OrbParams,
+    selected: Vec<SelectedSymbol>,
+    sink: DecisionSink,
+) -> anyhow::Result<LiveNode> {
+    let mut node = LiveNode::builder(TraderId::from("LS-LAB-001"), Environment::Live)
+        .map_err(|e| anyhow::anyhow!("live node builder: {e}"))?
+        .with_name("ls-lab-live")
+        .add_data_client(None, Box::new(LsDataClientFactory), Box::new(adapter_cfg.clone()))
+        .map_err(|e| anyhow::anyhow!("data client: {e}"))?
+        .add_exec_client(None, Box::new(LsExecutionClientFactory), Box::new(adapter_cfg))
+        .map_err(|e| anyhow::anyhow!("exec client: {e}"))?
+        .build()
+        .map_err(|e| anyhow::anyhow!("node build: {e}"))?;
+    // Off-identity multiplier 1.0: U6 mounts the default (non-compounding) sizing path;
+    // the rung fraction reaches sizing in U10 (KTD6).
+    let strategy = OrbStrategy::new(params, selected, sink, 1.0);
+    node.add_strategy(strategy).map_err(|e| anyhow::anyhow!("mount ORB strategy: {e}"))?;
+    Ok(node)
+}
+
+/// Record one of the mounted session's gateway dispatches (an order call, a t0425 poll)
+/// into the per-credential spend-ledger bucket (KTD5). Today only the ingest pacer and
+/// universe capture write the ledger, so a live session's own gateway calls would be
+/// invisible to the budget-headroom check; this closes that gap. The ledger is a lower
+/// bound on true spend, so the headroom verdict stays advisory-deferrable.
+///
+/// # Errors
+///
+/// A ledger-save (write/rename) failure.
+pub fn record_session_spend(data_home: &Path, lane_hash: &str, at_unix: i64) -> anyhow::Result<()> {
+    let catalog = data_home.join("catalog");
+    let path = spend_ledger_path(&catalog);
+    let mut ledger = SpendLedger::load(&path);
+    ledger.record_spend(lane_hash, at_unix);
+    ledger.save(&path)?;
+    Ok(())
+}
+
+/// Resolve the credential lane hash from the lane env file (the bin path). Offline tests
+/// pass the hash directly; the bin reads the resolved appkey and hashes it (spend-ledger
+/// precedent — never the raw key).
+///
+/// # Errors
+///
+/// If the lane env file cannot resolve credentials.
+pub fn resolve_lane_hash(lane_env_path: &Path) -> anyhow::Result<String> {
+    let adapter_cfg = LsAdapterConfig::from_lane_file(lane_env_path);
+    let resolved = adapter_cfg.build_config().map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(SpendLedger::hash_appkey(&resolved.appkey))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
