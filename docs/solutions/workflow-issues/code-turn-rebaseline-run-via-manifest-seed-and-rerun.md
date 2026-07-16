@@ -1,7 +1,7 @@
 ---
 title: "Producing a version-labeled code-turn re-baseline run when the lab-research CLI has no version-only-bump path"
 date: 2026-07-10
-last_updated: 2026-07-15
+last_updated: 2026-07-16
 category: workflow-issues
 module: "adapters/nautilus/lab strategy loop — runner/research.rs turn/rerun surface + artifacts/manifest.rs strategy_code_hash; operator data home data/turn4-fresh"
 problem_type: workflow_issue
@@ -10,6 +10,7 @@ applies_when:
   - "Running a strategy-loop CODE turn — one that edits crates/strategy source (adapters/nautilus/lab/src/strategy/orb.rs) and so bumps strategy_code_hash — but changes no swept OrbParams field (or the new param stays at its default)"
   - "You need the run labeled at the next version (e.g. v9) with params otherwise identical to the prior run, over an existing operator data home"
   - "`lab-research turn` refuses: the governed param turn requires a real param change to bump the version, and the rerun path keeps the current version — neither yields a version-only bump, and there is no LS_TURN_FORCE_VERSION"
+  - "ARMING a new default-off lever's merit flip (a 0.0 -> X sentinel flip): the native code-bump path re-baselines the version but does NOT arm the lever, and the governed param turn bounds-caps the infinite relative change — so the arming flip still uses seed-and-rerun (see the superseded-scope note)"
 severity: medium
 related_components:
   - "lab-research CLI (turn / runs compare)"
@@ -28,7 +29,29 @@ related_components:
 > `docs/plans/2026-07-16-002-feat-governed-strategy-turn-command-plan.md`) drives
 > bump → re-baseline → 1:1 reconcile → compare in the fresh child. The
 > manual seed-and-rerun below remains valid history but should no longer be
-> executed by hand.
+> executed by hand **for the re-baseline step**.
+>
+> **Superseded-scope caveat (2026-07-16): the native path retires the RE-BASELINE
+> seed-and-rerun, NOT the ARMING FLIP.** For a *new* default-off lever, arming it is
+> two steps: (1) the version-authority re-baseline (`alpha` at its `0.0` sentinel,
+> reconciles 1:1 to the prior head) — now `LS_TURN_CODE_BUMP=1`; and (2) the merit flip
+> that moves the sentinel off `0.0` (e.g. `liquidity_tilt_alpha 0.0 → 1.0`). Step 2
+> **cannot** go through a governed param turn: a `0.0 → X` change is an *infinite*
+> relative change, which `ProposalBoundsGuardrail` (cap `0.5`,
+> `research.rs::PROPOSAL_BOUNDS_CAP`, not env-configurable for a turn) fail-closes — the
+> same reason the ratio-ATR/breakeven-trail arming flips used seed-and-rerun. So the
+> arming flip **still uses the manifest seed-and-rerun below** (seed a `vN+1` manifest
+> with the flipped `alpha`, rerun, remove the seed). Observed on the 2026-07-16 Amihud
+> liquidity turn: v31 re-baseline via `turn governed LS_TURN_CODE_BUMP=1`, then the
+> `liquidity_tilt_alpha 0→1` flip via seed-and-rerun → v32.
+>
+> **Companion corollary:** for the arming flip to size correctly, the lever's frozen
+> non-default companions (a clamp band / reference) must be present in the re-baseline
+> manifest. The native code-bump seeds newer `#[serde(default)]` fields at their *serde
+> default*, so a lever whose companions must be non-default must declare them via
+> `#[serde(default = "fn")]` returning the frozen values (the `default_liquidity_tilt_*`
+> pattern, `params.rs`) — otherwise the re-baseline carries `0.0` companions and the flip
+> either fails `validate()` or sizes against a degenerate band.
 
 ## Context
 

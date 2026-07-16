@@ -65,3 +65,16 @@ ships without a line here silently decays the guard.
    *disclosed* event (the gate verdict embeds the prior trials) — never an
    invisible one.
    — *cites:* this plan's R5 / the forbidden-overfit rule in `docs/solutions/conventions/pre-code-collinearity-gate-before-a-second-normalizer-lever.md`.
+
+9. **A NEW default-off lever is armed in two steps — the governed command does the
+   first, seed-and-rerun does the second.** Step 1, the version-authority re-baseline
+   (`alpha` at its `0.0` sentinel), goes through `turn governed LS_TURN_CODE_BUMP=1`.
+   Step 2, the merit flip that moves the sentinel off `0.0`, **cannot** go through a
+   governed param turn — a `0.0 → X` change is an infinite relative change that
+   `ProposalBoundsGuardrail` (cap 0.5, not env-configurable) fail-closes — so the arming
+   flip uses manifest **seed-and-rerun**. The lever's frozen non-default companions must
+   be `#[serde(default = "fn")]` so the re-baseline carries the band (else the flip sizes
+   against a degenerate `0.0` band). Evaluate the KEEP rule via the exact
+   `EdgeEvaluation::keeps_over` logic; the sentinel flip does not produce a governed
+   verdict line.
+   — *cites:* the arming-flip / superseded-scope caveat in `docs/solutions/workflow-issues/code-turn-rebaseline-run-via-manifest-seed-and-rerun.md` (2026-07-16 Amihud liquidity turn).
