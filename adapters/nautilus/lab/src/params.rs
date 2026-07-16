@@ -253,19 +253,37 @@ pub struct OrbParams {
 }
 
 /// The frozen pre-registered reference illiquidity (plan 2026-07-16-003 KD2): the median
-/// Amihud illiquidity over head v30's illiq-available closed trades. A serde/`Default`
+/// Amihud illiquidity over **head v30's** illiq-available closed trades. A serde/`Default`
 /// constant (not swept) so the lever's clamp band is present in any lever-predating manifest
 /// — inert while `liquidity_tilt_alpha == 0.0`.
+///
+/// **Deliberate divergence from the sibling `ratio_atr_*` companions** (which default to
+/// `0.0`, are seeded into the head manifest at flip time, and so *fail loud* — an armed
+/// `ratio_atr_alpha` with a `0.0` band is rejected by `validate()`). These liquidity
+/// companions default to a *valid* band instead, which is what makes the lever
+/// governed-flippable in one `alpha` turn off the pre-existing v30 head (the manifest need
+/// not be re-seeded). The trade-off, by design: arming `liquidity_tilt_alpha` alone sizes
+/// against this baked band rather than being rejected — so `alpha` is the single on/off
+/// switch and the band is fixed. A future *third* tilt lever should choose consciously
+/// between the two patterns, not blindly mirror whichever sibling it sits next to.
+///
+/// **Staleness contract:** these three constants are a v30-catalog-era snapshot (the
+/// derivation cohort). They are inert while `alpha == 0.0`, but if a future turn *arms* a
+/// liquidity tilt after the head/catalog era moves, the band must be **re-derived** for the
+/// new cohort — a stale code default will not compile-error. (Unlike `default_profit_target_r`,
+/// whose `1.0` is an era-independent neutral identity, these are non-neutral sample statistics.)
 fn default_liquidity_tilt_ref() -> f64 {
     1.984_881e-13
 }
 
-/// The frozen lower clamp `w_lo = ref / p90(illiq)` (plan KD2).
+/// The frozen lower clamp `w_lo = ref / p90(illiq)` (plan KD2). See
+/// [`default_liquidity_tilt_ref`] for the divergence-from-`ratio_atr` and staleness contract.
 fn default_liquidity_tilt_w_lo() -> f64 {
     0.599_572_92
 }
 
-/// The frozen upper clamp `w_hi = ref / p10(illiq)` (plan KD2).
+/// The frozen upper clamp `w_hi = ref / p10(illiq)` (plan KD2). See
+/// [`default_liquidity_tilt_ref`] for the divergence-from-`ratio_atr` and staleness contract.
 fn default_liquidity_tilt_w_hi() -> f64 {
     6.541_589_27
 }
@@ -1715,13 +1733,15 @@ mod tests {
     /// dual-gate diagnostic: alpha 1.0, ref = median(illiq), clamps = ref/p90 .. ref/p10 over
     /// the head v30 illiq-available cohort.
     fn armed_liquidity() -> OrbParams {
+        // Source the frozen band from the default fns (single source of truth) so a
+        // re-derivation of the constants never leaves the fixture asserting against stale values.
         OrbParams {
             risk_per_trade_krw: 299_340.0,
             notional_per_position: 10_000_000.0,
             liquidity_tilt_alpha: 1.0,
-            liquidity_tilt_ref: 1.984_881e-13,
-            liquidity_tilt_w_lo: 0.599_572_92,
-            liquidity_tilt_w_hi: 6.541_589_27,
+            liquidity_tilt_ref: default_liquidity_tilt_ref(),
+            liquidity_tilt_w_lo: default_liquidity_tilt_w_lo(),
+            liquidity_tilt_w_hi: default_liquidity_tilt_w_hi(),
             ..Default::default()
         }
     }
