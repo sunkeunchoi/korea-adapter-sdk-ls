@@ -49,13 +49,19 @@ pub enum TripCause {
     DeadManOperator,
     /// The session max-loss breaker crossed the pre-registered threshold.
     MaxLoss,
+    /// Mutual liveness (KTD10): the watchdog supervisor went silent — the SESSION side trips
+    /// so a dead watchdog thread never silently degrades the envelope to attended-only.
+    SupervisorSilent,
 }
 
 impl TripCause {
-    /// The safety-trip record kind (a dead-man is a watchdog trip; the breaker its own).
+    /// The safety-trip record kind (dead-man / supervisor-silence are watchdog trips; the
+    /// breaker its own).
     pub fn safety_kind(self) -> SafetyTripKind {
         match self {
-            TripCause::DeadManRuntime | TripCause::DeadManOperator => SafetyTripKind::Watchdog,
+            TripCause::DeadManRuntime | TripCause::DeadManOperator | TripCause::SupervisorSilent => {
+                SafetyTripKind::Watchdog
+            }
             TripCause::MaxLoss => SafetyTripKind::Breaker,
         }
     }
@@ -71,6 +77,9 @@ impl TripCause {
             }
             TripCause::MaxLoss => {
                 "session max-loss breaker: P&L basis crossed the pre-registered threshold"
+            }
+            TripCause::SupervisorSilent => {
+                "session-side mutual liveness: the watchdog supervisor went silent (dead thread)"
             }
         }
     }
@@ -193,19 +202,26 @@ pub async fn execute_trip<S: LiveSession>(
     now: DateTime<Utc>,
     chain_rung: u8,
 ) -> anyhow::Result<TeardownReport> {
-    // 1. Cause record at trip time, before remediation (KTD4).
-    record_safety_trip(chain, cause.safety_kind(), run_id, cause.detail(), now, chain_rung)?;
-    // 2. Fail-closed teardown (reuse; halt-last is inside).
+    // 1. Persist the cause record before remediation (KTD4) — but a persistence failure must
+    //    NEVER gate the halt. The latch is already claimed, so if a chain-append error skipped
+    //    the teardown the trip would be swallowed with no retry (a fail-OPEN in a fail-closed
+    //    system: the position stays live). So capture the result and surface it AFTER the
+    //    teardown always runs.
+    let cause_append = record_safety_trip(chain, cause.safety_kind(), run_id, cause.detail(), now, chain_rung);
+    // 2. Fail-closed teardown ALWAYS (reuse; halt-last is inside) — never behind a chain write.
     let report = run_teardown(session, WATCHDOG_CANCEL_ATTEMPTS, WATCHDOG_FLAT_ATTEMPTS).await;
     // 3. Persist the kill-switch engagement the halt performed (KTD4).
-    record_safety_trip(
+    let ks_append = record_safety_trip(
         chain,
         SafetyTripKind::KillSwitch,
         run_id,
         "kill switch engaged by watchdog teardown",
         now,
         chain_rung,
-    )?;
+    );
+    // Remediation ran regardless; now surface any persistence failure to the caller.
+    cause_append?;
+    ks_append?;
     Ok(report)
 }
 
@@ -237,6 +253,36 @@ pub async fn watchdog_tick<S: LiveSession>(
         // teardown ran exactly once; do not run it again.
         Some(_) => Ok(None),
         None => Ok(None),
+    }
+}
+
+/// The session-loop's mutual-liveness check (KTD10): if the supervisor's touch has gone
+/// stale beyond the interval, the SESSION itself trips the fail-closed teardown — so a dead
+/// watchdog thread never silently degrades the envelope to attended-operator-only.
+/// Symmetric to [`watchdog_tick`] and shares its one-shot [`TripLatch`], so a real
+/// watchdog trip and this session-side trip together still tear down exactly once. Returns
+/// `Some(SupervisorSilent)` only when THIS tick executed the teardown.
+///
+/// # Errors
+///
+/// Propagates an [`execute_trip`] chain-append failure.
+#[allow(clippy::too_many_arguments)]
+pub async fn session_liveness_tick<S: LiveSession>(
+    session: &S,
+    chain: &DispatchChain,
+    latch: &TripLatch,
+    now_unix: i64,
+    supervisor_touch_unix: i64,
+    interval_secs: i64,
+    run_id: Option<&str>,
+    chain_rung: u8,
+) -> anyhow::Result<Option<TripCause>> {
+    if supervisor_silent(now_unix, supervisor_touch_unix, interval_secs) && latch.try_claim() {
+        let now = Utc.timestamp_opt(now_unix, 0).single().unwrap_or_else(Utc::now);
+        execute_trip(session, chain, TripCause::SupervisorSilent, run_id, now, chain_rung).await?;
+        Ok(Some(TripCause::SupervisorSilent))
+    } else {
+        Ok(None)
     }
 }
 
@@ -487,6 +533,34 @@ mod tests {
             chain.load().kill_switch_engaged
         });
         assert!(handle.join().unwrap(), "the watchdog runtime completed the teardown + trip record");
+    }
+
+    #[tokio::test]
+    async fn a_dead_supervisor_trips_the_session_side_teardown() {
+        // KTD10 mutual liveness: supervisor silence beyond the interval makes the SESSION
+        // side run the teardown, so a dead watchdog thread never degrades to attended-only.
+        let tmp = tempfile::TempDir::new().unwrap();
+        let chain = seed_chain(tmp.path());
+        let session = SyncFakeSession { cancel_ok: true, flat: true, ..Default::default() };
+        let latch = TripLatch::new();
+        let cause = session_liveness_tick(
+            &session, &chain, &latch, 1_752_600_100, 1_752_600_100 - 40, 30, Some("run-w"), 1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(cause, Some(TripCause::SupervisorSilent));
+        assert_eq!(*session.log.lock().unwrap().last().unwrap(), "halt", "teardown ran, halt last");
+        assert!(chain.load().kill_switch_engaged, "the trip persisted the kill switch");
+
+        // A fresh supervisor touch → no trip.
+        let latch2 = TripLatch::new();
+        let none = session_liveness_tick(
+            &SyncFakeSession { cancel_ok: true, flat: true, ..Default::default() },
+            &chain, &latch2, 1_752_600_100, 1_752_600_100 - 5, 30, Some("run-w"), 1,
+        )
+        .await
+        .unwrap();
+        assert_eq!(none, None, "a live supervisor does not trip");
     }
 
     #[test]

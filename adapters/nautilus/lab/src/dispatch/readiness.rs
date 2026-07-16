@@ -366,6 +366,27 @@ mod tests {
     }
 
     #[test]
+    fn a_dedup_hit_or_teardown_retry_reds_the_window() {
+        // Force-executes the "fail-toward-not-safe" safety arms (dedup hit on a real emission,
+        // teardown needing more than one retry) independent of the numeric thresholds.
+        let tmp = TempDir::new().unwrap();
+        stage_run(tmp.path(), "20260716T010000Z-live-orb-v30", Some("live"), clean_dq());
+        let mut dq = clean_dq();
+        dq.dedup_hits = Some(1);
+        stage_run(tmp.path(), "20260716T020000Z-live-orb-v30", Some("live"), dq);
+        let (v, _) = compute_readiness(tmp.path(), &[], Some(&prereg(2, None)));
+        assert_eq!(v, ReadinessVerdict::Red, "a real-emission dedup hit reds the window");
+
+        let tmp2 = TempDir::new().unwrap();
+        stage_run(tmp2.path(), "20260716T010000Z-live-orb-v30", Some("live"), clean_dq());
+        let mut dq2 = clean_dq();
+        dq2.teardown_retries = Some(2);
+        stage_run(tmp2.path(), "20260716T020000Z-live-orb-v30", Some("live"), dq2);
+        let (v2, _) = compute_readiness(tmp2.path(), &[], Some(&prereg(2, None)));
+        assert_eq!(v2, ReadinessVerdict::Red, "more than one teardown retry reds the window");
+    }
+
+    #[test]
     fn a_clean_full_window_is_green() {
         let tmp = TempDir::new().unwrap();
         for h in ["01", "02", "03"] {

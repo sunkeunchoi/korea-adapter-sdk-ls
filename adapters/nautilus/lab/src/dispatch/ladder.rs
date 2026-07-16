@@ -277,8 +277,17 @@ pub fn is_clean_session(
     if manifest.strategy_code_hash != code_hash || governed_params_hash(&manifest.params) != params_hash {
         return false;
     }
-    // Zero limit events for this run.
+    // Zero limit events for this run (artifact-sourced).
     if !run_limit_events(data_home, run_id, from_rung, prereg).is_empty() {
+        return false;
+    }
+    // A safety-tripped session is NEVER clean evidence — at ANY rung, not just rung 2+.
+    // `run_limit_events` reads only artifacts, so the chain safety-trip records are checked
+    // here explicitly. A rung-1 trip suspends the ladder to rung 0 (the stopping rule), so
+    // that same session must not later count toward re-escalation out of rung 1.
+    if chain_records.iter().any(|r| matches!(&r.body.kind,
+        RecordKind::SafetyTrip(t) if t.action == TripAction::Engage && t.run_id.as_deref() == Some(run_id)))
+    {
         return false;
     }
     // Required reports (rung 2+): a produced (non-failed) tracking-error twin.
@@ -286,12 +295,6 @@ pub fn is_clean_session(
         match read_report(data_home, run_id) {
             Ok(Some(r)) if r.status.produced() => {}
             _ => return false,
-        }
-        // Not a safety-trip'd session either.
-        if chain_records.iter().any(|r| matches!(&r.body.kind,
-            RecordKind::SafetyTrip(t) if t.action == TripAction::Engage && t.run_id.as_deref() == Some(run_id)))
-        {
-            return false;
         }
     }
     true
@@ -332,6 +335,14 @@ pub fn verify_escalation(
         return EscalationCheck::Blocked(format!("already at the top rung ({})", crate::dispatch::RUNG_MAX));
     }
     let n = match prereg.n_for_rung(from_rung) {
+        // Fail-closed on a degenerate N=0: never authorize escalation on zero clean evidence,
+        // even if an operator pre-registered it (config-trust floor).
+        Ok(0) => {
+            return EscalationCheck::Blocked(format!(
+                "pre-registered N for rung {from_rung} is 0 — refusing to escalate on zero clean \
+                 evidence (fail-closed floor)"
+            ))
+        }
         Ok(n) => n as usize,
         Err(e) => return EscalationCheck::Blocked(e.to_string()),
     };
@@ -625,6 +636,67 @@ mod tests {
         changed.risk_per_trade_krw += 1.0;
         assert!(!is_clean_session(tmp.path(), &chain.load().records, "20260716T010000Z-live-orb-v30", 1,
             &crate::artifacts::manifest::strategy_code_hash(), &governed_params_hash(&changed), Some(&rung1_prereg())));
+    }
+
+    #[test]
+    fn a_safety_tripped_session_is_not_clean_evidence_even_at_rung_1() {
+        // Regression: the safety-trip exclusion must apply at ALL rungs, not just rung 2+.
+        // A rung-1 trip suspends to rung 0 (stopping rule), so that session must never later
+        // count toward re-escalation out of rung 1.
+        let tmp = TempDir::new().unwrap();
+        let chain = DispatchChain::open(tmp.path()).unwrap();
+        chain.append(now(), 1, 1, None, RecordKind::Genesis).unwrap();
+        let d = dispatch_record(&chain, 1, 1);
+        let run = "20260716T010000Z-live-orb-v30";
+        stage_clean_run(tmp.path(), run, 1, &d, 500.0); // artifact-clean
+        // A benign watchdog trip on that run lands in the chain (clean artifacts, tripped).
+        chain
+            .append(now(), 1, 1, None, RecordKind::SafetyTrip(SafetyTrip {
+                trip: SafetyTripKind::Watchdog,
+                action: TripAction::Engage,
+                run_id: Some(run.into()),
+                detail: "network blip".into(),
+            }))
+            .unwrap();
+        assert!(
+            !is_clean_session(tmp.path(), &chain.load().records, run, 1,
+                &crate::artifacts::manifest::strategy_code_hash(), &governed_params_hash(&OrbParams::default()), None),
+            "a safety-tripped rung-1 session is never clean escalation evidence"
+        );
+    }
+
+    #[test]
+    fn a_strategy_code_hash_change_disqualifies_old_sessions() {
+        // R13 head-change: a strategy-code-hash change returns the ladder to rung 1 — old
+        // sessions at the prior code head no longer qualify.
+        let tmp = TempDir::new().unwrap();
+        let chain = DispatchChain::open(tmp.path()).unwrap();
+        chain.append(now(), 1, 1, None, RecordKind::Genesis).unwrap();
+        let d = dispatch_record(&chain, 1, 1);
+        let run = "20260716T010000Z-live-orb-v30";
+        stage_clean_run(tmp.path(), run, 1, &d, 500.0);
+        assert!(
+            !is_clean_session(tmp.path(), &chain.load().records, run, 1,
+                "a-different-code-hash", &governed_params_hash(&OrbParams::default()), None),
+            "an off-code-head session is not qualifying"
+        );
+    }
+
+    #[test]
+    fn escalation_refuses_a_degenerate_zero_n() {
+        let tmp = TempDir::new().unwrap();
+        let chain = DispatchChain::open(tmp.path()).unwrap();
+        chain.append(now(), 1, 1, None, RecordKind::Genesis).unwrap();
+        let pre = prereg(serde_json::json!({
+            "version": 1,
+            "rungs": [{ "rung": 1, "n_clean_sessions": 0,
+                        "expectation_band": { "min_cum_pnl": -1.0, "max_cum_pnl": 1.0 } }]
+        }));
+        let check = verify_escalation(
+            tmp.path(), &chain.load().records, 1,
+            &crate::artifacts::manifest::strategy_code_hash(), &governed_params_hash(&OrbParams::default()), &pre,
+        );
+        assert!(matches!(check, EscalationCheck::Blocked(_)), "N=0 is fail-closed, not auto-escalate: {check:?}");
     }
 
     #[test]
