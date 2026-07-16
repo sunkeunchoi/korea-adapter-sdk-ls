@@ -17,6 +17,7 @@
 
 pub mod agent;
 pub mod artifacts;
+pub mod dispatch;
 pub mod params;
 pub mod runner;
 pub mod strategy;
