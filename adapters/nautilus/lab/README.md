@@ -238,6 +238,49 @@ hand-authored against it and never adjusted to the result (R3).
      cargo run --bin lab-research analyze --scaffold
    ```
 
+## Dispatch pre-flight gate (`lab-live --dispatch`)
+
+Before any session, `lab-live --dispatch` machine-checks every session precondition and
+records the attempt in the append-only, hash-chained **dispatch chain**
+(`<data_home>/dispatch/chain.jsonl`). It is useful immediately — a pre-check ahead of the
+manual recipe below — and is the frame the mounted session (U6) wires into.
+
+Register the chain once (an explicit, nonce-gated rung-1 genesis), then run the gate
+before each session:
+
+```
+# One-time chain genesis (operator-attended: a fresh nonce, a TTY):
+LS_DATA_HOME=./data LS_DISPATCH_NONCE=$(date +%s) cargo run --bin lab-live -- --genesis
+
+# Pre-flight before a session:
+LS_DATA_HOME=./data LS_TRADING_ENV=paper LS_DISPATCH_LANE=paper \
+  cargo run --bin lab-live -- --dispatch
+```
+
+The gate runs nine tiered checks (R1/R3). **Non-deferrable** reds abort with no override:
+the trading-env interlock, account flat-start (holdings), kill-switch state, and rung
+authorization. **Deferrable** reds — advisory lock, session window, catalog watermark,
+stranded resting orders, budget headroom — abort *unless* the operator records an
+explicit, named deferral with a fresh nonce:
+
+```
+LS_DISPATCH_DEFER=stranded_orders LS_DISPATCH_NONCE=$(date +%s) \
+  LS_DATA_HOME=./data ... cargo run --bin lab-live -- --dispatch
+```
+
+Every attempt against a valid chain leaves a record — a refusal is chain history, not a
+silent exit. A gateway throttle (IGW00201) exits with a distinct code (75) as a **re-run**
+and is never written as a terminal record (KTD5). Exit `0` = green (session authorized),
+non-zero = refused.
+
+**Offline-first / stubbed-binary seam.** Every check is pure and fixture-driven; the
+gateway probes (`LS_DISPATCH_STUB_PROBES=clear,clear`), catalog freshness
+(`LS_DISPATCH_STUB_CATALOG=ok|stale|empty`), budget (`LS_DISPATCH_STUB_BUDGET=ok|low|
+unmeasured`), and clock (`LS_DISPATCH_NOW_UNIX`) can be stubbed so the whole gate runs
+without a gateway. With no gateway stub set, the gate builds the resolved-lane paper
+client and does the real t0424/t0425 reads (the operator path; U6 threads the same client
+through the mounted session).
+
 ## Live paper session (operator-gated)
 
 The `lab-live` bin runs the **same** ORB against the paper gateway and emits the same
@@ -264,14 +307,27 @@ LS_TRADING_ENV=paper LS_NODE_LANE_FILE=.env.domestic LS_DATA_HOME=./data \
   cargo run --bin lab-live
 ```
 
-> **Staging status:** the shipped `lab-live` bin validates the paper-only interlock
-> and then exits with a pointer to this recipe — the full LiveNode session (lock,
-> mount, `node.run`, teardown, artifact finalize) is **not yet wired**, because it
-> needs live credentials and an open KRX window that the offline gate never has. The
-> safety-critical pieces exist and are unit-tested: the fail-closed teardown
-> (`runner::live::run_teardown`), the `LiveSession` seam, the live advisory-lock guard
-> (`runner::live::live_guard`), the emission gate, and the reconcile/approximated-fill
-> collectors. An operator wiring the session composes those against a real `LiveNode`.
+> **Staging status:** the mounted session's building blocks are all shipped and
+> offline-tested; the only piece never driven by the gate is `node.run` itself, which
+> needs live credentials and an open KRX window (the documented invariant). An
+> operator-attended paper session composes these seams into one command:
+>
+> - `runner::live::authorize_mount` — operator-nonce confirm → a green, unconsumed,
+>   same-day dispatch (`MountAuthz::Ready`) → the Live advisory lock held through the
+>   session (TOCTOU close) → a consumption marker recording the mounted run id at mount
+>   time (so `.tmp-` residue is chain-classified as a limit event, R14(f)).
+> - `runner::live::build_live_session_node` — the `LiveNode` build + ORB mount, threading
+>   the authorized rung's pre-registered **rung fraction** into sizing (a numerator-only
+>   budget multiplier, never a param — a rung move leaves head identity unchanged).
+> - `runner::watchdog` — the dead-man + max-loss **watchdog envelope** on its own thread
+>   and runtime, routing every trip through `run_teardown` and appending a safety-trip
+>   record; it refuses to arm without a pre-registered heartbeat interval.
+> - `runner::live::{run_teardown, finalize_session}` — the fail-closed teardown (halt
+>   last) and finalize-always (abnormal on hard-fail), stamping the dispatch↔run linkage.
+> - The ladder governs it end to end: `dispatch::ladder` verifies evidence-cited
+>   escalation, auto-de-escalates on limit events, and suspends to rung 0; `--dispatch`
+>   auto-de-escalates before authorizing, and a red readiness verdict forces rung-1
+>   probation rather than refusing.
 
 ## Scope
 

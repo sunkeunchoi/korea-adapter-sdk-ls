@@ -1,0 +1,30 @@
+{
+  "_note": "PLACEHOLDER pre-registration mirror (KTD9). The real preregistration.json lands with the human pre-registration document BEFORE rung 1, frozen and amendable only by explicit re-registration. Every value here is illustrative, not a committed number. Each dispatch record cites the SHA-256 of the file it ran under. Rung bands are scheduled: a rung's tracking_band freezes from the PRECEDING rung's data (rung-2 band from rung-1 data), so rung 1 carries none by design (KD6).",
+  "version": 1,
+  "k_window": 5,
+  "heartbeat_interval_secs": 30,
+  "session_max_loss_krw": 500000.0,
+  "rung0_requalification": "PLACEHOLDER: N clean paper sessions + operator re-registration before re-entering rung 1.",
+  "exceedance": {
+    "max_reconcile_advised": 1,
+    "max_deferrals": 3,
+    "max_coverage_gaps": 1
+  },
+  "head_change": {
+    "params_change_reruns_n": true,
+    "code_change_resets_to_rung_1": true
+  },
+  "rungs": [
+    { "rung": 1, "fraction": 0.1, "n_clean_sessions": 5,
+      "expectation_band": { "min_cum_pnl": -200000.0, "max_cum_pnl": 2000000.0 } },
+    { "rung": 2, "fraction": 0.25, "n_clean_sessions": 5,
+      "tracking_band": { "max_slippage_per_share": 5.0, "max_approximated_fraction": 0.25 },
+      "expectation_band": { "min_cum_pnl": -100000.0, "max_cum_pnl": 5000000.0 } },
+    { "rung": 3, "fraction": 0.5, "n_clean_sessions": 5,
+      "tracking_band": { "max_slippage_per_share": 5.0, "max_approximated_fraction": 0.25 },
+      "expectation_band": { "min_cum_pnl": 0.0, "max_cum_pnl": 10000000.0 } },
+    { "rung": 4, "fraction": 1.0, "n_clean_sessions": 5,
+      "tracking_band": { "max_slippage_per_share": 5.0, "max_approximated_fraction": 0.25 },
+      "expectation_band": { "min_cum_pnl": 0.0, "max_cum_pnl": 20000000.0 } }
+  ]
+}

@@ -93,6 +93,15 @@ pub struct DataQualityReport {
     /// Reconcile-advised conditions observed during a live session (empty for a
     /// backtest).
     pub reconcile_advised: Vec<ReconcileCondition>,
+    /// The fail-closed teardown's cancel-retry count (R5): more than one retry is a
+    /// limit event (R14(d)). `None` for a backtest or a pre-U5 artifact — absent, not
+    /// zero (a real zero-retry live teardown records `Some(0)`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub teardown_retries: Option<u64>,
+    /// The order-dedup hit count over the session (R5): a non-zero count on a real
+    /// emission is a limit event (R14(d)). `None` for a backtest or a pre-U5 artifact.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dedup_hits: Option<u64>,
     /// The resolved universe symbol list used (its hash rides on the manifest; the
     /// composition lives here so the agent can compare runs, R7/KTD8).
     pub universe_snapshot: Vec<String>,
@@ -118,6 +127,8 @@ impl DataQualityReport {
             adjustment_basis_shift_symbols,
             price_approximated_fills: 0,
             reconcile_advised: Vec::new(),
+            teardown_retries: None,
+            dedup_hits: None,
             universe_snapshot,
             tier_composition: None,
             observations: Vec::new(),

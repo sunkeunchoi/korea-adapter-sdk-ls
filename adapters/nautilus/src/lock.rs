@@ -20,20 +20,31 @@ pub enum LockKind {
     Ingest,
     /// A live session (node tester binaries).
     Live,
+    /// The dispatch chain append serializer (KTD2). Serializes chain writes among
+    /// themselves; it has **no** counterpart — a dispatch append does not exclude an
+    /// ingest or a live session, and the gate probes the Live lock file explicitly
+    /// rather than pairing against it (KTD2).
+    Dispatch,
 }
 
 impl LockKind {
-    fn filename(self) -> &'static str {
+    /// The lockfile name for this kind. `pub(crate)` so the gate can probe the Live
+    /// lock file explicitly (KTD2) without acquiring it.
+    pub(crate) fn filename(self) -> &'static str {
         match self {
             LockKind::Ingest => ".ls-ingest.lock",
             LockKind::Live => ".ls-live.lock",
+            LockKind::Dispatch => ".ls-dispatch.lock",
         }
     }
 
-    fn counterpart(self) -> LockKind {
+    /// The mutual-exclusion counterpart, if this kind has one. `Dispatch` has none:
+    /// it is a binary Ingest↔Live pairing (KTD2).
+    fn counterpart(self) -> Option<LockKind> {
         match self {
-            LockKind::Ingest => LockKind::Live,
-            LockKind::Live => LockKind::Ingest,
+            LockKind::Ingest => Some(LockKind::Live),
+            LockKind::Live => Some(LockKind::Ingest),
+            LockKind::Dispatch => None,
         }
     }
 
@@ -41,6 +52,7 @@ impl LockKind {
         match self {
             LockKind::Ingest => "ingest",
             LockKind::Live => "live-session",
+            LockKind::Dispatch => "dispatch",
         }
     }
 }
@@ -65,15 +77,17 @@ impl AdvisoryLock {
             AdapterError::Ingest(format!("cannot create lock dir {}: {e}", dir.display()))
         })?;
 
-        let counterpart = dir.join(kind.counterpart().filename());
-        if counterpart.exists() {
-            return Err(AdapterError::Ingest(format!(
-                "refusing to start {}: the {} lock is held ({}); ingest and live sessions are \
-                 mutually exclusive (R15)",
-                kind.label(),
-                kind.counterpart().label(),
-                counterpart.display()
-            )));
+        if let Some(counterpart_kind) = kind.counterpart() {
+            let counterpart = dir.join(counterpart_kind.filename());
+            if counterpart.exists() {
+                return Err(AdapterError::Ingest(format!(
+                    "refusing to start {}: the {} lock is held ({}); ingest and live sessions are \
+                     mutually exclusive (R15)",
+                    kind.label(),
+                    counterpart_kind.label(),
+                    counterpart.display()
+                )));
+            }
         }
 
         let path = dir.join(kind.filename());
@@ -100,6 +114,14 @@ impl Drop for AdvisoryLock {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.path);
     }
+}
+
+/// Probe whether a `kind` lock is currently held in `dir`, without acquiring it. The
+/// dispatch gate uses this to check the Live lock explicitly (KTD2): a new `--dispatch`
+/// gate attempt refuses while a live session holds the Live lock, but `Dispatch` takes
+/// no counterpart, so the probe is a read, not an acquisition.
+pub fn is_held(dir: &Path, kind: LockKind) -> bool {
+    dir.join(kind.filename()).exists()
 }
 
 #[cfg(test)]
@@ -139,5 +161,34 @@ mod tests {
         let _a = AdvisoryLock::acquire(dir.path(), LockKind::Ingest).unwrap();
         let err = AdvisoryLock::acquire(dir.path(), LockKind::Ingest).unwrap_err();
         assert!(err.to_string().contains("already exists"));
+    }
+
+    #[test]
+    fn dispatch_has_no_counterpart_but_serializes_against_itself() {
+        // KTD2: a dispatch append does not exclude ingest or live, and vice versa —
+        // Dispatch has no counterpart. But two concurrent chain appends are refused.
+        let dir = tempdir().unwrap();
+        let _ingest = AdvisoryLock::acquire(dir.path(), LockKind::Ingest).unwrap();
+        let _live_probe_absent = !is_held(dir.path(), LockKind::Live);
+        // Dispatch acquires freely even while Ingest is held (no counterpart).
+        let disp = AdvisoryLock::acquire(dir.path(), LockKind::Dispatch).unwrap();
+        // A second concurrent dispatch append is refused (same-kind exclusion).
+        let err = AdvisoryLock::acquire(dir.path(), LockKind::Dispatch).unwrap_err();
+        assert!(err.to_string().contains("already exists"), "{err}");
+        drop(disp);
+        // Released — a fresh append can acquire.
+        let _again = AdvisoryLock::acquire(dir.path(), LockKind::Dispatch).unwrap();
+    }
+
+    #[test]
+    fn is_held_probes_without_acquiring() {
+        let dir = tempdir().unwrap();
+        assert!(!is_held(dir.path(), LockKind::Live));
+        let _live = AdvisoryLock::acquire(dir.path(), LockKind::Live).unwrap();
+        assert!(is_held(dir.path(), LockKind::Live));
+        // Probing does not itself acquire — a second probe still reads held, and a
+        // real acquire still refuses.
+        assert!(is_held(dir.path(), LockKind::Live));
+        assert!(AdvisoryLock::acquire(dir.path(), LockKind::Live).is_err());
     }
 }

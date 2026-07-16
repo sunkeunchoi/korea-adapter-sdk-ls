@@ -45,6 +45,7 @@ fn manifest(run_id: &str, source: RunSource, params: OrbParams) -> Manifest {
         strategy_code_hash: String::new(),
         checkpoint_hash: None,
         universe_metadata_hash: None,
+        dispatch: None,
         created_utc: "2024-01-05T09:00:00Z".into(),
     }
 }
@@ -274,4 +275,42 @@ fn write_decisions_scrubs_free_text_on_disk() {
     assert!(contents.contains("***"), "redaction present");
     let back = envelope::from_jsonl(&contents).unwrap();
     assert_eq!(back.len(), 1, "the scrubbed line still parses");
+}
+
+/// U5 back-compat: a data-quality file written before the teardown-retries / dedup-hits
+/// fields existed still deserializes, and the absent fields read as absent (None), not
+/// zero — a real zero-retry live teardown records Some(0), distinct from "never ran".
+#[test]
+fn pre_u5_data_quality_deserializes_with_absent_fields() {
+    let json = serde_json::json!({
+        "coverage_gaps": [],
+        "shallow_history_symbols": [],
+        "adjustment_basis_shift_symbols": [],
+        "price_approximated_fills": 0,
+        "reconcile_advised": [],
+        "universe_snapshot": []
+    });
+    let dq: DataQualityReport = serde_json::from_value(json).unwrap();
+    assert_eq!(dq.teardown_retries, None, "absent -> None, not zero");
+    assert_eq!(dq.dedup_hits, None);
+}
+
+/// U5 back-compat: a manifest written before the dispatch-linkage field existed still
+/// deserializes with `dispatch = None`.
+#[test]
+fn pre_u5_manifest_deserializes_without_dispatch_link() {
+    let json = serde_json::json!({
+        "run_id": "20260101T000000Z-live-orb-v1",
+        "source": "live",
+        "strategy_id": "orb",
+        "strategy_version": 1,
+        "params": OrbParams::default(),
+        "data_range": { "start": "20260101", "end": "20260101" },
+        "catalog_fingerprint": "abc",
+        "universe_hash": "def",
+        "strategy_code_hash": "ghi",
+        "created_utc": "2026-01-01T00:00:00Z"
+    });
+    let m: Manifest = serde_json::from_value(json).unwrap();
+    assert!(m.dispatch.is_none(), "absent dispatch link -> None");
 }
