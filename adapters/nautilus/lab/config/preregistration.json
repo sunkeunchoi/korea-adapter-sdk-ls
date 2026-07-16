@@ -1,0 +1,27 @@
+{
+  "_note": "FROZEN pre-registration mirror (KTD9) for the ORB Production Ladder. Values are frozen against the head v30 backtest closed-trade distribution — see config/PREREGISTRATION.md for the per-value derivation and its backtest source. Amendable ONLY by an explicit re-registration dispatch. Every dispatch record cites the SHA-256 of this file. Rung tracking_bands are SCHEDULED: each rung's band freezes from the PRECEDING rung's LIVE data before the first session at that rung (KD3/KD6) — they are intentionally absent here (the backtest has zero slippage, so they cannot be grounded now). Rung 1 carries no tracking_band by design; a rung-2+ dispatch is fail-closed until its band is re-registered.",
+  "version": 1,
+  "k_window": 5,
+  "heartbeat_interval_secs": 90,
+  "session_max_loss_krw": 300000.0,
+  "rung0_requalification": "Re-entry to rung 1 requires ALL of: (1) the triggering limit event's root cause identified and written into the re-registration reason (elapsed time alone never qualifies — a benign-cause watchdog trip, KD5, still requires this); (2) at least 3 clean paper sessions run through the dispatch gate at LS_TRADING_ENV=paper since the suspension, each finalized with zero limit events; (3) attended operator re-registration with a fresh nonce.",
+  "exceedance": {
+    "max_reconcile_advised": 1,
+    "max_deferrals": 3,
+    "max_coverage_gaps": 1
+  },
+  "head_change": {
+    "params_change_reruns_n": true,
+    "code_change_resets_to_rung_1": true
+  },
+  "rungs": [
+    { "rung": 1, "fraction": 0.10, "n_clean_sessions": 5,
+      "expectation_band": { "min_cum_pnl": -69000.0, "max_cum_pnl": 533000.0 } },
+    { "rung": 2, "fraction": 0.25, "n_clean_sessions": 5,
+      "expectation_band": { "min_cum_pnl": -172000.0, "max_cum_pnl": 1333000.0 } },
+    { "rung": 3, "fraction": 0.50, "n_clean_sessions": 5,
+      "expectation_band": { "min_cum_pnl": -345000.0, "max_cum_pnl": 2667000.0 } },
+    { "rung": 4, "fraction": 1.00, "n_clean_sessions": 5,
+      "expectation_band": { "min_cum_pnl": -690000.0, "max_cum_pnl": 5334000.0 } }
+  ]
+}
