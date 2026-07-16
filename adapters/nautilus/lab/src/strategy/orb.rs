@@ -895,6 +895,13 @@ pub struct OrbStrategy {
     /// P&L) — the value that makes off-sentinel sizing byte-identical to v26. The
     /// strategy holds NO account state (R9): this scalar is all it needs to size.
     session_equity_multiplier: f64,
+    /// The capital-ladder rung fraction (production-ladder KTD6): a runner-supplied,
+    /// dimensionless budget-numerator multiplier for the authorized rung, composed with
+    /// the equity factor and the ratio-ATR tilt (`risk_per_trade_krw × rung_fraction ×
+    /// equity factor × tilt`). `1.0` (the default) leaves sizing byte-identical to v30.
+    /// It is NEVER an `OrbParams`/manifest field, so a rung move produces zero head-
+    /// identity diff — the exactly-one-param compare discipline stays intact.
+    rung_fraction: f64,
 }
 
 impl OrbStrategy {
@@ -929,7 +936,17 @@ impl OrbStrategy {
             emission: EmissionGate::open(),
             entry_risk: EntryRiskLedger::new(),
             session_equity_multiplier,
+            rung_fraction: 1.0,
         }
+    }
+
+    /// Set the capital-ladder rung fraction (production-ladder KTD6) — the runner supplies
+    /// the authorized rung's pre-registered fraction here; it scales the risk budget
+    /// numerator only. Defaults to `1.0` (unscaled), so a caller that never sets it sizes
+    /// exactly as v30.
+    pub fn with_rung_fraction(mut self, rung_fraction: f64) -> Self {
+        self.rung_fraction = rung_fraction;
+        self
     }
 
     /// A clone of the emission gate — the live runner closes it at teardown so a
@@ -1016,7 +1033,12 @@ impl OrbStrategy {
         multiplier: f64,
     ) -> i64 {
         let prior_atr = self.states.get(id).and_then(|s| s.prior_atr);
-        let weight = self.params.ratio_atr_weight(prior_atr, limit_price as f64);
+        // The ratio-ATR tilt and the ladder rung fraction are both dimensionless,
+        // numerator-only multiplicands (the anti-collapse invariant): composing them into
+        // one `weight` applies `budget × tilt × rung_fraction` without touching the
+        // `risk_per_share` denominator or the notional ceiling (production-ladder KTD6).
+        // At rung_fraction 1.0 this is byte-identical to v30.
+        let weight = self.params.ratio_atr_weight(prior_atr, limit_price as f64) * self.rung_fraction;
         self.params.position_qty_risked_tilted(
             limit_price as f64,
             risk_per_share,
@@ -1402,5 +1424,21 @@ mod ratio_atr_wiring_tests {
             p.position_qty(62_000.0),
             "notional ceiling binds even when upweighted"
         );
+    }
+
+    #[test]
+    fn rung_fraction_scales_the_risk_budget_numerator_with_zero_param_diff() {
+        // Production-ladder KTD6/AE(U10): the ladder rung fraction is a numerator-only
+        // multiplier — half the fraction sizes at half the risked qty (budget binds),
+        // byte-identical to v30 at 1.0 — and a rung change never touches OrbParams, so the
+        // manifest/head identity is unchanged.
+        let (full, id_a) = strategy_at_entry(armed_params(), None, 1.0);
+        let (half, id_b) = strategy_at_entry(armed_params(), None, 1.0);
+        let half = half.with_rung_fraction(0.5);
+        let q_full = full.entry_qty(&id_a, 62_000, 2_000.0, 1.0);
+        let q_half = half.entry_qty(&id_b, 62_000, 2_000.0, 1.0);
+        assert!(q_full > 0, "risk budget binds at rung_fraction 1.0");
+        assert_eq!(q_half, q_full / 2, "rung_fraction 0.5 → half the risked qty (numerator scaled)");
+        assert_eq!(full.params, half.params, "the rung fraction never touches the parameter set");
     }
 }

@@ -272,6 +272,7 @@ use crate::dispatch::checks::{
     DispatchContext, GateResult, GatewayProbe, LanePosture, WeekdayKrxCalendar, TradingCalendar,
 };
 use crate::dispatch::nonce::{detect_unattended_marker, OperatorGate};
+use crate::dispatch::ladder::apply_deescalation;
 use crate::dispatch::readiness::{compute_readiness, readiness_summary, ReadinessVerdict};
 use crate::dispatch::RUNG_MIN;
 
@@ -468,7 +469,7 @@ fn build_context(
 /// (KTD5).
 pub fn run_dispatch(cfg: &DispatchCliConfig) -> anyhow::Result<DispatchGateOutcome> {
     let chain = DispatchChain::open(&cfg.data_home)?;
-    let state = chain.load();
+    let mut state = chain.load();
 
     // A record can only be appended onto a valid epoch. On no/defective chain, report
     // and direct to registration — never append a session-dispatch onto a broken or
@@ -497,6 +498,28 @@ pub fn run_dispatch(cfg: &DispatchCliConfig) -> anyhow::Result<DispatchGateOutco
         }
     }
 
+    // Load pre-registration once (optional in phase 1) — used by both the auto
+    // de-escalation band checks and the readiness reducer.
+    let prereg_loaded = cfg
+        .prereg_path
+        .as_ref()
+        .and_then(|p| crate::dispatch::prereg::load_optional(p).ok().flatten());
+    let now_dt = Utc.timestamp_opt(cfg.now_unix, 0).single().unwrap_or_else(Utc::now);
+
+    // F3: the next `--dispatch` auto-de-escalates for any unconsumed limit events BEFORE
+    // authorizing, so the session runs at the corrected rung; the events are marked
+    // consumed so they never double-fire.
+    let mut deescalation_line: Option<String> = None;
+    if let Some(rec) = apply_deescalation(&chain, &cfg.data_home, prereg_loaded.as_ref().map(|l| &l.values), now_dt)? {
+        if let RecordKind::DeEscalation(d) = &rec.body.kind {
+            deescalation_line = Some(format!(
+                "  auto de-escalation: rung {} → {} on {} limit event(s)",
+                d.from_rung, d.to_rung, d.events.len()
+            ));
+        }
+        state = chain.load();
+    }
+
     let kill_switch_has_record = state
         .records
         .iter()
@@ -517,13 +540,11 @@ pub fn run_dispatch(cfg: &DispatchCliConfig) -> anyhow::Result<DispatchGateOutco
         Some("green") => (ReadinessVerdict::Green, Default::default()),
         Some("red") => (ReadinessVerdict::Red, Default::default()),
         Some(_) => (ReadinessVerdict::NotEvaluated, Default::default()),
-        None => {
-            let prereg = cfg
-                .prereg_path
-                .as_ref()
-                .and_then(|p| crate::dispatch::prereg::load_optional(p).ok().flatten());
-            compute_readiness(&cfg.data_home, &state.records, prereg.as_ref().map(|l| &l.values))
-        }
+        None => compute_readiness(
+            &cfg.data_home,
+            &state.records,
+            prereg_loaded.as_ref().map(|l| &l.values),
+        ),
     };
 
     let ctx = build_context(
@@ -569,6 +590,9 @@ pub fn run_dispatch(cfg: &DispatchCliConfig) -> anyhow::Result<DispatchGateOutco
         GateResult::Throttled => "DISPATCH throttled — re-run (not recorded)",
     };
     lines.push(format!("{header} (rung {} requested, chain rung {})", cfg.requested_rung, state.authorized_rung));
+    if let Some(l) = &deescalation_line {
+        lines.push(l.clone());
+    }
     for r in &decision.records {
         let flag = if r.deferred { " [DEFERRED]" } else { "" };
         lines.push(format!("  {:<22} {:?} {:?}{flag} — {}", r.name, r.tier, r.status, r.detail));
@@ -907,9 +931,11 @@ pub fn authorize_mount(
 /// [`DecisionSink`] is the caller's handle to drain the session's decisions into the run
 /// artifacts after `node.run`.
 ///
-/// The rung fraction is recorded in the manifest (KTD3) but does NOT yet reach sizing —
-/// that threading lands in U10; the strategy mounts at the default (unscaled) budget
-/// multiplier here.
+/// The `rung_fraction` is the authorized rung's pre-registered budget-numerator multiplier
+/// (KTD6): the runner supplies it here and it reaches sizing via
+/// [`OrbStrategy::with_rung_fraction`], composed with the equity factor and the ratio-ATR
+/// tilt — never an `OrbParams`/manifest field, so a rung move produces zero head-identity
+/// diff. `1.0` sizes exactly as v30.
 ///
 /// # Errors
 ///
@@ -919,6 +945,7 @@ pub fn build_live_session_node(
     params: OrbParams,
     selected: Vec<SelectedSymbol>,
     sink: DecisionSink,
+    rung_fraction: f64,
 ) -> anyhow::Result<LiveNode> {
     let mut node = LiveNode::builder(TraderId::from("LS-LAB-001"), Environment::Live)
         .map_err(|e| anyhow::anyhow!("live node builder: {e}"))?
@@ -929,9 +956,9 @@ pub fn build_live_session_node(
         .map_err(|e| anyhow::anyhow!("exec client: {e}"))?
         .build()
         .map_err(|e| anyhow::anyhow!("node build: {e}"))?;
-    // Off-identity multiplier 1.0: U6 mounts the default (non-compounding) sizing path;
-    // the rung fraction reaches sizing in U10 (KTD6).
-    let strategy = OrbStrategy::new(params, selected, sink, 1.0);
+    // Off-identity equity multiplier 1.0; the ladder rung fraction scales the risk budget
+    // numerator (KTD6).
+    let strategy = OrbStrategy::new(params, selected, sink, 1.0).with_rung_fraction(rung_fraction);
     node.add_strategy(strategy).map_err(|e| anyhow::anyhow!("mount ORB strategy: {e}"))?;
     Ok(node)
 }

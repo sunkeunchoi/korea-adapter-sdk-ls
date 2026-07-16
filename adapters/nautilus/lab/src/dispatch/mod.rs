@@ -13,6 +13,7 @@
 
 pub mod chain;
 pub mod checks;
+pub mod ladder;
 pub mod nonce;
 pub mod prereg;
 pub mod readiness;

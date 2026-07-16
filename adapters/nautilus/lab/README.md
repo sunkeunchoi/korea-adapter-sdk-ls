@@ -307,14 +307,27 @@ LS_TRADING_ENV=paper LS_NODE_LANE_FILE=.env.domestic LS_DATA_HOME=./data \
   cargo run --bin lab-live
 ```
 
-> **Staging status:** the shipped `lab-live` bin validates the paper-only interlock
-> and then exits with a pointer to this recipe — the full LiveNode session (lock,
-> mount, `node.run`, teardown, artifact finalize) is **not yet wired**, because it
-> needs live credentials and an open KRX window that the offline gate never has. The
-> safety-critical pieces exist and are unit-tested: the fail-closed teardown
-> (`runner::live::run_teardown`), the `LiveSession` seam, the live advisory-lock guard
-> (`runner::live::live_guard`), the emission gate, and the reconcile/approximated-fill
-> collectors. An operator wiring the session composes those against a real `LiveNode`.
+> **Staging status:** the mounted session's building blocks are all shipped and
+> offline-tested; the only piece never driven by the gate is `node.run` itself, which
+> needs live credentials and an open KRX window (the documented invariant). An
+> operator-attended paper session composes these seams into one command:
+>
+> - `runner::live::authorize_mount` — operator-nonce confirm → a green, unconsumed,
+>   same-day dispatch (`MountAuthz::Ready`) → the Live advisory lock held through the
+>   session (TOCTOU close) → a consumption marker recording the mounted run id at mount
+>   time (so `.tmp-` residue is chain-classified as a limit event, R14(f)).
+> - `runner::live::build_live_session_node` — the `LiveNode` build + ORB mount, threading
+>   the authorized rung's pre-registered **rung fraction** into sizing (a numerator-only
+>   budget multiplier, never a param — a rung move leaves head identity unchanged).
+> - `runner::watchdog` — the dead-man + max-loss **watchdog envelope** on its own thread
+>   and runtime, routing every trip through `run_teardown` and appending a safety-trip
+>   record; it refuses to arm without a pre-registered heartbeat interval.
+> - `runner::live::{run_teardown, finalize_session}` — the fail-closed teardown (halt
+>   last) and finalize-always (abnormal on hard-fail), stamping the dispatch↔run linkage.
+> - The ladder governs it end to end: `dispatch::ladder` verifies evidence-cited
+>   escalation, auto-de-escalates on limit events, and suspends to rung 0; `--dispatch`
+>   auto-de-escalates before authorizing, and a red readiness verdict forces rung-1
+>   probation rather than refusing.
 
 ## Scope
 

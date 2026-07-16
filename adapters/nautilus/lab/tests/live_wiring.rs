@@ -385,6 +385,6 @@ fn build_live_session_node_mounts_the_strategy() {
     }];
     // The offline seam the operator command drives after a green dispatch (node.run stays
     // live-only): the node builds and the ORB strategy mounts.
-    let node = build_live_session_node(paper_config(), OrbParams::default(), selected, DecisionSink::new());
+    let node = build_live_session_node(paper_config(), OrbParams::default(), selected, DecisionSink::new(), 0.1);
     assert!(node.is_ok(), "the live session node builds and mounts the strategy: {:?}", node.err());
 }
