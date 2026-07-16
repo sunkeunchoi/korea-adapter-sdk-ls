@@ -88,6 +88,10 @@ pub struct UniverseCandidate {
     /// sessions (KTD9), or `None` below `rvol_min_history` samples. The RVOL
     /// gate's baseline; never read by selection (R4).
     pub prior_open_vol_mean: Option<f64>,
+    /// Prior-session Amihud illiquidity over the `atr_window` sessions strictly before
+    /// the session (plan 2026-07-16-003), or `None` when under-covered. Read only by the
+    /// liquidity budget tilt in the strategy — never by universe selection (R4).
+    pub prior_illiq: Option<f64>,
 }
 
 impl UniverseCandidate {
@@ -353,6 +357,10 @@ pub struct OrbState {
     /// The prior opening-window volume mean for this symbol-session (KTD9),
     /// threaded from the candidate seam (U2). `None` below `rvol_min_history`.
     prior_open_vol_mean: Option<f64>,
+    /// The prior-session Amihud illiquidity for this symbol-session (plan
+    /// 2026-07-16-003), threaded from the candidate seam. `None` when under-covered —
+    /// the liquidity budget tilt then fails closed to the neutral weight.
+    prior_illiq: Option<f64>,
 }
 
 impl Default for OrbState {
@@ -371,6 +379,7 @@ impl Default for OrbState {
             open_window_vol: 0.0,
             prior_atr: None,
             prior_open_vol_mean: None,
+            prior_illiq: None,
         }
     }
 }
@@ -382,9 +391,14 @@ impl OrbState {
     }
 
     /// A fresh state seeded with the candidate-seam priors (U2): the prior-daily
-    /// ATR and the prior opening-window volume mean the gates read (KTD5, KTD9).
-    pub fn with_priors(prior_atr: Option<f64>, prior_open_vol_mean: Option<f64>) -> Self {
-        OrbState { prior_atr, prior_open_vol_mean, ..Self::default() }
+    /// ATR, the prior opening-window volume mean, and the prior-session Amihud
+    /// illiquidity the gates / budget tilts read (KTD5, KTD9, plan 2026-07-16-003).
+    pub fn with_priors(
+        prior_atr: Option<f64>,
+        prior_open_vol_mean: Option<f64>,
+        prior_illiq: Option<f64>,
+    ) -> Self {
+        OrbState { prior_atr, prior_open_vol_mean, prior_illiq, ..Self::default() }
     }
 
     /// Whether a long position is currently held.
@@ -874,6 +888,10 @@ pub struct SelectedSymbol {
     /// The symbol's prior opening-window volume mean for this session (KTD9),
     /// threaded to its [`OrbState`] for the RVOL gate. `None` when below history.
     pub prior_open_vol_mean: Option<f64>,
+    /// The symbol's prior-session Amihud illiquidity for this session (plan
+    /// 2026-07-16-003), threaded to its [`OrbState`] for the liquidity budget tilt.
+    /// `None` when under-covered.
+    pub prior_illiq: Option<f64>,
 }
 
 /// The ORB v0 nautilus strategy. Mounts one [`OrbState`] per selected symbol, feeds
@@ -924,7 +942,12 @@ impl OrbStrategy {
         // mean (U2 candidate seam) onto its fresh state for the gates to read.
         let states = selected
             .iter()
-            .map(|s| (s.instrument_id, OrbState::with_priors(s.prior_atr, s.prior_open_vol_mean)))
+            .map(|s| {
+                (
+                    s.instrument_id,
+                    OrbState::with_priors(s.prior_atr, s.prior_open_vol_mean, s.prior_illiq),
+                )
+            })
             .collect();
         OrbStrategy {
             core: StrategyCore::new(base),
@@ -1033,12 +1056,16 @@ impl OrbStrategy {
         multiplier: f64,
     ) -> i64 {
         let prior_atr = self.states.get(id).and_then(|s| s.prior_atr);
-        // The ratio-ATR tilt and the ladder rung fraction are both dimensionless,
-        // numerator-only multiplicands (the anti-collapse invariant): composing them into
-        // one `weight` applies `budget × tilt × rung_fraction` without touching the
-        // `risk_per_share` denominator or the notional ceiling (production-ladder KTD6).
-        // At rung_fraction 1.0 this is byte-identical to v30.
-        let weight = self.params.ratio_atr_weight(prior_atr, limit_price as f64) * self.rung_fraction;
+        let prior_illiq = self.states.get(id).and_then(|s| s.prior_illiq);
+        // The ratio-ATR tilt, the Amihud liquidity tilt, and the ladder rung fraction are
+        // all dimensionless, numerator-only multiplicands (the anti-collapse invariant):
+        // composing them into one `weight` applies `budget × ratio-tilt × liquidity-tilt ×
+        // rung_fraction` without touching the `risk_per_share` denominator or the notional
+        // ceiling (production-ladder KTD6, plan 2026-07-16-003). With every tilt off-sentinel
+        // and rung_fraction 1.0 this is byte-identical to v30.
+        let weight = self.params.ratio_atr_weight(prior_atr, limit_price as f64)
+            * self.params.liquidity_tilt_weight(prior_illiq)
+            * self.rung_fraction;
         self.params.position_qty_risked_tilted(
             limit_price as f64,
             risk_per_share,
@@ -1338,6 +1365,7 @@ mod ratio_atr_wiring_tests {
             bar_type: BarKind::Minute(1).bar_type(id).unwrap(),
             prior_atr,
             prior_open_vol_mean: None,
+            prior_illiq: None,
         }];
         let mut strategy = OrbStrategy::new(params, selected, DecisionSink::new(), m);
         let p = strategy.params.clone();
@@ -1440,5 +1468,59 @@ mod ratio_atr_wiring_tests {
         assert!(q_full > 0, "risk budget binds at rung_fraction 1.0");
         assert_eq!(q_half, q_full / 2, "rung_fraction 0.5 → half the risked qty (numerator scaled)");
         assert_eq!(full.params, half.params, "the rung fraction never touches the parameter set");
+    }
+
+    /// The liquidity tilt threads `prior_illiq` onto the symbol's state, and `entry_qty`
+    /// applies `liquidity_tilt_weight` in the budget numerator (plan 2026-07-16-003): an
+    /// illiquid name (illiq above the reference → w < 1) sizes strictly smaller than the
+    /// untilted path, and the off-sentinel is byte-identical for any illiq.
+    #[test]
+    fn liquidity_tilt_wiring_downsizes_illiquid_and_off_is_byte_identical() {
+        let ref_illiq = 2.0e-13;
+        let armed = OrbParams {
+            risk_per_trade_krw: 299_340.0,
+            notional_per_position: 1_000_000_000.0, // slack ceiling so the budget binds
+            liquidity_tilt_alpha: 1.0,
+            liquidity_tilt_ref: ref_illiq,
+            liquidity_tilt_w_lo: 0.6,
+            liquidity_tilt_w_hi: 6.5,
+            ..Default::default()
+        };
+        let build = |params: OrbParams, illiq: Option<f64>| -> (OrbStrategy, InstrumentId) {
+            let id = InstrumentId::from("005930.XKRX");
+            let selected = vec![SelectedSymbol {
+                instrument_id: id,
+                bar_type: BarKind::Minute(1).bar_type(id).unwrap(),
+                prior_atr: None,
+                prior_open_vol_mean: None,
+                prior_illiq: illiq,
+            }];
+            let mut s = OrbStrategy::new(params, selected, DecisionSink::new(), 1.0);
+            let p = s.params.clone();
+            {
+                let st = s.states.get_mut(&id).unwrap();
+                assert!(st.on_bar(tm(9, 0), 61_500, 60_000, 61_500, 0.0, &p).is_empty());
+                assert!(st.on_bar(tm(9, 10), 61_500, 60_000, 61_500, 0.0, &p).is_empty());
+                let acts = st.on_bar(tm(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
+                assert_eq!(acts, vec![OrbAction::Enter { limit_price: 62_000 }]);
+            }
+            (s, id)
+        };
+        // Illiquid (illiq above ref → w < 1) sizes strictly smaller than the untilted path.
+        let (s_illiq, id) = build(armed.clone(), Some(ref_illiq * 3.0));
+        let q_illiq = s_illiq.entry_qty(&id, 62_000, 2_000.0, 1.0);
+        let untilted = armed.position_qty_risked_at(62_000.0, 2_000.0, 1.0);
+        assert!(q_illiq < untilted, "illiquid name downsized: {q_illiq} < {untilted}");
+        // Off-sentinel: byte-identical to the untilted path for ANY illiq (present/absent/zero).
+        let mut off = armed.clone();
+        off.liquidity_tilt_alpha = 0.0;
+        for illiq in [None, Some(ref_illiq * 3.0), Some(0.0)] {
+            let (s, id) = build(off.clone(), illiq);
+            assert_eq!(
+                s.entry_qty(&id, 62_000, 2_000.0, 1.0),
+                off.position_qty_risked_at(62_000.0, 2_000.0, 1.0),
+                "off sentinel identical (illiq={illiq:?})"
+            );
+        }
     }
 }

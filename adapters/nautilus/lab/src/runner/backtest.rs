@@ -453,9 +453,9 @@ fn run_sessions(
         // selected-symbol seam can thread it to the strategy (U2). Selection
         // itself reads neither value (R4) — computed on every candidate,
         // consumed only for the selected ones.
-        let derived: HashMap<String, (Option<f64>, Option<f64>)> = candidates
+        let derived: HashMap<String, (Option<f64>, Option<f64>, Option<f64>)> = candidates
             .iter()
-            .map(|c| (c.symbol.clone(), (c.prior_atr, c.prior_open_vol_mean)))
+            .map(|c| (c.symbol.clone(), (c.prior_atr, c.prior_open_vol_mean, c.prior_illiq)))
             .collect();
         let selected_symbols = select_universe(&candidates, params, sink, session_ts);
         for s in &selected_symbols {
@@ -470,9 +470,15 @@ fn run_sessions(
             .filter(|i| selected_symbols.iter().any(|s| s == &i.id().to_string()))
             .filter_map(|i| {
                 BarKind::Minute(minute_step).bar_type(i.id()).ok().map(|bar_type| {
-                    let (prior_atr, prior_open_vol_mean) =
-                        derived.get(&i.id().to_string()).copied().unwrap_or((None, None));
-                    SelectedSymbol { instrument_id: i.id(), bar_type, prior_atr, prior_open_vol_mean }
+                    let (prior_atr, prior_open_vol_mean, prior_illiq) =
+                        derived.get(&i.id().to_string()).copied().unwrap_or((None, None, None));
+                    SelectedSymbol {
+                        instrument_id: i.id(),
+                        bar_type,
+                        prior_atr,
+                        prior_open_vol_mean,
+                        prior_illiq,
+                    }
                 })
             })
             .collect();
@@ -584,6 +590,9 @@ fn build_candidates(
         // Derived gate inputs (U2) — computed for every candidate but read only
         // by the strategy's gates for the selected ones, never by selection (R4).
         let prior_atr = prior_atr(daily, session_date, atr_window);
+        // Amihud illiquidity over the same prior daily window as the ATR (plan
+        // 2026-07-16-003) — the liquidity tilt's axis; selection-neutral (R4).
+        let prior_illiq = prior_illiq(daily, session_date, atr_window);
         let prior_open_vol_mean = prior_open_window_vol_mean(
             open_vol_by_inst.get(&id),
             session_date,
@@ -598,6 +607,7 @@ fn build_candidates(
             meta,
             prior_atr,
             prior_open_vol_mean,
+            prior_illiq,
         });
     }
     candidates
@@ -640,6 +650,45 @@ pub(crate) fn prior_atr(daily_sorted: &[&Bar], session_date: NaiveDate, window: 
         sum_tr += tr;
     }
     Some(sum_tr / window as f64)
+}
+
+/// Amihud illiquidity over the `window` daily sessions strictly before `session_date`
+/// (plan 2026-07-16-003 R2). Uses the identical prior-window discipline as
+/// [`prior_atr`]: dedup to one bar per KST session (the latest, matching
+/// [`select_prior_today`]), need `window`+1 sessions (each of the `window` daily returns
+/// needs a prior close), and read the most-recent `window`+1. Each session's Amihud term
+/// is `|close_k/close_{k-1} − 1| / (close_k · volume_k)` (an absolute daily return over
+/// the session's KRW turnover); the measure is their mean. `None` when fewer than
+/// `window`+1 priors exist (the fail-closed boundary matching `prior_atr`), when `window`
+/// is zero, or when any prior close/turnover is non-positive (a degenerate session the
+/// ratio can't be formed on) — the strategy's liquidity tilt then fails closed to `w = 1`.
+pub(crate) fn prior_illiq(daily_sorted: &[&Bar], session_date: NaiveDate, window: usize) -> Option<f64> {
+    if window == 0 {
+        return None;
+    }
+    let mut by_date: BTreeMap<NaiveDate, &Bar> = BTreeMap::new();
+    for b in daily_sorted {
+        let d = kst_date_of(b);
+        if d < session_date {
+            by_date.insert(d, *b);
+        }
+    }
+    if by_date.len() < window + 1 {
+        return None;
+    }
+    let sessions: Vec<&Bar> = by_date.values().copied().collect();
+    let tail = &sessions[sessions.len() - (window + 1)..];
+    let mut sum = 0.0;
+    for pair in tail.windows(2) {
+        let prev_close = pair[0].close.as_f64();
+        let close = pair[1].close.as_f64();
+        let turnover = close * pair[1].volume.as_f64();
+        if prev_close <= 0.0 || turnover <= 0.0 {
+            return None;
+        }
+        sum += (close / prev_close - 1.0).abs() / turnover;
+    }
+    Some(sum / window as f64)
 }
 
 /// The mean opening-window volume over up to `window` prior in-range sessions
@@ -1113,6 +1162,71 @@ mod tests {
         assert_eq!(prior_open_window_vol_mean(None, session, 5, 1), None, "no minute index");
     }
 
+    // -- Amihud illiquidity (CLASS B liquidity tilt, plan 2026-07-16-003) ----------
+
+    /// A daily bar with an explicit close + volume (high/low = close; Amihud reads only
+    /// close and volume). Volume in whole shares.
+    fn day_cv(bt: BarType, ymd: (i32, u32, u32), close: i64, volume: u64) -> Bar {
+        let ts = kst_to_unix_nanos(NaiveDate::from_ymd_opt(ymd.0, ymd.1, ymd.2).unwrap(), KRX_REGULAR_CLOSE)
+            .unwrap();
+        Bar::new(
+            bt,
+            Price::from(close.to_string().as_str()),
+            Price::from(close.to_string().as_str()),
+            Price::from(close.to_string().as_str()),
+            Price::from(close.to_string().as_str()),
+            Quantity::from(volume),
+            ts,
+            ts,
+        )
+    }
+
+    #[test]
+    fn prior_illiq_matches_hand_computation_and_excludes_own_bar() {
+        let bt = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        // jan1 c=100 v=1000; jan2 c=110 v=1000 → |ret|=0.1, turnover=110_000, term=0.1/110_000;
+        // jan3 c=99  v=2000 → |ret|=|99/110-1|=0.1, turnover=198_000, term=0.1/198_000.
+        // Amihud(2) = (0.1/110_000 + 0.1/198_000) / 2.
+        let d1 = day_cv(bt, (2024, 1, 1), 100, 1000);
+        let d2 = day_cv(bt, (2024, 1, 2), 110, 1000);
+        let d3 = day_cv(bt, (2024, 1, 3), 99, 2000);
+        // The session's OWN bar (jan4) must be excluded from the lookback.
+        let d4 = day_cv(bt, (2024, 1, 4), 500, 9);
+        let daily = vec![&d1, &d2, &d3, &d4];
+        let jan4 = NaiveDate::from_ymd_opt(2024, 1, 4).unwrap();
+        let expect = (0.1 / 110_000.0 + 0.1 / 198_000.0) / 2.0;
+        let got = prior_illiq(&daily, jan4, 2).unwrap();
+        assert!((got - expect).abs() < 1e-18, "Amihud(2) hand match: got {got}, expect {expect}");
+    }
+
+    #[test]
+    fn prior_illiq_fails_closed_below_window_plus_one_and_on_zero_window() {
+        let bt = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        let d1 = day_cv(bt, (2024, 1, 1), 100, 1000);
+        let d2 = day_cv(bt, (2024, 1, 2), 110, 1000);
+        let d3 = day_cv(bt, (2024, 1, 3), 99, 2000);
+        let jan4 = NaiveDate::from_ymd_opt(2024, 1, 4).unwrap();
+        // window 2 needs 3 priors: exactly 2 → None, exactly 3 → Some (boundary matches ATR).
+        assert_eq!(prior_illiq(&vec![&d2, &d3], jan4, 2), None, "2 priors, window 2");
+        assert!(prior_illiq(&vec![&d1, &d2, &d3], jan4, 2).is_some(), "3 priors, window 2");
+        assert_eq!(prior_illiq(&vec![&d1, &d2, &d3], jan4, 0), None, "zero window");
+    }
+
+    #[test]
+    fn prior_illiq_dedups_a_same_session_divergent_copy() {
+        // Mirrors the ATR dedup discipline: the latest per-date bar wins, so a value-divergent
+        // same-session copy never adds a phantom session.
+        let bt = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        let d1 = day_cv(bt, (2024, 1, 1), 100, 1000);
+        let d2 = day_cv(bt, (2024, 1, 2), 110, 1000);
+        let d3 = day_cv(bt, (2024, 1, 3), 99, 2000);
+        let d3_dup = day_cv(bt, (2024, 1, 3), 99, 2000);
+        let jan4 = NaiveDate::from_ymd_opt(2024, 1, 4).unwrap();
+        let expect = (0.1 / 110_000.0 + 0.1 / 198_000.0) / 2.0;
+        let got = prior_illiq(&vec![&d1, &d2, &d3, &d3_dup], jan4, 2).unwrap();
+        assert!((got - expect).abs() < 1e-18, "same-session copy deduped, not a 4th session");
+    }
+
     // -- U3: session-open equity-compounding accumulator (CLASS B lever 2) --------
 
     /// Fold a chronological sequence of per-session realized-P&L totals into the
@@ -1193,6 +1307,7 @@ mod tests {
             meta: CandidateMeta::Untagged,
             prior_atr: atr,
             prior_open_vol_mean: rvol,
+            prior_illiq: None,
         };
         let none = vec![base(None, None)];
         let some = vec![base(Some(1234.0), Some(9999.0))];

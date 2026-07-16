@@ -24,7 +24,20 @@ use nautilus_ls_lab::runner::live::{count_approximated, live_guard, record_recon
 use nautilus_ls_lab::agent::sink::DecisionSink;
 use nautilus_ls_lab::strategy::orb::{OrbStrategy, SelectedSymbol};
 use nautilus_model::identifiers::{ClientOrderId, InstrumentId, TraderId, TradeId};
+use std::sync::{Mutex, MutexGuard};
 use tempfile::tempdir;
+
+/// Serializes the tests that build a Nautilus `LiveNode` (each initializes the process-global
+/// logger via a non-atomic check-then-set). Two builds racing in parallel test threads trip
+/// "a non-Nautilus logger is already registered" intermittently — deterministically red on some
+/// CI schedulers, green on others. Holding this lock across each `.build()` makes the logger
+/// init atomic across them, so a serialized second build sees the (own) logger already set and
+/// tolerates it. Poison-tolerant: a panicking node-building test must not wedge the others.
+static NODE_BUILD_LOCK: Mutex<()> = Mutex::new(());
+
+fn node_build_lock() -> MutexGuard<'static, ()> {
+    NODE_BUILD_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
 
 fn paper_config() -> LsAdapterConfig {
     let ls = LsConfig {
@@ -62,15 +75,20 @@ fn delta(ord_no: &str, price: i64, approximated: bool) -> FillDelta {
 /// succeeds). No `node.run` — the repo never drives a full LiveNode offline.
 #[tokio::test(flavor = "current_thread")]
 async fn strategy_mounts_in_a_built_live_node() {
-    let mut node = LiveNode::builder(TraderId::from("LS-LAB-001"), Environment::Live)
-        .expect("builder")
-        .with_name("ls-lab-live")
-        .add_data_client(None, Box::new(LsDataClientFactory), Box::new(paper_config()))
-        .expect("data client")
-        .add_exec_client(None, Box::new(LsExecutionClientFactory), Box::new(paper_config()))
-        .expect("exec client")
-        .build()
-        .expect("node builds");
+    // Serialize the logger-initializing build (see NODE_BUILD_LOCK). The guard covers only
+    // the synchronous builder chain and drops before any await — safe on any test flavor.
+    let mut node = {
+        let _guard = node_build_lock();
+        LiveNode::builder(TraderId::from("LS-LAB-001"), Environment::Live)
+            .expect("builder")
+            .with_name("ls-lab-live")
+            .add_data_client(None, Box::new(LsDataClientFactory), Box::new(paper_config()))
+            .expect("data client")
+            .add_exec_client(None, Box::new(LsExecutionClientFactory), Box::new(paper_config()))
+            .expect("exec client")
+            .build()
+            .expect("node builds")
+    };
 
     let id = InstrumentId::from("005930.XKRX");
     let selected = vec![SelectedSymbol {
@@ -78,6 +96,7 @@ async fn strategy_mounts_in_a_built_live_node() {
         bar_type: BarKind::Minute(1).bar_type(id).unwrap(),
         prior_atr: None,
         prior_open_vol_mean: None,
+        prior_illiq: None,
     }];
     // Off-identity multiplier 1.0 (CLASS B lever 2, R8/KTD-1): the live-wiring smoke
     // exercises the default (non-compounding) sizing path.
@@ -384,9 +403,14 @@ fn build_live_session_node_mounts_the_strategy() {
         bar_type: BarKind::Minute(1).bar_type(InstrumentId::from("005930.XKRX")).unwrap(),
         prior_atr: None,
         prior_open_vol_mean: None,
+        prior_illiq: None,
     }];
     // The offline seam the operator command drives after a green dispatch (node.run stays
-    // live-only): the node builds and the ORB strategy mounts.
-    let node = build_live_session_node(paper_config(), OrbParams::default(), selected, DecisionSink::new(), 0.1);
+    // live-only): the node builds and the ORB strategy mounts. Serialize the logger-initializing
+    // build against the other LiveNode-building test (see NODE_BUILD_LOCK).
+    let node = {
+        let _guard = node_build_lock();
+        build_live_session_node(paper_config(), OrbParams::default(), selected, DecisionSink::new(), 0.1)
+    };
     assert!(node.is_ok(), "the live session node builds and mounts the strategy: {:?}", node.err());
 }

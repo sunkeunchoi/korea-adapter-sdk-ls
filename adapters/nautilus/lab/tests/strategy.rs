@@ -386,7 +386,7 @@ fn atr_stop_mode_places_stop_below_entry_by_atr() {
     let mut p = OrbParams::default();
     p.stop_mode = 2.0; // ATR
     p.stop_atr_mult = 2.0;
-    let mut st = OrbState::with_priors(Some(300.0), None); // 2 × 300 = 600 below entry
+    let mut st = OrbState::with_priors(Some(300.0), None, None); // 2 × 300 = 600 below entry
     set_range(&mut st, &p, 61_500, 60_000);
     // entry 62_000 → stop = max(62_000 − 600, 60_000) = 61_400; trade-R = 600.
     // The entry bar's low (61_600) stays above the ATR stop → clean entry.
@@ -405,7 +405,7 @@ fn atr_stop_mode_clamps_to_range_low_when_wider() {
     p.stop_atr_mult = 2.0;
     // 2 × 5_000 = 10_000 below entry (62_000 − 10_000 = 52_000) is far below the
     // 60_000 range low → clamp to 60_000 (the v9 stop).
-    let mut st = OrbState::with_priors(Some(5_000.0), None);
+    let mut st = OrbState::with_priors(Some(5_000.0), None, None);
     set_range(&mut st, &p, 61_500, 60_000);
     assert_eq!(st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p), vec![OrbAction::Enter { limit_price: 62_000 }]);
     // A dip to 60_100 (above the 60_000 clamped stop) does NOT stop out.
@@ -422,7 +422,7 @@ fn atr_stop_mode_mfe_denominates_by_trade_r() {
     let mut p = OrbParams::default();
     p.stop_mode = 2.0;
     p.stop_atr_mult = 2.0;
-    let mut st = OrbState::with_priors(Some(300.0), None); // stop 600 below entry
+    let mut st = OrbState::with_priors(Some(300.0), None, None); // stop 600 below entry
     set_range(&mut st, &p, 61_500, 60_000); // range-R 1500 (NOT the denominator here)
     // entry 62_000, stop 61_400, trade-R = 600.
     st.on_bar(t(9, 20), 62_000, 61_600, 61_500, 0.0, &p);
@@ -869,7 +869,7 @@ fn realized_exit_r_reports_booked_r() {
 fn atr_stop_mode_fails_closed_without_atr() {
     let mut p = OrbParams::default();
     p.stop_mode = 2.0;
-    let mut st = OrbState::with_priors(None, None); // ATR unavailable
+    let mut st = OrbState::with_priors(None, None, None); // ATR unavailable
     set_range(&mut st, &p, 61_500, 60_000);
     // The first trading-window bar fixes the range → the gate rejects immediately.
     let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
@@ -890,7 +890,7 @@ fn atr_stop_mode_fails_closed_without_atr() {
 fn atr_stop_mode_treats_zero_atr_as_unavailable() {
     let mut p = OrbParams::default();
     p.stop_mode = 2.0; // ATR
-    let mut st = OrbState::with_priors(Some(0.0), None); // flat priors → ATR 0.0
+    let mut st = OrbState::with_priors(Some(0.0), None, None); // flat priors → ATR 0.0
     set_range(&mut st, &p, 61_500, 60_000);
     let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
     assert_eq!(
@@ -910,7 +910,7 @@ fn atr_stop_mode_treats_zero_atr_as_unavailable() {
 fn or_width_gate_skips_when_atr_non_positive() {
     let mut p = OrbParams::default();
     p.or_width_max_atr = 5.0; // gate on, but no positive ATR to normalize against
-    let mut st = OrbState::with_priors(Some(0.0), None); // flat priors → ATR 0.0
+    let mut st = OrbState::with_priors(Some(0.0), None, None); // flat priors → ATR 0.0
     set_range(&mut st, &p, 61_500, 60_000); // a wide range — would fail a live width gate
     assert_eq!(
         st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p),
@@ -933,7 +933,7 @@ fn atr_stop_distance_floored_at_one_never_collapses_onto_entry() {
     p.stop_mode = 2.0; // ATR
     p.stop_atr_mult = 2.0;
     // ATR 0.1 → 2 × 0.1 = 0.2 → round = 0 → floored to 1 (dist = 1 tick).
-    let mut st = OrbState::with_priors(Some(0.1), None);
+    let mut st = OrbState::with_priors(Some(0.1), None, None);
     set_range(&mut st, &p, 61_500, 61_000);
     // A flat entry bar (high = low = close = 62_000) breaks the range high. Stop =
     // max(62_000 − 1, 61_000) = 61_999; the entry bar low 62_000 > 61_999 → no
@@ -1057,7 +1057,7 @@ fn set_range_vol(st: &mut OrbState, p: &OrbParams, high: i64, low: i64, vol_per_
 #[test]
 fn or_width_gate_off_is_a_no_op() {
     let p = OrbParams::default(); // or_width_max_atr 0.0
-    let mut st = OrbState::with_priors(Some(100.0), None);
+    let mut st = OrbState::with_priors(Some(100.0), None, None);
     set_range(&mut st, &p, 61_500, 60_000); // a wide range
     assert_eq!(
         st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p),
@@ -1070,7 +1070,7 @@ fn or_width_gate_off_is_a_no_op() {
 fn or_width_gate_rejects_a_wide_range() {
     let mut p = OrbParams::default();
     p.or_width_max_atr = 5.0; // range-R must be ≤ 5 × ATR = 500
-    let mut st = OrbState::with_priors(Some(100.0), None);
+    let mut st = OrbState::with_priors(Some(100.0), None, None);
     set_range(&mut st, &p, 61_500, 60_000); // range-R 1500 > 500
     let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
     assert_eq!(
@@ -1087,7 +1087,7 @@ fn or_width_gate_rejects_a_wide_range() {
 fn or_width_gate_passes_a_tight_range() {
     let mut p = OrbParams::default();
     p.or_width_max_atr = 5.0; // threshold 500
-    let mut st = OrbState::with_priors(Some(100.0), None);
+    let mut st = OrbState::with_priors(Some(100.0), None, None);
     set_range(&mut st, &p, 60_300, 60_000); // range-R 300 ≤ 500 → pass
     assert_eq!(
         st.on_bar(t(9, 20), 60_800, 60_100, 60_500, 0.0, &p),
@@ -1104,7 +1104,7 @@ fn or_width_gate_passes_a_tight_range() {
 fn or_width_gate_skips_when_atr_missing() {
     let mut p = OrbParams::default();
     p.or_width_max_atr = 5.0;
-    let mut st = OrbState::with_priors(None, None); // ATR unavailable
+    let mut st = OrbState::with_priors(None, None, None); // ATR unavailable
     set_range(&mut st, &p, 61_500, 60_000);
     assert_eq!(
         st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p),
@@ -1117,7 +1117,7 @@ fn or_width_gate_skips_when_atr_missing() {
 #[test]
 fn rvol_gate_off_is_a_no_op() {
     let p = OrbParams::default(); // rvol_min 0.0
-    let mut st = OrbState::with_priors(None, Some(1_000.0));
+    let mut st = OrbState::with_priors(None, Some(1_000.0), None);
     set_range_vol(&mut st, &p, 61_500, 60_000, 1.0); // trivial volume
     assert_eq!(
         st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p),
@@ -1129,7 +1129,7 @@ fn rvol_gate_off_is_a_no_op() {
 fn rvol_gate_rejects_low_participation() {
     let mut p = OrbParams::default();
     p.rvol_min = 1.0;
-    let mut st = OrbState::with_priors(None, Some(1_000.0)); // prior mean 1000
+    let mut st = OrbState::with_priors(None, Some(1_000.0), None); // prior mean 1000
     set_range_vol(&mut st, &p, 61_500, 60_000, 400.0); // today 800 < 1.0 × 1000
     let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
     assert_eq!(
@@ -1145,7 +1145,7 @@ fn rvol_gate_rejects_low_participation() {
 fn rvol_gate_passes_high_participation() {
     let mut p = OrbParams::default();
     p.rvol_min = 1.0;
-    let mut st = OrbState::with_priors(None, Some(1_000.0));
+    let mut st = OrbState::with_priors(None, Some(1_000.0), None);
     set_range_vol(&mut st, &p, 61_500, 60_000, 600.0); // today 1200 ≥ 1000
     assert_eq!(
         st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p),
@@ -1157,7 +1157,7 @@ fn rvol_gate_passes_high_participation() {
 fn rvol_gate_fails_closed_without_history() {
     let mut p = OrbParams::default();
     p.rvol_min = 1.0;
-    let mut st = OrbState::with_priors(None, None); // no prior mean
+    let mut st = OrbState::with_priors(None, None, None); // no prior mean
     set_range_vol(&mut st, &p, 61_500, 60_000, 600.0);
     let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
     assert_eq!(
@@ -1173,7 +1173,7 @@ fn rvol_gate_fails_closed_without_history() {
 fn rvol_gate_fails_closed_on_zero_prior_mean() {
     let mut p = OrbParams::default();
     p.rvol_min = 1.0;
-    let mut st = OrbState::with_priors(None, Some(0.0)); // zero prior mean
+    let mut st = OrbState::with_priors(None, Some(0.0), None); // zero prior mean
     set_range_vol(&mut st, &p, 61_500, 60_000, 600.0);
     let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
     assert_eq!(
@@ -1191,7 +1191,7 @@ fn gate_order_records_or_width_before_rvol() {
     let mut p = OrbParams::default();
     p.or_width_max_atr = 5.0; // fails: wide range
     p.rvol_min = 1.0; // would also fail: low volume
-    let mut st = OrbState::with_priors(Some(100.0), Some(1_000.0)); // threshold 500
+    let mut st = OrbState::with_priors(Some(100.0), Some(1_000.0), None); // threshold 500
     set_range_vol(&mut st, &p, 61_500, 60_000, 100.0); // today 200 < 1000 too
     let acts = st.on_bar(t(9, 20), 62_000, 61_000, 61_500, 0.0, &p);
     assert_eq!(acts.len(), 1, "one canonical filter, not both");
@@ -1273,6 +1273,7 @@ fn candidate(sym: &str, prior_close: f64, today_open: f64, turnover: f64) -> Uni
         meta: CandidateMeta::Untagged,
         prior_atr: None,
         prior_open_vol_mean: None,
+        prior_illiq: None,
     }
 }
 
@@ -1369,6 +1370,7 @@ fn tagged(
         meta: CandidateMeta::Tagged { tradable, tags: tags(market, cap) },
         prior_atr: None,
         prior_open_vol_mean: None,
+        prior_illiq: None,
     }
 }
 
