@@ -272,6 +272,8 @@ use crate::dispatch::checks::{
     DispatchContext, GateResult, GatewayProbe, LanePosture, WeekdayKrxCalendar, TradingCalendar,
 };
 use crate::dispatch::nonce::{detect_unattended_marker, OperatorGate};
+use crate::dispatch::readiness::{compute_readiness, readiness_summary, ReadinessVerdict};
+use crate::dispatch::RUNG_MIN;
 
 /// The dispatch gate's resolved configuration (env-gathered, but constructible directly
 /// so the library tests bypass the process environment).
@@ -309,6 +311,13 @@ pub struct DispatchCliConfig {
     /// suppressed from the CLI; it exists only so a library test can exercise the
     /// applied-deferral path (which is unreachable in a no-TTY test harness by design).
     pub attended_override: Option<bool>,
+    /// Readiness-verdict override (`green` | `red` | `na`) for deterministic gate tests;
+    /// absent → compute the verdict from the registry + chain + sidecar (U9). The bin's
+    /// env gather leaves this `None` (the real verdict is always computed).
+    pub readiness_stub: Option<String>,
+    /// The pre-registration values file (`preregistration.json`) the reducer + record
+    /// citation load, when present (KTD9). Absent in phase 1.
+    pub prereg_path: Option<std::path::PathBuf>,
 }
 
 /// The gate's outcome: the verdict, the report lines, and whether a record was appended.
@@ -383,6 +392,12 @@ pub fn dispatch_gate_config_from_env() -> anyhow::Result<DispatchCliConfig> {
         // Never sourced from the environment: the no-TTY refusal cannot be suppressed
         // from the CLI.
         attended_override: None,
+        // Never stubbed from the environment: the real verdict is always computed.
+        readiness_stub: None,
+        prereg_path: std::env::var("LS_DISPATCH_PREREG")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .map(std::path::PathBuf::from),
     })
 }
 
@@ -410,6 +425,7 @@ fn build_context(
     kill_switch_engaged: bool,
     kill_switch_has_record: bool,
     probes: (GatewayProbe, GatewayProbe),
+    readiness: ReadinessVerdict,
 ) -> DispatchContext {
     let now_utc = Utc.timestamp_opt(cfg.now_unix, 0).single().unwrap_or_else(Utc::now);
     let catalog = cfg.data_home.join("catalog");
@@ -442,6 +458,7 @@ fn build_context(
         chain_authorized_rung,
         requested_rung: cfg.requested_rung,
         lane: cfg.lane,
+        readiness,
     }
 }
 
@@ -493,12 +510,29 @@ pub fn run_dispatch(cfg: &DispatchCliConfig) -> anyhow::Result<DispatchGateOutco
         }
     };
 
+    // The readiness verdict over the trailing K live-lane sessions (R11). A stub forces a
+    // verdict for deterministic gate tests; otherwise it is computed from the registry +
+    // chain + report sidecar (read-only). No frozen window (phase 1) → NotEvaluated.
+    let (readiness, readiness_catalog) = match cfg.readiness_stub.as_deref() {
+        Some("green") => (ReadinessVerdict::Green, Default::default()),
+        Some("red") => (ReadinessVerdict::Red, Default::default()),
+        Some(_) => (ReadinessVerdict::NotEvaluated, Default::default()),
+        None => {
+            let prereg = cfg
+                .prereg_path
+                .as_ref()
+                .and_then(|p| crate::dispatch::prereg::load_optional(p).ok().flatten());
+            compute_readiness(&cfg.data_home, &state.records, prereg.as_ref().map(|l| &l.values))
+        }
+    };
+
     let ctx = build_context(
         cfg,
         state.authorized_rung,
         state.kill_switch_engaged,
         kill_switch_has_record,
         probes,
+        readiness,
     );
 
     // The nonce authorizes the ACT of deferring. Without deferrals it is irrelevant.
@@ -556,11 +590,24 @@ pub fn run_dispatch(cfg: &DispatchCliConfig) -> anyhow::Result<DispatchGateOutco
         GateResult::Refused => DispatchOutcome::Refused,
         GateResult::Throttled => unreachable!(),
     };
+    // A green dispatch under a red readiness runs at rung-1 probation: the effective rung
+    // is forced to 1 while the record still carries the chain-authorized rung, so capital
+    // history stays reconstructable from the chain alone (R11). Probation never refuses.
     let effective_rung = if decision.result == GateResult::Green {
-        cfg.requested_rung
+        if readiness.is_probation() {
+            RUNG_MIN
+        } else {
+            cfg.requested_rung
+        }
     } else {
         state.authorized_rung
     };
+    if decision.result == GateResult::Green && readiness.is_probation() {
+        lines.push(format!(
+            "  readiness RED → rung-1 probation (chain rung {}, effective rung {RUNG_MIN})",
+            state.authorized_rung
+        ));
+    }
     chain.append(
         Utc.timestamp_opt(cfg.now_unix, 0).single().unwrap_or_else(Utc::now),
         state.authorized_rung,
@@ -570,7 +617,7 @@ pub fn run_dispatch(cfg: &DispatchCliConfig) -> anyhow::Result<DispatchGateOutco
             outcome,
             checks: decision.records.clone(),
             deferrals: decision.deferrals.clone(),
-            readiness: None,
+            readiness: Some(readiness_summary(readiness, &readiness_catalog)),
         }),
     )?;
 

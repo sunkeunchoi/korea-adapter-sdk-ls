@@ -6,7 +6,7 @@
 //! calls — the gateway probes are stubbed (the documented stubbed-binary seam).
 
 use chrono::{TimeZone, Utc};
-use nautilus_ls_lab::dispatch::chain::{DispatchChain, DispatchOutcome, RecordKind};
+use nautilus_ls_lab::dispatch::chain::{DispatchChain, DispatchOutcome, Escalation, RecordKind};
 use nautilus_ls_lab::dispatch::checks::{GatewayProbe, GateResult, LanePosture};
 use nautilus_ls_lab::runner::live::{run_dispatch, DispatchCliConfig};
 use tempfile::TempDir;
@@ -39,6 +39,8 @@ fn green_cfg(home: &std::path::Path) -> DispatchCliConfig {
         budget_stub: Some("ok".into()),
         budget_plan: 5,
         attended_override: None,
+        readiness_stub: None,
+        prereg_path: None,
     }
 }
 
@@ -145,6 +147,71 @@ fn planted_secret_never_reaches_output_or_the_record() {
     assert!(!out.lines.iter().any(|l| l.contains("20187511401")), "output scrubbed: {:?}", out.lines);
     let bytes = std::fs::read_to_string(DispatchChain::open(tmp.path()).unwrap().chain_path()).unwrap();
     assert!(!bytes.contains("20187511401"), "chain record scrubbed");
+}
+
+/// Seed a chain authorized at rung 2 (genesis → escalation).
+fn seed_rung_2(home: &std::path::Path) {
+    let chain = DispatchChain::open(home).unwrap();
+    let now = Utc.timestamp_opt(weekday_ts(), 0).unwrap();
+    chain.append(now, 1, 1, None, RecordKind::Genesis).unwrap();
+    chain
+        .append(
+            now,
+            2,
+            2,
+            None,
+            RecordKind::Escalation(Escalation { from_rung: 1, to_rung: 2, evidence_run_ids: Vec::new() }),
+        )
+        .unwrap();
+}
+
+#[test]
+fn red_readiness_forces_rung_1_probation_not_refusal() {
+    // Covers R11 through the gate's ACTUAL check list: a red readiness proceeds at
+    // effective rung 1 while the record carries both rungs — never a refusal.
+    let tmp = TempDir::new().unwrap();
+    seed_rung_2(tmp.path());
+    let mut cfg = green_cfg(tmp.path());
+    cfg.requested_rung = 2;
+    cfg.readiness_stub = Some("red".into());
+
+    let out = run_dispatch(&cfg).unwrap();
+    assert_eq!(out.result, GateResult::Green, "probation proceeds, never refuses (R11)");
+    assert!(out.lines.iter().any(|l| l.contains("probation")), "{:?}", out.lines);
+
+    let state = DispatchChain::open(tmp.path()).unwrap().load();
+    let rec = state
+        .records
+        .iter()
+        .rev()
+        .find(|r| matches!(r.body.kind, RecordKind::SessionDispatch(_)))
+        .unwrap();
+    assert_eq!(rec.body.chain_rung, 2, "chain-authorized rung preserved");
+    assert_eq!(rec.body.effective_rung, 1, "forced to rung-1 probation");
+    // The readiness summary rode the record.
+    if let RecordKind::SessionDispatch(s) = &rec.body.kind {
+        assert!(s.readiness.as_deref().unwrap_or("").contains("Red"), "readiness recorded");
+    }
+}
+
+#[test]
+fn green_readiness_runs_at_the_authorized_rung() {
+    let tmp = TempDir::new().unwrap();
+    seed_rung_2(tmp.path());
+    let mut cfg = green_cfg(tmp.path());
+    cfg.requested_rung = 2;
+    cfg.readiness_stub = Some("green".into());
+
+    let out = run_dispatch(&cfg).unwrap();
+    assert_eq!(out.result, GateResult::Green);
+    let state = DispatchChain::open(tmp.path()).unwrap().load();
+    let rec = state
+        .records
+        .iter()
+        .rev()
+        .find(|r| matches!(r.body.kind, RecordKind::SessionDispatch(_)))
+        .unwrap();
+    assert_eq!(rec.body.effective_rung, 2, "green readiness → the authorized rung, no probation");
 }
 
 // ---------------------------------------------------------------------------

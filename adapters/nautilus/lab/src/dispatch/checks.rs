@@ -21,6 +21,7 @@ use nautilus_ls::error::AdapterResult;
 use nautilus_ls::execution::LsExecClient;
 
 use crate::artifacts::scrub;
+use crate::dispatch::readiness::ReadinessVerdict;
 use crate::dispatch::{CheckRecord, CheckStatus, Deferral, Tier};
 
 /// Stable check names (used in records, deferral lists, and exceedance counts).
@@ -33,6 +34,7 @@ pub const CHECK_STRANDED: &str = "stranded_orders";
 pub const CHECK_KILL_SWITCH: &str = "kill_switch";
 pub const CHECK_BUDGET: &str = "budget_headroom";
 pub const CHECK_RUNG_AUTH: &str = "rung_authorization";
+pub const CHECK_READINESS: &str = "readiness_verdict";
 
 /// A "is this a trading session" seam (Dependencies). Today's implementation is
 /// weekday-only; a KRX holiday calendar upgrade drops in without redesign.
@@ -148,6 +150,10 @@ pub struct DispatchContext {
     pub requested_rung: u8,
     /// The lane posture governing rung-auth tiering.
     pub lane: LanePosture,
+
+    /// The readiness verdict over the trailing K live-lane sessions (R11). Red forces
+    /// rung-1 probation (never refusal); `NotEvaluated` when no window is frozen yet.
+    pub readiness: ReadinessVerdict,
 }
 
 /// One check's tiered outcome (pure). Converted to a [`CheckRecord`] with a `deferred`
@@ -354,6 +360,30 @@ pub fn check_rung_authorization(ctx: &DispatchContext) -> CheckOutcome {
     }
 }
 
+/// The readiness check (R11). **Informational** — it never refuses a dispatch: a red
+/// verdict forces rung-1 probation (the gate downgrades the effective rung), so the check
+/// is recorded but blocks nothing (outright refusal stays reserved for the non-deferrable
+/// R1 checks). `NotEvaluated` (no frozen window) reads green-with-note.
+pub fn check_readiness(ctx: &DispatchContext) -> CheckOutcome {
+    match ctx.readiness {
+        ReadinessVerdict::Green => {
+            CheckOutcome::new(CHECK_READINESS, Tier::Informational, CheckStatus::Green, "readiness green")
+        }
+        ReadinessVerdict::NotEvaluated => CheckOutcome::new(
+            CHECK_READINESS,
+            Tier::Informational,
+            CheckStatus::GreenWithNote,
+            "readiness not evaluated (no frozen trailing window yet)",
+        ),
+        ReadinessVerdict::Red => CheckOutcome::new(
+            CHECK_READINESS,
+            Tier::Informational,
+            CheckStatus::Red,
+            "readiness red — session forced to rung-1 probation (not refused, R11)",
+        ),
+    }
+}
+
 /// Run every check over the gathered context, in a stable order.
 pub fn run_checks(ctx: &DispatchContext) -> Vec<CheckOutcome> {
     vec![
@@ -366,6 +396,7 @@ pub fn run_checks(ctx: &DispatchContext) -> Vec<CheckOutcome> {
         check_kill_switch(ctx),
         check_budget(ctx),
         check_rung_authorization(ctx),
+        check_readiness(ctx),
     ]
 }
 

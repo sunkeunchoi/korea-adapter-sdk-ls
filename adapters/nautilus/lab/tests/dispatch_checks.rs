@@ -14,6 +14,7 @@ use nautilus_ls_lab::dispatch::checks::{
     LanePosture, TradingCalendar, WeekdayKrxCalendar, CHECK_ADVISORY_LOCK, CHECK_BUDGET,
     CHECK_KILL_SWITCH, CHECK_STRANDED, CHECK_TRADING_ENV,
 };
+use nautilus_ls_lab::dispatch::readiness::ReadinessVerdict;
 use nautilus_ls_lab::dispatch::CheckStatus;
 use nautilus_model::enums::AccountType;
 use wiremock::matchers::{header, method, path};
@@ -42,6 +43,7 @@ fn green_ctx() -> DispatchContext {
         chain_authorized_rung: 1,
         requested_rung: 1,
         lane: LanePosture::Live,
+        readiness: ReadinessVerdict::Green,
     }
 }
 

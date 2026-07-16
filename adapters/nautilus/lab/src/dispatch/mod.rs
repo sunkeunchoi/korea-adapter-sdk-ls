@@ -15,6 +15,7 @@ pub mod chain;
 pub mod checks;
 pub mod nonce;
 pub mod prereg;
+pub mod readiness;
 pub mod tracking;
 
 use serde::{Deserialize, Serialize};
