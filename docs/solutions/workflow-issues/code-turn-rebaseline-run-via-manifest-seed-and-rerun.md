@@ -16,6 +16,20 @@ related_components:
   - "strategy loop re-baseline governance"
 ---
 
+> **Superseded (2026-07-16) by the native code-turn path.** `lab-research turn`
+> now has a first-class version-only bump: set `LS_TURN_CODE_BUMP=1` (no
+> `LS_TURN_PARAM`) and it bumps `strategy_version` by 1 with a zero param diff,
+> re-serializing the resolved current params so any newer `#[serde(default)]`
+> companion the prior head predates is seeded at its default automatically — no
+> hand-seeded manifest, no seed-dir cleanup. `runs compare` gained
+> `LS_COMPARE_MODE=code`, which **PASSes** a version-only diff with the expected
+> `strategy_code_hash` delta (retiring "no `runs compare` mode PASSes a code
+> turn"). The governed one-shot (`turn governed`, plan
+> `docs/plans/2026-07-16-002-feat-governed-strategy-turn-command-plan.md`) drives
+> bump → re-baseline → 1:1 reconcile → compare in the fresh child. The
+> manual seed-and-rerun below remains valid history but should no longer be
+> executed by hand.
+
 ## Context
 
 The `adapters/nautilus/lab` strategy loop advances by **turns**, each judged against the

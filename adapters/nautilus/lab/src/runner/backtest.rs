@@ -303,6 +303,10 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
         // KTD-5: sequence-sensitive hash over the per-session selection sequence.
         universe_hash: universe_sequence_hash(&loop_out.selection_sequence),
         strategy_code_hash: crate::artifacts::manifest::strategy_code_hash(),
+        // KTD5/U1: the full-lab-source fingerprint embedded in this binary. The
+        // governed path (U7) rebuilds and verifies this before any flip, so a run
+        // is attributable to the exact source tree that produced it.
+        lab_src_fingerprint: Some(crate::fingerprint::EMBEDDED.to_string()),
         checkpoint_hash: checkpoint_hash(&catalog_path),
         universe_metadata_hash: metadata.as_ref().map(|(hash, _)| hash.clone()),
         dispatch: None,

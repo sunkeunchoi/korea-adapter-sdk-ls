@@ -16,14 +16,19 @@ use nautilus_ls::ingest::checkpoint::Checkpoint;
 use nautilus_ls::ingest::{build_daily_bar, build_minute_bar, write_bars, write_instruments, BarKind};
 use nautilus_ls::instruments::{InstrumentDomain, InstrumentProvider};
 use nautilus_ls::lock::{AdvisoryLock, LockKind};
+use std::collections::BTreeMap;
+
 use nautilus_ls_lab::agent::recording::DecisionRecorder;
-use nautilus_ls_lab::artifacts::manifest::{DataRange, Manifest};
+use nautilus_ls_lab::artifacts::manifest::{hash_bytes, DataRange, Manifest};
 use nautilus_ls_lab::artifacts::{list_runs, MANIFEST_FILE};
 use nautilus_ls_lab::runner::backtest::{run as backtest_run, BacktestConfig};
 use nautilus_ls_lab::runner::research::{
-    analyze_scaffold, catalog_compact, catalog_status, compare, replay_guard, turn, CompactConfig,
-    CompareConfig, CompareMode, ReplayConfig, ScaffoldConfig, StatusConfig, TurnConfig,
+    analyze_scaffold, catalog_compact, catalog_status, compare, latest_finalized_run, replay_guard,
+    turn, CompactConfig, CompareConfig, CompareMode, GovernedFlip, ReplayConfig, ScaffoldConfig,
+    StatusConfig, TurnConfig,
 };
+use nautilus_ls_lab::runner::diagnose::GateExit;
+use nautilus_ls_lab::trials::{LookKind, SampleLineage, TrialRecord, TrialsLedger};
 use nautilus_model::data::Bar;
 use nautilus_model::identifiers::InstrumentId;
 use serde_json::json;
@@ -150,6 +155,108 @@ fn turn_cfg(data_home: &Path, param: &str, target: f64, at: DateTime<Utc>) -> Tu
     cfg
 }
 
+// --------------------------------------------------------------------------
+// U6 — governed-flip fixtures. `write_go` authors a minimal-class candidate with
+// a GO gate-verdict + a matching gate-reading ledger record keyed to
+// (param, value, anchor_fp); `govern` wraps `turn_cfg` with it, resolving the
+// anchor fingerprint from the current head so the guard's fingerprint check
+// passes. (The guard's REFUSAL paths get their own bespoke fixtures below.)
+// --------------------------------------------------------------------------
+
+fn trials_ledger(home: &Path) -> TrialsLedger {
+    TrialsLedger::new(home.join("trials").join("trials.jsonl"))
+}
+
+fn candidate_json(slug: &str, param: &str, value: f64) -> Vec<u8> {
+    serde_json::to_vec_pretty(&json!({
+        "schema_version": 1,
+        "slug": slug,
+        "family": "class-b",
+        "phase_a": "minimal",
+        "flip_param": param,
+        "flip_value": value,
+        "keep_anchor": "size-invariant return-on-risk strict flip PASS"
+    }))
+    .unwrap()
+}
+
+/// Author a GO candidate (minimal Phase-A) + gate-verdict + ledger record.
+fn write_go(home: &Path, slug: &str, param: &str, value: f64, anchor_fp: &str) -> GovernedFlip {
+    let dir = home.join("candidates").join(slug);
+    std::fs::create_dir_all(&dir).unwrap();
+    let bytes = candidate_json(slug, param, value);
+    std::fs::write(dir.join("candidate.json"), &bytes).unwrap();
+    let content_hash = hash_bytes(&bytes);
+    let verdict = json!({
+        "schema_version": 1,
+        "slug": slug,
+        "family": "class-b",
+        "decision": "GO",
+        "diagnostic_readings": {},
+        "twin_readings": {},
+        "agreed_readings": {},
+        "pre_register_hash": content_hash,
+        "catalog_fingerprint": anchor_fp,
+        "freeze_commit": "commit-fixture",
+        "flip_param": param,
+        "flip_value": value,
+        "recorded_utc": "2026-07-16T00:00:00+00:00"
+    });
+    std::fs::write(dir.join("gate-verdict.json"), serde_json::to_string_pretty(&verdict).unwrap())
+        .unwrap();
+    let ledger = trials_ledger(home);
+    ledger
+        .append(&TrialRecord::new(
+            slug,
+            "class-b",
+            LookKind::GateReading,
+            SampleLineage { catalog_fingerprint: anchor_fp.to_string(), parent_fingerprint: None },
+            BTreeMap::new(),
+            "GO",
+            "2026-07-16T00:00:00+00:00",
+        ))
+        .unwrap();
+    GovernedFlip { candidate_dir: dir, ledger }
+}
+
+/// The current head's catalog fingerprint (`""` on a fresh home).
+fn anchor_fp(home: &Path) -> String {
+    latest_finalized_run(home)
+        .unwrap()
+        .map(|(_, m)| m.catalog_fingerprint)
+        .unwrap_or_default()
+}
+
+/// A governed param-turn config: `turn_cfg` plus a matching GO candidate.
+fn govern(home: &Path, slug: &str, param: &str, target: f64, at: DateTime<Utc>) -> TurnConfig {
+    let fp = anchor_fp(home);
+    let flip = write_go(home, slug, param, target, &fp);
+    let mut cfg = turn_cfg(home, param, target, at);
+    cfg.candidate = Some(flip);
+    cfg
+}
+
+/// Write only `candidate.json` (single-flip, minimal Phase-A); return dir + hash.
+fn write_candidate(home: &Path, slug: &str, param: &str, value: f64) -> (std::path::PathBuf, String) {
+    let dir = home.join("candidates").join(slug);
+    std::fs::create_dir_all(&dir).unwrap();
+    let bytes = candidate_json(slug, param, value);
+    std::fs::write(dir.join("candidate.json"), &bytes).unwrap();
+    (dir, hash_bytes(&bytes))
+}
+
+/// Write a gate-verdict into a candidate dir with the given decision + recorded hash.
+fn write_verdict(dir: &Path, slug: &str, param: &str, value: f64, anchor: &str, decision: &str, hash: &str) {
+    let verdict = json!({
+        "schema_version": 1, "slug": slug, "family": "class-b", "decision": decision,
+        "diagnostic_readings": {}, "twin_readings": {}, "agreed_readings": {},
+        "pre_register_hash": hash, "catalog_fingerprint": anchor,
+        "flip_param": param, "flip_value": value, "recorded_utc": "2026-07-16T00:00:00+00:00"
+    });
+    std::fs::write(dir.join("gate-verdict.json"), serde_json::to_string_pretty(&verdict).unwrap())
+        .unwrap();
+}
+
 // ===========================================================================
 // U1 — dispatch + scrub (through the compiled bin)
 // ===========================================================================
@@ -211,6 +318,7 @@ fn report_mfe_through_the_bin_prints_the_distribution() {
         catalog_fingerprint: "fp".to_string(),
         universe_hash: "uh".to_string(),
         strategy_code_hash: "ch".to_string(),
+        lab_src_fingerprint: None,
         checkpoint_hash: None,
         universe_metadata_hash: None,
         dispatch: None,
@@ -330,6 +438,53 @@ async fn malformed_minute_step_errors_rather_than_defaulting() {
 }
 
 #[test]
+fn fingerprint_subcommand_prints_a_64_hex_line_and_exits_zero() {
+    // U1/KTD5: the compiled bin reports its embedded lab-source fingerprint as a
+    // structured `fingerprint: <hex>` line (verbatim, unmasked), exit 0.
+    let out = bin().arg("fingerprint").output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let line = stdout.lines().find(|l| l.starts_with("fingerprint: ")).expect("fingerprint line");
+    let hex = line.trim_start_matches("fingerprint: ").trim();
+    assert_eq!(hex.len(), 64, "SHA-256 hex is 64 chars: {hex}");
+    assert!(hex.chars().all(|c| c.is_ascii_hexdigit()), "{hex}");
+    assert!(!stdout.contains("***"), "structured fingerprint is not masked: {stdout}");
+}
+
+#[test]
+fn fingerprint_is_enumerated_in_usage() {
+    let out = bin().arg("bogus").output().unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("fingerprint"), "usage enumerates fingerprint: {stderr}");
+}
+
+#[test]
+fn a_pre_fingerprint_manifest_still_deserializes_and_round_trips() {
+    // U1: the optional lab_src_fingerprint field is serde(default,
+    // skip_serializing_if) — a manifest JSON written before the field existed
+    // must still parse (as None), and a manifest carrying it must round-trip.
+    let legacy = json!({
+        "run_id": "20260101T000000Z-backtest-orb-v0",
+        "source": "backtest",
+        "strategy_id": "orb",
+        "strategy_version": 0,
+        "params": nautilus_ls_lab::params::OrbParams::default(),
+        "data_range": { "start": "20240102", "end": "20240105" },
+        "catalog_fingerprint": "fp",
+        "universe_hash": "uh",
+        "strategy_code_hash": "ch",
+        "created_utc": "2026-01-01T00:00:00+00:00"
+    });
+    let m: Manifest = serde_json::from_value(legacy).unwrap();
+    assert!(m.lab_src_fingerprint.is_none(), "absent field deserializes to None");
+    // A round-trip of a manifest WITH the field preserves it.
+    let mut with = m.clone();
+    with.lab_src_fingerprint = Some("deadbeef".repeat(8));
+    let back: Manifest = serde_json::from_str(&serde_json::to_string(&with).unwrap()).unwrap();
+    assert_eq!(back.lab_src_fingerprint, with.lab_src_fingerprint);
+}
+
+#[test]
 fn no_args_prints_usage_and_exits_non_zero() {
     let out = bin().output().unwrap();
     assert!(!out.status.success());
@@ -348,7 +503,7 @@ async fn ae2_bound_inclusive_turn_is_approved_and_bumps_the_version() {
     seed_run(dir.path(), 2.4, 0, stamp(0)).await;
 
     // 2.4 -> 1.2 is a relative change of exactly 0.50 — approved (bound inclusive).
-    let out = turn(turn_cfg(dir.path(), "gap_min_pct", 1.2, stamp(10))).await.unwrap();
+    let out = turn(govern(dir.path(), "c", "gap_min_pct", 1.2, stamp(10))).await.unwrap();
     assert!(out.ran, "backtest ran: {:?}", out.refusal);
     assert_eq!(out.approved, Some(true));
     assert_eq!(out.version, Some(1), "version is prior + 1");
@@ -363,8 +518,9 @@ async fn ae1_over_bound_turn_is_denied_and_runs_nothing() {
     build_fixture(dir.path()).await;
     let seed = seed_run(dir.path(), 2.4, 0, stamp(0)).await;
 
-    // 2.4 -> 0.6 is a relative change of 0.75 — denied.
-    let out = turn(turn_cfg(dir.path(), "gap_min_pct", 0.6, stamp(10))).await.unwrap();
+    // 2.4 -> 0.6 is a relative change of 0.75 — denied (the guard passes on the
+    // matching GO; the proposal-bounds cap is what refuses).
+    let out = turn(govern(dir.path(), "c", "gap_min_pct", 0.6, stamp(10))).await.unwrap();
     assert!(!out.ran, "no backtest on a denial");
     assert_eq!(out.approved, Some(false));
     assert!(out.refusal.unwrap().contains("proposal_bounds"), "guardrail reason recorded");
@@ -381,7 +537,7 @@ async fn ae7_fresh_home_resolves_to_the_committed_default() {
     build_fixture(dir.path()).await;
     // No seed run → a fresh registry. Current params resolve to OrbParams::default
     // (gap 3.0). 3.0 -> 1.5 is exactly 0.50 — approved. A fresh home needs a range.
-    let mut cfg = turn_cfg(dir.path(), "gap_min_pct", 1.5, stamp(10));
+    let mut cfg = govern(dir.path(), "c", "gap_min_pct", 1.5, stamp(10));
     cfg.range = Some(DataRange { start: "20240102".into(), end: "20240105".into() });
     let out = turn(cfg).await.unwrap();
     assert!(out.ran, "approved from the 3.0 default: {:?}", out.refusal);
@@ -404,8 +560,9 @@ async fn a_no_op_target_errors_clearly_not_with_a_mismatch_message() {
     build_fixture(dir.path()).await;
     seed_run(dir.path(), 2.4, 0, stamp(0)).await;
     // Propose the current value (2.4) — a no-op. It must error with a clear
-    // message, not approve-bump-then-refuse with a confusing mismatch.
-    let err = turn(turn_cfg(dir.path(), "gap_min_pct", 2.4, stamp(10))).await.unwrap_err();
+    // message, not approve-bump-then-refuse with a confusing mismatch. (The guard
+    // passes on the matching GO; the no-op check is what errors.)
+    let err = turn(govern(dir.path(), "c", "gap_min_pct", 2.4, stamp(10))).await.unwrap_err();
     let msg = err.to_string();
     assert!(msg.contains("no-op"), "clear no-op message: {msg}");
     assert!(!msg.contains("touches"), "not the mismatch message: {msg}");
@@ -419,10 +576,10 @@ async fn mismatched_override_set_is_refused_before_backtest() {
     let seed = seed_run(dir.path(), 2.4, 0, stamp(0)).await;
 
     // The envelope authorizes gap_min_pct, but the executed override set touches a
-    // different parameter — refuse before the backtest (R1).
-    let mut cfg = turn_cfg(dir.path(), "gap_min_pct", 1.2, stamp(10));
-    cfg.applied_overrides =
-        Some(std::collections::BTreeMap::from([("max_concurrent".to_string(), 3.0)]));
+    // different parameter — refuse before the backtest (R1). The flip guard passes
+    // (GO for gap_min_pct 1.2); the applied-set mismatch is what refuses.
+    let mut cfg = govern(dir.path(), "c", "gap_min_pct", 1.2, stamp(10));
+    cfg.applied_overrides = Some(BTreeMap::from([("max_concurrent".to_string(), 3.0)]));
     let out = turn(cfg).await.unwrap();
     assert!(!out.ran, "no backtest on a mismatch");
     assert!(out.refusal.unwrap().contains("differs"), "names the mismatch");
@@ -436,9 +593,9 @@ async fn a_denied_turn_consumes_no_version() {
     seed_run(dir.path(), 2.4, 5, stamp(0)).await;
 
     // Deny first (0.75 change), then approve (0.50 change).
-    let denied = turn(turn_cfg(dir.path(), "gap_min_pct", 0.6, stamp(10))).await.unwrap();
+    let denied = turn(govern(dir.path(), "c1", "gap_min_pct", 0.6, stamp(10))).await.unwrap();
     assert!(!denied.ran);
-    let approved = turn(turn_cfg(dir.path(), "gap_min_pct", 1.2, stamp(20))).await.unwrap();
+    let approved = turn(govern(dir.path(), "c2", "gap_min_pct", 1.2, stamp(20))).await.unwrap();
     assert!(approved.ran);
     assert_eq!(approved.version, Some(6), "prior 5 + 1 — the denial consumed no version");
 }
@@ -453,14 +610,14 @@ async fn a_failed_backtest_self_heals_the_next_turn() {
     // the turn errors after appending its (approved) envelope, leaving no run.
     {
         let _held = AdvisoryLock::acquire(&dir.path().join("catalog"), LockKind::Ingest).unwrap();
-        let err = turn(turn_cfg(dir.path(), "gap_min_pct", 1.2, stamp(10))).await.unwrap_err();
+        let err = turn(govern(dir.path(), "c1", "gap_min_pct", 1.2, stamp(10))).await.unwrap_err();
         assert!(err.to_string().contains("refused"), "{err}");
     }
     assert_eq!(list_runs(dir.path()), vec![seed.clone()], "no finalized run from the failure");
 
     // The next turn still resolves current params from the prior finalized
     // manifest — version prior + 1, not prior + 2.
-    let healed = turn(turn_cfg(dir.path(), "gap_min_pct", 1.2, stamp(20))).await.unwrap();
+    let healed = turn(govern(dir.path(), "c2", "gap_min_pct", 1.2, stamp(20))).await.unwrap();
     assert!(healed.ran);
     assert_eq!(healed.version, Some(1), "self-heal: current is still the seed at v0");
 }
@@ -472,7 +629,7 @@ async fn range_is_inherited_without_an_env_override() {
     let seed = seed_run(dir.path(), 2.4, 0, stamp(0)).await;
     let seed_range = read_manifest(dir.path(), &seed).data_range;
 
-    let out = turn(turn_cfg(dir.path(), "gap_min_pct", 1.2, stamp(10))).await.unwrap();
+    let out = turn(govern(dir.path(), "c", "gap_min_pct", 1.2, stamp(10))).await.unwrap();
     let m = read_manifest(dir.path(), out.run_id.as_ref().unwrap());
     assert_eq!(m.data_range, seed_range, "range inherited from the prior run");
 }
@@ -502,6 +659,164 @@ async fn rerun_mode_produces_a_data_turn_comparable_pair() {
     })
     .unwrap();
     assert!(verdict.pass, "data-turn verdict: {:?}", verdict.lines);
+}
+
+// ===========================================================================
+// U6 — the flip guard (R4, R5; AE1). Refusals assert on the typed gate exit, not
+// message text.
+// ===========================================================================
+
+#[tokio::test]
+async fn ae1_editing_the_pre_register_after_a_go_refuses_with_hash_mismatch() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    seed_run(dir.path(), 2.4, 0, stamp(0)).await;
+    let fp = anchor_fp(dir.path());
+    let flip = write_go(dir.path(), "c", "gap_min_pct", 1.2, &fp);
+
+    // Edit the pre-register (any content change) AFTER its GO.
+    let cand = flip.candidate_dir.join("candidate.json");
+    let mut s = std::fs::read_to_string(&cand).unwrap();
+    s.push('\n');
+    std::fs::write(&cand, s).unwrap();
+
+    let mut cfg = turn_cfg(dir.path(), "gap_min_pct", 1.2, stamp(10));
+    cfg.candidate = Some(flip);
+    let out = turn(cfg).await.unwrap();
+    assert_eq!(out.gate_exit, Some(GateExit::PreRegisterHashMismatch), "hash-mismatch gate");
+    assert!(!out.ran, "the softened freeze cannot flip");
+}
+
+#[tokio::test]
+async fn a_param_flip_without_a_candidate_refuses_but_a_rerun_proceeds() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    seed_run(dir.path(), 2.4, 0, stamp(0)).await;
+
+    // Override param, no candidate → refuse (the guard is not opt-in).
+    let out = turn(turn_cfg(dir.path(), "gap_min_pct", 1.2, stamp(10))).await.unwrap();
+    assert_eq!(out.gate_exit, Some(GateExit::UngovernedFlip));
+    assert!(!out.ran);
+
+    // A rerun flips nothing → exempt, proceeds.
+    let mut rr = TurnConfig::new(dir.path(), stamp(20));
+    rr.override_param = None;
+    assert!(turn(rr).await.unwrap().ran, "rerun stays exempt from the flip guard");
+}
+
+#[tokio::test]
+async fn an_absent_or_stop_verdict_refuses() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    seed_run(dir.path(), 2.4, 0, stamp(0)).await;
+    let fp = anchor_fp(dir.path());
+
+    // No verdict written.
+    let (cdir, _hash) = write_candidate(dir.path(), "c1", "gap_min_pct", 1.2);
+    let mut cfg = turn_cfg(dir.path(), "gap_min_pct", 1.2, stamp(10));
+    cfg.candidate = Some(GovernedFlip { candidate_dir: cdir, ledger: trials_ledger(dir.path()) });
+    assert_eq!(turn(cfg).await.unwrap().gate_exit, Some(GateExit::NoGoVerdict), "no verdict");
+
+    // A STOP verdict.
+    let (cdir2, hash2) = write_candidate(dir.path(), "c2", "gap_min_pct", 1.2);
+    write_verdict(&cdir2, "c2", "gap_min_pct", 1.2, &fp, "STOP", &hash2);
+    let mut cfg2 = turn_cfg(dir.path(), "gap_min_pct", 1.2, stamp(20));
+    cfg2.candidate = Some(GovernedFlip { candidate_dir: cdir2, ledger: trials_ledger(dir.path()) });
+    assert_eq!(turn(cfg2).await.unwrap().gate_exit, Some(GateExit::NoGoVerdict), "STOP verdict");
+}
+
+#[tokio::test]
+async fn a_go_without_a_matching_ledger_record_refuses() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    seed_run(dir.path(), 2.4, 0, stamp(0)).await;
+    let fp = anchor_fp(dir.path());
+
+    // GO verdict with the right hash + anchor, but the ledger has no gate-reading.
+    let (cdir, hash) = write_candidate(dir.path(), "c", "gap_min_pct", 1.2);
+    write_verdict(&cdir, "c", "gap_min_pct", 1.2, &fp, "GO", &hash);
+    let empty = TrialsLedger::new(dir.path().join("empty/trials.jsonl"));
+    let mut cfg = turn_cfg(dir.path(), "gap_min_pct", 1.2, stamp(10));
+    cfg.candidate = Some(GovernedFlip { candidate_dir: cdir, ledger: empty });
+    assert_eq!(turn(cfg).await.unwrap().gate_exit, Some(GateExit::MissingLedgerRecord));
+}
+
+#[tokio::test]
+async fn a_flip_that_does_not_match_the_candidate_declaration_refuses() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    seed_run(dir.path(), 2.4, 0, stamp(0)).await;
+    let fp = anchor_fp(dir.path());
+    // Candidate GO for gap_min_pct 1.2; the turn proposes 0.9 → mismatch.
+    let flip = write_go(dir.path(), "c", "gap_min_pct", 1.2, &fp);
+    let mut cfg = turn_cfg(dir.path(), "gap_min_pct", 0.9, stamp(10));
+    cfg.candidate = Some(flip);
+    assert_eq!(turn(cfg).await.unwrap().gate_exit, Some(GateExit::FlipMismatch));
+}
+
+#[tokio::test]
+async fn an_undeclared_sweep_leg_refuses() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    seed_run(dir.path(), 2.4, 0, stamp(0)).await;
+    let fp = anchor_fp(dir.path());
+
+    // A sweep candidate with legs {0.3, 0.5, 0.7}; a matching GO record.
+    let cdir = dir.path().join("candidates").join("sweep");
+    std::fs::create_dir_all(&cdir).unwrap();
+    let bytes = serde_json::to_vec_pretty(&json!({
+        "schema_version": 1, "slug": "sweep", "family": "class-b", "phase_a": "minimal",
+        "sweep_param": "gap_min_pct", "sweep_legs": [0.3, 0.5, 0.7],
+        "keep_anchor": "RoR PASS"
+    }))
+    .unwrap();
+    std::fs::write(cdir.join("candidate.json"), &bytes).unwrap();
+    let hash = hash_bytes(&bytes);
+    write_verdict(&cdir, "sweep", "gap_min_pct", 0.5, &fp, "GO", &hash);
+    let ledger = trials_ledger(dir.path());
+    ledger
+        .append(&TrialRecord::new(
+            "sweep", "class-b", LookKind::GateReading,
+            SampleLineage { catalog_fingerprint: fp.clone(), parent_fingerprint: None },
+            BTreeMap::new(), "GO", "2026-07-16T00:00:00+00:00",
+        ))
+        .unwrap();
+
+    // 0.4 is not a declared leg → refuse.
+    let mut cfg = turn_cfg(dir.path(), "gap_min_pct", 0.4, stamp(10));
+    cfg.candidate = Some(GovernedFlip { candidate_dir: cdir, ledger });
+    assert_eq!(turn(cfg).await.unwrap().gate_exit, Some(GateExit::FlipMismatch), "undeclared leg");
+}
+
+#[tokio::test]
+async fn catalog_fingerprint_drift_between_verdict_and_anchor_refuses() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    seed_run(dir.path(), 2.4, 0, stamp(0)).await;
+    // The GO ran against a different sample than the anchor run.
+    let flip = write_go(dir.path(), "c", "gap_min_pct", 1.2, "WRONG_FINGERPRINT");
+    let mut cfg = turn_cfg(dir.path(), "gap_min_pct", 1.2, stamp(10));
+    cfg.candidate = Some(flip);
+    assert_eq!(turn(cfg).await.unwrap().gate_exit, Some(GateExit::FingerprintDrift));
+}
+
+#[tokio::test]
+async fn happy_path_flips_and_appends_exactly_one_flip_trial() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    seed_run(dir.path(), 2.4, 0, stamp(0)).await;
+    let fp = anchor_fp(dir.path());
+    let flip = write_go(dir.path(), "c", "gap_min_pct", 1.2, &fp);
+    let ledger = flip.ledger.clone();
+    let mut cfg = turn_cfg(dir.path(), "gap_min_pct", 1.2, stamp(10));
+    cfg.candidate = Some(flip);
+    let out = turn(cfg).await.unwrap();
+    assert!(out.ran, "GO + clean hashes flips: {:?}", out.refusal);
+    assert!(out.gate_exit.is_none(), "no gate refusal on the happy path");
+    // The ledger now carries the gate-reading + exactly one flip trial.
+    let records = ledger.read_all().unwrap();
+    assert_eq!(records.len(), 2, "gate-reading + one flip: {records:?}");
+    assert_eq!(records.iter().filter(|r| matches!(r.look, LookKind::Flip)).count(), 1);
 }
 
 // ---------------------------------------------------------------------------
@@ -589,7 +904,7 @@ async fn ae3_param_turn_pair_passes_the_param_verdict() {
     let dir = tempdir().unwrap();
     build_fixture(dir.path()).await;
     seed_run(dir.path(), 2.4, 0, stamp(0)).await;
-    let out = turn(turn_cfg(dir.path(), "gap_min_pct", 1.2, stamp(10))).await.unwrap();
+    let out = turn(govern(dir.path(), "c", "gap_min_pct", 1.2, stamp(10))).await.unwrap();
     assert!(out.ran);
 
     // Default selection: the two newest finalized runs.
@@ -667,6 +982,178 @@ async fn param_verdict_fails_on_a_version_only_code_turn_diff() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// U2 — code-turn native path (LS_TURN_CODE_BUMP + CompareMode::Code)
+// ---------------------------------------------------------------------------
+
+/// Write a manifest-only run dir (no performance/decisions) and return its id.
+/// `mutate` can drop or edit params keys to model a prior head that predates a
+/// newer defaulted field, or a divergent code hash.
+fn write_manifest_run(data_home: &Path, run_id: &str, mut manifest: Manifest, mutate: impl FnOnce(&mut serde_json::Value)) {
+    manifest.run_id = run_id.to_string();
+    let mut v = serde_json::to_value(&manifest).unwrap();
+    mutate(&mut v);
+    let run_dir = data_home.join("runs").join(run_id);
+    std::fs::create_dir_all(&run_dir).unwrap();
+    std::fs::write(run_dir.join(MANIFEST_FILE), serde_json::to_string_pretty(&v).unwrap()).unwrap();
+}
+
+#[tokio::test]
+async fn ae6_code_bump_turn_bumps_the_version_with_params_unchanged_no_seed_dir() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    let v8 = seed_run(dir.path(), 2.4, 8, stamp(0)).await;
+    let prior = read_manifest(dir.path(), &v8);
+
+    // Native code bump: no LS_TURN_PARAM, no manual seed dir — just code_bump.
+    let mut cfg = TurnConfig::new(dir.path(), stamp(10));
+    cfg.code_bump = true;
+    let out = turn(cfg).await.unwrap();
+    assert!(out.ran, "code bump ran: {:?}", out.refusal);
+    assert_eq!(out.approved, None, "a code turn runs no governance cycle");
+    assert_eq!(out.version, Some(9), "version is prior + 1");
+
+    let bumped = read_manifest(dir.path(), out.run_id.as_ref().unwrap());
+    assert_eq!(bumped.strategy_version, 9);
+    // Params byte-equal to the prior head modulo the version field.
+    let mut a = serde_json::to_value(&prior.params).unwrap();
+    let mut b = serde_json::to_value(&bumped.params).unwrap();
+    a["strategy_version"] = json!(0);
+    b["strategy_version"] = json!(0);
+    assert_eq!(a, b, "params unchanged across the code bump");
+    // Only the real run exists — no lingering seed dir.
+    assert_eq!(list_runs(dir.path()).len(), 2, "just the v8 seed + the v9 run");
+}
+
+#[tokio::test]
+async fn code_bump_rejects_a_combined_param_turn() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    seed_run(dir.path(), 2.4, 8, stamp(0)).await;
+    let mut cfg = turn_cfg(dir.path(), "gap_min_pct", 1.2, stamp(10));
+    cfg.code_bump = true;
+    let err = turn(cfg).await.unwrap_err();
+    assert!(err.to_string().contains("cannot be combined with LS_TURN_PARAM"), "{err}");
+}
+
+#[tokio::test]
+async fn code_bump_seeds_a_newer_defaulted_param_the_prior_head_predates() {
+    // Companion-field regression: a prior head whose manifest literally lacks a
+    // newer #[serde(default)] param (profit_target_r) must yield a bumped manifest
+    // carrying that param at its default — the native path subsumes the manual
+    // companion-field seeding step.
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    let v8 = seed_run(dir.path(), 2.4, 8, stamp(0)).await;
+    let prior = read_manifest(dir.path(), &v8);
+
+    // Re-seed v8 as a manifest that predates profit_target_r (drop the key).
+    write_manifest_run(dir.path(), "20240601T000000Z-backtest-orb-v8", prior, |v| {
+        v["params"].as_object_mut().unwrap().remove("profit_target_r");
+    });
+
+    let mut cfg = TurnConfig::new(dir.path(), stamp(20));
+    cfg.code_bump = true;
+    let out = turn(cfg).await.unwrap();
+    assert!(out.ran, "code bump over a companion-predating head ran: {:?}", out.refusal);
+    let bumped = read_manifest(dir.path(), out.run_id.as_ref().unwrap());
+    assert_eq!(bumped.strategy_version, 9);
+    // The bumped manifest carries the newer param at its default (1.0).
+    assert_eq!(bumped.params.profit_target_r, 1.0, "companion field seeded at default");
+}
+
+#[tokio::test]
+async fn code_mode_passes_a_version_only_diff_with_a_code_hash_delta() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    // Two manifest-only runs: identical params, version differs, code hash differs.
+    let base = read_manifest(dir.path(), &seed_run(dir.path(), 2.4, 8, stamp(0)).await);
+    write_manifest_run(dir.path(), "20240601T000000Z-backtest-orb-v8b", base.clone(), |v| {
+        v["strategy_version"] = json!(8);
+        v["params"]["strategy_version"] = json!(8);
+        v["strategy_code_hash"] = json!("aaaa_old_code");
+    });
+    write_manifest_run(dir.path(), "20240601T000001Z-backtest-orb-v9", base.clone(), |v| {
+        v["strategy_version"] = json!(9);
+        v["params"]["strategy_version"] = json!(9);
+        v["strategy_code_hash"] = json!("bbbb_new_code");
+    });
+
+    let pass = compare(&CompareConfig {
+        data_home: dir.path().to_path_buf(),
+        run_a: Some("20240601T000000Z-backtest-orb-v8b".into()),
+        run_b: Some("20240601T000001Z-backtest-orb-v9".into()),
+        mode: CompareMode::Code,
+        explanation: None,
+    })
+    .unwrap();
+    assert!(pass.pass, "version-only diff + code-hash delta PASSes code mode: {:?}", pass.lines);
+    assert!(pass.lines.iter().any(|l| l.contains("strategy_code_hash delta: expected")), "{:?}", pass.lines);
+}
+
+#[tokio::test]
+async fn code_mode_fails_when_a_param_also_changed_or_the_code_hash_is_equal() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    let base = read_manifest(dir.path(), &seed_run(dir.path(), 2.4, 8, stamp(0)).await);
+
+    // (a) a param ALSO changed → FAIL (not a version-only diff).
+    write_manifest_run(dir.path(), "20240601T000000Z-backtest-orb-v8c", base.clone(), |v| {
+        v["strategy_version"] = json!(8);
+        v["params"]["strategy_version"] = json!(8);
+        v["strategy_code_hash"] = json!("aaaa");
+    });
+    write_manifest_run(dir.path(), "20240601T000001Z-backtest-orb-v9c", base.clone(), |v| {
+        v["strategy_version"] = json!(9);
+        v["params"]["strategy_version"] = json!(9);
+        v["params"]["gap_min_pct"] = json!(1.2); // extra param delta
+        v["strategy_code_hash"] = json!("bbbb");
+    });
+    let param_also = compare(&CompareConfig {
+        data_home: dir.path().to_path_buf(),
+        run_a: Some("20240601T000000Z-backtest-orb-v8c".into()),
+        run_b: Some("20240601T000001Z-backtest-orb-v9c".into()),
+        mode: CompareMode::Code,
+        explanation: None,
+    })
+    .unwrap();
+    assert!(!param_also.pass, "a param delta breaks the version-only rule: {:?}", param_also.lines);
+
+    // (b) code hash UNCHANGED → FAIL (a code turn must move it).
+    write_manifest_run(dir.path(), "20240601T000002Z-backtest-orb-v9d", base.clone(), |v| {
+        v["strategy_version"] = json!(9);
+        v["params"]["strategy_version"] = json!(9);
+        // same strategy_code_hash as v8c ("aaaa")
+        v["strategy_code_hash"] = json!("aaaa");
+    });
+    let no_delta = compare(&CompareConfig {
+        data_home: dir.path().to_path_buf(),
+        run_a: Some("20240601T000000Z-backtest-orb-v8c".into()),
+        run_b: Some("20240601T000002Z-backtest-orb-v9d".into()),
+        mode: CompareMode::Code,
+        explanation: None,
+    })
+    .unwrap();
+    assert!(!no_delta.pass, "an unchanged code hash fails code mode: {:?}", no_delta.lines);
+
+    // (c) catalog fingerprint differs → FAIL even with a version-only diff.
+    write_manifest_run(dir.path(), "20240601T000003Z-backtest-orb-v9e", base.clone(), |v| {
+        v["strategy_version"] = json!(9);
+        v["params"]["strategy_version"] = json!(9);
+        v["strategy_code_hash"] = json!("bbbb");
+        v["catalog_fingerprint"] = json!("drifted");
+    });
+    let fp_drift = compare(&CompareConfig {
+        data_home: dir.path().to_path_buf(),
+        run_a: Some("20240601T000000Z-backtest-orb-v8c".into()),
+        run_b: Some("20240601T000003Z-backtest-orb-v9e".into()),
+        mode: CompareMode::Code,
+        explanation: None,
+    })
+    .unwrap();
+    assert!(!fp_drift.pass, "a fingerprint drift fails code mode: {:?}", fp_drift.lines);
+}
+
 #[tokio::test]
 async fn data_verdict_requires_an_explanation_for_deltas() {
     let dir = tempdir().unwrap();
@@ -720,7 +1207,7 @@ async fn data_verdict_fails_on_a_nonzero_param_diff() {
     let dir = tempdir().unwrap();
     build_fixture(dir.path()).await;
     let seed = seed_run(dir.path(), 2.4, 0, stamp(0)).await;
-    let param_turn = turn(turn_cfg(dir.path(), "gap_min_pct", 1.2, stamp(10))).await.unwrap();
+    let param_turn = turn(govern(dir.path(), "c", "gap_min_pct", 1.2, stamp(10))).await.unwrap();
 
     let verdict = compare(&CompareConfig {
         data_home: dir.path().to_path_buf(),
@@ -763,7 +1250,7 @@ async fn evaluated_stream_reports_a_divergence_under_a_tighter_cap() {
     seed_run(dir.path(), 2.4, 0, stamp(0)).await;
     // An approved 2.4 -> 1.2 turn appends an intent-bearing envelope to the
     // cross-run registry (evaluated under the 0.5 pin).
-    let approved = turn(turn_cfg(dir.path(), "gap_min_pct", 1.2, stamp(10))).await.unwrap();
+    let approved = turn(govern(dir.path(), "c", "gap_min_pct", 1.2, stamp(10))).await.unwrap();
     assert!(approved.ran);
 
     let stream = dir.path().join("decisions").join("decisions.jsonl");
@@ -1258,6 +1745,7 @@ mod report_tiers {
             catalog_fingerprint: "fp".to_string(),
             universe_hash: "uh".to_string(),
             strategy_code_hash: "ch".to_string(),
+            lab_src_fingerprint: None,
             checkpoint_hash: None,
             universe_metadata_hash: Some(hash),
             dispatch: None,

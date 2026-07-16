@@ -17,7 +17,10 @@
 
 pub mod agent;
 pub mod artifacts;
+pub mod candidates;
 pub mod dispatch;
+pub mod fingerprint;
 pub mod params;
 pub mod runner;
 pub mod strategy;
+pub mod trials;

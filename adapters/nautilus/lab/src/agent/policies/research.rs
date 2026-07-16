@@ -350,6 +350,7 @@ mod tests {
             catalog_fingerprint: "fixture-fingerprint".to_string(),
             universe_hash: "fixture-universe".to_string(),
             strategy_code_hash: "fixture-code".to_string(),
+            lab_src_fingerprint: None,
             checkpoint_hash: None,
             universe_metadata_hash: None,
             dispatch: None,
