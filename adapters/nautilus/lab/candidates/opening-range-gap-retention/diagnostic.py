@@ -33,7 +33,8 @@ POPULATION = 167
 CUTOFF = 0.50
 SCALE = 1_000_000_000
 KST = dt.timezone(dt.timedelta(hours=9))
-DATA_HOME = Path("data/turn4-fresh")
+REPO_ROOT = Path(__file__).resolve().parents[5]
+DATA_HOME = REPO_ROOT / "data" / "turn4-fresh"
 RUN_HOME = DATA_HOME / "runs" / RUN_ID
 BARS_HOME = DATA_HOME / "catalog" / "data" / "bars"
 

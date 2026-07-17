@@ -32,7 +32,8 @@ OPEN = time(9, 0)
 CLOSE = time(9, 20)
 KST_DELTA = timedelta(hours=9)
 UNIT = 1_000_000_000
-ROOT = Path("data/turn4-fresh")
+REPOSITORY = Path(__file__).resolve().parents[5]
+ROOT = REPOSITORY / "data" / "turn4-fresh"
 RUN = ROOT / "runs" / PIN["run_id"]
 CATALOG = ROOT / "catalog" / "data" / "bars"
 

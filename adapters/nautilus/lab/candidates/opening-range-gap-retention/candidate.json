@@ -8,12 +8,12 @@
   "diagnostic": {
     "argv": ["uv", "run", "--with", "pyarrow", "python3", "diagnostic.py"],
     "file": "diagnostic.py",
-    "content_hash": "449c8d3e95acf97aefb2935f9581678e9d673ca2547b7b719d7cf80694e9ddd9"
+    "content_hash": "4fb58ca69d2b649990f03a8ff94c2b0bb5724abf05641a3f023821a16f3f5d86"
   },
   "twin": {
     "argv": ["uv", "run", "--with", "pyarrow", "python3", "twin.py"],
     "file": "twin.py",
-    "content_hash": "1e319d0b0fc51716329fd348e863b92d5f64a9986ab6565870ff2a3ebe246a99"
+    "content_hash": "a6e3f6233c949386c3a26f9f68d02a325d435e54b72016319ebd8cf1ba8588fb"
   },
   "readings": {
     "population_count": { "tolerance": 0, "precision": 0 },
