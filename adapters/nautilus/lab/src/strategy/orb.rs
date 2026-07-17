@@ -274,6 +274,50 @@ pub fn breakout_strength(breakout_price: i64, range_high: i64, range_low: i64) -
     (r > 0).then(|| (breakout_price - range_high) as f64 / r as f64)
 }
 
+/// The classified opening-range gap-retention observation (#165/#168, KTD3). One
+/// variant per frozen #165 rejection class plus the measured ratio. Classification
+/// is total and ordered — applicability before availability before the division —
+/// so a zero gap never reaches the divide and cannot masquerade as invalid.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum GapRetention {
+    /// The #165 applicability precondition failed: a non-positive `prior_close`
+    /// (including the unthreaded `SessionGapPrices::new(0, 0)` default) or a
+    /// non-positive gap (`today_open <= prior_close`).
+    NotApplicable,
+    /// No valid opening-range low exists: the `i64::MAX` sentinel (no range bar
+    /// observed) or a non-positive low.
+    Unavailable,
+    /// Inconsistent data: retention above `1.0` (`range_low > today_open`) or a
+    /// non-finite ratio (defensive — see the classifier's invalid arm).
+    Invalid,
+    /// A valid retention fraction, signed: `1.0` is full retention, `0.0` is a
+    /// prior-close touch, negative means the range crossed below the prior close.
+    Measured(f64),
+}
+
+/// Classify a session's opening-range gap retention (#165/#168, KTD3):
+/// `retention = (range_low − prior_close) / (today_open − prior_close)` where all
+/// three inputs are canonical integer KRW/ticks — the subtraction happens on
+/// `i64`, and only the final quotient is `f64`. `range_low` must be the frozen
+/// opening-range low (never the still-updating session low).
+fn classify_gap_retention(gap_prices: SessionGapPrices, range_low: i64) -> GapRetention {
+    let SessionGapPrices { prior_close, today_open } = gap_prices;
+    if prior_close <= 0 || today_open <= prior_close {
+        return GapRetention::NotApplicable;
+    }
+    if range_low == i64::MAX || range_low <= 0 {
+        return GapRetention::Unavailable;
+    }
+    let retention = (range_low - prior_close) as f64 / (today_open - prior_close) as f64;
+    if !retention.is_finite() || retention > 1.0 {
+        // Above-one is a real class (range_low > today_open — inconsistent data).
+        // Non-finite is defensive only: the not-applicable arm already guarantees
+        // a positive denominator, so finite `i64` operands cannot produce it.
+        return GapRetention::Invalid;
+    }
+    GapRetention::Measured(retention)
+}
+
 /// The universe scan's decision trigger: universe selection happens at session
 /// open, keyed to the scan — an internal state change, not a bar (R5).
 fn universe_trigger() -> DecisionTrigger {
@@ -373,8 +417,8 @@ pub struct OrbState {
     /// Today's accumulated opening-window (`[range_open, range_end)`) volume
     /// (KTD9) — the RVOL gate's numerator. Inert unless the RVOL gate is on.
     open_window_vol: f64,
-    /// Canonical gap prices threaded from selection, deliberately unread while OFF.
-    #[expect(dead_code, reason = "#167 carries this input; #168 will arm its only reader")]
+    /// Canonical gap prices threaded from selection (#167). Read only by the armed
+    /// gap-retention gate (#168) — the `1.0` OFF sentinel bypasses every read.
     gap_prices: SessionGapPrices,
     /// The prior-daily ATR for this symbol-session (KTD5), threaded from the
     /// candidate seam (U2). `None` when fewer than `atr_window`+1 priors — the
@@ -569,9 +613,17 @@ impl OrbState {
         }
 
         // At/after the range end. Without a fixed range (a data gap over 09:00–09:15)
-        // there is nothing to trade — never guess a range.
+        // there is nothing to trade — never guess a range. When the gap-retention
+        // gate is armed, this missingness cannot roll to Done silently (#168, KTD4):
+        // the sentinel `range_low` routes through the same classifier, recording
+        // `gap_retention_unavailable` (or `gap_retention_not_applicable` when the
+        // gap precondition also fails). OFF keeps the silent roll; the terminal
+        // outcome (Done, no trade) is identical either way.
         if !self.saw_range {
             self.phase = Phase::Done;
+            if let Some(reject) = self.gap_retention_reject(params) {
+                return vec![reject];
+            }
             return Vec::new();
         }
 
@@ -736,8 +788,9 @@ impl OrbState {
     /// The per-session gates evaluated once at range fix (KTD7): the first failing
     /// gate returns a [`OrbAction::SessionReject`] naming its single canonical
     /// filter and ends the day. `None` when every active gate passes (the all-off
-    /// default). Order is pinned — ATR availability, then OR-width, then RVOL — so a
-    /// session failing more than one gate records only the first (KTD7). A gate whose
+    /// default). Order is pinned — ATR availability, then OR-width, then RVOL, then
+    /// gap retention (#168, deterministically last) — so a session failing more than
+    /// one gate records only the first (KTD7). A gate whose
     /// input is REQUIRED and missing fails closed (never a silent pass): the ATR-stop
     /// arm and the RVOL-history arm. The OR-width arm is the deliberate exception — its
     /// ATR normalizer is optional, so a no-ATR session is skipped, not rejected (see
@@ -797,7 +850,56 @@ impl OrbState {
                 ));
             }
         }
-        None
+        // 4. Opening-range gap-retention gate (#165/#168, KTD6): the FINAL arm,
+        //    evaluated exactly once here on the frozen opening range. Armed only at
+        //    the frozen 0.50 cutoff — the reserved 1.0 sentinel returns before any
+        //    retention input is read — and every failure class fails closed under
+        //    its own #165 filter.
+        self.gap_retention_reject(params)
+    }
+
+    /// The armed gap-retention rejection for this session (#165/#168), or `None`
+    /// when OFF or the measured retention passes the cutoff (equality passes). The
+    /// OFF bypass runs before any retention input is read (KTD6), so the `1.0`
+    /// sentinel leaves the head-v30 decision stream untouched. The gate reads the
+    /// frozen `range_low` — only ever written inside `[range_open, range_end)`, so
+    /// a post-range low can never alter the observation (R2) — and never
+    /// `session_low`. Envelope values per KTD5: the cutoff plus every canonical
+    /// component that exists; a missing component is an omitted key, never a
+    /// numeric sentinel, and a non-finite retention is never inserted.
+    fn gap_retention_reject(&self, params: &OrbParams) -> Option<OrbAction> {
+        if !params.gap_retention_active() {
+            return None;
+        }
+        let cutoff = params.gap_retention_min;
+        let class = classify_gap_retention(self.gap_prices, self.range_low);
+        let filter = match class {
+            GapRetention::Measured(retention) => {
+                // `partial_cmp` fails closed (KTD3): an incomparable retention
+                // never passes. Equality passes — 0.50 retention is retained.
+                if retention.partial_cmp(&cutoff).is_some_and(|o| o.is_ge()) {
+                    return None;
+                }
+                "gap_retention_min"
+            }
+            GapRetention::NotApplicable => "gap_retention_not_applicable",
+            GapRetention::Unavailable => "gap_retention_unavailable",
+            GapRetention::Invalid => "gap_retention_invalid",
+        };
+        let mut values = vec![("gap_retention_min", cutoff)];
+        if let GapRetention::Measured(retention) = class {
+            values.push(("retention", retention));
+        }
+        if self.gap_prices.prior_close > 0 {
+            values.push(("prior_close", self.gap_prices.prior_close as f64));
+        }
+        if self.gap_prices.today_open > 0 {
+            values.push(("today_open", self.gap_prices.today_open as f64));
+        }
+        if self.saw_range && self.range_low > 0 {
+            values.push(("range_low", self.range_low as f64));
+        }
+        Some(session_reject(filter, values))
     }
 
     /// The stop price fixed at entry for `stop_mode` (KTD1/KTD4/KTD5): range low
@@ -1374,6 +1476,85 @@ impl DataActor for OrbStrategy {
             );
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod gap_retention_classifier_tests {
+    //! U2 (#168) — the pure gap-retention classifier: total over every `i64` input
+    //! pair, ordered per KTD3 (applicability → availability → divide → validity),
+    //! with the frozen #165 value semantics (signed, 0.0 = prior-close touch,
+    //! 1.0 = full retention).
+    use super::*;
+
+    fn classify(prior_close: i64, today_open: i64, range_low: i64) -> GapRetention {
+        classify_gap_retention(SessionGapPrices::new(prior_close, today_open), range_low)
+    }
+
+    #[test]
+    fn boundary_half_retention_is_exact_from_system_produced_prices() {
+        // Canonical KRW/tick prices where the numerator is exactly half the
+        // denominator: (61_500 − 60_000) · 2 == 63_000 − 60_000. Both differences
+        // are exact in f64, so the quotient is exactly 0.5 — equality at the
+        // frozen cutoff passes at the gate.
+        assert_eq!(classify(60_000, 63_000, 61_500), GapRetention::Measured(0.5));
+        // One tick lower measures strictly below the cutoff.
+        match classify(60_000, 63_000, 61_499) {
+            GapRetention::Measured(r) => assert!(r < 0.5, "one tick below → {r} < 0.5"),
+            other => panic!("expected measured, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn value_semantics_are_signed_with_exact_anchors() {
+        // Full retention: the range never dipped below today's open.
+        assert_eq!(classify(60_000, 63_000, 63_000), GapRetention::Measured(1.0));
+        // Prior-close touch is exactly zero.
+        assert_eq!(classify(60_000, 63_000, 60_000), GapRetention::Measured(0.0));
+        // A crossing below the prior close stays signed (negative), never clamped.
+        assert_eq!(classify(60_000, 63_000, 58_500), GapRetention::Measured(-0.5));
+    }
+
+    #[test]
+    fn zero_width_range_remains_a_valid_observation() {
+        // Validity is not redefined (#165): a zero-width range's low classifies
+        // measured like any other frozen low.
+        assert_eq!(classify(60_000, 63_000, 62_250), GapRetention::Measured(0.75));
+    }
+
+    #[test]
+    fn non_positive_gap_or_prior_close_is_not_applicable_before_any_division() {
+        // The unthreaded default pair.
+        assert_eq!(classify(0, 0, 61_500), GapRetention::NotApplicable);
+        // Non-positive prior close.
+        assert_eq!(classify(0, 63_000, 61_500), GapRetention::NotApplicable);
+        assert_eq!(classify(-100, 63_000, 61_500), GapRetention::NotApplicable);
+        // Zero gap (the would-be 0/0) and a gap-down — classified before the
+        // divide, so neither can masquerade as invalid.
+        assert_eq!(classify(63_000, 63_000, 61_500), GapRetention::NotApplicable);
+        assert_eq!(classify(63_000, 60_000, 61_500), GapRetention::NotApplicable);
+        // Applicability outranks availability: a sentinel low on a non-applicable
+        // session is still not-applicable (KTD3 ordering).
+        assert_eq!(classify(63_000, 60_000, i64::MAX), GapRetention::NotApplicable);
+    }
+
+    #[test]
+    fn missing_or_non_positive_range_low_is_unavailable() {
+        assert_eq!(classify(60_000, 63_000, i64::MAX), GapRetention::Unavailable);
+        assert_eq!(classify(60_000, 63_000, 0), GapRetention::Unavailable);
+        assert_eq!(classify(60_000, 63_000, -1), GapRetention::Unavailable);
+    }
+
+    #[test]
+    fn retention_above_one_is_invalid() {
+        // range_low above today's open is inconsistent data, never "better than
+        // full retention".
+        assert_eq!(classify(60_000, 63_000, 63_001), GapRetention::Invalid);
+        // Non-finite ratios are defensively invalid but unreachable from valid
+        // i64 inputs: the not-applicable arm guarantees a positive denominator
+        // and any finite i64 numerator divides to a finite f64. The largest
+        // admissible numerator still classifies (here invalid, being above 1.0).
+        assert_eq!(classify(1, 2, i64::MAX - 1), GapRetention::Invalid);
     }
 }
 
