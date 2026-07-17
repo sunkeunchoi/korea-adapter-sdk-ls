@@ -7,6 +7,7 @@
 use std::path::Path;
 
 use nautilus_ls_lab::artifacts::manifest::hash_bytes;
+use nautilus_ls_lab::candidates::{load, Candidate, Comparator, ScriptDecl};
 use nautilus_ls_lab::runner::diagnose::{diagnose, read_gate_verdict, DiagnoseConfig, GateExit};
 use nautilus_ls_lab::trials::TrialsLedger;
 use serde_json::json;
@@ -50,6 +51,58 @@ fn cfg(tmp: &TempDir, dir: &Path) -> DiagnoseConfig {
 
 fn emit(value: &str) -> String {
     format!("echo '{{\"collinearity_r\": {value}}}' > \"$1\"")
+}
+
+fn gap_candidate() -> Candidate {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("candidates/opening-range-gap-retention");
+    load(&dir).expect("the committed gap-retention candidate loads").values
+}
+
+fn gap_readings() -> serde_json::Map<String, serde_json::Value> {
+    json!({
+        "population_count": 167,
+        "valid_retention_count": 167,
+        "retained_count": 69,
+        "rejected_count": 98,
+        "retained_session_count": 17,
+        "rejected_session_count": 22,
+        "risk_complete_count": 167,
+        "head_ror": 0.10,
+        "retained_ror": 0.10065,
+        "predicted_ror_shift": 0.00065000,
+        "retained_max_risk_capital_share": 0.40000000
+    })
+    .as_object()
+    .unwrap()
+    .clone()
+}
+
+fn author_gap_candidate(
+    dir: &Path,
+    mut candidate: Candidate,
+    readings: &serde_json::Map<String, serde_json::Value>,
+) {
+    std::fs::create_dir_all(dir).unwrap();
+    let payload = serde_json::to_string(readings).unwrap();
+    let script = format!("#!/bin/sh\nprintf '%s' '{payload}' > \"$1\"\n");
+    std::fs::write(dir.join("diagnostic.sh"), &script).unwrap();
+    std::fs::write(dir.join("twin.sh"), &script).unwrap();
+    candidate.diagnostic = Some(ScriptDecl {
+        argv: vec!["sh".to_string(), "diagnostic.sh".to_string()],
+        file: "diagnostic.sh".to_string(),
+        content_hash: hash_bytes(script.as_bytes()),
+    });
+    candidate.twin = Some(ScriptDecl {
+        argv: vec!["sh".to_string(), "twin.sh".to_string()],
+        file: "twin.sh".to_string(),
+        content_hash: hash_bytes(script.as_bytes()),
+    });
+    std::fs::write(
+        dir.join("candidate.json"),
+        serde_json::to_string_pretty(&candidate).unwrap(),
+    )
+    .unwrap();
 }
 
 #[test]
@@ -205,4 +258,47 @@ fn a_planted_env_secret_never_appears_in_the_verdict_or_ledger_bytes() {
     let ledger_bytes = std::fs::read_to_string(c.ledger.path()).unwrap();
     assert!(!verdict_bytes.contains("20187511401"), "no env secret in the verdict: {verdict_bytes}");
     assert!(!ledger_bytes.contains("20187511401"), "no env secret in the ledger: {ledger_bytes}");
+}
+
+#[test]
+fn gap_retention_threshold_equalities_go_and_each_bound_fails_closed() {
+    let tmp = TempDir::new().unwrap();
+    let candidate = gap_candidate();
+    let equality_dir = tmp.path().join("equality");
+    author_gap_candidate(&equality_dir, candidate.clone(), &gap_readings());
+    let equality = diagnose(&cfg(&tmp, &equality_dir)).unwrap();
+    assert!(equality.go, "inclusive threshold equalities are GO: {:?}", equality.lines);
+
+    for (index, threshold) in candidate.thresholds.iter().enumerate() {
+        let mut readings = gap_readings();
+        let step = if threshold.value.fract() == 0.0 { 1.0 } else { 0.00000001 };
+        let failing = match threshold.comparator {
+            Comparator::Ge | Comparator::Gt => threshold.value - step,
+            Comparator::Le | Comparator::Lt => threshold.value + step,
+        };
+        readings.insert(threshold.reading.clone(), json!(failing));
+        let dir = tmp.path().join(format!("threshold-{index}"));
+        author_gap_candidate(&dir, candidate.clone(), &readings);
+        let outcome = diagnose(&cfg(&tmp, &dir)).unwrap();
+        assert_eq!(
+            outcome.exit,
+            GateExit::ThresholdFail,
+            "threshold {index} ({:?} {} {}) must STOP",
+            threshold.comparator,
+            threshold.reading,
+            threshold.value
+        );
+    }
+}
+
+#[test]
+fn gap_retention_missing_reading_stops_before_a_verdict() {
+    let tmp = TempDir::new().unwrap();
+    let dir = tmp.path().join("missing-reading");
+    let mut readings = gap_readings();
+    readings.remove("risk_complete_count");
+    author_gap_candidate(&dir, gap_candidate(), &readings);
+    let outcome = diagnose(&cfg(&tmp, &dir)).unwrap();
+    assert_eq!(outcome.exit, GateExit::ScriptFailure);
+    assert!(read_gate_verdict(&dir).unwrap().is_none());
 }
