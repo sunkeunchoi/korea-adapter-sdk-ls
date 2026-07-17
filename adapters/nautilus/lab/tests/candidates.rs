@@ -11,6 +11,10 @@ fn example_dir() -> std::path::PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("candidates/example")
 }
 
+fn gap_retention_dir() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("candidates/opening-range-gap-retention")
+}
+
 #[test]
 fn the_tracked_example_candidate_loads() {
     // Its declared diagnostic + twin content hashes must match the committed
@@ -34,4 +38,15 @@ fn the_example_round_trips_through_serde() {
     let json = serde_json::to_string(&loaded.values).unwrap();
     let back: Candidate = serde_json::from_str(&json).unwrap();
     assert_eq!(back, loaded.values, "the example candidate round-trips");
+}
+
+#[test]
+fn the_opening_range_gap_retention_candidate_is_frozen() {
+    let loaded = load(&gap_retention_dir()).expect("the gap-retention candidate loads");
+    assert_eq!(loaded.values.slug, "opening-range-gap-retention");
+    assert_eq!(loaded.values.family, "entry-filter");
+    assert_eq!(loaded.values.phase_a, PhaseAClass::Bespoke);
+    assert!(loaded.values.flip_matches("gap_retention_min", 0.50));
+    assert_eq!(loaded.values.readings.len(), 11);
+    assert_eq!(loaded.values.thresholds.len(), 16);
 }

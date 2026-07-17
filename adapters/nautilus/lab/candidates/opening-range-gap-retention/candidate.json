@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "slug": "opening-range-gap-retention",
+  "family": "entry-filter",
+  "phase_a": "bespoke",
+  "flip_param": "gap_retention_min",
+  "flip_value": 0.50,
+  "diagnostic": {
+    "argv": ["uv", "run", "--with", "pyarrow", "python3", "diagnostic.py"],
+    "file": "diagnostic.py",
+    "content_hash": "449c8d3e95acf97aefb2935f9581678e9d673ca2547b7b719d7cf80694e9ddd9"
+  },
+  "twin": {
+    "argv": ["uv", "run", "--with", "pyarrow", "python3", "twin.py"],
+    "file": "twin.py",
+    "content_hash": "1e319d0b0fc51716329fd348e863b92d5f64a9986ab6565870ff2a3ebe246a99"
+  },
+  "readings": {
+    "population_count": { "tolerance": 0, "precision": 0 },
+    "valid_retention_count": { "tolerance": 0, "precision": 0 },
+    "retained_count": { "tolerance": 0, "precision": 0 },
+    "rejected_count": { "tolerance": 0, "precision": 0 },
+    "retained_session_count": { "tolerance": 0, "precision": 0 },
+    "rejected_session_count": { "tolerance": 0, "precision": 0 },
+    "risk_complete_count": { "tolerance": 0, "precision": 0 },
+    "head_ror": { "tolerance": 0.00000001, "precision": 8 },
+    "retained_ror": { "tolerance": 0.00000001, "precision": 8 },
+    "predicted_ror_shift": { "tolerance": 0.00000001, "precision": 8 },
+    "retained_max_risk_capital_share": { "tolerance": 0.00000001, "precision": 8 }
+  },
+  "thresholds": [
+    { "reading": "population_count", "comparator": "ge", "value": 167 },
+    { "reading": "population_count", "comparator": "le", "value": 167 },
+    { "reading": "valid_retention_count", "comparator": "ge", "value": 167 },
+    { "reading": "valid_retention_count", "comparator": "le", "value": 167 },
+    { "reading": "retained_count", "comparator": "ge", "value": 69 },
+    { "reading": "retained_count", "comparator": "le", "value": 69 },
+    { "reading": "rejected_count", "comparator": "ge", "value": 98 },
+    { "reading": "rejected_count", "comparator": "le", "value": 98 },
+    { "reading": "retained_session_count", "comparator": "ge", "value": 17 },
+    { "reading": "retained_session_count", "comparator": "le", "value": 17 },
+    { "reading": "rejected_session_count", "comparator": "ge", "value": 22 },
+    { "reading": "rejected_session_count", "comparator": "le", "value": 22 },
+    { "reading": "risk_complete_count", "comparator": "ge", "value": 167 },
+    { "reading": "risk_complete_count", "comparator": "le", "value": 167 },
+    { "reading": "predicted_ror_shift", "comparator": "ge", "value": 0.00065000 },
+    { "reading": "retained_max_risk_capital_share", "comparator": "le", "value": 0.40000000 }
+  ],
+  "keep_anchor": "after sentinel re-baseline, return-on-risk strictly improves and retained max per-symbol risk-capital share is <= 0.40; otherwise REVERT"
+}
