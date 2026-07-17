@@ -17,6 +17,7 @@ use nautilus_ls::lock::{AdvisoryLock, LockKind};
 use nautilus_ls_lab::artifacts::data_quality::{DataQualityReport, GapReasonKind};
 use nautilus_ls_lab::artifacts::manifest::Manifest;
 use nautilus_ls_lab::artifacts::performance::PerformanceReport;
+use nautilus_ls_lab::agent::context::AgentContext;
 use nautilus_ls_lab::agent::envelope::{DecisionTrigger, SignalKind};
 use nautilus_ls_lab::agent::replay::read_envelopes;
 use nautilus_ls_lab::artifacts::{aborted_runs, list_runs, MANIFEST_FILE, PERFORMANCE_FILE, DECISIONS_FILE, DATA_QUALITY_FILE};
@@ -164,6 +165,42 @@ async fn full_backtest_lands_a_registry_run() {
     assert!(
         envelopes.iter().all(|e| e.decision_detail.is_some()),
         "every in-run envelope carries a decision detail"
+    );
+    // #167 OFF compatibility at the complete backtest/strategy seam: adding the
+    // manifest-recorded sentinel changes only the parameter context, not the semantic
+    // action/decision stream. The pre-feature fixture stream remains exactly these
+    // five decisions, with no gap-retention rejection inserted.
+    let kinds: Vec<_> = envelopes
+        .iter()
+        .filter_map(|e| e.decision_detail.as_ref().map(|detail| detail.kind))
+        .collect();
+    assert_eq!(
+        kinds,
+        vec![
+            SignalKind::Universe,
+            SignalKind::Breakout,
+            SignalKind::OrderPlaced,
+            SignalKind::Target,
+            SignalKind::SessionSummary,
+        ],
+        "OFF preserves the pre-feature complete-session decision stream"
+    );
+    assert!(
+        envelopes.iter().all(|e| {
+            e.decision_detail
+                .as_ref()
+                .and_then(|detail| detail.filter.as_deref())
+                .is_none_or(|filter| !filter.starts_with("gap_retention"))
+        }),
+        "OFF never emits a retention decision"
+    );
+    assert!(
+        envelopes.iter().all(|e| matches!(
+            &e.context,
+            AgentContext::Telemetry { params_hash_or_summary, .. }
+                if params_hash_or_summary.get("gap_retention_min") == Some(&1.0)
+        )),
+        "the behavioral stream is unchanged while its context records the OFF sentinel"
     );
     // Session summaries fire at strategy stop, not on a bar — their trigger
     // records the stop-time state change (R5).
