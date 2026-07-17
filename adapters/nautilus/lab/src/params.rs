@@ -214,6 +214,13 @@ pub struct OrbParams {
     /// `validate()` requires `w_hi ≥ 1.0` when the lever is armed.
     #[serde(default)]
     pub ratio_atr_w_hi: f64,
+    /// Opening-range gap-retention cutoff. The reserved `1.0` value is exclusively
+    /// OFF: this seam release records it in manifests but does not observe retention
+    /// inputs. The sole armed value (`0.50`) is rejected until the final session gate
+    /// is implemented, preventing a manifest from advertising behavior that does not
+    /// yet exist. Legacy manifests resolve to the same OFF sentinel.
+    #[serde(default = "default_gap_retention_min")]
+    pub gap_retention_min: f64,
     /// Amihud-illiquidity budget tilt (CLASS B, liquidity axis, plan 2026-07-16-003
     /// R1/KD1/KD3). Multiplies the per-trade risk **budget** by a dimensionless
     /// inverse-illiquidity weight `w = clamp((liquidity_tilt_ref / illiq)^alpha, w_lo,
@@ -334,6 +341,11 @@ fn default_rvol_min_history() -> f64 {
     5.0
 }
 
+/// Back-compatible OFF sentinel for the gap-retention seam (#167).
+fn default_gap_retention_min() -> f64 {
+    1.0
+}
+
 impl Default for OrbParams {
     fn default() -> Self {
         OrbParams {
@@ -371,6 +383,7 @@ impl Default for OrbParams {
             ratio_atr_ref: 0.0,
             ratio_atr_w_lo: 0.0,
             ratio_atr_w_hi: 0.0,
+            gap_retention_min: default_gap_retention_min(),
             // Amihud liquidity budget tilt (plan 2026-07-16-003) — alpha sentinel off; the
             // clamp/ref companions carry their frozen pre-register values (inert while alpha
             // == 0.0, so byte-identical to v30), so the lever is governed-flippable in one turn.
@@ -415,6 +428,13 @@ impl OrbParams {
     /// trades that reads as a real result. A negative `entry_cutoff_min` is a
     /// config error, not the `0.0`-off sentinel.
     pub fn validate(&self) -> Result<(), String> {
+        if self.gap_retention_min != default_gap_retention_min() {
+            return Err(format!(
+                "gap_retention_min {} is not available yet — 1.0 is reserved as OFF until the \
+                 final gap-retention session gate is implemented (#168)",
+                self.gap_retention_min
+            ));
+        }
         if self.entry_cutoff_min < 0.0 {
             return Err(format!(
                 "entry_cutoff_min {} is negative — use 0.0 to disable the cutoff, a positive \
@@ -949,6 +969,27 @@ mod tests {
         assert!(!p.risk_sizing_active());
         assert!(!p.equity_compounding_active());
         assert!(!p.ratio_atr_active());
+    }
+
+    #[test]
+    fn gap_retention_off_seam_is_manifest_recorded_and_legacy_safe() {
+        let mut legacy = serde_json::to_value(OrbParams::default()).unwrap();
+        legacy.as_object_mut().unwrap().remove("gap_retention_min");
+
+        let resolved: OrbParams = serde_json::from_value(legacy).unwrap();
+        assert_eq!(resolved.gap_retention_min, 1.0, "legacy manifests resolve to OFF");
+        assert_eq!(
+            resolved.numeric_summary().get("gap_retention_min"),
+            Some(&1.0),
+            "new manifests record the OFF sentinel"
+        );
+        assert!(resolved.validate().is_ok(), "the reserved OFF sentinel validates");
+
+        let prematurely_armed = OrbParams { gap_retention_min: 0.50, ..resolved };
+        assert!(
+            prematurely_armed.validate().is_err(),
+            "the armed value stays unavailable until the final gate is implemented"
+        );
     }
 
     #[test]

@@ -9,7 +9,7 @@ use nautilus_ls_lab::agent::sink::DecisionSink;
 use nautilus_ls_lab::params::OrbParams;
 use nautilus_ls_lab::strategy::orb::{
     breakout_strength, select_universe, CandidateMeta, ExitReason, OrbAction, OrbState, Phase,
-    UniverseCandidate,
+    SessionGapPrices, UniverseCandidate,
 };
 
 fn t(h: u32, m: u32) -> NaiveTime {
@@ -52,6 +52,41 @@ fn clean_breakout_enters_once_and_time_exits() {
     let acts = bar(&mut st, t(15, 0), 62_200, 62_000, &p);
     assert_eq!(acts, vec![OrbAction::Exit { limit_price: 62_000, reason: ExitReason::TimeFlat }]);
     assert_eq!(st.phase(), Phase::Done);
+}
+
+#[test]
+fn gap_retention_off_ignores_session_inputs_and_preserves_complete_session_actions() {
+    fn complete_session(prior_close: i64, today_open: i64) -> Vec<OrbAction> {
+        let params = OrbParams::default();
+        let mut state = OrbState::with_session_inputs(
+            SessionGapPrices::new(prior_close, today_open),
+            None,
+            None,
+            None,
+        );
+        let mut actions = Vec::new();
+        actions.extend(bar(&mut state, t(9, 0), 61_500, 60_000, &params));
+        actions.extend(bar(&mut state, t(9, 10), 61_500, 60_000, &params));
+        actions.extend(bar(&mut state, t(9, 20), 62_000, 61_000, &params));
+        actions.extend(bar(&mut state, t(10, 0), 63_000, 61_800, &params));
+        actions.extend(bar(&mut state, t(15, 0), 63_200, 62_000, &params));
+        actions
+    }
+
+    let expected = vec![
+        OrbAction::Enter { limit_price: 62_000 },
+        OrbAction::Exit { limit_price: 62_000, reason: ExitReason::TimeFlat },
+    ];
+    assert_eq!(
+        complete_session(60_000, 63_000),
+        expected,
+        "OFF does not observe a below-0.50 retention input"
+    );
+    assert_eq!(
+        complete_session(0, 0),
+        expected,
+        "OFF does not observe unavailable/not-applicable retention inputs"
+    );
 }
 
 /// The stop (range low) is honored: after entry, a bar that breaches the range low
@@ -1264,11 +1299,10 @@ fn breakout_strength_none_on_degenerate_range() {
 // Universe scan
 // ---------------------------------------------------------------------------
 
-fn candidate(sym: &str, prior_close: f64, today_open: f64, turnover: f64) -> UniverseCandidate {
+fn candidate(sym: &str, prior_close: i64, today_open: i64, turnover: f64) -> UniverseCandidate {
     UniverseCandidate {
         symbol: sym.to_string(),
-        prior_close,
-        today_open,
+        gap_prices: SessionGapPrices::new(prior_close, today_open),
         prior_turnover: turnover,
         meta: CandidateMeta::Untagged,
         prior_atr: None,
@@ -1284,7 +1318,7 @@ fn gap_reject_names_filter_and_values() {
     let p = OrbParams::default(); // gap_min_pct 3.0
     let sink = DecisionSink::new();
     // 60000 → 60500 is +0.83%, below the 3% gap floor.
-    let cands = vec![candidate("005930.XKRX", 60_000.0, 60_500.0, 1_000.0)];
+    let cands = vec![candidate("005930.XKRX", 60_000, 60_500, 1_000.0)];
     let selected = select_universe(&cands, &p, &sink, 42);
     assert!(selected.is_empty(), "a sub-gap candidate is not selected");
 
@@ -1315,7 +1349,7 @@ fn universe_caps_top_n_by_turnover() {
     // 25 candidates all clearing the gap (+5%), with turnover = index so ranking is
     // unambiguous.
     let cands: Vec<UniverseCandidate> = (0..25)
-        .map(|i| candidate(&format!("{:06}.XKRX", i), 100.0, 105.0, i as f64))
+        .map(|i| candidate(&format!("{:06}.XKRX", i), 100, 105, i as f64))
         .collect();
     let selected = select_universe(&cands, &p, &sink, 1);
     assert_eq!(selected.len(), 20, "top-20 cap enforced");
@@ -1356,7 +1390,7 @@ fn tags(market: MarketClass, cap: CapTier) -> ConditionerTags {
 
 fn tagged(
     sym: &str,
-    today_open: f64,
+    today_open: i64,
     turnover: f64,
     tradable: bool,
     market: MarketClass,
@@ -1364,8 +1398,7 @@ fn tagged(
 ) -> UniverseCandidate {
     UniverseCandidate {
         symbol: sym.to_string(),
-        prior_close: 100.0,
-        today_open,
+        gap_prices: SessionGapPrices::new(100, today_open),
         prior_turnover: turnover,
         meta: CandidateMeta::Tagged { tradable, tags: tags(market, cap) },
         prior_atr: None,
@@ -1381,8 +1414,8 @@ fn non_tradable_candidate_is_excluded_even_when_gap_and_turnover_qualify() {
     let p = OrbParams::default(); // gap_min_pct 3.0
     let sink = DecisionSink::new();
     let cands = vec![
-        tagged("111111.XKRX", 105.0, 9_999_999.0, false, MarketClass::Kospi, CapTier::Top),
-        tagged("222222.XKRX", 105.0, 1_000.0, true, MarketClass::Kospi, CapTier::Top),
+        tagged("111111.XKRX", 105, 9_999_999.0, false, MarketClass::Kospi, CapTier::Top),
+        tagged("222222.XKRX", 105, 1_000.0, true, MarketClass::Kospi, CapTier::Top),
     ];
     let selected = select_universe(&cands, &p, &sink, 1);
     assert_eq!(selected, vec!["222222.XKRX".to_string()], "only the clean symbol is selected");
@@ -1405,8 +1438,8 @@ fn below_floor_candidate_is_excluded_and_at_floor_passes() {
     p.turnover_floor_krw = 1_000.0;
     let sink = DecisionSink::new();
     let cands = vec![
-        tagged("111111.XKRX", 105.0, 999.0, true, MarketClass::Kosdaq, CapTier::Mid),
-        tagged("222222.XKRX", 105.0, 1_000.0, true, MarketClass::Kosdaq, CapTier::Mid),
+        tagged("111111.XKRX", 105, 999.0, true, MarketClass::Kosdaq, CapTier::Mid),
+        tagged("222222.XKRX", 105, 1_000.0, true, MarketClass::Kosdaq, CapTier::Mid),
     ];
     let selected = select_universe(&cands, &p, &sink, 1);
     assert_eq!(selected, vec!["222222.XKRX".to_string()], "at-floor passes, below-floor is cut");
@@ -1431,7 +1464,7 @@ fn unavailable_capture_turnover_gates_on_daily_bar_prior_turnover() {
     // Unknown liquidity tier (capture turnover Unavailable) but a healthy
     // daily-bar prior_turnover → selected.
     let cands =
-        vec![tagged("300001.XKRX", 105.0, 5_000.0, true, MarketClass::Kosdaq, CapTier::BelowBoard)];
+        vec![tagged("300001.XKRX", 105, 5_000.0, true, MarketClass::Kosdaq, CapTier::BelowBoard)];
     let selected = select_universe(&cands, &p, &sink, 1);
     assert_eq!(selected, vec!["300001.XKRX".to_string()]);
 }
@@ -1442,7 +1475,7 @@ fn unavailable_capture_turnover_gates_on_daily_bar_prior_turnover() {
 fn missing_metadata_candidate_is_dropped_and_recorded() {
     let p = OrbParams::default();
     let sink = DecisionSink::new();
-    let mut c = candidate("111111.XKRX", 100.0, 105.0, 9_999.0);
+    let mut c = candidate("111111.XKRX", 100, 105, 9_999.0);
     c.meta = CandidateMeta::Missing;
     let selected = select_universe(&[c], &p, &sink, 1);
     assert!(selected.is_empty(), "missing metadata is non-selectable");
@@ -1460,10 +1493,10 @@ fn gap_and_turnover_ranking_preserved_within_the_filtered_set() {
     let sink = DecisionSink::new();
     let cands = vec![
         // Highest turnover but designated — gated out before ranking.
-        tagged("111111.XKRX", 105.0, 10_000.0, false, MarketClass::Kospi, CapTier::Top),
-        tagged("222222.XKRX", 105.0, 3_000.0, true, MarketClass::Kospi, CapTier::Top),
-        tagged("333333.XKRX", 105.0, 5_000.0, true, MarketClass::Kospi, CapTier::Mid),
-        tagged("444444.XKRX", 105.0, 1_000.0, true, MarketClass::Kosdaq, CapTier::Mid),
+        tagged("111111.XKRX", 105, 10_000.0, false, MarketClass::Kospi, CapTier::Top),
+        tagged("222222.XKRX", 105, 3_000.0, true, MarketClass::Kospi, CapTier::Top),
+        tagged("333333.XKRX", 105, 5_000.0, true, MarketClass::Kospi, CapTier::Mid),
+        tagged("444444.XKRX", 105, 1_000.0, true, MarketClass::Kosdaq, CapTier::Mid),
     ];
     let selected = select_universe(&cands, &p, &sink, 1);
     assert_eq!(
@@ -1480,8 +1513,8 @@ fn accept_envelope_carries_conditioner_tags_and_the_correct_tier() {
     let p = OrbParams::default();
     let sink = DecisionSink::new();
     let cands = vec![
-        tagged("111111.XKRX", 105.0, 5_000.0, true, MarketClass::Kospi, CapTier::Top),
-        candidate("222222.XKRX", 100.0, 105.0, 1_000.0), // legacy Untagged
+        tagged("111111.XKRX", 105, 5_000.0, true, MarketClass::Kospi, CapTier::Top),
+        candidate("222222.XKRX", 100, 105, 1_000.0), // legacy Untagged
     ];
     let selected = select_universe(&cands, &p, &sink, 1);
     assert_eq!(selected.len(), 2);

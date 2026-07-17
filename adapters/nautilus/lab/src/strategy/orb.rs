@@ -66,15 +66,37 @@ pub enum CandidateMeta {
     },
 }
 
+/// Canonical integer prices defining a symbol-session's opening gap.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SessionGapPrices {
+    /// Prior-session close in integer KRW/ticks.
+    pub prior_close: i64,
+    /// Current-session open in integer KRW/ticks.
+    pub today_open: i64,
+}
+
+impl SessionGapPrices {
+    /// Construct the canonical price pair.
+    pub const fn new(prior_close: i64, today_open: i64) -> Self {
+        Self { prior_close, today_open }
+    }
+
+    /// The opening gap versus the prior close, in percent.
+    fn gap_pct(self) -> f64 {
+        if self.prior_close <= 0 {
+            return 0.0;
+        }
+        (self.today_open - self.prior_close) as f64 / self.prior_close as f64 * 100.0
+    }
+}
+
 /// A universe candidate assembled from prior-session daily context.
 #[derive(Debug, Clone, PartialEq)]
 pub struct UniverseCandidate {
     /// `{shcode}.XKRX` instrument id string.
     pub symbol: String,
-    /// Prior-session close price (KRW).
-    pub prior_close: f64,
-    /// The session-open price the gap is measured against (KRW).
-    pub today_open: f64,
+    /// Canonical integer prices defining this symbol-session's opening gap.
+    pub gap_prices: SessionGapPrices,
     /// Prior-session turnover (value traded) used for ranking.
     pub prior_turnover: f64,
     /// The reference-data join state (U4).
@@ -97,10 +119,7 @@ pub struct UniverseCandidate {
 impl UniverseCandidate {
     /// The gap versus the prior close, in percent.
     pub fn gap_pct(&self) -> f64 {
-        if self.prior_close <= 0.0 {
-            return 0.0;
-        }
-        (self.today_open - self.prior_close) / self.prior_close * 100.0
+        self.gap_prices.gap_pct()
     }
 }
 
@@ -146,8 +165,8 @@ pub fn select_universe(
                     "missing_metadata",
                     vals(&[
                         ("gap_pct", c.gap_pct()),
-                        ("prior_close", c.prior_close),
-                        ("today_open", c.today_open),
+                        ("prior_close", c.gap_prices.prior_close as f64),
+                        ("today_open", c.gap_prices.today_open as f64),
                         ("prior_turnover", c.prior_turnover),
                     ]),
                 );
@@ -173,7 +192,11 @@ pub fn select_universe(
         if gap < params.gap_min_pct {
             reject(
                 "gap",
-                vals(&[("gap_pct", gap), ("prior_close", c.prior_close), ("today_open", c.today_open)]),
+                vals(&[
+                    ("gap_pct", gap),
+                    ("prior_close", c.gap_prices.prior_close as f64),
+                    ("today_open", c.gap_prices.today_open as f64),
+                ]),
             );
         } else {
             passed.push(c);
@@ -350,6 +373,9 @@ pub struct OrbState {
     /// Today's accumulated opening-window (`[range_open, range_end)`) volume
     /// (KTD9) — the RVOL gate's numerator. Inert unless the RVOL gate is on.
     open_window_vol: f64,
+    /// Canonical gap prices threaded from selection, deliberately unread while OFF.
+    #[expect(dead_code, reason = "#167 carries this input; #168 will arm its only reader")]
+    gap_prices: SessionGapPrices,
     /// The prior-daily ATR for this symbol-session (KTD5), threaded from the
     /// candidate seam (U2). `None` when fewer than `atr_window`+1 priors — the
     /// ATR stop / OR-width gate fail closed rather than silently fall back.
@@ -377,6 +403,7 @@ impl Default for OrbState {
             stop_price: 0,
             r_denom: 0,
             open_window_vol: 0.0,
+            gap_prices: SessionGapPrices::new(0, 0),
             prior_atr: None,
             prior_open_vol_mean: None,
             prior_illiq: None,
@@ -399,6 +426,24 @@ impl OrbState {
         prior_illiq: Option<f64>,
     ) -> Self {
         OrbState { prior_atr, prior_open_vol_mean, prior_illiq, ..Self::default() }
+    }
+
+    /// A fresh state seeded from the selected-symbol boundary. Prices stay in
+    /// canonical integer KRW/ticks; #167 only carries them and never evaluates
+    /// retention while the manifest sentinel is OFF.
+    pub fn with_session_inputs(
+        gap_prices: SessionGapPrices,
+        prior_atr: Option<f64>,
+        prior_open_vol_mean: Option<f64>,
+        prior_illiq: Option<f64>,
+    ) -> Self {
+        OrbState {
+            gap_prices,
+            prior_atr,
+            prior_open_vol_mean,
+            prior_illiq,
+            ..Self::default()
+        }
     }
 
     /// Whether a long position is currently held.
@@ -882,6 +927,8 @@ pub struct SelectedSymbol {
     pub instrument_id: InstrumentId,
     /// The bar type to subscribe (typically the 1-minute series).
     pub bar_type: BarType,
+    /// Canonical integer prices defining this symbol-session's opening gap.
+    pub gap_prices: SessionGapPrices,
     /// The symbol's prior-daily ATR for this session (KTD5), threaded to its
     /// [`OrbState`] for the stop / OR-width gates. `None` when unavailable.
     pub prior_atr: Option<f64>,
@@ -945,7 +992,12 @@ impl OrbStrategy {
             .map(|s| {
                 (
                     s.instrument_id,
-                    OrbState::with_priors(s.prior_atr, s.prior_open_vol_mean, s.prior_illiq),
+                    OrbState::with_session_inputs(
+                        s.gap_prices,
+                        s.prior_atr,
+                        s.prior_open_vol_mean,
+                        s.prior_illiq,
+                    ),
                 )
             })
             .collect();
@@ -1363,6 +1415,7 @@ mod ratio_atr_wiring_tests {
         let selected = vec![SelectedSymbol {
             instrument_id: id,
             bar_type: BarKind::Minute(1).bar_type(id).unwrap(),
+            gap_prices: SessionGapPrices::new(60_000, 63_000),
             prior_atr,
             prior_open_vol_mean: None,
             prior_illiq: None,
@@ -1491,6 +1544,7 @@ mod ratio_atr_wiring_tests {
             let selected = vec![SelectedSymbol {
                 instrument_id: id,
                 bar_type: BarKind::Minute(1).bar_type(id).unwrap(),
+                gap_prices: SessionGapPrices::new(60_000, 63_000),
                 prior_atr: None,
                 prior_open_vol_mean: None,
                 prior_illiq: illiq,

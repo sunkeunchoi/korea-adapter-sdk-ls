@@ -22,7 +22,7 @@ use nautilus_ls_lab::artifacts::{run_id, RunSource, RunWriter, DATA_QUALITY_FILE
 use nautilus_ls_lab::params::OrbParams;
 use nautilus_ls_lab::runner::live::{count_approximated, live_guard, record_reconcile};
 use nautilus_ls_lab::agent::sink::DecisionSink;
-use nautilus_ls_lab::strategy::orb::{OrbStrategy, SelectedSymbol};
+use nautilus_ls_lab::strategy::orb::{OrbStrategy, SelectedSymbol, SessionGapPrices};
 use nautilus_model::identifiers::{ClientOrderId, InstrumentId, TraderId, TradeId};
 use std::sync::{Mutex, MutexGuard};
 use tempfile::tempdir;
@@ -94,6 +94,7 @@ async fn strategy_mounts_in_a_built_live_node() {
     let selected = vec![SelectedSymbol {
         instrument_id: id,
         bar_type: BarKind::Minute(1).bar_type(id).unwrap(),
+        gap_prices: SessionGapPrices::new(60_000, 63_000),
         prior_atr: None,
         prior_open_vol_mean: None,
         prior_illiq: None,
@@ -401,6 +402,7 @@ fn build_live_session_node_mounts_the_strategy() {
     let selected = vec![SelectedSymbol {
         instrument_id: InstrumentId::from("005930.XKRX"),
         bar_type: BarKind::Minute(1).bar_type(InstrumentId::from("005930.XKRX")).unwrap(),
+        gap_prices: SessionGapPrices::new(60_000, 63_000),
         prior_atr: None,
         prior_open_vol_mean: None,
         prior_illiq: None,

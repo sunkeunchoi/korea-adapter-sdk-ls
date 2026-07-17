@@ -25,7 +25,7 @@ use nautilus_model::enums::{AccountType, BarAggregation, BookType, OmsType};
 use nautilus_model::identifiers::{InstrumentId, Venue};
 use nautilus_model::instruments::{Instrument, InstrumentAny};
 use nautilus_model::position::Position;
-use nautilus_model::types::{Currency, Money};
+use nautilus_model::types::{Currency, Money, Price};
 
 use nautilus_ls::reference::universe_metadata::{
     assign_liquidity_tier, stratum_of, ConditionerTags, InstrumentMetadata, Resolved, Stratum,
@@ -44,7 +44,7 @@ use crate::agent::sink::DecisionSink;
 use crate::params::OrbParams;
 use crate::strategy::orb::{
     kst_time_from_nanos, select_universe, CandidateMeta, OrbStrategy, SelectedSymbol,
-    UniverseCandidate,
+    SessionGapPrices, UniverseCandidate,
 };
 
 /// Backtest run configuration.
@@ -453,10 +453,8 @@ fn run_sessions(
         // selected-symbol seam can thread it to the strategy (U2). Selection
         // itself reads neither value (R4) — computed on every candidate,
         // consumed only for the selected ones.
-        let derived: HashMap<String, (Option<f64>, Option<f64>, Option<f64>)> = candidates
-            .iter()
-            .map(|c| (c.symbol.clone(), (c.prior_atr, c.prior_open_vol_mean, c.prior_illiq)))
-            .collect();
+        let candidates_by_symbol: HashMap<&str, &UniverseCandidate> =
+            candidates.iter().map(|candidate| (candidate.symbol.as_str(), candidate)).collect();
         let selected_symbols = select_universe(&candidates, params, sink, session_ts);
         for s in &selected_symbols {
             selected_union.insert(s.clone());
@@ -470,14 +468,18 @@ fn run_sessions(
             .filter(|i| selected_symbols.iter().any(|s| s == &i.id().to_string()))
             .filter_map(|i| {
                 BarKind::Minute(minute_step).bar_type(i.id()).ok().map(|bar_type| {
-                    let (prior_atr, prior_open_vol_mean, prior_illiq) =
-                        derived.get(&i.id().to_string()).copied().unwrap_or((None, None, None));
+                    let symbol = i.id().to_string();
+                    let candidate = candidates_by_symbol
+                        .get(symbol.as_str())
+                        .copied()
+                        .expect("selected symbol came from this session's candidates");
                     SelectedSymbol {
                         instrument_id: i.id(),
                         bar_type,
-                        prior_atr,
-                        prior_open_vol_mean,
-                        prior_illiq,
+                        gap_prices: candidate.gap_prices,
+                        prior_atr: candidate.prior_atr,
+                        prior_open_vol_mean: candidate.prior_open_vol_mean,
+                        prior_illiq: candidate.prior_illiq,
                     }
                 })
             })
@@ -601,8 +603,10 @@ fn build_candidates(
         );
         candidates.push(UniverseCandidate {
             symbol,
-            prior_close: prior.close.as_f64(),
-            today_open: today.open.as_f64(),
+            gap_prices: SessionGapPrices::new(
+                canonical_krw_ticks(&prior.close),
+                canonical_krw_ticks(&today.open),
+            ),
             prior_turnover,
             meta,
             prior_atr,
@@ -611,6 +615,14 @@ fn build_candidates(
         });
     }
     candidates
+}
+
+/// Convert a KRX price to its canonical integer KRW/tick representation without
+/// routing through `f64`. Cataloged domestic-equity prices are precision-zero;
+/// fail loudly if that invariant changes instead of silently rounding a new shape.
+fn canonical_krw_ticks(price: &Price) -> i64 {
+    assert_eq!(price.precision, 0, "KRX catalog price must use integer-KRW precision");
+    i64::try_from(price.as_decimal().mantissa()).expect("KRX price fits i64 ticks")
 }
 
 /// ATR(`window`) over the daily bars strictly before `session_date` (KTD5),
@@ -1301,8 +1313,7 @@ mod tests {
         let params = OrbParams::default(); // gap_min_pct 3.0
         let base = |atr: Option<f64>, rvol: Option<f64>| UniverseCandidate {
             symbol: "005930.XKRX".to_string(),
-            prior_close: 60_000.0,
-            today_open: 63_000.0, // +5% gap, passes
+            gap_prices: SessionGapPrices::new(60_000, 63_000), // +5% gap, passes
             prior_turnover: 1_000_000.0,
             meta: CandidateMeta::Untagged,
             prior_atr: atr,
