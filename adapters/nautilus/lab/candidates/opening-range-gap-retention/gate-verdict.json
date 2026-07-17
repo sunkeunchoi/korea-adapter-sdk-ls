@@ -42,11 +42,36 @@
     "risk_complete_count": 167.0,
     "valid_retention_count": 167.0
   },
-  "pre_register_hash": "76a210e24b3e1c465b98dd41e1ae88b6c663f117ca894e588200f62f32ea9663",
+  "pre_register_hash": "1a9af3eea13fd58cc711b8ff9e73b5b9008aac64c8f144580264372e0b113588",
   "catalog_fingerprint": "3b6be31bdf8d29a8d774d42d490020d65753455acfc1b2214a0b13f14b589200",
-  "freeze_commit": "c355af47d3649ff2e380caba97b8e7428a0400a8",
+  "freeze_commit": "403b6c97099119ce45934094ad5ebc696e671398",
   "flip_param": "gap_retention_min",
   "flip_value": 0.5,
-  "prior_trials": [],
-  "recorded_utc": "2026-07-17T04:24:46.707375+00:00"
+  "prior_trials": [
+    {
+      "schema_version": 1,
+      "recorded_utc": "2026-07-17T04:24:46.707375+00:00",
+      "candidate": "opening-range-gap-retention",
+      "family": "entry-filter",
+      "look": "gate-reading",
+      "lineage": {
+        "catalog_fingerprint": "3b6be31bdf8d29a8d774d42d490020d65753455acfc1b2214a0b13f14b589200"
+      },
+      "readings": {
+        "head_ror": 0.1262394,
+        "population_count": 167.0,
+        "predicted_ror_shift": 0.10496394,
+        "rejected_count": 98.0,
+        "rejected_session_count": 22.0,
+        "retained_count": 69.0,
+        "retained_max_risk_capital_share": 0.09742712,
+        "retained_ror": 0.23120334,
+        "retained_session_count": 17.0,
+        "risk_complete_count": 167.0,
+        "valid_retention_count": 167.0
+      },
+      "verdict": "GO"
+    }
+  ],
+  "recorded_utc": "2026-07-17T04:45:32.401912+00:00"
 }
