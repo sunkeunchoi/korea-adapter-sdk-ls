@@ -69,6 +69,19 @@ fn minute_json(date: &str, time: &str, o: &str, h: &str, l: &str, c: &str, v: &s
 /// Build a fixture catalog with one gapping symbol (005930): two daily bars (a +5%
 /// gap-up) for the universe scan, and a clean-breakout minute session for 20240105.
 async fn build_fixture(data_home: &Path, with_checkpoint_gap: bool) {
+    build_fixture_with_range_lows(data_home, with_checkpoint_gap, ["62500", "63000"]).await
+}
+
+/// The same fixture with the two opening-range minute lows overridable (#168):
+/// `["61000", "62800"]` freezes a 61_000 range low, measuring gap retention
+/// 1_000/3_000 ≈ 0.333 — below the armed 0.50 cutoff — while the +5% daily gap
+/// still clears universe selection. The defaults keep the shared OFF fixture
+/// (range low 62_500, retention ≈ 0.833) byte-identical.
+async fn build_fixture_with_range_lows(
+    data_home: &Path,
+    with_checkpoint_gap: bool,
+    or_lows: [&str; 2],
+) {
     let catalog = data_home.join("catalog");
     let server = MockServer::start().await;
     mount_token(&server).await;
@@ -105,8 +118,8 @@ async fn build_fixture(data_home: &Path, with_checkpoint_gap: bool) {
     // a clean uptrend never breaches the 62500 stop; time-flat exit at 15:00 (sell at
     // the bar low 64900 > the ~64000 entry → a winning trade).
     let minute: Vec<Bar> = [
-        minute_json("20240105", "090000", "63000", "63500", "62500", "63200", "1000"),
-        minute_json("20240105", "091000", "63200", "63400", "63000", "63300", "1000"),
+        minute_json("20240105", "090000", "63000", "63500", or_lows[0], "63200", "1000"),
+        minute_json("20240105", "091000", "63200", "63400", or_lows[1], "63300", "1000"),
         minute_json("20240105", "092000", "63300", "64000", "63300", "63900", "1000"),
         minute_json("20240105", "100000", "64000", "64500", "63900", "64400", "1000"),
         minute_json("20240105", "110000", "64400", "65000", "64300", "64900", "1000"),
@@ -541,6 +554,53 @@ async fn entry_cutoff_gate_suppresses_a_late_breakout() {
     assert!(decisions.contains("entry_cutoff"), "the cutoff filter is recorded");
     assert!(!decisions.contains("order_placed"), "no entry after the cutoff");
     assert_eq!(read_perf(&outcome.run_dir).summary["num_trades"], 0.0);
+}
+
+/// #168 — the armed gap-retention gate through the full backtest seam: an armed
+/// run over a reject-shaped fixture (frozen range low 61_000 → retention ≈ 0.333)
+/// records exactly one measured `gap_retention_min` rejection in decisions.jsonl
+/// with all five values, takes no trade, carries the 0.5 cutoff in every
+/// envelope's parameter context, and still finalizes and registers normally.
+#[tokio::test]
+async fn armed_gap_retention_backtest_records_the_rejection_and_finalizes() {
+    let dir = tempdir().unwrap();
+    build_fixture_with_range_lows(dir.path(), false, ["61000", "62800"]).await;
+
+    let mut c = cfg(dir.path());
+    c.params.gap_retention_min = 0.50;
+    let start = Utc.with_ymd_and_hms(2024, 1, 6, 0, 0, 0).unwrap();
+    let outcome = run(c, start).await.unwrap();
+
+    let envelopes = read_envelopes(&outcome.run_dir.join(DECISIONS_FILE)).unwrap();
+    let rejects: Vec<_> = envelopes
+        .iter()
+        .filter_map(|e| e.decision_detail.as_ref())
+        .filter(|d| d.filter.as_deref().is_some_and(|f| f.starts_with("gap_retention")))
+        .collect();
+    assert_eq!(rejects.len(), 1, "exactly one gap-retention rejection");
+    assert_eq!(rejects[0].filter.as_deref(), Some("gap_retention_min"), "a measured reject");
+    for key in ["gap_retention_min", "retention", "prior_close", "today_open", "range_low"] {
+        assert!(
+            rejects[0].values.contains_key(key),
+            "the measured reject carries {key}: {:?}",
+            rejects[0].values
+        );
+    }
+    assert!(
+        envelopes.iter().all(|e| matches!(
+            &e.context,
+            AgentContext::Telemetry { params_hash_or_summary, .. }
+                if params_hash_or_summary.get("gap_retention_min") == Some(&0.5)
+        )),
+        "armed envelopes record the 0.5 cutoff in their parameter context"
+    );
+    // The rejected session can never break out or order; the run still finalizes
+    // and registers like any other.
+    let decisions = std::fs::read_to_string(outcome.run_dir.join(DECISIONS_FILE)).unwrap();
+    assert!(!decisions.contains("order_placed"), "no order on the rejected session");
+    assert_eq!(read_perf(&outcome.run_dir).summary["num_trades"], 0.0, "no trade");
+    assert_eq!(list_runs(dir.path()), vec![outcome.run_id]);
+    assert!(aborted_runs(dir.path()).is_empty());
 }
 
 /// U4 OR-width gate (decoupled from ATR availability): on with only two prior dailies

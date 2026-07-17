@@ -214,11 +214,11 @@ pub struct OrbParams {
     /// `validate()` requires `w_hi ≥ 1.0` when the lever is armed.
     #[serde(default)]
     pub ratio_atr_w_hi: f64,
-    /// Opening-range gap-retention cutoff. The reserved `1.0` value is exclusively
-    /// OFF: this seam release records it in manifests but does not observe retention
-    /// inputs. The sole armed value (`0.50`) is rejected until the final session gate
-    /// is implemented, preventing a manifest from advertising behavior that does not
-    /// yet exist. Legacy manifests resolve to the same OFF sentinel.
+    /// Opening-range gap-retention cutoff (#165/#168). The reserved `1.0` value is
+    /// exclusively OFF: manifests record it but the strategy never reads a retention
+    /// input. The sole armed value is `0.50` (equality passes) — `validate()` rejects
+    /// everything else so no sweep, retune, or companion value can arm the gate.
+    /// Legacy manifests resolve to the same OFF sentinel.
     #[serde(default = "default_gap_retention_min")]
     pub gap_retention_min: f64,
     /// Amihud-illiquidity budget tilt (CLASS B, liquidity axis, plan 2026-07-16-003
@@ -428,10 +428,10 @@ impl OrbParams {
     /// trades that reads as a real result. A negative `entry_cutoff_min` is a
     /// config error, not the `0.0`-off sentinel.
     pub fn validate(&self) -> Result<(), String> {
-        if self.gap_retention_min != default_gap_retention_min() {
+        if self.gap_retention_min != default_gap_retention_min() && self.gap_retention_min != 0.50 {
             return Err(format!(
-                "gap_retention_min {} is not available yet — 1.0 is reserved as OFF until the \
-                 final gap-retention session gate is implemented (#168)",
+                "gap_retention_min {} is not a governed value — 1.0 is reserved as OFF and 0.50 \
+                 is the sole armed cutoff (#165/#168); no sweep or retune is permitted",
                 self.gap_retention_min
             ));
         }
@@ -742,6 +742,14 @@ impl OrbParams {
         self.ratio_atr_alpha > 0.0
     }
 
+    /// Whether the gap-retention session gate is armed (#165/#168): any value other
+    /// than the reserved `1.0` OFF sentinel. `validate()` guarantees the only such
+    /// value is the frozen `0.50` cutoff; while OFF the strategy bypasses every
+    /// retention read so the head-v30 stream is untouched.
+    pub fn gap_retention_active(&self) -> bool {
+        self.gap_retention_min != default_gap_retention_min()
+    }
+
     /// The dimensionless ratio-ATR budget multiplier `w` for a trade with prior-daily
     /// `prior_atr` entering at `entry_price` (plan R1/R4/KTD-5). Computes
     /// `w = clamp((ratio_atr_ref / v)^alpha, ratio_atr_w_lo, ratio_atr_w_hi)` on the
@@ -984,12 +992,18 @@ mod tests {
             "new manifests record the OFF sentinel"
         );
         assert!(resolved.validate().is_ok(), "the reserved OFF sentinel validates");
+        assert!(!resolved.gap_retention_active(), "the OFF sentinel never arms the gate");
 
-        let prematurely_armed = OrbParams { gap_retention_min: 0.50, ..resolved };
-        assert!(
-            prematurely_armed.validate().is_err(),
-            "the armed value stays unavailable until the final gate is implemented"
-        );
+        // #168: the frozen 0.50 cutoff is the sole armed value (equality passes at the
+        // gate); everything else — near-misses, zero, negatives, NaN — stays rejected
+        // so no sweep or retune can arm the gate.
+        let armed = OrbParams { gap_retention_min: 0.50, ..resolved.clone() };
+        assert!(armed.validate().is_ok(), "0.50 is the sole armed cutoff");
+        assert!(armed.gap_retention_active(), "0.50 arms the gate");
+        for off_set in [0.49, 0.51, 0.75, 0.0, -0.5, f64::NAN] {
+            let p = OrbParams { gap_retention_min: off_set, ..resolved.clone() };
+            assert!(p.validate().is_err(), "{off_set} is not a governed gap_retention_min");
+        }
     }
 
     #[test]

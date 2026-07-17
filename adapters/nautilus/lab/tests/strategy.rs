@@ -89,6 +89,206 @@ fn gap_retention_off_ignores_session_inputs_and_preserves_complete_session_actio
     );
 }
 
+// ---------------------------------------------------------------------------
+// #168 — the armed gap-retention session gate (complete-session decision streams)
+// ---------------------------------------------------------------------------
+
+/// The armed parameter set: the frozen 0.50 cutoff, everything else at the
+/// filter-off defaults so the retention arm is the only active gate.
+fn gap_armed() -> OrbParams {
+    OrbParams { gap_retention_min: 0.50, ..Default::default() }
+}
+
+/// A session state carrying only the canonical gap prices (no ATR/RVOL priors).
+fn gap_state(prior_close: i64, today_open: i64) -> OrbState {
+    OrbState::with_session_inputs(SessionGapPrices::new(prior_close, today_open), None, None, None)
+}
+
+/// R2 leakage: the gate reads the frozen opening-range low, never a post-range
+/// low. A first post-range bar that dips below the prior close (which would
+/// measure retention −0.5 if it leaked into the observation) passes silently on
+/// the frozen 0.5, and the session still enters on a later breakout.
+#[test]
+fn gap_retention_reads_the_frozen_range_low_never_a_post_range_low() {
+    let p = gap_armed();
+    let mut st = gap_state(60_000, 63_000);
+    set_range(&mut st, &p, 63_500, 61_500); // frozen retention = 1_500/3_000 = 0.5
+    let acts = bar(&mut st, t(9, 20), 63_400, 58_500, &p); // post-range low < prior close
+    assert!(acts.is_empty(), "the frozen 0.5 passes; the post-range low changes nothing: {acts:?}");
+    assert_eq!(st.range(), Some((63_500, 61_500)), "the recorded range is the frozen window");
+    let acts = bar(&mut st, t(9, 30), 63_600, 63_000, &p);
+    assert_eq!(acts, vec![OrbAction::Enter { limit_price: 63_600 }], "entry still proceeds");
+}
+
+/// Boundary: retention exactly 0.50 from system-produced canonical prices passes
+/// with no envelope, and entry logic proceeds on that same bar's trigger rules.
+#[test]
+fn gap_retention_equality_at_the_cutoff_passes_quietly_and_enters_same_bar() {
+    let p = gap_armed();
+    let mut st = gap_state(60_000, 63_000);
+    set_range(&mut st, &p, 61_800, 61_500); // (61_500 − 60_000)·2 == 63_000 − 60_000
+    let acts = bar(&mut st, t(9, 20), 62_000, 61_700, &p);
+    assert_eq!(
+        acts,
+        vec![OrbAction::Enter { limit_price: 62_000 }],
+        "an exactly-0.50 session emits no envelope and takes the breakout"
+    );
+}
+
+/// Measured reject: one tick below the boundary records a single
+/// `gap_retention_min` rejection carrying all five values, transitions directly
+/// to Done, and no later bar can act, break out, or order.
+#[test]
+fn gap_retention_one_tick_below_rejects_once_with_full_components() {
+    let p = gap_armed();
+    let mut st = gap_state(60_000, 63_000);
+    set_range(&mut st, &p, 63_500, 61_499);
+    let acts = bar(&mut st, t(9, 20), 64_000, 63_300, &p); // a would-be breakout bar
+    assert_eq!(
+        acts,
+        vec![OrbAction::SessionReject {
+            filter: "gap_retention_min",
+            values: vec![
+                ("gap_retention_min", 0.5),
+                ("retention", 1_499.0 / 3_000.0),
+                ("prior_close", 60_000.0),
+                ("today_open", 63_000.0),
+                ("range_low", 61_499.0),
+            ],
+        }]
+    );
+    assert_eq!(st.phase(), Phase::Done);
+    // Single rejection, never per-bar; no breakout or order ever fires.
+    assert!(bar(&mut st, t(9, 30), 65_000, 64_000, &p).is_empty());
+    assert!(bar(&mut st, t(15, 0), 65_500, 65_000, &p).is_empty());
+}
+
+/// Failure class: a non-positive gap with an observed range rejects
+/// `gap_retention_not_applicable`, recording the cutoff and every component
+/// (all three exist here).
+#[test]
+fn gap_retention_non_positive_gap_rejects_not_applicable() {
+    let p = gap_armed();
+    let mut st = gap_state(63_000, 63_000); // zero gap
+    set_range(&mut st, &p, 63_500, 62_500);
+    let acts = bar(&mut st, t(9, 20), 64_000, 63_300, &p);
+    assert_eq!(
+        acts,
+        vec![OrbAction::SessionReject {
+            filter: "gap_retention_not_applicable",
+            values: vec![
+                ("gap_retention_min", 0.5),
+                ("prior_close", 63_000.0),
+                ("today_open", 63_000.0),
+                ("range_low", 62_500.0),
+            ],
+        }]
+    );
+    assert_eq!(st.phase(), Phase::Done);
+}
+
+/// Failure class (KTD4): an armed session that never observed a range bar emits
+/// `gap_retention_unavailable` before Done — missingness cannot silently pass.
+/// `range_low` does not exist, so its key is omitted, never a numeric sentinel.
+#[test]
+fn gap_retention_no_range_session_rejects_unavailable_when_armed() {
+    let p = gap_armed();
+    let mut st = gap_state(60_000, 63_000); // positive gap, no range bars
+    let acts = bar(&mut st, t(9, 20), 64_000, 63_300, &p);
+    assert_eq!(
+        acts,
+        vec![OrbAction::SessionReject {
+            filter: "gap_retention_unavailable",
+            values: vec![
+                ("gap_retention_min", 0.5),
+                ("prior_close", 60_000.0),
+                ("today_open", 63_000.0),
+            ],
+        }]
+    );
+    assert_eq!(st.phase(), Phase::Done);
+    assert!(bar(&mut st, t(9, 30), 65_000, 64_000, &p).is_empty(), "one rejection only");
+}
+
+/// Failure class ordering (KTD4 routes through the KTD3 classifier): a no-range
+/// session whose gap is also non-positive records `gap_retention_not_applicable`
+/// — applicability outranks availability.
+#[test]
+fn gap_retention_no_range_non_positive_gap_rejects_not_applicable() {
+    let p = gap_armed();
+    let mut st = gap_state(63_000, 62_000); // gap-down, no range bars
+    let acts = bar(&mut st, t(9, 20), 64_000, 63_300, &p);
+    assert_eq!(
+        acts,
+        vec![OrbAction::SessionReject {
+            filter: "gap_retention_not_applicable",
+            values: vec![
+                ("gap_retention_min", 0.5),
+                ("prior_close", 63_000.0),
+                ("today_open", 62_000.0),
+            ],
+        }]
+    );
+}
+
+/// Failure class: a frozen range low above today's open measures above 1.0 —
+/// inconsistent data rejects `gap_retention_invalid` with the cutoff and all
+/// three components (the non-finite/above-one retention itself is never a value).
+#[test]
+fn gap_retention_above_one_rejects_invalid() {
+    let p = gap_armed();
+    let mut st = gap_state(60_000, 61_000);
+    set_range(&mut st, &p, 62_000, 61_500); // range low 61_500 > today_open 61_000
+    let acts = bar(&mut st, t(9, 20), 62_500, 61_800, &p);
+    assert_eq!(
+        acts,
+        vec![OrbAction::SessionReject {
+            filter: "gap_retention_invalid",
+            values: vec![
+                ("gap_retention_min", 0.5),
+                ("prior_close", 60_000.0),
+                ("today_open", 61_000.0),
+                ("range_low", 61_500.0),
+            ],
+        }]
+    );
+    assert_eq!(st.phase(), Phase::Done);
+}
+
+/// Gate ordering: retention is the FINAL arm — a session failing both RVOL and
+/// retention records only the RVOL filter (first-failing-gate-records-only).
+#[test]
+fn gate_order_records_rvol_before_gap_retention() {
+    let p = OrbParams { rvol_min: 0.5, ..gap_armed() };
+    // Retention would fail (61_000 → 1_000/3_000 ≈ 0.33) and so does RVOL
+    // (open-window volume 0 < 0.5 · 10_000).
+    let mut st = OrbState::with_session_inputs(
+        SessionGapPrices::new(60_000, 63_000),
+        None,
+        Some(10_000.0),
+        None,
+    );
+    set_range(&mut st, &p, 63_500, 61_000);
+    let acts = bar(&mut st, t(9, 20), 64_000, 63_300, &p);
+    assert_eq!(acts.len(), 1, "exactly one rejection: {acts:?}");
+    match &acts[0] {
+        OrbAction::SessionReject { filter, .. } => {
+            assert_eq!(*filter, "rvol_min", "the first failing gate records, not retention");
+        }
+        other => panic!("expected a session reject, got {other:?}"),
+    }
+}
+
+/// OFF compatibility for the KTD4 hook: while OFF, a no-range session still
+/// rolls to Done silently — no envelope, byte-stable with the pre-#168 stream.
+#[test]
+fn gap_retention_off_no_range_session_stays_silent() {
+    let p = OrbParams::default();
+    let mut st = gap_state(60_000, 63_000); // positive gap, no range bars, OFF
+    assert!(bar(&mut st, t(9, 20), 64_000, 63_300, &p).is_empty(), "OFF stays silent");
+    assert_eq!(st.phase(), Phase::Done);
+}
+
 /// The stop (range low) is honored: after entry, a bar that breaches the range low
 /// exits with reason Stop.
 #[test]
