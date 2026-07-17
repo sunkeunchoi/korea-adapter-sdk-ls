@@ -10,6 +10,7 @@ daily/one-minute catalog bars.
 
 import datetime as dt
 import glob
+import hashlib
 import json
 import math
 import struct
@@ -59,6 +60,54 @@ def rows(files, columns):
         table = pq.read_table(file_name, columns=columns).to_pydict()
         for index in range(len(table[columns[0]])):
             yield {column: table[column][index] for column in columns}
+
+
+def display_fixed(raw, precision):
+    value = struct.unpack("<q", raw)[0]
+    sign = "-" if value < 0 else ""
+    value = abs(value)
+    whole, fraction = divmod(value, SCALE)
+    if precision == 0:
+        return f"{sign}{whole}"
+    fraction //= 10 ** (9 - precision)
+    return f"{sign}{whole}.{fraction:0{precision}d}"
+
+
+def actual_catalog_fingerprint():
+    start_ns = int(dt.datetime(2026, 5, 26, tzinfo=KST).timestamp()) * SCALE
+    end_ns = int(dt.datetime(2026, 7, 4, tzinfo=KST).timestamp()) * SCALE - 1
+    unique = set()
+    for file_name in sorted(BARS_HOME.glob("*/*.parquet")):
+        table = pq.read_table(file_name, columns=["open", "high", "low", "close", "volume", "ts_event"])
+        metadata = table.schema.metadata or {}
+        bar_type = metadata.get(b"bar_type", b"").decode()
+        price_precision = int(metadata.get(b"price_precision", b"-1"))
+        size_precision = int(metadata.get(b"size_precision", b"-1"))
+        require(bar_type and 0 <= price_precision <= 9 and 0 <= size_precision <= 9, f"invalid Parquet metadata: {file_name}")
+        values = table.to_pydict()
+        for index, event in enumerate(values["ts_event"]):
+            if start_ns <= event <= end_ns:
+                unique.add((
+                    bar_type,
+                    event,
+                    values["open"][index],
+                    values["high"][index],
+                    values["low"][index],
+                    values["close"][index],
+                    values["volume"][index],
+                    price_precision,
+                    size_precision,
+                ))
+    require(unique, "catalog has no bars in the frozen range")
+    lines = []
+    for bar_type, event, open_, high, low, close, volume, price_precision, size_precision in unique:
+        prices = [display_fixed(value, price_precision) for value in (open_, high, low, close)]
+        lines.append("|".join([bar_type, str(event), *prices, display_fixed(volume, size_precision)]))
+    digest = hashlib.sha256()
+    for line in sorted(lines):
+        digest.update(line.encode())
+        digest.update(b"\n")
+    return digest.hexdigest()
 
 
 def reconstruct(entry):
@@ -113,6 +162,7 @@ def assert_identity(manifest, closed):
     }
     for name, value in expected.items():
         require(manifest.get(name) == value, f"source identity mismatch: {name}")
+    require(actual_catalog_fingerprint() == CATALOG_FINGERPRINT, "catalog content fingerprint mismatch")
     require(manifest.get("data_range") == {"start": DATA_START, "end": DATA_END}, "data-range mismatch")
     params = manifest.get("params", {})
     require(params.get("range_open") == "09:00:00", "opening-range start mismatch")

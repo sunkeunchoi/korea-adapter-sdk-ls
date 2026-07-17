@@ -11,6 +11,7 @@ from collections import defaultdict
 from datetime import datetime, time, timedelta, timezone
 from pathlib import Path
 import json
+import hashlib
 import math
 import struct
 import sys
@@ -53,6 +54,47 @@ def won(blob):
     if raw % UNIT:
         stop("catalog contains a fractional KRW/tick price")
     return raw // UNIT
+
+
+def render(raw, digits):
+    number = struct.unpack("<q", raw)[0]
+    prefix = "-" if number < 0 else ""
+    quotient, remainder = divmod(abs(number), UNIT)
+    if digits == 0:
+        return prefix + str(quotient)
+    tail = remainder // (10 ** (9 - digits))
+    return f"{prefix}{quotient}.{tail:0{digits}d}"
+
+
+def catalog_digest():
+    first = int(datetime(2026, 5, 26, tzinfo=timezone(KST_DELTA)).timestamp()) * UNIT
+    after_last = int(datetime(2026, 7, 4, tzinfo=timezone(KST_DELTA)).timestamp()) * UNIT
+    bars = set()
+    for file_name in CATALOG.glob("*/*.parquet"):
+        table = parquet.read_table(file_name, columns=["ts_event", "open", "high", "low", "close", "volume"])
+        meta = table.schema.metadata or {}
+        kind = meta.get(b"bar_type", b"").decode()
+        price_digits = int(meta.get(b"price_precision", b"-1"))
+        size_digits = int(meta.get(b"size_precision", b"-1"))
+        if not kind or price_digits not in range(10) or size_digits not in range(10):
+            stop(f"invalid Parquet metadata: {file_name}")
+        columns = table.to_pydict()
+        for parts in zip(
+            columns["ts_event"], columns["open"], columns["high"],
+            columns["low"], columns["close"], columns["volume"],
+        ):
+            if first <= parts[0] < after_last:
+                bars.add((kind, price_digits, size_digits, *parts))
+    if not bars:
+        stop("catalog has no bars in the frozen range")
+    canonical = []
+    for kind, price_digits, size_digits, event, open_, high, low, close, volume in bars:
+        fields = [kind, str(event)]
+        fields.extend(render(raw, price_digits) for raw in (open_, high, low, close))
+        fields.append(render(volume, size_digits))
+        canonical.append("|".join(fields))
+    payload = "".join(line + "\n" for line in sorted(canonical)).encode()
+    return hashlib.sha256(payload).hexdigest()
 
 
 def materialize_dataset(symbols):
@@ -119,6 +161,8 @@ def main():
     for field, frozen in PIN.items():
         if manifest.get(field) != frozen:
             stop(f"source identity mismatch: {field}")
+    if catalog_digest() != PIN["catalog_fingerprint"]:
+        stop("catalog content fingerprint mismatch")
     if manifest.get("data_range") != EXPECTED_RANGE:
         stop("source identity mismatch: data_range")
     params = manifest.get("params", {})
