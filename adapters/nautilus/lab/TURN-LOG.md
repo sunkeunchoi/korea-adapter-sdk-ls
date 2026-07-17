@@ -4,6 +4,84 @@ Committed record of each loop turn's verdict + the bar conditions it held. The
 full artifacts (`analysis.md`, manifests, performance) live in the gitignored data
 home; this file is the durable, reviewable outcome trail.
 
+## Turn — opening-range gap-retention session gate (entry-filter axis): Phase-A GO, armed via the governed command, KEEP → v32 (2026-07-17) — plan 2026-07-17-001
+
+- **Verdict: KEEP — the gap-retention session gate `gap_retention_min 1.0 → 0.50` strictly
+  improves the size-invariant RoR crux; the flip run is the new head v32** (run
+  `20260717T094841Z-backtest-orb-v32`, hash `d7a9820b…`, RoR **0.1876**). Verbatim governed
+  verdict line: `KEEP v32 dad62e9663873af0a57a5014fa92f990b8c0212d8ad81402ca67e6899e9d6641`
+  (the hash is the run's `lab_src_fingerprint`). The first entry-filter KEEP since the
+  or-width decouple, and the **first candidate whose ARMING flip traversed the governed
+  param path natively**: `1.0 → 0.50` is a finite 50% relative change, exactly on the
+  `PROPOSAL_BOUNDS_CAP = 0.5` inclusive bound — the on-bound epsilon fix admitted it
+  (`approved: gap_retention_min 1.0000 -> 0.5000, strategy v31 -> v32`), so no
+  seed-and-rerun was needed (unlike every `0 → X` sentinel arming flip before it).
+- **Phase A — committed GO, echoed from the frozen candidate package (never re-derived).**
+  Frozen candidate `adapters/nautilus/lab/candidates/opening-range-gap-retention/`, freeze
+  commit `403b6c9`, catalog fingerprint `3b6be31b…`, pre-register hash `1a9af3ee…`;
+  diagnostic + twin agree bit-for-bit on all readings. Over v30's 167 closed trades:
+  retained 69 / rejected 98 (17 / 22 sessions), `predicted_ror_shift 0.10496394`
+  (161× the `0.00065` floor, GO), `retained_max_risk_capital_share 0.09742712` (≤ 0.40, GO),
+  `retained_ror 0.23120334` vs `head_ror 0.1262394`. The ledger carries two identical
+  `gate-reading` GO lines (04:24:46 / 04:45:32 UTC 2026-07-17) — benign append-only history,
+  one gate verdict.
+- **Re-baseline — v31 via `turn governed` `LS_TURN_CODE_BUMP=1` (invocation 1, unarmed).**
+  Stage lines verbatim: `parent fingerprint OK` → `reusing GO for candidate
+  'opening-range-gap-retention'` → `build OK` → `built binary fingerprint OK` → `code turn:
+  strategy v30 -> v31, params unchanged` → `finalized run 20260717T094646Z-backtest-orb-v31`
+  → `REVERT ror-negative`. That printed REVERT is the **identity outcome** (a perfect
+  re-baseline equals v30's RoR, failing the strictly-greater rule by construction — the
+  amihud precedent), NOT this turn's verdict; it landed no ledger line (identity checks
+  never do). `strategy_code_hash 6ae7b9f1… → d7a9820b…` (the #167 OFF seam + #168 armed
+  gate moved `orb.rs`); catalog/universe/range identical to v30.
+- **One-to-one reconciliation vs pinned head v30 — the fail-closed gate before arming.**
+  (a) `performance.json` v30 vs v31: **the entire artifact is byte-identical** (`cmp` clean)
+  — all 171 trade rows (167 closed) identical on every field incl. symbol/qty/pnl/
+  risk_capital, summary equal on every field. (b) `runs compare` code mode v30 → v31:
+  `param diff: ["strategy_version"]` / `version-only delta: strategy_version (code turn)` /
+  `strategy_code_hash delta: expected (code-turn re-baseline)` / `verdict: PASS`. The OFF
+  seam + armed-at-sentinel gate are verifiably behavior-preserving.
+- **Flip — v32 via `turn governed` `LS_TURN_PARAM=gap_retention_min LS_TURN_VALUE=0.5`
+  (invocation 2, armed).** Same parent gates green; guardrail approved the exact-on-cap
+  change; `runs compare` param mode v31 → v32 PASS with diff exactly
+  `["gap_retention_min", "strategy_version"]`; exactly one trials line appended
+  (`look: flip`, `verdict: "flip approved v32"` — the KEEP/REVERT verdict is recorded here
+  and in the run artifacts, not in the ledger, by construction).
+- **The flip result (v32 vs v31, KEEP rule = `EdgeEvaluation::keeps_over`: RoR strictly
+  beats 0.1262394 AND risk-capital dominance ≤ 0.40):**
+
+  | metric | v31 (=v30) | v32 (flip) | KEEP gate |
+  |---|---|---|---|
+  | **Return-on-risk** (the crux) | 0.1262394 | **0.1875966** | **PASS** (strict; +0.0613572) |
+  | equal-weight mean-R | 0.112946 | 0.173689 | improved (real cohort change, not a reweight) |
+  | closed trades | 167 | 77 | — |
+  | Σ risk_capital | 43,060,250 | 19,676,800 (−54.3%) | — |
+  | risk-capital dominance | 0.0593 | 0.0979 | PASS (≤ 0.40) |
+  | pnl_total (KRW) | 5,435,900 | 3,691,300 (−1,744,600) | — |
+
+- **Bind — the gate cuts risk far faster than P&L.** The armed session gate rejected
+  **301 distinct symbol-sessions** on measured retention `< 0.50` plus **2 fail-closed
+  `gap_retention_invalid` sessions** (068270.XKRX 20260526/20260529); zero
+  `gap_retention_*` records in the unarmed v31 stream, confirming the seam. The realized
+  cohort is 77 closed trades — **above** Phase-A's static 69, because rejected sessions
+  freed `max_concurrent` slots for replacement entries (the turn-10 caveat, here working
+  in the gate's favor). Realized ΔRoR **+0.0614** vs the first-order predicted **+0.1050**:
+  the static retained-cohort projection over-predicted (replacements dilute the retained
+  cohort's 0.2312 RoR) but direction and materiality held — 41% less P&L on 54% less
+  deployed risk is a strictly better use of capital under the size-invariant crux.
+- **Registry state.** Head is now **v32** (`20260717T094841Z-backtest-orb-v32`,
+  `strategy_code_hash d7a9820b…`, `lab_src_fingerprint dad62e96…`, RoR 0.1876,
+  `gap_retention_min 0.50` — the sole armed value; `1.0` stays the reserved OFF sentinel
+  per `OrbParams::validate`'s exact-set rule). Per the KEEP settlement both new runs stay
+  in `runs/`: v30 (prior head) → v31 (re-baseline) → v32 (head). No archives moved.
+  Offline throughout; no gateway. Root workspace untouched (evidence-only diff).
+- **Family status.** Entry-filter axis reopened and productive: gap-retention is the first
+  session-classifier gate (applicability → availability → divide → validity, equality
+  passes) and the first KEEP on the axis since or-width 0.666. The #159–#168 chain
+  (observable → cutoff → cohort → Phase-A gate → OFF seam → armed gate) closes with a
+  merit-bearing KEEP; `strategy_code_hash d7a9820b…` is the new re-baseline anchor for
+  any future turn.
+
 ## Turn — Amihud liquidity budget tilt (CLASS B, liquidity axis): Phase-A DUAL GO, built + flipped via the governed command, REVERT (2026-07-16) — plan 2026-07-16-003
 
 - **Verdict: REVERT — the Amihud-illiquidity budget tilt `liquidity_tilt_alpha` is
