@@ -3158,6 +3158,37 @@ mod calendar_gate_migration {
         assert_eq!(r2.backward_widen_uncertainties.len(), 1, "re-evaluated on the next run (not silenced)");
     }
 
+    #[tokio::test]
+    async fn enforced_backward_widen_mixed_session_and_unknown_is_uncertain() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        seed_bars(&catalog, &[ymd(2010, 6, 18)]).await;
+        seed_watermark(&catalog, ymd(2011, 6, 15));
+        let cal = calendar_with_statuses(&[
+            (ymd(2010, 6, 15), DayStatus::TradingSession),
+            (ymd(2010, 6, 16), DayStatus::Unknown),
+            (ymd(2010, 6, 17), DayStatus::TradingSession),
+        ]);
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(cal.as_of(as_of()).unwrap()));
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing
+            .run_accumulate_gated(
+                &[InstrumentId::from(SAMSUNG)],
+                ymd(2011, 6, 15),
+                ymd(2010, 6, 15),
+                gate,
+            )
+            .await
+            .unwrap();
+
+        assert!(report.backward_widen_warnings.is_empty());
+        assert_eq!(report.backward_widen_uncertainties.len(), 1);
+        assert_eq!(read_history_floor(&catalog), None, "uncertainty never persists a marker");
+    }
+
     /// Run one backward-widen accumulate under `gate_for` over an all-Closed pre-coverage region
     /// and return (normal warnings, uncertainties, persisted floor).
     async fn widen_once(

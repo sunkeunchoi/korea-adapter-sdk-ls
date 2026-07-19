@@ -188,8 +188,8 @@ pub enum WidenAction {
     /// Emit + PERSIST the normal backward-widen warning (Legacy/Shadow always; Enforced when
     /// a proven Trading Session lies in the pre-coverage region — real un-fetched history).
     EmitPersist,
-    /// Emit the DISTINCT NON-PERSISTED uncertainty warning (Enforced + Unknown/unavailable
-    /// evidence, no proven session): do NOT record a history floor, so a later run with
+    /// Emit the DISTINCT NON-PERSISTED uncertainty warning (Enforced + any
+    /// Unknown/unavailable evidence): do NOT record a history floor, so a later run with
     /// newly-resolved calendar evidence re-evaluates the region.
     EmitUncertain,
     /// Emit nothing (Enforced + an all-proven-Closed pre-coverage region — no trading history
@@ -234,6 +234,10 @@ impl<'c> CalendarGate<'c> {
     /// Full-history freshness for conservative checkpoint continuity decisions.
     pub fn full_history_freshness(&self) -> Option<DimensionStaleness> {
         self.view.map(|view| view.freshness().full_history)
+    }
+
+    pub fn has_stale_evidence(&self) -> bool {
+        self.view.map(|view| view.freshness().any_stale()).unwrap_or(false)
     }
 
     /// The adoption-INDEPENDENT calendar decision for `target` (U9). Consults the injected
@@ -500,7 +504,29 @@ impl<'c> CalendarGate<'c> {
         floor: NaiveDate,
         earliest_stored: NaiveDate,
     ) -> ContinuityDecision {
-        self.scan_continuity(floor, earliest_stored)
+        let mut date = floor;
+        let mut saw_session = false;
+        let mut indeterminate = false;
+        while date < earliest_stored {
+            match self.calendar_decision(date) {
+                CalendarDecision::Fetch => saw_session = true,
+                CalendarDecision::ClosedAdvance => {}
+                CalendarDecision::UnknownStop | CalendarDecision::UnavailableStop => {
+                    indeterminate = true;
+                }
+            }
+            date = match date.succ_opt() {
+                Some(next) => next,
+                None => break,
+            };
+        }
+        if indeterminate {
+            ContinuityDecision::Indeterminate
+        } else if saw_session {
+            ContinuityDecision::TradingPresent
+        } else {
+            ContinuityDecision::AllClosed
+        }
     }
 
     /// The backward-widen warning action for the pre-coverage region `[floor, earliest_stored)`
@@ -1454,8 +1480,8 @@ pub struct BackwardWidenWarning {
 }
 
 /// A backward-widen uncertainty (U10/KTD8, Enforced only): the pre-coverage region
-/// `[floor, earliest_stored)` contains an Unknown or unavailable calendar date and NO proven
-/// Trading Session, so whether it holds un-fetched trading history is undetermined. Unlike
+/// `[floor, earliest_stored)` contains an Unknown or unavailable calendar date, so whether
+/// the complete interval holds un-fetched trading history is undetermined. Unlike
 /// [`BackwardWidenWarning`], this is deliberately NOT persisted (no `history_floor` is
 /// recorded), so a later run with newly-resolved calendar evidence re-evaluates the region
 /// and can escalate it to a real warning or clear it. Surfaced, never silent; never reddens
@@ -1470,6 +1496,8 @@ pub struct BackwardWidenUncertainty {
     pub floor: String,
     /// The earliest stored coverage date (`YYYYMMDD`) the floor precedes.
     pub earliest_stored: String,
+    /// Whether another calendar freshness dimension was stale at the fixed as-of instant.
+    pub calendar_stale: bool,
 }
 
 /// A symbol/triple deferred pre-dispatch because its estimated page cost exceeds
@@ -1979,6 +2007,7 @@ impl Ingestor {
                                             bar_type: label.clone(),
                                             floor: fmt_ymd(lookback_floor),
                                             earliest_stored: fmt_ymd(earliest_stored),
+                                            calendar_stale: calendar.has_stale_evidence(),
                                         });
                                     }
                                     WidenAction::Suppress => {

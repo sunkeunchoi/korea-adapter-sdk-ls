@@ -76,6 +76,19 @@ fn exit_code_for(report: &CoverageReport) -> u8 {
     }
 }
 
+fn backward_widen_uncertainty_line(
+    uncertainty: &nautilus_ls::ingest::BackwardWidenUncertainty,
+) -> String {
+    format!(
+        "BACKWARD WIDEN UNCERTAIN: {} {} — lookback floor {} precedes earliest stored coverage {}; the interval contains Unknown/unavailable calendar evidence (calendar_stale={}) and no marker was persisted. Resolve calendar evidence and re-run.",
+        uncertainty.instrument,
+        uncertainty.bar_type,
+        uncertainty.floor,
+        uncertainty.earliest_stored,
+        uncertainty.calendar_stale,
+    )
+}
+
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     // Credential hygiene before any output (mirrors the repo's smoke convention).
@@ -338,6 +351,9 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
             );
         }
     }
+    for uncertainty in &report.backward_widen_uncertainties {
+        println!("{}", backward_widen_uncertainty_line(uncertainty));
+    }
     if !report.budget_deferrals.is_empty() {
         for d in &report.budget_deferrals {
             println!(
@@ -557,7 +573,10 @@ fn parse_symbol_ids(list: &str) -> Vec<InstrumentId> {
 mod tests {
     use super::*;
     use chrono::TimeZone;
-    use nautilus_ls::ingest::{AppendRefusal, BackwardWidenWarning, BudgetEstimate, HealRefusal, RangeRefusal};
+    use nautilus_ls::ingest::{
+        AppendRefusal, BackwardWidenUncertainty, BackwardWidenWarning, BudgetEstimate,
+        HealRefusal, RangeRefusal,
+    };
 
     /// A zero-refusal, zero-warning coverage report — the base each case mutates.
     fn empty_report() -> CoverageReport {
@@ -593,6 +612,19 @@ mod tests {
             earliest_stored: "20240618".to_string(),
         });
         assert_eq!(exit_code_for(&report), 0, "backward-widen warnings never affect the exit code");
+    }
+
+    #[test]
+    fn exit_zero_for_backward_widen_uncertainty() {
+        let mut report = empty_report();
+        report.backward_widen_uncertainties.push(BackwardWidenUncertainty {
+            instrument: "005930.XKRX".to_string(),
+            bar_type: "1-DAY".to_string(),
+            floor: "20100615".to_string(),
+            earliest_stored: "20100618".to_string(),
+            calendar_stale: false,
+        });
+        assert_eq!(exit_code_for(&report), 0);
     }
 
     /// R8: each genuine refusal vec independently forces a nonzero exit — and it is
@@ -670,6 +702,22 @@ mod tests {
             calendar_target_for_mode("probe-lookback", before).unwrap(),
             NaiveDate::from_ymd_opt(2026, 7, 17).unwrap()
         );
+    }
+
+    #[test]
+    fn backward_widen_uncertainty_output_is_distinct_and_complete() {
+        let line = backward_widen_uncertainty_line(&BackwardWidenUncertainty {
+            instrument: "005930.XKRX".to_string(),
+            bar_type: "1-DAY".to_string(),
+            floor: "20100615".to_string(),
+            earliest_stored: "20100618".to_string(),
+            calendar_stale: true,
+        });
+
+        assert!(line.starts_with("BACKWARD WIDEN UNCERTAIN:"));
+        for expected in ["005930.XKRX", "1-DAY", "20100615", "20100618", "calendar_stale=true"] {
+            assert!(line.contains(expected), "missing {expected}: {line}");
+        }
     }
 
     mod stratified {
