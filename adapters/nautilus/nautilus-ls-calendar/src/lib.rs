@@ -11,7 +11,9 @@
 
 pub mod canonical;
 pub mod load;
+pub mod query;
 pub mod schema;
 
 pub use canonical::{compute_artifact_id, compute_calendar_id, schema_is_compatible, SCHEMA_VERSION};
 pub use load::{CalendarLoadError, KrxCalendar};
+pub use query::{AsOfView, DateRange, DayFact, Presence, QueryError, SessionSearch};

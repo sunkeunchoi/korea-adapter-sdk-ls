@@ -9,7 +9,8 @@ use nautilus_ls_calendar::schema::{
     EvidenceKind, EvidenceRecord, Freshness, Snapshot, Source, SourceAvailabilityBound, SourceKind,
 };
 use nautilus_ls_calendar::{
-    compute_artifact_id, compute_calendar_id, schema_is_compatible, SCHEMA_VERSION,
+    compute_artifact_id, compute_calendar_id, schema_is_compatible, AsOfView, CalendarLoadError,
+    DateRange, KrxCalendar, Presence, QueryError, SessionSearch, SCHEMA_VERSION,
 };
 
 fn d(y: i32, m: u32, day: u32) -> NaiveDate {
@@ -312,4 +313,395 @@ fn schema_compat_accepts_same_major_and_rejects_unsupported_major() {
     );
     assert!(!schema_is_compatible("not-a-version"));
     assert!(!schema_is_compatible("1.0"), "a malformed SemVer must be rejected");
+}
+
+// ---------------------------------------------------------------------------
+// U4: as-of view + proof-preserving day/range queries.
+// ---------------------------------------------------------------------------
+
+/// A contiguous, loadable synthetic snapshot covering 2010-01-01..=2010-01-10 with a
+/// deliberate mix of statuses to exercise every query branch:
+///
+/// ```text
+/// 01  Closed
+/// 02  Closed
+/// 03  Unknown
+/// 04  TradingSession  (decisive ev-1, alert al-1, conflicting ev-2)
+/// 05  TradingSession
+/// 06  Closed
+/// 07  Unknown
+/// 08  Closed
+/// 09  Closed
+/// 10  TradingSession
+/// ```
+///
+/// `expires_at` is the caller-supplied argument so authorization-boundary tests can vary
+/// it; the identities are stamped so it passes the U3 loader.
+fn queryable_snapshot(expires_at: chrono::DateTime<Utc>) -> Snapshot {
+    let row = |date, status, decisive: &[&str], conflicting: &[&str], alerts: &[&str]| DayRow {
+        date,
+        status,
+        decisive_evidence: decisive.iter().map(|s| s.to_string()).collect(),
+        conflicting_evidence: conflicting.iter().map(|s| s.to_string()).collect(),
+        alerts: alerts.iter().map(|s| s.to_string()).collect(),
+    };
+    let snap = Snapshot {
+        schema_version: "1.0.0".to_string(),
+        artifact_id: String::new(),
+        calendar_id: String::new(),
+        predecessor_artifact_id: None,
+        scope: CalendarScope {
+            calendar_name: "KRX domestic equity regular session (SYNTHETIC)".to_string(),
+            venue: "XKRX".to_string(),
+            instrument_class: "domestic-equity".to_string(),
+            timezone: "Asia/Seoul".to_string(),
+            synthetic: true,
+        },
+        authorization: Authorization {
+            authorized: true,
+            authority: "SYNTHETIC-MAINTAINER".to_string(),
+            granted_at: Utc.with_ymd_and_hms(2009, 1, 1, 0, 0, 0).unwrap(),
+            expires_at: Some(expires_at),
+            terminated_at: None,
+        },
+        coverage: Coverage {
+            materialized_from: d(2010, 1, 1),
+            materialized_through: d(2010, 1, 10),
+            retrospectively_checked_through: d(2010, 1, 10),
+            scheduled_closure_evaluated_through: d(2010, 1, 10),
+            source_availability: vec![SourceAvailabilityBound {
+                source_id: "krx-daily".to_string(),
+                available_from: Some(d(2010, 1, 4)),
+                available_through: Some(d(2010, 1, 10)),
+            }],
+        },
+        freshness: Freshness {
+            evidence_refreshed_at: Utc.with_ymd_and_hms(2010, 1, 11, 0, 0, 0).unwrap(),
+            holiday_facts_checked_at: None,
+            full_history_reconciled_at: None,
+            forward_readiness_through: None,
+            last_incremental_at: None,
+        },
+        sources: vec![
+            Source {
+                id: "krx-daily".to_string(),
+                kind: SourceKind::KrxDailyMarket,
+                label: "KRX stk_bydd_trd (SYNTHETIC)".to_string(),
+                synthetic: true,
+            },
+            Source {
+                id: "krx-rule".to_string(),
+                kind: SourceKind::KrxRule,
+                label: "KRX rule (SYNTHETIC)".to_string(),
+                synthetic: true,
+            },
+        ],
+        evidence: vec![
+            EvidenceRecord {
+                id: "ev-1".to_string(),
+                source_id: "krx-daily".to_string(),
+                date: d(2010, 1, 4),
+                kind: EvidenceKind::PositiveWitness,
+                valid: true,
+                superseded_by: None,
+                citation: None,
+                recorded_at: Utc.with_ymd_and_hms(2010, 1, 5, 0, 0, 0).unwrap(),
+            },
+            EvidenceRecord {
+                id: "ev-2".to_string(),
+                source_id: "krx-rule".to_string(),
+                date: d(2010, 1, 4),
+                kind: EvidenceKind::DeterministicRule,
+                valid: true,
+                superseded_by: None,
+                citation: None,
+                recorded_at: Utc.with_ymd_and_hms(2010, 1, 5, 0, 0, 0).unwrap(),
+            },
+        ],
+        alerts: vec![Alert {
+            id: "al-1".to_string(),
+            date: d(2010, 1, 4),
+            kind: AlertKind::WitnessOverridesInference,
+            message: "positive witness overrides inferred closure".to_string(),
+        }],
+        rows: vec![
+            row(d(2010, 1, 1), DayStatus::Closed, &[], &[], &[]),
+            row(d(2010, 1, 2), DayStatus::Closed, &[], &[], &[]),
+            row(d(2010, 1, 3), DayStatus::Unknown, &[], &[], &[]),
+            row(
+                d(2010, 1, 4),
+                DayStatus::TradingSession,
+                &["ev-1"],
+                &["ev-2"],
+                &["al-1"],
+            ),
+            row(d(2010, 1, 5), DayStatus::TradingSession, &[], &[], &[]),
+            row(d(2010, 1, 6), DayStatus::Closed, &[], &[], &[]),
+            row(d(2010, 1, 7), DayStatus::Unknown, &[], &[], &[]),
+            row(d(2010, 1, 8), DayStatus::Closed, &[], &[], &[]),
+            row(d(2010, 1, 9), DayStatus::Closed, &[], &[], &[]),
+            row(d(2010, 1, 10), DayStatus::TradingSession, &[], &[], &[]),
+        ],
+    };
+    stamp(snap)
+}
+
+/// Stamp the deterministic identities so a hand-built snapshot passes the U3 loader.
+fn stamp(mut snap: Snapshot) -> Snapshot {
+    snap.artifact_id = compute_artifact_id(&snap);
+    snap.calendar_id = compute_calendar_id(&snap);
+    snap
+}
+
+/// A loaded, valid calendar over the fixture, authorized well past the as-of instant.
+fn queryable_calendar() -> KrxCalendar {
+    let as_of = Utc.with_ymd_and_hms(2012, 6, 1, 0, 0, 0).unwrap();
+    let snap = queryable_snapshot(Utc.with_ymd_and_hms(2099, 1, 1, 0, 0, 0).unwrap());
+    KrxCalendar::from_snapshot(snap, as_of).expect("fixture must load")
+}
+
+fn view(cal: &KrxCalendar) -> AsOfView<'_> {
+    cal.as_of(Utc.with_ymd_and_hms(2012, 6, 1, 0, 0, 0).unwrap())
+        .expect("authorized view")
+}
+
+#[test]
+fn day_facts_return_each_status_with_resolved_refs() {
+    let cal = queryable_calendar();
+    let view = view(&cal);
+
+    // Trading Session with resolved evidence + alert records (not raw ids).
+    let ts = view.day(d(2010, 1, 4)).expect("in window");
+    assert_eq!(ts.status, DayStatus::TradingSession);
+    assert_eq!(ts.decisive_evidence.len(), 1);
+    assert_eq!(ts.decisive_evidence[0].id, "ev-1");
+    assert_eq!(ts.conflicting_evidence.len(), 1);
+    assert_eq!(ts.conflicting_evidence[0].id, "ev-2");
+    assert_eq!(ts.alerts.len(), 1);
+    assert_eq!(ts.alerts[0].id, "al-1");
+
+    // Closed and Unknown are both SUCCESSFUL day facts.
+    assert_eq!(view.day(d(2010, 1, 1)).unwrap().status, DayStatus::Closed);
+    let unknown = view.day(d(2010, 1, 3)).expect("Unknown is a success");
+    assert_eq!(unknown.status, DayStatus::Unknown);
+    assert!(unknown.decisive_evidence.is_empty());
+}
+
+#[test]
+fn a_day_outside_the_window_is_out_of_range_not_unknown() {
+    let cal = queryable_calendar();
+    let view = view(&cal);
+    assert_eq!(
+        view.day(d(2009, 12, 31)),
+        Err(QueryError::OutOfRange {
+            date: d(2009, 12, 31)
+        }),
+        "a date before the window must be a typed OutOfRange, NOT Unknown"
+    );
+    assert_eq!(
+        view.day(d(2010, 1, 11)),
+        Err(QueryError::OutOfRange {
+            date: d(2010, 1, 11)
+        }),
+        "a date after the window must be a typed OutOfRange, NOT Unknown"
+    );
+}
+
+#[test]
+fn presence_is_present_absent_or_indeterminate_proof_preserving() {
+    let cal = queryable_calendar();
+    let view = view(&cal);
+
+    // A span with a Trading Session → Present.
+    let span = DateRange::inclusive(d(2010, 1, 1), d(2010, 1, 5)).unwrap();
+    assert_eq!(view.presence(&span).unwrap(), Presence::Present);
+
+    // An all-Closed span → proven Absent.
+    let closed = DateRange::inclusive(d(2010, 1, 8), d(2010, 1, 9)).unwrap();
+    assert_eq!(view.presence(&closed).unwrap(), Presence::Absent);
+
+    // A span with an Unknown and no proven session → Indeterminate, NEVER Absent.
+    let unknown = DateRange::inclusive(d(2010, 1, 6), d(2010, 1, 9)).unwrap();
+    assert_eq!(view.presence(&unknown).unwrap(), Presence::Indeterminate);
+
+    // A proven session outranks a co-present Unknown → still Present (Unknown never
+    // downgrades a positively-proven presence).
+    let mixed = DateRange::inclusive(d(2010, 1, 3), d(2010, 1, 4)).unwrap();
+    assert_eq!(view.presence(&mixed).unwrap(), Presence::Present);
+}
+
+#[test]
+fn first_and_last_session_search_preserve_proof() {
+    let cal = queryable_calendar();
+    let view = view(&cal);
+
+    // Found on a real session.
+    let hit = DateRange::inclusive(d(2010, 1, 4), d(2010, 1, 5)).unwrap();
+    assert_eq!(
+        view.first_session(&hit).unwrap(),
+        SessionSearch::Found(d(2010, 1, 4))
+    );
+    assert_eq!(
+        view.last_session(&hit).unwrap(),
+        SessionSearch::Found(d(2010, 1, 5))
+    );
+
+    // Proven None only when the whole span is Closed.
+    let closed = DateRange::inclusive(d(2010, 1, 8), d(2010, 1, 9)).unwrap();
+    assert_eq!(view.first_session(&closed).unwrap(), SessionSearch::None);
+    assert_eq!(view.last_session(&closed).unwrap(), SessionSearch::None);
+
+    // Indeterminate when an Unknown sits before any proven session in the scan
+    // direction: 01-01 Closed, 01-02 Closed, 01-03 Unknown → the first session could be
+    // the Unknown day, so first_session is Indeterminate.
+    let front_unknown = DateRange::inclusive(d(2010, 1, 1), d(2010, 1, 5)).unwrap();
+    assert_eq!(
+        view.first_session(&front_unknown).unwrap(),
+        SessionSearch::Indeterminate
+    );
+    // Scanning backward over 01-06 Closed, 01-07 Unknown hits the Unknown first.
+    let back_unknown = DateRange::inclusive(d(2010, 1, 6), d(2010, 1, 7)).unwrap();
+    assert_eq!(
+        view.last_session(&back_unknown).unwrap(),
+        SessionSearch::Indeterminate
+    );
+}
+
+#[test]
+fn range_forms_normalize_to_the_expected_canonical_spans() {
+    let (a, b) = (d(2010, 1, 4), d(2010, 1, 6));
+
+    // Inclusive [a, b] keeps both endpoints.
+    assert_eq!(
+        DateRange::inclusive(a, b).unwrap().bounds(),
+        Some((d(2010, 1, 4), d(2010, 1, 6)))
+    );
+    // Half-open [a, b) drops the last endpoint.
+    assert_eq!(
+        DateRange::half_open(a, b).unwrap().bounds(),
+        Some((d(2010, 1, 4), d(2010, 1, 5)))
+    );
+    // Strictly-between (a, b) drops both → single interior day here.
+    assert_eq!(
+        DateRange::strictly_between(a, b).unwrap().bounds(),
+        Some((d(2010, 1, 5), d(2010, 1, 5)))
+    );
+
+    // Single-day inclusive span.
+    assert_eq!(
+        DateRange::inclusive(a, a).unwrap().bounds(),
+        Some((d(2010, 1, 4), d(2010, 1, 4)))
+    );
+    // Empty half-open span (start == end) and empty strictly-between (adjacent endpoints).
+    assert!(DateRange::half_open(a, a).unwrap().is_empty());
+    assert!(DateRange::strictly_between(d(2010, 1, 4), d(2010, 1, 5))
+        .unwrap()
+        .is_empty());
+    // Inverted inclusive normalizes to empty (not an error).
+    assert!(DateRange::inclusive(b, a).unwrap().is_empty());
+}
+
+#[test]
+fn empty_spans_aggregate_to_proven_absent_and_none() {
+    let cal = queryable_calendar();
+    let view = view(&cal);
+    let empty = DateRange::empty();
+    assert!(empty.is_empty());
+    assert_eq!(view.presence(&empty).unwrap(), Presence::Absent);
+    assert_eq!(view.first_session(&empty).unwrap(), SessionSearch::None);
+    assert_eq!(view.last_session(&empty).unwrap(), SessionSearch::None);
+}
+
+#[test]
+fn range_endpoint_conversion_overflow_is_a_typed_error() {
+    // succ past the maximum representable date.
+    assert_eq!(
+        DateRange::strictly_between(NaiveDate::MAX, NaiveDate::MAX),
+        Err(QueryError::DateOverflow)
+    );
+    // pred past the minimum representable date.
+    assert_eq!(
+        DateRange::strictly_between(NaiveDate::MIN, NaiveDate::MIN),
+        Err(QueryError::DateOverflow)
+    );
+}
+
+#[test]
+fn a_range_past_the_materialized_window_is_out_of_range_not_truncated() {
+    let cal = queryable_calendar();
+    let view = view(&cal);
+    // Span [08, 15] extends past materialized_through (10): must be OutOfRange at the
+    // offending endpoint, NOT a truncated all-Closed Absent.
+    let past = DateRange::inclusive(d(2010, 1, 8), d(2010, 1, 15)).unwrap();
+    assert_eq!(
+        view.presence(&past),
+        Err(QueryError::OutOfRange {
+            date: d(2010, 1, 15)
+        })
+    );
+    assert_eq!(
+        view.first_session(&past),
+        Err(QueryError::OutOfRange {
+            date: d(2010, 1, 15)
+        })
+    );
+    // And a span starting before the window is caught at the start endpoint.
+    let before = DateRange::inclusive(d(2009, 12, 30), d(2010, 1, 3)).unwrap();
+    assert_eq!(
+        view.presence(&before),
+        Err(QueryError::OutOfRange {
+            date: d(2009, 12, 30)
+        })
+    );
+}
+
+#[test]
+fn an_unknown_cannot_be_collapsed_by_aggregation_ae_us27() {
+    // Proof: the Unknown at 01-07 is SOLELY responsible for the Indeterminate verdict.
+    // Flipping only that row to Closed turns the same span into a proven Absent — showing
+    // the aggregate never silently treated the Unknown as Closed.
+    let cal = queryable_calendar();
+    let base_view = view(&cal);
+    let span = DateRange::inclusive(d(2010, 1, 6), d(2010, 1, 9)).unwrap();
+    assert_eq!(base_view.presence(&span).unwrap(), Presence::Indeterminate);
+
+    let as_of = Utc.with_ymd_and_hms(2012, 6, 1, 0, 0, 0).unwrap();
+    let mut snap = queryable_snapshot(Utc.with_ymd_and_hms(2099, 1, 1, 0, 0, 0).unwrap());
+    snap.rows
+        .iter_mut()
+        .find(|r| r.date == d(2010, 1, 7))
+        .unwrap()
+        .status = DayStatus::Closed;
+    let snap = stamp(snap);
+    let flipped = KrxCalendar::from_snapshot(snap, as_of).unwrap();
+    let flipped_view = view(&flipped);
+    assert_eq!(
+        flipped_view.presence(&span).unwrap(),
+        Presence::Absent,
+        "with the sole Unknown proven Closed, the span is now a proven Absent"
+    );
+}
+
+#[test]
+fn as_of_view_re_evaluates_authorization_at_the_supplied_instant() {
+    // A calendar authorized through 2012-12-31, loaded at a valid instant.
+    let loaded_at = Utc.with_ymd_and_hms(2012, 6, 1, 0, 0, 0).unwrap();
+    let expiry = Utc.with_ymd_and_hms(2012, 12, 31, 0, 0, 0).unwrap();
+    let cal = KrxCalendar::from_snapshot(queryable_snapshot(expiry), loaded_at)
+        .expect("valid at load time");
+
+    // A later view, past expiry, re-evaluates authorization WITHOUT reloading → Expired.
+    let later = Utc.with_ymd_and_hms(2013, 1, 1, 0, 0, 1).unwrap();
+    assert!(matches!(
+        cal.as_of(later),
+        Err(CalendarLoadError::Expired)
+    ));
+    // Exactly at the expiry instant is still authorized (inclusive-at boundary).
+    assert!(cal.as_of(expiry).is_ok());
+    // Strictly after is expired.
+    let just_after = Utc.with_ymd_and_hms(2012, 12, 31, 0, 0, 1).unwrap();
+    assert!(matches!(
+        AsOfView::new(&cal, just_after),
+        Err(CalendarLoadError::Expired)
+    ));
 }
