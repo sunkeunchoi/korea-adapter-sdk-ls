@@ -25,6 +25,7 @@ use chrono::{DateTime, Datelike, NaiveDate, Utc, Weekday};
 
 use nautilus_ls::ingest::checkpoint::Checkpoint;
 use nautilus_ls::ingest::{compact_catalog, kst_date_of, read_all_bars, CompactOutcome};
+use nautilus_ls_calendar::{AsOfView, CalendarAdoption, DateRange, SessionSearch};
 use nautilus_model::data::Bar;
 use nautilus_model::enums::BarAggregation;
 
@@ -134,6 +135,115 @@ fn last_weekday_on_or_before(mut date: NaiveDate) -> NaiveDate {
         date = date.pred_opt().expect("a date always has a predecessor");
     }
     date
+}
+
+/// A proven Trading-Session boundary for a catalog readiness check (U11, KTD8). Computed
+/// purely from the injected calendar view, so it is adoption-INDEPENDENT: Shadow RECORDS
+/// it while the weekday path acts, and Enforced ACTS on it. The proof-preserving
+/// tri-state distinction is intact — an `Unknown` at the boundary is never collapsed into
+/// a session or a proven absence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionBoundary {
+    /// A positively proven Trading Session marks the boundary date.
+    Session(NaiveDate),
+    /// The relevant span is positively proven all-`Closed` — no session boundary to
+    /// compare a span endpoint against (vacuously satisfied, never an undershoot).
+    NoSession,
+    /// An `Unknown` sits where it could be the boundary — the fact cannot be proven, so a
+    /// boundary-relevant Unknown fails closed under Enforced (`NO-GO — calendar indeterminate`).
+    Indeterminate,
+    /// No calendar was injected, or the boundary date is outside the materialized coverage
+    /// window (a `QueryError::OutOfRange`) — unavailable (`NO-GO — calendar unavailable`).
+    Unavailable,
+}
+
+/// The per-consumer calendar seam for `catalog status` (U11, KTD8). Carries the adoption
+/// posture and, when a snapshot loaded and authorized, an [`AsOfView`]. `Copy` (the view
+/// is a borrow + an instant). Construct [`legacy`](Self::legacy) for the weekday-only path
+/// or [`new`](Self::new) at the composition root.
+#[derive(Debug, Clone, Copy)]
+pub struct CatalogCalendarGate<'c> {
+    adoption: CalendarAdoption,
+    view: Option<AsOfView<'c>>,
+}
+
+impl<'c> CatalogCalendarGate<'c> {
+    /// A Legacy no-op gate: never consults a calendar, so the weekday tail/expected-range
+    /// checks stay authoritative and output is byte-identical to the pre-migration path.
+    /// This is what the un-gated [`catalog_status`] wrapper injects so every existing
+    /// caller (and test) is unchanged.
+    pub fn legacy() -> Self {
+        Self {
+            adoption: CalendarAdoption::Legacy,
+            view: None,
+        }
+    }
+
+    /// Build a gate for `adoption` with an optional as-of view (`None` = calendar
+    /// unavailable — a missing/failed snapshot, non-fatal in Shadow/Legacy, fail-closed in
+    /// Enforced).
+    pub fn new(adoption: CalendarAdoption, view: Option<AsOfView<'c>>) -> Self {
+        Self { adoption, view }
+    }
+
+    /// The adoption posture this gate runs under.
+    pub fn adoption(&self) -> CalendarAdoption {
+        self.adoption
+    }
+
+    /// The LAST proven Trading Session on or before `date` (proof-preserving). The real
+    /// tail boundary a span must reach — replaces the weekday [`last_weekday_on_or_before`]
+    /// walk-back under Enforced. A boundary date outside the materialized window is
+    /// [`Unavailable`](SessionBoundary::Unavailable) (fail closed), never clamped.
+    pub fn last_session_on_or_before(&self, date: NaiveDate) -> SessionBoundary {
+        let Some(view) = self.view else {
+            return SessionBoundary::Unavailable;
+        };
+        let coverage = view.calendar().coverage();
+        if date < coverage.materialized_from || date > coverage.materialized_through {
+            return SessionBoundary::Unavailable;
+        }
+        let range = match DateRange::inclusive(coverage.materialized_from, date) {
+            Ok(range) => range,
+            Err(_) => return SessionBoundary::Unavailable,
+        };
+        match view.last_session(&range) {
+            Ok(SessionSearch::Found(d)) => SessionBoundary::Session(d),
+            Ok(SessionSearch::None) => SessionBoundary::NoSession,
+            Ok(SessionSearch::Indeterminate) => SessionBoundary::Indeterminate,
+            Err(_) => SessionBoundary::Unavailable,
+        }
+    }
+
+    /// The FIRST proven Trading Session on or after `date` (proof-preserving). The real
+    /// front boundary an expected range's first bar must not fall behind. A boundary date
+    /// outside the materialized window is [`Unavailable`](SessionBoundary::Unavailable).
+    pub fn first_session_on_or_after(&self, date: NaiveDate) -> SessionBoundary {
+        let Some(view) = self.view else {
+            return SessionBoundary::Unavailable;
+        };
+        let coverage = view.calendar().coverage();
+        if date < coverage.materialized_from || date > coverage.materialized_through {
+            return SessionBoundary::Unavailable;
+        }
+        let range = match DateRange::inclusive(date, coverage.materialized_through) {
+            Ok(range) => range,
+            Err(_) => return SessionBoundary::Unavailable,
+        };
+        match view.first_session(&range) {
+            Ok(SessionSearch::Found(d)) => SessionBoundary::Session(d),
+            Ok(SessionSearch::None) => SessionBoundary::NoSession,
+            Ok(SessionSearch::Indeterminate) => SessionBoundary::Indeterminate,
+            Err(_) => SessionBoundary::Unavailable,
+        }
+    }
+
+    /// Whether the injected calendar's freshness is stale at the view's as-of instant.
+    /// `false` when no view is injected (there is nothing to be stale). Advisory only — a
+    /// stale-but-established boundary is a GO with a prominent warning, never a status flip.
+    pub fn is_stale(&self) -> bool {
+        self.view.map(|v| v.freshness().any_stale()).unwrap_or(false)
+    }
 }
 
 // ===========================================================================
@@ -1050,6 +1160,20 @@ pub struct StatusOutcome {
 /// The ingest→backtest go/no-go (R6; AE5; KTD6). Facts always; full undershoot
 /// only against an operator-supplied expected range.
 pub async fn catalog_status(cfg: &StatusConfig) -> anyhow::Result<StatusOutcome> {
+    catalog_status_gated(cfg, CatalogCalendarGate::legacy()).await
+}
+
+/// The go/no-go behind the per-consumer calendar adoption seam (U11, KTD8). Legacy/Shadow
+/// keep the weekday tail/expected-range checks authoritative and produce output
+/// byte-identical to the pre-migration path (Shadow additionally RECORDS the calendar
+/// verdict to the non-persisted diagnostic channel); Enforced bases the watermark and
+/// expected-range boundary checks on PROVEN first/last Trading Sessions, adding the
+/// distinct `NO-GO — calendar indeterminate` / `NO-GO — calendar unavailable` lines and a
+/// prominent stale-but-established warning.
+pub async fn catalog_status_gated(
+    cfg: &StatusConfig,
+    gate: CatalogCalendarGate<'_>,
+) -> anyhow::Result<StatusOutcome> {
     // The catalog dir must exist BEFORE catalog construction — ParquetDataCatalog
     // canonicalizes on `new` and fails on a missing dir (the block-on-from-async
     // trap). A missing catalog is an explicit no-go, never a panic.
@@ -1078,38 +1202,154 @@ pub async fn catalog_status(cfg: &StatusConfig) -> anyhow::Result<StatusOutcome>
         anyhow::bail!("catalog holds no bars — nothing to report (no-go)");
     }
 
+    let enforced = matches!(gate.adoption(), CalendarAdoption::Enforced);
+    let shadow = matches!(gate.adoption(), CalendarAdoption::Shadow);
+
     let mut triples = Vec::new();
     let mut go = true;
     let mut lines = Vec::new();
+    // Distinct Enforced-only messaging for the boundary-relevant Unknown / unavailable
+    // cases (U11). Collected separately so the per-triple facts stay stable and these
+    // NO-GO lines render just before the final status verdict.
+    let mut calendar_notes: Vec<String> = Vec::new();
     for ((instrument, bar_kind), group) in groups {
         let first = group.iter().map(|b| kst_date_of(b.ts_event)).min().expect("non-empty group");
         let last = group.iter().map(|b| kst_date_of(b.ts_event)).max().expect("non-empty group");
         let mut flags = Vec::new();
 
         // Tail check vs the checkpoint watermark (always). A span ending before
-        // the covered watermark undershoots the completed range (AE5). The
-        // watermark is compared at its last *session* (weekday), not the raw
-        // date: accumulate advances the watermark onto weekends with no session,
-        // so a healthy Friday-closed catalog must not false-flag when the last
-        // ingest ran over a weekend.
+        // the covered watermark undershoots the completed range (AE5). Under Legacy/Shadow
+        // the watermark is compared at its last *weekday* (accumulate advances the watermark
+        // onto weekends with no session, so a healthy Friday-closed catalog must not
+        // false-flag when the last ingest ran over a weekend). Under Enforced the boundary is
+        // the PROVEN last Trading Session on or before the watermark — a real holiday closure
+        // no longer false-flags, and an Unknown/unavailable boundary fails closed.
         if let Some(wm) = checkpoint.watermark(&instrument, &bar_kind) {
-            let last_session = last_weekday_on_or_before(wm);
-            if last < last_session {
-                flags.push(format!(
-                    "tail undershoot: last {last} < last session {last_session} (watermark {wm})"
-                ));
+            if enforced {
+                match gate.last_session_on_or_before(wm) {
+                    SessionBoundary::Session(sess) => {
+                        if last < sess {
+                            flags.push(format!(
+                                "tail undershoot: last {last} < last session {sess} (watermark {wm})"
+                            ));
+                        }
+                    }
+                    SessionBoundary::NoSession => {}
+                    SessionBoundary::Indeterminate => {
+                        go = false;
+                        calendar_notes.push(format!(
+                            "NO-GO — calendar indeterminate: {instrument} {bar_kind} last session at/before watermark {wm} cannot be proven (Unknown at the boundary)"
+                        ));
+                    }
+                    SessionBoundary::Unavailable => {
+                        go = false;
+                        calendar_notes.push(format!(
+                            "NO-GO — calendar unavailable: {instrument} {bar_kind} watermark {wm} is outside calendar coverage"
+                        ));
+                    }
+                }
+            } else {
+                let last_session = last_weekday_on_or_before(wm);
+                if last < last_session {
+                    flags.push(format!(
+                        "tail undershoot: last {last} < last session {last_session} (watermark {wm})"
+                    ));
+                }
+                if shadow {
+                    // Non-persisted diagnostic channel only (tracing): a Shadow recording
+                    // never touches stdout/a persisted artifact, so the report lines stay
+                    // byte-identical to Legacy while the calendar verdict is captured.
+                    tracing::info!(
+                        instrument = %instrument,
+                        bar_kind = %bar_kind,
+                        watermark = %wm,
+                        boundary = ?gate.last_session_on_or_before(wm),
+                        adoption = "shadow",
+                        "calendar shadow watermark boundary (recorded; weekday path authoritative)"
+                    );
+                }
             }
         }
         // Both-direction checks vs an operator-supplied expected range.
         if let Some(exp) = &cfg.expected_range {
             if let Ok(exp_start) = NaiveDate::parse_from_str(exp.start.trim(), "%Y%m%d") {
-                if first > exp_start {
-                    flags.push(format!("front truncation: first {first} > expected start {exp_start}"));
+                if enforced {
+                    match gate.first_session_on_or_after(exp_start) {
+                        SessionBoundary::Session(sess) => {
+                            if first > sess {
+                                flags.push(format!(
+                                    "front truncation: first {first} > first session {sess} (expected start {exp_start})"
+                                ));
+                            }
+                        }
+                        SessionBoundary::NoSession => {}
+                        SessionBoundary::Indeterminate => {
+                            go = false;
+                            calendar_notes.push(format!(
+                                "NO-GO — calendar indeterminate: {instrument} {bar_kind} first session at/after expected start {exp_start} cannot be proven (Unknown at the boundary)"
+                            ));
+                        }
+                        SessionBoundary::Unavailable => {
+                            go = false;
+                            calendar_notes.push(format!(
+                                "NO-GO — calendar unavailable: {instrument} {bar_kind} expected start {exp_start} is outside calendar coverage"
+                            ));
+                        }
+                    }
+                } else {
+                    if first > exp_start {
+                        flags.push(format!("front truncation: first {first} > expected start {exp_start}"));
+                    }
+                    if shadow {
+                        tracing::info!(
+                            instrument = %instrument,
+                            bar_kind = %bar_kind,
+                            expected_start = %exp_start,
+                            boundary = ?gate.first_session_on_or_after(exp_start),
+                            adoption = "shadow",
+                            "calendar shadow expected-start boundary (recorded; weekday path authoritative)"
+                        );
+                    }
                 }
             }
             if let Ok(exp_end) = NaiveDate::parse_from_str(exp.end.trim(), "%Y%m%d") {
-                if last < exp_end {
-                    flags.push(format!("tail undershoot: last {last} < expected end {exp_end}"));
+                if enforced {
+                    match gate.last_session_on_or_before(exp_end) {
+                        SessionBoundary::Session(sess) => {
+                            if last < sess {
+                                flags.push(format!(
+                                    "tail undershoot: last {last} < last session {sess} (expected end {exp_end})"
+                                ));
+                            }
+                        }
+                        SessionBoundary::NoSession => {}
+                        SessionBoundary::Indeterminate => {
+                            go = false;
+                            calendar_notes.push(format!(
+                                "NO-GO — calendar indeterminate: {instrument} {bar_kind} last session at/before expected end {exp_end} cannot be proven (Unknown at the boundary)"
+                            ));
+                        }
+                        SessionBoundary::Unavailable => {
+                            go = false;
+                            calendar_notes.push(format!(
+                                "NO-GO — calendar unavailable: {instrument} {bar_kind} expected end {exp_end} is outside calendar coverage"
+                            ));
+                        }
+                    }
+                } else {
+                    if last < exp_end {
+                        flags.push(format!("tail undershoot: last {last} < expected end {exp_end}"));
+                    }
+                    if shadow {
+                        tracing::info!(
+                            instrument = %instrument,
+                            bar_kind = %bar_kind,
+                            expected_end = %exp_end,
+                            boundary = ?gate.last_session_on_or_before(exp_end),
+                            adoption = "shadow",
+                            "calendar shadow expected-end boundary (recorded; weekday path authoritative)"
+                        );
+                    }
                 }
             }
         }
@@ -1130,6 +1370,17 @@ pub async fn catalog_status(cfg: &StatusConfig) -> anyhow::Result<StatusOutcome>
             flags,
         });
     }
+    // Stale-but-established (Enforced): the boundary facts are proven (no calendar note,
+    // still a GO) but the calendar's freshness is stale at the as-of instant — surface a
+    // PROMINENT warning without flipping the verdict.
+    if enforced && go && gate.is_stale() {
+        lines.push(
+            "WARNING: calendar evidence is STALE — boundary facts established, proceeding (GO)"
+                .to_string(),
+        );
+    }
+    // The Enforced-only NO-GO calendar lines render just before the verdict.
+    lines.extend(calendar_notes);
     lines.push(format!("status: {}", if go { "GO" } else { "NO-GO" }));
     Ok(StatusOutcome { go, triples, lines })
 }
@@ -1468,6 +1719,10 @@ fn env_f64(key: &str) -> anyhow::Result<Option<f64>> {
 /// exits non-zero too (KTD8).
 pub fn main_cli() -> ExitCode {
     nautilus_ls::scrub::install();
+    // Mandatory startup calendar record (U8): one redacted line to the non-persisted
+    // diagnostic channel (stderr). Default adoption = Shadow; a missing snapshot is
+    // non-fatal (KTD8). Startup record ONLY — the catalog watermark migration is U11.
+    nautilus_ls::calendar::emit_startup_from_env("lab-research");
     match dispatch() {
         Ok(code) => code,
         Err(e) => {
@@ -1546,7 +1801,18 @@ fn dispatch() -> anyhow::Result<ExitCode> {
         Some("catalog") => match std::env::args().nth(2).as_deref() {
             Some("status") => {
                 let rt = tokio::runtime::Runtime::new()?;
-                let out = rt.block_on(catalog_status(&status_config_from_env()?))?;
+                let cfg = status_config_from_env()?;
+                // Composition root (KTD5/KTD8): resolve the EXPLICIT snapshot path +
+                // adoption from env, load once, and inject one calendar gate. The composed
+                // default is Shadow; at slice-deploy the production snapshot is deferred, so
+                // the path is normally absent → no view → byte-identical to Legacy.
+                let as_of = Utc::now();
+                let adoption = nautilus_ls::calendar::adoption_from_env();
+                let path = nautilus_ls::calendar::snapshot_path_from_env();
+                let loaded = nautilus_ls::calendar::resolve_and_load(path.as_deref(), as_of, adoption);
+                let view = loaded.calendar().and_then(|cal| cal.as_of(as_of).ok());
+                let gate = CatalogCalendarGate::new(adoption, view);
+                let out = rt.block_on(catalog_status_gated(&cfg, gate))?;
                 print_lines(&out.lines);
                 Ok(ok_fail(out.go))
             }

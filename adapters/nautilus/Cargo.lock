@@ -2868,6 +2868,7 @@ dependencies = [
  "nautilus-common",
  "nautilus-core",
  "nautilus-live",
+ "nautilus-ls-calendar",
  "nautilus-model",
  "nautilus-persistence",
  "nautilus-trading",
@@ -2882,6 +2883,19 @@ dependencies = [
  "tracing",
  "ustr",
  "wiremock",
+]
+
+[[package]]
+name = "nautilus-ls-calendar"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "serde",
+ "serde_json",
+ "sha2",
+ "tempfile",
+ "thiserror",
 ]
 
 [[package]]
@@ -2900,6 +2914,7 @@ dependencies = [
  "nautilus-core",
  "nautilus-live",
  "nautilus-ls",
+ "nautilus-ls-calendar",
  "nautilus-model",
  "nautilus-persistence",
  "nautilus-trading",

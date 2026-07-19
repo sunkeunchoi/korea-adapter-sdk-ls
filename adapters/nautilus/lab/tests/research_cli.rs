@@ -9,7 +9,7 @@
 use std::path::Path;
 use std::process::Command;
 
-use chrono::{DateTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Duration, NaiveDate, TimeZone, Utc, Weekday};
 use ls_sdk::LsSdk;
 use ls_sdk_test_support::{mock_config, mount_token};
 use nautilus_ls::ingest::checkpoint::Checkpoint;
@@ -23,10 +23,15 @@ use nautilus_ls_lab::artifacts::manifest::{hash_bytes, DataRange, Manifest};
 use nautilus_ls_lab::artifacts::{list_runs, MANIFEST_FILE};
 use nautilus_ls_lab::runner::backtest::{run as backtest_run, BacktestConfig};
 use nautilus_ls_lab::runner::research::{
-    analyze_scaffold, catalog_compact, catalog_status, compare, latest_finalized_run, replay_guard,
-    turn, CompactConfig, CompareConfig, CompareMode, GovernedFlip, ReplayConfig, ScaffoldConfig,
-    StatusConfig, TurnConfig,
+    analyze_scaffold, catalog_compact, catalog_status, catalog_status_gated, compare,
+    latest_finalized_run, replay_guard, turn, CatalogCalendarGate, CompactConfig, CompareConfig,
+    CompareMode, GovernedFlip, ReplayConfig, ScaffoldConfig, SessionBoundary, StatusConfig,
+    TurnConfig,
 };
+use nautilus_ls_calendar::schema::{
+    Authorization, CalendarScope, Coverage, DayRow, DayStatus, Freshness, Snapshot,
+};
+use nautilus_ls_calendar::{compute_artifact_id, compute_calendar_id, CalendarAdoption, KrxCalendar};
 use nautilus_ls_lab::runner::diagnose::GateExit;
 use nautilus_ls_lab::trials::{LookKind, SampleLineage, TrialRecord, TrialsLedger};
 use nautilus_model::data::Bar;
@@ -1416,6 +1421,249 @@ async fn missing_catalog_dir_is_a_clean_no_go_not_a_panic() {
     .await
     .unwrap_err();
     assert!(err.to_string().contains("no catalog"), "clean error: {err}");
+}
+
+// ===========================================================================
+// U11 (KTD8) — catalog watermark + expected-range migration behind the calendar
+// adoption seam. Enforced bases the tail/expected-range boundary checks on PROVEN
+// first/last Trading Sessions (a real holiday closure no longer false-flags, an
+// Unknown/unavailable boundary fails closed with distinct messaging); Shadow records
+// the verdict but stays byte-identical to Legacy. PROOF-FIRST: assert the OBSERVABLE
+// GO/NO-GO, boundary dates, and operator messages — never the weekday helper.
+//
+// The 2024 catalog bars (last daily = 20240105 Friday) are covered by a small
+// in-memory calendar over 2024-01-01..2024-01-31 (default: weekends Closed, weekdays
+// Trading Session) with per-date overrides for the precise boundary scenario.
+// ===========================================================================
+
+/// The as-of instant every U11 calendar view is evaluated at — inside the injected
+/// calendar's authorization grant and after its (fresh) freshness anchors.
+fn cal_as_of() -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2024, 2, 15, 0, 0, 0).unwrap()
+}
+
+fn ymd(y: i32, m: u32, d: u32) -> NaiveDate {
+    NaiveDate::from_ymd_opt(y, m, d).unwrap()
+}
+
+/// Build a small, contiguous, loadable in-memory calendar over 2024-01-01..2024-01-31.
+/// Each date defaults to `Closed` on weekends and `TradingSession` on weekdays; every
+/// `(date, status)` in `overrides` replaces that default. `stale` drives the freshness
+/// block: fresh (all dimensions current at [`cal_as_of`]) or stale (holiday facts far in
+/// the past) — staleness never rewrites a day status.
+fn build_calendar(overrides: &[(NaiveDate, DayStatus)], stale: bool) -> KrxCalendar {
+    let from = ymd(2024, 1, 1);
+    let through = ymd(2024, 1, 31);
+    let mut rows = Vec::new();
+    let mut d = from;
+    while d <= through {
+        let status = overrides
+            .iter()
+            .find(|(dd, _)| *dd == d)
+            .map(|(_, s)| *s)
+            .unwrap_or(if matches!(d.weekday(), Weekday::Sat | Weekday::Sun) {
+                DayStatus::Closed
+            } else {
+                DayStatus::TradingSession
+            });
+        rows.push(DayRow {
+            date: d,
+            status,
+            decisive_evidence: vec![],
+            conflicting_evidence: vec![],
+            alerts: vec![],
+        });
+        d = d.succ_opt().unwrap();
+    }
+    let as_of = cal_as_of();
+    let holiday_anchor = if stale {
+        // 14-day KASI threshold: far in the past → stale at cal_as_of.
+        Some(Utc.with_ymd_and_hms(2023, 1, 1, 0, 0, 0).unwrap())
+    } else {
+        Some(as_of)
+    };
+    let freshness = Freshness {
+        evidence_refreshed_at: as_of,
+        holiday_facts_checked_at: holiday_anchor,
+        full_history_reconciled_at: Some(as_of),
+        forward_readiness_through: Some(as_of.date_naive() + Duration::days(365)),
+        last_incremental_at: Some(as_of),
+    };
+    let authorization = Authorization {
+        authorized: true,
+        authority: "SYNTHETIC-MAINTAINER".to_string(),
+        granted_at: Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
+        expires_at: Some(Utc.with_ymd_and_hms(2099, 1, 1, 0, 0, 0).unwrap()),
+        terminated_at: None,
+    };
+    let mut snap = Snapshot {
+        schema_version: "1.0.0".to_string(),
+        artifact_id: String::new(),
+        calendar_id: String::new(),
+        predecessor_artifact_id: None,
+        scope: CalendarScope {
+            calendar_name: "KRX domestic equity regular session (SYNTHETIC)".to_string(),
+            venue: "XKRX".to_string(),
+            instrument_class: "domestic-equity".to_string(),
+            timezone: "Asia/Seoul".to_string(),
+            synthetic: true,
+        },
+        authorization,
+        coverage: Coverage {
+            materialized_from: from,
+            materialized_through: through,
+            retrospectively_checked_through: through,
+            scheduled_closure_evaluated_through: through,
+            source_availability: vec![],
+        },
+        freshness,
+        sources: vec![],
+        evidence: vec![],
+        alerts: vec![],
+        rows,
+    };
+    snap.artifact_id = compute_artifact_id(&snap);
+    snap.calendar_id = compute_calendar_id(&snap);
+    KrxCalendar::from_snapshot(snap, as_of).expect("hand-built calendar must load")
+}
+
+/// Set the daily watermark for 005930 to `wm` (mirrors accumulate's checkpoint advance).
+fn set_daily_watermark(dir: &Path, wm: NaiveDate) {
+    let cp_path = dir.join("catalog").join("ingest-checkpoint.json");
+    let mut cp = Checkpoint::load(&cp_path).unwrap();
+    cp.set_watermark("005930.XKRX", "1-DAY", wm);
+    cp.save(&cp_path).unwrap();
+}
+
+/// Closed boundary: a Monday-holiday watermark that Legacy flags as a tail undershoot does
+/// NOT flag under the calendar — the PROVEN last Trading Session is the prior Friday, which
+/// the catalog reaches. (This is the exact scenario `genuine_undershoot_across_a_weekend`
+/// flags under the weekday walk-back.)
+#[tokio::test]
+async fn enforced_closed_watermark_boundary_does_not_false_flag() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    // Watermark = Monday 20240108 (a holiday). Last daily bar = Friday 20240105.
+    set_daily_watermark(dir.path(), ymd(2024, 1, 8));
+    let cfg = StatusConfig { data_home: dir.path().to_path_buf(), expected_range: None };
+
+    // Legacy: Monday is a weekday → last_weekday(Mon)=Mon, Fri < Mon → NO-GO.
+    let legacy = catalog_status(&cfg).await.unwrap();
+    assert!(!legacy.go, "Legacy false-flags the holiday-Monday watermark: {:?}", legacy.lines);
+
+    // Enforced with 20240108 proven Closed: last session = Friday 20240105 → no undershoot.
+    let cal = build_calendar(&[(ymd(2024, 1, 8), DayStatus::Closed)], false);
+    let view = cal.as_of(cal_as_of()).unwrap();
+    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let enforced = catalog_status_gated(&cfg, gate).await.unwrap();
+    assert!(enforced.go, "the calendar clears the false undershoot: {:?}", enforced.lines);
+    assert!(
+        enforced.triples.iter().all(|t| t.flags.is_empty()),
+        "no tail flag once the real last session (Friday) is proven: {:?}",
+        enforced.triples
+    );
+}
+
+/// A boundary-relevant Unknown (Unknown at the watermark, before any proven session
+/// scanning back) fails closed with the distinct `NO-GO — calendar indeterminate` line.
+#[tokio::test]
+async fn enforced_boundary_relevant_unknown_is_a_no_go_indeterminate() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    set_daily_watermark(dir.path(), ymd(2024, 1, 8));
+    let cfg = StatusConfig { data_home: dir.path().to_path_buf(), expected_range: None };
+
+    let cal = build_calendar(&[(ymd(2024, 1, 8), DayStatus::Unknown)], false);
+    let view = cal.as_of(cal_as_of()).unwrap();
+    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let out = catalog_status_gated(&cfg, gate).await.unwrap();
+    assert!(!out.go, "an Unknown boundary is a no-go: {:?}", out.lines);
+    assert!(
+        out.lines.iter().any(|l| l.contains("NO-GO — calendar indeterminate")),
+        "the indeterminate message is present: {:?}",
+        out.lines
+    );
+}
+
+/// A watermark outside the materialized coverage window is unavailable — the calendar
+/// cannot prove the boundary, so Enforced fails closed with `NO-GO — calendar unavailable`.
+#[tokio::test]
+async fn enforced_out_of_coverage_watermark_is_a_no_go_unavailable() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    // 20240201 is past the calendar's 2024-01-31 materialized_through.
+    set_daily_watermark(dir.path(), ymd(2024, 2, 1));
+    let cfg = StatusConfig { data_home: dir.path().to_path_buf(), expected_range: None };
+
+    let cal = build_calendar(&[], false);
+    let view = cal.as_of(cal_as_of()).unwrap();
+    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let out = catalog_status_gated(&cfg, gate).await.unwrap();
+    assert!(!out.go, "an out-of-coverage watermark is a no-go: {:?}", out.lines);
+    assert!(
+        out.lines.iter().any(|l| l.contains("NO-GO — calendar unavailable")),
+        "the unavailable message is present: {:?}",
+        out.lines
+    );
+
+    // A missing calendar (no view injected) is equally unavailable under Enforced.
+    let blind = CatalogCalendarGate::new(CalendarAdoption::Enforced, None);
+    let out_blind = catalog_status_gated(&cfg, blind).await.unwrap();
+    assert!(!out_blind.go, "no calendar → unavailable no-go: {:?}", out_blind.lines);
+    assert!(out_blind.lines.iter().any(|l| l.contains("NO-GO — calendar unavailable")));
+}
+
+/// Stale-but-established: the boundary facts are proven (a GO) but the calendar's freshness
+/// is stale at the as-of instant — a GO WITH a prominent warning, never a status flip.
+#[tokio::test]
+async fn enforced_stale_but_established_is_a_go_with_a_prominent_warning() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    set_daily_watermark(dir.path(), ymd(2024, 1, 8));
+    let cfg = StatusConfig { data_home: dir.path().to_path_buf(), expected_range: None };
+
+    // 20240108 proven Closed (established boundary → GO) but freshness is stale.
+    let cal = build_calendar(&[(ymd(2024, 1, 8), DayStatus::Closed)], true);
+    let view = cal.as_of(cal_as_of()).unwrap();
+    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let out = catalog_status_gated(&cfg, gate).await.unwrap();
+    assert!(out.go, "an established boundary stays a GO even when stale: {:?}", out.lines);
+    assert!(
+        out.lines.iter().any(|l| l.contains("WARNING") && l.contains("STALE")),
+        "a prominent stale warning is present on the GO: {:?}",
+        out.lines
+    );
+}
+
+/// Shadow: GO/NO-GO + lines are byte-identical to Legacy (the weekday path stays
+/// authoritative) even when the calendar verdict DISAGREES — the disagreeing verdict is
+/// recorded (a real, observable calendar boundary) but never alters the output.
+#[tokio::test]
+async fn shadow_is_byte_identical_to_legacy_while_recording_the_calendar_verdict() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    // The closed-boundary disagreement: Legacy NO-GO (Monday undershoot), calendar GO.
+    set_daily_watermark(dir.path(), ymd(2024, 1, 8));
+    let cfg = StatusConfig { data_home: dir.path().to_path_buf(), expected_range: None };
+
+    let legacy = catalog_status(&cfg).await.unwrap();
+
+    let cal = build_calendar(&[(ymd(2024, 1, 8), DayStatus::Closed)], false);
+    let view = cal.as_of(cal_as_of()).unwrap();
+    let shadow_gate = CatalogCalendarGate::new(CalendarAdoption::Shadow, Some(view));
+    let shadow = catalog_status_gated(&cfg, shadow_gate).await.unwrap();
+
+    assert_eq!(shadow.go, legacy.go, "Shadow verdict matches Legacy");
+    assert_eq!(shadow.lines, legacy.lines, "Shadow lines are byte-identical to Legacy");
+    assert!(!legacy.go, "the scenario is a Legacy NO-GO (a genuine disagreement)");
+
+    // The recorded calendar verdict is real + disagreeing: the proven last session at/before
+    // the watermark is the Friday the catalog reaches — a GO the weekday path did not grant.
+    assert_eq!(
+        shadow_gate.last_session_on_or_before(ymd(2024, 1, 8)),
+        SessionBoundary::Session(ymd(2024, 1, 5)),
+        "the disagreeing calendar boundary is computed (recorded), not the weekday one"
+    );
 }
 
 // ===========================================================================

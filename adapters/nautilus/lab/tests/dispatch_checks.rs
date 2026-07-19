@@ -10,12 +10,14 @@ use ls_sdk_test_support::{mock_config, mount_token};
 use nautilus_ls::execution::LsExecClient;
 use nautilus_ls_lab::dispatch::checks::{
     check_flat_start as pure_flat_start, decide, parse_deferrals, probe_flat_start,
-    probe_stranded_orders, run_checks, BudgetHeadroom, DispatchContext, GatewayProbe, GateResult,
-    LanePosture, TradingCalendar, WeekdayKrxCalendar, CHECK_ADVISORY_LOCK, CHECK_BUDGET,
-    CHECK_KILL_SWITCH, CHECK_STRANDED, CHECK_TRADING_ENV,
+    probe_stranded_orders, run_checks, BudgetHeadroom, CalendarDateFact, DispatchContext,
+    GatewayProbe, GateResult, LanePosture, TradingCalendar, WeekdayKrxCalendar,
+    CHECK_ADVISORY_LOCK, CHECK_BUDGET, CHECK_CALENDAR_DATE, CHECK_KILL_SWITCH, CHECK_STRANDED,
+    CHECK_TRADING_ENV,
 };
 use nautilus_ls_lab::dispatch::readiness::ReadinessVerdict;
-use nautilus_ls_lab::dispatch::CheckStatus;
+use nautilus_ls_lab::dispatch::{CheckStatus, UnknownOverride};
+use nautilus_ls_calendar::schema::Citation;
 use nautilus_model::enums::AccountType;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -32,7 +34,10 @@ fn green_ctx() -> DispatchContext {
         lane_env_present: true,
         resolved_env_is_paper: Some(true),
         live_lock_held: false,
+        date_fact: CalendarDateFact::TradingSession,
         window_open: true,
+        run_id: "run-1".into(),
+        unknown_override: None,
         watermark_fresh: true,
         bars_present: true,
         flat_start: GatewayProbe::Clear,
@@ -194,6 +199,195 @@ fn weekday_calendar_seam() {
     assert!(!cal.is_trading_session(Utc.with_ymd_and_hms(2026, 7, 16, 7, 0, 0).unwrap()));
     // 2026-07-18 is a Saturday -> closed all day.
     assert!(!cal.is_trading_session(Utc.with_ymd_and_hms(2026, 7, 18, 1, 0, 0).unwrap()));
+}
+
+#[test]
+fn weekday_seam_splits_date_fact_from_time_window() {
+    use chrono::{TimeZone, Utc};
+    let cal = WeekdayKrxCalendar;
+    // 2026-07-16 Thu: the DATE is a Trading Session regardless of the time-of-day.
+    let thu_open = Utc.with_ymd_and_hms(2026, 7, 16, 1, 0, 0).unwrap(); // 10:00 KST
+    let thu_after = Utc.with_ymd_and_hms(2026, 7, 16, 7, 0, 0).unwrap(); // 16:00 KST
+    assert_eq!(cal.date_fact(thu_open), CalendarDateFact::TradingSession);
+    assert_eq!(cal.date_fact(thu_after), CalendarDateFact::TradingSession);
+    // The PRESERVED 09:00–15:30 KST time window is a distinct bool.
+    assert!(cal.in_time_window(thu_open));
+    assert!(!cal.in_time_window(thu_after));
+    // A weekend DATE maps to Closed (never Unknown — the weekday path can't yield Unknown).
+    let sat = Utc.with_ymd_and_hms(2026, 7, 18, 1, 0, 0).unwrap();
+    assert_eq!(cal.date_fact(sat), CalendarDateFact::Closed);
+}
+
+// ---------------------------------------------------------------------------
+// U12 — Production Ladder date gate + attended Unknown override (KTD8)
+// ---------------------------------------------------------------------------
+
+fn citation() -> Citation {
+    Citation {
+        reference: "KRX-NOTICE-2026-EX-01".into(),
+        issuer: "KRX".into(),
+        note: Some("synthetic first-party basis".into()),
+    }
+}
+
+/// A well-formed attended Unknown override bound to `kst_date` + `run_id`.
+fn override_for(kst_date: &str, run_id: &str) -> UnknownOverride {
+    UnknownOverride {
+        kst_date: kst_date.into(),
+        run_id: run_id.into(),
+        operator: "operator-alice".into(),
+        authorized_at_unix: 1_000_000,
+        snapshot_artifact_id: "artifact-abc".into(),
+        snapshot_calendar_id: "calendar-abc".into(),
+        alerts: vec!["alert-witness-vs-closure".into()],
+        reason: "reviewed the cited first-party basis for the Unknown date".into(),
+        citation: citation(),
+    }
+}
+
+#[test]
+fn u12_failure_inversion_unknown_refuses_but_trading_session_greens() {
+    // Unknown date, no override → NO authorized dispatch.
+    let mut ctx = green_ctx();
+    ctx.date_fact = CalendarDateFact::Unknown;
+    assert_eq!(
+        verdict(&ctx, &[], false),
+        GateResult::Refused,
+        "an Unknown calendar date emits no authorized dispatch"
+    );
+
+    // Flip ONLY the row to Trading Session (window open + all other gates green) → Green.
+    ctx.date_fact = CalendarDateFact::TradingSession;
+    assert_eq!(
+        verdict(&ctx, &[], false),
+        GateResult::Green,
+        "the same context with a proven Trading Session authorizes"
+    );
+}
+
+#[test]
+fn u12_closed_refuses_and_no_override_can_green_it() {
+    let mut ctx = green_ctx();
+    ctx.date_fact = CalendarDateFact::Closed;
+    assert_eq!(verdict(&ctx, &[], false), GateResult::Refused);
+    // The blunt deferral surface cannot proceed a proven closure.
+    assert_eq!(verdict(&ctx, &[CHECK_CALENDAR_DATE], true), GateResult::Refused);
+    // Even a well-formed override bound to this exact date + run cannot proceed a closure.
+    let (d, r) = (ctx.today_kst.clone(), ctx.run_id.clone());
+    ctx.unknown_override = Some(override_for(&d, &r));
+    assert_eq!(
+        verdict(&ctx, &[], false),
+        GateResult::Refused,
+        "the override cannot proceed a proven Closed date"
+    );
+}
+
+#[test]
+fn u12_unavailable_refuses_without_override() {
+    let mut ctx = green_ctx();
+    ctx.date_fact = CalendarDateFact::Unavailable;
+    assert_eq!(verdict(&ctx, &[], false), GateResult::Refused);
+    assert_eq!(verdict(&ctx, &[CHECK_CALENDAR_DATE], true), GateResult::Refused);
+    let (d, r) = (ctx.today_kst.clone(), ctx.run_id.clone());
+    ctx.unknown_override = Some(override_for(&d, &r));
+    assert_eq!(
+        verdict(&ctx, &[], false),
+        GateResult::Refused,
+        "a calendar load/use/query failure refuses without override"
+    );
+}
+
+#[test]
+fn u12_unknown_override_binds_to_exact_date_and_run() {
+    let mut ctx = green_ctx(); // today_kst = 2026-07-16, run_id = run-1
+    ctx.date_fact = CalendarDateFact::Unknown;
+
+    // Exact date + run → proceeds to Green.
+    ctx.unknown_override = Some(override_for("2026-07-16", "run-1"));
+    assert_eq!(
+        verdict(&ctx, &[], false),
+        GateResult::Green,
+        "a bound, well-formed override proceeds the Unknown date"
+    );
+
+    // A different KST date is NOT covered.
+    ctx.unknown_override = Some(override_for("2026-07-17", "run-1"));
+    assert_eq!(verdict(&ctx, &[], false), GateResult::Refused, "a different date is not covered");
+
+    // A different run is NOT covered.
+    ctx.unknown_override = Some(override_for("2026-07-16", "run-2"));
+    assert_eq!(verdict(&ctx, &[], false), GateResult::Refused, "a different run is not covered");
+}
+
+#[test]
+fn u12_override_requires_all_audit_fields_including_structured_citation() {
+    let mut ctx = green_ctx();
+    ctx.date_fact = CalendarDateFact::Unknown;
+    let base = override_for("2026-07-16", "run-1");
+
+    // A blank structured-citation reference is not authorizing (no unverifiable basis).
+    let mut ov = base.clone();
+    ov.citation.reference = String::new();
+    ctx.unknown_override = Some(ov);
+    assert_eq!(verdict(&ctx, &[], false), GateResult::Refused, "blank citation reference refuses");
+
+    // A blank citation issuer is not authorizing.
+    let mut ov = base.clone();
+    ov.citation.issuer = String::new();
+    ctx.unknown_override = Some(ov);
+    assert_eq!(verdict(&ctx, &[], false), GateResult::Refused, "blank citation issuer refuses");
+
+    // A blank operator is not authorizing.
+    let mut ov = base.clone();
+    ov.operator = String::new();
+    ctx.unknown_override = Some(ov);
+    assert_eq!(verdict(&ctx, &[], false), GateResult::Refused, "blank operator refuses");
+
+    // A blank reason is not authorizing.
+    let mut ov = base.clone();
+    ov.reason = "   ".into();
+    ctx.unknown_override = Some(ov);
+    assert_eq!(verdict(&ctx, &[], false), GateResult::Refused, "blank reason refuses");
+
+    // Fully-formed → proceeds.
+    ctx.unknown_override = Some(base);
+    assert_eq!(verdict(&ctx, &[], false), GateResult::Green, "a complete override proceeds");
+}
+
+#[test]
+fn u12_time_window_preserved_for_a_proven_session_and_an_overridden_unknown() {
+    // A proven Trading Session OUTSIDE 09:00–15:30 KST still defers on the time window.
+    let mut ctx = green_ctx();
+    ctx.date_fact = CalendarDateFact::TradingSession;
+    ctx.window_open = false;
+    assert_eq!(verdict(&ctx, &[], false), GateResult::Refused, "outside the time window still refuses");
+
+    // An overridden Unknown ALSO cannot escape the time-window check.
+    ctx.date_fact = CalendarDateFact::Unknown;
+    ctx.unknown_override = Some(override_for("2026-07-16", "run-1"));
+    ctx.window_open = false;
+    assert_eq!(
+        verdict(&ctx, &[], false),
+        GateResult::Refused,
+        "the override cannot proceed a closed time window"
+    );
+}
+
+#[test]
+fn u12_calendar_date_check_is_non_deferrable_for_every_non_session_fact() {
+    for fact in [
+        CalendarDateFact::Closed,
+        CalendarDateFact::Unknown,
+        CalendarDateFact::Unavailable,
+    ] {
+        let mut ctx = green_ctx();
+        ctx.date_fact = fact;
+        assert_eq!(
+            verdict(&ctx, &[CHECK_CALENDAR_DATE], true),
+            GateResult::Refused,
+            "calendar_date is non-deferrable for {fact:?}"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

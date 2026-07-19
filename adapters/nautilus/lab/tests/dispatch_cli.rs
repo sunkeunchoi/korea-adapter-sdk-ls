@@ -6,8 +6,11 @@
 //! calls — the gateway probes are stubbed (the documented stubbed-binary seam).
 
 use chrono::{TimeZone, Utc};
+use nautilus_ls_calendar::schema::Citation;
+use nautilus_ls_calendar::CalendarAdoption;
 use nautilus_ls_lab::dispatch::chain::{DispatchChain, DispatchOutcome, Escalation, RecordKind};
-use nautilus_ls_lab::dispatch::checks::{GatewayProbe, GateResult, LanePosture};
+use nautilus_ls_lab::dispatch::checks::{CalendarDateFact, GatewayProbe, GateResult, LanePosture};
+use nautilus_ls_lab::dispatch::UnknownOverride;
 use nautilus_ls_lab::runner::live::{run_dispatch, DispatchCliConfig};
 use tempfile::TempDir;
 
@@ -41,6 +44,12 @@ fn green_cfg(home: &std::path::Path) -> DispatchCliConfig {
         attended_override: None,
         readiness_stub: None,
         prereg_path: None,
+        // U12: a stubbed proven Trading Session so the base green path is unchanged; the
+        // stub is the Enforced offline seam (it wins over adoption resolution).
+        adoption: CalendarAdoption::Legacy,
+        run_id: Some("run-cli-1".into()),
+        date_fact_stub: Some(CalendarDateFact::TradingSession),
+        unknown_override: None,
     }
 }
 
@@ -212,6 +221,114 @@ fn green_readiness_runs_at_the_authorized_rung() {
         .find(|r| matches!(r.body.kind, RecordKind::SessionDispatch(_)))
         .unwrap();
     assert_eq!(rec.body.effective_rung, 2, "green readiness → the authorized rung, no probation");
+}
+
+// ---------------------------------------------------------------------------
+// U12 — Production Ladder date gate + attended Unknown override (end-to-end)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn u12_enforced_unknown_refuses_with_no_authorized_dispatch() {
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+    let mut cfg = green_cfg(tmp.path());
+    cfg.adoption = CalendarAdoption::Enforced;
+    cfg.date_fact_stub = Some(CalendarDateFact::Unknown);
+    let out = run_dispatch(&cfg).unwrap();
+    assert_eq!(out.result, GateResult::Refused);
+    assert!(out.appended, "a refusal is chain history");
+    assert!(out.lines.iter().any(|l| l.contains("calendar_date")), "{:?}", out.lines);
+    assert_eq!(last_dispatch(tmp.path()).unwrap().0, DispatchOutcome::Refused);
+}
+
+#[test]
+fn u12_enforced_unknown_override_greens_and_records_full_audit() {
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+    let mut cfg = green_cfg(tmp.path());
+    cfg.adoption = CalendarAdoption::Enforced;
+    cfg.date_fact_stub = Some(CalendarDateFact::Unknown);
+    cfg.run_id = Some("run-cli-1".into());
+    cfg.nonce = Some(cfg.now_unix.to_string());
+    cfg.attended_override = Some(true);
+    cfg.unknown_override = Some(UnknownOverride {
+        kst_date: "2026-07-16".into(),
+        run_id: "run-cli-1".into(),
+        operator: "operator-alice".into(),
+        authorized_at_unix: cfg.now_unix,
+        snapshot_artifact_id: "artifact-abc".into(),
+        snapshot_calendar_id: "calendar-abc".into(),
+        alerts: vec!["alert-witness-vs-closure".into()],
+        reason: "reviewed the cited first-party basis".into(),
+        citation: Citation { reference: "KRX-NOTICE-01".into(), issuer: "KRX".into(), note: None },
+    });
+    let out = run_dispatch(&cfg).unwrap();
+    assert_eq!(out.result, GateResult::Green, "{:?}", out.lines);
+    assert!(out.lines.iter().any(|l| l.contains("override applied")), "{:?}", out.lines);
+    // The full audit rode the persisted chain record.
+    let state = DispatchChain::open(tmp.path()).unwrap().load();
+    let ov = state
+        .records
+        .iter()
+        .rev()
+        .find_map(|r| match &r.body.kind {
+            RecordKind::SessionDispatch(s) => s.unknown_override.clone(),
+            _ => None,
+        })
+        .expect("the override audit is recorded on the session-dispatch");
+    assert_eq!(ov.kst_date, "2026-07-16");
+    assert_eq!(ov.run_id, "run-cli-1");
+    assert_eq!(ov.operator, "operator-alice");
+    assert_eq!(ov.snapshot_artifact_id, "artifact-abc");
+    assert_eq!(ov.snapshot_calendar_id, "calendar-abc");
+    assert_eq!(ov.citation.reference, "KRX-NOTICE-01");
+    assert_eq!(ov.citation.issuer, "KRX");
+}
+
+#[test]
+fn u12_unknown_override_refused_when_unattended() {
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+    let mut cfg = green_cfg(tmp.path());
+    cfg.adoption = CalendarAdoption::Enforced;
+    cfg.date_fact_stub = Some(CalendarDateFact::Unknown);
+    cfg.run_id = Some("run-cli-1".into());
+    cfg.nonce = Some(cfg.now_unix.to_string());
+    cfg.attended_override = Some(false); // no-TTY / unattended → the override cannot apply
+    cfg.unknown_override = Some(UnknownOverride {
+        kst_date: "2026-07-16".into(),
+        run_id: "run-cli-1".into(),
+        operator: "operator-alice".into(),
+        authorized_at_unix: cfg.now_unix,
+        snapshot_artifact_id: "artifact-abc".into(),
+        snapshot_calendar_id: "calendar-abc".into(),
+        alerts: Vec::new(),
+        reason: "reviewed the cited first-party basis".into(),
+        citation: Citation { reference: "KRX-NOTICE-01".into(), issuer: "KRX".into(), note: None },
+    });
+    let out = run_dispatch(&cfg).unwrap();
+    assert_eq!(out.result, GateResult::Refused, "{:?}", out.lines);
+    assert!(out.lines.iter().any(|l| l.contains("override rejected")), "{:?}", out.lines);
+}
+
+#[test]
+fn u12_shadow_dispatch_record_is_byte_identical_to_legacy() {
+    // With no stub and no configured snapshot, the weekday fact stays authoritative under
+    // BOTH Legacy and Shadow; Shadow's calendar recording goes only to stderr (non-persisted),
+    // so the persisted chain record is byte-identical.
+    fn run_with(adoption: CalendarAdoption) -> Vec<u8> {
+        let tmp = TempDir::new().unwrap();
+        seed_genesis(tmp.path());
+        let mut cfg = green_cfg(tmp.path());
+        cfg.adoption = adoption;
+        cfg.date_fact_stub = None; // exercise the resolution path
+        let out = run_dispatch(&cfg).unwrap();
+        assert_eq!(out.result, GateResult::Green);
+        std::fs::read(DispatchChain::open(tmp.path()).unwrap().chain_path()).unwrap()
+    }
+    let legacy = run_with(CalendarAdoption::Legacy);
+    let shadow = run_with(CalendarAdoption::Shadow);
+    assert_eq!(legacy, shadow, "Shadow dispatch record is byte-identical to Legacy");
 }
 
 // ---------------------------------------------------------------------------

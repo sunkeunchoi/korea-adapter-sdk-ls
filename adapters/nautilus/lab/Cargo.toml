@@ -31,6 +31,11 @@ nautilus-ls = { path = ".." }
 ls-sdk = { path = "../../../crates/ls-sdk" }
 ls-core = { path = "../../../crates/ls-core" }
 
+# The shared offline KRX calendar leaf crate (KTD1). The lab is a consumer
+# (composition-root startup record now, U8; catalog + dispatch date-gate migrations
+# in Phase C). Acyclic — the calendar depends on nothing in this workspace.
+nautilus-ls-calendar = { path = "../nautilus-ls-calendar" }
+
 # nautilus_trader v2 (Rust), same =0.60.0 lockstep as the adapter (KTD1). nautilus
 # types cross the lab↔adapter boundary, so the pins must match exactly.
 nautilus-core = "=0.60.0"

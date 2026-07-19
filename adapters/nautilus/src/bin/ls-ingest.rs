@@ -80,6 +80,12 @@ fn exit_code_for(report: &CoverageReport) -> u8 {
 async fn main() -> std::process::ExitCode {
     // Credential hygiene before any output (mirrors the repo's smoke convention).
     scrub::install();
+    // Mandatory startup calendar record (U8): resolves the explicit snapshot path +
+    // adoption from env at the composition root, emits one redacted line to the
+    // non-persisted diagnostic channel (stderr). Default adoption = Shadow; a missing
+    // snapshot is non-fatal (Shadow degradation contract, KTD8). Startup record ONLY —
+    // the ingest decision migration is U9/U10.
+    nautilus_ls::calendar::emit_startup_from_env("ls-ingest");
     // Scrub the terminal error too — a `?`-propagated SDK error would otherwise be
     // printed unscrubbed by the runtime, leaking a raw broker message.
     match run().await {
@@ -246,7 +252,19 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
         if mode == "rebase" {
             ingestor.run_rebase(&universe, last_closed, floor).await?
         } else {
-            ingestor.run_accumulate(&universe, last_closed, floor).await?
+            // U9/KTD8: resolve the explicit snapshot path + adoption at the composition root
+            // and inject one calendar gate. Default adoption = Shadow; a missing/failed
+            // snapshot is non-fatal in Shadow/Legacy (the weekday path stays authoritative).
+            // `loaded` owns the calendar for the duration of this call.
+            let as_of = Utc::now();
+            let adoption = nautilus_ls::calendar::adoption_from_env();
+            let path = nautilus_ls::calendar::snapshot_path_from_env();
+            let loaded = nautilus_ls::calendar::resolve_and_load(path.as_deref(), as_of, adoption);
+            let view = loaded.calendar().and_then(|cal| cal.as_of(as_of).ok());
+            let gate = nautilus_ls::ingest::CalendarGate::new(adoption, view);
+            ingestor
+                .run_accumulate_gated(&universe, last_closed, floor, gate)
+                .await?
         }
     } else {
         ingestor.run(&universe).await?
@@ -355,7 +373,19 @@ async fn run_probe(sdk: &ls_sdk::LsSdk, catalog: PathBuf) -> Result<(), Box<dyn 
         overlap_days: DEFAULT_OVERLAP_DAYS,
     };
     let ingestor = Ingestor::new(sdk.clone(), config);
-    match ingestor.run_probe_lookback(&pilot, ncnt, anchor, probed_at).await? {
+    // U9/KTD8: inject the calendar gate for the probe anchor. Default adoption = Shadow (the
+    // weekday anchor stays authoritative); Enforced selects the most recent proven session or
+    // stops. `loaded` owns the calendar for the duration of the probe call.
+    let as_of = Utc::now();
+    let adoption = nautilus_ls::calendar::adoption_from_env();
+    let cal_path = nautilus_ls::calendar::snapshot_path_from_env();
+    let loaded = nautilus_ls::calendar::resolve_and_load(cal_path.as_deref(), as_of, adoption);
+    let view = loaded.calendar().and_then(|cal| cal.as_of(as_of).ok());
+    let gate = nautilus_ls::ingest::CalendarGate::new(adoption, view);
+    match ingestor
+        .run_probe_lookback_gated(&pilot, ncnt, anchor, probed_at, gate)
+        .await?
+    {
         Some(lb) => {
             println!(
                 "probe: pilot {pilot} earliest minute date {} (depth {} days) — recorded to <data>/probes/minute-lookback.json",
@@ -522,6 +552,7 @@ mod tests {
             range_refusals: Vec::new(),
             append_refusals: Vec::new(),
             backward_widen_warnings: Vec::new(),
+            backward_widen_uncertainties: Vec::new(),
             budget_deferrals: Vec::new(),
             budget: BudgetEstimate { symbols: 0, bar_kinds: 0, per_sec_cap: 1, min_requests: 0 },
         }

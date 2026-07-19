@@ -1,0 +1,8088 @@
+{
+  "schema_version": "1.0.0",
+  "artifact_id": "502f0e4582ecbb479ca906a6a6744625e3177f0424e18b1068fd96c05d29216b",
+  "calendar_id": "67ace8f018bed119968d4ab21316cdcd49e6aedadf36e949f23bf56aeaeda0e9",
+  "predecessor_artifact_id": null,
+  "scope": {
+    "calendar_name": "SYNTHETIC counterfactual KRX-shaped calendar — NOT A REAL CALENDAR",
+    "venue": "XKRX",
+    "instrument_class": "domestic-equity",
+    "timezone": "Asia/Seoul",
+    "synthetic": true
+  },
+  "authorization": {
+    "authorized": true,
+    "authority": "SYNTHETIC-MAINTAINER (counterfactual)",
+    "granted_at": "2013-01-01T00:00:00Z",
+    "expires_at": "2099-01-01T00:00:00Z",
+    "terminated_at": null
+  },
+  "coverage": {
+    "materialized_from": "2010-01-01",
+    "materialized_through": "2012-12-31",
+    "retrospectively_checked_through": "2012-12-31",
+    "scheduled_closure_evaluated_through": "2012-12-31",
+    "source_availability": [
+      {
+        "source_id": "krx-daily-SYNTH",
+        "available_from": "2010-01-04",
+        "available_through": "2012-12-31"
+      }
+    ]
+  },
+  "freshness": {
+    "evidence_refreshed_at": "2013-01-01T00:00:00Z",
+    "holiday_facts_checked_at": "2013-01-01T00:00:00Z",
+    "full_history_reconciled_at": "2013-01-01T00:00:00Z",
+    "forward_readiness_through": "2013-03-01",
+    "last_incremental_at": "2013-01-01T00:00:00Z"
+  },
+  "sources": [
+    {
+      "id": "krx-daily-SYNTH",
+      "kind": "krx_daily_market",
+      "label": "KRX stk_bydd_trd (SYNTHETIC — counterfactual, never a real KRX row)",
+      "synthetic": true
+    },
+    {
+      "id": "kasi-SYNTH",
+      "kind": "kasi_holiday",
+      "label": "KASI holiday facts (SYNTHETIC — counterfactual, never a real KRX row)",
+      "synthetic": true
+    },
+    {
+      "id": "krx-rule-SYNTH",
+      "kind": "krx_rule",
+      "label": "KRX published rule (SYNTHETIC — counterfactual, never a real KRX row)",
+      "synthetic": true
+    },
+    {
+      "id": "krx-notice-SYNTH",
+      "kind": "first_party_notice",
+      "label": "KRX first-party notice (SYNTHETIC — counterfactual, never a real KRX row)",
+      "synthetic": true
+    },
+    {
+      "id": "krx-correction-SYNTH",
+      "kind": "correction",
+      "label": "Maintainer correction (SYNTHETIC — counterfactual, never a real KRX row)",
+      "synthetic": true
+    }
+  ],
+  "evidence": [
+    {
+      "id": "ev-newyear-holiday",
+      "source_id": "kasi-SYNTH",
+      "date": "2010-01-01",
+      "kind": "holiday_fact",
+      "valid": true,
+      "superseded_by": null,
+      "citation": null,
+      "recorded_at": "2010-01-01T00:00:00Z"
+    },
+    {
+      "id": "ev-newyear-rule",
+      "source_id": "krx-rule-SYNTH",
+      "date": "2010-01-01",
+      "kind": "deterministic_rule",
+      "valid": true,
+      "superseded_by": null,
+      "citation": null,
+      "recorded_at": "2010-01-01T00:00:00Z"
+    },
+    {
+      "id": "ev-election-holiday",
+      "source_id": "kasi-SYNTH",
+      "date": "2010-06-02",
+      "kind": "holiday_fact",
+      "valid": true,
+      "superseded_by": null,
+      "citation": null,
+      "recorded_at": "2010-06-02T00:00:00Z"
+    },
+    {
+      "id": "ev-election-rule",
+      "source_id": "krx-rule-SYNTH",
+      "date": "2010-06-02",
+      "kind": "deterministic_rule",
+      "valid": true,
+      "superseded_by": null,
+      "citation": null,
+      "recorded_at": "2010-06-02T00:00:00Z"
+    },
+    {
+      "id": "ev-ordinary-witness-1",
+      "source_id": "krx-daily-SYNTH",
+      "date": "2010-06-15",
+      "kind": "positive_witness",
+      "valid": true,
+      "superseded_by": null,
+      "citation": null,
+      "recorded_at": "2010-06-15T00:00:00Z"
+    },
+    {
+      "id": "ev-ordinary-witness-2",
+      "source_id": "krx-daily-SYNTH",
+      "date": "2010-06-17",
+      "kind": "positive_witness",
+      "valid": true,
+      "superseded_by": null,
+      "citation": null,
+      "recorded_at": "2010-06-17T00:00:00Z"
+    },
+    {
+      "id": "ev-weekend-sat",
+      "source_id": "krx-rule-SYNTH",
+      "date": "2010-06-19",
+      "kind": "deterministic_rule",
+      "valid": true,
+      "superseded_by": null,
+      "citation": null,
+      "recorded_at": "2010-06-19T00:00:00Z"
+    },
+    {
+      "id": "ev-weekend-sun",
+      "source_id": "krx-rule-SYNTH",
+      "date": "2010-06-20",
+      "kind": "deterministic_rule",
+      "valid": true,
+      "superseded_by": null,
+      "citation": null,
+      "recorded_at": "2010-06-20T00:00:00Z"
+    },
+    {
+      "id": "ev-yearend-2010",
+      "source_id": "krx-rule-SYNTH",
+      "date": "2010-12-31",
+      "kind": "deterministic_rule",
+      "valid": true,
+      "superseded_by": null,
+      "citation": null,
+      "recorded_at": "2010-12-31T00:00:00Z"
+    },
+    {
+      "id": "ev-lny-holiday-2",
+      "source_id": "kasi-SYNTH",
+      "date": "2011-02-02",
+      "kind": "holiday_fact",
+      "valid": true,
+      "superseded_by": null,
+      "citation": null,
+      "recorded_at": "2011-02-02T00:00:00Z"
+    },
+    {
+      "id": "ev-lny-rule-2",
+      "source_id": "krx-rule-SYNTH",
+      "date": "2011-02-02",
+      "kind": "deterministic_rule",
+      "valid": true,
+      "superseded_by": null,
+      "citation": null,
+      "recorded_at": "2011-02-02T00:00:00Z"
+    },
+    {
+      "id": "ev-lny-holiday-3",
+      "source_id": "kasi-SYNTH",
+      "date": "2011-02-03",
+      "kind": "holiday_fact",
+      "valid": true,
+      "superseded_by": null,
+      "citation": null,
+      "recorded_at": "2011-02-03T00:00:00Z"
+    },
+    {
+      "id": "ev-lny-rule-3",
+      "source_id": "krx-rule-SYNTH",
+      "date": "2011-02-03",
+      "kind": "deterministic_rule",
+      "valid": true,
+      "superseded_by": null,
+      "citation": null,
+      "recorded_at": "2011-02-03T00:00:00Z"
+    },
+    {
+      "id": "ev-lny-holiday-4",
+      "source_id": "kasi-SYNTH",
+      "date": "2011-02-04",
+      "kind": "holiday_fact",
+      "valid": true,
+      "superseded_by": null,
+      "citation": null,
+      "recorded_at": "2011-02-04T00:00:00Z"
+    },
+    {
+      "id": "ev-lny-rule-4",
+      "source_id": "krx-rule-SYNTH",
+      "date": "2011-02-04",
+      "kind": "deterministic_rule",
+      "valid": true,
+      "superseded_by": null,
+      "citation": null,
+      "recorded_at": "2011-02-04T00:00:00Z"
+    },
+    {
+      "id": "ev-override-witness",
+      "source_id": "krx-daily-SYNTH",
+      "date": "2011-06-15",
+      "kind": "positive_witness",
+      "valid": true,
+      "superseded_by": null,
+      "citation": null,
+      "recorded_at": "2011-06-15T00:00:00Z"
+    },
+    {
+      "id": "ev-override-rule",
+      "source_id": "krx-rule-SYNTH",
+      "date": "2011-06-15",
+      "kind": "deterministic_rule",
+      "valid": true,
+      "superseded_by": null,
+      "citation": null,
+      "recorded_at": "2011-06-15T00:00:00Z"
+    },
+    {
+      "id": "ev-exceptional-notice",
+      "source_id": "krx-notice-SYNTH",
+      "date": "2011-09-21",
+      "kind": "closure_notice",
+      "valid": true,
+      "superseded_by": null,
+      "citation": {
+        "reference": "KRX-NOTICE-EXCEPTIONAL-2011-09-21 (SYNTHETIC)",
+        "issuer": "KRX (SYNTHETIC)",
+        "note": "counterfactual fixture citation — not a real notice"
+      },
+      "recorded_at": "2011-09-21T00:00:00Z"
+    },
+    {
+      "id": "ev-conflict-notice-a",
+      "source_id": "krx-notice-SYNTH",
+      "date": "2011-10-05",
+      "kind": "closure_notice",
+      "valid": true,
+      "superseded_by": null,
+      "citation": {
+        "reference": "KRX-NOTICE-CONFLICT-A (SYNTHETIC)",
+        "issuer": "KRX (SYNTHETIC)",
+        "note": "counterfactual fixture citation — not a real notice"
+      },
+      "recorded_at": "2011-10-05T00:00:00Z"
+    },
+    {
+      "id": "ev-conflict-notice-b",
+      "source_id": "krx-notice-SYNTH",
+      "date": "2011-10-05",
+      "kind": "closure_notice",
+      "valid": true,
+      "superseded_by": null,
+      "citation": {
+        "reference": "KRX-NOTICE-CONFLICT-B (SYNTHETIC)",
+        "issuer": "KRX (SYNTHETIC)",
+        "note": "counterfactual fixture citation — not a real notice"
+      },
+      "recorded_at": "2011-10-05T00:00:00Z"
+    },
+    {
+      "id": "ev-correction-stale",
+      "source_id": "krx-notice-SYNTH",
+      "date": "2012-03-14",
+      "kind": "closure_notice",
+      "valid": true,
+      "superseded_by": "ev-correction-fix",
+      "citation": {
+        "reference": "KRX-NOTICE-STALE-2012-03-14 (SYNTHETIC)",
+        "issuer": "KRX (SYNTHETIC)",
+        "note": "counterfactual fixture citation — not a real notice"
+      },
+      "recorded_at": "2012-03-14T00:00:00Z"
+    },
+    {
+      "id": "ev-correction-governing",
+      "source_id": "krx-notice-SYNTH",
+      "date": "2012-03-14",
+      "kind": "closure_notice",
+      "valid": true,
+      "superseded_by": null,
+      "citation": {
+        "reference": "KRX-NOTICE-GOVERNING-2012-03-14 (SYNTHETIC)",
+        "issuer": "KRX (SYNTHETIC)",
+        "note": "counterfactual fixture citation — not a real notice"
+      },
+      "recorded_at": "2012-03-14T00:00:00Z"
+    },
+    {
+      "id": "ev-correction-fix",
+      "source_id": "krx-correction-SYNTH",
+      "date": "2012-03-14",
+      "kind": "correction",
+      "valid": true,
+      "superseded_by": null,
+      "citation": {
+        "reference": "KRX-CORRECTION-2012-03-14 (SYNTHETIC)",
+        "issuer": "KRX (SYNTHETIC)",
+        "note": "counterfactual fixture citation — not a real notice"
+      },
+      "recorded_at": "2012-03-14T00:00:00Z"
+    },
+    {
+      "id": "ev-laborday-2012",
+      "source_id": "krx-rule-SYNTH",
+      "date": "2012-05-01",
+      "kind": "deterministic_rule",
+      "valid": true,
+      "superseded_by": null,
+      "citation": null,
+      "recorded_at": "2012-05-01T00:00:00Z"
+    },
+    {
+      "id": "ev-yearend-2012",
+      "source_id": "krx-rule-SYNTH",
+      "date": "2012-12-31",
+      "kind": "deterministic_rule",
+      "valid": true,
+      "superseded_by": null,
+      "citation": null,
+      "recorded_at": "2012-12-31T00:00:00Z"
+    }
+  ],
+  "alerts": [
+    {
+      "id": "al-2011-06-15-0",
+      "date": "2011-06-15",
+      "kind": "witness_overrides_inference",
+      "message": "KRX positive witness overrides an inferred closure"
+    },
+    {
+      "id": "al-2011-10-05-0",
+      "date": "2011-10-05",
+      "kind": "first_party_conflict",
+      "message": "two conflicting first-party closure notices for the date"
+    },
+    {
+      "id": "al-2012-03-14-0",
+      "date": "2012-03-14",
+      "kind": "superseded",
+      "message": "evidence was superseded by an explicit correction"
+    }
+  ],
+  "rows": [
+    {
+      "date": "2010-01-01",
+      "status": "closed",
+      "decisive_evidence": [
+        "ev-newyear-holiday",
+        "ev-newyear-rule"
+      ],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-01-31",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-02-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-03-31",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-04-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-05-31",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-02",
+      "status": "closed",
+      "decisive_evidence": [
+        "ev-election-holiday",
+        "ev-election-rule"
+      ],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-15",
+      "status": "trading_session",
+      "decisive_evidence": [
+        "ev-ordinary-witness-1"
+      ],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-17",
+      "status": "trading_session",
+      "decisive_evidence": [
+        "ev-ordinary-witness-2"
+      ],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-19",
+      "status": "closed",
+      "decisive_evidence": [
+        "ev-weekend-sat"
+      ],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-20",
+      "status": "closed",
+      "decisive_evidence": [
+        "ev-weekend-sun"
+      ],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-06-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-07-31",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-08-31",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-09-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-10-31",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-11-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2010-12-31",
+      "status": "closed",
+      "decisive_evidence": [
+        "ev-yearend-2010"
+      ],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-01-31",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-02",
+      "status": "closed",
+      "decisive_evidence": [
+        "ev-lny-holiday-2",
+        "ev-lny-rule-2"
+      ],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-03",
+      "status": "closed",
+      "decisive_evidence": [
+        "ev-lny-holiday-3",
+        "ev-lny-rule-3"
+      ],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-04",
+      "status": "closed",
+      "decisive_evidence": [
+        "ev-lny-holiday-4",
+        "ev-lny-rule-4"
+      ],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-02-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-03-31",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-04-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-05-31",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-15",
+      "status": "trading_session",
+      "decisive_evidence": [
+        "ev-override-witness"
+      ],
+      "conflicting_evidence": [
+        "ev-override-rule"
+      ],
+      "alerts": [
+        "al-2011-06-15-0"
+      ]
+    },
+    {
+      "date": "2011-06-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-06-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-07-31",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-08-31",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-21",
+      "status": "closed",
+      "decisive_evidence": [
+        "ev-exceptional-notice"
+      ],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-09-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [
+        "ev-conflict-notice-a",
+        "ev-conflict-notice-b"
+      ],
+      "alerts": [
+        "al-2011-10-05-0"
+      ]
+    },
+    {
+      "date": "2011-10-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-10-31",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-11-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2011-12-31",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-01-31",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-02-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-14",
+      "status": "closed",
+      "decisive_evidence": [
+        "ev-correction-governing"
+      ],
+      "conflicting_evidence": [],
+      "alerts": [
+        "al-2012-03-14-0"
+      ]
+    },
+    {
+      "date": "2012-03-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-03-31",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-04-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-01",
+      "status": "closed",
+      "decisive_evidence": [
+        "ev-laborday-2012"
+      ],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-05-31",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-06-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-07-31",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-08-31",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-09-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-10-31",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-11-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-01",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-02",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-03",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-04",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-05",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-06",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-07",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-08",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-09",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-10",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-11",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-12",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-13",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-14",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-15",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-16",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-17",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-18",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-19",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-20",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-21",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-22",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-23",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-24",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-25",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-26",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-27",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-28",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-29",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-30",
+      "status": "unknown",
+      "decisive_evidence": [],
+      "conflicting_evidence": [],
+      "alerts": []
+    },
+    {
+      "date": "2012-12-31",
+      "status": "closed",
+      "decisive_evidence": [
+        "ev-yearend-2012"
+      ],
+      "conflicting_evidence": [],
+      "alerts": []
+    }
+  ]
+}

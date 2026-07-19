@@ -110,6 +110,20 @@ Three terminals reach this status, distinguished by the gateway signal: a hard *
 
 Vocabulary for the standalone Nautilus adapter's market-data catalog (`adapters/nautilus/`).
 
+### KRX trading-date status
+The calendar judgment for a Korea Exchange domestic-equity regular-session date. It has three distinct outcomes: **Trading Session** when official evidence proves the session exists, **Closed** when official evidence proves no regular session exists, and **Unknown** when the maintained evidence does not cover the date. Unknown is never treated as Closed; each consumer applies its own safety posture to missing evidence.
+*Avoid:* business day (includes non-exchange weekdays), holiday status (does not express positive sessions or missing evidence), boolean trading day (collapses Closed and Unknown).
+
+### Calendar Adoption State
+The per-consumer rollout posture for the shared offline KRX calendar, advanced independently at each calendar-dependent boundary (ingest accumulate/probe, checkpoint continuity, backward-widen, catalog readiness, Production Ladder date gate, budget-probe): **Legacy** consults the calendar not at all and keeps the pre-existing weekday/civil-date arithmetic; **Shadow** computes and records the calendar's [[KRX trading-date status]] decision to a non-persisted diagnostic channel while the legacy weekday path stays authoritative (behavior byte-identical to Legacy); **Enforced** lets the calendar decide with no weekday fallback. The composed live default is Shadow — no consumer enforces until its retirement gate passes.
+*Avoid:* feature flag (implies a boolean on/off, not the three-state Legacy→Shadow→Enforced progression), rollout percentage (adoption is per-consumer, not per-request).
+
+### Calendar Foundation Gate
+The shared offline gate that must pass before *any* weekday-era workaround is retired: the entire calendar-core, refresh, diagnostic, six-consumer, composition-root, and fixture test surface plus the standalone adapter workspace gate pass entirely offline — fixed clocks, no production snapshot, no credentials, no network access, no real KRX-derived rows, no wall-clock dependence. It proves the calendar machinery is trustworthy; it does not by itself authorize cutting any specific consumer over to [[Calendar Adoption State|Enforced]].
+
+### Consumer Retirement Gate
+The per-consumer gate that authorizes removing *that* consumer's legacy weekday path and cutting it over to [[Calendar Adoption State|Enforced]]. Required in addition to the [[Calendar Foundation Gate]], plus an owner-local canary, a restart after activation, and a rehearsed rollback — all operator-attended and live, so they sit outside the offline slice. Until a consumer's retirement gate fires, its weekday primitive stays in the tree and Shadow remains its authoritative path.
+
 ### Accumulate-forward
 The adapter's checkpoint-driven ingest mode: per `(instrument, bar type)`, a watermark records the last closed session date whose bars are covered, and each run grows coverage from watermark+1 to the last closed session (or from the bounded backfill floor for an unseen instrument). The watermark is the sole skip authority and advances even over a gap day, so an empty history is reported once and never retried forever. Idempotent by construction — re-running covers nothing twice — but only within the watermark format: the watermark records a last covered date with no representable coverage start, so a checkpoint predating the format (legacy `completed` ranges, empty watermarks) shares no coverage state with it, and widening such a catalog re-fetches from the floor and writes overlapping duplicates.
 
@@ -184,6 +198,9 @@ An evidence-ranked backlog of candidate strategy mechanisms consumed one governe
 
 ### Breakout strength
 How far beyond the opening range a breakout fired, in R-multiples: `(breakout_price − range_high) / R` with `R = range_high − range_low`. Computed per trade by joining an exit envelope to its breakout envelope, so it is readable from any run's decision stream without re-running the strategy. Its relationship to expectancy is **non-monotonic — a band-pass, not a threshold**: turn 9 found the middle band (≈0.067–0.125) the only positive bucket under all three exit geometries, while both marginal breakouts (too weak) and overextended pops (too strong) carry the losses. This makes it an entry-side filter axis for a [[Strategy-logic turn]], distinct from exit-side levers read via [[MFE (maximum favorable excursion)]].
+
+### Opening-Range Gap-Retention Fraction
+An entry-filter observable measuring how much of a positive overnight gap survived the completed opening range: `retention = (opening_range_low − prior_close) / (today_open − prior_close)`, computed on canonical integer KRW/tick prices with only the final ratio as `f64`. `1.0` is full retention, `0.0` is a prior-close touch, negatives stay signed (a crossing below the prior close), values above `1.0` are invalid data; the observable applies only when `prior_close > 0` and `today_open > prior_close`, and it freezes at the end of the half-open opening-range window, before the first post-range bar is evaluated. Governed by the manifest param `gap_retention_min`, whose `1.0` value is reserved exclusively as OFF (the only inverted sentinel among the lab's default-off gates); the sole armed cutoff is `0.50`, equality passing, evaluated once as the final ORB session gate after the ATR, opening-range-width, and RVOL gates.
 
 ### MFE (maximum favorable excursion)
 The per-trade best unrealized gain, expressed in R-multiples of the opening range: how far price moved in the trade's favor between entry and exit, regardless of where the exit actually landed. Recorded on every exit envelope in a run's decision stream so exit-geometry tuning reads give-back (MFE achieved vs. profit realized) directly from data instead of reconstructing it. A trade stopped out at −1R with an MFE of +1.2R gave back a winner; a distribution of MFEs across a run tells an exit-tuning turn where a profit target should sit. Zero before entry or when the opening range is degenerate.

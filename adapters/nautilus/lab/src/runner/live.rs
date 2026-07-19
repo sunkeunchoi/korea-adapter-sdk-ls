@@ -268,13 +268,16 @@ use crate::dispatch::chain::{
     SafetyTripKind, SessionDispatch, TripAction,
 };
 use crate::dispatch::checks::{
-    decide, parse_deferrals, probe_flat_start, probe_stranded_orders, run_checks, BudgetHeadroom,
-    DispatchContext, GateResult, GatewayProbe, LanePosture, WeekdayKrxCalendar, TradingCalendar,
+    date_fact_from_view, decide, parse_deferrals, probe_flat_start, probe_stranded_orders,
+    run_checks, BudgetHeadroom, CalendarDateFact, DispatchContext, GateResult, GatewayProbe,
+    LanePosture, TradingCalendar, WeekdayKrxCalendar,
 };
 use crate::dispatch::nonce::{detect_unattended_marker, OperatorGate};
 use crate::dispatch::ladder::apply_deescalation;
 use crate::dispatch::readiness::{compute_readiness, readiness_summary, ReadinessVerdict};
-use crate::dispatch::RUNG_MIN;
+use crate::dispatch::{UnknownOverride, RUNG_MIN};
+
+use nautilus_ls_calendar::CalendarAdoption;
 
 /// The dispatch gate's resolved configuration (env-gathered, but constructible directly
 /// so the library tests bypass the process environment).
@@ -319,6 +322,24 @@ pub struct DispatchCliConfig {
     /// The pre-registration values file (`preregistration.json`) the reducer + record
     /// citation load, when present (KTD9). Absent in phase 1.
     pub prereg_path: Option<std::path::PathBuf>,
+    /// The per-consumer calendar adoption posture (U12, KTD8). Composed default Shadow: the
+    /// calendar date decision is computed + recorded to stderr while the weekday
+    /// `window_open`/date-fact path stays authoritative. Enforced makes the calendar the
+    /// authoritative date fact (no weekday fallback); Legacy leaves the weekday path.
+    pub adoption: CalendarAdoption,
+    /// The current dispatch run identity the attended Unknown override binds to (U12).
+    /// Absent → an empty run id (no override can bind).
+    pub run_id: Option<String>,
+    /// Deterministic-test injection of the tri-state calendar DATE fact (U12) — the
+    /// Enforced offline seam (mirrors `catalog_stub`/`readiness_stub`). Absent → resolve
+    /// from `adoption` + the env-configured snapshot. The bin's env gather leaves this
+    /// `None` (the real fact is always resolved).
+    pub date_fact_stub: Option<CalendarDateFact>,
+    /// A library-injected attended Unknown-date override (U12). Nonce/attendance-gated in
+    /// [`run_dispatch`] before it can proceed an Unknown date. The bin's env gather leaves
+    /// this `None` — the narrow override enters via an operator tool path, never a blunt
+    /// env toggle (mirrors [`attended_override`](Self::attended_override)).
+    pub unknown_override: Option<UnknownOverride>,
 }
 
 /// The gate's outcome: the verdict, the report lines, and whether a record was appended.
@@ -399,6 +420,14 @@ pub fn dispatch_gate_config_from_env() -> anyhow::Result<DispatchCliConfig> {
             .ok()
             .filter(|s| !s.trim().is_empty())
             .map(std::path::PathBuf::from),
+        // The per-consumer adoption posture (U12, KTD8): composed default Shadow.
+        adoption: nautilus_ls::calendar::adoption_from_env(),
+        run_id: std::env::var("LS_DISPATCH_RUN_ID").ok().filter(|s| !s.trim().is_empty()),
+        // Never stubbed from the environment: the real date fact is always resolved.
+        date_fact_stub: None,
+        // Never sourced from the environment: the narrow attended Unknown override enters
+        // via an operator tool path, not a blunt env toggle.
+        unknown_override: None,
     })
 }
 
@@ -420,6 +449,7 @@ async fn resolve_real_probes(cfg: &DispatchCliConfig) -> anyhow::Result<(Gateway
     Ok((flat, stranded))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_context(
     cfg: &DispatchCliConfig,
     chain_authorized_rung: u8,
@@ -427,6 +457,8 @@ fn build_context(
     kill_switch_has_record: bool,
     probes: (GatewayProbe, GatewayProbe),
     readiness: ReadinessVerdict,
+    date_fact: CalendarDateFact,
+    unknown_override: Option<UnknownOverride>,
 ) -> DispatchContext {
     let now_utc = Utc.timestamp_opt(cfg.now_unix, 0).single().unwrap_or_else(Utc::now);
     let catalog = cfg.data_home.join("catalog");
@@ -448,7 +480,11 @@ fn build_context(
         lane_env_present: cfg.lane_env_path.exists(),
         resolved_env_is_paper: cfg.trading_env.as_deref().map(|e| e.eq_ignore_ascii_case("paper")),
         live_lock_held: is_held(&catalog, LockKind::Live),
-        window_open: WeekdayKrxCalendar.is_trading_session(now_utc),
+        date_fact,
+        // The PRESERVED time-of-day window only (U12); the date decision is `date_fact`.
+        window_open: WeekdayKrxCalendar.in_time_window(now_utc),
+        run_id: cfg.run_id.clone().unwrap_or_default(),
+        unknown_override,
         watermark_fresh,
         bars_present,
         flat_start: probes.0,
@@ -461,6 +497,51 @@ fn build_context(
         lane: cfg.lane,
         readiness,
     }
+}
+
+/// Resolve the AUTHORITATIVE calendar DATE fact for this dispatch (U12, KTD8) plus an
+/// optional non-persisted Shadow diagnostic line. The composition root: a deterministic
+/// `date_fact_stub` wins (the Enforced offline seam); otherwise it resolves per adoption:
+///
+/// - Legacy → the weekday date fact (authoritative); the calendar is not consulted.
+/// - Shadow → the weekday date fact stays AUTHORITATIVE; the calendar fact is computed and
+///   returned as a stderr-only line, so Shadow's dispatch outcome/record is byte-identical
+///   to Legacy while the calendar decision is recorded.
+/// - Enforced → the `KrxCalendar` fact from the env-configured snapshot, or `Unavailable`
+///   on ANY load/use/query failure (no weekday fallback).
+fn resolve_date_fact(
+    cfg: &DispatchCliConfig,
+    now_utc: chrono::DateTime<Utc>,
+) -> (CalendarDateFact, Option<String>) {
+    if let Some(fact) = cfg.date_fact_stub {
+        return (fact, None);
+    }
+    let weekday_fact = WeekdayKrxCalendar.date_fact(now_utc);
+    match cfg.adoption {
+        CalendarAdoption::Legacy => (weekday_fact, None),
+        CalendarAdoption::Shadow => {
+            let calendar_fact = resolve_calendar_fact(now_utc, CalendarAdoption::Shadow);
+            let line = format!(
+                "calendar-shadow date_fact={calendar_fact:?} (weekday-authoritative={weekday_fact:?})"
+            );
+            (weekday_fact, Some(line))
+        }
+        CalendarAdoption::Enforced => {
+            (resolve_calendar_fact(now_utc, CalendarAdoption::Enforced), None)
+        }
+    }
+}
+
+/// Load the env-configured snapshot at `now_utc` and map the KST civil date to a
+/// [`CalendarDateFact`] (KTD5/KTD8). A missing/failed/expired/out-of-range case →
+/// [`CalendarDateFact::Unavailable`], never `Unknown`.
+fn resolve_calendar_fact(now_utc: chrono::DateTime<Utc>, adoption: CalendarAdoption) -> CalendarDateFact {
+    // KST = UTC+9, no DST — the same civil-date shift `kst_trading_date` uses.
+    let kst_date = (now_utc + chrono::Duration::hours(9)).date_naive();
+    let path = nautilus_ls::calendar::snapshot_path_from_env();
+    let loaded = nautilus_ls::calendar::resolve_and_load(path.as_deref(), now_utc, adoption);
+    let view = loaded.calendar().and_then(|cal| cal.as_of(now_utc).ok());
+    date_fact_from_view(view.as_ref(), kst_date)
 }
 
 /// Run the phase-1 dispatch gate: load the chain, gather the context, decide, record the
@@ -547,6 +628,38 @@ pub fn run_dispatch(cfg: &DispatchCliConfig) -> anyhow::Result<DispatchGateOutco
         ),
     };
 
+    // The attended Unknown override is a consequential operator action — gate it on the
+    // same fresh-nonce + attendance rule as a deferral before it may proceed an Unknown
+    // date (U12). A rejected override is dropped (leaving Unknown to refuse), noted below.
+    let mut override_note: Option<String> = None;
+    let effective_override: Option<UnknownOverride> = match cfg.unknown_override.clone() {
+        None => None,
+        Some(ov) => {
+            let unattended_marker = match cfg.attended_override {
+                Some(true) => None,
+                Some(false) => Some("forced unattended".to_string()),
+                None => detect_unattended_marker(),
+            };
+            let gate =
+                OperatorGate { unattended_marker, nonce: cfg.nonce.clone(), now_unix: cfg.now_unix };
+            match gate.authorize("attended Unknown calendar override") {
+                Ok(()) => Some(ov),
+                Err(e) => {
+                    override_note = Some(e);
+                    None
+                }
+            }
+        }
+    };
+
+    // Resolve the authoritative calendar date fact (U12, KTD8). Shadow records the calendar
+    // decision to the non-persisted diagnostic channel (stderr) while the weekday fact stays
+    // authoritative, so the dispatch outcome/record is byte-identical to Legacy.
+    let (date_fact, shadow_line) = resolve_date_fact(cfg, now_dt);
+    if let Some(line) = shadow_line {
+        eprintln!("{line}");
+    }
+
     let ctx = build_context(
         cfg,
         state.authorized_rung,
@@ -554,7 +667,18 @@ pub fn run_dispatch(cfg: &DispatchCliConfig) -> anyhow::Result<DispatchGateOutco
         kill_switch_has_record,
         probes,
         readiness,
+        date_fact,
+        effective_override,
     );
+
+    // Whether the attended override actually proceeded an Unknown date (audit): recorded on
+    // the session-dispatch. Only meaningful when the date fact is Unknown and the override
+    // binds to this exact KST date + run.
+    let applied_override: Option<UnknownOverride> = if ctx.date_fact == CalendarDateFact::Unknown {
+        ctx.unknown_override.clone().filter(|o| o.covers(&ctx.today_kst, &ctx.run_id))
+    } else {
+        None
+    };
 
     // The nonce authorizes the ACT of deferring. Without deferrals it is irrelevant.
     let mut nonce_note: Option<String> = None;
@@ -600,6 +724,15 @@ pub fn run_dispatch(cfg: &DispatchCliConfig) -> anyhow::Result<DispatchGateOutco
     if let Some(note) = &nonce_note {
         lines.push(format!("  deferral nonce rejected: {note}"));
     }
+    if let Some(note) = &override_note {
+        lines.push(format!("  attended Unknown override rejected: {note}"));
+    }
+    if let Some(ov) = &applied_override {
+        lines.push(format!(
+            "  attended Unknown override applied for {} (run {}, citation {}/{}) — calendar status unchanged",
+            ov.kst_date, ov.run_id, ov.citation.issuer, ov.citation.reference
+        ));
+    }
     if !decision.refused_items.is_empty() {
         lines.push(format!("  red items: {}", decision.refused_items.join(", ")));
     }
@@ -642,6 +775,7 @@ pub fn run_dispatch(cfg: &DispatchCliConfig) -> anyhow::Result<DispatchGateOutco
             checks: decision.records.clone(),
             deferrals: decision.deferrals.clone(),
             readiness: Some(readiness_summary(readiness, &readiness_catalog)),
+            unknown_override: applied_override,
         }),
     )?;
 
@@ -681,6 +815,11 @@ pub fn run_genesis(cfg: &DispatchCliConfig) -> anyhow::Result<Vec<String>> {
 /// exit code (`research.rs` shape).
 pub fn main_cli() -> ExitCode {
     nautilus_ls::scrub::install();
+    // Mandatory startup calendar record (U8): one redacted line to the non-persisted
+    // diagnostic channel (stderr). Default adoption = Shadow; a missing snapshot is
+    // non-fatal (KTD8). Startup record ONLY — the Production Ladder date-gate migration
+    // is U12.
+    nautilus_ls::calendar::emit_startup_from_env("lab-live");
     match dispatch_main() {
         Ok(code) => code,
         Err(e) => {

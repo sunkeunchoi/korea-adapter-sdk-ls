@@ -34,6 +34,8 @@ use nautilus_model::data::{Bar, BarSpecification, BarType};
 use nautilus_model::enums::{AggregationSource, BarAggregation, PriceType};
 use nautilus_model::identifiers::InstrumentId;
 use nautilus_model::types::{Price, Quantity};
+use nautilus_ls_calendar::schema::DayStatus;
+use nautilus_ls_calendar::{AsOfView, CalendarAdoption, DateRange, SessionSearch};
 use nautilus_persistence::backend::catalog::ParquetDataCatalog;
 use serde::{Deserialize, Serialize};
 
@@ -94,6 +96,356 @@ pub fn last_closed_session(now_kst: NaiveDateTime, close_buffer: NaiveTime) -> N
             .date()
             .pred_opt()
             .expect("a date always has a predecessor")
+    }
+}
+
+/// The calendar-derived decision for a single target civil date (U9, KTD8), independent of
+/// the adoption posture. Computed purely from the injected calendar view (or its absence),
+/// so Shadow can RECORD it while the weekday path acts and Enforced can ACT on it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CalendarDecision {
+    /// A proven Trading Session: eligible to fetch (respecting the close buffer already
+    /// folded into `last_closed`).
+    Fetch,
+    /// A proven Closed date: skip the gateway call and advance coverage FROM closure
+    /// evidence (the provenance guard — never advanced on Unknown, KTD8).
+    ClosedAdvance,
+    /// A successful Unknown day fact: stop before dispatch, preserve state.
+    UnknownStop,
+    /// No calendar injected, or the date is out of range / erroring: stop before dispatch.
+    UnavailableStop,
+}
+
+/// The action the ingest next-fetch path takes for a target date under the adoption seam
+/// (U9, KTD8). Only Enforced ever yields anything but [`Proceed`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GateAction {
+    /// Run the existing weekday-authoritative (Legacy/Shadow) or proven-session (Enforced)
+    /// fetch path unchanged.
+    Proceed,
+    /// Enforced + proven Closed: advance the watermark to the target WITHOUT a gateway call.
+    SkipAdvance,
+    /// Enforced + Unknown/unavailable: stop before dispatch; preserve checkpoint + watermark
+    /// byte-for-byte and issue zero gateway requests for the target.
+    Stop,
+}
+
+/// The probe-anchor decision under the adoption seam (U9). Legacy/Shadow keep the weekday
+/// anchor authoritative (Shadow records the calendar-selected one); Enforced replaces it with
+/// the most recent proven Trading Session, or stops when none can be proven.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeAnchor {
+    /// Probe using this anchor date.
+    Use(NaiveDate),
+    /// Enforced + Unknown/unavailable: do not probe (zero gateway requests, nothing recorded).
+    Stop,
+}
+
+/// The adoption-INDEPENDENT calendar continuity verdict for an OPEN civil-date interval —
+/// the checkpoint merge-hole test (U10, KTD8). Legacy checkpoint ranges either side of a
+/// gap merge into one watermark ONLY when every intervening date is a proven Closed date; a
+/// proven Trading Session in the gap is un-attested history that must keep the ranges
+/// separate; Unknown/unavailable evidence is treated conservatively (stay separate +
+/// over-fetch) so newly-resolved evidence can re-chain the ranges later. Computed purely
+/// from the injected view, so Shadow can RECORD it while the weekday hole test acts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContinuityDecision {
+    /// Every intervening date is a proven Closed date (or the gap is empty) — contiguous,
+    /// ranges MERGE.
+    AllClosed,
+    /// A proven Trading Session lies in the gap — un-attested history, ranges STAY SEPARATE.
+    TradingPresent,
+    /// An Unknown or unavailable date lies in the gap with no proven Trading Session — the
+    /// conservative over-fetch verdict: ranges STAY SEPARATE until the evidence resolves.
+    Indeterminate,
+}
+
+impl ContinuityDecision {
+    /// Whether this verdict BREAKS the migration chain (keeps the ranges separate). Only a
+    /// fully-proven all-Closed gap chains; a proven Trading Session or indeterminate evidence
+    /// breaks it (the conservative default — never fold un-attested or unproven history).
+    pub fn breaks_chain(self) -> bool {
+        !matches!(self, ContinuityDecision::AllClosed)
+    }
+}
+
+/// The backward-widen warning action under the adoption seam (U10, KTD8). Legacy/Shadow keep
+/// the unconditional weekday warning authoritative (Shadow records the calendar verdict);
+/// Enforced gates the warning on proven calendar evidence in the pre-coverage region.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WidenAction {
+    /// Emit + PERSIST the normal backward-widen warning (Legacy/Shadow always; Enforced when
+    /// a proven Trading Session lies in the pre-coverage region — real un-fetched history).
+    EmitPersist,
+    /// Emit the DISTINCT NON-PERSISTED uncertainty warning (Enforced + Unknown/unavailable
+    /// evidence, no proven session): do NOT record a history floor, so a later run with
+    /// newly-resolved calendar evidence re-evaluates the region.
+    EmitUncertain,
+    /// Emit nothing (Enforced + an all-proven-Closed pre-coverage region — no trading history
+    /// was missed, so there is nothing to widen).
+    Suppress,
+}
+
+/// The per-consumer calendar seam injected into the ingest accumulate + lookback-probe
+/// boundaries (KTD8). Carries the adoption posture and, when a snapshot loaded and
+/// authorized, an [`AsOfView`]. `Copy` (the view is `Copy` — a borrow + an instant), so it
+/// threads cheaply through the per-triple loop. Construct [`legacy`](Self::legacy) for the
+/// weekday-only path or [`new`](Self::new) at the composition root.
+#[derive(Debug, Clone, Copy)]
+pub struct CalendarGate<'c> {
+    adoption: CalendarAdoption,
+    view: Option<AsOfView<'c>>,
+}
+
+impl<'c> CalendarGate<'c> {
+    /// A Legacy no-op gate: never consults a calendar, so the weekday primitives stay
+    /// authoritative and behavior is byte-identical to the pre-migration path. This is what
+    /// the un-gated [`Ingestor::run_accumulate`] / [`Ingestor::run_probe_lookback`] wrappers
+    /// inject so every existing caller (and test) is unchanged.
+    pub fn legacy() -> Self {
+        Self {
+            adoption: CalendarAdoption::Legacy,
+            view: None,
+        }
+    }
+
+    /// Build a gate for `adoption` with an optional as-of view (`None` = calendar unavailable
+    /// — a missing/failed snapshot, non-fatal in Shadow/Legacy, fail-closed in Enforced).
+    pub fn new(adoption: CalendarAdoption, view: Option<AsOfView<'c>>) -> Self {
+        Self { adoption, view }
+    }
+
+    /// The adoption posture this gate runs under.
+    pub fn adoption(&self) -> CalendarAdoption {
+        self.adoption
+    }
+
+    /// The adoption-INDEPENDENT calendar decision for `target` (U9). Consults the injected
+    /// view: a proven Trading Session → [`Fetch`](CalendarDecision::Fetch), proven Closed →
+    /// [`ClosedAdvance`](CalendarDecision::ClosedAdvance), a successful Unknown →
+    /// [`UnknownStop`](CalendarDecision::UnknownStop), and a missing view or any
+    /// out-of-range/query error → [`UnavailableStop`](CalendarDecision::UnavailableStop). This
+    /// is the value Shadow records and Enforced acts on.
+    pub fn calendar_decision(&self, target: NaiveDate) -> CalendarDecision {
+        match self.view {
+            None => CalendarDecision::UnavailableStop,
+            Some(view) => match view.day(target) {
+                Ok(fact) => match fact.status {
+                    DayStatus::TradingSession => CalendarDecision::Fetch,
+                    DayStatus::Closed => CalendarDecision::ClosedAdvance,
+                    DayStatus::Unknown => CalendarDecision::UnknownStop,
+                },
+                Err(_) => CalendarDecision::UnavailableStop,
+            },
+        }
+    }
+
+    /// The next-fetch action for `target` under the adoption seam (U9, KTD8). Legacy never
+    /// consults the calendar; Shadow computes + RECORDS the decision to the non-persisted
+    /// diagnostic channel but still yields [`Proceed`](GateAction::Proceed) so the weekday
+    /// path stays authoritative (byte-identical to Legacy); only Enforced lets the calendar
+    /// decide.
+    pub fn action(&self, target: NaiveDate) -> GateAction {
+        match self.adoption {
+            CalendarAdoption::Legacy => GateAction::Proceed,
+            CalendarAdoption::Shadow => {
+                let decision = self.calendar_decision(target);
+                // Non-persisted diagnostic channel only (tracing): a Shadow recording never
+                // touches a persisted artifact a Legacy reader consumes, so the accumulate
+                // request-count + checkpoint/watermark state stay byte-identical to Legacy.
+                tracing::info!(
+                    target = %fmt_ymd(target),
+                    decision = ?decision,
+                    adoption = "shadow",
+                    "calendar shadow next-fetch decision (recorded; weekday path authoritative)"
+                );
+                GateAction::Proceed
+            }
+            CalendarAdoption::Enforced => match self.calendar_decision(target) {
+                CalendarDecision::Fetch => GateAction::Proceed,
+                CalendarDecision::ClosedAdvance => GateAction::SkipAdvance,
+                CalendarDecision::UnknownStop | CalendarDecision::UnavailableStop => {
+                    GateAction::Stop
+                }
+            },
+        }
+    }
+
+    /// The next-fetch action for the INCLUSIVE range `[start, last_closed]` under the adoption
+    /// seam — the range-aware form of [`action`](Self::action) that guards advance-without-fetch
+    /// against false coverage. The single-date [`action`](Self::action) only inspects the
+    /// endpoint, but a SkipAdvance replaces a fetch of the WHOLE range `[start, last_closed]`
+    /// (`start` = watermark+1, or the lookback floor for the initial backfill); skip-advancing
+    /// when a Trading Session lies inside that span would mark it covered with zero bars. Scans
+    /// every date in the range (reusing [`scan_inclusive`](Self::scan_inclusive)): an
+    /// all-proven-Closed range (or a single proven-Closed date) →
+    /// [`SkipAdvance`](GateAction::SkipAdvance); any proven Trading Session →
+    /// [`Proceed`](GateAction::Proceed) (fetch the range, never skip a session); any
+    /// Unknown/unavailable date with no proven session → [`Stop`](GateAction::Stop). Legacy/Shadow
+    /// keep the weekday path authoritative (Shadow records the range verdict). Passing
+    /// `start == last_closed` recovers the single-date semantics exactly.
+    pub fn range_action(&self, start: NaiveDate, last_closed: NaiveDate) -> GateAction {
+        match self.adoption {
+            CalendarAdoption::Legacy => GateAction::Proceed,
+            CalendarAdoption::Shadow => {
+                let decision = self.scan_inclusive(start, last_closed);
+                tracing::info!(
+                    start = %fmt_ymd(start),
+                    last_closed = %fmt_ymd(last_closed),
+                    decision = ?decision,
+                    adoption = "shadow",
+                    "calendar shadow range next-fetch decision (recorded; weekday path authoritative)"
+                );
+                GateAction::Proceed
+            }
+            CalendarAdoption::Enforced => match self.scan_inclusive(start, last_closed) {
+                ContinuityDecision::AllClosed => GateAction::SkipAdvance,
+                ContinuityDecision::TradingPresent => GateAction::Proceed,
+                ContinuityDecision::Indeterminate => GateAction::Stop,
+            },
+        }
+    }
+
+    /// The most recent proven Trading Session at or before `anchor` in the injected view, or
+    /// `None` if there is no view, no proven session, or an `Unknown` sits at/before the
+    /// anchor with no proven session first (proof-preserving — an `Unknown` never manufactures
+    /// a session anchor). Used only under Enforced.
+    fn select_recent_session(&self, anchor: NaiveDate) -> Option<NaiveDate> {
+        let view = self.view?;
+        let coverage = view.calendar().coverage();
+        // Clamp the scan window to the materialized coverage; an anchor past the window end
+        // scans only within it (an out-of-window anchor cannot be proven a session itself).
+        let end = anchor.min(coverage.materialized_through);
+        let range = DateRange::inclusive(coverage.materialized_from, end).ok()?;
+        match view.last_session(&range) {
+            Ok(SessionSearch::Found(d)) => Some(d),
+            _ => None,
+        }
+    }
+
+    /// The probe anchor under the adoption seam (U9). Legacy/Shadow keep `weekday_anchor`
+    /// authoritative (Shadow records the calendar-selected anchor); Enforced replaces it with
+    /// the most recent proven Trading Session, or [`Stop`](ProbeAnchor::Stop) when the calendar
+    /// is unavailable or no session can be proven at/before the anchor.
+    pub fn probe_anchor(&self, weekday_anchor: NaiveDate) -> ProbeAnchor {
+        match self.adoption {
+            CalendarAdoption::Legacy => ProbeAnchor::Use(weekday_anchor),
+            CalendarAdoption::Shadow => {
+                let selected = self.select_recent_session(weekday_anchor);
+                tracing::info!(
+                    weekday_anchor = %fmt_ymd(weekday_anchor),
+                    calendar_anchor = ?selected.map(fmt_ymd),
+                    adoption = "shadow",
+                    "calendar shadow probe anchor (recorded; weekday anchor authoritative)"
+                );
+                ProbeAnchor::Use(weekday_anchor)
+            }
+            CalendarAdoption::Enforced => match self.select_recent_session(weekday_anchor) {
+                Some(d) => ProbeAnchor::Use(d),
+                None => ProbeAnchor::Stop,
+            },
+        }
+    }
+
+    /// Scan the half-open civil-date interval `[first, end_exclusive)` for the continuity
+    /// verdict (U10). A proven Trading Session short-circuits to
+    /// [`TradingPresent`](ContinuityDecision::TradingPresent) (the most conclusive break — real
+    /// un-attested history); any Unknown/unavailable date with no proven session yields
+    /// [`Indeterminate`](ContinuityDecision::Indeterminate); an all-proven-Closed (or empty)
+    /// span yields [`AllClosed`](ContinuityDecision::AllClosed). Consults `calendar_decision`
+    /// per date, so a missing view makes every probe unavailable → `Indeterminate` for any
+    /// non-empty span.
+    fn scan_continuity(&self, first: NaiveDate, end_exclusive: NaiveDate) -> ContinuityDecision {
+        let mut d = first;
+        let mut indeterminate = false;
+        while d < end_exclusive {
+            match self.calendar_decision(d) {
+                CalendarDecision::Fetch => return ContinuityDecision::TradingPresent,
+                CalendarDecision::ClosedAdvance => {}
+                CalendarDecision::UnknownStop | CalendarDecision::UnavailableStop => {
+                    indeterminate = true;
+                }
+            }
+            d = match d.succ_opt() {
+                Some(n) => n,
+                None => break,
+            };
+        }
+        if indeterminate {
+            ContinuityDecision::Indeterminate
+        } else {
+            ContinuityDecision::AllClosed
+        }
+    }
+
+    /// Scan the INCLUSIVE civil-date range `[start, last_closed]` for the continuity verdict,
+    /// reusing [`scan_continuity`](Self::scan_continuity) over the half-open
+    /// `[start, last_closed + 1)`. An empty range (`start > last_closed`) is vacuously
+    /// [`AllClosed`](ContinuityDecision::AllClosed). This is the range form the accumulate
+    /// advance-without-fetch guard scans (the fetch a SkipAdvance replaces covers the whole
+    /// range, not just the endpoint).
+    fn scan_inclusive(&self, start: NaiveDate, last_closed: NaiveDate) -> ContinuityDecision {
+        if start > last_closed {
+            return ContinuityDecision::AllClosed;
+        }
+        match last_closed.succ_opt() {
+            Some(end_exclusive) => self.scan_continuity(start, end_exclusive),
+            // `last_closed` is the maximum representable date (unreachable in practice); the
+            // half-open span already covers every date strictly before it, so the residual
+            // endpoint is the only date unscanned — treat the vacuous tail as all-Closed.
+            None => self.scan_continuity(start, last_closed),
+        }
+    }
+
+    /// The adoption-INDEPENDENT continuity verdict for the OPEN interval `(after, before)` —
+    /// the checkpoint merge-hole test (U10). Walks each civil date strictly between the two.
+    /// This is the value Shadow records and Enforced acts on (via
+    /// [`breaks_chain`](ContinuityDecision::breaks_chain)).
+    pub fn continuity_decision(&self, after: NaiveDate, before: NaiveDate) -> ContinuityDecision {
+        match after.succ_opt() {
+            Some(first) => self.scan_continuity(first, before),
+            None => ContinuityDecision::AllClosed,
+        }
+    }
+
+    /// The adoption-INDEPENDENT continuity verdict for the backward-widen pre-coverage region
+    /// `[floor, earliest_stored)` (U10) — the half-open span accumulate would NOT fetch. This
+    /// is the value Shadow records and Enforced acts on (via [`Self::widen_action`]).
+    pub fn widen_evidence(
+        &self,
+        floor: NaiveDate,
+        earliest_stored: NaiveDate,
+    ) -> ContinuityDecision {
+        self.scan_continuity(floor, earliest_stored)
+    }
+
+    /// The backward-widen warning action for the pre-coverage region `[floor, earliest_stored)`
+    /// under the adoption seam (U10, KTD8). Legacy always emits + persists the unconditional
+    /// warning; Shadow does too (weekday authoritative) while RECORDING the calendar verdict to
+    /// the non-persisted diagnostic channel (byte-identical to Legacy); Enforced acts on
+    /// [`widen_evidence`](Self::widen_evidence) — a proven Trading Session emits + persists, an
+    /// all-Closed region suppresses, and Unknown/unavailable emits the distinct non-persisted
+    /// uncertainty warning.
+    pub fn widen_action(&self, floor: NaiveDate, earliest_stored: NaiveDate) -> WidenAction {
+        match self.adoption {
+            CalendarAdoption::Legacy => WidenAction::EmitPersist,
+            CalendarAdoption::Shadow => {
+                let decision = self.widen_evidence(floor, earliest_stored);
+                tracing::info!(
+                    floor = %fmt_ymd(floor),
+                    earliest_stored = %fmt_ymd(earliest_stored),
+                    decision = ?decision,
+                    adoption = "shadow",
+                    "calendar shadow backward-widen verdict (recorded; weekday warning authoritative)"
+                );
+                WidenAction::EmitPersist
+            }
+            CalendarAdoption::Enforced => match self.widen_evidence(floor, earliest_stored) {
+                ContinuityDecision::TradingPresent => WidenAction::EmitPersist,
+                ContinuityDecision::AllClosed => WidenAction::Suppress,
+                ContinuityDecision::Indeterminate => WidenAction::EmitUncertain,
+            },
+        }
     }
 }
 
@@ -1017,6 +1369,25 @@ pub struct BackwardWidenWarning {
     pub earliest_stored: String,
 }
 
+/// A backward-widen uncertainty (U10/KTD8, Enforced only): the pre-coverage region
+/// `[floor, earliest_stored)` contains an Unknown or unavailable calendar date and NO proven
+/// Trading Session, so whether it holds un-fetched trading history is undetermined. Unlike
+/// [`BackwardWidenWarning`], this is deliberately NOT persisted (no `history_floor` is
+/// recorded), so a later run with newly-resolved calendar evidence re-evaluates the region
+/// and can escalate it to a real warning or clear it. Surfaced, never silent; never reddens
+/// CI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BackwardWidenUncertainty {
+    /// The instrument id (`{shcode}.XKRX`).
+    pub instrument: String,
+    /// The bar-type label (e.g. `1-DAY`).
+    pub bar_type: String,
+    /// The configured lookback floor (`YYYYMMDD`).
+    pub floor: String,
+    /// The earliest stored coverage date (`YYYYMMDD`) the floor precedes.
+    pub earliest_stored: String,
+}
+
 /// A symbol/triple deferred pre-dispatch because its estimated page cost exceeds
 /// the remaining measured budget (AE3/KTD-3): the ingest stopped before dispatching,
 /// preserved the checkpoint unchanged, and scheduled the remainder — no IGW00201 was
@@ -1057,6 +1428,11 @@ pub struct CoverageReport {
     /// Backward-widen loud no-ops (R4/KTD-6): triples whose lookback floor precedes
     /// their earliest stored coverage, so the pre-coverage region is unreachable.
     pub backward_widen_warnings: Vec<BackwardWidenWarning>,
+    /// Backward-widen uncertainties (U10/KTD8, Enforced only): triples whose pre-coverage
+    /// region has Unknown/unavailable calendar evidence and no proven Trading Session —
+    /// surfaced as a DISTINCT non-persisted warning so a later run with resolved evidence
+    /// re-evaluates. Always empty under Legacy/Shadow (weekday warning authoritative).
+    pub backward_widen_uncertainties: Vec<BackwardWidenUncertainty>,
     /// Triples deferred pre-dispatch under a measured budget (AE3/KTD-3) — stopped
     /// before the cliff with the remainder scheduled, never provoking IGW00201.
     pub budget_deferrals: Vec<BudgetDeferral>,
@@ -1328,6 +1704,7 @@ impl Ingestor {
             range_refusals,
             append_refusals,
             backward_widen_warnings: Vec::new(),
+            backward_widen_uncertainties: Vec::new(),
             budget_deferrals,
             budget,
         })
@@ -1360,11 +1737,40 @@ impl Ingestor {
         last_closed: NaiveDate,
         lookback_floor: NaiveDate,
     ) -> AdapterResult<CoverageReport> {
+        // The un-gated entry point is Legacy: the weekday primitives stay authoritative and
+        // behavior is byte-identical to the pre-migration path (every existing caller/test).
+        self.run_accumulate_gated(universe, last_closed, lookback_floor, CalendarGate::legacy())
+            .await
+    }
+
+    /// Accumulate-forward with an injected [`CalendarGate`] (U9, KTD8). Identical to
+    /// [`run_accumulate`](Self::run_accumulate) except the per-triple next-fetch is routed
+    /// through the calendar seam for the target session `last_closed`:
+    ///
+    /// - **Legacy / Shadow** — the weekday path is authoritative; Shadow additionally records
+    ///   the calendar decision to the non-persisted diagnostic channel (byte-identical to
+    ///   Legacy).
+    /// - **Enforced, proven Trading Session** — fetch as usual (the close buffer is already
+    ///   folded into `last_closed`).
+    /// - **Enforced, proven Closed** — skip the gateway call and advance the watermark to
+    ///   `last_closed` FROM closure evidence (never on Unknown — the provenance guard, KTD8).
+    /// - **Enforced, Unknown / unavailable** — stop before dispatch; the checkpoint + watermark
+    ///   are preserved byte-for-byte and zero gateway requests are issued for that target.
+    pub async fn run_accumulate_gated(
+        &mut self,
+        universe: &[InstrumentId],
+        last_closed: NaiveDate,
+        lookback_floor: NaiveDate,
+        calendar: CalendarGate<'_>,
+    ) -> AdapterResult<CoverageReport> {
         std::fs::create_dir_all(&self.config.catalog_path).map_err(|e| {
             AdapterError::Ingest(format!("mkdir catalog {}: {e}", self.config.catalog_path.display()))
         })?;
         let checkpoint_path = self.config.checkpoint_path();
-        let mut checkpoint = Checkpoint::load(&checkpoint_path)?;
+        // U10/KTD8: the legacy `completed`→`watermark` migration runs on load; route it
+        // through the same calendar seam so Enforced merges only fully-proven-Closed gaps
+        // (Legacy/Shadow stay weekday-authoritative and byte-identical).
+        let mut checkpoint = Checkpoint::load_gated(&checkpoint_path, &calendar)?;
         checkpoint.adjusted_prices = self.config.adjusted_prices;
 
         let mut bars_written = 0usize;
@@ -1374,6 +1780,7 @@ impl Ingestor {
         let mut heal_refusals: Vec<HealRefusal> = Vec::new();
         let mut append_refusals: Vec<AppendRefusal> = Vec::new();
         let mut backward_widen_warnings: Vec<BackwardWidenWarning> = Vec::new();
+        let mut backward_widen_uncertainties: Vec<BackwardWidenUncertainty> = Vec::new();
         let mut budget_deferrals: Vec<BudgetDeferral> = Vec::new();
 
         for id in universe {
@@ -1391,6 +1798,59 @@ impl Ingestor {
                 let heal_now = if matches!(kind, BarKind::Daily) && checkpoint.is_shifted(&instrument, &label) {
                     true
                 } else {
+                    // U9/KTD8 calendar next-fetch gate on the target session `last_closed`.
+                    // Legacy/Shadow fall through (weekday-authoritative; Shadow only records).
+                    // Enforced acts BEFORE any gateway request (backward-widen reads parquet,
+                    // detect_shift fetches) so Closed/Stop issue exactly zero requests.
+                    match calendar.action(last_closed) {
+                        GateAction::Proceed => {}
+                        GateAction::SkipAdvance => {
+                            // The endpoint `last_closed` is proven Closed, but the fetch this
+                            // SkipAdvance replaces covers the WHOLE range [start, last_closed]
+                            // (start = watermark+1, or lookback_floor for the initial backfill).
+                            // Advancing coverage over that span without a fetch is only safe when
+                            // EVERY date in it is proven Closed — otherwise a Trading Session in
+                            // the range would be silently skipped and marked covered with zero
+                            // bars (the "advance coverage without evidence" hazard, via the range
+                            // endpoint rather than the endpoint alone, KTD8). Re-scan the range.
+                            let wm = checkpoint.watermark(&instrument, &label);
+                            let start = match wm {
+                                Some(d) => d.succ_opt().expect("a date always has a successor"),
+                                None => lookback_floor,
+                            };
+                            match calendar.range_action(start, last_closed) {
+                                GateAction::SkipAdvance => {
+                                    // Whole range proven Closed: advance FROM closure evidence
+                                    // with NO gateway call — but only forward, never below the
+                                    // watermark (provenance guard; Unknown never reaches here).
+                                    if wm.map_or(true, |w| last_closed > w) {
+                                        checkpoint.set_watermark(&instrument, &label, last_closed);
+                                        checkpoint.save(&checkpoint_path)?;
+                                    }
+                                    skipped += 1;
+                                    continue;
+                                }
+                                GateAction::Stop => {
+                                    // An Unknown/unavailable date lies in the range with no
+                                    // proven session: stop before dispatch, preserve state.
+                                    skipped += 1;
+                                    continue;
+                                }
+                                GateAction::Proceed => {
+                                    // A proven Trading Session lies in the range: do NOT skip it.
+                                    // Fall through to the normal FETCH path (fetch the range as
+                                    // Legacy would), so the session is never silently skipped.
+                                }
+                            }
+                        }
+                        GateAction::Stop => {
+                            // Unknown/unavailable: stop before dispatch. No watermark advance,
+                            // no save on this triple — checkpoint + watermark preserved
+                            // byte-for-byte, zero gateway requests for this target.
+                            skipped += 1;
+                            continue;
+                        }
+                    }
                     let wm = checkpoint.watermark(&instrument, &label);
                     // R4/KTD-6 backward-widen loud no-op: accumulate fetches from
                     // watermark+1, never below it, so a floor earlier than the
@@ -1420,26 +1880,61 @@ impl Ingestor {
                         {
                             let earliest_stored = kst_date_of(UnixNanos::from(earliest_ns));
                             if lookback_floor < earliest_stored {
-                                tracing::warn!(
-                                    instrument = %instrument,
-                                    floor = %fmt_ymd(lookback_floor),
-                                    earliest = %fmt_ymd(earliest_stored),
-                                    "backward widen is a no-op: the lookback floor precedes the earliest stored coverage and accumulate never fetches below the watermark; recover the pre-coverage region with a fresh catalog at the wider lookback, or wipe + full re-pull"
-                                );
-                                backward_widen_warnings.push(BackwardWidenWarning {
-                                    instrument: instrument.clone(),
-                                    bar_type: label.clone(),
-                                    floor: fmt_ymd(lookback_floor),
-                                    earliest_stored: fmt_ymd(earliest_stored),
-                                });
-                                // Record the warned floor and persist it now: an
-                                // already-current late-listed triple is skipped
-                                // below (a bare `continue`, no save), so relying on
-                                // the per-triple save would lose the marker and the
-                                // symbol would re-warn every run — the exact noise
-                                // this closes.
-                                checkpoint.set_history_floor(&instrument, &label, lookback_floor);
-                                checkpoint.save(&checkpoint_path)?;
+                                // U10/KTD8: gate the widen warning on calendar evidence in the
+                                // pre-coverage region [floor, earliest_stored). Legacy/Shadow
+                                // keep the unconditional weekday warning (Shadow records the
+                                // calendar verdict, non-persisted); Enforced acts on proven
+                                // facts — a proven Trading Session still warns + persists, an
+                                // all-Closed region emits nothing, and Unknown/unavailable emits
+                                // the DISTINCT non-persisted uncertainty (no floor recorded, so a
+                                // later run with resolved evidence re-evaluates).
+                                match calendar.widen_action(lookback_floor, earliest_stored) {
+                                    WidenAction::EmitPersist => {
+                                        tracing::warn!(
+                                            instrument = %instrument,
+                                            floor = %fmt_ymd(lookback_floor),
+                                            earliest = %fmt_ymd(earliest_stored),
+                                            "backward widen is a no-op: the lookback floor precedes the earliest stored coverage and accumulate never fetches below the watermark; recover the pre-coverage region with a fresh catalog at the wider lookback, or wipe + full re-pull"
+                                        );
+                                        backward_widen_warnings.push(BackwardWidenWarning {
+                                            instrument: instrument.clone(),
+                                            bar_type: label.clone(),
+                                            floor: fmt_ymd(lookback_floor),
+                                            earliest_stored: fmt_ymd(earliest_stored),
+                                        });
+                                        // Record the warned floor and persist it now: an
+                                        // already-current late-listed triple is skipped
+                                        // below (a bare `continue`, no save), so relying on
+                                        // the per-triple save would lose the marker and the
+                                        // symbol would re-warn every run — the exact noise
+                                        // this closes.
+                                        checkpoint.set_history_floor(&instrument, &label, lookback_floor);
+                                        checkpoint.save(&checkpoint_path)?;
+                                    }
+                                    WidenAction::EmitUncertain => {
+                                        // Enforced + Unknown/unavailable evidence: the region MAY
+                                        // hold un-fetched trading history, but no proof yet.
+                                        // Surface it distinctly and DO NOT persist a floor, so a
+                                        // later run with newly-resolved evidence re-evaluates.
+                                        tracing::warn!(
+                                            instrument = %instrument,
+                                            floor = %fmt_ymd(lookback_floor),
+                                            earliest = %fmt_ymd(earliest_stored),
+                                            "backward widen is INDETERMINATE: the pre-coverage region has Unknown/unavailable calendar evidence and no proven Trading Session; whether it holds un-fetched history is undetermined — not persisted, re-evaluated when the calendar resolves"
+                                        );
+                                        backward_widen_uncertainties.push(BackwardWidenUncertainty {
+                                            instrument: instrument.clone(),
+                                            bar_type: label.clone(),
+                                            floor: fmt_ymd(lookback_floor),
+                                            earliest_stored: fmt_ymd(earliest_stored),
+                                        });
+                                    }
+                                    WidenAction::Suppress => {
+                                        // Enforced + an all-proven-Closed pre-coverage region: no
+                                        // trading history was missed, so there is nothing to
+                                        // widen. Emit nothing and record no floor.
+                                    }
+                                }
                             }
                         }
                     }
@@ -1708,6 +2203,7 @@ impl Ingestor {
             range_refusals: Vec::new(),
             append_refusals,
             backward_widen_warnings,
+            backward_widen_uncertainties,
             budget_deferrals,
             budget,
         })
@@ -2595,6 +3091,30 @@ impl Ingestor {
         anchor: NaiveDate,
         probed_at: String,
     ) -> AdapterResult<Option<MinuteLookback>> {
+        // The un-gated entry point is Legacy: the weekday anchor is authoritative.
+        self.run_probe_lookback_gated(pilot, ncnt, anchor, probed_at, CalendarGate::legacy())
+            .await
+    }
+
+    /// The staged max-lookback probe with an injected [`CalendarGate`] (U9, KTD8). Identical
+    /// to [`run_probe_lookback`](Self::run_probe_lookback) except the anchor is routed through
+    /// the calendar seam: Legacy/Shadow probe from the weekday `anchor` (Shadow records the
+    /// calendar-selected one); Enforced probes from the most recent proven Trading Session at
+    /// or before it, and STOPS (zero gateway requests, nothing recorded) when the calendar is
+    /// unavailable or no session can be proven at/before the anchor.
+    pub async fn run_probe_lookback_gated(
+        &self,
+        pilot: &str,
+        ncnt: u32,
+        anchor: NaiveDate,
+        probed_at: String,
+        calendar: CalendarGate<'_>,
+    ) -> AdapterResult<Option<MinuteLookback>> {
+        let anchor = match calendar.probe_anchor(anchor) {
+            ProbeAnchor::Use(a) => a,
+            // Enforced + Unknown/unavailable: do not touch the gateway, record nothing.
+            ProbeAnchor::Stop => return Ok(None),
+        };
         let earliest = probe_minute_lookback(&self.fetcher, pilot, ncnt, anchor, 7, 400).await?;
         match earliest {
             Some(d) => {

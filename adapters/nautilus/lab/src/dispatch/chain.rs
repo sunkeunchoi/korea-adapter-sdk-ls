@@ -37,7 +37,7 @@ use nautilus_ls::lock::{AdvisoryLock, LockKind};
 
 use crate::artifacts::manifest::hash_bytes;
 use crate::artifacts::scrub;
-use crate::dispatch::{CheckRecord, Deferral, RUNG_MIN};
+use crate::dispatch::{CheckRecord, Deferral, UnknownOverride, RUNG_MIN};
 
 /// The dispatch home directory name under `<data_home>/`.
 pub const DISPATCH_DIR: &str = "dispatch";
@@ -102,6 +102,10 @@ pub struct SessionDispatch {
     /// The readiness verdict summary this dispatch ran under, when computed (U9).
     #[serde(default)]
     pub readiness: Option<String>,
+    /// The attended Unknown-date override that authorized this dispatch, when a bound,
+    /// audited override proceeded an Unknown calendar date (U12, KTD8). Absent otherwise.
+    #[serde(default)]
+    pub unknown_override: Option<UnknownOverride>,
 }
 
 /// An escalation record's payload (R13, F2).
@@ -618,6 +622,13 @@ fn scrub_kind(kind: RecordKind) -> RecordKind {
             }
             for d in &mut s.deferrals {
                 d.reason = scrub(&d.reason);
+            }
+            if let Some(ov) = &mut s.unknown_override {
+                ov.reason = scrub(&ov.reason);
+                ov.operator = scrub(&ov.operator);
+                if let Some(note) = &ov.citation.note {
+                    ov.citation.note = Some(scrub(note));
+                }
             }
             RecordKind::SessionDispatch(s)
         }
