@@ -2655,4 +2655,261 @@ mod calendar_gate_migration {
         // depth = selected anchor (2010-06-15) − earliest served (2010-06-01) = 14 days.
         assert_eq!(out.depth_days, 14, "anchored at the proven session, not a later weekday");
     }
+
+    // -----------------------------------------------------------------------
+    // U10 (KTD8) — checkpoint merge continuity + backward-widen migration.
+    // Enforced merges a legacy `completed` gap ONLY when every intervening date
+    // is proven Closed; a proven Trading Session (un-attested history) or an
+    // Unknown/unavailable date (conservative over-fetch) keeps the ranges
+    // separate. Shadow records the calendar verdict but stays byte-identical to
+    // the weekday-authoritative Legacy path. The disagreement cases are chosen so
+    // the calendar verdict DIFFERS from the weekday result, proving the seam acts.
+    // -----------------------------------------------------------------------
+
+    use nautilus_ls::ingest::{kst_to_unix_nanos, write_bars};
+    use nautilus_ls::rules::KRX_REGULAR_CLOSE;
+    use nautilus_model::data::{Bar, BarType};
+    use nautilus_model::types::{Price, Quantity};
+
+    /// Migrate `ranges` for SAMSUNG/1-DAY under `gate` and return (derived watermark, the
+    /// per-triple remainder range lists).
+    fn migrate_with(gate: &CalendarGate, ranges: &[&str]) -> (Option<NaiveDate>, Vec<Vec<String>>) {
+        let mut cp = Checkpoint::default();
+        for r in ranges {
+            cp.mark_done(SAMSUNG, DAILY, r);
+        }
+        let rem = cp.migrate_completed_watermarks_gated(gate);
+        (
+            cp.watermark(SAMSUNG, DAILY),
+            rem.into_iter().map(|r| r.ranges).collect(),
+        )
+    }
+
+    /// Enforced merges a gap whose every intervening date is a proven Closed date (the
+    /// 2011-02-02..04 holiday cluster) — where Legacy's weekday hole test would SPLIT it.
+    #[test]
+    fn enforced_merges_an_all_closed_gap_that_legacy_splits() {
+        let cal = fixture_calendar();
+        let view = cal.as_of(as_of()).unwrap();
+        let enforced = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        // Gap open interval (2011-02-01, 2011-02-05) = {02-02, 02-03, 02-04}, all proven Closed.
+        let ranges = ["20110115..20110201", "20110205..20110210"];
+        let (wm, rem) = migrate_with(&enforced, &ranges);
+        assert_eq!(wm, Some(ymd(2011, 2, 10)), "an all-Closed holiday-cluster gap chains into one watermark");
+        assert!(rem.is_empty(), "no remainder — the ranges merged");
+
+        // Legacy (weekday) SPLITS the same gap: 02-02..04 are weekdays.
+        let (lwm, lrem) = migrate_with(&CalendarGate::legacy(), &ranges);
+        assert_eq!(lwm, Some(ymd(2011, 2, 1)), "Legacy stops before the weekday hole");
+        assert_eq!(lrem, vec![vec!["20110205..20110210".to_string()]]);
+    }
+
+    /// A proven Trading Session in the gap PREVENTS the merge under Enforced (un-attested
+    /// history must not be folded into the watermark).
+    #[test]
+    fn enforced_trading_session_in_the_gap_prevents_merge() {
+        let cal = fixture_calendar();
+        let view = cal.as_of(as_of()).unwrap();
+        let enforced = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        // Gap open (2010-06-14, 2010-06-16) = {2010-06-15}, a proven Trading Session.
+        let (wm, rem) = migrate_with(&enforced, &["20100610..20100614", "20100616..20100620"]);
+        assert_eq!(wm, Some(ymd(2010, 6, 14)), "the chain stops before the un-attested session");
+        assert_eq!(rem, vec![vec!["20100616..20100620".to_string()]]);
+    }
+
+    /// Unknown/unavailable evidence keeps the ranges SEPARATE under Enforced (conservative
+    /// over-fetch) — even a weekend-only gap that Legacy would MERGE, because the calendar has
+    /// no positive proof the weekend dates are non-trading.
+    #[test]
+    fn enforced_keeps_separate_across_an_unknown_gap_that_legacy_merges() {
+        let cal = fixture_calendar();
+        let view = cal.as_of(as_of()).unwrap();
+        let enforced = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        // Gap open (2010-01-08 Fri, 2010-01-11 Mon) = {01-09 Sat, 01-10 Sun}, both Unknown.
+        let ranges = ["20100104..20100108", "20100111..20100115"];
+        let (wm, rem) = migrate_with(&enforced, &ranges);
+        assert_eq!(wm, Some(ymd(2010, 1, 8)), "an unproven gap is not chained (conservative over-fetch)");
+        assert_eq!(rem, vec![vec!["20100111..20100115".to_string()]]);
+
+        // Legacy MERGES the weekend gap (no weekday strictly between Fri and Mon).
+        let (lwm, lrem) = migrate_with(&CalendarGate::legacy(), &ranges);
+        assert_eq!(lwm, Some(ymd(2010, 1, 15)), "Legacy merges across the weekend");
+        assert!(lrem.is_empty());
+    }
+
+    /// Shadow migration is byte-identical to Legacy even when the calendar DISAGREES: the
+    /// all-Closed gap Enforced would merge stays SPLIT under Shadow (weekday authoritative;
+    /// the calendar verdict is recorded only).
+    #[test]
+    fn shadow_migration_is_byte_identical_to_legacy_even_when_calendar_disagrees() {
+        let cal = fixture_calendar();
+        let view = cal.as_of(as_of()).unwrap();
+        let shadow = CalendarGate::new(CalendarAdoption::Shadow, Some(view));
+        let ranges = ["20110115..20110201", "20110205..20110210"];
+
+        let (swm, srem) = migrate_with(&shadow, &ranges);
+        let (lwm, lrem) = migrate_with(&CalendarGate::legacy(), &ranges);
+        assert_eq!(swm, lwm, "Shadow watermark identical to Legacy");
+        assert_eq!(srem, lrem, "Shadow remainders identical to Legacy");
+        assert_eq!(swm, Some(ymd(2011, 2, 1)), "…the weekday SPLIT result, not the Enforced merge");
+    }
+
+    // -- Backward-widen under the calendar seam --
+
+    fn samsung_daily_bt() -> BarType {
+        BarKind::Daily.bar_type(InstrumentId::from(SAMSUNG)).unwrap()
+    }
+
+    fn daily_bar(bt: BarType, date: NaiveDate, close: i64) -> Bar {
+        let ts = kst_to_unix_nanos(date, KRX_REGULAR_CLOSE).unwrap();
+        Bar::new(
+            bt,
+            Price::from((close - 5).to_string().as_str()),
+            Price::from((close + 10).to_string().as_str()),
+            Price::from((close - 10).to_string().as_str()),
+            Price::from(close.to_string().as_str()),
+            Quantity::from(1000),
+            ts,
+            ts,
+        )
+    }
+
+    async fn seed_bars(catalog: &Path, dates: &[NaiveDate]) {
+        let bt = samsung_daily_bt();
+        let bars: Vec<Bar> = dates.iter().map(|d| daily_bar(bt, *d, 60000)).collect();
+        write_bars(catalog, bars).await.unwrap();
+    }
+
+    fn read_history_floor(catalog: &Path) -> Option<NaiveDate> {
+        Checkpoint::load(&cp_path(catalog)).unwrap().history_floor(SAMSUNG, DAILY)
+    }
+
+    /// Enforced backward-widen: a proven Trading Session in the pre-coverage region emits +
+    /// PERSISTS the normal warning (real un-fetched history).
+    #[tokio::test]
+    async fn enforced_backward_widen_trading_session_warns_and_persists() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        // earliest stored = 2010-06-16; floor 2010-06-15 precedes it; [06-15, 06-16) = a proven
+        // Trading Session (2010-06-15).
+        seed_bars(&catalog, &[ymd(2010, 6, 16), ymd(2010, 6, 17)]).await;
+        seed_watermark(&catalog, ymd(2011, 6, 15));
+
+        let cal = fixture_calendar();
+        let view = cal.as_of(as_of()).unwrap();
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing
+            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2011, 6, 15), ymd(2010, 6, 15), gate)
+            .await
+            .unwrap();
+
+        assert_eq!(report.backward_widen_warnings.len(), 1, "proven Trading Session → the normal warning");
+        assert!(report.backward_widen_uncertainties.is_empty());
+        assert_eq!(count_t8410(&server).await, 0, "no fetch below the watermark");
+        assert_eq!(read_history_floor(&catalog), Some(ymd(2010, 6, 15)), "the floor is persisted (silences re-warns)");
+    }
+
+    /// Enforced backward-widen: an all-Closed pre-coverage region emits NOTHING and persists no
+    /// floor (no trading history was missed).
+    #[tokio::test]
+    async fn enforced_backward_widen_all_closed_region_is_silent() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        // earliest stored = 2011-02-05; floor 2011-02-02; [02-02, 02-05) = {02-02..04} all Closed.
+        seed_bars(&catalog, &[ymd(2011, 2, 5)]).await;
+        seed_watermark(&catalog, ymd(2011, 6, 15));
+
+        let cal = fixture_calendar();
+        let view = cal.as_of(as_of()).unwrap();
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing
+            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2011, 6, 15), ymd(2011, 2, 2), gate)
+            .await
+            .unwrap();
+
+        assert!(report.backward_widen_warnings.is_empty(), "all-Closed region → no warning");
+        assert!(report.backward_widen_uncertainties.is_empty(), "…and not an uncertainty either");
+        assert_eq!(count_t8410(&server).await, 0);
+        assert_eq!(read_history_floor(&catalog), None, "no floor recorded for an all-Closed region");
+    }
+
+    /// Enforced backward-widen: an Unknown/unavailable pre-coverage region emits the DISTINCT
+    /// non-persisted uncertainty warning — and because it is not persisted, a later run
+    /// RE-EVALUATES it (never silenced by a recorded floor).
+    #[tokio::test]
+    async fn enforced_backward_widen_unknown_region_is_uncertain_and_reevaluates() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        // earliest stored = 2010-01-06; floor 2010-01-04; [01-04, 01-06) = {01-04, 01-05} Unknown.
+        seed_bars(&catalog, &[ymd(2010, 1, 6)]).await;
+        seed_watermark(&catalog, ymd(2011, 6, 15));
+
+        let cal = fixture_calendar();
+        let view = cal.as_of(as_of()).unwrap();
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+
+        let r1 = ing
+            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2011, 6, 15), ymd(2010, 1, 4), gate)
+            .await
+            .unwrap();
+        assert!(r1.backward_widen_warnings.is_empty(), "Unknown region → not the normal warning");
+        assert_eq!(r1.backward_widen_uncertainties.len(), 1, "…but the distinct uncertainty warning");
+        assert_eq!(read_history_floor(&catalog), None, "the uncertainty is NOT persisted");
+
+        // A later run (same gate; the evidence has not resolved) re-evaluates and re-emits — the
+        // non-persistence is what lets newly-resolved evidence be reconsidered.
+        let r2 = ing
+            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2011, 6, 15), ymd(2010, 1, 4), gate)
+            .await
+            .unwrap();
+        assert_eq!(r2.backward_widen_uncertainties.len(), 1, "re-evaluated on the next run (not silenced)");
+    }
+
+    /// Run one backward-widen accumulate under `gate_for` over an all-Closed pre-coverage region
+    /// and return (normal warnings, uncertainties, persisted floor).
+    async fn widen_once(
+        gate_for: impl Fn(&'static KrxCalendar) -> CalendarGate<'static>,
+        cal: &'static KrxCalendar,
+    ) -> (usize, usize, Option<NaiveDate>) {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        seed_bars(&catalog, &[ymd(2011, 2, 5)]).await;
+        seed_watermark(&catalog, ymd(2011, 6, 15));
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing
+            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2011, 6, 15), ymd(2011, 2, 2), gate_for(cal))
+            .await
+            .unwrap();
+        (
+            report.backward_widen_warnings.len(),
+            report.backward_widen_uncertainties.len(),
+            read_history_floor(&catalog),
+        )
+    }
+
+    /// Shadow backward-widen is byte-identical to Legacy even where Enforced would SUPPRESS: an
+    /// all-Closed region still warns + persists under Shadow (weekday authoritative).
+    #[tokio::test]
+    async fn shadow_backward_widen_is_byte_identical_to_legacy() {
+        let cal: &'static KrxCalendar = Box::leak(Box::new(fixture_calendar()));
+        let legacy = widen_once(|_| CalendarGate::legacy(), cal).await;
+        let shadow = widen_once(
+            |c| CalendarGate::new(CalendarAdoption::Shadow, Some(c.as_of(as_of()).unwrap())),
+            cal,
+        )
+        .await;
+        assert_eq!(legacy, shadow, "Shadow backward-widen identical to Legacy (warns + persists), not the Enforced suppress");
+        assert_eq!(legacy, (1, 0, Some(ymd(2011, 2, 2))), "Legacy/Shadow warn once and persist the floor");
+    }
 }

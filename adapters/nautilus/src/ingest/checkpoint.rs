@@ -10,9 +10,11 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 
 use chrono::{Datelike, NaiveDate};
+use nautilus_ls_calendar::CalendarAdoption;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AdapterError, AdapterResult};
+use crate::ingest::{CalendarGate, ContinuityDecision};
 
 /// Per-series (instrument + bar type) cap on retained [`RebaseEvent`]s (U6/KTD7),
 /// oldest-dropped. Bounds the checkpoint-rewrite cost over the ~2,600-symbol
@@ -477,7 +479,71 @@ impl Checkpoint {
     /// `completed` and surface as a [`MigrationRemainder`]. Existing watermarks are
     /// never overridden, so a double-load derives nothing new (R3). Returns the
     /// per-triple remainders for the caller to warn about.
+    ///
+    /// The un-gated entry point is Legacy: the weekday hole test
+    /// ([`weekday_strictly_between`]) stays authoritative, so behavior is byte-identical to the
+    /// pre-migration path for every existing caller/test.
     pub fn migrate_completed_watermarks(&mut self) -> Vec<MigrationRemainder> {
+        self.migrate_completed_watermarks_gated(&CalendarGate::legacy())
+    }
+
+    /// Migrate legacy `completed` ranges to `watermarks` under an injected [`CalendarGate`]
+    /// (U10/KTD8). Identical to [`migrate_completed_watermarks`](Self::migrate_completed_watermarks)
+    /// except the merge-hole test is routed through the calendar seam:
+    ///
+    /// - **Legacy** — the weekday hole test ([`weekday_strictly_between`]) decides (a weekday in
+    ///   the gap breaks the chain).
+    /// - **Shadow** — the weekday hole test still decides (byte-identical to Legacy), but the
+    ///   calendar continuity verdict is RECORDED to the non-persisted diagnostic channel.
+    /// - **Enforced** — the calendar decides: ranges merge ONLY when every intervening date is a
+    ///   proven Closed date; a proven Trading Session in the gap breaks the chain (un-attested
+    ///   history), and Unknown/unavailable evidence breaks it too (conservative over-fetch, with
+    ///   a diagnostic) so newly-resolved evidence can re-chain the ranges on a later load.
+    pub fn migrate_completed_watermarks_gated(
+        &mut self,
+        gate: &CalendarGate,
+    ) -> Vec<MigrationRemainder> {
+        // The merge-hole test under the adoption seam: `true` breaks the chain (keeps the far
+        // range in `completed`). Legacy/Shadow keep the weekday result authoritative; Enforced
+        // acts on the calendar continuity verdict.
+        let hole_breaks = |cm: NaiveDate, sd: NaiveDate| -> bool {
+            match gate.adoption() {
+                CalendarAdoption::Legacy => weekday_strictly_between(cm, sd),
+                CalendarAdoption::Shadow => {
+                    let decision = gate.continuity_decision(cm, sd);
+                    let weekday = weekday_strictly_between(cm, sd);
+                    tracing::info!(
+                        after = %cm.format("%Y%m%d"),
+                        before = %sd.format("%Y%m%d"),
+                        calendar_decision = ?decision,
+                        weekday_breaks = weekday,
+                        adoption = "shadow",
+                        "calendar shadow checkpoint continuity verdict (recorded; weekday hole test authoritative)"
+                    );
+                    weekday
+                }
+                CalendarAdoption::Enforced => {
+                    let decision = gate.continuity_decision(cm, sd);
+                    if matches!(decision, ContinuityDecision::Indeterminate) {
+                        tracing::warn!(
+                            after = %cm.format("%Y%m%d"),
+                            before = %sd.format("%Y%m%d"),
+                            "checkpoint continuity INDETERMINATE: Unknown/unavailable calendar evidence in the gap and no proven Trading Session; keeping the ranges separate (conservative over-fetch) until the evidence resolves"
+                        );
+                    }
+                    decision.breaks_chain()
+                }
+            }
+        };
+        self.migrate_completed_watermarks_inner(hole_breaks)
+    }
+
+    /// The shared migration transform (U2/U10), parameterized on the merge-hole predicate so the
+    /// weekday (Legacy/Shadow) and calendar (Enforced) paths share one implementation.
+    fn migrate_completed_watermarks_inner(
+        &mut self,
+        hole_breaks: impl Fn(NaiveDate, NaiveDate) -> bool,
+    ) -> Vec<MigrationRemainder> {
         // Ranges keyed by (instrument, bar type), only for triples lacking a
         // watermark (derive into absent keys only, R3). Each range is
         // (start date, end date, raw range key).
@@ -534,7 +600,7 @@ impl Checkpoint {
                 match chain_max {
                     None => chain_max = Some(*ed),
                     Some(cm) => {
-                        if weekday_strictly_between(cm, *sd) {
+                        if hole_breaks(cm, *sd) {
                             broke = true;
                             remainder_ranges.push(raw.clone());
                         } else {
@@ -573,12 +639,25 @@ impl Checkpoint {
     ///
     /// [`AdapterError::Ingest`] if the file exists but cannot be read/parsed.
     pub fn load(path: &Path) -> AdapterResult<Self> {
+        Self::load_gated(path, &CalendarGate::legacy())
+    }
+
+    /// Load a checkpoint from `path` under an injected [`CalendarGate`] (U10/KTD8): the
+    /// legacy `completed`→`watermarks` migration's merge-hole test is routed through the
+    /// calendar seam. Legacy (what [`load`](Self::load) injects) keeps the weekday hole test
+    /// authoritative — byte-identical to the pre-migration path; Shadow records the calendar
+    /// verdict; Enforced merges only fully-proven-Closed gaps.
+    ///
+    /// # Errors
+    ///
+    /// [`AdapterError::Ingest`] if the file exists but cannot be read/parsed.
+    pub fn load_gated(path: &Path, gate: &CalendarGate) -> AdapterResult<Self> {
         match std::fs::read_to_string(path) {
             Ok(s) => {
                 let mut cp: Self = serde_json::from_str(&s).map_err(|e| {
                     AdapterError::Ingest(format!("corrupt checkpoint {}: {e}", path.display()))
                 })?;
-                for rem in cp.migrate_completed_watermarks() {
+                for rem in cp.migrate_completed_watermarks_gated(gate) {
                     tracing::warn!(
                         instrument = %rem.instrument,
                         bar_type = %rem.bar_type,
