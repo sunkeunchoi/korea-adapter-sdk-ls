@@ -556,6 +556,7 @@ fn parse_symbol_ids(list: &str) -> Vec<InstrumentId> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::TimeZone;
     use nautilus_ls::ingest::{AppendRefusal, BackwardWidenWarning, BudgetEstimate, HealRefusal, RangeRefusal};
 
     /// A zero-refusal, zero-warning coverage report — the base each case mutates.
@@ -654,6 +655,21 @@ mod tests {
         std::env::set_var("LS_TEST_FLAG_XYZ", "0");
         assert!(!env_flag("LS_TEST_FLAG_XYZ"), "0 → false");
         std::env::remove_var("LS_TEST_FLAG_XYZ");
+    }
+
+    #[test]
+    fn automatic_calendar_target_is_the_close_buffer_civil_ceiling() {
+        let after = Utc.with_ymd_and_hms(2026, 7, 18, 8, 0, 0).unwrap(); // 17:00 KST Saturday
+        let before = Utc.with_ymd_and_hms(2026, 7, 18, 6, 0, 0).unwrap(); // 15:00 KST Saturday
+
+        assert_eq!(
+            calendar_target_for_mode("accumulate", after).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 7, 18).unwrap()
+        );
+        assert_eq!(
+            calendar_target_for_mode("probe-lookback", before).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 7, 17).unwrap()
+        );
     }
 
     mod stratified {

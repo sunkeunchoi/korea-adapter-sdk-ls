@@ -2370,7 +2370,10 @@ mod calendar_gate_migration {
     use std::path::PathBuf;
     use chrono::{DateTime, TimeZone, Utc};
     use nautilus_ls::ingest::{CalendarGate, GateAction, ProbeAnchor};
-    use nautilus_ls_calendar::{CalendarAdoption, KrxCalendar};
+    use nautilus_ls_calendar::{
+        compute_artifact_id, compute_calendar_id, CalendarAdoption, KrxCalendar,
+    };
+    use nautilus_ls_calendar::schema::DayStatus;
 
     const SAMSUNG: &str = "005930.XKRX";
     const DAILY: &str = "1-DAY";
@@ -2385,6 +2388,43 @@ mod calendar_gate_migration {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("nautilus-ls-calendar/fixtures/base_2010_2012.json");
         KrxCalendar::load_from_path(&path, as_of()).expect("fixture calendar loads")
+    }
+
+    fn calendar_with_statuses(statuses: &[(NaiveDate, DayStatus)]) -> KrxCalendar {
+        let mut snapshot = fixture_calendar().snapshot().clone();
+        for (date, status) in statuses {
+            snapshot.rows.iter_mut().find(|row| row.date == *date).unwrap().status = *status;
+        }
+        snapshot.artifact_id.clear();
+        snapshot.calendar_id.clear();
+        snapshot.artifact_id = compute_artifact_id(&snapshot);
+        snapshot.calendar_id = compute_calendar_id(&snapshot);
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("counterfactual-calendar.json");
+        std::fs::write(&path, serde_json::to_vec_pretty(&snapshot).unwrap()).unwrap();
+        KrxCalendar::load_from_path(&path, as_of()).unwrap()
+    }
+
+    async fn t8410_ranges(server: &MockServer) -> Vec<(String, String)> {
+        server
+            .received_requests()
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|request| {
+                request.url.path() == CHART_PATH
+                    && request.headers.get("tr_cd").and_then(|v| v.to_str().ok())
+                        == Some("t8410")
+            })
+            .map(|request| {
+                let body: serde_json::Value = serde_json::from_slice(&request.body).unwrap();
+                let input = &body["t8410InBlock"];
+                (
+                    input["sdate"].as_str().unwrap().to_string(),
+                    input["edate"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
     }
 
     fn cp_path(catalog: &Path) -> PathBuf {
@@ -2473,7 +2513,7 @@ mod calendar_gate_migration {
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
         // last_closed = 2010-06-15 is a proven Trading Session.
         let report = ing
-            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2010, 6, 15), ymd(2010, 6, 14), gate)
+            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2010, 6, 15), ymd(2010, 6, 15), gate)
             .await
             .unwrap();
 
@@ -2545,36 +2585,29 @@ mod calendar_gate_migration {
     // EVERY date in it is proven Closed — a proven Trading Session in the span would
     // otherwise be silently skipped and marked covered with zero bars (false coverage).
 
-    /// Enforced, MULTI-DAY initial backfill (no watermark, start = lookback_floor) whose
-    /// endpoint `last_closed` is proven Closed but an INTERVENING date is a proven Trading
-    /// Session: the range MUST be fetched (request observable), not skip-advanced over.
-    /// Range [2010-06-14 .. 2010-06-19]: 06-15 & 06-17 are Trading Sessions, 06-19 is Closed.
+    /// A later Trading Session cannot outrank the first Unknown. The authorized prefix ends
+    /// at 06-15; 06-17 and the trailing Closed dates remain beyond the stop boundary.
     #[tokio::test]
-    async fn enforced_closed_endpoint_but_intervening_session_fetches_the_range() {
+    async fn enforced_later_session_does_not_cross_the_first_unknown() {
         let dir = tempdir().unwrap();
         let catalog = dir.path().join("catalog");
         let server = MockServer::start().await;
         let sdk = sdk_over(&server, daily_body_three_rows()).await;
-        // No watermark seeded → start = lookback_floor (the initial multi-day backfill).
-
         let cal = fixture_calendar();
         let view = cal.as_of(as_of()).unwrap();
         let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
-        // last_closed = 2010-06-19 (Closed) but the range back to the floor 2010-06-14
-        // straddles the 06-15/06-17 Trading Sessions.
-        let report = ing
-            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2010, 6, 19), ymd(2010, 6, 14), gate)
+        ing
+            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2010, 6, 19), ymd(2010, 6, 15), gate)
             .await
             .unwrap();
 
-        // The intervening Trading Session is fetched — NOT skip-advanced over with zero bars.
-        assert!(count_t8410(&server).await >= 1, "the range with a Trading Session is fetched, not skipped");
-        assert!(report.bars_written > 0, "bars for the fetched range are written");
-        assert_eq!(report.triples_ingested, 1);
-        // The watermark advances only because the range was actually fetched.
-        assert_eq!(read_watermark(&catalog), Some(ymd(2010, 6, 19)), "watermark advances over a FETCHED range");
+        assert_eq!(
+            t8410_ranges(&server).await,
+            vec![("20100615".to_string(), "20100615".to_string())]
+        );
+        assert_eq!(read_watermark(&catalog), Some(ymd(2010, 6, 15)));
     }
 
     /// Enforced, MULTI-DAY range whose EVERY date is proven Closed (no watermark, start =
@@ -2633,6 +2666,75 @@ mod calendar_gate_migration {
         assert_eq!(read_watermark(&catalog), Some(ymd(2010, 6, 17)), "watermark preserved (no advance over Unknown)");
         let after = std::fs::read(&cp_path(&catalog)).unwrap();
         assert_eq!(before, after, "checkpoint file byte-for-byte identical");
+    }
+
+    #[tokio::test]
+    async fn enforced_mixed_span_fetches_and_commits_only_the_established_prefix() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        let cal = calendar_with_statuses(&[
+            (ymd(2010, 6, 15), DayStatus::TradingSession),
+            (ymd(2010, 6, 16), DayStatus::Closed),
+            (ymd(2010, 6, 17), DayStatus::Unknown),
+            (ymd(2010, 6, 18), DayStatus::TradingSession),
+        ]);
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(cal.as_of(as_of()).unwrap()));
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        ing.run_accumulate_gated(
+            &[InstrumentId::from(SAMSUNG)],
+            ymd(2010, 6, 18),
+            ymd(2010, 6, 15),
+            gate,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            t8410_ranges(&server).await,
+            vec![("20100615".to_string(), "20100615".to_string())],
+            "the request ends on the last session before Unknown"
+        );
+        assert_eq!(
+            read_watermark(&catalog),
+            Some(ymd(2010, 6, 16)),
+            "successful fetch may commit the proven trailing Closed date, but not Unknown"
+        );
+    }
+
+    #[tokio::test]
+    async fn enforced_incomplete_fetch_does_not_commit_trailing_closures() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_empty()).await;
+        let cal = calendar_with_statuses(&[
+            (ymd(2010, 6, 15), DayStatus::TradingSession),
+            (ymd(2010, 6, 16), DayStatus::Closed),
+        ]);
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(cal.as_of(as_of()).unwrap()));
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        ing.run_accumulate_gated(
+            &[InstrumentId::from(SAMSUNG)],
+            ymd(2010, 6, 16),
+            ymd(2010, 6, 15),
+            gate,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            t8410_ranges(&server).await,
+            vec![("20100615".to_string(), "20100615".to_string())]
+        );
+        assert_eq!(
+            read_watermark(&catalog),
+            None,
+            "empty-history uncertainty cannot authorize the session or trailing closure"
+        );
     }
 
     // -- Shadow byte-equivalence to Legacy --
@@ -2707,6 +2809,23 @@ mod calendar_gate_migration {
         // Shadow keeps the weekday anchor authoritative even on a disagreeing (Unknown) date.
         let shadow = CalendarGate::new(CalendarAdoption::Shadow, Some(view));
         assert_eq!(shadow.probe_anchor(ymd(2010, 1, 5)), ProbeAnchor::Use(ymd(2010, 1, 5)));
+    }
+
+    #[test]
+    fn enforced_probe_walks_only_the_reachable_established_suffix() {
+        let cal = calendar_with_statuses(&[
+            (ymd(2010, 6, 15), DayStatus::TradingSession),
+            (ymd(2010, 6, 16), DayStatus::Closed),
+            (ymd(2010, 6, 17), DayStatus::Unknown),
+        ]);
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(cal.as_of(as_of()).unwrap()));
+
+        assert_eq!(gate.probe_anchor(ymd(2010, 6, 16)), ProbeAnchor::Use(ymd(2010, 6, 15)));
+        assert_eq!(
+            gate.probe_anchor(ymd(2010, 6, 17)),
+            ProbeAnchor::Stop,
+            "the probe cannot jump backward across an Unknown boundary"
+        );
     }
 
     /// Enforced probe: an Unknown anchor STOPS before dispatch — zero t8412 requests, nothing
