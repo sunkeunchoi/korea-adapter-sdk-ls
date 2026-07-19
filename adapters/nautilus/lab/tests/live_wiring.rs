@@ -241,6 +241,7 @@ fn seed_green_dispatch(home: &std::path::Path, now_unix: i64) -> String {
                 checks: Vec::new(),
                 deferrals: Vec::new(),
                 readiness: None,
+                unknown_override: None,
             }),
         )
         .unwrap();

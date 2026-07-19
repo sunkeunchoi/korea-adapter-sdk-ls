@@ -31,6 +31,7 @@ fn empty_dispatch() -> SessionDispatch {
         checks: Vec::new(),
         deferrals: Vec::new(),
         readiness: None,
+        unknown_override: None,
     }
 }
 

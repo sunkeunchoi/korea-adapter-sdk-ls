@@ -471,6 +471,7 @@ mod tests {
                     checks: Vec::new(),
                     deferrals: Vec::new(),
                     readiness: None,
+                    unknown_override: None,
                 }),
             )
             .unwrap();

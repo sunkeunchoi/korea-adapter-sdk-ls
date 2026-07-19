@@ -19,6 +19,7 @@ pub mod prereg;
 pub mod readiness;
 pub mod tracking;
 
+use nautilus_ls_calendar::schema::Citation;
 use serde::{Deserialize, Serialize};
 
 /// The suspended state below rung 1: paper-only, no live sessions.
@@ -83,4 +84,55 @@ pub struct Deferral {
     pub item: String,
     /// The operator-supplied reason — scrubbed before the record lands.
     pub reason: String,
+}
+
+/// A narrowly-audited attended override of an **Unknown** calendar date (U12, KTD8). It
+/// flips ONLY an Unknown-date refusal — never Closed, Unavailable, authorization, integrity,
+/// schema, availability, coverage, or the time-of-day window — and it NEVER changes the
+/// calendar status. It is bound to the exact KST date and the current run, and carries the
+/// full audit a reviewer needs: operator, run id, authorization instant, snapshot identity,
+/// the relevant alerts, a reason, and a STRUCTURED first-party [`Citation`] (the same shape
+/// the reconciliation layer accepts for notices — never free text, so an operator cannot
+/// authorize dispatch on a real closure with an unverifiable justification).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct UnknownOverride {
+    /// The exact KST civil date (`YYYY-MM-DD`) this override authorizes.
+    pub kst_date: String,
+    /// The exact dispatch run this override is bound to.
+    pub run_id: String,
+    /// The operator who authorized the override (audit).
+    pub operator: String,
+    /// The unix-seconds instant the override was authorized (audit).
+    pub authorized_at_unix: i64,
+    /// The snapshot `artifact_id` in force when the override was authorized (audit).
+    pub snapshot_artifact_id: String,
+    /// The snapshot `calendar_id` in force when the override was authorized (audit).
+    pub snapshot_calendar_id: String,
+    /// The relevant calendar alert ids/messages the operator reviewed (audit).
+    #[serde(default)]
+    pub alerts: Vec<String>,
+    /// The operator-supplied reason — scrubbed before the record lands.
+    pub reason: String,
+    /// The structured, verifiable first-party basis (never free text).
+    pub citation: Citation,
+}
+
+impl UnknownOverride {
+    /// Whether every required audit field is present (a blank operator, reason, run id,
+    /// KST date, or citation reference/issuer makes the override non-authorizing — a
+    /// well-formed structured citation is mandatory, so an unverifiable basis cannot pass).
+    pub fn is_well_formed(&self) -> bool {
+        !self.kst_date.trim().is_empty()
+            && !self.run_id.trim().is_empty()
+            && !self.operator.trim().is_empty()
+            && !self.reason.trim().is_empty()
+            && !self.citation.reference.trim().is_empty()
+            && !self.citation.issuer.trim().is_empty()
+    }
+
+    /// Whether this override covers the given KST date + run exactly (and is well-formed).
+    /// A different date or a different run is NOT covered.
+    pub fn covers(&self, kst_date: &str, run_id: &str) -> bool {
+        self.is_well_formed() && self.kst_date == kst_date && self.run_id == run_id
+    }
 }

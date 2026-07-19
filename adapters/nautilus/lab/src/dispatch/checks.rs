@@ -14,19 +14,24 @@
 //! empty-store-with-current-watermark trap (a fresh watermark paired with a bar-presence
 //! sample).
 
-use chrono::{DateTime, Datelike, Timelike, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, Timelike, Utc};
 use chrono_tz::Asia::Seoul;
 
 use nautilus_ls::error::AdapterResult;
 use nautilus_ls::execution::LsExecClient;
+use nautilus_ls_calendar::schema::DayStatus;
+use nautilus_ls_calendar::AsOfView;
 
 use crate::artifacts::scrub;
 use crate::dispatch::readiness::ReadinessVerdict;
-use crate::dispatch::{CheckRecord, CheckStatus, Deferral, Tier};
+use crate::dispatch::{CheckRecord, CheckStatus, Deferral, Tier, UnknownOverride};
 
 /// Stable check names (used in records, deferral lists, and exceedance counts).
 pub const CHECK_ADVISORY_LOCK: &str = "advisory_lock";
 pub const CHECK_TRADING_ENV: &str = "trading_env_interlock";
+/// The tri-state calendar DATE fact (Trading Session / Closed / Unknown / Unavailable),
+/// split out of the old fused `session_window` (U12).
+pub const CHECK_CALENDAR_DATE: &str = "calendar_date";
 pub const CHECK_SESSION_WINDOW: &str = "session_window";
 pub const CHECK_WATERMARK: &str = "catalog_watermark";
 pub const CHECK_FLAT_START: &str = "flat_start";
@@ -36,29 +41,89 @@ pub const CHECK_BUDGET: &str = "budget_headroom";
 pub const CHECK_RUNG_AUTH: &str = "rung_authorization";
 pub const CHECK_READINESS: &str = "readiness_verdict";
 
-/// A "is this a trading session" seam (Dependencies). Today's implementation is
-/// weekday-only; a KRX holiday calendar upgrade drops in without redesign.
-pub trait TradingCalendar {
-    /// Whether `now` (UTC) falls inside an open KRX trading session.
-    fn is_trading_session(&self, now: DateTime<Utc>) -> bool;
+/// The tri-state calendar DATE fact for a KST civil date (U12, KTD8), SPLIT out of the
+/// old fused weekday `window_open` boolean. A single bool could not distinguish a proven
+/// closure from an evidentially-unknown date from a calendar load/use/query failure — the
+/// Production Ladder date gate must branch on all four (see the flowchart), so the date
+/// fact is a distinct value from the preserved time-of-day window.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CalendarDateFact {
+    /// A regular KRX domestic-equity Trading Session positively holds on this KST date.
+    TradingSession,
+    /// The venue is proven Closed on this KST date — refused with NO override.
+    Closed,
+    /// Maintained evidence does not cover this KST date — refused BY DEFAULT; only a bound,
+    /// audited attended Unknown override proceeds.
+    Unknown,
+    /// The calendar could not be loaded/used/queried (missing snapshot, expired
+    /// authorization, out-of-range, corruption, …) — refused with NO override. A typed
+    /// failure, never conflated with `Unknown`.
+    Unavailable,
 }
 
-/// The weekday-only KRX session window (09:00–15:30 KST, Mon–Fri). Inherits today's
-/// logic until the separate session-truth calendar lands (Dependencies) — a KRX holiday
-/// passes this check until then.
+/// A "is this a trading session" seam (Dependencies), SPLIT into the DATE fact and the
+/// time-of-day window (U12). The date fact is a proven tri-state calendar fact; the time
+/// window is the PRESERVED 09:00–15:30 KST minute test. `WeekdayKrxCalendar` remains the
+/// Legacy/Shadow implementation; `KrxCalendar` is adapted onto the date fact under Enforced
+/// via [`date_fact_from_view`].
+pub trait TradingCalendar {
+    /// The tri-state DATE fact for the KST civil date of `now` (date-of-day only).
+    fn date_fact(&self, now: DateTime<Utc>) -> CalendarDateFact;
+
+    /// Whether `now` falls inside the PRESERVED 09:00–15:30 KST minute window
+    /// (time-of-day only — the unchanged half of the old fused test).
+    fn in_time_window(&self, now: DateTime<Utc>) -> bool;
+
+    /// Back-compat fused convenience: a session is open iff the date is a proven Trading
+    /// Session AND the time-of-day is inside the window. Retained so existing callers of
+    /// the seam (and its unit test) keep working; the gate itself consumes the two split
+    /// parts.
+    fn is_trading_session(&self, now: DateTime<Utc>) -> bool {
+        self.date_fact(now) == CalendarDateFact::TradingSession && self.in_time_window(now)
+    }
+}
+
+/// The weekday-only KRX date fact (Mon–Fri = Trading Session, Sat/Sun = Closed) + the
+/// preserved 09:00–15:30 KST minute window. The Legacy/Shadow implementation: a KRX
+/// holiday still reads as a Trading Session here (it never yields `Unknown`), so Enforced
+/// (the real `KrxCalendar`) is what closes that gap.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WeekdayKrxCalendar;
 
 impl TradingCalendar for WeekdayKrxCalendar {
-    fn is_trading_session(&self, now: DateTime<Utc>) -> bool {
-        let kst = now.with_timezone(&Seoul);
-        let weekday = kst.weekday();
+    fn date_fact(&self, now: DateTime<Utc>) -> CalendarDateFact {
+        let weekday = now.with_timezone(&Seoul).weekday();
         if weekday == chrono::Weekday::Sat || weekday == chrono::Weekday::Sun {
-            return false;
+            CalendarDateFact::Closed
+        } else {
+            CalendarDateFact::TradingSession
         }
-        // 09:00–15:30 KST inclusive of the open, exclusive of the close minute.
+    }
+
+    fn in_time_window(&self, now: DateTime<Utc>) -> bool {
+        let kst = now.with_timezone(&Seoul);
+        // 09:00–15:30 KST inclusive of the open, exclusive of the close minute. PRESERVED
+        // byte-for-byte from the pre-U12 fused test.
         let minutes = kst.hour() * 60 + kst.minute();
         (9 * 60..=15 * 60 + 30).contains(&minutes)
+    }
+}
+
+/// Adapt an optional as-of `KrxCalendar` view (Enforced) + the KST civil date into the
+/// tri-state [`CalendarDateFact`] (KTD2/KTD8). No injected view, or any query failure
+/// (out-of-range / use failure), maps to [`CalendarDateFact::Unavailable`] — never to
+/// `Unknown` (which is reserved for a materialized "no covering evidence" day fact).
+pub fn date_fact_from_view(view: Option<&AsOfView>, kst_date: NaiveDate) -> CalendarDateFact {
+    let Some(view) = view else {
+        return CalendarDateFact::Unavailable;
+    };
+    match view.day(kst_date) {
+        Ok(fact) => match fact.status {
+            DayStatus::TradingSession => CalendarDateFact::TradingSession,
+            DayStatus::Closed => CalendarDateFact::Closed,
+            DayStatus::Unknown => CalendarDateFact::Unknown,
+        },
+        Err(_) => CalendarDateFact::Unavailable,
     }
 }
 
@@ -121,8 +186,20 @@ pub struct DispatchContext {
     /// Whether a live session currently holds the Live advisory lock.
     pub live_lock_held: bool,
 
-    /// Whether the session window is open (calendar seam).
+    /// The tri-state calendar DATE fact for `today_kst` (U12) — SPLIT from the fused
+    /// weekday `window_open`. Under Legacy/Shadow this is the weekday result; under
+    /// Enforced it is the `KrxCalendar` fact (or `Unavailable` on a load/use/query failure).
+    pub date_fact: CalendarDateFact,
+    /// Whether the PRESERVED 09:00–15:30 KST minute window (time-of-day only) is open. The
+    /// date decision now lives in [`date_fact`](Self::date_fact); this bool is unchanged.
     pub window_open: bool,
+    /// The current dispatch run identity the attended Unknown override binds to (U12). An
+    /// override only proceeds an Unknown date when its `run_id` matches this value.
+    pub run_id: String,
+    /// An attended Unknown-date override bound to this exact KST date + run (U12). When
+    /// present, well-formed, and covering (`date_fact == Unknown` only), it flips ONLY an
+    /// Unknown-date refusal — never Closed, Unavailable, or any other check.
+    pub unknown_override: Option<UnknownOverride>,
 
     /// Whether the catalog watermark is fresh.
     pub watermark_fresh: bool,
@@ -223,17 +300,72 @@ pub fn check_trading_env(ctx: &DispatchContext) -> CheckOutcome {
     }
 }
 
-/// The session-window check (deferrable): red outside the KRX session window / on a
-/// weekend.
+/// The calendar DATE check (U12) — the DATE half of the old fused session window,
+/// branching on the tri-state [`CalendarDateFact`] per the flowchart. Non-deferrable so
+/// the blunt `LS_DISPATCH_DEFER` surface can NEVER proceed a Closed/Unavailable/Unknown
+/// date; only the narrow, bound, audited attended Unknown override (applied here) proceeds
+/// an Unknown — and nothing proceeds a Closed or Unavailable.
+///
+/// - Trading Session → Green.
+/// - Closed → non-deferrable Red (no override).
+/// - Unavailable (load/use/query failure) → non-deferrable Red (no override).
+/// - Unknown → non-deferrable Red BY DEFAULT, flipped to GreenWithNote only when a bound,
+///   well-formed override covers this exact KST date + run. The calendar status is never
+///   changed — the override only authorizes proceeding.
+pub fn check_calendar_date(ctx: &DispatchContext) -> CheckOutcome {
+    // Non-deferrable: the blunt `LS_DISPATCH_DEFER` surface can never proceed a
+    // Closed/Unavailable/Unknown date. Only the narrow attended Unknown override (applied
+    // here, and only to an Unknown) proceeds.
+    let red = |detail: &str| {
+        CheckOutcome::new(CHECK_CALENDAR_DATE, Tier::NonDeferrable, CheckStatus::Red, detail)
+    };
+    match ctx.date_fact {
+        CalendarDateFact::TradingSession => CheckOutcome::new(
+            CHECK_CALENDAR_DATE,
+            Tier::NonDeferrable,
+            CheckStatus::Green,
+            "calendar proves a Trading Session on this KST date",
+        ),
+        CalendarDateFact::Closed => red(
+            "calendar proves the venue Closed on this KST date — refused (no override proceeds a proven closure)",
+        ),
+        CalendarDateFact::Unavailable => red(
+            "calendar unavailable (load/use/query failure) — refused (no override proceeds an unproven calendar)",
+        ),
+        CalendarDateFact::Unknown => match &ctx.unknown_override {
+            Some(ov) if ov.covers(&ctx.today_kst, &ctx.run_id) => CheckOutcome::new(
+                CHECK_CALENDAR_DATE,
+                Tier::NonDeferrable,
+                CheckStatus::GreenWithNote,
+                format!(
+                    "Unknown KST date proceeded by a bound, audited attended override (run {}, citation {}/{}) — calendar status unchanged",
+                    ov.run_id, ov.citation.issuer, ov.citation.reference
+                ),
+            ),
+            _ => red(
+                "calendar date is Unknown (no covering evidence) — refused by default; only a bound, audited attended Unknown override proceeds",
+            ),
+        },
+    }
+}
+
+/// The session-window check (deferrable) — the TIME-of-day half only (U12): red outside the
+/// PRESERVED 09:00–15:30 KST minute window. The date decision moved to
+/// [`check_calendar_date`]; a proven Trading Session outside the window still defers here.
 pub fn check_session_window(ctx: &DispatchContext) -> CheckOutcome {
     if ctx.window_open {
-        CheckOutcome::new(CHECK_SESSION_WINDOW, Tier::Deferrable, CheckStatus::Green, "session window open")
+        CheckOutcome::new(
+            CHECK_SESSION_WINDOW,
+            Tier::Deferrable,
+            CheckStatus::Green,
+            "inside the 09:00–15:30 KST session window",
+        )
     } else {
         CheckOutcome::new(
             CHECK_SESSION_WINDOW,
             Tier::Deferrable,
             CheckStatus::Red,
-            "outside the KRX session window (weekday-only until the holiday calendar lands)",
+            "outside the 09:00–15:30 KST session window (time-of-day)",
         )
     }
 }
@@ -389,6 +521,7 @@ pub fn run_checks(ctx: &DispatchContext) -> Vec<CheckOutcome> {
     vec![
         check_trading_env(ctx),
         check_advisory_lock(ctx),
+        check_calendar_date(ctx),
         check_session_window(ctx),
         check_watermark(ctx),
         check_flat_start(ctx),
