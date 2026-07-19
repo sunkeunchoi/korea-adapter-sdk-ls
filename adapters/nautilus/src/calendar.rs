@@ -198,10 +198,30 @@ pub fn build_startup_record(
     as_of: DateTime<Utc>,
     target: NaiveDate,
 ) -> StartupRecord {
+    build_startup_record_targeted(consumer, adoption, loaded, as_of, Some(target))
+}
+
+/// Build the startup record with an OPTIONAL decision target (KTD2). When `target` is
+/// `Some(date)`, the diagnostic queries that day and the record carries `day=<date>:<status>`;
+/// when `target` is `None`, the diagnostic is a posture/coverage summary with no `day=`
+/// marker — the honest representation for a consumer that resolves no single decision date
+/// (a probe that refused to select any day rather than a misleading anchor). A `None` target
+/// never yields an `OutOfRange`, so a posture-only startup over a usable calendar reports the
+/// calendar as available.
+pub fn build_startup_record_targeted(
+    consumer: &str,
+    adoption: CalendarAdoption,
+    loaded: &LoadedCalendar,
+    as_of: DateTime<Utc>,
+    target: Option<NaiveDate>,
+) -> StartupRecord {
     let (diagnostic, available) = match loaded {
         LoadedCalendar::Available(cal) => match cal.as_of(as_of) {
             Ok(view) => {
-                let diag = CalendarDiagnostic::from_view(&view, target);
+                let diag = match target {
+                    Some(t) => CalendarDiagnostic::from_view(&view, t),
+                    None => CalendarDiagnostic::from_view_untargeted(&view),
+                };
                 // A usable calendar is one that loaded AND resolves a factual day (a
                 // successful Healthy/Stale/Unknown/Conflict outcome). An out-of-range
                 // query at startup is a not-yet-usable state.

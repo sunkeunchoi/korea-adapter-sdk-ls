@@ -66,10 +66,10 @@ async fn main() -> std::process::ExitCode {
     // Mandatory credential hygiene before any output (repo pattern for
     // credential-touching binaries).
     scrub::install();
-    // Mandatory startup calendar record (U8): one redacted line to the non-persisted
-    // diagnostic channel (stderr). Default adoption = Shadow; a missing snapshot is
-    // non-fatal (KTD8). Startup record ONLY — the budget-probe date migration is U13.
-    nautilus_ls::calendar::emit_startup_from_env("budget-probe");
+    // The mandatory startup calendar record is now emitted inside `run` from the SAME
+    // single per-invocation load that drives the probe-date decision (U1/KTD1) — targeting
+    // the probe anchor rather than today's KST date. It fires before the paper gate and the
+    // fallible env parses, preserving the always-emit invariant on every path.
     match run().await {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
@@ -80,14 +80,14 @@ async fn main() -> std::process::ExitCode {
 }
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
-    if !paper_ok(std::env::var("LS_TRADING_ENV").ok().as_deref()) {
-        return Err("refusing to run: set LS_TRADING_ENV=paper (this probe is paper-only)".into());
-    }
-
-    let stages = parse_stages(&std::env::var("LS_PROBE_STAGES").unwrap_or_else(|_| DEFAULT_STAGES.into()))?;
-    let ceiling_n: usize = parse_env("LS_PROBE_CEILING", DEFAULT_CEILING)?;
-    let symbol = std::env::var("LS_PROBE_SYMBOL").unwrap_or_else(|_| DEFAULT_SYMBOL.into());
-    // U13 (KTD8): resolve the t8412 probe range through the calendar adoption seam.
+    // U1 (KTD1): resolve the per-invocation calendar context ONCE — one explicit snapshot
+    // path, one as-of instant, at most one immutable calendar — and emit the mandatory,
+    // decision-relevant startup record from it, BEFORE the paper gate and the fallible env
+    // parses. This preserves the always-emit invariant (a non-paper or parse-error
+    // invocation still emits exactly one startup record) while collapsing the former
+    // double load (main startup + resolve_probe_dates) into a single load and as-of.
+    //
+    // U13 (KTD8): the t8412 probe range is resolved through the calendar adoption seam.
     // Shadow (the composed default) keeps the weekday `recent_trading_day` default
     // authoritative — byte-identical to Legacy — while recording the calendar default to
     // the non-persisted diagnostic channel; Enforced (offline-tested) selects the most
@@ -98,7 +98,16 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         sdate: std::env::var("LS_PROBE_SDATE").ok().filter(|s| !s.trim().is_empty()),
         edate: std::env::var("LS_PROBE_EDATE").ok().filter(|s| !s.trim().is_empty()),
     };
-    let (sdate, edate) = resolve_probe_dates(&weekday_anchor, &explicit)?;
+    let ctx = ProbeContext::resolve(&weekday_anchor, &explicit);
+
+    if !paper_ok(std::env::var("LS_TRADING_ENV").ok().as_deref()) {
+        return Err("refusing to run: set LS_TRADING_ENV=paper (this probe is paper-only)".into());
+    }
+
+    let stages = parse_stages(&std::env::var("LS_PROBE_STAGES").unwrap_or_else(|_| DEFAULT_STAGES.into()))?;
+    let ceiling_n: usize = parse_env("LS_PROBE_CEILING", DEFAULT_CEILING)?;
+    let symbol = std::env::var("LS_PROBE_SYMBOL").unwrap_or_else(|_| DEFAULT_SYMBOL.into());
+    let (sdate, edate) = ctx.resolved_range()?;
     let pace_ms: u64 = parse_env("LS_PROBE_PACE_MS", DEFAULT_PACE_MS)?;
     let pace = std::time::Duration::from_millis(pace_ms);
     let out = std::env::var("LS_PROBE_OUT").unwrap_or_else(|_| DEFAULT_OUT.into());
@@ -284,9 +293,10 @@ fn recent_trading_day() -> String {
 //   * `plan_probe_dates` is a pure decision over (adoption, scan, weekday anchor,
 //     explicit override) → the selected range, warnings, bypass record, and WHETHER
 //     a live request is attempted. No calendar, no gateway — fully testable.
-// `resolve_probe_dates` is the composition-root glue that reads env, builds the view,
-// records the calendar decision to the non-persisted diagnostic channel, and returns
-// the range (or a clean refusal when Enforced can prove nothing and has no bypass).
+// `ProbeContext` is the composition-root glue (U1): it reads env, builds the view from ONE
+// per-invocation load, plans the range, emits the mandatory decision-relevant startup
+// record and the calendar-decision diagnostics to the non-persisted channel, and hands the
+// range (or a clean refusal when Enforced can prove nothing and has no bypass) to `run`.
 // ---------------------------------------------------------------------------
 
 /// How far back from the anchor `scan_recent_session` looks for a proven Trading Session
@@ -351,8 +361,9 @@ impl ExplicitRange {
 }
 
 /// The resolved probe-date plan: the range to use (`None` when Enforced refuses), whether a
-/// live request may be attempted, the range source, the recorded calendar default, and any
-/// non-fatal warnings — all inspectable without a live gateway.
+/// live request may be attempted, the range source, the recorded calendar default, any
+/// non-fatal warnings, and — on an explicit-range bypass — the bypass audit — all
+/// inspectable without a live gateway.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ProbeDatePlan {
     sdate: Option<String>,
@@ -364,6 +375,121 @@ struct ProbeDatePlan {
     /// session was proven.
     calendar_default: Option<String>,
     warnings: Vec<String>,
+    /// The bypass audit — `Some` iff the operator supplied an explicit `LS_PROBE_SDATE`/
+    /// `EDATE` range (U2, KTD4). A pure, inspectable record of WHO forced the range, the run
+    /// context, and the calendar condition automatic selection skipped. Recorded on EVERY
+    /// adoption; it never changes probe status or authorizes dispatch.
+    bypass_audit: Option<BypassAudit>,
+}
+
+/// The calendar condition automatic selection SKIPPED when the operator forced an explicit
+/// range (U2, KTD4). Derived purely from the recent-session scan.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BypassedCondition {
+    /// The calendar proved no Trading Session in the bounded lookback.
+    NoProvenSession,
+    /// No usable calendar was injected (missing / failed / unauthorized / expired snapshot).
+    Unavailable,
+    /// A Trading Session WAS proven, but the operator's explicit range overrode it.
+    ProvenSessionNotSelected,
+}
+
+impl BypassedCondition {
+    /// The stable token used in the audit line.
+    fn token(self) -> &'static str {
+        match self {
+            BypassedCondition::NoProvenSession => "no-proven-session",
+            BypassedCondition::Unavailable => "unavailable",
+            BypassedCondition::ProvenSessionNotSelected => "proven-session-not-selected",
+        }
+    }
+
+    /// The condition automatic selection would have hit for `scan`.
+    fn from_scan(scan: SessionScan) -> Self {
+        match scan {
+            SessionScan::Session { .. } => BypassedCondition::ProvenSessionNotSelected,
+            SessionScan::NoSession => BypassedCondition::NoProvenSession,
+            SessionScan::Unavailable => BypassedCondition::Unavailable,
+        }
+    }
+}
+
+/// The redacted run context threaded into the bypass audit at the composition root (U2,
+/// KTD4): the operator identity and a run id, both SANITIZED before they reach the
+/// non-persisted diagnostic channel so an operator-supplied value cannot forge a second
+/// diagnostic/startup line. Pure data — carried into [`plan_probe_dates`], never read from
+/// env there.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct RunContext {
+    /// The sanitized operator identity (control chars stripped, length-bounded, scrubbed).
+    operator: String,
+    /// The sanitized, injectable/seeded run id (no wall-clock / random dependency).
+    run_id: String,
+}
+
+impl RunContext {
+    /// Resolve the run context at the composition root: operator from `LS_PROBE_OPERATOR`
+    /// (else `USER`/`LOGNAME`, else `unknown`), run id from `LS_PROBE_RUN_ID` (else the
+    /// process id — deterministic, no wall-clock/random) — each sanitized before use.
+    fn from_env() -> Self {
+        let operator = std::env::var("LS_PROBE_OPERATOR")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| std::env::var("USER").ok().filter(|s| !s.trim().is_empty()))
+            .or_else(|| std::env::var("LOGNAME").ok().filter(|s| !s.trim().is_empty()))
+            .unwrap_or_else(|| "unknown".to_string());
+        let run_id = std::env::var("LS_PROBE_RUN_ID")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| format!("pid-{}", std::process::id()));
+        Self {
+            operator: sanitize_audit_field(&operator),
+            run_id: sanitize_audit_field(&run_id),
+        }
+    }
+}
+
+/// Sanitize a free-text audit field before it reaches the non-persisted diagnostic channel
+/// (U2, KTD4/KTD8): strip control characters and newlines (so a value cannot inject a second
+/// diagnostic or startup line), bound the length, and route the remainder through the
+/// credential scrub. Redacted-by-construction, matching the diagnostic builders.
+fn sanitize_audit_field(raw: &str) -> String {
+    const MAX_LEN: usize = 96;
+    let cleaned: String = raw
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(MAX_LEN)
+        .collect();
+    let scrubbed = scrub::scrub_secrets(cleaned.trim());
+    if scrubbed.is_empty() {
+        "unknown".to_string()
+    } else {
+        scrubbed
+    }
+}
+
+/// The bypass audit (U2, KTD4): a pure, inspectable record that an explicit range bypassed
+/// automatic selection. It records WHO, the run context, and the calendar condition skipped —
+/// and NOTHING that changes probe status or authorizes dispatch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct BypassAudit {
+    operator: String,
+    run_id: String,
+    condition: BypassedCondition,
+}
+
+impl BypassAudit {
+    /// Render the audit as ONE line for the non-persisted diagnostic channel. Every field is
+    /// already sanitized; the line explicitly disclaims any status/dispatch effect.
+    fn render_line(&self) -> String {
+        format!(
+            "explicit LS_PROBE_SDATE/EDATE range → BYPASS operator={} run_id={} bypassed={} \
+             (audit only — probe status unchanged, no dispatch authorization)",
+            self.operator,
+            self.run_id,
+            self.condition.token()
+        )
+    }
 }
 
 /// Format a civil date as the gateway's `YYYYMMDD`.
@@ -406,15 +532,19 @@ fn scan_recent_session(view: Option<&AsOfView<'_>>, anchor: NaiveDate) -> Sessio
     SessionScan::NoSession
 }
 
-/// The pure default-date decision (U13, KTD8). Legacy/Shadow keep the weekday anchor
+/// The pure default-date decision (U13/U2, KTD8/KTD4). Legacy/Shadow keep the weekday anchor
 /// authoritative (Shadow additionally RECORDS the calendar default); Enforced selects the
 /// proven session, or refuses (no live call) when nothing is proven and no explicit range is
-/// supplied. An explicit range is always a BYPASS. No calendar, no I/O — fully testable.
+/// supplied. An explicit range is always a BYPASS — recorded as a [`BypassAudit`] naming the
+/// (pre-sanitized) operator + run context and the calendar condition automatic selection
+/// skipped. The bypass NEVER changes probe status or authorizes dispatch. No calendar, no
+/// I/O, no wall-clock — fully testable.
 fn plan_probe_dates(
     adoption: CalendarAdoption,
     scan: SessionScan,
     weekday_anchor: &str,
     explicit: &ExplicitRange,
+    run: &RunContext,
 ) -> ProbeDatePlan {
     // The weekday-authoritative range, byte-identical to the pre-migration behavior: each
     // endpoint is the explicit override if present, else the weekday `recent_trading_day`.
@@ -432,11 +562,23 @@ fn plan_probe_dates(
         _ => None,
     };
     let bypass = explicit.is_supplied();
+    // On a bypass, record WHICH calendar condition automatic selection skipped — derived
+    // purely from the scan (the same value on every adoption). Absent when no explicit range.
+    let bypass_audit = if bypass {
+        Some(BypassAudit {
+            operator: run.operator.clone(),
+            run_id: run.run_id.clone(),
+            condition: BypassedCondition::from_scan(scan),
+        })
+    } else {
+        None
+    };
 
     match adoption {
         // Legacy / Shadow: the weekday path acts. Shadow differs only by recording the
         // calendar default (the `calendar_default` field above); the range + request
-        // decision are identical, so byte-identical-to-Legacy holds.
+        // decision are identical, so byte-identical-to-Legacy holds. A bypass audit is
+        // recorded to the non-persisted channel only — it never touches the range/request.
         CalendarAdoption::Legacy | CalendarAdoption::Shadow => {
             let (sdate, edate) = weekday_range();
             ProbeDatePlan {
@@ -446,6 +588,7 @@ fn plan_probe_dates(
                 source: if bypass { DateSource::Bypass } else { DateSource::WeekdayDefault },
                 calendar_default,
                 warnings: Vec::new(),
+                bypass_audit,
             }
         }
         CalendarAdoption::Enforced => {
@@ -460,6 +603,7 @@ fn plan_probe_dates(
                     source: DateSource::Bypass,
                     calendar_default,
                     warnings: Vec::new(),
+                    bypass_audit,
                 };
             }
             match scan {
@@ -480,6 +624,7 @@ fn plan_probe_dates(
                         source: DateSource::CalendarSession,
                         calendar_default,
                         warnings,
+                        bypass_audit: None,
                     }
                 }
                 SessionScan::NoSession => ProbeDatePlan {
@@ -493,6 +638,7 @@ fn plan_probe_dates(
                          until an explicit LS_PROBE_SDATE/EDATE range is supplied"
                             .to_string(),
                     ],
+                    bypass_audit: None,
                 },
                 SessionScan::Unavailable => ProbeDatePlan {
                     sdate: None,
@@ -505,57 +651,98 @@ fn plan_probe_dates(
                          LS_PROBE_SDATE/EDATE range is supplied"
                             .to_string(),
                     ],
+                    bypass_audit: None,
                 },
             }
         }
     }
 }
 
-/// Composition-root glue (U13): resolve the env-configured snapshot path + adoption, build a
-/// fixed-`now` as-of view, scan for the recent proven session, plan the range, record the
-/// calendar decision to the non-persisted diagnostic channel (stderr, KTD8), and return the
-/// `(sdate, edate)` range — or a clean refusal when Enforced can prove nothing and no explicit
-/// range bypasses it. The pure functions above carry the logic; this only wires I/O.
-fn resolve_probe_dates(
-    weekday_anchor: &str,
-    explicit: &ExplicitRange,
-) -> Result<(String, String), Box<dyn std::error::Error>> {
-    let adoption = nautilus_ls::calendar::adoption_from_env();
-    let as_of = chrono::Utc::now();
-    let path = nautilus_ls::calendar::snapshot_path_from_env();
-    let loaded = nautilus_ls::calendar::resolve_and_load(path.as_deref(), as_of, adoption);
-    // A usable view requires a loaded calendar that authorizes at `as_of`.
-    let view = loaded.calendar().and_then(|c| c.as_of(as_of).ok());
-    let anchor_date = NaiveDate::parse_from_str(weekday_anchor, "%Y%m%d")
-        .map_err(|e| format!("weekday anchor {weekday_anchor:?} parse: {e}"))?;
-    let scan = scan_recent_session(view.as_ref(), anchor_date);
-    let plan = plan_probe_dates(adoption, scan, weekday_anchor, explicit);
+/// The per-invocation calendar context (U1, KTD1): ONE env read, ONE as-of instant, at most
+/// ONE immutable calendar load, shared between the mandatory startup record and the
+/// probe-date decision. Built by [`ProbeContext::resolve`] before the paper gate so the
+/// always-emit startup invariant holds on every path; the resolved range (or the Enforced
+/// refusal) is read back later via [`ProbeContext::resolved_range`].
+struct ProbeContext {
+    /// The planned probe-date decision (range, source, warnings, bypass audit, live-request
+    /// flag) — inspectable without a live gateway.
+    plan: ProbeDatePlan,
+}
 
-    // Record the calendar decision to the non-persisted diagnostic channel only (stderr) so
-    // a Shadow/Legacy recording never touches stdout or a persisted artifact (KTD8).
-    for w in &plan.warnings {
-        eprintln!("calendar-probe-date: {w}");
-    }
-    if let Some(def) = &plan.calendar_default {
-        eprintln!(
-            "calendar-probe-date: adoption={} source={} calendar_default={def}",
-            adoption.as_str(),
-            plan.source.token()
+impl ProbeContext {
+    /// Resolve the env-configured snapshot path + adoption, build a fixed-`now` as-of view
+    /// from ONE load, scan for the recent proven session, plan the range, and emit BOTH the
+    /// mandatory decision-relevant startup record and the calendar-decision diagnostics to
+    /// the non-persisted channel (stderr, KTD8). The load is non-fatal (a missing/failed
+    /// snapshot is a recorded unavailable state); the Enforced refusal is deferred to
+    /// [`resolved_range`](Self::resolved_range) so the paper gate stays the primary refusal.
+    fn resolve(weekday_anchor: &str, explicit: &ExplicitRange) -> Self {
+        let adoption = nautilus_ls::calendar::adoption_from_env();
+        let as_of = chrono::Utc::now();
+        let path = nautilus_ls::calendar::snapshot_path_from_env();
+        let loaded = nautilus_ls::calendar::resolve_and_load(path.as_deref(), as_of, adoption);
+        // A usable view requires a loaded calendar that authorizes at `as_of`.
+        let view = loaded.calendar().and_then(|c| c.as_of(as_of).ok());
+        // The anchor is `recent_trading_day` output (always valid `YYYYMMDD`); a defensive
+        // parse failure is treated as an unavailable scan rather than a panic.
+        let anchor_date = NaiveDate::parse_from_str(weekday_anchor, "%Y%m%d").ok();
+        let scan = match anchor_date {
+            Some(a) => scan_recent_session(view.as_ref(), a),
+            None => SessionScan::Unavailable,
+        };
+        // Resolve the (sanitized) operator + run context once at the composition root and
+        // thread it into the pure plan (U2, KTD4) — it only lands in the audit on a bypass.
+        let run = RunContext::from_env();
+        let plan = plan_probe_dates(adoption, scan, weekday_anchor, explicit, &run);
+
+        // Mandatory startup record (U1/KTD2): one redacted line to the non-persisted
+        // diagnostic channel, targeting the probe ANCHOR — or NO target when Enforced refuses
+        // (no proven session / unavailable), rather than a misleading anchor-day status.
+        let target = if plan.sdate.is_some() { anchor_date } else { None };
+        let record = nautilus_ls::calendar::build_startup_record_targeted(
+            "budget-probe",
+            adoption,
+            &loaded,
+            as_of,
+            target,
         );
-    }
-    if matches!(plan.source, DateSource::Bypass) {
-        eprintln!(
-            "calendar-probe-date: explicit LS_PROBE_SDATE/EDATE range → BYPASS \
-             (not a calendar-backed default)"
-        );
+        nautilus_ls::calendar::emit_startup_record(&record);
+
+        // Record the calendar date decision to the non-persisted diagnostic channel only
+        // (stderr) so a Shadow/Legacy recording never touches stdout or a persisted artifact.
+        Self::emit_probe_date_diagnostics(adoption, &plan);
+
+        Self { plan }
     }
 
-    match (plan.sdate, plan.edate) {
-        (Some(s), Some(e)) => Ok((s, e)),
-        _ => Err("calendar Enforced: no proven Trading Session in the lookback and no explicit \
-                  LS_PROBE_SDATE/EDATE range — refusing to probe (supply an explicit range to \
-                  bypass)"
-            .into()),
+    /// Emit the calendar-date decision diagnostics (warnings, the recorded calendar default,
+    /// and — for a bypass — the audit record) to the non-persisted channel (KTD8).
+    fn emit_probe_date_diagnostics(adoption: CalendarAdoption, plan: &ProbeDatePlan) {
+        for w in &plan.warnings {
+            eprintln!("calendar-probe-date: {w}");
+        }
+        if let Some(def) = &plan.calendar_default {
+            eprintln!(
+                "calendar-probe-date: adoption={} source={} calendar_default={def}",
+                adoption.as_str(),
+                plan.source.token()
+            );
+        }
+        if let Some(audit) = &plan.bypass_audit {
+            eprintln!("calendar-probe-date: {}", audit.render_line());
+        }
+    }
+
+    /// The resolved `(sdate, edate)` range, or a clean refusal when Enforced can prove
+    /// nothing and no explicit range bypasses it.
+    fn resolved_range(&self) -> Result<(String, String), Box<dyn std::error::Error>> {
+        match (&self.plan.sdate, &self.plan.edate) {
+            (Some(s), Some(e)) => Ok((s.clone(), e.clone())),
+            _ => Err("calendar Enforced: no proven Trading Session in the lookback and no \
+                      explicit LS_PROBE_SDATE/EDATE range — refusing to probe (supply an \
+                      explicit range to bypass)"
+                .into()),
+        }
     }
 }
 
@@ -659,6 +846,10 @@ mod tests {
         fn no_explicit() -> ExplicitRange {
             ExplicitRange { sdate: None, edate: None }
         }
+        /// A fixed, pre-sanitized run context — asserted structurally, never by wall-clock.
+        fn run_ctx() -> RunContext {
+            RunContext { operator: "op-alice".to_string(), run_id: "run-42".to_string() }
+        }
 
         /// Enforced Trading: the most recent proven session is selected, skipping a
         /// trailing Closed/Unknown run (2010-06-20 Closed, 06-19 Closed, 06-18 Unknown
@@ -672,7 +863,7 @@ mod tests {
                 matches!(scan, SessionScan::Session { date, stale: false } if date == ymd(2010, 6, 17)),
                 "walk-back skips the trailing Closed/Unknown run to the proven session: {scan:?}"
             );
-            let plan = plan_probe_dates(CalendarAdoption::Enforced, scan, "20100620", &no_explicit());
+            let plan = plan_probe_dates(CalendarAdoption::Enforced, scan, "20100620", &no_explicit(), &run_ctx());
             assert_eq!(plan.sdate.as_deref(), Some("20100617"));
             assert_eq!(plan.edate.as_deref(), Some("20100617"));
             assert!(plan.live_request, "a proven session is servable → live request");
@@ -690,7 +881,7 @@ mod tests {
             // (first session is 2010-06-15) → no proven session.
             let scan = scan_recent_session(Some(&view), ymd(2010, 1, 20));
             assert!(matches!(scan, SessionScan::NoSession), "{scan:?}");
-            let plan = plan_probe_dates(CalendarAdoption::Enforced, scan, "20100120", &no_explicit());
+            let plan = plan_probe_dates(CalendarAdoption::Enforced, scan, "20100120", &no_explicit(), &run_ctx());
             assert!(!plan.live_request, "no proven session → no live call");
             assert_eq!(plan.source, DateSource::NoDefault);
             assert!(plan.sdate.is_none() && plan.edate.is_none());
@@ -700,7 +891,7 @@ mod tests {
             let scan_u = scan_recent_session(None, ymd(2010, 1, 20));
             assert!(matches!(scan_u, SessionScan::Unavailable));
             let plan_u =
-                plan_probe_dates(CalendarAdoption::Enforced, scan_u, "20100120", &no_explicit());
+                plan_probe_dates(CalendarAdoption::Enforced, scan_u, "20100120", &no_explicit(), &run_ctx());
             assert!(!plan_u.live_request);
             assert_eq!(plan_u.source, DateSource::NoDefault);
 
@@ -710,7 +901,7 @@ mod tests {
                 edate: Some("20100617".into()),
             };
             let plan_b =
-                plan_probe_dates(CalendarAdoption::Enforced, scan_u, "20100120", &explicit);
+                plan_probe_dates(CalendarAdoption::Enforced, scan_u, "20100120", &explicit, &run_ctx());
             assert!(plan_b.live_request, "an explicit range unblocks the live call");
             assert_eq!(plan_b.source, DateSource::Bypass);
             assert_eq!(plan_b.sdate.as_deref(), Some("20100617"));
@@ -728,7 +919,7 @@ mod tests {
                 sdate: Some("20111231".into()),
                 edate: Some("20111231".into()),
             };
-            let plan = plan_probe_dates(CalendarAdoption::Enforced, scan, "20100620", &explicit);
+            let plan = plan_probe_dates(CalendarAdoption::Enforced, scan, "20100620", &explicit, &run_ctx());
             assert_eq!(plan.source, DateSource::Bypass);
             assert_eq!(plan.sdate.as_deref(), Some("20111231"));
             assert_eq!(plan.edate.as_deref(), Some("20111231"));
@@ -744,7 +935,7 @@ mod tests {
             let view = cal.as_of(stale_as_of()).unwrap();
             let scan = scan_recent_session(Some(&view), ymd(2010, 6, 20));
             assert!(matches!(scan, SessionScan::Session { stale: true, .. }), "{scan:?}");
-            let plan = plan_probe_dates(CalendarAdoption::Enforced, scan, "20100620", &no_explicit());
+            let plan = plan_probe_dates(CalendarAdoption::Enforced, scan, "20100620", &no_explicit(), &run_ctx());
             assert_eq!(plan.sdate.as_deref(), Some("20100617"), "stale evidence is still usable");
             assert!(plan.live_request);
             assert_eq!(plan.source, DateSource::CalendarSession);
@@ -766,8 +957,8 @@ mod tests {
             // Disagreement: weekday anchor 2010-01-20 is Unknown to the calendar (no
             // session in the lookback) — Shadow keeps the weekday anchor authoritative.
             let scan = scan_recent_session(Some(&view), ymd(2010, 1, 20));
-            let legacy = plan_probe_dates(CalendarAdoption::Legacy, scan, "20100120", &no_explicit());
-            let shadow = plan_probe_dates(CalendarAdoption::Shadow, scan, "20100120", &no_explicit());
+            let legacy = plan_probe_dates(CalendarAdoption::Legacy, scan, "20100120", &no_explicit(), &run_ctx());
+            let shadow = plan_probe_dates(CalendarAdoption::Shadow, scan, "20100120", &no_explicit(), &run_ctx());
             assert_eq!(legacy.sdate, shadow.sdate, "byte-identical sdate");
             assert_eq!(legacy.edate, shadow.edate, "byte-identical edate");
             assert_eq!(legacy.live_request, shadow.live_request, "same request decision");
@@ -779,13 +970,170 @@ mod tests {
             // still uses the weekday anchor (2010-06-20) authoritatively.
             let scan2 = scan_recent_session(Some(&view), ymd(2010, 6, 20));
             let shadow2 =
-                plan_probe_dates(CalendarAdoption::Shadow, scan2, "20100620", &no_explicit());
+                plan_probe_dates(CalendarAdoption::Shadow, scan2, "20100620", &no_explicit(), &run_ctx());
             assert_eq!(shadow2.sdate.as_deref(), Some("20100620"), "weekday anchor authoritative");
             assert_eq!(shadow2.source, DateSource::WeekdayDefault);
             assert_eq!(
                 shadow2.calendar_default.as_deref(),
                 Some("20100617"),
                 "the calendar default is recorded in Shadow"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // U2 (KTD4) — the explicit-range BYPASS audit. Every explicit `LS_PROBE_SDATE`/
+    // `EDATE` range records WHO forced it, the run context, and the calendar condition
+    // automatic selection skipped — a pure, inspectable value that changes neither probe
+    // status nor any dispatch authorization, and whose operator/run fields are sanitized
+    // before they can reach the non-persisted diagnostic channel.
+    // -----------------------------------------------------------------------
+    mod bypass_audit {
+        use super::super::*;
+        use chrono::{DateTime, TimeZone, Utc};
+        use nautilus_ls_calendar::{CalendarAdoption, KrxCalendar};
+
+        fn fixture_calendar() -> KrxCalendar {
+            let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("nautilus-ls-calendar/fixtures/base_2010_2012.json");
+            KrxCalendar::load_from_path(&path, fresh_as_of()).expect("fixture calendar loads")
+        }
+        fn fresh_as_of() -> DateTime<Utc> {
+            Utc.with_ymd_and_hms(2013, 1, 1, 0, 0, 0).unwrap()
+        }
+        fn ymd(y: i32, m: u32, d: u32) -> chrono::NaiveDate {
+            chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap()
+        }
+        fn run_ctx() -> RunContext {
+            RunContext { operator: "op-alice".to_string(), run_id: "run-42".to_string() }
+        }
+        fn explicit() -> ExplicitRange {
+            ExplicitRange { sdate: Some("20111231".into()), edate: Some("20111231".into()) }
+        }
+        fn no_explicit() -> ExplicitRange {
+            ExplicitRange { sdate: None, edate: None }
+        }
+
+        /// Scenario 1: explicit range under Enforced with an UNAVAILABLE calendar records a
+        /// bypass audit naming the operator + run context + condition `unavailable`, with
+        /// `live_request` true and the resolved range honored (probe status unchanged).
+        #[test]
+        fn enforced_unavailable_records_unavailable_condition_and_still_calls() {
+            let scan = scan_recent_session(None, ymd(2010, 1, 20));
+            assert!(matches!(scan, SessionScan::Unavailable));
+            let plan =
+                plan_probe_dates(CalendarAdoption::Enforced, scan, "20100120", &explicit(), &run_ctx());
+            let audit = plan.bypass_audit.as_ref().expect("a bypass records an audit");
+            assert_eq!(audit.condition, BypassedCondition::Unavailable);
+            assert_eq!(audit.operator, "op-alice");
+            assert_eq!(audit.run_id, "run-42");
+            assert!(plan.live_request, "the explicit range unblocks the live call");
+            assert_eq!(plan.source, DateSource::Bypass);
+            assert_eq!(plan.sdate.as_deref(), Some("20111231"));
+        }
+
+        /// Scenario 2: explicit range under Enforced with no proven session in the lookback
+        /// records condition `no-proven-session`.
+        #[test]
+        fn enforced_no_proven_session_records_no_proven_session_condition() {
+            let cal = fixture_calendar();
+            let view = cal.as_of(fresh_as_of()).unwrap();
+            // Early-2010 anchor: the whole bounded lookback is Unknown/weekend-Closed.
+            let scan = scan_recent_session(Some(&view), ymd(2010, 1, 20));
+            assert!(matches!(scan, SessionScan::NoSession), "{scan:?}");
+            let plan =
+                plan_probe_dates(CalendarAdoption::Enforced, scan, "20100120", &explicit(), &run_ctx());
+            let audit = plan.bypass_audit.as_ref().expect("a bypass records an audit");
+            assert_eq!(audit.condition, BypassedCondition::NoProvenSession);
+            assert!(plan.live_request);
+        }
+
+        /// Scenario 3: explicit range under Enforced when a session WAS proven records
+        /// condition `proven-session-not-selected` and still records `calendar_default`.
+        #[test]
+        fn enforced_proven_but_overridden_records_proven_not_selected_and_default() {
+            let cal = fixture_calendar();
+            let view = cal.as_of(fresh_as_of()).unwrap();
+            let scan = scan_recent_session(Some(&view), ymd(2010, 6, 20)); // would select 2010-06-17
+            let plan =
+                plan_probe_dates(CalendarAdoption::Enforced, scan, "20100620", &explicit(), &run_ctx());
+            let audit = plan.bypass_audit.as_ref().expect("a bypass records an audit");
+            assert_eq!(audit.condition, BypassedCondition::ProvenSessionNotSelected);
+            assert_eq!(plan.calendar_default.as_deref(), Some("20100617"), "the default is still recorded");
+        }
+
+        /// Scenario 4 + 5: explicit range under Legacy and Shadow records the audit but keeps
+        /// the resolved range/request byte-identical to a NON-audited Legacy weekday run — the
+        /// audit alters neither the range nor the request decision.
+        #[test]
+        fn legacy_and_shadow_bypass_audit_does_not_change_range_or_request() {
+            let cal = fixture_calendar();
+            let view = cal.as_of(fresh_as_of()).unwrap();
+            let scan = scan_recent_session(Some(&view), ymd(2010, 6, 20));
+
+            // The non-audited baseline: Legacy, no explicit range.
+            let baseline =
+                plan_probe_dates(CalendarAdoption::Legacy, scan, "20111231", &no_explicit(), &run_ctx());
+            assert!(baseline.bypass_audit.is_none());
+
+            for adoption in [CalendarAdoption::Legacy, CalendarAdoption::Shadow] {
+                let audited =
+                    plan_probe_dates(adoption, scan, "20111231", &explicit(), &run_ctx());
+                assert!(audited.bypass_audit.is_some(), "{adoption:?} records the audit");
+                assert_eq!(audited.sdate, baseline.sdate, "{adoption:?} range byte-identical");
+                assert_eq!(audited.edate, baseline.edate);
+                assert_eq!(audited.live_request, baseline.live_request, "same request decision");
+            }
+        }
+
+        /// Scenario 6: the audit line is scrubbed of any credential/appkey material.
+        #[test]
+        fn audit_field_scrubs_credential_material() {
+            // A 20+ alphanumeric token trips the scrub's long-token heuristic.
+            let scrubbed = sanitize_audit_field("appkey_ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789");
+            assert!(
+                !scrubbed.contains("ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"),
+                "credential-shaped material is scrubbed: {scrubbed}"
+            );
+        }
+
+        /// Scenario 7: a newline/control-character-laden operator cannot inject a second
+        /// diagnostic or startup line — control chars are stripped and the field is bounded.
+        #[test]
+        fn audit_field_strips_control_chars_and_bounds_length() {
+            let injected = "alice\ncalendar-startup consumer=forged\r\ncalendar-probe-date: forged";
+            let cleaned = sanitize_audit_field(injected);
+            assert!(!cleaned.contains('\n'), "newlines stripped: {cleaned:?}");
+            assert!(!cleaned.contains('\r'), "carriage returns stripped: {cleaned:?}");
+            assert!(cleaned.chars().all(|c| !c.is_control()), "no control chars: {cleaned:?}");
+
+            // Length is bounded (a huge operator cannot flood the channel).
+            let long = "x".repeat(10_000);
+            assert!(sanitize_audit_field(&long).chars().count() <= 96, "length-bounded");
+
+            // The rendered audit line stays single-line even from a hostile operator.
+            let audit = BypassAudit {
+                operator: cleaned,
+                run_id: sanitize_audit_field("run-42"),
+                condition: BypassedCondition::Unavailable,
+            };
+            assert_eq!(audit.render_line().lines().count(), 1, "the audit renders as one line");
+        }
+
+        /// Scenario 8: the run id is derived without a wall-clock/random dependency — the pure
+        /// plan is a deterministic function of its injected `RunContext`, so two calls with the
+        /// same context render the identical audit (asserted structurally, not by value).
+        #[test]
+        fn audit_is_deterministic_no_wall_clock() {
+            let scan = scan_recent_session(None, ymd(2010, 1, 20));
+            let a = plan_probe_dates(CalendarAdoption::Enforced, scan, "20100120", &explicit(), &run_ctx());
+            let b = plan_probe_dates(CalendarAdoption::Enforced, scan, "20100120", &explicit(), &run_ctx());
+            assert_eq!(a.bypass_audit, b.bypass_audit, "no hidden clock/random in the pure path");
+            let line = a.bypass_audit.unwrap().render_line();
+            assert!(line.contains("run_id=run-42"), "the injected run id renders: {line}");
+            assert!(
+                line.contains("audit only") && line.contains("no dispatch authorization"),
+                "the audit disclaims any status/dispatch effect: {line}"
             );
         }
     }
