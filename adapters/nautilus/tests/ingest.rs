@@ -2629,6 +2629,60 @@ mod calendar_gate_migration {
         assert!(!cp_path(&catalog).exists());
     }
 
+    #[tokio::test]
+    async fn enforced_rebase_refuses_before_marking_or_dispatch() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        seed_watermark(&catalog, ymd(2010, 1, 2));
+        let before = std::fs::read(cp_path(&catalog)).unwrap();
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, None);
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing
+            .run_rebase_gated(
+                &[InstrumentId::from(SAMSUNG)],
+                ymd(2010, 1, 5),
+                ymd(2010, 1, 1),
+                gate,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(report.triples_ingested, 0);
+        assert_eq!(count_t8410(&server).await, 0);
+        assert_eq!(std::fs::read(cp_path(&catalog)).unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn enforced_rebase_marks_and_heals_an_established_session() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        let cal = fixture_calendar();
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(cal.as_of(as_of()).unwrap()));
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing
+            .run_rebase_gated(
+                &[InstrumentId::from(SAMSUNG)],
+                ymd(2010, 6, 15),
+                ymd(2010, 6, 15),
+                gate,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(report.triples_ingested, 1);
+        assert_eq!(count_t8410(&server).await, 2, "re-pull plus re-verification");
+        let checkpoint = Checkpoint::load(&cp_path(&catalog)).unwrap();
+        assert_eq!(checkpoint.watermark(SAMSUNG, DAILY), Some(ymd(2010, 6, 15)));
+        assert!(!checkpoint.is_shifted(SAMSUNG, DAILY));
+        assert_eq!(checkpoint.rebase_events()[0].origin, RebaseOrigin::Epoch);
+    }
+
     // -- Enforced accumulate next-fetch over the WHOLE RANGE (not just the endpoint) --
     //
     // The SkipAdvance the endpoint gate proposes replaces a fetch of the WHOLE range

@@ -80,6 +80,36 @@ advisory lockfile beside the catalog (`.ls-ingest.lock` / `.ls-live.lock`) and
 **refuse to start while the counterpart lock is held**. A stale lock from a crash
 blocks until cleared manually (`rm <catalog>/.ls-*.lock`) — a deliberate fail-safe.
 
+### KRX calendar configuration and adoption
+
+`ls-ingest` resolves `LS_CALENDAR_SNAPSHOT` once per invocation after acquiring the
+ingest lock and evaluates it at one fixed instant. `LS_CALENDAR_ADOPTION` accepts:
+
+- `legacy`: the existing civil-date/weekday-compatible path remains authoritative.
+- `shadow` (the composed default): the calendar plan and divergence are recorded on
+  the redacted, non-persisted diagnostic channel, while gateway requests, checkpoint
+  bytes, markers, and exit behavior remain Legacy-compatible.
+- `enforced`: automatic `accumulate`, `probe-lookback`, and `rebase` fail closed before
+  SDK construction when the explicit snapshot is missing, unauthorized, expired, or
+  cannot cover the relevant date. No weekday fallback is used.
+
+The 16:30 KST close buffer determines only the latest eligible civil date. In
+Enforced mode, calendar facts then select the established prefix: requests end on
+the last reachable Trading Session, proven trailing Closed dates advance only after
+successful coverage, and scanning stops before the first Unknown/unavailable date.
+An all-Closed prefix can advance without a gateway request. `probe-lookback` cannot
+jump across an Unknown boundary, and `rebase` performs the same admission before it
+writes epoch marks or wipes a series.
+
+Checkpoint migration merges legacy ranges across a proven all-Closed gap only when
+full-history freshness is `fresh`; stale or unevaluated evidence keeps the ranges
+separate for conservative over-fetch. Staleness remains a diagnostic and never
+rewrites a day fact. `BACKWARD WIDEN UNCERTAIN` is likewise non-persisted and is
+reevaluated after evidence changes.
+
+Shadow remains the supported default. This runbook does not claim that the live
+Enforced cutover or the parent Consumer Retirement Gate is complete.
+
 ### Max-lookback probe (run FIRST — sizes the backfill)
 
 Before the first minute backfill, run the staged probe to learn how deep the server

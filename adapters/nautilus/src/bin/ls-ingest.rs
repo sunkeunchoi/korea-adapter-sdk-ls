@@ -272,13 +272,15 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
     let report = if accumulate {
         let floor = parse_yyyymmdd(&sdate)?;
         let last_closed = parse_yyyymmdd(&edate)?;
+        let gate = nautilus_ls::ingest::CalendarGate::new(
+            calendar.adoption(),
+            calendar.view(),
+        );
         if mode == "rebase" {
-            ingestor.run_rebase(&universe, last_closed, floor).await?
+            ingestor
+                .run_rebase_gated(&universe, last_closed, floor, gate)
+                .await?
         } else {
-            let gate = nautilus_ls::ingest::CalendarGate::new(
-                calendar.adoption(),
-                calendar.view(),
-            );
             ingestor
                 .run_accumulate_gated(&universe, last_closed, floor, gate)
                 .await?

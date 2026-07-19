@@ -2109,7 +2109,13 @@ impl Ingestor {
                 let highest_covered = covered
                     .iter()
                     .filter(|(cs, _)| *cs <= request_through)
-                    .map(|(_, e)| (*e).min(advance_through))
+                    .map(|(_, e)| {
+                        if calendar.adoption() == CalendarAdoption::Enforced {
+                            (*e).min(advance_through)
+                        } else {
+                            *e
+                        }
+                    })
                     .max();
                 let sub_ranges = subtract_covered(start, request_through, &covered);
 
@@ -2326,26 +2332,66 @@ impl Ingestor {
         last_closed: NaiveDate,
         lookback_floor: NaiveDate,
     ) -> AdapterResult<CoverageReport> {
-        std::fs::create_dir_all(&self.config.catalog_path).map_err(|e| {
-            AdapterError::Ingest(format!("mkdir catalog {}: {e}", self.config.catalog_path.display()))
-        })?;
+        self.run_rebase_gated(
+            universe,
+            last_closed,
+            lookback_floor,
+            CalendarGate::legacy(),
+        )
+        .await
+    }
+
+    /// Calendar-aware epoch rebase. Admission and prefix selection happen before the
+    /// durable mark-all boundary; an unusable or zero-length Enforced prefix therefore
+    /// cannot mutate markers, wipe data, or dispatch to LS.
+    pub async fn run_rebase_gated(
+        &mut self,
+        universe: &[InstrumentId],
+        last_closed: NaiveDate,
+        lookback_floor: NaiveDate,
+        calendar: CalendarGate<'_>,
+    ) -> AdapterResult<CoverageReport> {
         if !self.config.bar_kinds.iter().any(|k| matches!(k, BarKind::Daily)) {
             return Err(AdapterError::Ingest(
                 "epoch re-base requires the daily bar kind (a mark with no daily lane would never heal)".to_string(),
             ));
         }
+        let plan = calendar.accumulate_plan(lookback_floor, last_closed);
+        let Some(rebase_end) = plan.request_through else {
+            return Ok(CoverageReport {
+                bars_written: 0,
+                triples_ingested: 0,
+                triples_skipped: universe.len() * self.config.bar_kinds.len(),
+                gaps: Vec::new(),
+                heal_refusals: Vec::new(),
+                range_refusals: Vec::new(),
+                append_refusals: Vec::new(),
+                backward_widen_warnings: Vec::new(),
+                backward_widen_uncertainties: Vec::new(),
+                budget_deferrals: Vec::new(),
+                budget: BudgetEstimate {
+                    symbols: universe.len(),
+                    bar_kinds: self.config.bar_kinds.len(),
+                    per_sec_cap: self.fetcher.daily_pacer_cap(),
+                    min_requests: 0,
+                },
+            });
+        };
+        std::fs::create_dir_all(&self.config.catalog_path).map_err(|e| {
+            AdapterError::Ingest(format!("mkdir catalog {}: {e}", self.config.catalog_path.display()))
+        })?;
         let checkpoint_path = self.config.checkpoint_path();
-        let mut checkpoint = Checkpoint::load(&checkpoint_path)?;
+        let mut checkpoint = Checkpoint::load_gated(&checkpoint_path, &calendar)?;
         let daily_label = BarKind::Daily.label();
         for id in universe {
             // Epoch origin — the one-time rollout, kept out of the organic audit
             // metric (KTD5/R8). A series already heal-marked keeps its heal origin
             // (keep-original-on-re-mark).
-            checkpoint.mark_shifted(&id.to_string(), &daily_label, last_closed, RebaseOrigin::Epoch);
+            checkpoint.mark_shifted(&id.to_string(), &daily_label, rebase_end, RebaseOrigin::Epoch);
         }
         checkpoint.save(&checkpoint_path)?;
         tracing::info!(symbols = universe.len(), "epoch re-base: all daily triples marked; healing");
-        self.run_accumulate(universe, last_closed, lookback_floor).await
+        self.run_accumulate_gated(universe, rebase_end, lookback_floor, calendar).await
     }
 
     /// Detect a basis shift for one daily triple (KTD-3): fetch the overlap
