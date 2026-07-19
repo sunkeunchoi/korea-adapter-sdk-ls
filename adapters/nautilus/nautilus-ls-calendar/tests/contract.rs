@@ -9,8 +9,9 @@ use nautilus_ls_calendar::schema::{
     EvidenceKind, EvidenceRecord, Freshness, Snapshot, Source, SourceAvailabilityBound, SourceKind,
 };
 use nautilus_ls_calendar::{
-    compute_artifact_id, compute_calendar_id, schema_is_compatible, AsOfView, CalendarLoadError,
-    DateRange, KrxCalendar, Presence, QueryError, SessionSearch, SCHEMA_VERSION,
+    compute_artifact_id, compute_calendar_id, reconcile, schema_is_compatible, AsOfView,
+    CalendarLoadError, DateRange, KrxCalendar, Presence, QueryError, ReconcileAlert, ReconciledDay,
+    SessionSearch, SCHEMA_VERSION,
 };
 
 fn d(y: i32, m: u32, day: u32) -> NaiveDate {
@@ -704,4 +705,237 @@ fn as_of_view_re_evaluates_authorization_at_the_supplied_instant() {
         AsOfView::new(&cal, just_after),
         Err(CalendarLoadError::Expired)
     ));
+}
+
+// ---------------------------------------------------------------------------
+// U5: evidence reconciliation authority matrix (KTD6).
+//
+// One test per matrix row. Every scenario runs through the pure `reconcile` fn.
+// ---------------------------------------------------------------------------
+
+/// The date every U5 scenario reconciles.
+fn rd() -> NaiveDate {
+    d(2010, 5, 4)
+}
+
+/// A synthetic evidence record on [`rd`] with the given id + kind, valid + un-cited +
+/// un-superseded by default. Mutate the returned value for citations/validity/supersession.
+fn ev(id: &str, kind: EvidenceKind) -> EvidenceRecord {
+    EvidenceRecord {
+        id: id.to_string(),
+        source_id: "src".to_string(),
+        date: rd(),
+        kind,
+        valid: true,
+        superseded_by: None,
+        citation: None,
+        recorded_at: Utc.with_ymd_and_hms(2010, 5, 5, 0, 0, 0).unwrap(),
+    }
+}
+
+/// A synthetic first-party citation (never real).
+fn cite(reference: &str) -> Citation {
+    Citation {
+        reference: reference.to_string(),
+        issuer: "KRX (SYNTHETIC)".to_string(),
+        note: None,
+    }
+}
+
+fn has_alert(r: &ReconciledDay, kind: AlertKind) -> bool {
+    r.alerts.iter().any(|a| a.kind == kind)
+}
+
+/// Row 1 — a KRX positive witness on an otherwise-inferred (rule) closure wins:
+/// Trading Session, the inferred closure retained as conflicting, + override alert.
+#[test]
+fn row1_witness_overrides_inferred_closure() {
+    let evs = [
+        ev("wit", EvidenceKind::PositiveWitness),
+        ev("rule", EvidenceKind::DeterministicRule),
+    ];
+    let out = reconcile(rd(), &evs);
+    assert_eq!(out.status, DayStatus::TradingSession);
+    assert_eq!(out.decisive_evidence, vec!["wit".to_string()]);
+    assert_eq!(out.conflicting_evidence, vec!["rule".to_string()]);
+    assert!(has_alert(&out, AlertKind::WitnessOverridesInference));
+    // Observed operation wins even over an inferred HolidayFact closure.
+    let evs2 = [
+        ev("wit", EvidenceKind::PositiveWitness),
+        ev("hol", EvidenceKind::HolidayFact),
+    ];
+    let out2 = reconcile(rd(), &evs2);
+    assert_eq!(out2.status, DayStatus::TradingSession);
+    assert_eq!(out2.conflicting_evidence, vec!["hol".to_string()]);
+    assert!(has_alert(&out2, AlertKind::WitnessOverridesInference));
+}
+
+/// Row 2 — a positive witness vs. a direct cited first-party closure notice is an
+/// unresolved first-party conflict: Unknown + alert, both claims retained as conflicting.
+#[test]
+fn row2_witness_vs_closure_notice_is_unknown() {
+    let mut notice = ev("notice", EvidenceKind::ClosureNotice);
+    notice.citation = Some(cite("KRX-NOTICE-2010-05-04"));
+    let evs = [ev("wit", EvidenceKind::PositiveWitness), notice];
+    let out = reconcile(rd(), &evs);
+    assert_eq!(out.status, DayStatus::Unknown);
+    assert!(out.decisive_evidence.is_empty());
+    assert!(out.conflicting_evidence.contains(&"wit".to_string()));
+    assert!(out.conflicting_evidence.contains(&"notice".to_string()));
+    assert!(has_alert(&out, AlertKind::WitnessVsClosureNotice));
+}
+
+/// Row 3 — a later empty/malformed KRX response (a non-qualifying, `valid == false`
+/// witness record) never retracts an accepted witness: Trading Session preserved + alert.
+#[test]
+fn row3_later_absence_never_retracts_accepted_witness() {
+    let mut empty = ev("empty", EvidenceKind::PositiveWitness);
+    empty.valid = false; // recorded empty/malformed later response = non-evidence
+    let evs = [ev("wit", EvidenceKind::PositiveWitness), empty];
+    let out = reconcile(rd(), &evs);
+    assert_eq!(out.status, DayStatus::TradingSession);
+    assert_eq!(out.decisive_evidence, vec!["wit".to_string()]);
+    assert!(has_alert(&out, AlertKind::AbsenceIgnored));
+}
+
+/// Row 4 — a KASI holiday fact + an applicable published KRX rule → Closed (both decisive).
+#[test]
+fn row4_holiday_plus_connecting_rule_is_closed() {
+    let evs = [
+        ev("hol", EvidenceKind::HolidayFact),
+        ev("rule", EvidenceKind::DeterministicRule),
+    ];
+    let out = reconcile(rd(), &evs);
+    assert_eq!(out.status, DayStatus::Closed);
+    assert!(out.decisive_evidence.contains(&"hol".to_string()));
+    assert!(out.decisive_evidence.contains(&"rule".to_string()));
+}
+
+/// Row 4 (negative) — a holiday fact with NO connecting rule is NOT Closed → Unknown.
+#[test]
+fn row4_holiday_without_connecting_rule_is_not_closed() {
+    let evs = [ev("hol", EvidenceKind::HolidayFact)];
+    let out = reconcile(rd(), &evs);
+    assert_eq!(out.status, DayStatus::Unknown);
+    assert!(out.decisive_evidence.is_empty());
+}
+
+/// Row 5 — weekend / Labor Day / year-end per a published KRX rule → Closed (rule authority).
+#[test]
+fn row5_deterministic_rule_is_closed() {
+    let evs = [ev("rule", EvidenceKind::DeterministicRule)];
+    let out = reconcile(rd(), &evs);
+    assert_eq!(out.status, DayStatus::Closed);
+    assert_eq!(out.decisive_evidence, vec!["rule".to_string()]);
+}
+
+/// Row 6 — an exceptional closure with a CITED first-party notice → Closed; an UN-cited
+/// closure notice is rejected (cannot create a bare status) → Unknown.
+#[test]
+fn row6_cited_closure_notice_is_closed_uncited_rejected() {
+    let mut cited = ev("notice", EvidenceKind::ClosureNotice);
+    cited.citation = Some(cite("KRX-NOTICE-EXCEPTIONAL"));
+    let out = reconcile(rd(), &[cited]);
+    assert_eq!(out.status, DayStatus::Closed);
+    assert_eq!(out.decisive_evidence, vec!["notice".to_string()]);
+
+    // Bare (un-cited) closure notice: rejected — no bare status.
+    let bare = ev("bare", EvidenceKind::ClosureNotice);
+    let out2 = reconcile(rd(), &[bare]);
+    assert_eq!(out2.status, DayStatus::Unknown);
+    assert!(out2.decisive_evidence.is_empty());
+}
+
+/// Row 7 — two distinct effective cited first-party closure notices, neither superseding
+/// the other, are an unresolved first-party conflict → Unknown + alert.
+#[test]
+fn row7_conflicting_first_party_claims_is_unknown() {
+    let mut n1 = ev("n1", EvidenceKind::ClosureNotice);
+    n1.citation = Some(cite("KRX-NOTICE-A"));
+    let mut n2 = ev("n2", EvidenceKind::ClosureNotice);
+    n2.citation = Some(cite("KRX-NOTICE-B"));
+    let out = reconcile(rd(), &[n1, n2]);
+    assert_eq!(out.status, DayStatus::Unknown);
+    assert!(out.decisive_evidence.is_empty());
+    assert!(out.conflicting_evidence.contains(&"n1".to_string()));
+    assert!(out.conflicting_evidence.contains(&"n2".to_string()));
+    assert!(has_alert(&out, AlertKind::FirstPartyConflict));
+}
+
+/// Row 8 — an explicit correction supersedes ONLY the identified evidence: the sibling
+/// closure notice is untouched and decides Closed; the superseded one drops out + alert.
+#[test]
+fn row8_correction_supersedes_only_the_identified_evidence() {
+    // Without the correction, two notices would be a first-party conflict (row 7).
+    let mut superseded = ev("n1", EvidenceKind::ClosureNotice);
+    superseded.citation = Some(cite("KRX-NOTICE-STALE"));
+    superseded.superseded_by = Some("corr".to_string());
+    let mut sibling = ev("n2", EvidenceKind::ClosureNotice);
+    sibling.citation = Some(cite("KRX-NOTICE-GOVERNING"));
+    let mut correction = ev("corr", EvidenceKind::Correction);
+    correction.citation = Some(cite("KRX-CORRECTION-1"));
+
+    let out = reconcile(rd(), &[superseded, sibling, correction]);
+    // Only the identified n1 is superseded; the sibling n2 governs → Closed.
+    assert_eq!(out.status, DayStatus::Closed);
+    assert_eq!(out.decisive_evidence, vec!["n2".to_string()]);
+    assert!(!out.decisive_evidence.contains(&"n1".to_string()));
+    assert!(has_alert(&out, AlertKind::Superseded));
+}
+
+/// Row 9 — a human adjudication changes only validity/supersession; it cannot write a
+/// status. An adjudication-invalidated witness leaves no covering evidence → Unknown.
+#[test]
+fn row9_adjudication_invalidates_but_cannot_set_status() {
+    let mut invalidated = ev("wit", EvidenceKind::PositiveWitness);
+    invalidated.valid = false; // adjudication flipped its validity
+    invalidated.superseded_by = Some("adj".to_string());
+    let mut adjudication = ev("adj", EvidenceKind::Adjudication);
+    adjudication.citation = Some(cite("HUMAN-ADJ-1"));
+
+    let out = reconcile(rd(), &[invalidated, adjudication]);
+    // The adjudication itself is never status-bearing; the only witness is gone → Unknown.
+    assert_eq!(out.status, DayStatus::Unknown);
+    assert!(out.decisive_evidence.is_empty());
+    assert!(has_alert(&out, AlertKind::Adjudicated));
+}
+
+/// Row 10 — no covering evidence (empty, or all-invalid) → Unknown, a successful factual
+/// result (never an error, never Closed).
+#[test]
+fn row10_no_covering_evidence_is_unknown() {
+    let out = reconcile(rd(), &[]);
+    assert_eq!(
+        out,
+        ReconciledDay {
+            status: DayStatus::Unknown,
+            decisive_evidence: vec![],
+            conflicting_evidence: vec![],
+            alerts: vec![],
+        }
+    );
+
+    // All-invalid evidence is likewise not covering → Unknown.
+    let mut dead = ev("dead", EvidenceKind::PositiveWitness);
+    dead.valid = false;
+    let out2 = reconcile(rd(), &[dead]);
+    assert_eq!(out2.status, DayStatus::Unknown);
+    assert!(out2.decisive_evidence.is_empty());
+}
+
+/// The alert carries the reconciled date + a message so the caller (U14) only stamps ids.
+#[test]
+fn reconcile_alert_carries_kind_message_and_date() {
+    let evs = [
+        ev("wit", EvidenceKind::PositiveWitness),
+        ev("rule", EvidenceKind::DeterministicRule),
+    ];
+    let out = reconcile(rd(), &evs);
+    let alert: &ReconcileAlert = out
+        .alerts
+        .iter()
+        .find(|a| a.kind == AlertKind::WitnessOverridesInference)
+        .expect("override alert present");
+    assert_eq!(alert.date, rd());
+    assert!(!alert.message.is_empty());
 }
