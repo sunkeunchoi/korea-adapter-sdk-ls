@@ -76,7 +76,6 @@ impl LoadedCalendar {
 pub struct IngestCalendarContext {
     as_of: DateTime<Utc>,
     adoption: CalendarAdoption,
-    snapshot_path: Option<PathBuf>,
     loaded: LoadedCalendar,
 }
 
@@ -87,7 +86,7 @@ impl IngestCalendarContext {
         adoption: CalendarAdoption,
     ) -> Self {
         let loaded = resolve_and_load(snapshot_path.as_deref(), as_of, adoption);
-        Self { as_of, adoption, snapshot_path, loaded }
+        Self { as_of, adoption, loaded }
     }
 
     pub fn from_env(as_of: DateTime<Utc>) -> Self {
@@ -100,10 +99,6 @@ impl IngestCalendarContext {
 
     pub fn adoption(&self) -> CalendarAdoption {
         self.adoption
-    }
-
-    pub fn snapshot_path(&self) -> Option<&Path> {
-        self.snapshot_path.as_deref()
     }
 
     pub fn view(&self) -> Option<AsOfView<'_>> {

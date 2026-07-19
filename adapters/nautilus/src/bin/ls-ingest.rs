@@ -433,11 +433,7 @@ fn automatic_mode_requires_calendar(mode: &str) -> bool {
 fn calendar_target_for_mode(mode: &str, as_of: DateTime<Utc>) -> Result<NaiveDate, String> {
     if automatic_mode_requires_calendar(mode) {
         let now_kst = (as_of + Duration::hours(9)).naive_utc();
-        if now_kst.time() >= ACCUMULATE_CLOSE_BUFFER {
-            Ok(now_kst.date())
-        } else {
-            now_kst.date().pred_opt().ok_or_else(|| "calendar civil ceiling underflow".to_string())
-        }
+        Ok(last_closed_session(now_kst, ACCUMULATE_CLOSE_BUFFER))
     } else {
         parse_yyyymmdd(&env_required("LS_INGEST_EDATE")?)
     }

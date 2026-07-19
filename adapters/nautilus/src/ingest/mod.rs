@@ -143,7 +143,7 @@ pub enum ProbeAnchor {
 
 /// The consumer-owned proof plan for one inclusive pending span.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct CalendarRangePlan {
+struct CalendarRangePlan {
     /// Last positively-established Trading Session eligible as a request endpoint.
     pub request_through: Option<NaiveDate>,
     /// Last established date that may become covered after the request succeeds.
@@ -335,26 +335,38 @@ impl<'c> CalendarGate<'c> {
         if start > ceiling {
             return plan;
         }
-        let mut date = start;
-        loop {
-            match self.calendar_decision(date) {
-                CalendarDecision::Fetch => {
-                    plan.request_through = Some(date);
-                    plan.advance_through = Some(date);
+        let Some(view) = self.view else {
+            plan.stop_before = Some(start);
+            return plan;
+        };
+        let coverage = view.calendar().coverage();
+        if start < coverage.materialized_from || start > coverage.materialized_through {
+            plan.stop_before = Some(start);
+            return plan;
+        }
+        let scan_end = ceiling.min(coverage.materialized_through);
+        for row in view
+            .calendar()
+            .snapshot()
+            .rows
+            .iter()
+            .filter(|row| row.date >= start)
+            .take_while(|row| row.date <= scan_end)
+        {
+            match row.status {
+                DayStatus::TradingSession => {
+                    plan.request_through = Some(row.date);
+                    plan.advance_through = Some(row.date);
                 }
-                CalendarDecision::ClosedAdvance => plan.advance_through = Some(date),
-                CalendarDecision::UnknownStop | CalendarDecision::UnavailableStop => {
-                    plan.stop_before = Some(date);
+                DayStatus::Closed => plan.advance_through = Some(row.date),
+                DayStatus::Unknown => {
+                    plan.stop_before = Some(row.date);
                     break;
                 }
             }
-            if date == ceiling {
-                break;
-            }
-            date = match date.succ_opt() {
-                Some(next) => next,
-                None => break,
-            };
+        }
+        if plan.stop_before.is_none() && ceiling > coverage.materialized_through {
+            plan.stop_before = coverage.materialized_through.succ_opt();
         }
         plan
     }
@@ -362,7 +374,7 @@ impl<'c> CalendarGate<'c> {
     /// Plan one pending accumulate span. Legacy and Shadow execute the unchanged civil
     /// range; Shadow records the counterfactual proof plan. Enforced acts only on the
     /// established prefix and never selects an endpoint beyond its first uncertainty.
-    pub fn accumulate_plan(&self, start: NaiveDate, ceiling: NaiveDate) -> CalendarRangePlan {
+    fn accumulate_plan(&self, start: NaiveDate, ceiling: NaiveDate) -> CalendarRangePlan {
         let legacy = CalendarRangePlan {
             request_through: (start <= ceiling).then_some(ceiling),
             advance_through: (start <= ceiling).then_some(ceiling),
@@ -397,18 +409,21 @@ impl<'c> CalendarGate<'c> {
         if anchor < coverage.materialized_from || anchor > coverage.materialized_through {
             return None;
         }
-        let mut date = anchor;
-        loop {
-            match view.day(date).ok()?.status {
-                DayStatus::TradingSession => return Some(date),
+        for row in view
+            .calendar()
+            .snapshot()
+            .rows
+            .iter()
+            .rev()
+            .skip_while(|row| row.date > anchor)
+        {
+            match row.status {
+                DayStatus::TradingSession => return Some(row.date),
                 DayStatus::Closed => {}
                 DayStatus::Unknown => return None,
             }
-            if date == coverage.materialized_from {
-                return None;
-            }
-            date = date.pred_opt()?;
         }
+        None
     }
 
     /// The probe anchor under the adoption seam (U9). Legacy/Shadow keep `weekday_anchor`
@@ -504,21 +519,35 @@ impl<'c> CalendarGate<'c> {
         floor: NaiveDate,
         earliest_stored: NaiveDate,
     ) -> ContinuityDecision {
-        let mut date = floor;
+        if floor >= earliest_stored {
+            return ContinuityDecision::AllClosed;
+        }
+        let Some(view) = self.view else {
+            return ContinuityDecision::Indeterminate;
+        };
+        let coverage = view.calendar().coverage();
+        let last = match earliest_stored.pred_opt() {
+            Some(last) => last,
+            None => return ContinuityDecision::Indeterminate,
+        };
+        if floor < coverage.materialized_from || last > coverage.materialized_through {
+            return ContinuityDecision::Indeterminate;
+        }
         let mut saw_session = false;
         let mut indeterminate = false;
-        while date < earliest_stored {
-            match self.calendar_decision(date) {
-                CalendarDecision::Fetch => saw_session = true,
-                CalendarDecision::ClosedAdvance => {}
-                CalendarDecision::UnknownStop | CalendarDecision::UnavailableStop => {
-                    indeterminate = true;
-                }
+        for row in view
+            .calendar()
+            .snapshot()
+            .rows
+            .iter()
+            .filter(|row| row.date >= floor)
+            .take_while(|row| row.date < earliest_stored)
+        {
+            match row.status {
+                DayStatus::TradingSession => saw_session = true,
+                DayStatus::Closed => {}
+                DayStatus::Unknown => indeterminate = true,
             }
-            date = match date.succ_opt() {
-                Some(next) => next,
-                None => break,
-            };
         }
         if indeterminate {
             ContinuityDecision::Indeterminate
