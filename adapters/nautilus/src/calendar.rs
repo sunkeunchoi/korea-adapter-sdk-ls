@@ -21,12 +21,12 @@
 //! [`diagnostics`](nautilus_ls_calendar::diagnostics) layer — no credential or
 //! authorization identity is ever printed.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
 
 pub use nautilus_ls_calendar::CalendarAdoption;
-use nautilus_ls_calendar::{CalendarDiagnostic, CalendarLoadError, KrxCalendar};
+use nautilus_ls_calendar::{AsOfView, CalendarDiagnostic, CalendarLoadError, KrxCalendar};
 
 /// The env var naming the explicit snapshot path (composition-root input, KTD5). Unset
 /// or empty means "no snapshot configured" — the Shadow degradation contract applies.
@@ -64,6 +64,54 @@ impl LoadedCalendar {
     /// Whether a usable calendar was injected.
     pub fn is_available(&self) -> bool {
         matches!(self, LoadedCalendar::Available(_))
+    }
+}
+
+/// One immutable calendar resolution for an `ls-ingest` invocation.
+///
+/// The composition root fixes the clock, adoption posture, explicit source path, and
+/// loaded snapshot once. Startup admission and every runtime policy view are then
+/// derived from this owned value; replacing the source file cannot change the run.
+#[derive(Debug)]
+pub struct IngestCalendarContext {
+    as_of: DateTime<Utc>,
+    adoption: CalendarAdoption,
+    snapshot_path: Option<PathBuf>,
+    loaded: LoadedCalendar,
+}
+
+impl IngestCalendarContext {
+    pub fn resolve(
+        snapshot_path: Option<PathBuf>,
+        as_of: DateTime<Utc>,
+        adoption: CalendarAdoption,
+    ) -> Self {
+        let loaded = resolve_and_load(snapshot_path.as_deref(), as_of, adoption);
+        Self { as_of, adoption, snapshot_path, loaded }
+    }
+
+    pub fn from_env(as_of: DateTime<Utc>) -> Self {
+        Self::resolve(snapshot_path_from_env(), as_of, adoption_from_env())
+    }
+
+    pub fn as_of(&self) -> DateTime<Utc> {
+        self.as_of
+    }
+
+    pub fn adoption(&self) -> CalendarAdoption {
+        self.adoption
+    }
+
+    pub fn snapshot_path(&self) -> Option<&Path> {
+        self.snapshot_path.as_deref()
+    }
+
+    pub fn view(&self) -> Option<AsOfView<'_>> {
+        self.loaded.calendar().and_then(|calendar| calendar.as_of(self.as_of).ok())
+    }
+
+    pub fn startup_record(&self, consumer: &str, target: NaiveDate) -> StartupRecord {
+        build_startup_record(consumer, self.adoption, &self.loaded, self.as_of, target)
     }
 }
 
@@ -262,14 +310,12 @@ pub fn adoption_from_env() -> CalendarAdoption {
 /// root) does, then hands explicit values to [`resolve_and_load`] / [`build_startup_record`].
 pub fn startup_from_env(consumer: &str) -> StartupRecord {
     let as_of = Utc::now();
-    let adoption = adoption_from_env();
-    let path = snapshot_path_from_env();
+    let context = IngestCalendarContext::from_env(as_of);
     // The date the process cares about at startup: today's civil date in KST (KST = UTC+9,
     // no DST). Consumers that care about a specific other date compute it themselves in
     // Phase C; the startup record just needs a representative in-scope target.
     let target = (as_of + Duration::hours(9)).date_naive();
-    let loaded = resolve_and_load(path.as_deref(), as_of, adoption);
-    build_startup_record(consumer, adoption, &loaded, as_of, target)
+    context.startup_record(consumer, target)
 }
 
 /// The composition-root one-liner: build the env-driven startup record and emit it. Every

@@ -4,7 +4,8 @@
 
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use nautilus_ls::calendar::{
-    build_startup_record, resolve_and_load, LoadedCalendar, ResultingAction,
+    build_startup_record, resolve_and_load, IngestCalendarContext, LoadedCalendar,
+    ResultingAction,
 };
 use nautilus_ls_calendar::diagnostics::{DiagnosticOutcome, LoadFailure};
 use nautilus_ls_calendar::schema::{
@@ -137,6 +138,28 @@ fn composition_root_resolves_loads_injects_and_reports_adoption() {
         d(2010, 1, 2),
     );
     assert_eq!(enforced.action, ResultingAction::EnforcedActive);
+}
+
+#[test]
+fn ingest_context_keeps_one_loaded_snapshot_for_startup_and_runtime() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = write_snapshot(dir.path());
+    let context = IngestCalendarContext::resolve(
+        Some(path.clone()),
+        as_of(),
+        CalendarAdoption::Enforced,
+    );
+
+    std::fs::remove_file(path).unwrap();
+
+    let startup = context.startup_record("ls-ingest", d(2010, 1, 2));
+    assert_eq!(startup.action, ResultingAction::EnforcedActive);
+    assert_eq!(context.adoption(), CalendarAdoption::Enforced);
+    assert_eq!(context.as_of(), as_of());
+    assert_eq!(
+        context.view().unwrap().day(d(2010, 1, 2)).unwrap().status,
+        DayStatus::TradingSession
+    );
 }
 
 #[test]
