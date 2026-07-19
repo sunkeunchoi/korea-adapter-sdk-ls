@@ -2482,21 +2482,24 @@ mod calendar_gate_migration {
         assert_eq!(read_watermark(&catalog), Some(ymd(2010, 6, 15)), "watermark advances to the session");
     }
 
-    /// Enforced, proven Closed (change only the target row): the watermark advances FROM
-    /// closure evidence with NO gateway request.
+    /// Enforced, SINGLE-DATE proven Closed target: the watermark advances FROM closure
+    /// evidence with NO gateway request. Seed a watermark of 2010-06-18 so the fetch range
+    /// [start, last_closed] collapses to the single date 2010-06-19 (start = watermark+1),
+    /// isolating the endpoint's single-date advance from the whole-range guard.
     #[tokio::test]
     async fn enforced_closed_target_advances_without_request() {
         let dir = tempdir().unwrap();
         let catalog = dir.path().join("catalog");
         let server = MockServer::start().await;
         let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        seed_watermark(&catalog, ymd(2010, 6, 18));
 
         let cal = fixture_calendar();
         let view = cal.as_of(as_of()).unwrap();
         let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
-        // last_closed = 2010-06-19 is a proven Closed date.
+        // last_closed = 2010-06-19 is a proven Closed date; watermark 2010-06-18 → start = 06-19.
         let report = ing
             .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2010, 6, 19), ymd(2010, 6, 14), gate)
             .await
@@ -2530,6 +2533,104 @@ mod calendar_gate_migration {
         assert_eq!(count_t8410(&server).await, 0, "unavailable calendar → fail closed, zero requests");
         assert_eq!(report.triples_ingested, 0);
         assert_eq!(read_watermark(&catalog), Some(ymd(2010, 1, 2)), "watermark preserved");
+        let after = std::fs::read(&cp_path(&catalog)).unwrap();
+        assert_eq!(before, after, "checkpoint file byte-for-byte identical");
+    }
+
+    // -- Enforced accumulate next-fetch over the WHOLE RANGE (not just the endpoint) --
+    //
+    // The SkipAdvance the endpoint gate proposes replaces a fetch of the WHOLE range
+    // [start, last_closed] (start = watermark+1, or lookback_floor for the initial
+    // backfill). Advancing coverage over that span without a fetch is only safe when
+    // EVERY date in it is proven Closed — a proven Trading Session in the span would
+    // otherwise be silently skipped and marked covered with zero bars (false coverage).
+
+    /// Enforced, MULTI-DAY initial backfill (no watermark, start = lookback_floor) whose
+    /// endpoint `last_closed` is proven Closed but an INTERVENING date is a proven Trading
+    /// Session: the range MUST be fetched (request observable), not skip-advanced over.
+    /// Range [2010-06-14 .. 2010-06-19]: 06-15 & 06-17 are Trading Sessions, 06-19 is Closed.
+    #[tokio::test]
+    async fn enforced_closed_endpoint_but_intervening_session_fetches_the_range() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        // No watermark seeded → start = lookback_floor (the initial multi-day backfill).
+
+        let cal = fixture_calendar();
+        let view = cal.as_of(as_of()).unwrap();
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        // last_closed = 2010-06-19 (Closed) but the range back to the floor 2010-06-14
+        // straddles the 06-15/06-17 Trading Sessions.
+        let report = ing
+            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2010, 6, 19), ymd(2010, 6, 14), gate)
+            .await
+            .unwrap();
+
+        // The intervening Trading Session is fetched — NOT skip-advanced over with zero bars.
+        assert!(count_t8410(&server).await >= 1, "the range with a Trading Session is fetched, not skipped");
+        assert!(report.bars_written > 0, "bars for the fetched range are written");
+        assert_eq!(report.triples_ingested, 1);
+        // The watermark advances only because the range was actually fetched.
+        assert_eq!(read_watermark(&catalog), Some(ymd(2010, 6, 19)), "watermark advances over a FETCHED range");
+    }
+
+    /// Enforced, MULTI-DAY range whose EVERY date is proven Closed (no watermark, start =
+    /// lookback_floor): still SkipAdvance — no gateway request, watermark advances FROM
+    /// closure evidence. Range [2011-02-02 .. 2011-02-04] is fully Closed in the fixture.
+    #[tokio::test]
+    async fn enforced_all_closed_range_advances_without_request() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+
+        let cal = fixture_calendar();
+        let view = cal.as_of(as_of()).unwrap();
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing
+            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2011, 2, 4), ymd(2011, 2, 2), gate)
+            .await
+            .unwrap();
+
+        assert_eq!(count_t8410(&server).await, 0, "all-Closed range → no gateway request");
+        assert_eq!(report.bars_written, 0);
+        assert_eq!(report.triples_ingested, 0);
+        assert_eq!(report.triples_skipped, 1);
+        assert_eq!(read_watermark(&catalog), Some(ymd(2011, 2, 4)), "coverage advances FROM closure evidence");
+    }
+
+    /// Enforced, MULTI-DAY range with an intervening UNKNOWN and no proven Trading Session
+    /// (endpoint Closed): Stop before dispatch — no advance, checkpoint preserved byte-for-byte.
+    /// Watermark 2010-06-17 → start 2010-06-18 (Unknown); last_closed 2010-06-19 (Closed).
+    #[tokio::test]
+    async fn enforced_range_with_intervening_unknown_stops_and_preserves_state() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        seed_watermark(&catalog, ymd(2010, 6, 17));
+        let before = std::fs::read(&cp_path(&catalog)).unwrap();
+
+        let cal = fixture_calendar();
+        let view = cal.as_of(as_of()).unwrap();
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        // start = 2010-06-18 (Unknown), last_closed = 2010-06-19 (Closed): the range holds an
+        // Unknown and no proven Trading Session → Indeterminate → Stop.
+        let report = ing
+            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2010, 6, 19), ymd(2010, 6, 1), gate)
+            .await
+            .unwrap();
+
+        assert_eq!(count_t8410(&server).await, 0, "Unknown in the range → fail closed, zero requests");
+        assert_eq!(report.triples_ingested, 0);
+        assert_eq!(read_watermark(&catalog), Some(ymd(2010, 6, 17)), "watermark preserved (no advance over Unknown)");
         let after = std::fs::read(&cp_path(&catalog)).unwrap();
         assert_eq!(before, after, "checkpoint file byte-for-byte identical");
     }

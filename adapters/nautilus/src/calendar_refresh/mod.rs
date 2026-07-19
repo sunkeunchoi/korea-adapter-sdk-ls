@@ -24,6 +24,8 @@ pub mod diff;
 pub mod port;
 pub mod transport;
 
+use std::io::Write;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
@@ -197,7 +199,12 @@ fn append_ext(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
-/// Atomic sibling-temp + rename write (mirrors the ingest checkpoint write hardening).
+/// Atomic sibling-temp + rename write (mirrors the ingest checkpoint write hardening and
+/// [`atomic_install_owner_only`](activate::atomic_install_owner_only)). The candidate is a
+/// full Snapshot with the same license-restricted KRX-derived rows as production, and the
+/// diff carries KRX/KASI-derived facts, so the tempfile is created `0o600` (owner read/write
+/// ONLY) and re-asserted with `set_permissions` before rename — never at the umask-default
+/// world-readable `0o644`.
 fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() {
@@ -205,6 +212,17 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         }
     }
     let tmp = append_ext(path, "tmp");
-    std::fs::write(&tmp, bytes)?;
+    {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    // Re-assert 0o600 in case the temp path pre-existed with wider bits.
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
     std::fs::rename(&tmp, path)
 }

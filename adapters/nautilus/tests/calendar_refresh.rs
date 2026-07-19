@@ -3,9 +3,10 @@
 
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use nautilus_ls::calendar_refresh::{
-    build_candidate, diff_against_predecessor, refresh, strip_url_credentials, write_candidate,
-    CategorizedDiff, DiffCategory, EvidenceInputPort, LiveEvidencePort, MaintainerCredentials,
-    RefreshInputs, RefreshMode, RefreshScope, SourceOutcome, StaticEvidencePort,
+    build_candidate, diff_against_predecessor, refresh, refresh_incremental, strip_url_credentials,
+    write_candidate, CategorizedDiff, DiffCategory, EvidenceInputPort, LiveEvidencePort,
+    MaintainerCredentials, RefreshInputs, RefreshMode, RefreshScope, SourceOutcome,
+    StaticEvidencePort,
 };
 use nautilus_ls_calendar::schema::{
     Authorization, CalendarScope, Citation, Coverage, DayRow, DayStatus, EvidenceKind,
@@ -520,6 +521,157 @@ fn transport_request_error_strips_credentials_from_every_surface() {
     let dbg = format!("{port:?}");
     assert!(!dbg.contains("SUPERSECRET123"), "{dbg}");
     assert!(!dbg.contains("APPKEY_ABC999"), "{dbg}");
+}
+
+/// FIX 1 (safety): an incremental refresh re-gathers only ONE new date but marks KRX_DAILY
+/// "ok". Prior KRX positive witnesses on the NON-re-gathered historical dates MUST be
+/// retained — a partial re-gather must never retract a prior positive witness (which would
+/// revert a proven-open day back to an inferred Closed). Before FIX 1 the build dropped
+/// ALL of a successful source's prior evidence wholesale, reverting 2012-06-01 to Closed.
+#[test]
+fn incremental_partial_regather_retains_prior_witnesses_on_untouched_dates() {
+    // Prior over 2012-06-01..2012-06-05:
+    //  - 2012-06-01: holiday+rule (inferred Closed) OVERRIDDEN by a KRX witness -> TradingSession
+    //  - 2012-06-03: a bare KRX witness -> TradingSession
+    let from = d(2012, 6, 1);
+    let through = d(2012, 6, 5);
+    let sources = vec![
+        src("krx-daily", SourceKind::KrxDailyMarket),
+        src("kasi", SourceKind::KasiHoliday),
+        src("krx-rule", SourceKind::KrxRule),
+    ];
+    let evidence = vec![
+        ev("kasi-0601", "kasi", d(2012, 6, 1), EvidenceKind::HolidayFact, false),
+        ev("rule-0601", "krx-rule", d(2012, 6, 1), EvidenceKind::DeterministicRule, false),
+        ev("witness-0601", "krx-daily", d(2012, 6, 1), EvidenceKind::PositiveWitness, false),
+        ev("witness-0603", "krx-daily", d(2012, 6, 3), EvidenceKind::PositiveWitness, false),
+    ];
+    let mut rows = Vec::new();
+    let mut cursor = from;
+    while cursor <= through {
+        let (status, decisive) = match cursor {
+            x if x == d(2012, 6, 1) => (DayStatus::TradingSession, vec!["witness-0601".to_string()]),
+            x if x == d(2012, 6, 3) => (DayStatus::TradingSession, vec!["witness-0603".to_string()]),
+            _ => (DayStatus::Unknown, vec![]),
+        };
+        rows.push(DayRow {
+            date: cursor,
+            status,
+            decisive_evidence: decisive,
+            conflicting_evidence: vec![],
+            alerts: vec![],
+        });
+        cursor = cursor.succ_opt().unwrap();
+    }
+    let base = prior_snapshot();
+    let prior = stamp(Snapshot {
+        sources,
+        evidence,
+        rows,
+        ..base
+    });
+
+    // Incremental refresh gathering ONLY the single new date 2012-06-06, KRX_DAILY ok.
+    let inputs = RefreshInputs {
+        sources: vec![src("krx-daily", SourceKind::KrxDailyMarket)],
+        evidence: vec![ev(
+            "witness-0606",
+            "krx-daily",
+            d(2012, 6, 6),
+            EvidenceKind::PositiveWitness,
+            false,
+        )],
+        outcomes: vec![SourceOutcome::ok("krx-daily", SourceKind::KrxDailyMarket)],
+    };
+    let out = refresh_incremental(
+        &prior,
+        &StaticEvidencePort::new(inputs),
+        refresh_now(),
+        d(2012, 6, 6),
+    );
+    let candidate = &out.candidate;
+
+    // Prior witnesses on the NON-re-gathered dates are RETAINED.
+    assert!(
+        candidate.evidence.iter().any(|e| e.id == "witness-0601"),
+        "a prior positive witness on a non-re-gathered date must be retained"
+    );
+    assert!(
+        candidate.evidence.iter().any(|e| e.id == "witness-0603"),
+        "a prior positive witness on a non-re-gathered date must be retained"
+    );
+
+    // The row-1 override date stays TradingSession — NOT reverted to inferred Closed.
+    let row_0601 = candidate
+        .rows
+        .iter()
+        .find(|r| r.date == d(2012, 6, 1))
+        .unwrap();
+    assert_eq!(
+        row_0601.status,
+        DayStatus::TradingSession,
+        "a proven-open (witness-overrides-inference) day must not revert to Closed on a partial re-gather"
+    );
+    let row_0603 = candidate
+        .rows
+        .iter()
+        .find(|r| r.date == d(2012, 6, 3))
+        .unwrap();
+    assert_eq!(row_0603.status, DayStatus::TradingSession);
+
+    // The freshly re-gathered date is materialized as proven-open.
+    let row_0606 = candidate
+        .rows
+        .iter()
+        .find(|r| r.date == d(2012, 6, 6))
+        .unwrap();
+    assert_eq!(row_0606.status, DayStatus::TradingSession);
+}
+
+/// FIX 2 (security): the candidate + diff carry the same license-restricted KRX/KASI-derived
+/// facts as the production snapshot, so both must be written owner-only (`0o600`), never at
+/// the umask-default world-readable `0o644`.
+#[test]
+fn write_candidate_writes_owner_only_0600_files() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    let active_path = dir.path().join("calendar.json");
+    let prior = prior_snapshot();
+    std::fs::write(&active_path, serde_json::to_vec_pretty(&prior).unwrap()).unwrap();
+
+    let out = refresh(
+        &prior,
+        &StaticEvidencePort::new(ok_inputs_flip_0603_to_session()),
+        RefreshScope {
+            from: d(2012, 6, 1),
+            through: d(2012, 6, 5),
+        },
+        RefreshMode::Incremental,
+        refresh_now(),
+        horizon(),
+    );
+    let artifacts = write_candidate(&active_path, &out).unwrap();
+
+    let cand_mode = std::fs::metadata(&artifacts.candidate_path)
+        .unwrap()
+        .permissions()
+        .mode();
+    let diff_mode = std::fs::metadata(&artifacts.diff_path)
+        .unwrap()
+        .permissions()
+        .mode();
+    assert_eq!(
+        cand_mode & 0o777,
+        0o600,
+        "candidate must be owner-only 0o600, got {:o}",
+        cand_mode & 0o777
+    );
+    assert_eq!(
+        diff_mode & 0o777,
+        0o600,
+        "diff must be owner-only 0o600, got {:o}",
+        diff_mode & 0o777
+    );
 }
 
 #[test]

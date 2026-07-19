@@ -64,11 +64,22 @@ pub fn build_candidate(
         .map(|o| o.source_id.as_str())
         .collect();
 
-    // Merge evidence by id: retained prior (from non-refreshed / failed sources) + fresh.
+    // Merge evidence by id: retained prior (from non-refreshed / failed sources) + fresh. A
+    // successful source's prior record is REPLACED (dropped in favor of the fresh gather)
+    // ONLY when its date falls inside the re-covered scope window — the window the gather
+    // actually re-attested. A partial re-gather (e.g. an incremental refresh of a single
+    // date) that marks a source "ok" must NEVER retract that source's prior positive
+    // witnesses on dates it did not re-cover; dropping them wholesale would revert a
+    // proven-open day back to an inferred Closed ("absence never retracts a prior positive
+    // witness", enforced here at the BUILD layer). A FULL-history re-gather covers every
+    // date, so its replacement stays wholesale — semantics unchanged.
     let mut evidence_by_id: BTreeMap<String, _> = BTreeMap::new();
     for e in &prior.evidence {
-        if ok_source_ids.contains(e.source_id.as_str()) {
-            continue; // replaced by the successful source's fresh gather
+        let re_covered = ok_source_ids.contains(e.source_id.as_str())
+            && e.date >= scope.from
+            && e.date <= scope.through;
+        if re_covered {
+            continue; // replaced by the successful source's fresh gather for this in-scope date
         }
         evidence_by_id.insert(e.id.clone(), e.clone());
     }

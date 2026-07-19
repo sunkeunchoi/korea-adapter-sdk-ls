@@ -271,6 +271,41 @@ impl<'c> CalendarGate<'c> {
         }
     }
 
+    /// The next-fetch action for the INCLUSIVE range `[start, last_closed]` under the adoption
+    /// seam — the range-aware form of [`action`](Self::action) that guards advance-without-fetch
+    /// against false coverage. The single-date [`action`](Self::action) only inspects the
+    /// endpoint, but a SkipAdvance replaces a fetch of the WHOLE range `[start, last_closed]`
+    /// (`start` = watermark+1, or the lookback floor for the initial backfill); skip-advancing
+    /// when a Trading Session lies inside that span would mark it covered with zero bars. Scans
+    /// every date in the range (reusing [`scan_inclusive`](Self::scan_inclusive)): an
+    /// all-proven-Closed range (or a single proven-Closed date) →
+    /// [`SkipAdvance`](GateAction::SkipAdvance); any proven Trading Session →
+    /// [`Proceed`](GateAction::Proceed) (fetch the range, never skip a session); any
+    /// Unknown/unavailable date with no proven session → [`Stop`](GateAction::Stop). Legacy/Shadow
+    /// keep the weekday path authoritative (Shadow records the range verdict). Passing
+    /// `start == last_closed` recovers the single-date semantics exactly.
+    pub fn range_action(&self, start: NaiveDate, last_closed: NaiveDate) -> GateAction {
+        match self.adoption {
+            CalendarAdoption::Legacy => GateAction::Proceed,
+            CalendarAdoption::Shadow => {
+                let decision = self.scan_inclusive(start, last_closed);
+                tracing::info!(
+                    start = %fmt_ymd(start),
+                    last_closed = %fmt_ymd(last_closed),
+                    decision = ?decision,
+                    adoption = "shadow",
+                    "calendar shadow range next-fetch decision (recorded; weekday path authoritative)"
+                );
+                GateAction::Proceed
+            }
+            CalendarAdoption::Enforced => match self.scan_inclusive(start, last_closed) {
+                ContinuityDecision::AllClosed => GateAction::SkipAdvance,
+                ContinuityDecision::TradingPresent => GateAction::Proceed,
+                ContinuityDecision::Indeterminate => GateAction::Stop,
+            },
+        }
+    }
+
     /// The most recent proven Trading Session at or before `anchor` in the injected view, or
     /// `None` if there is no view, no proven session, or an `Unknown` sits at/before the
     /// anchor with no proven session first (proof-preserving — an `Unknown` never manufactures
@@ -340,6 +375,25 @@ impl<'c> CalendarGate<'c> {
             ContinuityDecision::Indeterminate
         } else {
             ContinuityDecision::AllClosed
+        }
+    }
+
+    /// Scan the INCLUSIVE civil-date range `[start, last_closed]` for the continuity verdict,
+    /// reusing [`scan_continuity`](Self::scan_continuity) over the half-open
+    /// `[start, last_closed + 1)`. An empty range (`start > last_closed`) is vacuously
+    /// [`AllClosed`](ContinuityDecision::AllClosed). This is the range form the accumulate
+    /// advance-without-fetch guard scans (the fetch a SkipAdvance replaces covers the whole
+    /// range, not just the endpoint).
+    fn scan_inclusive(&self, start: NaiveDate, last_closed: NaiveDate) -> ContinuityDecision {
+        if start > last_closed {
+            return ContinuityDecision::AllClosed;
+        }
+        match last_closed.succ_opt() {
+            Some(end_exclusive) => self.scan_continuity(start, end_exclusive),
+            // `last_closed` is the maximum representable date (unreachable in practice); the
+            // half-open span already covers every date strictly before it, so the residual
+            // endpoint is the only date unscanned — treat the vacuous tail as all-Closed.
+            None => self.scan_continuity(start, last_closed),
         }
     }
 
@@ -1751,16 +1805,43 @@ impl Ingestor {
                     match calendar.action(last_closed) {
                         GateAction::Proceed => {}
                         GateAction::SkipAdvance => {
-                            // Proven Closed: advance coverage FROM closure evidence with NO
-                            // gateway call — but only forward, never below the watermark
-                            // (provenance guard; Unknown never reaches here, KTD8).
+                            // The endpoint `last_closed` is proven Closed, but the fetch this
+                            // SkipAdvance replaces covers the WHOLE range [start, last_closed]
+                            // (start = watermark+1, or lookback_floor for the initial backfill).
+                            // Advancing coverage over that span without a fetch is only safe when
+                            // EVERY date in it is proven Closed — otherwise a Trading Session in
+                            // the range would be silently skipped and marked covered with zero
+                            // bars (the "advance coverage without evidence" hazard, via the range
+                            // endpoint rather than the endpoint alone, KTD8). Re-scan the range.
                             let wm = checkpoint.watermark(&instrument, &label);
-                            if wm.map_or(true, |w| last_closed > w) {
-                                checkpoint.set_watermark(&instrument, &label, last_closed);
-                                checkpoint.save(&checkpoint_path)?;
+                            let start = match wm {
+                                Some(d) => d.succ_opt().expect("a date always has a successor"),
+                                None => lookback_floor,
+                            };
+                            match calendar.range_action(start, last_closed) {
+                                GateAction::SkipAdvance => {
+                                    // Whole range proven Closed: advance FROM closure evidence
+                                    // with NO gateway call — but only forward, never below the
+                                    // watermark (provenance guard; Unknown never reaches here).
+                                    if wm.map_or(true, |w| last_closed > w) {
+                                        checkpoint.set_watermark(&instrument, &label, last_closed);
+                                        checkpoint.save(&checkpoint_path)?;
+                                    }
+                                    skipped += 1;
+                                    continue;
+                                }
+                                GateAction::Stop => {
+                                    // An Unknown/unavailable date lies in the range with no
+                                    // proven session: stop before dispatch, preserve state.
+                                    skipped += 1;
+                                    continue;
+                                }
+                                GateAction::Proceed => {
+                                    // A proven Trading Session lies in the range: do NOT skip it.
+                                    // Fall through to the normal FETCH path (fetch the range as
+                                    // Legacy would), so the session is never silently skipped.
+                                }
                             }
-                            skipped += 1;
-                            continue;
                         }
                         GateAction::Stop => {
                             // Unknown/unavailable: stop before dispatch. No watermark advance,
