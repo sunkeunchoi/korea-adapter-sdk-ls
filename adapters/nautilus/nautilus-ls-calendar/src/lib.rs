@@ -10,6 +10,7 @@
 //! layered on by later units.
 
 pub mod canonical;
+pub mod freshness;
 pub mod load;
 pub mod query;
 pub mod reconcile;
@@ -17,6 +18,10 @@ pub mod schema;
 pub mod witness;
 
 pub use canonical::{compute_artifact_id, compute_calendar_id, schema_is_compatible, SCHEMA_VERSION};
+pub use freshness::{
+    DimensionStaleness, FreshnessReport, FORWARD_READINESS_MIN_DAYS, FULL_HISTORY_STALE_AFTER_DAYS,
+    INCREMENTAL_STALE_AFTER_DAYS, KASI_STALE_AFTER_DAYS,
+};
 pub use load::{CalendarLoadError, KrxCalendar};
 pub use query::{AsOfView, DateRange, DayFact, Presence, QueryError, SessionSearch};
 pub use reconcile::{reconcile, ReconcileAlert, ReconciledDay};
