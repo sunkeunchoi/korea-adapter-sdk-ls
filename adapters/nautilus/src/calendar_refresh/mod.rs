@@ -18,6 +18,7 @@
 //! candidate.predecessor_artifact_id` (stale-base guard). [`write_candidate`] returns the
 //! [`CandidateArtifacts`] paths U15 revalidates + atomically installs.
 
+pub mod activate;
 pub mod candidate;
 pub mod diff;
 pub mod port;
@@ -29,6 +30,10 @@ use chrono::{DateTime, Duration, NaiveDate, Utc};
 
 use nautilus_ls_calendar::schema::Snapshot;
 
+pub use activate::{
+    acknowledgment_key, activate, required_acknowledgments, ActivationApproval, ActivationError,
+    ActivationRecord, PARTIAL_ACK_KEY,
+};
 pub use candidate::{build_candidate, RefreshMode};
 pub use diff::{diff_against_predecessor, CategorizedDiff, DiffCategory, DiffEntry};
 pub use port::{

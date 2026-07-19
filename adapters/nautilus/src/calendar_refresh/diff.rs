@@ -14,13 +14,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use chrono::NaiveDate;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use nautilus_ls_calendar::schema::{AlertKind, DayStatus, Snapshot};
 
 /// A typed category of change in a categorized diff. The first six are HIGH-RISK; the last
 /// three are additive/low-risk.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DiffCategory {
     /// An already-materialized past date's established status changed (known → different
@@ -63,7 +63,7 @@ impl DiffCategory {
 }
 
 /// One typed change in a categorized diff.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DiffEntry {
     /// The category of change.
     pub category: DiffCategory,
@@ -76,7 +76,7 @@ pub struct DiffEntry {
 }
 
 /// A deterministic categorized diff of a candidate vs. its exact active predecessor.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CategorizedDiff {
     /// The predecessor `artifact_id` the candidate declares (the exact active predecessor).
     pub predecessor_artifact_id: Option<String>,
