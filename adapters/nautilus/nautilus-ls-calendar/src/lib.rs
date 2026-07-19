@@ -14,8 +14,13 @@ pub mod load;
 pub mod query;
 pub mod reconcile;
 pub mod schema;
+pub mod witness;
 
 pub use canonical::{compute_artifact_id, compute_calendar_id, schema_is_compatible, SCHEMA_VERSION};
 pub use load::{CalendarLoadError, KrxCalendar};
 pub use query::{AsOfView, DateRange, DayFact, Presence, QueryError, SessionSearch};
 pub use reconcile::{reconcile, ReconcileAlert, ReconciledDay};
+pub use witness::{
+    build_witness_record, default_witness_id, witness_from_response, KrxDailyMarketResponse,
+    KrxDailyRow, NonWitnessReason, WitnessOutcome, KRX_DAILY_MARKET_SOURCE_HINT, MIN_WITNESS_DATE,
+};

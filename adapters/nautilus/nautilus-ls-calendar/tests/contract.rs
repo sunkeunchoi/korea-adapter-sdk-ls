@@ -9,9 +9,10 @@ use nautilus_ls_calendar::schema::{
     EvidenceKind, EvidenceRecord, Freshness, Snapshot, Source, SourceAvailabilityBound, SourceKind,
 };
 use nautilus_ls_calendar::{
-    compute_artifact_id, compute_calendar_id, reconcile, schema_is_compatible, AsOfView,
-    CalendarLoadError, DateRange, KrxCalendar, Presence, QueryError, ReconcileAlert, ReconciledDay,
-    SessionSearch, SCHEMA_VERSION,
+    build_witness_record, compute_artifact_id, compute_calendar_id, reconcile, schema_is_compatible,
+    witness_from_response, AsOfView, CalendarLoadError, DateRange, KrxCalendar, KrxDailyMarketResponse,
+    KrxDailyRow, NonWitnessReason, Presence, QueryError, ReconcileAlert, ReconciledDay, SessionSearch,
+    WitnessOutcome, SCHEMA_VERSION,
 };
 
 fn d(y: i32, m: u32, day: u32) -> NaiveDate {
@@ -938,4 +939,208 @@ fn reconcile_alert_carries_kind_message_and_date() {
         .expect("override alert present");
     assert_eq!(alert.date, rd());
     assert!(!alert.message.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// U6: KRX daily-market positive-witness rule (KTD7).
+//
+// PROOF-FIRST: the non-evidence cases come first — the safety property is that
+// absence / malformation NEVER manufactures a Closed or retracts a prior witness.
+// A witness is accepted ONLY when the response is successful, structurally valid,
+// its rows' date matches the request, it carries a qualifying KOSPI row, and the
+// requested date is >= 2010-01-04.
+// ---------------------------------------------------------------------------
+
+/// The earliest date KTD7 admits a witness for.
+fn min_witness_date() -> NaiveDate {
+    d(2010, 1, 4)
+}
+
+/// A qualifying KOSPI row on `date`.
+fn kospi_row(date: NaiveDate) -> KrxDailyRow {
+    KrxDailyRow {
+        date,
+        market: "KOSPI".to_string(),
+    }
+}
+
+/// A successful, un-erroring KRX daily-market response for `requested` carrying `rows`.
+fn ok_response(requested: NaiveDate, rows: Vec<KrxDailyRow>) -> KrxDailyMarketResponse {
+    KrxDailyMarketResponse {
+        success: true,
+        requested_date: requested,
+        rows,
+        error_code: None,
+    }
+}
+
+fn non_evidence(resp: &KrxDailyMarketResponse) -> NonWitnessReason {
+    match witness_from_response(resp) {
+        WitnessOutcome::NonEvidence(reason) => reason,
+        WitnessOutcome::Witness(rec) => {
+            panic!("expected NonEvidence, got a witness {rec:?}")
+        }
+    }
+}
+
+/// Empty response (successful but no rows) → no witness.
+#[test]
+fn u6_empty_response_is_non_evidence() {
+    let resp = ok_response(min_witness_date(), vec![]);
+    assert_eq!(non_evidence(&resp), NonWitnessReason::Empty);
+}
+
+/// Malformed body (a structurally broken row — blank market) → no witness.
+#[test]
+fn u6_malformed_response_is_non_evidence() {
+    let resp = ok_response(
+        min_witness_date(),
+        vec![KrxDailyRow {
+            date: min_witness_date(),
+            market: String::new(),
+        }],
+    );
+    assert_eq!(non_evidence(&resp), NonWitnessReason::Malformed);
+}
+
+/// A failed response (success == false, no error envelope) → no witness.
+#[test]
+fn u6_failed_response_is_non_evidence() {
+    let resp = KrxDailyMarketResponse {
+        success: false,
+        requested_date: min_witness_date(),
+        rows: vec![kospi_row(min_witness_date())],
+        error_code: None,
+    };
+    assert_eq!(non_evidence(&resp), NonWitnessReason::Failed);
+}
+
+/// An error-envelope response (an error_code is present) → no witness.
+#[test]
+fn u6_error_envelope_response_is_non_evidence() {
+    let resp = KrxDailyMarketResponse {
+        success: false,
+        requested_date: min_witness_date(),
+        rows: vec![kospi_row(min_witness_date())],
+        error_code: Some("IGW00201".to_string()),
+    };
+    assert_eq!(non_evidence(&resp), NonWitnessReason::ErrorEnvelope);
+}
+
+/// A date-mismatched response (rows carry a different date than requested) → no witness.
+#[test]
+fn u6_date_mismatched_response_is_non_evidence() {
+    let resp = ok_response(min_witness_date(), vec![kospi_row(d(2010, 1, 5))]);
+    assert_eq!(non_evidence(&resp), NonWitnessReason::DateMismatch);
+}
+
+/// A pre-2010 request (before 2010-01-04) is out of KTD7 scope → no witness, even with a
+/// qualifying KOSPI row on that date.
+#[test]
+fn u6_pre_2010_response_is_non_evidence() {
+    let early = d(2009, 12, 31);
+    let resp = ok_response(early, vec![kospi_row(early)]);
+    assert_eq!(non_evidence(&resp), NonWitnessReason::Pre2010);
+}
+
+/// A response with rows on the requested date but no qualifying KOSPI row → no witness.
+#[test]
+fn u6_no_qualifying_kospi_row_is_non_evidence() {
+    let resp = ok_response(
+        min_witness_date(),
+        vec![KrxDailyRow {
+            date: min_witness_date(),
+            market: "KOSDAQ".to_string(),
+        }],
+    );
+    assert_eq!(non_evidence(&resp), NonWitnessReason::NoQualifyingRow);
+}
+
+/// Happy path — a valid, non-empty response with a qualifying KOSPI row on the requested
+/// date (>= 2010-01-04) yields a valid PositiveWitness EvidenceRecord dated to the request.
+#[test]
+fn u6_qualifying_response_yields_positive_witness() {
+    let day = min_witness_date();
+    let resp = ok_response(day, vec![kospi_row(day)]);
+    let rec = match witness_from_response(&resp) {
+        WitnessOutcome::Witness(rec) => rec,
+        other => panic!("expected a witness, got {other:?}"),
+    };
+    assert_eq!(rec.kind, EvidenceKind::PositiveWitness);
+    assert_eq!(rec.date, day, "witness is dated to the requested date");
+    assert!(rec.valid, "an accepted witness is valid");
+    assert!(
+        rec.superseded_by.is_none(),
+        "an accepted witness is un-superseded"
+    );
+
+    // Case-insensitive market label still qualifies.
+    let resp2 = ok_response(
+        day,
+        vec![KrxDailyRow {
+            date: day,
+            market: "kospi".to_string(),
+        }],
+    );
+    assert!(matches!(
+        witness_from_response(&resp2),
+        WitnessOutcome::Witness(_)
+    ));
+}
+
+/// Integration with U5: a produced witness reconciles to Trading Session; a later empty
+/// response yields NonEvidence (no record), so the witness set is unchanged and the day
+/// stays a Trading Session — absence NEVER retracts (the core safety property).
+#[test]
+fn u6_witness_reconciles_and_absence_does_not_retract() {
+    let day = min_witness_date();
+
+    // A qualifying response → a witness record, stamped with U14-supplied id/source_id.
+    let resp = ok_response(day, vec![kospi_row(day)]);
+    let witness = match witness_from_response(&resp) {
+        WitnessOutcome::Witness(rec) => {
+            build_witness_record(rec.date, "ev-krx-1", "krx-daily", rec.recorded_at)
+        }
+        other => panic!("expected a witness, got {other:?}"),
+    };
+
+    // It reconciles to a Trading Session.
+    let out = reconcile(day, std::slice::from_ref(&witness));
+    assert_eq!(out.status, DayStatus::TradingSession);
+    assert_eq!(out.decisive_evidence, vec!["ev-krx-1".to_string()]);
+
+    // A LATER empty response for the same date is non-evidence — it produces NO record,
+    // so nothing is added to the maintained set and nothing can retract the witness.
+    let later_empty = ok_response(day, vec![]);
+    assert!(matches!(
+        witness_from_response(&later_empty),
+        WitnessOutcome::NonEvidence(NonWitnessReason::Empty)
+    ));
+
+    // The witness set is unchanged → still a Trading Session (absence never retracts).
+    let out_after = reconcile(day, std::slice::from_ref(&witness));
+    assert_eq!(out_after.status, DayStatus::TradingSession);
+    assert_eq!(out_after, out, "a later absence leaves the reconciliation intact");
+}
+
+/// The U14 builder stamps a supplied id/source_id/recorded_at onto a valid PositiveWitness
+/// record dated to the given date — the ergonomic path for the refresh tooling.
+#[test]
+fn u6_builder_stamps_id_and_source_id_for_u14() {
+    let day = min_witness_date();
+    let recorded_at = Utc.with_ymd_and_hms(2010, 1, 5, 9, 0, 0).unwrap();
+    let rec = build_witness_record(day, "ev-42", "krx-daily-market", recorded_at);
+    assert_eq!(rec.id, "ev-42");
+    assert_eq!(rec.source_id, "krx-daily-market");
+    assert_eq!(rec.date, day);
+    assert_eq!(rec.recorded_at, recorded_at);
+    assert_eq!(rec.kind, EvidenceKind::PositiveWitness);
+    assert!(rec.valid);
+    assert!(rec.superseded_by.is_none());
+
+    // The stamped record is a full EvidenceRecord that reconciles as a witness.
+    assert_eq!(
+        reconcile(day, std::slice::from_ref(&rec)).status,
+        DayStatus::TradingSession
+    );
 }
