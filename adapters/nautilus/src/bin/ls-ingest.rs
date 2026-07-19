@@ -252,9 +252,7 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
     // Resolve the per-mode date range.
     let (sdate, edate) = if accumulate {
         let floor = env_required("LS_INGEST_LOOKBACK")?;
-        let now_kst = (Utc::now() + Duration::hours(9)).naive_utc();
-        let last_closed = last_closed_session(now_kst, ACCUMULATE_CLOSE_BUFFER);
-        (floor, last_closed.format("%Y%m%d").to_string())
+        automatic_date_range(floor, calendar_target)
     } else {
         (env_required("LS_INGEST_SDATE")?, env_required("LS_INGEST_EDATE")?)
     };
@@ -437,6 +435,10 @@ fn calendar_target_for_mode(mode: &str, as_of: DateTime<Utc>) -> Result<NaiveDat
     } else {
         parse_yyyymmdd(&env_required("LS_INGEST_EDATE")?)
     }
+}
+
+fn automatic_date_range(floor: String, calendar_target: NaiveDate) -> (String, String) {
+    (floor, calendar_target.format("%Y%m%d").to_string())
 }
 
 fn require_paper() -> Result<(), Box<dyn std::error::Error>> {
@@ -699,6 +701,17 @@ mod tests {
         assert_eq!(
             calendar_target_for_mode("probe-lookback", before).unwrap(),
             NaiveDate::from_ymd_opt(2026, 7, 17).unwrap()
+        );
+    }
+
+    #[test]
+    fn automatic_date_range_uses_the_frozen_calendar_target() {
+        assert_eq!(
+            automatic_date_range(
+                "20100101".to_string(),
+                NaiveDate::from_ymd_opt(2026, 7, 18).unwrap(),
+            ),
+            ("20100101".to_string(), "20260718".to_string())
         );
     }
 

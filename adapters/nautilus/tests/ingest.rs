@@ -2683,6 +2683,71 @@ mod calendar_gate_migration {
         assert_eq!(checkpoint.rebase_events()[0].origin, RebaseOrigin::Epoch);
     }
 
+    #[tokio::test]
+    async fn enforced_existing_shift_stops_without_an_admissible_prefix() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        std::fs::create_dir_all(&catalog).unwrap();
+        let mut checkpoint = Checkpoint::load(&cp_path(&catalog)).unwrap();
+        checkpoint.adjusted_prices = true;
+        checkpoint.mark_shifted(SAMSUNG, DAILY, ymd(2010, 1, 5), RebaseOrigin::Heal);
+        checkpoint.save(&cp_path(&catalog)).unwrap();
+        let before = std::fs::read(cp_path(&catalog)).unwrap();
+
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        let cal = fixture_calendar();
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(cal.as_of(as_of()).unwrap()));
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        ing.run_accumulate_gated(
+            &[InstrumentId::from(SAMSUNG)],
+            ymd(2010, 1, 5),
+            ymd(2010, 1, 5),
+            gate,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(count_t8410(&server).await, 0);
+        assert_eq!(std::fs::read(cp_path(&catalog)).unwrap(), before);
+    }
+
+    #[tokio::test]
+    async fn enforced_existing_shift_preserves_state_at_an_unknown_boundary() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        std::fs::create_dir_all(&catalog).unwrap();
+        let mut checkpoint = Checkpoint::load(&cp_path(&catalog)).unwrap();
+        checkpoint.adjusted_prices = true;
+        checkpoint.mark_shifted(SAMSUNG, DAILY, ymd(2010, 6, 18), RebaseOrigin::Heal);
+        checkpoint.save(&cp_path(&catalog)).unwrap();
+        let before = std::fs::read(cp_path(&catalog)).unwrap();
+
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        let cal = calendar_with_statuses(&[
+            (ymd(2010, 6, 15), DayStatus::TradingSession),
+            (ymd(2010, 6, 16), DayStatus::Closed),
+            (ymd(2010, 6, 17), DayStatus::Unknown),
+            (ymd(2010, 6, 18), DayStatus::TradingSession),
+        ]);
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(cal.as_of(as_of()).unwrap()));
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        ing.run_accumulate_gated(
+            &[InstrumentId::from(SAMSUNG)],
+            ymd(2010, 6, 18),
+            ymd(2010, 6, 15),
+            gate,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(count_t8410(&server).await, 0, "a whole-series wipe cannot commit a partial prefix");
+        assert_eq!(std::fs::read(cp_path(&catalog)).unwrap(), before);
+    }
+
     // -- Enforced accumulate next-fetch over the WHOLE RANGE (not just the endpoint) --
     //
     // The SkipAdvance the endpoint gate proposes replaces a fetch of the WHOLE range

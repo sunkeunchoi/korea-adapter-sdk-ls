@@ -152,6 +152,14 @@ struct CalendarRangePlan {
     pub stop_before: Option<NaiveDate>,
 }
 
+impl CalendarRangePlan {
+    /// A wipe-and-repull heal cannot commit a partial prefix because it deletes the
+    /// whole series first. Admit it only when the complete planned span is established.
+    fn destructive_request_through(self) -> Option<NaiveDate> {
+        self.stop_before.is_none().then_some(self.request_through).flatten()
+    }
+}
+
 /// The adoption-INDEPENDENT calendar continuity verdict for an OPEN civil-date interval —
 /// the checkpoint merge-hole test (U10, KTD8). Legacy checkpoint ranges either side of a
 /// gap merge into one watermark ONLY when every intervening date is a proven Closed date; a
@@ -1934,10 +1942,31 @@ impl Ingestor {
                 // Decide whether this triple heals or appends. Set only on the
                 // normal (append) path.
                 let mut pending_plan: Option<CalendarRangePlan> = None;
+                let mut heal_plan: Option<CalendarRangePlan> = None;
                 // The shifted mark outranks the watermark as authority (KTD-2): a
                 // marked symbol heals regardless of watermark state, BEFORE the
                 // already-current skip below.
                 let heal_now = if matches!(kind, BarKind::Daily) && checkpoint.is_shifted(&instrument, &label) {
+                    let plan = calendar.accumulate_plan(lookback_floor, last_closed);
+                    let required_through = checkpoint
+                        .watermark(&instrument, &label)
+                        .into_iter()
+                        .chain(
+                            checkpoint
+                                .shifted_detected(&instrument, &label)
+                                .and_then(|date| NaiveDate::parse_from_str(date, "%Y%m%d").ok()),
+                        )
+                        .max();
+                    let heal_through = plan.destructive_request_through();
+                    if heal_through.is_none()
+                        || required_through.is_some_and(|required| {
+                            heal_through.is_some_and(|through| through < required)
+                        })
+                    {
+                        skipped += 1;
+                        continue;
+                    }
+                    heal_plan = Some(plan);
                     true
                 } else {
                     let wm = checkpoint.watermark(&instrument, &label);
@@ -2061,14 +2090,24 @@ impl Ingestor {
                     let mut detected = false;
                     if matches!(kind, BarKind::Daily) {
                         if let Some(wm) = checkpoint.watermark(&instrument, &label) {
-                            if self.detect_shift(&shcode, bar_type, wm).await? {
+                            let candidate = calendar.accumulate_plan(lookback_floor, last_closed);
+                            let detection_authorized = candidate
+                                .destructive_request_through()
+                                .is_some_and(|heal_through| heal_through >= wm)
+                                && (calendar.adoption() != CalendarAdoption::Enforced
+                                    || matches!(calendar.calendar_decision(wm), CalendarDecision::Fetch));
+                            if detection_authorized && self.detect_shift(&shcode, bar_type, wm).await? {
+                                let heal_through = candidate
+                                    .destructive_request_through()
+                                    .expect("an authorized detection has a complete heal endpoint");
                                 // Save the mark atomically BEFORE any delete (KTD-2:
                                 // mark-before-wipe is load-bearing — the reverse order
                                 // plus a crash would leave a high watermark over an
                                 // empty store and silently truncate history forever).
-                                checkpoint.mark_shifted(&instrument, &label, last_closed, RebaseOrigin::Heal);
+                                checkpoint.mark_shifted(&instrument, &label, heal_through, RebaseOrigin::Heal);
                                 checkpoint.save(&checkpoint_path)?;
                                 checkpoint_committed = true;
+                                heal_plan = Some(candidate);
                                 tracing::warn!(instrument = %instrument, "adjustment-basis shift detected; healing");
                                 detected = true;
                             }
@@ -2077,13 +2116,23 @@ impl Ingestor {
                     detected
                 };
                 if heal_now {
+                    let plan = heal_plan.expect("every admitted heal has a complete calendar plan");
+                    let heal_through = plan
+                        .destructive_request_through()
+                        .expect("every admitted heal has an established request endpoint");
                     match self
-                        .heal_daily(&mut checkpoint, &checkpoint_path, &shcode, &instrument, &label, bar_type, last_closed, lookback_floor)
+                        .heal_daily(&mut checkpoint, &checkpoint_path, &shcode, &instrument, &label, bar_type, heal_through, lookback_floor)
                         .await?
                     {
                         HealOutcome::Healed(n) => {
                             bars_written += n;
                             ingested += 1;
+                            if let Some(advance) = plan.advance_through {
+                                if advance > heal_through {
+                                    checkpoint.set_watermark(&instrument, &label, advance);
+                                    checkpoint.save(&checkpoint_path)?;
+                                }
+                            }
                             checkpoint_committed = true;
                         }
                         HealOutcome::Refused(r) => heal_refusals.push(r),
