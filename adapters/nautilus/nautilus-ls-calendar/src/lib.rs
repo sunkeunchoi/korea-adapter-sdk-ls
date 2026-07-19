@@ -10,6 +10,8 @@
 //! layered on by later units.
 
 pub mod canonical;
+pub mod load;
 pub mod schema;
 
 pub use canonical::{compute_artifact_id, compute_calendar_id, schema_is_compatible, SCHEMA_VERSION};
+pub use load::{CalendarLoadError, KrxCalendar};

@@ -21,3 +21,7 @@ chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 sha2 = "0.10"
 thiserror = "2"
+
+[dev-dependencies]
+# On-disk snapshot fixtures for the loader typed-failure tests (U3+).
+tempfile = "3"
