@@ -35,7 +35,7 @@ use nautilus_model::enums::{AggregationSource, BarAggregation, PriceType};
 use nautilus_model::identifiers::InstrumentId;
 use nautilus_model::types::{Price, Quantity};
 use nautilus_ls_calendar::schema::DayStatus;
-use nautilus_ls_calendar::{AsOfView, CalendarAdoption};
+use nautilus_ls_calendar::{AsOfView, CalendarAdoption, DimensionStaleness};
 use nautilus_persistence::backend::catalog::ParquetDataCatalog;
 use serde::{Deserialize, Serialize};
 
@@ -229,6 +229,11 @@ impl<'c> CalendarGate<'c> {
     /// The adoption posture this gate runs under.
     pub fn adoption(&self) -> CalendarAdoption {
         self.adoption
+    }
+
+    /// Full-history freshness for conservative checkpoint continuity decisions.
+    pub fn full_history_freshness(&self) -> Option<DimensionStaleness> {
+        self.view.map(|view| view.freshness().full_history)
     }
 
     /// The adoption-INDEPENDENT calendar decision for `target` (U9). Consults the injected
@@ -1851,6 +1856,7 @@ impl Ingestor {
         // (Legacy/Shadow stay weekday-authoritative and byte-identical).
         let mut checkpoint = Checkpoint::load_gated(&checkpoint_path, &calendar)?;
         checkpoint.adjusted_prices = self.config.adjusted_prices;
+        let mut checkpoint_committed = false;
 
         let mut bars_written = 0usize;
         let mut ingested = 0usize;
@@ -1889,6 +1895,7 @@ impl Ingestor {
                                 if wm.map_or(true, |watermark| advance > watermark) {
                                     checkpoint.set_watermark(&instrument, &label, advance);
                                     checkpoint.save(&checkpoint_path)?;
+                                    checkpoint_committed = true;
                                 }
                             }
                             skipped += 1;
@@ -1954,6 +1961,7 @@ impl Ingestor {
                                         // this closes.
                                         checkpoint.set_history_floor(&instrument, &label, lookback_floor);
                                         checkpoint.save(&checkpoint_path)?;
+                                        checkpoint_committed = true;
                                     }
                                     WidenAction::EmitUncertain => {
                                         // Enforced + Unknown/unavailable evidence: the region MAY
@@ -2002,6 +2010,7 @@ impl Ingestor {
                                 // empty store and silently truncate history forever).
                                 checkpoint.mark_shifted(&instrument, &label, last_closed, RebaseOrigin::Heal);
                                 checkpoint.save(&checkpoint_path)?;
+                                checkpoint_committed = true;
                                 tracing::warn!(instrument = %instrument, "adjustment-basis shift detected; healing");
                                 detected = true;
                             }
@@ -2017,18 +2026,25 @@ impl Ingestor {
                         HealOutcome::Healed(n) => {
                             bars_written += n;
                             ingested += 1;
+                            checkpoint_committed = true;
                         }
                         HealOutcome::Refused(r) => heal_refusals.push(r),
                         // #104/R7: a heal re-pull append that hit an overlap
                         // refusal is per-triple, not run-fatal — record it and
                         // move on to the remaining triples (the mark stays).
-                        HealOutcome::AppendRefused(r) => append_refusals.push(r),
-                        HealOutcome::Incomplete => gaps_this_run.push(CoverageGap {
-                            instrument: instrument.clone(),
-                            bar_type: label.clone(),
-                            range: format!("{}..{}", fmt_ymd(lookback_floor), fmt_ymd(last_closed)),
-                            reason: GapReason::PaperThin,
-                        }),
+                        HealOutcome::AppendRefused(r) => {
+                            append_refusals.push(r);
+                            checkpoint_committed = true;
+                        }
+                        HealOutcome::Incomplete => {
+                            gaps_this_run.push(CoverageGap {
+                                instrument: instrument.clone(),
+                                bar_type: label.clone(),
+                                range: format!("{}..{}", fmt_ymd(lookback_floor), fmt_ymd(last_closed)),
+                                reason: GapReason::PaperThin,
+                            });
+                            checkpoint_committed = true;
+                        }
                     }
                     continue;
                 }
@@ -2208,15 +2224,22 @@ impl Ingestor {
                         checkpoint.set_watermark(&instrument, &label, target);
                     }
                 }
-                // Persist after each triple for crash safety.
-                checkpoint.save(&checkpoint_path)?;
+                // Persist after each authorized triple for crash safety. Enforced stop/
+                // incomplete paths with no progress leave legacy input bytes untouched.
+                let changed = wrote_any || checkpoint.watermark(&instrument, &label) != wm;
+                if calendar.adoption() != CalendarAdoption::Enforced || changed {
+                    checkpoint.save(&checkpoint_path)?;
+                    checkpoint_committed = true;
+                }
             }
         }
 
         // Prune legacy completed/gap rows below the watermarks so daily runs stay
         // bounded (KTD7); the run's own gaps report comes from memory.
-        checkpoint.prune_below_watermarks();
-        checkpoint.save(&checkpoint_path)?;
+        if calendar.adoption() != CalendarAdoption::Enforced || checkpoint_committed {
+            checkpoint.prune_below_watermarks();
+            checkpoint.save(&checkpoint_path)?;
+        }
 
         // Each pending daily triple now costs a detection overlap fetch ON TOP
         // of the append fetch (KTD-3/KTD-4) — the printed lower bound must say

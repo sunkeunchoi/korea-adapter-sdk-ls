@@ -2384,6 +2384,10 @@ mod calendar_gate_migration {
         Utc.with_ymd_and_hms(2013, 6, 1, 0, 0, 0).unwrap()
     }
 
+    fn fresh_history_as_of() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2013, 4, 1, 0, 0, 0).unwrap()
+    }
+
     fn fixture_calendar() -> KrxCalendar {
         let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("nautilus-ls-calendar/fixtures/base_2010_2012.json");
@@ -2575,6 +2579,54 @@ mod calendar_gate_migration {
         assert_eq!(read_watermark(&catalog), Some(ymd(2010, 1, 2)), "watermark preserved");
         let after = std::fs::read(&cp_path(&catalog)).unwrap();
         assert_eq!(before, after, "checkpoint file byte-for-byte identical");
+    }
+
+    #[tokio::test]
+    async fn enforced_stop_preserves_raw_legacy_checkpoint_bytes() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        std::fs::create_dir_all(&catalog).unwrap();
+        let raw = br#"{"completed":["005930.XKRX|1-DAY|20100101..20100102"],"gaps":[],"adjusted_prices":true}"#;
+        std::fs::write(cp_path(&catalog), raw).unwrap();
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        let cal = fixture_calendar();
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(cal.as_of(as_of()).unwrap()));
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        ing.run_accumulate_gated(
+            &[InstrumentId::from(SAMSUNG)],
+            ymd(2010, 1, 5),
+            ymd(2010, 1, 1),
+            gate,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(count_t8410(&server).await, 0);
+        assert_eq!(std::fs::read(cp_path(&catalog)).unwrap(), raw);
+    }
+
+    #[tokio::test]
+    async fn enforced_stop_does_not_create_a_missing_checkpoint() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, None);
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        ing.run_accumulate_gated(
+            &[InstrumentId::from(SAMSUNG)],
+            ymd(2010, 1, 5),
+            ymd(2010, 1, 1),
+            gate,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(count_t8410(&server).await, 0);
+        assert!(!cp_path(&catalog).exists());
     }
 
     // -- Enforced accumulate next-fetch over the WHOLE RANGE (not just the endpoint) --
@@ -2910,7 +2962,7 @@ mod calendar_gate_migration {
     #[test]
     fn enforced_merges_an_all_closed_gap_that_legacy_splits() {
         let cal = fixture_calendar();
-        let view = cal.as_of(as_of()).unwrap();
+        let view = cal.as_of(fresh_history_as_of()).unwrap();
         let enforced = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
         // Gap open interval (2011-02-01, 2011-02-05) = {02-02, 02-03, 02-04}, all proven Closed.
         let ranges = ["20110115..20110201", "20110205..20110210"];
@@ -2922,6 +2974,18 @@ mod calendar_gate_migration {
         let (lwm, lrem) = migrate_with(&CalendarGate::legacy(), &ranges);
         assert_eq!(lwm, Some(ymd(2011, 2, 1)), "Legacy stops before the weekday hole");
         assert_eq!(lrem, vec![vec!["20110205..20110210".to_string()]]);
+    }
+
+    #[test]
+    fn enforced_stale_full_history_keeps_all_closed_ranges_separate() {
+        let cal = fixture_calendar();
+        let stale = CalendarGate::new(CalendarAdoption::Enforced, Some(cal.as_of(as_of()).unwrap()));
+        let ranges = ["20110115..20110201", "20110205..20110210"];
+
+        let (wm, rem) = migrate_with(&stale, &ranges);
+
+        assert_eq!(wm, Some(ymd(2011, 2, 1)));
+        assert_eq!(rem, vec![vec!["20110205..20110210".to_string()]]);
     }
 
     /// A proven Trading Session in the gap PREVENTS the merge under Enforced (un-attested

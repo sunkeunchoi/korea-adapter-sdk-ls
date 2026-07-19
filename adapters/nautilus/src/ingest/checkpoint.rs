@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 
 use chrono::{Datelike, NaiveDate};
-use nautilus_ls_calendar::CalendarAdoption;
+use nautilus_ls_calendar::{CalendarAdoption, DimensionStaleness};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AdapterError, AdapterResult};
@@ -523,6 +523,16 @@ impl Checkpoint {
                     weekday
                 }
                 CalendarAdoption::Enforced => {
+                    let freshness = gate.full_history_freshness();
+                    if freshness != Some(DimensionStaleness::Fresh) {
+                        tracing::warn!(
+                            after = %cm.format("%Y%m%d"),
+                            before = %sd.format("%Y%m%d"),
+                            full_history_freshness = ?freshness,
+                            "checkpoint continuity lacks fresh full-history evidence; keeping the ranges separate (conservative over-fetch)"
+                        );
+                        return true;
+                    }
                     let decision = gate.continuity_decision(cm, sd);
                     if matches!(decision, ContinuityDecision::Indeterminate) {
                         tracing::warn!(
