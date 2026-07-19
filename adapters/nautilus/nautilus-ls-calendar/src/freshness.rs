@@ -38,6 +38,7 @@
 //! status.
 
 use chrono::{DateTime, Duration, NaiveDate, Utc};
+use serde::Serialize;
 
 use crate::query::AsOfView;
 
@@ -52,7 +53,8 @@ pub const FORWARD_READINESS_MIN_DAYS: i64 = 45;
 
 /// The staleness of one freshness dimension at the as-of instant. Deliberately does NOT
 /// carry or imply a [`DayStatus`](crate::schema::DayStatus) (AC8).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum DimensionStaleness {
     /// Within its threshold at the as-of instant.
     Fresh,
@@ -72,7 +74,7 @@ impl DimensionStaleness {
 
 /// A per-dimension freshness verdict computed at a fixed as-of instant. Purely advisory —
 /// computing it neither reads nor mutates any [`DayStatus`](crate::schema::DayStatus).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct FreshnessReport {
     /// The instant this report was evaluated at.
     pub as_of: DateTime<Utc>,

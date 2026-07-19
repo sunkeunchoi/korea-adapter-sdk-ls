@@ -21,6 +21,7 @@
 //! Everything is verifiable offline against the mock gateway
 //! (`ls-sdk-test-support`); the live tester binaries are operator-gated.
 
+pub mod calendar;
 pub mod config;
 pub mod error;
 pub mod guard;

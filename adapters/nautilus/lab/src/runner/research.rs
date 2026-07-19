@@ -1468,6 +1468,10 @@ fn env_f64(key: &str) -> anyhow::Result<Option<f64>> {
 /// exits non-zero too (KTD8).
 pub fn main_cli() -> ExitCode {
     nautilus_ls::scrub::install();
+    // Mandatory startup calendar record (U8): one redacted line to the non-persisted
+    // diagnostic channel (stderr). Default adoption = Shadow; a missing snapshot is
+    // non-fatal (KTD8). Startup record ONLY — the catalog watermark migration is U11.
+    nautilus_ls::calendar::emit_startup_from_env("lab-research");
     match dispatch() {
         Ok(code) => code,
         Err(e) => {

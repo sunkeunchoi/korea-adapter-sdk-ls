@@ -9,7 +9,9 @@
 //! [`schema::DayStatus`]. Behavior (identities, loading, queries, reconciliation) is
 //! layered on by later units.
 
+pub mod adoption;
 pub mod canonical;
+pub mod diagnostics;
 pub mod freshness;
 pub mod load;
 pub mod query;
@@ -17,7 +19,12 @@ pub mod reconcile;
 pub mod schema;
 pub mod witness;
 
+pub use adoption::CalendarAdoption;
 pub use canonical::{compute_artifact_id, compute_calendar_id, schema_is_compatible, SCHEMA_VERSION};
+pub use diagnostics::{
+    mask_identity, render_human, render_json, AuthorizationView, CalendarDiagnostic,
+    CoverageSummary, DiagnosticOutcome, LoadFailure,
+};
 pub use freshness::{
     DimensionStaleness, FreshnessReport, FORWARD_READINESS_MIN_DAYS, FULL_HISTORY_STALE_AFTER_DAYS,
     INCREMENTAL_STALE_AFTER_DAYS, KASI_STALE_AFTER_DAYS,

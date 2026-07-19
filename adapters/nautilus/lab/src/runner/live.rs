@@ -681,6 +681,11 @@ pub fn run_genesis(cfg: &DispatchCliConfig) -> anyhow::Result<Vec<String>> {
 /// exit code (`research.rs` shape).
 pub fn main_cli() -> ExitCode {
     nautilus_ls::scrub::install();
+    // Mandatory startup calendar record (U8): one redacted line to the non-persisted
+    // diagnostic channel (stderr). Default adoption = Shadow; a missing snapshot is
+    // non-fatal (KTD8). Startup record ONLY — the Production Ladder date-gate migration
+    // is U12.
+    nautilus_ls::calendar::emit_startup_from_env("lab-live");
     match dispatch_main() {
         Ok(code) => code,
         Err(e) => {

@@ -80,6 +80,12 @@ fn exit_code_for(report: &CoverageReport) -> u8 {
 async fn main() -> std::process::ExitCode {
     // Credential hygiene before any output (mirrors the repo's smoke convention).
     scrub::install();
+    // Mandatory startup calendar record (U8): resolves the explicit snapshot path +
+    // adoption from env at the composition root, emits one redacted line to the
+    // non-persisted diagnostic channel (stderr). Default adoption = Shadow; a missing
+    // snapshot is non-fatal (Shadow degradation contract, KTD8). Startup record ONLY —
+    // the ingest decision migration is U9/U10.
+    nautilus_ls::calendar::emit_startup_from_env("ls-ingest");
     // Scrub the terminal error too — a `?`-propagated SDK error would otherwise be
     // printed unscrubbed by the runtime, leaking a raw broker message.
     match run().await {

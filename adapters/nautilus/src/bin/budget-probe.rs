@@ -57,6 +57,10 @@ async fn main() -> std::process::ExitCode {
     // Mandatory credential hygiene before any output (repo pattern for
     // credential-touching binaries).
     scrub::install();
+    // Mandatory startup calendar record (U8): one redacted line to the non-persisted
+    // diagnostic channel (stderr). Default adoption = Shadow; a missing snapshot is
+    // non-fatal (KTD8). Startup record ONLY — the budget-probe date migration is U13.
+    nautilus_ls::calendar::emit_startup_from_env("budget-probe");
     match run().await {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
