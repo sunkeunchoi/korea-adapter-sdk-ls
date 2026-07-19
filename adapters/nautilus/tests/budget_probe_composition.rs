@@ -42,10 +42,14 @@ fn enforced_no_session_refuses_before_any_gateway_call() {
     let dir = tempfile::tempdir().unwrap();
     let snap = temp_snapshot(dir.path());
 
+    let report = dir.path().join("report.json");
     let out = probe()
         .env("LS_TRADING_ENV", "paper")
         .env("LS_CALENDAR_ADOPTION", "enforced")
         .env("LS_CALENDAR_SNAPSHOT", &snap)
+        // Pin the report path into the tempdir so its NON-existence is a meaningful
+        // no-dispatch artifact (a proceeding probe writes it at the end of a real run).
+        .env("LS_PROBE_OUT", &report)
         // A junk lane file guarantees no real credentials are ever resolved — but the probe
         // must refuse BEFORE it ever reaches the SDK build, so this is never consulted.
         .env("LS_PROBE_LANE_FILE", dir.path().join("does-not-exist.env"))
@@ -53,6 +57,7 @@ fn enforced_no_session_refuses_before_any_gateway_call() {
         .expect("budget-probe runs");
 
     let stderr = String::from_utf8_lossy(&out.stderr);
+    let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(!out.status.success(), "the Enforced no-session refusal exits non-zero: {stderr}");
 
     // Exactly one startup record, naming the Enforced adoption, redacted.
@@ -74,10 +79,17 @@ fn enforced_no_session_refuses_before_any_gateway_call() {
         stderr.contains("refusing to probe"),
         "the process refuses at the calendar gate, before any gateway call: {stderr}"
     );
+    // No probe stage ran — the stage progress lines print to STDOUT (`println!`), so the guard
+    // must inspect stdout, not stderr. A regression that let a stage run (and issue a gateway
+    // call) would print "stage 0"/"stage 1"/"probe complete" here and fail this assertion.
     assert!(
-        !stderr.contains("stage 0") && !stderr.contains("stage 1"),
-        "no probe stage ran (no gateway call issued): {stderr}"
+        !stdout.contains("stage 0")
+            && !stdout.contains("stage 1")
+            && !stdout.contains("probe complete"),
+        "no probe stage ran (no gateway call issued): stdout={stdout:?}"
     );
+    // The true no-dispatch artifact: the probe report is never written when it refuses.
+    assert!(!report.exists(), "the probe wrote no report — it refused before any dispatch");
 }
 
 /// U1 scenario 6: the always-emit invariant survives the single-load consolidation — a

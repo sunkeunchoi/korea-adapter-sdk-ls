@@ -455,9 +455,14 @@ impl RunContext {
 /// credential scrub. Redacted-by-construction, matching the diagnostic builders.
 fn sanitize_audit_field(raw: &str) -> String {
     const MAX_LEN: usize = 96;
+    // `char::is_control()` only covers the Unicode Cc category — it does NOT strip the
+    // line/paragraph separators U+2028/U+2029 (Zl/Zp), which a Unicode-aware log consumer
+    // renders as a line break. Strip those explicitly too so an operator-supplied value
+    // cannot forge a second diagnostic/startup line on any consumer (NEL U+0085 is Cc, so
+    // `is_control()` already catches it).
     let cleaned: String = raw
         .chars()
-        .filter(|c| !c.is_control())
+        .filter(|c| !c.is_control() && !matches!(*c, '\u{2028}' | '\u{2029}'))
         .take(MAX_LEN)
         .collect();
     let scrubbed = scrub::scrub_secrets(cleaned.trim());
@@ -695,10 +700,17 @@ impl ProbeContext {
         let run = RunContext::from_env();
         let plan = plan_probe_dates(adoption, scan, weekday_anchor, explicit, &run);
 
-        // Mandatory startup record (U1/KTD2): one redacted line to the non-persisted
-        // diagnostic channel, targeting the probe ANCHOR — or NO target when Enforced refuses
-        // (no proven session / unavailable), rather than a misleading anchor-day status.
-        let target = if plan.sdate.is_some() { anchor_date } else { None };
+        // Mandatory startup record (U1/KTD2, R2): one redacted line to the non-persisted
+        // diagnostic channel, targeting the day the probe will ACTUALLY query — the resolved
+        // probe date (`plan.sdate`) — or NO target when the plan refuses (Enforced, no proven
+        // session / unavailable). For Legacy/Shadow this IS the weekday anchor; for Enforced it
+        // is the proven session (guaranteed in-coverage), and for a bypass it is the explicit
+        // date — never the discarded anchor, whose day status would misrepresent the decision
+        // (and could even read OutOfRange while the probe proceeds on a proven session).
+        let target = plan
+            .sdate
+            .as_deref()
+            .and_then(|s| NaiveDate::parse_from_str(s, "%Y%m%d").ok());
         let record = nautilus_ls::calendar::build_startup_record_targeted(
             "budget-probe",
             adoption,
@@ -1107,6 +1119,13 @@ mod tests {
             assert!(!cleaned.contains('\r'), "carriage returns stripped: {cleaned:?}");
             assert!(cleaned.chars().all(|c| !c.is_control()), "no control chars: {cleaned:?}");
 
+            // Unicode line/paragraph separators (U+2028/U+2029) are NOT ASCII control chars,
+            // but a Unicode-aware consumer treats them as line breaks — they must be stripped
+            // too, or the anti-injection guarantee is bypassable with non-ASCII input.
+            let uni = sanitize_audit_field("alice\u{2028}calendar-startup forged\u{2029}line");
+            assert!(!uni.contains('\u{2028}'), "U+2028 line separator stripped: {uni:?}");
+            assert!(!uni.contains('\u{2029}'), "U+2029 paragraph separator stripped: {uni:?}");
+
             // Length is bounded (a huge operator cannot flood the channel).
             let long = "x".repeat(10_000);
             assert!(sanitize_audit_field(&long).chars().count() <= 96, "length-bounded");
@@ -1135,6 +1154,20 @@ mod tests {
                 line.contains("audit only") && line.contains("no dispatch authorization"),
                 "the audit disclaims any status/dispatch effect: {line}"
             );
+        }
+
+        /// Scenario 8 (derivation): `RunContext::from_env` — the REAL run-context derivation the
+        /// pure plan only consumes — reads env + process id ONLY (no wall-clock/random), so two
+        /// calls in one process yield the identical operator + run id, and both resolve
+        /// non-empty. This exercises the derivation the injected-constant determinism test above
+        /// cannot reach.
+        #[test]
+        fn run_context_from_env_is_deterministic_and_non_empty() {
+            let a = RunContext::from_env();
+            let b = RunContext::from_env();
+            assert_eq!(a, b, "from_env is stable within a process — no clock/random dependency");
+            assert!(!a.operator.is_empty(), "operator resolves non-empty (falls back to 'unknown')");
+            assert!(!a.run_id.is_empty(), "run id resolves non-empty (falls back to pid)");
         }
     }
 }

@@ -1881,13 +1881,14 @@ fn dispatch() -> anyhow::Result<ExitCode> {
         }
         Some("catalog") => match std::env::args().nth(2).as_deref() {
             Some("status") => {
-                let rt = tokio::runtime::Runtime::new()?;
-                let cfg = status_config_from_env()?;
                 // Composition root (KTD5/KTD8, U1): resolve the EXPLICIT snapshot path +
-                // adoption from env and load ONCE, sharing that single immutable calendar
-                // between the mandatory startup record and the catalog gate. The composed
-                // default is Shadow; at slice-deploy the production snapshot is deferred, so
-                // the path is normally absent → no view → byte-identical to Legacy.
+                // adoption from env and load ONCE, then emit the mandatory startup record
+                // BEFORE the fallible config parse / runtime build — a malformed LS_STATUS_*
+                // or LS_DATA_HOME must NOT drop the always-emit startup invariant (the same
+                // discipline ProbeContext::resolve applies for budget-probe). The single
+                // loaded calendar is shared with the catalog gate below. The composed default
+                // is Shadow; at slice-deploy the production snapshot is deferred, so the path
+                // is normally absent → no view → byte-identical to Legacy.
                 let as_of = Utc::now();
                 let adoption = nautilus_ls::calendar::adoption_from_env();
                 let path = nautilus_ls::calendar::snapshot_path_from_env();
@@ -1895,12 +1896,11 @@ fn dispatch() -> anyhow::Result<ExitCode> {
                 // The decision-relevant startup target (KTD2): catalog has no single per-triple
                 // decision date at the startup emit point, so it reports posture plus a defined
                 // representative target — the operator-supplied expected-range END when present,
-                // else the coverage watermark `materialized_through`. `None` only when neither
-                // exists (no expected range and no loaded calendar), which renders posture-only.
-                let target = cfg
-                    .expected_range
-                    .as_ref()
-                    .and_then(|r| NaiveDate::parse_from_str(r.end.trim(), "%Y%m%d").ok())
+                // else the coverage watermark `materialized_through`. Read the endpoint straight
+                // from env so the emit never depends on the fallible full-config parse below.
+                let target = std::env::var("LS_STATUS_EDATE")
+                    .ok()
+                    .and_then(|s| NaiveDate::parse_from_str(s.trim(), "%Y%m%d").ok())
                     .or_else(|| loaded.calendar().map(|cal| cal.coverage().materialized_through));
                 let record = nautilus_ls::calendar::build_startup_record_targeted(
                     "lab-research",
@@ -1910,6 +1910,10 @@ fn dispatch() -> anyhow::Result<ExitCode> {
                     target,
                 );
                 nautilus_ls::calendar::emit_startup_record(&record);
+
+                // The fallible config parse + go/no-go run AFTER the record is already emitted.
+                let rt = tokio::runtime::Runtime::new()?;
+                let cfg = status_config_from_env()?;
                 let view = loaded.calendar().and_then(|cal| cal.as_of(as_of).ok());
                 let gate = CatalogCalendarGate::new(adoption, view);
                 let out = rt.block_on(catalog_status_gated(&cfg, gate))?;
