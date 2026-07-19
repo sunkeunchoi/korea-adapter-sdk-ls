@@ -552,6 +552,7 @@ mod tests {
             range_refusals: Vec::new(),
             append_refusals: Vec::new(),
             backward_widen_warnings: Vec::new(),
+            backward_widen_uncertainties: Vec::new(),
             budget_deferrals: Vec::new(),
             budget: BudgetEstimate { symbols: 0, bar_kinds: 0, per_sec_cap: 1, min_requests: 0 },
         }
