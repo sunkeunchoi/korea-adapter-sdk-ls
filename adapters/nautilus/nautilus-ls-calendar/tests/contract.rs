@@ -8,6 +8,9 @@ use nautilus_ls_calendar::schema::{
     Alert, AlertKind, Authorization, CalendarScope, Citation, Coverage, DayRow, DayStatus,
     EvidenceKind, EvidenceRecord, Freshness, Snapshot, Source, SourceAvailabilityBound, SourceKind,
 };
+use nautilus_ls_calendar::{
+    compute_artifact_id, compute_calendar_id, schema_is_compatible, SCHEMA_VERSION,
+};
 
 fn d(y: i32, m: u32, day: u32) -> NaiveDate {
     NaiveDate::from_ymd_opt(y, m, day).unwrap()
@@ -169,4 +172,144 @@ fn snapshot_missing_a_required_section_fails_to_deserialize() {
         result.is_err(),
         "a snapshot missing the required `coverage` section must fail to deserialize"
     );
+}
+
+// ---------------------------------------------------------------------------
+// U2: deterministic identities (artifact_id / calendar_id) + SemVer compat.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn identities_are_deterministic_for_identical_content() {
+    // Compute twice on the same value: byte-identical ids.
+    let snap = minimal_snapshot();
+    assert_eq!(compute_artifact_id(&snap), compute_artifact_id(&snap));
+    assert_eq!(compute_calendar_id(&snap), compute_calendar_id(&snap));
+
+    // Two independently-built equal snapshots agree.
+    let other = minimal_snapshot();
+    assert_eq!(
+        compute_artifact_id(&snap),
+        compute_artifact_id(&other),
+        "equal content must yield an equal artifact_id"
+    );
+    assert_eq!(
+        compute_calendar_id(&snap),
+        compute_calendar_id(&other),
+        "equal content must yield an equal calendar_id"
+    );
+}
+
+#[test]
+fn identities_ignore_the_identity_fields_themselves() {
+    // Setting artifact_id/calendar_id must NOT feed back into the artifact hash
+    // (KTD4: the identity fields are excluded from canonicalization).
+    let base = minimal_snapshot();
+    let mut stamped = base.clone();
+    stamped.artifact_id = "deadbeef".to_string();
+    stamped.calendar_id = "cafef00d".to_string();
+    assert_eq!(
+        compute_artifact_id(&base),
+        compute_artifact_id(&stamped),
+        "artifact_id must exclude the identity fields themselves"
+    );
+    assert_eq!(
+        compute_calendar_id(&base),
+        compute_calendar_id(&stamped),
+        "calendar_id must exclude the identity fields themselves"
+    );
+}
+
+#[test]
+fn retrieval_mechanics_move_artifact_id_but_not_calendar_id() {
+    let base = minimal_snapshot();
+
+    // Change ONLY an evidence retrieval timestamp.
+    let mut ts = base.clone();
+    ts.evidence[0].recorded_at = Utc.with_ymd_and_hms(2011, 1, 1, 0, 0, 0).unwrap();
+    ts.freshness.evidence_refreshed_at = Utc.with_ymd_and_hms(2013, 1, 1, 0, 0, 0).unwrap();
+    assert_ne!(
+        compute_artifact_id(&base),
+        compute_artifact_id(&ts),
+        "a retrieval-timestamp change must move artifact_id"
+    );
+    assert_eq!(
+        compute_calendar_id(&base),
+        compute_calendar_id(&ts),
+        "a retrieval-timestamp change must NOT move calendar_id"
+    );
+
+    // Change ONLY a source_availability bound.
+    let mut avail = base.clone();
+    avail.coverage.source_availability[0].available_through = Some(d(2010, 1, 5));
+    assert_ne!(
+        compute_artifact_id(&base),
+        compute_artifact_id(&avail),
+        "a source_availability change must move artifact_id"
+    );
+    assert_eq!(
+        compute_calendar_id(&base),
+        compute_calendar_id(&avail),
+        "a source_availability change must NOT move calendar_id"
+    );
+}
+
+#[test]
+fn an_effective_status_change_moves_both_identities() {
+    let base = minimal_snapshot();
+    let mut flipped = base.clone();
+    // Flip the TradingSession row (2010-01-04) to Closed.
+    let row = flipped
+        .rows
+        .iter_mut()
+        .find(|r| r.date == d(2010, 1, 4))
+        .expect("row present");
+    row.status = DayStatus::Closed;
+
+    assert_ne!(
+        compute_artifact_id(&base),
+        compute_artifact_id(&flipped),
+        "an effective status change must move artifact_id"
+    );
+    assert_ne!(
+        compute_calendar_id(&base),
+        compute_calendar_id(&flipped),
+        "an effective status change must move calendar_id"
+    );
+}
+
+#[test]
+fn a_decisive_claim_identity_change_moves_both_identities() {
+    let base = minimal_snapshot();
+    let mut invalidated = base.clone();
+    // ev-1 is decisive for the 2010-01-04 TradingSession row; flip its validity.
+    invalidated.evidence[0].valid = false;
+
+    assert_ne!(
+        compute_artifact_id(&base),
+        compute_artifact_id(&invalidated),
+        "a decisive-claim validity change must move artifact_id"
+    );
+    assert_ne!(
+        compute_calendar_id(&base),
+        compute_calendar_id(&invalidated),
+        "a decisive-claim validity change must move calendar_id"
+    );
+}
+
+#[test]
+fn schema_compat_accepts_same_major_and_rejects_unsupported_major() {
+    assert!(SCHEMA_VERSION.starts_with("1."), "test assumes MAJOR 1");
+    assert!(schema_is_compatible(SCHEMA_VERSION));
+    assert!(schema_is_compatible("1.5.0"), "same major is compatible");
+    assert!(schema_is_compatible("1.0.99"));
+    assert!(
+        !schema_is_compatible("2.0.0"),
+        "an unsupported (higher) major must be incompatible"
+    );
+    assert!(
+        !schema_is_compatible("0.9.0"),
+        "an unsupported (lower) major must be incompatible"
+    );
+    assert!(!schema_is_compatible("not-a-version"));
+    assert!(!schema_is_compatible("1.0"), "a malformed SemVer must be rejected");
 }

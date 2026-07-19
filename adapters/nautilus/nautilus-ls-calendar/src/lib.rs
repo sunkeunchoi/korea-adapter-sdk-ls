@@ -9,4 +9,7 @@
 //! [`schema::DayStatus`]. Behavior (identities, loading, queries, reconciliation) is
 //! layered on by later units.
 
+pub mod canonical;
 pub mod schema;
+
+pub use canonical::{compute_artifact_id, compute_calendar_id, schema_is_compatible, SCHEMA_VERSION};
