@@ -2351,3 +2351,308 @@ mod reingest_trim {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// U9 (KTD8) — accumulate + max-lookback probe migration behind the calendar
+// adoption seam. Enforced routes the next-fetch/anchor through proven calendar
+// facts; Shadow records the decision but stays byte-identical to Legacy; the
+// fixture-loaded real `KrxCalendar` drives every case. PROOF-FIRST: assert
+// ACTUAL gateway-request counts (wiremock) + watermark state, never a helper.
+//
+// Fixture facts (nautilus-ls-calendar/fixtures/base_2010_2012.json):
+//   Trading Session : 2010-06-15, 2010-06-17, 2011-06-15
+//   Closed          : 2010-06-19, 2010-06-20, 2011-02-02..04, 2012-05-01, ...
+//   Unknown         : nearly every other weekday (e.g. 2010-01-05)
+//   Coverage        : 2010-01-01 .. 2012-12-31
+// ---------------------------------------------------------------------------
+mod calendar_gate_migration {
+    use super::*;
+    use std::path::PathBuf;
+    use chrono::{DateTime, TimeZone, Utc};
+    use nautilus_ls::ingest::{CalendarGate, GateAction, ProbeAnchor};
+    use nautilus_ls_calendar::{CalendarAdoption, KrxCalendar};
+
+    const SAMSUNG: &str = "005930.XKRX";
+    const DAILY: &str = "1-DAY";
+
+    /// An instant comfortably inside the fixture's authorization grant (2013-01-01 ..
+    /// 2099-01-01), so the as-of view loads and authorizes.
+    fn as_of() -> DateTime<Utc> {
+        Utc.with_ymd_and_hms(2013, 6, 1, 0, 0, 0).unwrap()
+    }
+
+    fn fixture_calendar() -> KrxCalendar {
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("nautilus-ls-calendar/fixtures/base_2010_2012.json");
+        KrxCalendar::load_from_path(&path, as_of()).expect("fixture calendar loads")
+    }
+
+    fn cp_path(catalog: &Path) -> PathBuf {
+        catalog.join("ingest-checkpoint.json")
+    }
+
+    fn seed_watermark(catalog: &Path, wm: NaiveDate) {
+        std::fs::create_dir_all(catalog).unwrap();
+        let mut cp = Checkpoint::load(&cp_path(catalog)).unwrap();
+        // Match daily_config's adjusted_prices so the byte-for-byte comparison isolates a
+        // genuine state advance — accumulate rewrites this metadata field on every run.
+        cp.adjusted_prices = true;
+        cp.set_watermark(SAMSUNG, DAILY, wm);
+        cp.save(&cp_path(catalog)).unwrap();
+    }
+
+    fn read_watermark(catalog: &Path) -> Option<NaiveDate> {
+        Checkpoint::load(&cp_path(catalog)).unwrap().watermark(SAMSUNG, DAILY)
+    }
+
+    // -- Pure gate decision/action (Shadow records the decision but never acts) --
+
+    /// The calendar decision is adoption-INDEPENDENT: a proven Closed date reads
+    /// `SkipAdvance` under Enforced, but Shadow computes the SAME decision yet still
+    /// yields `Proceed` (weekday authoritative) — the recorded-vs-acted split.
+    #[test]
+    fn shadow_records_the_disagreeing_decision_but_proceeds() {
+        let cal = fixture_calendar();
+        let view = cal.as_of(as_of()).unwrap();
+        let closed = ymd(2010, 6, 19);
+
+        let enforced = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        let shadow = CalendarGate::new(CalendarAdoption::Shadow, Some(view));
+        // Same underlying calendar decision …
+        assert_eq!(enforced.calendar_decision(closed), shadow.calendar_decision(closed));
+        // … but only Enforced ACTS on it; Shadow proceeds (weekday authoritative).
+        assert_eq!(enforced.action(closed), GateAction::SkipAdvance);
+        assert_eq!(shadow.action(closed), GateAction::Proceed);
+        // Legacy never consults the calendar at all.
+        let legacy = CalendarGate::new(CalendarAdoption::Legacy, Some(view));
+        assert_eq!(legacy.action(closed), GateAction::Proceed);
+    }
+
+    // -- Enforced accumulate next-fetch --
+
+    /// Enforced, Unknown target: ZERO gateway requests for that date, and the seeded
+    /// watermark is preserved byte-for-byte (no advance on Unknown — the provenance guard).
+    #[tokio::test]
+    async fn enforced_unknown_target_makes_no_request_and_no_advance() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        seed_watermark(&catalog, ymd(2010, 1, 2));
+
+        let cal = fixture_calendar();
+        let view = cal.as_of(as_of()).unwrap();
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        // last_closed = 2010-01-05 is Unknown in the fixture.
+        let report = ing
+            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2010, 1, 5), ymd(2010, 1, 1), gate)
+            .await
+            .unwrap();
+
+        assert_eq!(count_t8410(&server).await, 0, "Unknown target → zero gateway requests");
+        assert_eq!(report.bars_written, 0);
+        assert_eq!(report.triples_ingested, 0);
+        assert_eq!(read_watermark(&catalog), Some(ymd(2010, 1, 2)), "watermark preserved (no advance on Unknown)");
+    }
+
+    /// Enforced, proven Trading Session (change only the target row): the request becomes
+    /// observable and the watermark advances to the session.
+    #[tokio::test]
+    async fn enforced_trading_session_target_fetches() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+
+        let cal = fixture_calendar();
+        let view = cal.as_of(as_of()).unwrap();
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        // last_closed = 2010-06-15 is a proven Trading Session.
+        let report = ing
+            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2010, 6, 15), ymd(2010, 6, 14), gate)
+            .await
+            .unwrap();
+
+        assert_eq!(count_t8410(&server).await, 1, "Trading Session target → the fetch is observable");
+        assert_eq!(report.triples_ingested, 1);
+        assert_eq!(read_watermark(&catalog), Some(ymd(2010, 6, 15)), "watermark advances to the session");
+    }
+
+    /// Enforced, proven Closed (change only the target row): the watermark advances FROM
+    /// closure evidence with NO gateway request.
+    #[tokio::test]
+    async fn enforced_closed_target_advances_without_request() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+
+        let cal = fixture_calendar();
+        let view = cal.as_of(as_of()).unwrap();
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        // last_closed = 2010-06-19 is a proven Closed date.
+        let report = ing
+            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2010, 6, 19), ymd(2010, 6, 14), gate)
+            .await
+            .unwrap();
+
+        assert_eq!(count_t8410(&server).await, 0, "Closed target → no gateway request");
+        assert_eq!(report.bars_written, 0);
+        assert_eq!(report.triples_ingested, 0);
+        assert_eq!(report.triples_skipped, 1);
+        assert_eq!(read_watermark(&catalog), Some(ymd(2010, 6, 19)), "coverage advances FROM closure evidence");
+    }
+
+    /// Enforced, calendar unavailable (no view injected): stop before dispatch — checkpoint +
+    /// watermark preserved byte-for-byte, zero gateway requests.
+    #[tokio::test]
+    async fn enforced_unavailable_calendar_stops_and_preserves_state() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        seed_watermark(&catalog, ymd(2010, 1, 2));
+        let before = std::fs::read(&cp_path(&catalog)).unwrap();
+
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, None);
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        let report = ing
+            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2010, 1, 5), ymd(2010, 1, 1), gate)
+            .await
+            .unwrap();
+
+        assert_eq!(count_t8410(&server).await, 0, "unavailable calendar → fail closed, zero requests");
+        assert_eq!(report.triples_ingested, 0);
+        assert_eq!(read_watermark(&catalog), Some(ymd(2010, 1, 2)), "watermark preserved");
+        let after = std::fs::read(&cp_path(&catalog)).unwrap();
+        assert_eq!(before, after, "checkpoint file byte-for-byte identical");
+    }
+
+    // -- Shadow byte-equivalence to Legacy --
+
+    /// Run the same accumulate once under each gate over independent catalogs/servers and
+    /// return (request count, watermark) so equivalence can be asserted.
+    async fn run_once(gate_of: impl Fn() -> CalendarGate<'static>, cal: &'static KrxCalendar, last_closed: NaiveDate) -> (usize, Option<NaiveDate>) {
+        let _ = cal;
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        ing.run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], last_closed, ymd(2010, 6, 14), gate_of())
+            .await
+            .unwrap();
+        (count_t8410(&server).await, read_watermark(&catalog))
+    }
+
+    /// Shadow is byte-identical to Legacy even when the calendar DISAGREES (a Closed target
+    /// that Enforced would skip-advance): both fetch and advance identically, the calendar
+    /// decision goes only to the non-persisted diagnostic channel.
+    #[tokio::test]
+    async fn shadow_disagreement_is_byte_identical_to_legacy() {
+        // `cal` must outlive the borrowed views → leak one fixture for 'static.
+        let cal: &'static KrxCalendar = Box::leak(Box::new(fixture_calendar()));
+        let closed = ymd(2010, 6, 19); // Closed → Enforced would skip; Shadow/Legacy fetch.
+
+        let legacy = run_once(|| CalendarGate::legacy(), cal, closed).await;
+        let shadow = run_once(
+            move || CalendarGate::new(CalendarAdoption::Shadow, Some(cal.as_of(as_of()).unwrap())),
+            cal,
+            closed,
+        )
+        .await;
+
+        assert_eq!(legacy.0, shadow.0, "same gateway request count as Legacy");
+        assert_eq!(legacy.1, shadow.1, "same watermark as Legacy");
+        assert_eq!(legacy.0, 1, "Legacy/Shadow weekday path still fetches the Closed target");
+    }
+
+    /// Shadow with an UNAVAILABLE calendar is byte-identical to Legacy: the weekday path acts.
+    #[tokio::test]
+    async fn shadow_unavailable_is_byte_identical_to_legacy() {
+        let cal: &'static KrxCalendar = Box::leak(Box::new(fixture_calendar()));
+        let target = ymd(2010, 6, 19);
+
+        let legacy = run_once(|| CalendarGate::legacy(), cal, target).await;
+        let shadow = run_once(|| CalendarGate::new(CalendarAdoption::Shadow, None), cal, target).await;
+
+        assert_eq!(legacy.0, shadow.0, "same request count as Legacy under an unavailable calendar");
+        assert_eq!(legacy.1, shadow.1, "same watermark as Legacy");
+    }
+
+    // -- Probe anchor --
+
+    /// Enforced probe anchor selects the most recent proven Trading Session; Unknown and
+    /// unavailable stop (pure gate assertion).
+    #[test]
+    fn enforced_probe_anchor_selects_session_or_stops() {
+        let cal = fixture_calendar();
+        let view = cal.as_of(as_of()).unwrap();
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+
+        // Anchor IS a proven session → select it.
+        assert_eq!(gate.probe_anchor(ymd(2010, 6, 15)), ProbeAnchor::Use(ymd(2010, 6, 15)));
+        // Anchor is Unknown → stop (an Unknown at the boundary never manufactures an anchor).
+        assert_eq!(gate.probe_anchor(ymd(2010, 1, 5)), ProbeAnchor::Stop);
+        // Unavailable calendar → stop.
+        let blind = CalendarGate::new(CalendarAdoption::Enforced, None);
+        assert_eq!(blind.probe_anchor(ymd(2010, 6, 15)), ProbeAnchor::Stop);
+        // Shadow keeps the weekday anchor authoritative even on a disagreeing (Unknown) date.
+        let shadow = CalendarGate::new(CalendarAdoption::Shadow, Some(view));
+        assert_eq!(shadow.probe_anchor(ymd(2010, 1, 5)), ProbeAnchor::Use(ymd(2010, 1, 5)));
+    }
+
+    /// Enforced probe: an Unknown anchor STOPS before dispatch — zero t8412 requests, nothing
+    /// recorded.
+    #[tokio::test]
+    async fn enforced_probe_unknown_anchor_makes_no_request() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("data").join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_with_probe(&server, ymd(2010, 6, 1)).await;
+
+        let cal = fixture_calendar();
+        let view = cal.as_of(as_of()).unwrap();
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+
+        let ing = Ingestor::new(sdk, probe_config(&catalog));
+        let out = ing
+            .run_probe_lookback_gated("005930", 1, ymd(2010, 1, 5), "2013-06-01T00:00:00Z".into(), gate)
+            .await
+            .unwrap();
+
+        assert!(out.is_none(), "Unknown anchor → nothing recorded");
+        assert_eq!(count_t8412(&server).await, 0, "Unknown anchor → zero gateway requests");
+    }
+
+    /// Enforced probe: a proven-session anchor probes (request observable), anchored at the
+    /// selected session.
+    #[tokio::test]
+    async fn enforced_probe_session_anchor_probes() {
+        let dir = tempdir().unwrap();
+        let catalog = dir.path().join("data").join("catalog");
+        let server = MockServer::start().await;
+        let sdk = sdk_with_probe(&server, ymd(2010, 6, 1)).await;
+
+        let cal = fixture_calendar();
+        let view = cal.as_of(as_of()).unwrap();
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+
+        let ing = Ingestor::new(sdk, probe_config(&catalog));
+        let out = ing
+            .run_probe_lookback_gated("005930", 1, ymd(2010, 6, 15), "2013-06-01T00:00:00Z".into(), gate)
+            .await
+            .unwrap()
+            .expect("the pilot serves history from the selected session anchor");
+
+        assert!(count_t8412(&server).await >= 1, "session anchor → the probe dispatches");
+        // depth = selected anchor (2010-06-15) − earliest served (2010-06-01) = 14 days.
+        assert_eq!(out.depth_days, 14, "anchored at the proven session, not a later weekday");
+    }
+}
