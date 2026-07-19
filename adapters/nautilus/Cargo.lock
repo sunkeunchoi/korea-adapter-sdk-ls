@@ -2885,6 +2885,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "nautilus-ls-calendar"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "chrono-tz",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+]
+
+[[package]]
 name = "nautilus-ls-lab"
 version = "0.1.0"
 dependencies = [

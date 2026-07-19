@@ -1,0 +1,23 @@
+[package]
+name = "nautilus-ls-calendar"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.96"
+license = "MIT"
+description = "Shared offline KRX domestic-equity trading calendar: self-contained snapshot schema, deterministic identities, typed loading, evidence reconciliation, and proof-preserving day/range queries. A pure leaf crate (KTD1) depended on by both nautilus_ls and lab."
+publish = false
+
+# Pure domain LEAF (KTD1): depends on NOTHING in the standalone adapter workspace,
+# so it can be depended on by BOTH `nautilus_ls` and `lab` (which itself depends on
+# `nautilus_ls`) without introducing a cycle. Dependency set is deliberately minimal.
+[lib]
+name = "nautilus_ls_calendar"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+sha2 = "0.10"
+thiserror = "2"
