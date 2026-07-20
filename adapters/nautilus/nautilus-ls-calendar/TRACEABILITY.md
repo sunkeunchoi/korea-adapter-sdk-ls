@@ -75,11 +75,10 @@ Trading/Closed/Unknown/unavailable branch to its owning assertion in the consume
 
 ### Accumulate / probe — `../src/ingest/mod.rs` (`CalendarGate`)
 
+Enforced-only after the U6 retirement (weekday primitive + Legacy/Shadow branches removed).
+
 | Branch | Owning assertion (`../tests/ingest.rs`) |
 |--------|------------------------------------------|
-| Shadow records disagreement, proceeds | `shadow_records_the_disagreeing_decision_but_proceeds` |
-| Shadow byte-identical to Legacy | `shadow_disagreement_is_byte_identical_to_legacy` |
-| Shadow unavailable byte-identical | `shadow_unavailable_is_byte_identical_to_legacy` |
 | Enforced Unknown → no request/advance | `enforced_unknown_target_makes_no_request_and_no_advance` |
 | Enforced Trading → fetch | `enforced_trading_session_target_fetches` |
 | Enforced Closed → advance without request | `enforced_closed_target_advances_without_request` |
@@ -89,18 +88,20 @@ Trading/Closed/Unknown/unavailable branch to its owning assertion in the consume
 
 ### Checkpoint continuity — `../src/ingest/checkpoint.rs`
 
+Enforced-only after the U6 retirement.
+
 | Branch | Owning assertion (`../tests/ingest.rs`) |
 |--------|------------------------------------------|
-| Shadow migration byte-identical | `shadow_migration_is_byte_identical_to_legacy_even_when_calendar_disagrees` |
-| Enforced merges all-closed gap | `enforced_merges_an_all_closed_gap_that_legacy_splits` |
+| Enforced merges all-closed gap | `enforced_merges_an_all_closed_gap` |
 | Enforced Trading in gap prevents merge | `enforced_trading_session_in_the_gap_prevents_merge` |
-| Enforced Unknown gap kept separate | `enforced_keeps_separate_across_an_unknown_gap_that_legacy_merges` |
+| Enforced Unknown gap kept separate | `enforced_keeps_separate_across_an_unknown_gap` |
 
 ### Backward-widen — `../src/ingest/mod.rs`
 
+Enforced-only after the U6 retirement.
+
 | Branch | Owning assertion (`../tests/ingest.rs`) |
 |--------|------------------------------------------|
-| Shadow byte-identical | `shadow_backward_widen_is_byte_identical_to_legacy` |
 | Enforced Trading → warn + persist | `enforced_backward_widen_trading_session_warns_and_persists` |
 | Enforced all-closed → silent | `enforced_backward_widen_all_closed_region_is_silent` |
 | Enforced Unknown → uncertain + re-evaluate | `enforced_backward_widen_unknown_region_is_uncertain_and_reevaluates` |
@@ -164,7 +165,6 @@ Each consumer emits a classified, redacted, non-persisted Shadow-divergence obse
 |--------|------------------|
 | `DivergenceClass` + `classify_divergence` | `enum DivergenceClass`, `fn classify_divergence` (`../src/calendar.rs`) |
 | Redacted, non-persisted, classified | `divergence_observation_is_redacted_and_classified` (`../src/calendar.rs`) |
-| Ingest emits classified divergence | `shadow_divergence_is_classified_and_redacted` (`../tests/ingest.rs`) |
 | Ladder emits classified divergence | `shadow_divergence_is_classified_and_redacted` (`../lab/src/runner/live.rs`) |
 
 _(Budget-probe's Shadow divergence row was removed with its U8 Enforced-only retirement.)_

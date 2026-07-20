@@ -61,6 +61,83 @@ async fn sdk_over(server: &MockServer, body: serde_json::Value) -> LsSdk {
     LsSdk::new(mock_config(&server.uri())).expect("sdk builds")
 }
 
+// ---------------------------------------------------------------------------
+// Enforced-only calendar gates (#189 U6). The ingest `run_accumulate`/`run_rebase`/
+// `run_probe_lookback` un-gated (Legacy) wrappers were retired; every accumulate/probe
+// now takes an injected `CalendarGate`. `all_sessions_gate` is an Enforced gate over a
+// wide all-Trading-Session calendar — with every civil date a proven session, the
+// established-prefix plan reproduces the pre-retirement civil-range fetch exactly, so the
+// tests that used to drive the Legacy path keep their gateway-count / watermark assertions.
+// `no_calendar_gate` is a no-view Enforced gate for pure checkpoint load/migration
+// round-trips (a single covered range still derives its watermark; multi-range legacy holes
+// stay conservatively separate).
+// ---------------------------------------------------------------------------
+
+use nautilus_ls::ingest::CalendarGate;
+use nautilus_ls_calendar::schema::{DayRow, DayStatus as CalDayStatus};
+use nautilus_ls_calendar::{compute_artifact_id, compute_calendar_id, CalendarAdoption, KrxCalendar};
+
+/// The as-of instant every offline calendar gate here is evaluated at (inside the fixture's
+/// authorization grant, 2013-01-01 .. 2099-01-01).
+fn cal_as_of() -> chrono::DateTime<chrono::Utc> {
+    use chrono::TimeZone;
+    chrono::Utc.with_ymd_and_hms(2013, 6, 1, 0, 0, 0).unwrap()
+}
+
+/// A validated calendar covering `[2009-01-01, 2027-12-31]` where EVERY civil date is a
+/// proven Trading Session, built once and leaked for a `'static` view. Reuses the base
+/// fixture's scope/authorization/freshness/sources so it validates through the real loader.
+fn all_sessions_calendar() -> &'static KrxCalendar {
+    use std::sync::OnceLock;
+    static CAL: OnceLock<KrxCalendar> = OnceLock::new();
+    CAL.get_or_init(|| {
+        let template = {
+            let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("nautilus-ls-calendar/fixtures/base_2010_2012.json");
+            KrxCalendar::load_from_path(&path, cal_as_of())
+                .expect("base fixture loads")
+                .snapshot()
+                .clone()
+        };
+        let mut snap = template;
+        let from = ymd(2009, 1, 1);
+        let through = ymd(2027, 12, 31);
+        let mut rows = Vec::new();
+        let mut d = from;
+        while d <= through {
+            rows.push(DayRow {
+                date: d,
+                status: CalDayStatus::TradingSession,
+                decisive_evidence: Vec::new(),
+                conflicting_evidence: Vec::new(),
+                alerts: Vec::new(),
+            });
+            d = d.succ_opt().unwrap();
+        }
+        snap.rows = rows;
+        snap.coverage.materialized_from = from;
+        snap.coverage.materialized_through = through;
+        snap.coverage.retrospectively_checked_through = through;
+        snap.coverage.scheduled_closure_evaluated_through = through;
+        snap.artifact_id.clear();
+        snap.calendar_id.clear();
+        snap.artifact_id = compute_artifact_id(&snap);
+        snap.calendar_id = compute_calendar_id(&snap);
+        KrxCalendar::from_snapshot(snap, cal_as_of()).expect("all-sessions calendar validates")
+    })
+}
+
+/// An Enforced gate over the wide all-Trading-Session calendar.
+fn all_sessions_gate() -> CalendarGate<'static> {
+    let view = all_sessions_calendar().as_of(cal_as_of()).unwrap();
+    CalendarGate::new(CalendarAdoption::Enforced, Some(view))
+}
+
+/// A no-view Enforced gate for checkpoint load/migration round-trips.
+fn no_calendar_gate() -> CalendarGate<'static> {
+    CalendarGate::new(CalendarAdoption::Enforced, None)
+}
+
 fn daily_config(catalog: &Path) -> IngestConfig {
     IngestConfig {
         catalog_path: catalog.to_path_buf(),
@@ -174,7 +251,7 @@ async fn adjusted_price_flag_lands_in_checkpoint_metadata() {
         .await
         .unwrap();
 
-    let cp = Checkpoint::load(&catalog_path.join("ingest-checkpoint.json")).unwrap();
+    let cp = Checkpoint::load_gated(&catalog_path.join("ingest-checkpoint.json"), &no_calendar_gate()).unwrap();
     assert!(cp.adjusted_prices, "sujung=Y basis recorded in the checkpoint");
 }
 
@@ -191,14 +268,14 @@ async fn accumulate_second_run_is_a_noop() {
     let floor = ymd(2024, 1, 1);
 
     let mut ingestor = Ingestor::new(sdk.clone(), daily_config(&catalog_path));
-    let first = ingestor.run_accumulate(&universe, last_closed, floor).await.unwrap();
+    let first = ingestor.run_accumulate_gated(&universe, last_closed, floor, all_sessions_gate()).await.unwrap();
     assert_eq!(first.triples_ingested, 1, "first run covers the range");
     let after_first = count_t8410(&server).await;
     assert!(after_first >= 1);
 
     // Second run, same last-closed session → already current → no bar fetch.
     let mut ingestor2 = Ingestor::new(sdk, daily_config(&catalog_path));
-    let second = ingestor2.run_accumulate(&universe, last_closed, floor).await.unwrap();
+    let second = ingestor2.run_accumulate_gated(&universe, last_closed, floor, all_sessions_gate()).await.unwrap();
     assert_eq!(second.triples_skipped, 1, "already current → skipped");
     assert_eq!(second.bars_written, 0);
     assert_eq!(count_t8410(&server).await, after_first, "no refetch when current (AE4)");
@@ -218,22 +295,26 @@ async fn accumulate_new_instrument_begins_coverage() {
     // Run 1: only 005930 exists.
     let mut ingestor = Ingestor::new(sdk.clone(), daily_config(&catalog_path));
     ingestor
-        .run_accumulate(&[InstrumentId::from("005930.XKRX")], last_closed, floor)
+        .run_accumulate_gated(&[InstrumentId::from("005930.XKRX")], last_closed, floor, all_sessions_gate())
         .await
         .unwrap();
 
     // Run 2: a newly-listed 000660 appears → it begins coverage; 005930 is current.
     let universe = [InstrumentId::from("005930.XKRX"), InstrumentId::from("000660.XKRX")];
     let mut ingestor2 = Ingestor::new(sdk, daily_config(&catalog_path));
-    let second = ingestor2.run_accumulate(&universe, last_closed, floor).await.unwrap();
+    let second = ingestor2.run_accumulate_gated(&universe, last_closed, floor, all_sessions_gate()).await.unwrap();
     assert_eq!(second.triples_ingested, 1, "only the newly-listed symbol is fetched");
     assert_eq!(second.triples_skipped, 1, "the already-covered symbol is skipped");
 }
 
-/// A gap-reason triple (empty history) advances the watermark and is reported once,
-/// not retried forever.
+/// Enforced-only after #189 U6: an empty-history fetch on a PROVEN Trading Session is reported
+/// as a gap but does NOT advance the watermark — a session that serves no bars is an anomaly the
+/// Enforced path refuses to attest, so it halts conservatively and re-attempts on the next run
+/// (a proven Closed date, by contrast, advances FROM closure evidence with no fetch — see
+/// `calendar_gate_migration::enforced_closed_target_advances_without_request`). This is the
+/// deliberate replacement of the Legacy "any civil day advances the watermark once" guarantee.
 #[tokio::test]
-async fn accumulate_gap_advances_watermark_and_reports_once() {
+async fn accumulate_empty_session_reports_a_gap_without_advancing() {
     let dir = tempdir().unwrap();
     let catalog_path = dir.path().join("catalog");
     let server = MockServer::start().await;
@@ -243,15 +324,28 @@ async fn accumulate_gap_advances_watermark_and_reports_once() {
     let floor = ymd(2024, 1, 1);
 
     let mut ingestor = Ingestor::new(sdk.clone(), daily_config(&catalog_path));
-    let first = ingestor.run_accumulate(&universe, last_closed, floor).await.unwrap();
+    let first = ingestor.run_accumulate_gated(&universe, last_closed, floor, all_sessions_gate()).await.unwrap();
     assert_eq!(first.gaps.len(), 1, "the empty history is reported as a gap");
-    let after_first = count_t8410(&server).await;
 
-    // The watermark advanced to last_closed → a re-run at the same session skips.
+    // The watermark did NOT advance over the empty session → a re-run re-attempts it (it is not
+    // marked covered on zero bars). The day is re-attested only once the gateway serves bars or
+    // the calendar proves it Closed.
     let mut ingestor2 = Ingestor::new(sdk, daily_config(&catalog_path));
-    let second = ingestor2.run_accumulate(&universe, last_closed, floor).await.unwrap();
-    assert_eq!(second.triples_skipped, 1, "the gap day is not retried forever");
-    assert_eq!(count_t8410(&server).await, after_first, "no refetch of the gap day");
+    let second = ingestor2.run_accumulate_gated(&universe, last_closed, floor, all_sessions_gate()).await.unwrap();
+    assert_eq!(second.triples_skipped, 0, "an empty proven session is re-attempted, not marked covered on zero bars");
+    assert_eq!(
+        read_watermark_top(&catalog_path),
+        None,
+        "no watermark advance over an empty session (Enforced conservative halt)"
+    );
+}
+
+/// Read the daily watermark from a catalog checkpoint (top-level helper mirroring the
+/// `calendar_gate_migration` module's `read_watermark`).
+fn read_watermark_top(catalog: &Path) -> Option<NaiveDate> {
+    Checkpoint::load_gated(&catalog.join("ingest-checkpoint.json"), &no_calendar_gate())
+        .unwrap()
+        .watermark("005930.XKRX", "1-DAY")
 }
 
 #[tokio::test]
@@ -530,7 +624,7 @@ mod basis_shift_heal {
     const SAMSUNG: &str = "005930.XKRX";
 
     fn checkpoint_at(catalog: &Path) -> Checkpoint {
-        Checkpoint::load(&catalog.join("ingest-checkpoint.json")).unwrap()
+        Checkpoint::load_gated(&catalog.join("ingest-checkpoint.json"), &no_calendar_gate()).unwrap()
     }
 
     /// The stored closes, ascending by date, as plain integers.
@@ -562,7 +656,7 @@ mod basis_shift_heal {
         let floor = ymd(2024, 1, 1);
 
         let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
-        let first = ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+        let first = ing.run_accumulate_gated(&universe, ymd(2024, 1, 5), floor, all_sessions_gate()).await.unwrap();
         assert_eq!(first.bars_written, 3);
 
         // The gateway rewrites S's whole history (post-split basis) for both the
@@ -570,7 +664,7 @@ mod basis_shift_heal {
         shared.set(v2());
 
         let mut ing2 = Ingestor::new(sdk.clone(), daily_config(&catalog));
-        let report = ing2.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        let report = ing2.run_accumulate_gated(&universe, ymd(2024, 1, 8), floor, all_sessions_gate()).await.unwrap();
         assert_eq!(report.bars_written, 4, "wholesale re-pull replaced the series, not an append");
         assert!(report.heal_refusals.is_empty());
 
@@ -589,7 +683,7 @@ mod basis_shift_heal {
         // A post-heal accumulate detects nothing and is a no-op.
         let calls_before = count_t8410(&server).await;
         let mut ing3 = Ingestor::new(sdk, daily_config(&catalog));
-        let third = ing3.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        let third = ing3.run_accumulate_gated(&universe, ymd(2024, 1, 8), floor, all_sessions_gate()).await.unwrap();
         assert_eq!(third.triples_skipped, 1);
         assert_eq!(count_t8410(&server).await, calls_before, "no fetch when current post-heal");
     }
@@ -608,12 +702,12 @@ mod basis_shift_heal {
         let floor = ymd(2024, 1, 1);
 
         let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
-        ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+        ing.run_accumulate_gated(&universe, ymd(2024, 1, 5), floor, all_sessions_gate()).await.unwrap();
 
         // Simulated interruption: the shifted mark was durably saved, then the
         // process died before the wipe/re-pull.
         let cp_path = catalog.join("ingest-checkpoint.json");
-        let mut cp = Checkpoint::load(&cp_path).unwrap();
+        let mut cp = Checkpoint::load_gated(&cp_path, &no_calendar_gate()).unwrap();
         cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5), RebaseOrigin::Heal);
         cp.save(&cp_path).unwrap();
         shared.set(v2());
@@ -625,7 +719,7 @@ mod basis_shift_heal {
         // The watermark is CURRENT (20240105 == last_closed) — the mark must
         // still heal (it outranks the watermark as authority, KTD-2).
         let mut ing2 = Ingestor::new(sdk.clone(), daily_config(&catalog));
-        let report = ing2.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+        let report = ing2.run_accumulate_gated(&universe, ymd(2024, 1, 5), floor, all_sessions_gate()).await.unwrap();
         assert_eq!(report.triples_skipped, 0, "a marked symbol is never skipped as current");
         assert_eq!(stored_closes(&catalog).await, vec![30000, 30900, 31000], "healed onto the served basis");
         let cp = checkpoint_at(&catalog);
@@ -646,11 +740,11 @@ mod basis_shift_heal {
         let floor = ymd(2024, 1, 1);
 
         let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
-        ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+        ing.run_accumulate_gated(&universe, ymd(2024, 1, 5), floor, all_sessions_gate()).await.unwrap();
 
         // Simulate: marked, wiped, watermark cleared — then crash.
         let cp_path = catalog.join("ingest-checkpoint.json");
-        let mut cp = Checkpoint::load(&cp_path).unwrap();
+        let mut cp = Checkpoint::load_gated(&cp_path, &no_calendar_gate()).unwrap();
         cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5), RebaseOrigin::Heal);
         cp.clear_watermark(SAMSUNG, "1-DAY");
         cp.save(&cp_path).unwrap();
@@ -659,7 +753,7 @@ mod basis_shift_heal {
         shared.set(v2());
 
         let mut ing2 = Ingestor::new(sdk, daily_config(&catalog));
-        ing2.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        ing2.run_accumulate_gated(&universe, ymd(2024, 1, 8), floor, all_sessions_gate()).await.unwrap();
         assert_eq!(stored_closes(&catalog).await, vec![30000, 30900, 31000, 31500]);
         assert!(!checkpoint_at(&catalog).is_shifted(SAMSUNG, "1-DAY"));
     }
@@ -679,7 +773,7 @@ mod basis_shift_heal {
         let floor = ymd(2024, 1, 1);
 
         let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
-        ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+        ing.run_accumulate_gated(&universe, ymd(2024, 1, 5), floor, all_sessions_gate()).await.unwrap();
 
         // The server now gap-fills Jan 4 and serves a new session — same basis.
         let mut filled = holey;
@@ -688,7 +782,7 @@ mod basis_shift_heal {
         shared.set(filled);
 
         let mut ing2 = Ingestor::new(sdk, daily_config(&catalog));
-        let report = ing2.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        let report = ing2.run_accumulate_gated(&universe, ymd(2024, 1, 8), floor, all_sessions_gate()).await.unwrap();
         let cp = checkpoint_at(&catalog);
         assert!(!cp.is_shifted(SAMSUNG, "1-DAY"), "one-sided dates are not a shift");
         assert!(cp.rebase_events().is_empty());
@@ -710,13 +804,13 @@ mod basis_shift_heal {
         let floor = ymd(2024, 1, 1);
 
         let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
-        ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+        ing.run_accumulate_gated(&universe, ymd(2024, 1, 5), floor, all_sessions_gate()).await.unwrap();
 
         // Rewritten values on only two mutual dates — below the minimum.
         shared.set(series(&[("20240104", 30900), ("20240105", 31000), ("20240108", 31500)]));
 
         let mut ing2 = Ingestor::new(sdk, daily_config(&catalog));
-        ing2.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        ing2.run_accumulate_gated(&universe, ymd(2024, 1, 8), floor, all_sessions_gate()).await.unwrap();
         let cp = checkpoint_at(&catalog);
         assert!(!cp.is_shifted(SAMSUNG, "1-DAY"), "insufficient overlap never marks");
         assert!(cp.rebase_events().is_empty());
@@ -735,16 +829,16 @@ mod basis_shift_heal {
         let universe = [InstrumentId::from(SAMSUNG)];
 
         let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
-        ing.run_accumulate(&universe, ymd(2024, 1, 5), ymd(2024, 1, 1)).await.unwrap();
+        ing.run_accumulate_gated(&universe, ymd(2024, 1, 5), ymd(2024, 1, 1), all_sessions_gate()).await.unwrap();
 
         let cp_path = catalog.join("ingest-checkpoint.json");
-        let mut cp = Checkpoint::load(&cp_path).unwrap();
+        let mut cp = Checkpoint::load_gated(&cp_path, &no_calendar_gate()).unwrap();
         cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5), RebaseOrigin::Heal);
         cp.save(&cp_path).unwrap();
 
         // Run floor Jan 4 > earliest stored bar Jan 3 — the wipe must refuse.
         let mut ing2 = Ingestor::new(sdk, daily_config(&catalog));
-        let report = ing2.run_accumulate(&universe, ymd(2024, 1, 8), ymd(2024, 1, 4)).await.unwrap();
+        let report = ing2.run_accumulate_gated(&universe, ymd(2024, 1, 8), ymd(2024, 1, 4), all_sessions_gate()).await.unwrap();
         assert_eq!(report.heal_refusals.len(), 1, "the refusal is surfaced, never silent");
         assert_eq!(report.heal_refusals[0].floor, "20240104");
         assert_eq!(report.heal_refusals[0].earliest_stored, "20240103");
@@ -766,17 +860,17 @@ mod basis_shift_heal {
         let floor = ymd(2024, 1, 1);
 
         let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
-        ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+        ing.run_accumulate_gated(&universe, ymd(2024, 1, 5), floor, all_sessions_gate()).await.unwrap();
 
         let cp_path = catalog.join("ingest-checkpoint.json");
-        let mut cp = Checkpoint::load(&cp_path).unwrap();
+        let mut cp = Checkpoint::load_gated(&cp_path, &no_calendar_gate()).unwrap();
         cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5), RebaseOrigin::Heal);
         cp.save(&cp_path).unwrap();
         // The rewritten symbol now serves only two sessions (listed-late shape).
         shared.set(series(&[("20240105", 31000), ("20240108", 31500)]));
 
         let mut ing2 = Ingestor::new(sdk, daily_config(&catalog));
-        ing2.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        ing2.run_accumulate_gated(&universe, ymd(2024, 1, 8), floor, all_sessions_gate()).await.unwrap();
         let cp = checkpoint_at(&catalog);
         assert!(!cp.is_shifted(SAMSUNG, "1-DAY"), "cursor completed → mark cleared despite short history");
         assert_eq!(cp.rebase_events().len(), 1);
@@ -799,23 +893,23 @@ mod basis_shift_heal {
         let floor = ymd(2024, 1, 1);
 
         let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
-        ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+        ing.run_accumulate_gated(&universe, ymd(2024, 1, 5), floor, all_sessions_gate()).await.unwrap();
 
         let cp_path = catalog.join("ingest-checkpoint.json");
-        let mut cp = Checkpoint::load(&cp_path).unwrap();
+        let mut cp = Checkpoint::load_gated(&cp_path, &no_calendar_gate()).unwrap();
         cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5), RebaseOrigin::Heal);
         cp.save(&cp_path).unwrap();
 
         // Heal attempt: re-pull v2, re-verify v3 → mismatch → stays marked.
         let mut ing2 = Ingestor::new(sdk.clone(), daily_config(&catalog));
-        let report = ing2.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        let report = ing2.run_accumulate_gated(&universe, ymd(2024, 1, 8), floor, all_sessions_gate()).await.unwrap();
         assert!(checkpoint_at(&catalog).is_shifted(SAMSUNG, "1-DAY"), "failed re-verify keeps the mark");
         assert!(checkpoint_at(&catalog).rebase_events().is_empty());
         assert_eq!(report.gaps.len(), 1, "the incomplete heal is reported");
 
         // Next run re-enters at the wipe against the now-stable v3 and completes.
         let mut ing3 = Ingestor::new(sdk, daily_config(&catalog));
-        ing3.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        ing3.run_accumulate_gated(&universe, ymd(2024, 1, 8), floor, all_sessions_gate()).await.unwrap();
         let cp = checkpoint_at(&catalog);
         assert!(!cp.is_shifted(SAMSUNG, "1-DAY"));
         assert_eq!(cp.rebase_events().len(), 1);
@@ -837,17 +931,17 @@ mod basis_shift_heal {
         let floor = ymd(2024, 1, 1);
 
         let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
-        ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+        ing.run_accumulate_gated(&universe, ymd(2024, 1, 5), floor, all_sessions_gate()).await.unwrap();
 
         let cp_path = catalog.join("ingest-checkpoint.json");
-        let mut cp = Checkpoint::load(&cp_path).unwrap();
+        let mut cp = Checkpoint::load_gated(&cp_path, &no_calendar_gate()).unwrap();
         cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5), RebaseOrigin::Heal);
         cp.save(&cp_path).unwrap();
         // A transient gateway hiccup: the server serves NOTHING for the symbol.
         shared.set(series(&[]));
 
         let mut ing2 = Ingestor::new(sdk.clone(), daily_config(&catalog));
-        let report = ing2.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        let report = ing2.run_accumulate_gated(&universe, ymd(2024, 1, 8), floor, all_sessions_gate()).await.unwrap();
         let cp = checkpoint_at(&catalog);
         assert!(cp.is_shifted(SAMSUNG, "1-DAY"), "an empty re-pull must not complete the heal");
         assert!(cp.rebase_events().is_empty());
@@ -857,7 +951,7 @@ mod basis_shift_heal {
         // The server recovers → the next run re-pulls and completes.
         shared.set(v2());
         let mut ing3 = Ingestor::new(sdk, daily_config(&catalog));
-        ing3.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        ing3.run_accumulate_gated(&universe, ymd(2024, 1, 8), floor, all_sessions_gate()).await.unwrap();
         assert!(!checkpoint_at(&catalog).is_shifted(SAMSUNG, "1-DAY"));
         assert_eq!(stored_closes(&catalog).await, vec![30000, 30900, 31000, 31500]);
     }
@@ -879,14 +973,14 @@ mod basis_shift_heal {
         let floor = ymd(2024, 1, 1);
 
         let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
-        ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+        ing.run_accumulate_gated(&universe, ymd(2024, 1, 5), floor, all_sessions_gate()).await.unwrap();
 
         // The pre-epoch catalog may hold years of baked-in splices — the server
         // now sits on a different basis, undetectable forward-only.
         shared.set(v2());
 
         let mut ing2 = Ingestor::new(sdk.clone(), daily_config(&catalog));
-        let report = ing2.run_rebase(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        let report = ing2.run_rebase_gated(&universe, ymd(2024, 1, 8), floor, all_sessions_gate()).await.unwrap();
         assert_eq!(report.triples_ingested, 2, "every symbol was re-pulled");
         assert_eq!(report.bars_written, 8);
 
@@ -904,7 +998,7 @@ mod basis_shift_heal {
         // A post-epoch accumulate detects nothing.
         let calls_before = count_t8410(&server).await;
         let mut ing3 = Ingestor::new(sdk, daily_config(&catalog));
-        let third = ing3.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        let third = ing3.run_accumulate_gated(&universe, ymd(2024, 1, 8), floor, all_sessions_gate()).await.unwrap();
         assert_eq!(third.triples_skipped, 2);
         assert_eq!(count_t8410(&server).await, calls_before);
     }
@@ -922,23 +1016,23 @@ mod basis_shift_heal {
         let floor = ymd(2024, 1, 1);
 
         let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
-        ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+        ing.run_accumulate_gated(&universe, ymd(2024, 1, 5), floor, all_sessions_gate()).await.unwrap();
         shared.set(v2());
 
         // Simulated interruption: the epoch's atomic mark-all save landed, then
         // only SAMSUNG healed before the crash (drive it via a one-symbol run).
         let cp_path = catalog.join("ingest-checkpoint.json");
-        let mut cp = Checkpoint::load(&cp_path).unwrap();
+        let mut cp = Checkpoint::load_gated(&cp_path, &no_calendar_gate()).unwrap();
         cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 8), RebaseOrigin::Heal);
         cp.mark_shifted(HYNIX, "1-DAY", ymd(2024, 1, 8), RebaseOrigin::Heal);
         cp.save(&cp_path).unwrap();
         let mut ing2 = Ingestor::new(sdk.clone(), daily_config(&catalog));
-        ing2.run_accumulate(&universe[..1], ymd(2024, 1, 8), floor).await.unwrap();
+        ing2.run_accumulate_gated(&universe[..1], ymd(2024, 1, 8), floor, all_sessions_gate()).await.unwrap();
         assert!(checkpoint_at(&catalog).is_shifted(HYNIX, "1-DAY"), "the remainder is still marked");
 
         // Resume: heals only HYNIX (SAMSUNG is clean and current).
         let mut ing3 = Ingestor::new(sdk, daily_config(&catalog));
-        let resumed = ing3.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        let resumed = ing3.run_accumulate_gated(&universe, ymd(2024, 1, 8), floor, all_sessions_gate()).await.unwrap();
         assert_eq!(resumed.triples_ingested, 1, "only the un-healed symbol is re-pulled");
         let cp = checkpoint_at(&catalog);
         assert!(!cp.is_shifted(SAMSUNG, "1-DAY"));
@@ -961,13 +1055,13 @@ mod basis_shift_heal {
         let floor = ymd(2024, 1, 1);
 
         let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
-        ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+        ing.run_accumulate_gated(&universe, ymd(2024, 1, 5), floor, all_sessions_gate()).await.unwrap();
         shared.set(v2());
 
         // Simulate the epoch's atomic mark-all landing (epoch origin) then a crash
         // before any heal — exactly what `run_rebase` writes before healing.
         let cp_path = catalog.join("ingest-checkpoint.json");
-        let mut cp = Checkpoint::load(&cp_path).unwrap();
+        let mut cp = Checkpoint::load_gated(&cp_path, &no_calendar_gate()).unwrap();
         cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 8), RebaseOrigin::Epoch);
         cp.mark_shifted(HYNIX, "1-DAY", ymd(2024, 1, 8), RebaseOrigin::Epoch);
         cp.save(&cp_path).unwrap();
@@ -975,7 +1069,7 @@ mod basis_shift_heal {
         // Resume under ACCUMULATE mode (not run_rebase) — the mode cannot tell why
         // the mark exists; only the stored origin can.
         let mut ing2 = Ingestor::new(sdk, daily_config(&catalog));
-        ing2.run_accumulate(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        ing2.run_accumulate_gated(&universe, ymd(2024, 1, 8), floor, all_sessions_gate()).await.unwrap();
         let cp = checkpoint_at(&catalog);
         assert_eq!(cp.rebase_events().len(), 2);
         assert!(cp.rebase_events().iter().all(|e| e.origin == RebaseOrigin::Epoch), "crash-resumed events keep epoch origin");
@@ -996,18 +1090,18 @@ mod basis_shift_heal {
         let floor = ymd(2024, 1, 1);
 
         let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
-        ing.run_accumulate(&universe, ymd(2024, 1, 5), floor).await.unwrap();
+        ing.run_accumulate_gated(&universe, ymd(2024, 1, 5), floor, all_sessions_gate()).await.unwrap();
         shared.set(v2());
 
         // The symbol was organically heal-marked before the epoch runs.
         let cp_path = catalog.join("ingest-checkpoint.json");
-        let mut cp = Checkpoint::load(&cp_path).unwrap();
+        let mut cp = Checkpoint::load_gated(&cp_path, &no_calendar_gate()).unwrap();
         cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 6), RebaseOrigin::Heal);
         cp.save(&cp_path).unwrap();
 
         // The epoch re-base marks-all (epoch), but keep-original leaves this series heal.
         let mut ing2 = Ingestor::new(sdk, daily_config(&catalog));
-        ing2.run_rebase(&universe, ymd(2024, 1, 8), floor).await.unwrap();
+        ing2.run_rebase_gated(&universe, ymd(2024, 1, 8), floor, all_sessions_gate()).await.unwrap();
         let cp = checkpoint_at(&catalog);
         assert_eq!(cp.rebase_events().len(), 1);
         assert_eq!(cp.rebase_events()[0].origin, RebaseOrigin::Heal, "the pre-existing heal origin is kept");
@@ -1114,13 +1208,13 @@ mod basis_shift_heal {
 
         // Run 1: samsung gets stored bars + a watermark (a normal accumulate).
         let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
-        ing.run_accumulate(&[samsung], ymd(2024, 1, 5), floor).await.unwrap();
+        ing.run_accumulate_gated(&[samsung], ymd(2024, 1, 5), floor, all_sessions_gate()).await.unwrap();
 
         // The gateway rewrites the basis, and we mark samsung shifted (a detected
         // shift, saved before the wipe). Arm the overlap injection for run 2.
         shared.set(v2());
         let cp_path = catalog.join("ingest-checkpoint.json");
-        let mut cp = Checkpoint::load(&cp_path).unwrap();
+        let mut cp = Checkpoint::load_gated(&cp_path, &no_calendar_gate()).unwrap();
         cp.mark_shifted(SAMSUNG, "1-DAY", ymd(2024, 1, 5), RebaseOrigin::Heal);
         cp.save(&cp_path).unwrap();
         inject_armed.store(true, Ordering::SeqCst);
@@ -1129,7 +1223,7 @@ mod basis_shift_heal {
         // hynix appends cleanly. The refused triple does not abort the run.
         let mut ing2 = Ingestor::new(sdk, daily_config(&catalog));
         let report = ing2
-            .run_accumulate(&[samsung, hynix], ymd(2024, 1, 8), floor)
+            .run_accumulate_gated(&[samsung, hynix], ymd(2024, 1, 8), floor, all_sessions_gate())
             .await
             .unwrap();
 
@@ -1211,7 +1305,7 @@ async fn probe_converges_on_earliest_served_date_and_writes_file() {
     let ingestor = Ingestor::new(sdk, probe_config(&catalog));
     let anchor = ymd(2024, 1, 31);
     let out = ingestor
-        .run_probe_lookback("005930", 1, anchor, "2024-01-31T16:30:00+09:00".into())
+        .run_probe_lookback_gated("005930", 1, anchor, "2024-01-31T16:30:00+09:00".into(), all_sessions_gate())
         .await
         .unwrap()
         .expect("the pilot serves history");
@@ -1233,7 +1327,7 @@ async fn probe_reports_nothing_when_pilot_serves_no_history() {
 
     let ingestor = Ingestor::new(sdk, probe_config(&catalog));
     let out = ingestor
-        .run_probe_lookback("005930", 1, ymd(2024, 1, 31), "2024-01-31T16:30:00+09:00".into())
+        .run_probe_lookback_gated("005930", 1, ymd(2024, 1, 31), "2024-01-31T16:30:00+09:00".into(), all_sessions_gate())
         .await
         .unwrap();
     assert!(out.is_none(), "an empty pilot records nothing");
@@ -1264,7 +1358,7 @@ fn minute_lookback_file_round_trips() {
 /// Seed a shifted mark for one series into the run's checkpoint on disk.
 fn mark_series_shifted(catalog: &Path, instrument: &str, label: &str, detected: NaiveDate) {
     let cp_path = catalog.join("ingest-checkpoint.json");
-    let mut cp = Checkpoint::load(&cp_path).unwrap();
+    let mut cp = Checkpoint::load_gated(&cp_path, &no_calendar_gate()).unwrap();
     cp.mark_shifted(instrument, label, detected, RebaseOrigin::Heal);
     cp.save(&cp_path).unwrap();
 }
@@ -1291,7 +1385,7 @@ async fn range_mode_refuses_a_marked_series() {
     assert_eq!(report.range_refusals[0].detected, "20240105");
     assert_eq!(count_t8410(&server).await, 0, "a refused series makes no gateway call");
 
-    let cp = Checkpoint::load(&catalog.join("ingest-checkpoint.json")).unwrap();
+    let cp = Checkpoint::load_gated(&catalog.join("ingest-checkpoint.json"), &no_calendar_gate()).unwrap();
     assert!(!cp.is_done("005930.XKRX", "1-DAY", "20240101..20240105"), "a refused series is not marked done");
     assert!(cp.is_shifted("005930.XKRX", "1-DAY"), "the mark stays until an accumulate/rebase heal");
 }
@@ -1344,7 +1438,7 @@ async fn range_mode_pulls_unmarked_sibling_and_exits_ok() {
     assert_eq!(report.bars_written, 3);
     assert_eq!(count_t8410(&server).await, 1, "only the unmarked sibling hits the gateway");
 
-    let cp = Checkpoint::load(&catalog.join("ingest-checkpoint.json")).unwrap();
+    let cp = Checkpoint::load_gated(&catalog.join("ingest-checkpoint.json"), &no_calendar_gate()).unwrap();
     assert!(cp.is_done("000660.XKRX", "1-DAY", "20240101..20240105"), "the sibling is completed");
 }
 
@@ -1707,14 +1801,14 @@ mod checked_append_and_compact {
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
         let report = ing
-            .run_accumulate(&[samsung, hynix], ymd(2024, 1, 5), ymd(2024, 1, 1))
+            .run_accumulate_gated(&[samsung, hynix], ymd(2024, 1, 5), ymd(2024, 1, 1), all_sessions_gate())
             .await
             .unwrap();
 
         assert_eq!(report.append_refusals.len(), 1, "the overlapping triple is refused, not fatal");
         assert_eq!(report.append_refusals[0].instrument, "005930.XKRX");
         assert_eq!(report.triples_ingested, 1, "the clean sibling still ingests");
-        let cp = Checkpoint::load(&catalog.join("ingest-checkpoint.json")).unwrap();
+        let cp = Checkpoint::load_gated(&catalog.join("ingest-checkpoint.json"), &no_calendar_gate()).unwrap();
         assert!(cp.watermark("005930.XKRX", "1-DAY").is_none(), "refused triple's watermark unchanged");
         assert!(cp.watermark("000660.XKRX", "1-DAY").is_some(), "clean triple advanced");
     }
@@ -1743,7 +1837,7 @@ mod checked_append_and_compact {
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
         // Floor at the earliest stored session so no backward-widen warning fires.
-        let report = ing.run_accumulate(&[samsung], ymd(2024, 1, 5), ymd(2024, 1, 3)).await.unwrap();
+        let report = ing.run_accumulate_gated(&[samsung], ymd(2024, 1, 5), ymd(2024, 1, 3), all_sessions_gate()).await.unwrap();
         assert_eq!(report.triples_skipped, 1, "the migrated watermark skips the covered range");
         assert_eq!(count_t8410(&server).await, 0, "no re-fetch from the floor");
         assert!(report.append_refusals.is_empty(), "no overlapping write attempted");
@@ -1773,7 +1867,7 @@ mod checked_append_and_compact {
         .unwrap();
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
-        let report = ing.run_accumulate(&[samsung], ymd(2024, 7, 3), ymd(2024, 6, 1)).await.unwrap();
+        let report = ing.run_accumulate_gated(&[samsung], ymd(2024, 7, 3), ymd(2024, 6, 1), all_sessions_gate()).await.unwrap();
         assert_eq!(report.backward_widen_warnings.len(), 1, "the unreachable region is surfaced");
         let w = &report.backward_widen_warnings[0];
         assert_eq!(w.instrument, "005930.XKRX");
@@ -1809,10 +1903,10 @@ mod checked_append_and_compact {
 
         // Run 1: floor 0601 precedes earliest coverage 0618 → warns once, records marker.
         let mut ing = Ingestor::new(sdk.clone(), daily_config(&catalog));
-        let r1 = ing.run_accumulate(&[samsung], ymd(2024, 7, 3), ymd(2024, 6, 1)).await.unwrap();
+        let r1 = ing.run_accumulate_gated(&[samsung], ymd(2024, 7, 3), ymd(2024, 6, 1), all_sessions_gate()).await.unwrap();
         assert_eq!(r1.backward_widen_warnings.len(), 1, "run 1 warns once");
         assert_eq!(
-            Checkpoint::load(&cp_path).unwrap().history_floor("005930.XKRX", "1-DAY"),
+            Checkpoint::load_gated(&cp_path, &no_calendar_gate()).unwrap().history_floor("005930.XKRX", "1-DAY"),
             Some(ymd(2024, 6, 1)),
             "the warned floor is recorded and persisted (survives the already-current skip)"
         );
@@ -1820,15 +1914,15 @@ mod checked_append_and_compact {
         // Run 2: SAME floor → silent. No warning ⟹ needs_check was false ⟹ the
         // per-triple interval read was skipped (else the still-below floor re-warns).
         let mut ing2 = Ingestor::new(sdk.clone(), daily_config(&catalog));
-        let r2 = ing2.run_accumulate(&[samsung], ymd(2024, 7, 3), ymd(2024, 6, 1)).await.unwrap();
+        let r2 = ing2.run_accumulate_gated(&[samsung], ymd(2024, 7, 3), ymd(2024, 6, 1), all_sessions_gate()).await.unwrap();
         assert!(r2.backward_widen_warnings.is_empty(), "run 2 at the same floor is silent (read skipped)");
 
         // Run 3: DEEPER floor (0525 < recorded 0601) → new information, re-warns.
         let mut ing3 = Ingestor::new(sdk, daily_config(&catalog));
-        let r3 = ing3.run_accumulate(&[samsung], ymd(2024, 7, 3), ymd(2024, 5, 25)).await.unwrap();
+        let r3 = ing3.run_accumulate_gated(&[samsung], ymd(2024, 7, 3), ymd(2024, 5, 25), all_sessions_gate()).await.unwrap();
         assert_eq!(r3.backward_widen_warnings.len(), 1, "a deeper floor re-warns (R5)");
         assert_eq!(
-            Checkpoint::load(&cp_path).unwrap().history_floor("005930.XKRX", "1-DAY"),
+            Checkpoint::load_gated(&cp_path, &no_calendar_gate()).unwrap().history_floor("005930.XKRX", "1-DAY"),
             Some(ymd(2024, 5, 25)),
             "the marker updates to the deeper floor"
         );
@@ -1854,7 +1948,7 @@ mod checked_append_and_compact {
         )
         .unwrap();
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
-        let report = ing.run_accumulate(&[samsung], ymd(2024, 7, 3), ymd(2024, 6, 18)).await.unwrap();
+        let report = ing.run_accumulate_gated(&[samsung], ymd(2024, 7, 3), ymd(2024, 6, 18), all_sessions_gate()).await.unwrap();
         assert!(report.backward_widen_warnings.is_empty(), "floor at earliest coverage does not warn");
     }
 
@@ -1867,7 +1961,7 @@ mod checked_append_and_compact {
         let sdk = sdk_over(&server, daily_body_three_rows()).await;
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
         let report = ing
-            .run_accumulate(&[InstrumentId::from("005930.XKRX")], ymd(2024, 1, 5), ymd(2024, 1, 1))
+            .run_accumulate_gated(&[InstrumentId::from("005930.XKRX")], ymd(2024, 1, 5), ymd(2024, 1, 1), all_sessions_gate())
             .await
             .unwrap();
         assert!(report.backward_widen_warnings.is_empty(), "an unseen instrument is not a backward widen");
@@ -2156,9 +2250,13 @@ mod reingest_trim {
 
     /// Covers AE1 (holiday half) + the stall-flip: a prefix watermark and one far
     /// `completed` range separated by a non-trading gap. The far range is trimmed
-    /// out (never re-fetched), the empty gap is probed once, no overlap is refused,
-    /// and the watermark advances past the far range — the fixture that stalled the
-    /// pre-trim code now stabilizes.
+    /// out (never re-fetched), the empty gap is probed once, and no overlap is refused.
+    /// Enforced-only after #189 U6: the empty-gap probe returns no bars, so the Enforced
+    /// path halts before it (a session that serves nothing is not attested) and the watermark
+    /// HOLDS at the prefix rather than advancing past the far range — the Legacy far-edate
+    /// extension is gone. (In the real Enforced flow this checkpoint would not reach the trim
+    /// path at all: with no explicit watermark seeded, the load-time migration merges the far
+    /// range across a proven all-Closed gap.)
     #[tokio::test]
     async fn legacy_multi_range_stall_flips_to_stable_and_advanced() {
         let dir = tempdir().unwrap();
@@ -2170,7 +2268,7 @@ mod reingest_trim {
         stage(&catalog, bt, &[(ymd(2024, 1, 3), 103), (ymd(2024, 1, 4), 104), (ymd(2024, 1, 5), 105)], &[(ymd(2024, 1, 10), 110), (ymd(2024, 1, 11), 111), (ymd(2024, 1, 12), 112)], r#""005930.XKRX|1-DAY|20240110..20240112""#, "20240105").await;
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
-        let report = ing.run_accumulate(&[InstrumentId::from(SAMSUNG)], ymd(2024, 1, 12), ymd(2024, 1, 3)).await.unwrap();
+        let report = ing.run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2024, 1, 12), ymd(2024, 1, 3), all_sessions_gate()).await.unwrap();
 
         assert!(report.append_refusals.is_empty(), "no overlap is refused — the far range is trimmed, not re-fetched");
         assert!(report.backward_widen_warnings.is_empty(), "floor at earliest coverage → no widen warning");
@@ -2178,9 +2276,9 @@ mod reingest_trim {
         // far range is never re-fetched (that would be a 3rd call and an overlap).
         assert_eq!(count_t8410(&server).await, 2, "detect + gap probe only; far range not re-fetched");
         assert_eq!(
-            Checkpoint::load(&cp_path(&catalog)).unwrap().watermark(SAMSUNG, "1-DAY"),
-            Some(ymd(2024, 1, 12)),
-            "the watermark advances past the far range (max(last_closed, far edate))"
+            Checkpoint::load_gated(&cp_path(&catalog), &no_calendar_gate()).unwrap().watermark(SAMSUNG, "1-DAY"),
+            Some(ymd(2024, 1, 5)),
+            "Enforced holds the watermark at the prefix — an empty gap probe is not attested, so coverage does not advance past the far range"
         );
         assert_eq!(closes(&catalog).await, vec![103, 104, 105, 110, 111, 112], "stored content unchanged — no duplicate, no gap bars");
     }
@@ -2200,7 +2298,7 @@ mod reingest_trim {
         stage(&catalog, bt, &[(ymd(2024, 1, 3), 103), (ymd(2024, 1, 4), 104), (ymd(2024, 1, 5), 105)], &[(ymd(2024, 1, 10), 110), (ymd(2024, 1, 11), 111), (ymd(2024, 1, 12), 112)], r#""005930.XKRX|1-DAY|20240110..20240112""#, "20240105").await;
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
-        let report = ing.run_accumulate(&[InstrumentId::from(SAMSUNG)], ymd(2024, 1, 12), ymd(2024, 1, 3)).await.unwrap();
+        let report = ing.run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2024, 1, 12), ymd(2024, 1, 3), all_sessions_gate()).await.unwrap();
 
         assert!(report.append_refusals.is_empty());
         // 1 detect-overlap fetch + 1 gap sub-range fetch (0106..0109); far untouched.
@@ -2210,7 +2308,7 @@ mod reingest_trim {
             vec![103, 104, 105, 108, 110, 111, 112],
             "the genuine gap day 0108 is written; the far range is not re-fetched"
         );
-        assert_eq!(Checkpoint::load(&cp_path(&catalog)).unwrap().watermark(SAMSUNG, "1-DAY"), Some(ymd(2024, 1, 12)));
+        assert_eq!(Checkpoint::load_gated(&cp_path(&catalog), &no_calendar_gate()).unwrap().watermark(SAMSUNG, "1-DAY"), Some(ymd(2024, 1, 12)));
     }
 
     /// Steady state: a single contiguous coverage block ending at the watermark
@@ -2229,7 +2327,7 @@ mod reingest_trim {
         std::fs::write(cp_path(&catalog), r#"{"completed":[],"gaps":[],"watermarks":{"005930.XKRX|1-DAY":"20240105"},"adjusted_prices":true}"#).unwrap();
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
-        let report = ing.run_accumulate(&[InstrumentId::from(SAMSUNG)], ymd(2024, 1, 10), ymd(2024, 1, 3)).await.unwrap();
+        let report = ing.run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2024, 1, 10), ymd(2024, 1, 3), all_sessions_gate()).await.unwrap();
 
         assert!(report.append_refusals.is_empty());
         // 1 detect-overlap fetch + 1 forward-window fetch — the single-segment
@@ -2237,7 +2335,7 @@ mod reingest_trim {
         assert_eq!(count_t8410(&server).await, 2, "detect + one forward fetch");
         assert_eq!(report.bars_written, 3, "the three served forward candles");
         assert_eq!(closes(&catalog).await, vec![103, 104, 105, 108, 109, 110]);
-        assert_eq!(Checkpoint::load(&cp_path(&catalog)).unwrap().watermark(SAMSUNG, "1-DAY"), Some(ymd(2024, 1, 10)));
+        assert_eq!(Checkpoint::load_gated(&cp_path(&catalog), &no_calendar_gate()).unwrap().watermark(SAMSUNG, "1-DAY"), Some(ymd(2024, 1, 10)));
     }
 
     /// Multiple covered spans above the watermark subtract to multiple un-covered
@@ -2267,7 +2365,7 @@ mod reingest_trim {
         .unwrap();
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
-        let report = ing.run_accumulate(&[InstrumentId::from(SAMSUNG)], ymd(2024, 1, 19), ymd(2024, 1, 3)).await.unwrap();
+        let report = ing.run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2024, 1, 19), ymd(2024, 1, 3), all_sessions_gate()).await.unwrap();
 
         assert!(report.append_refusals.is_empty(), "each sub-range is disjoint from stored coverage");
         // 1 detect-overlap fetch + 3 un-covered sub-range fetches; neither far range re-fetched.
@@ -2277,12 +2375,13 @@ mod reingest_trim {
             vec![103, 104, 105, 108, 110, 111, 115, 116, 117, 119],
             "gap days written, far ranges untouched, all contiguous"
         );
-        assert_eq!(Checkpoint::load(&cp_path(&catalog)).unwrap().watermark(SAMSUNG, "1-DAY"), Some(ymd(2024, 1, 19)));
+        assert_eq!(Checkpoint::load_gated(&cp_path(&catalog), &no_calendar_gate()).unwrap().watermark(SAMSUNG, "1-DAY"), Some(ymd(2024, 1, 19)));
     }
 
     /// `last_closed` at or below the far range's edate: the far range spans across
-    /// last_closed, so the watermark still advances to the far edate — the next run
-    /// starts above it and does not re-overlap it.
+    /// last_closed. Enforced-only after #189 U6: the pre-far gap serves 0108, so that fetch
+    /// succeeds, but the watermark advances only to the proven `last_closed` (0112) — the Legacy
+    /// far-edate extension (advancing to the un-attested far edate 0114) is gone under Enforced.
     #[tokio::test]
     async fn watermark_advances_to_far_edate_when_last_closed_is_lower() {
         let dir = tempdir().unwrap();
@@ -2294,15 +2393,15 @@ mod reingest_trim {
         stage(&catalog, bt, &[(ymd(2024, 1, 3), 103), (ymd(2024, 1, 4), 104), (ymd(2024, 1, 5), 105)], &[(ymd(2024, 1, 10), 110), (ymd(2024, 1, 14), 114)], r#""005930.XKRX|1-DAY|20240110..20240114""#, "20240105").await;
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
-        let report = ing.run_accumulate(&[InstrumentId::from(SAMSUNG)], ymd(2024, 1, 12), ymd(2024, 1, 3)).await.unwrap();
+        let report = ing.run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2024, 1, 12), ymd(2024, 1, 3), all_sessions_gate()).await.unwrap();
 
         assert!(report.append_refusals.is_empty());
         // 1 detect-overlap fetch + 1 pre-far gap fetch; the straddling far range is not re-fetched.
         assert_eq!(count_t8410(&server).await, 2, "detect + the pre-far gap only");
         assert_eq!(
-            Checkpoint::load(&cp_path(&catalog)).unwrap().watermark(SAMSUNG, "1-DAY"),
-            Some(ymd(2024, 1, 14)),
-            "advances to the far edate, not the lower last_closed, so the next run skips the far range"
+            Checkpoint::load_gated(&cp_path(&catalog), &no_calendar_gate()).unwrap().watermark(SAMSUNG, "1-DAY"),
+            Some(ymd(2024, 1, 12)),
+            "Enforced advances to the proven last_closed (0112), not the un-attested far edate (0114)"
         );
     }
 
@@ -2336,7 +2435,7 @@ mod reingest_trim {
         .unwrap();
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
-        let report = ing.run_accumulate(&[InstrumentId::from(SAMSUNG)], ymd(2024, 1, 19), ymd(2024, 1, 3)).await.unwrap();
+        let report = ing.run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2024, 1, 19), ymd(2024, 1, 3), all_sessions_gate()).await.unwrap();
 
         assert_eq!(report.append_refusals.len(), 1, "the first sub-range's overlap halts the loop");
         // 1 detect-overlap fetch + 1 first-sub-range fetch (which then refuses on
@@ -2345,7 +2444,7 @@ mod reingest_trim {
         let stored = closes(&catalog).await;
         assert!(!stored.contains(&118) && !stored.contains(&119), "no bars orphaned above the pinned watermark");
         assert_eq!(
-            Checkpoint::load(&cp_path(&catalog)).unwrap().watermark(SAMSUNG, "1-DAY"),
+            Checkpoint::load_gated(&cp_path(&catalog), &no_calendar_gate()).unwrap().watermark(SAMSUNG, "1-DAY"),
             Some(ymd(2024, 1, 5)),
             "the watermark pins before the halting sub-range (no advance) → the next run re-derives it"
         );
@@ -2437,7 +2536,7 @@ mod calendar_gate_migration {
 
     fn seed_watermark(catalog: &Path, wm: NaiveDate) {
         std::fs::create_dir_all(catalog).unwrap();
-        let mut cp = Checkpoint::load(&cp_path(catalog)).unwrap();
+        let mut cp = Checkpoint::load_gated(&cp_path(catalog), &no_calendar_gate()).unwrap();
         // Match daily_config's adjusted_prices so the byte-for-byte comparison isolates a
         // genuine state advance — accumulate rewrites this metadata field on every run.
         cp.adjusted_prices = true;
@@ -2446,64 +2545,23 @@ mod calendar_gate_migration {
     }
 
     fn read_watermark(catalog: &Path) -> Option<NaiveDate> {
-        Checkpoint::load(&cp_path(catalog)).unwrap().watermark(SAMSUNG, DAILY)
+        Checkpoint::load_gated(&cp_path(catalog), &no_calendar_gate()).unwrap().watermark(SAMSUNG, DAILY)
     }
 
-    // -- Pure gate decision/action (Shadow records the decision but never acts) --
+    // -- Pure gate decision/action (Enforced-only after #189 U6) --
 
-    /// The calendar decision is adoption-INDEPENDENT: a proven Closed date reads
-    /// `SkipAdvance` under Enforced, but Shadow computes the SAME decision yet still
-    /// yields `Proceed` (weekday authoritative) — the recorded-vs-acted split.
+    /// The Enforced gate ACTS on the calendar decision: a proven Closed date is `SkipAdvance`,
+    /// a proven Trading Session is `Proceed`. (The Shadow record-but-proceed and Shadow
+    /// divergence-classification tests were retired with the ingest cutover — the divergence
+    /// machinery no longer has an ingest caller.)
     #[test]
-    fn shadow_records_the_disagreeing_decision_but_proceeds() {
+    fn enforced_acts_on_the_calendar_decision() {
         let cal = fixture_calendar();
         let view = cal.as_of(as_of()).unwrap();
-        let closed = ymd(2010, 6, 19);
-
         let enforced = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
-        let shadow = CalendarGate::new(CalendarAdoption::Shadow, Some(view));
-        // Same underlying calendar decision …
-        assert_eq!(enforced.calendar_decision(closed), shadow.calendar_decision(closed));
-        // … but only Enforced ACTS on it; Shadow proceeds (weekday authoritative).
-        assert_eq!(enforced.action(closed), GateAction::SkipAdvance);
-        assert_eq!(shadow.action(closed), GateAction::Proceed);
-        // Legacy never consults the calendar at all.
-        let legacy = CalendarGate::new(CalendarAdoption::Legacy, Some(view));
-        assert_eq!(legacy.action(closed), GateAction::Proceed);
-    }
-
-    /// U3: the Shadow arm's recorded disagreement is a CLASSIFIED, assertable, redacted
-    /// divergence observation — a proven Closed date the weekday accumulate path treats as
-    /// fetchable is `CalendarClosedWeekdayOpen`, the safety-relevant class.
-    #[test]
-    fn shadow_divergence_is_classified_and_redacted() {
-        use nautilus_ls::calendar::DivergenceClass;
-        let cal = fixture_calendar();
-        let view = cal.as_of(as_of()).unwrap();
-        let shadow = CalendarGate::new(CalendarAdoption::Shadow, Some(view));
-
-        let closed = ymd(2010, 6, 19); // proven weekend Closed
-        let obs = shadow.divergence("ingest-accumulate", closed);
-        assert_eq!(obs.class, DivergenceClass::CalendarClosedWeekdayOpen);
-        assert_eq!(obs.consumer, "ingest-accumulate");
-        assert_eq!(obs.date, closed);
-
-        // A proven Trading Session agrees; a missing view classifies as Unavailable.
-        let trading = ymd(2010, 6, 15);
-        assert_eq!(
-            shadow.divergence("ingest-accumulate", trading).class,
-            DivergenceClass::Agree
-        );
-        let no_view = CalendarGate::new(CalendarAdoption::Shadow, None);
-        assert_eq!(
-            no_view.divergence("ingest-accumulate", closed).class,
-            DivergenceClass::Unavailable
-        );
-
-        // Redacted: the render line carries no authority/credential identity.
-        let line = obs.render_line();
-        assert!(line.contains("class=calendar-closed-weekday-open"), "{line}");
-        assert!(!line.to_lowercase().contains("authority"), "{line}");
+        assert_eq!(enforced.action(ymd(2010, 6, 19)), GateAction::SkipAdvance, "proven Closed → skip-advance");
+        assert_eq!(enforced.action(ymd(2010, 6, 15)), GateAction::Proceed, "proven Trading Session → fetch");
+        assert_eq!(enforced.action(ymd(2010, 1, 5)), GateAction::Stop, "Unknown → fail closed");
     }
 
     // -- Enforced accumulate next-fetch --
@@ -2711,7 +2769,7 @@ mod calendar_gate_migration {
 
         assert_eq!(report.triples_ingested, 1);
         assert_eq!(count_t8410(&server).await, 2, "re-pull plus re-verification");
-        let checkpoint = Checkpoint::load(&cp_path(&catalog)).unwrap();
+        let checkpoint = Checkpoint::load_gated(&cp_path(&catalog), &no_calendar_gate()).unwrap();
         assert_eq!(checkpoint.watermark(SAMSUNG, DAILY), Some(ymd(2010, 6, 15)));
         assert!(!checkpoint.is_shifted(SAMSUNG, DAILY));
         assert_eq!(checkpoint.rebase_events()[0].origin, RebaseOrigin::Epoch);
@@ -2722,7 +2780,7 @@ mod calendar_gate_migration {
         let dir = tempdir().unwrap();
         let catalog = dir.path().join("catalog");
         std::fs::create_dir_all(&catalog).unwrap();
-        let mut checkpoint = Checkpoint::load(&cp_path(&catalog)).unwrap();
+        let mut checkpoint = Checkpoint::load_gated(&cp_path(&catalog), &no_calendar_gate()).unwrap();
         checkpoint.adjusted_prices = true;
         checkpoint.mark_shifted(SAMSUNG, DAILY, ymd(2010, 1, 5), RebaseOrigin::Heal);
         checkpoint.save(&cp_path(&catalog)).unwrap();
@@ -2752,7 +2810,7 @@ mod calendar_gate_migration {
         let dir = tempdir().unwrap();
         let catalog = dir.path().join("catalog");
         std::fs::create_dir_all(&catalog).unwrap();
-        let mut checkpoint = Checkpoint::load(&cp_path(&catalog)).unwrap();
+        let mut checkpoint = Checkpoint::load_gated(&cp_path(&catalog), &no_calendar_gate()).unwrap();
         checkpoint.adjusted_prices = true;
         checkpoint.mark_shifted(SAMSUNG, DAILY, ymd(2010, 6, 18), RebaseOrigin::Heal);
         checkpoint.save(&cp_path(&catalog)).unwrap();
@@ -2942,57 +3000,9 @@ mod calendar_gate_migration {
         );
     }
 
-    // -- Shadow byte-equivalence to Legacy --
-
-    /// Run the same accumulate once under each gate over independent catalogs/servers and
-    /// return (request count, watermark) so equivalence can be asserted.
-    async fn run_once(gate_of: impl Fn() -> CalendarGate<'static>, cal: &'static KrxCalendar, last_closed: NaiveDate) -> (usize, Option<NaiveDate>) {
-        let _ = cal;
-        let dir = tempdir().unwrap();
-        let catalog = dir.path().join("catalog");
-        let server = MockServer::start().await;
-        let sdk = sdk_over(&server, daily_body_three_rows()).await;
-        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
-        ing.run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], last_closed, ymd(2010, 6, 14), gate_of())
-            .await
-            .unwrap();
-        (count_t8410(&server).await, read_watermark(&catalog))
-    }
-
-    /// Shadow is byte-identical to Legacy even when the calendar DISAGREES (a Closed target
-    /// that Enforced would skip-advance): both fetch and advance identically, the calendar
-    /// decision goes only to the non-persisted diagnostic channel.
-    #[tokio::test]
-    async fn shadow_disagreement_is_byte_identical_to_legacy() {
-        // `cal` must outlive the borrowed views → leak one fixture for 'static.
-        let cal: &'static KrxCalendar = Box::leak(Box::new(fixture_calendar()));
-        let closed = ymd(2010, 6, 19); // Closed → Enforced would skip; Shadow/Legacy fetch.
-
-        let legacy = run_once(|| CalendarGate::legacy(), cal, closed).await;
-        let shadow = run_once(
-            move || CalendarGate::new(CalendarAdoption::Shadow, Some(cal.as_of(as_of()).unwrap())),
-            cal,
-            closed,
-        )
-        .await;
-
-        assert_eq!(legacy.0, shadow.0, "same gateway request count as Legacy");
-        assert_eq!(legacy.1, shadow.1, "same watermark as Legacy");
-        assert_eq!(legacy.0, 1, "Legacy/Shadow weekday path still fetches the Closed target");
-    }
-
-    /// Shadow with an UNAVAILABLE calendar is byte-identical to Legacy: the weekday path acts.
-    #[tokio::test]
-    async fn shadow_unavailable_is_byte_identical_to_legacy() {
-        let cal: &'static KrxCalendar = Box::leak(Box::new(fixture_calendar()));
-        let target = ymd(2010, 6, 19);
-
-        let legacy = run_once(|| CalendarGate::legacy(), cal, target).await;
-        let shadow = run_once(|| CalendarGate::new(CalendarAdoption::Shadow, None), cal, target).await;
-
-        assert_eq!(legacy.0, shadow.0, "same request count as Legacy under an unavailable calendar");
-        assert_eq!(legacy.1, shadow.1, "same watermark as Legacy");
-    }
+    // (The Shadow byte-equivalence-to-Legacy accumulate tests were retired with the ingest
+    //  Consumer Retirement Gate (#189 U6): there is no longer a Legacy/Shadow arm to compare
+    //  against — the Enforced fetch/skip/stop behavior is asserted directly above.)
 
     // -- Probe anchor --
 
@@ -3011,9 +3021,6 @@ mod calendar_gate_migration {
         // Unavailable calendar → stop.
         let blind = CalendarGate::new(CalendarAdoption::Enforced, None);
         assert_eq!(blind.probe_anchor(ymd(2010, 6, 15)), ProbeAnchor::Stop);
-        // Shadow keeps the weekday anchor authoritative even on a disagreeing (Unknown) date.
-        let shadow = CalendarGate::new(CalendarAdoption::Shadow, Some(view));
-        assert_eq!(shadow.probe_anchor(ymd(2010, 1, 5)), ProbeAnchor::Use(ymd(2010, 1, 5)));
     }
 
     #[test]
@@ -3111,9 +3118,10 @@ mod calendar_gate_migration {
     }
 
     /// Enforced merges a gap whose every intervening date is a proven Closed date (the
-    /// 2011-02-02..04 holiday cluster) — where Legacy's weekday hole test would SPLIT it.
+    /// 2011-02-02..04 holiday cluster). (The retired weekday hole test would have SPLIT it —
+    /// 02-02..04 are weekdays — but the weekday primitive was removed with #189 U6.)
     #[test]
-    fn enforced_merges_an_all_closed_gap_that_legacy_splits() {
+    fn enforced_merges_an_all_closed_gap() {
         let cal = fixture_calendar();
         let view = cal.as_of(fresh_history_as_of()).unwrap();
         let enforced = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
@@ -3122,11 +3130,6 @@ mod calendar_gate_migration {
         let (wm, rem) = migrate_with(&enforced, &ranges);
         assert_eq!(wm, Some(ymd(2011, 2, 10)), "an all-Closed holiday-cluster gap chains into one watermark");
         assert!(rem.is_empty(), "no remainder — the ranges merged");
-
-        // Legacy (weekday) SPLITS the same gap: 02-02..04 are weekdays.
-        let (lwm, lrem) = migrate_with(&CalendarGate::legacy(), &ranges);
-        assert_eq!(lwm, Some(ymd(2011, 2, 1)), "Legacy stops before the weekday hole");
-        assert_eq!(lrem, vec![vec!["20110205..20110210".to_string()]]);
     }
 
     #[test]
@@ -3155,10 +3158,10 @@ mod calendar_gate_migration {
     }
 
     /// Unknown/unavailable evidence keeps the ranges SEPARATE under Enforced (conservative
-    /// over-fetch) — even a weekend-only gap that Legacy would MERGE, because the calendar has
-    /// no positive proof the weekend dates are non-trading.
+    /// over-fetch), because the calendar has no positive proof the gap dates are non-trading.
+    /// (The retired weekday hole test would have MERGED this weekend-only gap.)
     #[test]
-    fn enforced_keeps_separate_across_an_unknown_gap_that_legacy_merges() {
+    fn enforced_keeps_separate_across_an_unknown_gap() {
         let cal = fixture_calendar();
         let view = cal.as_of(as_of()).unwrap();
         let enforced = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
@@ -3167,29 +3170,11 @@ mod calendar_gate_migration {
         let (wm, rem) = migrate_with(&enforced, &ranges);
         assert_eq!(wm, Some(ymd(2010, 1, 8)), "an unproven gap is not chained (conservative over-fetch)");
         assert_eq!(rem, vec![vec!["20100111..20100115".to_string()]]);
-
-        // Legacy MERGES the weekend gap (no weekday strictly between Fri and Mon).
-        let (lwm, lrem) = migrate_with(&CalendarGate::legacy(), &ranges);
-        assert_eq!(lwm, Some(ymd(2010, 1, 15)), "Legacy merges across the weekend");
-        assert!(lrem.is_empty());
     }
 
-    /// Shadow migration is byte-identical to Legacy even when the calendar DISAGREES: the
-    /// all-Closed gap Enforced would merge stays SPLIT under Shadow (weekday authoritative;
-    /// the calendar verdict is recorded only).
-    #[test]
-    fn shadow_migration_is_byte_identical_to_legacy_even_when_calendar_disagrees() {
-        let cal = fixture_calendar();
-        let view = cal.as_of(as_of()).unwrap();
-        let shadow = CalendarGate::new(CalendarAdoption::Shadow, Some(view));
-        let ranges = ["20110115..20110201", "20110205..20110210"];
-
-        let (swm, srem) = migrate_with(&shadow, &ranges);
-        let (lwm, lrem) = migrate_with(&CalendarGate::legacy(), &ranges);
-        assert_eq!(swm, lwm, "Shadow watermark identical to Legacy");
-        assert_eq!(srem, lrem, "Shadow remainders identical to Legacy");
-        assert_eq!(swm, Some(ymd(2011, 2, 1)), "…the weekday SPLIT result, not the Enforced merge");
-    }
+    // (The Shadow migration byte-equivalence test was retired with #189 U6 — there is no
+    //  Legacy/Shadow arm to compare against; the Enforced merge/split verdicts are asserted
+    //  directly above.)
 
     // -- Backward-widen under the calendar seam --
 
@@ -3218,7 +3203,7 @@ mod calendar_gate_migration {
     }
 
     fn read_history_floor(catalog: &Path) -> Option<NaiveDate> {
-        Checkpoint::load(&cp_path(catalog)).unwrap().history_floor(SAMSUNG, DAILY)
+        Checkpoint::load_gated(&cp_path(catalog), &no_calendar_gate()).unwrap().history_floor(SAMSUNG, DAILY)
     }
 
     /// Enforced backward-widen: a proven Trading Session in the pre-coverage region emits +
@@ -3342,42 +3327,7 @@ mod calendar_gate_migration {
         assert_eq!(read_history_floor(&catalog), None, "uncertainty never persists a marker");
     }
 
-    /// Run one backward-widen accumulate under `gate_for` over an all-Closed pre-coverage region
-    /// and return (normal warnings, uncertainties, persisted floor).
-    async fn widen_once(
-        gate_for: impl Fn(&'static KrxCalendar) -> CalendarGate<'static>,
-        cal: &'static KrxCalendar,
-    ) -> (usize, usize, Option<NaiveDate>) {
-        let dir = tempdir().unwrap();
-        let catalog = dir.path().join("catalog");
-        let server = MockServer::start().await;
-        let sdk = sdk_over(&server, daily_body_three_rows()).await;
-        seed_bars(&catalog, &[ymd(2011, 2, 5)]).await;
-        seed_watermark(&catalog, ymd(2011, 6, 15));
-        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
-        let report = ing
-            .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2011, 6, 15), ymd(2011, 2, 2), gate_for(cal))
-            .await
-            .unwrap();
-        (
-            report.backward_widen_warnings.len(),
-            report.backward_widen_uncertainties.len(),
-            read_history_floor(&catalog),
-        )
-    }
-
-    /// Shadow backward-widen is byte-identical to Legacy even where Enforced would SUPPRESS: an
-    /// all-Closed region still warns + persists under Shadow (weekday authoritative).
-    #[tokio::test]
-    async fn shadow_backward_widen_is_byte_identical_to_legacy() {
-        let cal: &'static KrxCalendar = Box::leak(Box::new(fixture_calendar()));
-        let legacy = widen_once(|_| CalendarGate::legacy(), cal).await;
-        let shadow = widen_once(
-            |c| CalendarGate::new(CalendarAdoption::Shadow, Some(c.as_of(as_of()).unwrap())),
-            cal,
-        )
-        .await;
-        assert_eq!(legacy, shadow, "Shadow backward-widen identical to Legacy (warns + persists), not the Enforced suppress");
-        assert_eq!(legacy, (1, 0, Some(ymd(2011, 2, 2))), "Legacy/Shadow warn once and persist the floor");
-    }
+    // (The Shadow backward-widen byte-equivalence-to-Legacy test and its `widen_once` helper
+    //  were retired with #189 U6 — there is no Legacy/Shadow arm to compare against; the
+    //  Enforced warn/suppress/uncertain verdicts are asserted directly above.)
 }

@@ -165,9 +165,17 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
     // load (t8430 + 2x t9945) against the shared per-process rate buckets.
     let _lock = AdvisoryLock::acquire(&catalog, LockKind::Ingest)?;
 
-    // Freeze one invocation clock, adoption posture, path, and loaded snapshot after the
-    // lock wait and before constructing anything gateway-capable.
-    let calendar = nautilus_ls::calendar::IngestCalendarContext::from_env(Utc::now());
+    // Freeze one invocation clock, path, and loaded snapshot after the lock wait and before
+    // constructing anything gateway-capable. Enforced-only after the ingest Consumer Retirement
+    // Gate (#189 U6): the date decision no longer consults LS_CALENDAR_ADOPTION — accumulate /
+    // rebase / probe resolve against proven Trading Sessions and fail closed when the calendar
+    // is unavailable. The mandatory startup record is still emitted BEFORE any fallible config
+    // parse / runtime build (always-emit-before-fallible-parse, KTD2).
+    let calendar = nautilus_ls::calendar::IngestCalendarContext::resolve(
+        nautilus_ls::calendar::snapshot_path_from_env(),
+        Utc::now(),
+        nautilus_ls_calendar::CalendarAdoption::Enforced,
+    );
     let calendar_target = calendar_target_for_mode(&mode, calendar.as_of())?;
     let startup = calendar.startup_record("ls-ingest", calendar_target);
     nautilus_ls::calendar::emit_startup_record(&startup);

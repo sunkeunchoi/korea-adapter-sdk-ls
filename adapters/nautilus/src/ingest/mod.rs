@@ -37,7 +37,6 @@ use nautilus_model::types::{Price, Quantity};
 use nautilus_ls_calendar::schema::DayStatus;
 use nautilus_ls_calendar::{AsOfView, CalendarAdoption, DimensionStaleness};
 
-use crate::calendar::{emit_divergence, DivergenceObservation};
 use nautilus_persistence::backend::catalog::ParquetDataCatalog;
 use serde::{Deserialize, Serialize};
 
@@ -210,8 +209,8 @@ pub enum WidenAction {
 /// The per-consumer calendar seam injected into the ingest accumulate + lookback-probe
 /// boundaries (KTD8). Carries the adoption posture and, when a snapshot loaded and
 /// authorized, an [`AsOfView`]. `Copy` (the view is `Copy` — a borrow + an instant), so it
-/// threads cheaply through the per-triple loop. Construct [`legacy`](Self::legacy) for the
-/// weekday-only path or [`new`](Self::new) at the composition root.
+/// threads cheaply through the per-triple loop. Enforced-only after the ingest Consumer
+/// Retirement Gate (#189 U6): construct [`new`](Self::new) at the composition root.
 #[derive(Debug, Clone, Copy)]
 pub struct CalendarGate<'c> {
     adoption: CalendarAdoption,
@@ -219,19 +218,10 @@ pub struct CalendarGate<'c> {
 }
 
 impl<'c> CalendarGate<'c> {
-    /// A Legacy no-op gate: never consults a calendar, so the weekday primitives stay
-    /// authoritative and behavior is byte-identical to the pre-migration path. This is what
-    /// the un-gated [`Ingestor::run_accumulate`] / [`Ingestor::run_probe_lookback`] wrappers
-    /// inject so every existing caller (and test) is unchanged.
-    pub fn legacy() -> Self {
-        Self {
-            adoption: CalendarAdoption::Legacy,
-            view: None,
-        }
-    }
-
     /// Build a gate for `adoption` with an optional as-of view (`None` = calendar unavailable
-    /// — a missing/failed snapshot, non-fatal in Shadow/Legacy, fail-closed in Enforced).
+    /// — a missing/failed snapshot; Enforced fails closed). Enforced-only after the ingest
+    /// Consumer Retirement Gate (#189 U6): the decision methods act on the injected calendar
+    /// regardless of `adoption`, and a missing view stops before dispatch.
     pub fn new(adoption: CalendarAdoption, view: Option<AsOfView<'c>>) -> Self {
         Self { adoption, view }
     }
@@ -270,72 +260,15 @@ impl<'c> CalendarGate<'c> {
         }
     }
 
-    /// The calendar's tri-state day status for `target` in the injected view, or `None` when
-    /// there is no view or the query is out-of-range (unavailable). The value the Shadow
-    /// divergence observation classifies the weekday decision against (U3).
-    fn calendar_status(&self, target: NaiveDate) -> Option<DayStatus> {
-        let view = self.view?;
-        view.day(target).ok().map(|fact| fact.status)
-    }
-
-    /// Reduce a range/continuity verdict to the tri-state the divergence classifier compares
-    /// against: a proven session → `TradingSession`, all-Closed → `Closed`, indeterminate →
-    /// `Unknown` (or `None` when there is no view at all — unavailable).
-    fn continuity_status(&self, decision: ContinuityDecision) -> Option<DayStatus> {
-        if self.view.is_none() {
-            return None;
-        }
-        Some(match decision {
-            ContinuityDecision::TradingPresent => DayStatus::TradingSession,
-            ContinuityDecision::AllClosed => DayStatus::Closed,
-            ContinuityDecision::Indeterminate => DayStatus::Unknown,
-        })
-    }
-
-    /// The classified, redacted Shadow-divergence observation for a single-date boundary
-    /// (accumulate next-fetch / probe anchor): the weekday path treats the date as fetchable
-    /// (open), and the calendar's tri-state is the comparison (U3, KTD6). Assertable, and the
-    /// value the Shadow arm emits to the non-persisted diagnostic channel.
-    pub fn divergence(&self, consumer: &str, target: NaiveDate) -> DivergenceObservation {
-        DivergenceObservation::new(consumer, target, true, self.calendar_status(target))
-    }
-
-    /// The classified, redacted Shadow-divergence observation for a range/continuity boundary
-    /// at representative date `at`: `weekday_open` is the weekday path's verdict for the span,
-    /// the calendar verdict is reduced from `decision` (U3, KTD6).
-    pub fn continuity_divergence(
-        &self,
-        consumer: &str,
-        at: NaiveDate,
-        weekday_open: bool,
-        decision: ContinuityDecision,
-    ) -> DivergenceObservation {
-        DivergenceObservation::new(consumer, at, weekday_open, self.continuity_status(decision))
-    }
-
-    /// The next-fetch action for `target` under the adoption seam (U9, KTD8). Legacy never
-    /// consults the calendar; Shadow computes + RECORDS the decision to the non-persisted
-    /// diagnostic channel but still yields [`Proceed`](GateAction::Proceed) so the weekday
-    /// path stays authoritative (byte-identical to Legacy); only Enforced lets the calendar
-    /// decide.
+    /// The next-fetch action for `target` (U9, KTD8). Enforced-only after the ingest Consumer
+    /// Retirement Gate (#189 U6): the injected calendar decides — a proven Trading Session →
+    /// [`Proceed`](GateAction::Proceed), a proven Closed date → [`SkipAdvance`](GateAction::SkipAdvance),
+    /// and an Unknown or unavailable date → [`Stop`](GateAction::Stop) (fail closed).
     pub fn action(&self, target: NaiveDate) -> GateAction {
-        match self.adoption {
-            CalendarAdoption::Legacy => GateAction::Proceed,
-            CalendarAdoption::Shadow => {
-                // Non-persisted diagnostic channel only: a Shadow recording never touches a
-                // persisted artifact a Legacy reader consumes, so the accumulate request-count +
-                // checkpoint/watermark state stay byte-identical to Legacy. The record is a
-                // classified, assertable, redacted divergence observation (U3, KTD6).
-                emit_divergence(&self.divergence("ingest-accumulate", target));
-                GateAction::Proceed
-            }
-            CalendarAdoption::Enforced => match self.calendar_decision(target) {
-                CalendarDecision::Fetch => GateAction::Proceed,
-                CalendarDecision::ClosedAdvance => GateAction::SkipAdvance,
-                CalendarDecision::UnknownStop | CalendarDecision::UnavailableStop => {
-                    GateAction::Stop
-                }
-            },
+        match self.calendar_decision(target) {
+            CalendarDecision::Fetch => GateAction::Proceed,
+            CalendarDecision::ClosedAdvance => GateAction::SkipAdvance,
+            CalendarDecision::UnknownStop | CalendarDecision::UnavailableStop => GateAction::Stop,
         }
     }
 
@@ -353,23 +286,10 @@ impl<'c> CalendarGate<'c> {
     /// keep the weekday path authoritative (Shadow records the range verdict). Passing
     /// `start == last_closed` recovers the single-date semantics exactly.
     pub fn range_action(&self, start: NaiveDate, last_closed: NaiveDate) -> GateAction {
-        match self.adoption {
-            CalendarAdoption::Legacy => GateAction::Proceed,
-            CalendarAdoption::Shadow => {
-                let decision = self.scan_inclusive(start, last_closed);
-                emit_divergence(&self.continuity_divergence(
-                    "ingest-accumulate-range",
-                    start,
-                    true,
-                    decision,
-                ));
-                GateAction::Proceed
-            }
-            CalendarAdoption::Enforced => match self.scan_inclusive(start, last_closed) {
-                ContinuityDecision::AllClosed => GateAction::SkipAdvance,
-                ContinuityDecision::TradingPresent => GateAction::Proceed,
-                ContinuityDecision::Indeterminate => GateAction::Stop,
-            },
+        match self.scan_inclusive(start, last_closed) {
+            ContinuityDecision::AllClosed => GateAction::SkipAdvance,
+            ContinuityDecision::TradingPresent => GateAction::Proceed,
+            ContinuityDecision::Indeterminate => GateAction::Stop,
         }
     }
 
@@ -418,32 +338,11 @@ impl<'c> CalendarGate<'c> {
         plan
     }
 
-    /// Plan one pending accumulate span. Legacy and Shadow execute the unchanged civil
-    /// range; Shadow records the counterfactual proof plan. Enforced acts only on the
-    /// established prefix and never selects an endpoint beyond its first uncertainty.
+    /// Plan one pending accumulate span. Enforced-only after the ingest Consumer Retirement
+    /// Gate (#189 U6): the plan acts only on the established prefix and never selects an
+    /// endpoint beyond its first uncertainty.
     fn accumulate_plan(&self, start: NaiveDate, ceiling: NaiveDate) -> CalendarRangePlan {
-        let legacy = CalendarRangePlan {
-            request_through: (start <= ceiling).then_some(ceiling),
-            advance_through: (start <= ceiling).then_some(ceiling),
-            stop_before: None,
-        };
-        match self.adoption {
-            CalendarAdoption::Legacy => legacy,
-            CalendarAdoption::Shadow => {
-                let observed = self.established_prefix(start, ceiling);
-                tracing::info!(
-                    start = %fmt_ymd(start),
-                    ceiling = %fmt_ymd(ceiling),
-                    request_through = ?observed.request_through.map(fmt_ymd),
-                    advance_through = ?observed.advance_through.map(fmt_ymd),
-                    stop_before = ?observed.stop_before.map(fmt_ymd),
-                    adoption = "shadow",
-                    "calendar shadow accumulate plan (recorded; legacy range authoritative)"
-                );
-                legacy
-            }
-            CalendarAdoption::Enforced => self.established_prefix(start, ceiling),
-        }
+        self.established_prefix(start, ceiling)
     }
 
     /// The most recent proven Trading Session at or before `anchor` in the injected view, or
@@ -473,21 +372,14 @@ impl<'c> CalendarGate<'c> {
         None
     }
 
-    /// The probe anchor under the adoption seam (U9). Legacy/Shadow keep `weekday_anchor`
-    /// authoritative (Shadow records the calendar-selected anchor); Enforced replaces it with
-    /// the most recent proven Trading Session, or [`Stop`](ProbeAnchor::Stop) when the calendar
-    /// is unavailable or no session can be proven at/before the anchor.
-    pub fn probe_anchor(&self, weekday_anchor: NaiveDate) -> ProbeAnchor {
-        match self.adoption {
-            CalendarAdoption::Legacy => ProbeAnchor::Use(weekday_anchor),
-            CalendarAdoption::Shadow => {
-                emit_divergence(&self.divergence("ingest-probe-anchor", weekday_anchor));
-                ProbeAnchor::Use(weekday_anchor)
-            }
-            CalendarAdoption::Enforced => match self.select_recent_session(weekday_anchor) {
-                Some(d) => ProbeAnchor::Use(d),
-                None => ProbeAnchor::Stop,
-            },
+    /// The probe anchor (U9). Enforced-only after the ingest Consumer Retirement Gate (#189
+    /// U6): the anchor is the most recent proven Trading Session at or before `anchor`, or
+    /// [`Stop`](ProbeAnchor::Stop) when the calendar is unavailable or no session can be proven
+    /// at/before it.
+    pub fn probe_anchor(&self, anchor: NaiveDate) -> ProbeAnchor {
+        match self.select_recent_session(anchor) {
+            Some(d) => ProbeAnchor::Use(d),
+            None => ProbeAnchor::Stop,
         }
     }
 
@@ -600,30 +492,15 @@ impl<'c> CalendarGate<'c> {
     }
 
     /// The backward-widen warning action for the pre-coverage region `[floor, earliest_stored)`
-    /// under the adoption seam (U10, KTD8). Legacy always emits + persists the unconditional
-    /// warning; Shadow does too (weekday authoritative) while RECORDING the calendar verdict to
-    /// the non-persisted diagnostic channel (byte-identical to Legacy); Enforced acts on
+    /// (U10, KTD8). Enforced-only after the ingest Consumer Retirement Gate (#189 U6): acts on
     /// [`widen_evidence`](Self::widen_evidence) — a proven Trading Session emits + persists, an
     /// all-Closed region suppresses, and Unknown/unavailable emits the distinct non-persisted
     /// uncertainty warning.
     pub fn widen_action(&self, floor: NaiveDate, earliest_stored: NaiveDate) -> WidenAction {
-        match self.adoption {
-            CalendarAdoption::Legacy => WidenAction::EmitPersist,
-            CalendarAdoption::Shadow => {
-                let decision = self.widen_evidence(floor, earliest_stored);
-                emit_divergence(&self.continuity_divergence(
-                    "ingest-backward-widen",
-                    floor,
-                    true,
-                    decision,
-                ));
-                WidenAction::EmitPersist
-            }
-            CalendarAdoption::Enforced => match self.widen_evidence(floor, earliest_stored) {
-                ContinuityDecision::TradingPresent => WidenAction::EmitPersist,
-                ContinuityDecision::AllClosed => WidenAction::Suppress,
-                ContinuityDecision::Indeterminate => WidenAction::EmitUncertain,
-            },
+        match self.widen_evidence(floor, earliest_stored) {
+            ContinuityDecision::TradingPresent => WidenAction::EmitPersist,
+            ContinuityDecision::AllClosed => WidenAction::Suppress,
+            ContinuityDecision::Indeterminate => WidenAction::EmitUncertain,
         }
     }
 }
@@ -1721,6 +1598,11 @@ impl Ingestor {
             AdapterError::Ingest(format!("mkdir catalog {}: {e}", self.config.catalog_path.display()))
         })?;
         let checkpoint_path = self.config.checkpoint_path();
+        // Range mode is the manual `SDATE`/`EDATE` path — it never consults the calendar for a
+        // date decision. Enforced-only after the ingest Consumer Retirement Gate (#189 U6): the
+        // legacy `completed`→`watermark` migration on load runs under a no-view gate (via
+        // `Checkpoint::load`), which keeps legacy ranges conservatively separate (a fresh
+        // catalog has nothing to migrate).
         let mut checkpoint = Checkpoint::load(&checkpoint_path)?;
         checkpoint.adjusted_prices = self.config.adjusted_prices;
 
@@ -1891,52 +1773,23 @@ impl Ingestor {
         })
     }
 
-    /// Accumulate-forward run under the R15 lock (refuses while a live session runs).
-    /// The caller re-snapshots the universe first (`write_instruments`).
-    pub async fn run_accumulate_locked(
-        &mut self,
-        universe: &[InstrumentId],
-        last_closed: NaiveDate,
-        lookback_floor: NaiveDate,
-    ) -> AdapterResult<CoverageReport> {
-        let _lock = AdvisoryLock::acquire(&self.config.catalog_path, LockKind::Ingest)?;
-        self.run_accumulate(universe, last_closed, lookback_floor).await
-    }
-
-    /// Accumulate-forward: grow whole-universe coverage from each instrument's
-    /// watermark to `last_closed`, reusing the proven per-triple fetch loop over a
-    /// per-instrument range (U5, KTD7). The **watermark map is the sole skip
-    /// authority**: a triple already current makes zero bar fetches (R6/AE4). An
-    /// instrument with no watermark starts at `lookback_floor` (the initial bounded
-    /// backfill, R8; a newly-listed symbol begins here too, R7/AE5). The watermark
-    /// advances to `last_closed` even for a gap day, so an empty history is reported
-    /// once and never retried forever (R10). Does not take the lock or re-snapshot
-    /// the universe — use [`Self::run_accumulate_locked`] and pre-write instruments.
-    pub async fn run_accumulate(
-        &mut self,
-        universe: &[InstrumentId],
-        last_closed: NaiveDate,
-        lookback_floor: NaiveDate,
-    ) -> AdapterResult<CoverageReport> {
-        // The un-gated entry point is Legacy: the weekday primitives stay authoritative and
-        // behavior is byte-identical to the pre-migration path (every existing caller/test).
-        self.run_accumulate_gated(universe, last_closed, lookback_floor, CalendarGate::legacy())
-            .await
-    }
-
-    /// Accumulate-forward with an injected [`CalendarGate`] (U9, KTD8). Identical to
-    /// [`run_accumulate`](Self::run_accumulate) except the per-triple next-fetch is routed
-    /// through the calendar seam for the target session `last_closed`:
+    /// Accumulate-forward with an injected [`CalendarGate`] (U9, KTD8): grow whole-universe
+    /// coverage from each instrument's watermark to `last_closed`, reusing the proven
+    /// per-triple fetch loop over a per-instrument range (U5, KTD7). The **watermark map is the
+    /// sole skip authority**: a triple already current makes zero bar fetches (R6/AE4). An
+    /// instrument with no watermark starts at `lookback_floor` (the initial bounded backfill,
+    /// R8; a newly-listed symbol begins here too, R7/AE5). Does not take the lock or
+    /// re-snapshot the universe — the caller holds the R15 lock and pre-writes instruments.
     ///
-    /// - **Legacy / Shadow** — the weekday path is authoritative; Shadow additionally records
-    ///   the calendar decision to the non-persisted diagnostic channel (byte-identical to
-    ///   Legacy).
-    /// - **Enforced, proven Trading Session** — fetch as usual (the close buffer is already
-    ///   folded into `last_closed`).
-    /// - **Enforced, proven Closed** — skip the gateway call and advance the watermark to
-    ///   `last_closed` FROM closure evidence (never on Unknown — the provenance guard, KTD8).
-    /// - **Enforced, Unknown / unavailable** — stop before dispatch; the checkpoint + watermark
-    ///   are preserved byte-for-byte and zero gateway requests are issued for that target.
+    /// Enforced-only after the ingest Consumer Retirement Gate (#189 U6): the per-triple
+    /// next-fetch is decided by the injected calendar for the target session `last_closed`:
+    ///
+    /// - **proven Trading Session** — fetch as usual (the close buffer is already folded into
+    ///   `last_closed`).
+    /// - **proven Closed** — skip the gateway call and advance the watermark to `last_closed`
+    ///   FROM closure evidence (never on Unknown — the provenance guard, KTD8).
+    /// - **Unknown / unavailable** — stop before dispatch; the checkpoint + watermark are
+    ///   preserved byte-for-byte and zero gateway requests are issued for that target.
     pub async fn run_accumulate_gated(
         &mut self,
         universe: &[InstrumentId],
@@ -2126,8 +1979,7 @@ impl Ingestor {
                             let detection_authorized = candidate
                                 .destructive_request_through()
                                 .is_some_and(|heal_through| heal_through >= wm)
-                                && (calendar.adoption() != CalendarAdoption::Enforced
-                                    || matches!(calendar.calendar_decision(wm), CalendarDecision::Fetch));
+                                && matches!(calendar.calendar_decision(wm), CalendarDecision::Fetch);
                             if detection_authorized && self.detect_shift(&shcode, bar_type, wm).await? {
                                 let heal_through = candidate
                                     .destructive_request_through()
@@ -2429,31 +2281,15 @@ impl Ingestor {
         })
     }
 
-    /// Epoch re-base (KTD-4, R6): mark every daily triple in `universe` shifted
-    /// in ONE atomic checkpoint save, then run the accumulate/heal path. The
-    /// per-symbol marks are the completion state, so the epoch is crash-resumable
-    /// by construction: a resumed run (accumulate mode) heals only what remains.
-    /// Forward-only detection cannot see splices already baked into the catalog;
-    /// this is the one-time rollout that puts the whole catalog on a single
-    /// basis. Minute triples are never marked (KTD-8).
-    pub async fn run_rebase(
-        &mut self,
-        universe: &[InstrumentId],
-        last_closed: NaiveDate,
-        lookback_floor: NaiveDate,
-    ) -> AdapterResult<CoverageReport> {
-        self.run_rebase_gated(
-            universe,
-            last_closed,
-            lookback_floor,
-            CalendarGate::legacy(),
-        )
-        .await
-    }
-
-    /// Calendar-aware epoch rebase. Admission and prefix selection happen before the
-    /// durable mark-all boundary; an unusable or zero-length Enforced prefix therefore
-    /// cannot mutate markers, wipe data, or dispatch to LS.
+    /// Calendar-aware epoch re-base (KTD-4, R6): mark every daily triple in `universe` shifted
+    /// in ONE atomic checkpoint save, then run the accumulate/heal path. The per-symbol marks
+    /// are the completion state, so the epoch is crash-resumable by construction: a resumed run
+    /// (accumulate mode) heals only what remains. Forward-only detection cannot see splices
+    /// already baked into the catalog; this is the one-time rollout that puts the whole catalog
+    /// on a single basis. Minute triples are never marked (KTD-8). Enforced-only after the
+    /// ingest Consumer Retirement Gate (#189 U6): admission and prefix selection happen before
+    /// the durable mark-all boundary, so an unusable or zero-length proven prefix cannot mutate
+    /// markers, wipe data, or dispatch to LS.
     pub async fn run_rebase_gated(
         &mut self,
         universe: &[InstrumentId],
@@ -3344,24 +3180,10 @@ impl Ingestor {
     /// earliest served minute date via a windowed backward search and, on success,
     /// write `<data>/probes/minute-lookback.json`. Returns the recorded result, or
     /// `None` when the pilot serves nothing (nothing is written).
-    pub async fn run_probe_lookback(
-        &self,
-        pilot: &str,
-        ncnt: u32,
-        anchor: NaiveDate,
-        probed_at: String,
-    ) -> AdapterResult<Option<MinuteLookback>> {
-        // The un-gated entry point is Legacy: the weekday anchor is authoritative.
-        self.run_probe_lookback_gated(pilot, ncnt, anchor, probed_at, CalendarGate::legacy())
-            .await
-    }
-
-    /// The staged max-lookback probe with an injected [`CalendarGate`] (U9, KTD8). Identical
-    /// to [`run_probe_lookback`](Self::run_probe_lookback) except the anchor is routed through
-    /// the calendar seam: Legacy/Shadow probe from the weekday `anchor` (Shadow records the
-    /// calendar-selected one); Enforced probes from the most recent proven Trading Session at
-    /// or before it, and STOPS (zero gateway requests, nothing recorded) when the calendar is
-    /// unavailable or no session can be proven at/before the anchor.
+    /// The staged max-lookback probe with an injected [`CalendarGate`] (U9, KTD8). Enforced-only
+    /// after the ingest Consumer Retirement Gate (#189 U6): the anchor is the most recent proven
+    /// Trading Session at or before `anchor`, and the probe STOPS (zero gateway requests, nothing
+    /// recorded) when the calendar is unavailable or no session can be proven at/before it.
     pub async fn run_probe_lookback_gated(
         &self,
         pilot: &str,

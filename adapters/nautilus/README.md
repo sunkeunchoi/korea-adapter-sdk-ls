@@ -151,28 +151,27 @@ when none can be proven (or the calendar is unavailable) until an explicit
 context, and the calendar condition automatic selection skipped, and changes neither probe
 status nor any dispatch authorization. The weekday `recent_trading_day` anchor is retired.
 
-**`ls-ingest` behavior by adoption (issue #186).** `ls-ingest` also reads the shared calendar,
-resolving `LS_CALENDAR_SNAPSHOT` once per invocation after acquiring the ingest lock and evaluating
-it at one fixed instant:
+**`ls-ingest` calendar behavior (Enforced-only after the #189 U6 Consumer Retirement Gate).**
+`ls-ingest` reads the shared calendar, resolving `LS_CALENDAR_SNAPSHOT` once per invocation after
+acquiring the ingest lock and evaluating it at one fixed instant. The weekday primitive and the
+`LS_CALENDAR_ADOPTION` seam are retired for ingest — the date decision is always Enforced:
 
-- **Legacy** — the existing civil-date/weekday-compatible path remains authoritative.
-- **Shadow** (default) — the calendar plan and divergence are recorded on the redacted,
-  non-persisted diagnostic channel, while gateway requests, checkpoint bytes, markers, and exit
-  behavior stay Legacy-compatible (byte-identical).
-- **Enforced** — automatic `accumulate`, `probe-lookback`, and `rebase` fail closed before SDK
-  construction when the explicit snapshot is missing, unauthorized, expired, or cannot cover the
-  relevant date; no weekday fallback is used. The 16:30 KST close buffer determines only the latest
-  eligible civil date, then calendar facts select the established prefix: requests end on the last
-  reachable Trading Session, proven trailing Closed dates advance only after successful coverage,
-  and scanning stops before the first Unknown/unavailable date. An all-Closed prefix can advance
-  without a gateway request; `probe-lookback` cannot jump across an Unknown boundary; `rebase`
-  performs the same admission before it writes epoch marks or wipes a series.
+- Automatic `accumulate`, `probe-lookback`, and `rebase` fail closed before SDK construction when
+  the explicit snapshot is missing, unauthorized, expired, or cannot cover the relevant date; there
+  is no weekday fallback. The 16:30 KST close buffer determines only the latest eligible civil date,
+  then calendar facts select the established prefix: requests end on the last reachable Trading
+  Session, proven trailing Closed dates advance only after successful coverage, and scanning stops
+  before the first Unknown/unavailable date. An all-Closed prefix can advance without a gateway
+  request; `probe-lookback` cannot jump across an Unknown boundary; `rebase` performs the same
+  admission before it writes epoch marks or wipes a series.
+- Manual `range` mode (`SDATE`/`EDATE`) never consults the calendar for a date decision; its legacy
+  `completed`→`watermark` migration on load runs under a no-view gate that keeps ranges
+  conservatively separate.
 
 Checkpoint migration merges legacy ranges across a proven all-Closed gap only when full-history
 freshness is `fresh`; stale or unevaluated evidence keeps the ranges separate for conservative
 over-fetch. Staleness remains a diagnostic and never rewrites a day fact. `BACKWARD WIDEN UNCERTAIN`
-is likewise non-persisted and reevaluated after evidence changes. Shadow remains the supported
-default; the live Enforced cutover and Consumer Retirement Gate are not claimed complete here.
+is likewise non-persisted and reevaluated after evidence changes.
 
 ### Max-lookback probe (run FIRST — sizes the backfill)
 
@@ -242,9 +241,13 @@ owns no scheduler). The lock dir MUST be the catalog directory so the R15 exclus
 actually contends with a live node / tester (`LS_NODE_LOCK_DIR=./data/catalog`):
 
 ```cron
-# 17:00 KST every weekday, after the 16:30 close buffer. Adjust TZ/path.
-0 17 * * 1-5  cd /path/to/adapters/nautilus && \
+# 17:00 KST daily, after the 16:30 close buffer. Adjust TZ/path. Runs every day, not
+# just weekdays (KTD8): the Enforced calendar decides whether the day is a Trading
+# Session — a weekend/holiday simply advances coverage from proven closure or stops
+# fail-closed, so there is no `1-5` weekday restriction to keep in sync with KRX.
+0 17 * * *  cd /path/to/adapters/nautilus && \
   LS_TRADING_ENV=paper LS_INGEST_LANE_FILE=.env.domestic \
+  LS_CALENDAR_SNAPSHOT=./data/krx-calendar.json \
   LS_INGEST_MODE=accumulate LS_INGEST_CATALOG=./data/catalog \
   LS_INGEST_LOOKBACK=20240101 LS_INGEST_KIND=daily,minute:1 \
   cargo run --release --bin ls-ingest >> ./data/catalog/ingest.log 2>&1
