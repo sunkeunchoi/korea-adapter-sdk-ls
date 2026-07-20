@@ -98,17 +98,46 @@ shared-scaffold removal (U10) is where dual-implementation rollback ends.
 
 ---
 
-## OPERATOR-OWNERSHIP DECISION — settle at hand-off (surfaced, not decided here)
+## OPERATOR-OWNERSHIP DECISION — SETTLED (recorded 2026-07-20)
 
-The plan flags an open decision that is **not an agent task** (Risks: "the migration stalls
-half-migrated"). Settle it before running the first live gate:
+The plan flagged an open decision that is **not an agent task** (Risks: "the migration stalls
+half-migrated"). It is settled as follows; this is the governing record until #189 closes at U10.
 
-- **Who owns and schedules the four live Consumer Retirement Gates** (ingest — after #186 lands;
-  catalog; budget-probe; Ladder), including the attended sessions they require.
-- **A by-when / escalation trigger** for each deferred live gate.
-- **The interim policy for a partially-enforced system**: how long a consumer may sit in Shadow,
-  and who periodically reviews that the shared `Legacy`/`Shadow` scaffold is still carried (it is
-  removed only in U10, after all four gates are recorded — leaving it indefinitely is the
-  "permanent dual implementation" the plan lists as outside its identity).
+### Owner (all four gates)
 
-Record the owner + by-when here (or in the team's ops tracker) before the first gate runs.
+The **operator-maintainer** (the adapter operator/maintainer, `sunkeunchoi`) owns and schedules
+**all four** live Consumer Retirement Gates — ingest, catalog, budget-probe, Ladder — and runs
+their attended sessions (Ladder's AC12 attended paper-session preflight included). There is no
+split owner: the ingest gate has the same owner, it is only *sequenced* after #186 lands (its PR
+#191 must merge first). One person holds the verdict pen for every `gate-verdicts/<consumer>.json`
+flip (R17/KTD9 verdict-only).
+
+### By-when + escalation (per gate)
+
+Each gate's target date is set by the operator **when its preconditions are met**, not fixed in
+advance. The escalation trigger prevents a silent stall:
+
+| Gate | Precondition (must hold before scheduling) | By-when after precondition met | Escalation if not scheduled |
+|---|---|---|---|
+| catalog | Foundation Gate green; snapshot PASS | schedule the live session within **2 weeks** | operator logs the reason it slipped in the owner-local gate log and re-targets |
+| budget-probe | Foundation Gate green; snapshot PASS | within **2 weeks** | same |
+| Ladder | Foundation Gate green; snapshot PASS; catalog + budget-probe recorded (run Ladder last) | within **2 weeks** | same |
+| ingest | **#186 merged** (PR #191) + its proof suite on main; Foundation Gate green; snapshot PASS | within **2 weeks** of #186 landing | same |
+
+"Within 2 weeks" is the target, not a hard deadline; the escalation trigger is *the absence of a
+scheduled date* past that window, which forces an explicit, logged decision rather than drift.
+
+### Interim policy for the partially-enforced system
+
+- A consumer may sit in **Shadow** (Legacy authoritative, calendar counterfactual recorded)
+  indefinitely **only while its gate's precondition is unmet or a HOLD condition stands**. Once
+  the precondition holds, the by-when + escalation above applies — Shadow is not a resting state.
+- **Scaffold-retention review:** the operator reviews, on a **monthly** cadence, that the shared
+  `Legacy`/`Shadow` scaffold (the `CalendarAdoption::Legacy|Shadow` enum, the divergence types,
+  the un-gated weekday primitives on not-yet-retired consumers) is still justified — i.e. at least
+  one consumer is still legitimately pre-gate. The scaffold is removed only in **U10**, after all
+  four `gate-verdicts/*.json` are `PASS` and their PRs merged. Carrying it past that point is the
+  "permanent dual implementation" the plan lists as outside its identity; the monthly review is
+  the check against that outcome.
+- Each review's outcome (which consumers remain pre-gate, whether the scaffold is still warranted,
+  any re-targeted by-when) is noted in the **owner-local** gate log, never committed here.
