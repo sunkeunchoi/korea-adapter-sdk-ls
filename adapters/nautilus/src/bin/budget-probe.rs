@@ -47,6 +47,7 @@ use chrono::{Duration, NaiveDate};
 use nautilus_ls_calendar::schema::DayStatus;
 use nautilus_ls_calendar::{AsOfView, CalendarAdoption};
 
+use nautilus_ls::calendar::DivergenceObservation;
 use nautilus_ls::config::LsAdapterConfig;
 use nautilus_ls::ingest::budget::{
     self, spend_ledger_path, BucketScope, CallCeiling, CrossClassReport, ProbeCaller, ProbeReport,
@@ -537,6 +538,37 @@ fn scan_recent_session(view: Option<&AsOfView<'_>>, anchor: NaiveDate) -> Sessio
     SessionScan::NoSession
 }
 
+/// The classified Shadow-divergence for budget-probe automatic selection (U3, KTD6): the
+/// weekday `recent_trading_day` anchor is treated as a trading day (open); the calendar's
+/// bounded recent-session scan reduces to the tri-state it disagrees on (the anchor itself
+/// proven a session → agree; an earlier session was the most recent → the anchor is a proven
+/// non-session; no session in the lookback → the calendar could not confirm; unavailable →
+/// no comparison). `Some` only under Shadow — Legacy never consults the calendar and Enforced
+/// acts on the scan rather than recording it. Pure + assertable.
+fn probe_divergence(
+    adoption: CalendarAdoption,
+    weekday_anchor: NaiveDate,
+    scan: SessionScan,
+) -> Option<DivergenceObservation> {
+    if adoption != CalendarAdoption::Shadow {
+        return None;
+    }
+    let calendar = match scan {
+        SessionScan::Session { date, .. } if date == weekday_anchor => {
+            Some(DayStatus::TradingSession)
+        }
+        SessionScan::Session { .. } => Some(DayStatus::Closed),
+        SessionScan::NoSession => Some(DayStatus::Unknown),
+        SessionScan::Unavailable => None,
+    };
+    Some(DivergenceObservation::new(
+        "budget-probe",
+        weekday_anchor,
+        true,
+        calendar,
+    ))
+}
+
 /// The pure default-date decision (U13/U2, KTD8/KTD4). Legacy/Shadow keep the weekday anchor
 /// authoritative (Shadow additionally RECORDS the calendar default); Enforced selects the
 /// proven session, or refuses (no live call) when nothing is proven and no explicit range is
@@ -723,6 +755,14 @@ impl ProbeContext {
         // Record the calendar date decision to the non-persisted diagnostic channel only
         // (stderr) so a Shadow/Legacy recording never touches stdout or a persisted artifact.
         Self::emit_probe_date_diagnostics(adoption, &plan);
+
+        // Shadow-divergence classification (U3): the classified weekday-vs-calendar
+        // disagreement for the anchor, on the same non-persisted channel (Shadow only).
+        if let Some(anchor) = anchor_date {
+            if let Some(obs) = probe_divergence(adoption, anchor, scan) {
+                nautilus_ls::calendar::emit_divergence(&obs);
+            }
+        }
 
         Self { plan }
     }
@@ -990,6 +1030,40 @@ mod tests {
                 Some("20100617"),
                 "the calendar default is recorded in Shadow"
             );
+        }
+
+        /// U3: budget-probe Shadow records a CLASSIFIED, assertable, redacted divergence —
+        /// the weekday anchor is treated as a trading day, so a most-recent proven session
+        /// EARLIER than the anchor makes the anchor a proven non-session
+        /// (`CalendarClosedWeekdayOpen`); the anchor itself proven a session is `Agree`; an
+        /// unavailable scan is `Unavailable`. Legacy/Enforced record nothing here.
+        #[test]
+        fn shadow_divergence_is_classified_and_redacted() {
+            use nautilus_ls::calendar::DivergenceClass;
+            let anchor = ymd(2010, 6, 21);
+            let scan = SessionScan::Session { date: ymd(2010, 6, 18), stale: false };
+
+            let obs = probe_divergence(CalendarAdoption::Shadow, anchor, scan).expect("shadow emits");
+            assert_eq!(obs.class, DivergenceClass::CalendarClosedWeekdayOpen);
+            assert_eq!(obs.consumer, "budget-probe");
+            assert!(probe_divergence(CalendarAdoption::Legacy, anchor, scan).is_none());
+            assert!(probe_divergence(CalendarAdoption::Enforced, anchor, scan).is_none());
+
+            let same = SessionScan::Session { date: anchor, stale: false };
+            assert_eq!(
+                probe_divergence(CalendarAdoption::Shadow, anchor, same).unwrap().class,
+                DivergenceClass::Agree
+            );
+            assert_eq!(
+                probe_divergence(CalendarAdoption::Shadow, anchor, SessionScan::Unavailable)
+                    .unwrap()
+                    .class,
+                DivergenceClass::Unavailable
+            );
+
+            let line = obs.render_line();
+            assert!(line.contains("class=calendar-closed-weekday-open"), "{line}");
+            assert!(!line.to_lowercase().contains("authority"), "{line}");
         }
     }
 

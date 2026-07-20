@@ -277,7 +277,8 @@ use crate::dispatch::ladder::apply_deescalation;
 use crate::dispatch::readiness::{compute_readiness, readiness_summary, ReadinessVerdict};
 use crate::dispatch::{UnknownOverride, RUNG_MIN};
 
-use nautilus_ls::calendar::StartupRecord;
+use nautilus_ls::calendar::{DivergenceObservation, StartupRecord};
+use nautilus_ls_calendar::schema::DayStatus;
 use nautilus_ls_calendar::CalendarAdoption;
 
 /// The dispatch gate's resolved configuration (env-gathered, but constructible directly
@@ -518,7 +519,44 @@ fn resolve_calendar_for_dispatch(
     }
     let path = nautilus_ls::calendar::snapshot_path_from_env();
     let loaded = nautilus_ls::calendar::resolve_and_load(path.as_deref(), now_utc, cfg.adoption);
-    resolve_date_fact_and_record(cfg.adoption, &loaded, now_utc)
+    let resolved = resolve_date_fact_and_record(cfg.adoption, &loaded, now_utc);
+    // Shadow-divergence classification (U3): the classified weekday-vs-calendar date-fact
+    // disagreement, on the same non-persisted channel (Shadow only). Non-fatal, recorded after
+    // the fact is resolved; the weekday date fact stays authoritative.
+    if let Some(obs) = ladder_divergence(cfg.adoption, &loaded, now_utc) {
+        nautilus_ls::calendar::emit_divergence(&obs);
+    }
+    resolved
+}
+
+/// The classified Shadow-divergence for the Production Ladder date gate (U3, KTD6): the weekday
+/// `date_fact` (Sat/Sun → Closed, else Trading Session — a KRX holiday still reads open) vs the
+/// calendar's tri-state fact for the same KST date. `Some` only under Shadow (Legacy records no
+/// divergence; Enforced acts on the calendar fact). Pure + assertable — env-free, so the tests
+/// inject a fixture-built `LoadedCalendar` directly.
+fn ladder_divergence(
+    adoption: CalendarAdoption,
+    loaded: &nautilus_ls::calendar::LoadedCalendar,
+    now_utc: chrono::DateTime<Utc>,
+) -> Option<DivergenceObservation> {
+    if adoption != CalendarAdoption::Shadow {
+        return None;
+    }
+    let kst_date = (now_utc + chrono::Duration::hours(9)).date_naive();
+    let weekday_open = WeekdayKrxCalendar.date_fact(now_utc) == CalendarDateFact::TradingSession;
+    let view = loaded.calendar().and_then(|cal| cal.as_of(now_utc).ok());
+    let calendar = match date_fact_from_view(view.as_ref(), kst_date) {
+        CalendarDateFact::TradingSession => Some(DayStatus::TradingSession),
+        CalendarDateFact::Closed => Some(DayStatus::Closed),
+        CalendarDateFact::Unknown => Some(DayStatus::Unknown),
+        CalendarDateFact::Unavailable => None,
+    };
+    Some(DivergenceObservation::new(
+        "lab-live-dispatch",
+        kst_date,
+        weekday_open,
+        calendar,
+    ))
 }
 
 /// Derive the authoritative [`CalendarDateFact`] and the dispatch-date-targeted
@@ -1432,6 +1470,33 @@ mod tests {
         assert!(line.contains("adoption=shadow"), "{line}");
         assert!(line.contains("action=shadow-recorded"), "{line}");
         assert!(line.contains("artifact_id="), "{line}");
+    }
+
+    /// U3: the Ladder Shadow arm records a CLASSIFIED, assertable, redacted divergence — a
+    /// weekday (weekday-open) date the calendar proves Closed is `CalendarClosedWeekdayOpen`;
+    /// Legacy/Enforced record no divergence (Legacy never records, Enforced acts on the fact).
+    #[test]
+    fn shadow_divergence_is_classified_and_redacted() {
+        use nautilus_ls::calendar::DivergenceClass;
+        use nautilus_ls_calendar::schema::DayStatus;
+        let dir = tempfile::TempDir::new().unwrap();
+        // dispatch_now()'s KST date (2026-07-16) is a weekday; the calendar proves it Closed.
+        let loaded = loaded_fixture(
+            dir.path(),
+            DayStatus::Closed,
+            chrono::NaiveDate::from_ymd_opt(2026, 12, 31).unwrap(),
+            CalendarAdoption::Shadow,
+        );
+        let obs = ladder_divergence(CalendarAdoption::Shadow, &loaded, dispatch_now())
+            .expect("shadow emits a divergence");
+        assert_eq!(obs.class, DivergenceClass::CalendarClosedWeekdayOpen);
+        assert_eq!(obs.consumer, "lab-live-dispatch");
+        assert!(ladder_divergence(CalendarAdoption::Legacy, &loaded, dispatch_now()).is_none());
+        assert!(ladder_divergence(CalendarAdoption::Enforced, &loaded, dispatch_now()).is_none());
+
+        let line = obs.render_line();
+        assert!(line.contains("class=calendar-closed-weekday-open"), "{line}");
+        assert!(!line.to_lowercase().contains("authority"), "{line}");
     }
 
     #[test]

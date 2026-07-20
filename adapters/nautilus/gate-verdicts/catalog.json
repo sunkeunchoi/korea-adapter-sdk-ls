@@ -1,0 +1,8 @@
+{
+  "consumer": "catalog",
+  "gate": "Consumer Retirement Gate — catalog readiness",
+  "verdict": "HOLD",
+  "software_version": "<adapter-version>",
+  "schema_version": "<calendar-schema-version>",
+  "note": "Awaiting the live, operator-attended catalog Consumer Retirement Gate (AC10 local status canary). Flip verdict to PASS only after the owner-local canary + restart-after-activation + rehearsed rollback are recorded per RUNBOOK-retire-catalog.md. Verdict-only: never add KRX-derived dates or snapshot identities to this file (R17/KTD9)."
+}

@@ -59,6 +59,25 @@ cargo test --workspace   # offline, no credentials, no network
 cargo build --bins       # ls-ingest, node_data_tester, node_exec_tester
 ```
 
+### Calendar Foundation Gate
+
+```
+make foundation-gate     # from the repo ROOT (mirrors `make adapter-check`)
+```
+
+The **Calendar Foundation Gate** (issue #189) is the named, reproducible offline invocation that
+proves the shared KRX calendar machinery is trustworthy before any consumer's weekday-era
+workaround is retired. It asserts the entire calendar surface — core, refresh, activation,
+diagnostics (the ten `calendar status` outcomes, redacted), the reproducible fixtures, the six
+consumer seams, the composition roots, the failure-inversion suite, the traceability drift check
+(`nautilus-ls-calendar/TRACEABILITY.md`), the rollback rehearsal, and the Shadow-divergence
+classification — fixed-clock, with no production snapshot, credentials, network, or real
+KRX-derived rows. It also runs the closeout publication-boundary scan, which fails the gate if
+[`CLOSEOUT.md`](CLOSEOUT.md) leaks a snapshot identity or an ISO date (the closeout is
+verdict-only). Passing the Foundation Gate does NOT by itself authorize enforcing any consumer —
+that is each consumer's own **Consumer Retirement Gate** (an operator-attended live ceremony; see
+the retirement runbooks).
+
 ## Operator run-book (live, paper-only)
 
 All three binaries are **operator-gated**: paper-only, session-windowed, and never
@@ -98,6 +117,23 @@ vars configure it, both resolved once per invocation (single load, single as-of)
 Every invocation emits one redacted, decision-relevant **startup record** to stderr
 (never a persisted artifact): adoption, snapshot identity, coverage, freshness, the
 factual query, and the resulting action — with authority/credential identities masked.
+
+> **`LS_CALENDAR_ADOPTION` is process-wide.** Setting it to `enforced` flips **every**
+> not-yet-retired consumer in that process at once — during a canary, use per-consumer scoping
+> (a dedicated invocation), never a global `enforced` flip. Independence between consumers is
+> achieved by per-consumer arm removal in each staged retirement diff, not by this env var.
+
+**Retirement (issue #189).** Each consumer advances Shadow → **Enforced** only through its
+operator-attended **Consumer Retirement Gate**, after which its weekday primitive and stale
+guidance are removed. The operator runbooks:
+[production-snapshot validation](RUNBOOK-calendar-snapshot.md),
+[activation + rollback rehearsal](RUNBOOK-calendar-rollback.md), and the generic
+[Consumer Retirement Gate template](RUNBOOK-consumer-retirement-gate.md) (per-consumer:
+`RUNBOOK-retire-{ingest,catalog,budget-probe,ladder}.md`). Merge of a staged retirement diff is
+blocked **mechanically** — `make merge-block-check` fails any diff that deletes a consumer's
+weekday primitive unless its committed [`gate-verdicts/<consumer>.json`](gate-verdicts/README.md)
+is present and `PASS` (written only after the live gate). The public
+[`CLOSEOUT.md`](CLOSEOUT.md) is verdict-only.
 
 **`catalog status` behavior by adoption:**
 

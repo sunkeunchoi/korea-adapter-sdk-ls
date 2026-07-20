@@ -2428,6 +2428,40 @@ mod calendar_gate_migration {
         assert_eq!(legacy.action(closed), GateAction::Proceed);
     }
 
+    /// U3: the Shadow arm's recorded disagreement is a CLASSIFIED, assertable, redacted
+    /// divergence observation — a proven Closed date the weekday accumulate path treats as
+    /// fetchable is `CalendarClosedWeekdayOpen`, the safety-relevant class.
+    #[test]
+    fn shadow_divergence_is_classified_and_redacted() {
+        use nautilus_ls::calendar::DivergenceClass;
+        let cal = fixture_calendar();
+        let view = cal.as_of(as_of()).unwrap();
+        let shadow = CalendarGate::new(CalendarAdoption::Shadow, Some(view));
+
+        let closed = ymd(2010, 6, 19); // proven weekend Closed
+        let obs = shadow.divergence("ingest-accumulate", closed);
+        assert_eq!(obs.class, DivergenceClass::CalendarClosedWeekdayOpen);
+        assert_eq!(obs.consumer, "ingest-accumulate");
+        assert_eq!(obs.date, closed);
+
+        // A proven Trading Session agrees; a missing view classifies as Unavailable.
+        let trading = ymd(2010, 6, 15);
+        assert_eq!(
+            shadow.divergence("ingest-accumulate", trading).class,
+            DivergenceClass::Agree
+        );
+        let no_view = CalendarGate::new(CalendarAdoption::Shadow, None);
+        assert_eq!(
+            no_view.divergence("ingest-accumulate", closed).class,
+            DivergenceClass::Unavailable
+        );
+
+        // Redacted: the render line carries no authority/credential identity.
+        let line = obs.render_line();
+        assert!(line.contains("class=calendar-closed-weekday-open"), "{line}");
+        assert!(!line.to_lowercase().contains("authority"), "{line}");
+    }
+
     // -- Enforced accumulate next-fetch --
 
     /// Enforced, Unknown target: ZERO gateway requests for that date, and the seeded

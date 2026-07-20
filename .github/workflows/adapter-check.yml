@@ -53,3 +53,12 @@ jobs:
       - name: Test adapter workspace (offline)
         run: cargo test --workspace
         working-directory: adapters/nautilus
+
+      # Mechanical merge-block (issue #189 U5, KTD1/R7): fails the PR if a consumer's weekday
+      # primitive was deleted without a present-and-PASS gate-verdict record. Runs the
+      # tree-state coupling check (the `#[ignore]`d test), so a staged retirement diff cannot
+      # remove a Legacy fallback before its live Consumer Retirement Gate is recorded. Offline,
+      # no secret. See adapters/nautilus/gate-verdicts/README.md.
+      - name: Mechanical merge-block (weekday-primitive retirement guard)
+        run: cargo test -p nautilus-ls-calendar --test merge_block -- --ignored
+        working-directory: adapters/nautilus

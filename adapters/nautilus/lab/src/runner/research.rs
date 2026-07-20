@@ -23,8 +23,10 @@ use std::process::ExitCode;
 
 use chrono::{DateTime, Datelike, NaiveDate, Utc, Weekday};
 
+use nautilus_ls::calendar::{emit_divergence, DivergenceObservation};
 use nautilus_ls::ingest::checkpoint::Checkpoint;
 use nautilus_ls::ingest::{compact_catalog, kst_date_of, read_all_bars, CompactOutcome};
+use nautilus_ls_calendar::schema::DayStatus;
 use nautilus_ls_calendar::{AsOfView, CalendarAdoption, DateRange, SessionSearch};
 use nautilus_model::data::Bar;
 use nautilus_model::enums::BarAggregation;
@@ -242,6 +244,27 @@ impl<'c> CatalogCalendarGate<'c> {
             Ok(SessionSearch::Indeterminate) => SessionBoundary::Indeterminate,
             Err(_) => SessionBoundary::Unavailable,
         }
+    }
+
+    /// The classified, redacted Shadow-divergence observation for a catalog boundary (U3,
+    /// KTD6): the weekday walk-back (`last_weekday_on_or_before`) always finds a weekday, so it
+    /// treats the boundary as open; the calendar's [`SessionBoundary`] reduces to the tri-state
+    /// it disagrees on (a proven session → open, proven all-Closed → closed, Unknown →
+    /// indeterminate, out-of-coverage → unavailable). Assertable, and the value the Shadow arm
+    /// emits to the non-persisted diagnostic channel.
+    pub fn divergence(
+        &self,
+        consumer: &str,
+        date: NaiveDate,
+        boundary: SessionBoundary,
+    ) -> DivergenceObservation {
+        let calendar = match boundary {
+            SessionBoundary::Session(_) => Some(DayStatus::TradingSession),
+            SessionBoundary::NoSession => Some(DayStatus::Closed),
+            SessionBoundary::Indeterminate => Some(DayStatus::Unknown),
+            SessionBoundary::Unavailable => None,
+        };
+        DivergenceObservation::new(consumer, date, true, calendar)
     }
 
     /// Whether the injected calendar's freshness is stale at the view's as-of instant.
@@ -1302,17 +1325,14 @@ pub async fn catalog_status_gated(
                     ));
                 }
                 if shadow {
-                    // Non-persisted diagnostic channel only (tracing): a Shadow recording
-                    // never touches stdout/a persisted artifact, so the report lines stay
-                    // byte-identical to Legacy while the calendar verdict is captured.
-                    tracing::info!(
-                        instrument = %instrument,
-                        bar_kind = %bar_kind,
-                        watermark = %wm,
-                        boundary = ?gate.last_session_on_or_before(wm),
-                        adoption = "shadow",
-                        "calendar shadow watermark boundary (recorded; weekday path authoritative)"
-                    );
+                    // Non-persisted diagnostic channel only: a Shadow recording never touches
+                    // stdout/a persisted artifact, so the report lines stay byte-identical to
+                    // Legacy while the classified, assertable divergence is captured (U3, KTD6).
+                    emit_divergence(&gate.divergence(
+                        "catalog-watermark",
+                        wm,
+                        gate.last_session_on_or_before(wm),
+                    ));
                 }
             }
         }
@@ -1348,14 +1368,11 @@ pub async fn catalog_status_gated(
                         flags.push(format!("front truncation: first {first} > expected start {exp_start}"));
                     }
                     if shadow {
-                        tracing::info!(
-                            instrument = %instrument,
-                            bar_kind = %bar_kind,
-                            expected_start = %exp_start,
-                            boundary = ?gate.first_session_on_or_after(exp_start),
-                            adoption = "shadow",
-                            "calendar shadow expected-start boundary (recorded; weekday path authoritative)"
-                        );
+                        emit_divergence(&gate.divergence(
+                            "catalog-expected-start",
+                            exp_start,
+                            gate.first_session_on_or_after(exp_start),
+                        ));
                     }
                 }
             }
@@ -1389,14 +1406,11 @@ pub async fn catalog_status_gated(
                         flags.push(format!("tail undershoot: last {last} < expected end {exp_end}"));
                     }
                     if shadow {
-                        tracing::info!(
-                            instrument = %instrument,
-                            bar_kind = %bar_kind,
-                            expected_end = %exp_end,
-                            boundary = ?gate.last_session_on_or_before(exp_end),
-                            adoption = "shadow",
-                            "calendar shadow expected-end boundary (recorded; weekday path authoritative)"
-                        );
+                        emit_divergence(&gate.divergence(
+                            "catalog-expected-end",
+                            exp_end,
+                            gate.last_session_on_or_before(exp_end),
+                        ));
                     }
                 }
             }

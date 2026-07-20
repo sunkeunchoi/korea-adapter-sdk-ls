@@ -1103,6 +1103,36 @@ lane-check:
 adapter-check:
 	cd adapters/nautilus && cargo test --workspace
 
+.PHONY: foundation-gate
+
+## The named Calendar Foundation Gate (issue #189 U4, R1–R5): the ENTIRE offline calendar
+## surface — calendar core, refresh, activation, diagnostics (the ten `calendar status`
+## outcomes, redacted), fixtures, the six consumer seams, the composition roots, the
+## failure-inversion suite, the U1 traceability drift check, the U2 rollback rehearsal, and the
+## U3 Shadow-divergence classification — asserted fixed-clock with NO production snapshot,
+## credentials, network, or real KRX-derived rows, PLUS the U4 closeout publication-boundary
+## scan (`nautilus-ls-calendar/tests/closeout_scan.rs`). Like `adapter-check`, it is run from the
+## repo ROOT and cd's into the standalone adapter workspace internally. The traceability drift
+## check it runs verifies the named pieces still exist, so deleting/renaming any reddens the
+## gate. CONCEPTS.md: this gate must pass before ANY consumer weekday primitive is retired — it
+## proves the calendar machinery is trustworthy; it does NOT by itself authorize cutting any
+## specific consumer over to Enforced (that is the per-consumer Consumer Retirement Gate).
+foundation-gate:
+	@echo "== Calendar Foundation Gate (offline: fixed-clock, no snapshot/credentials/network) =="
+	cd adapters/nautilus && cargo test --workspace
+
+.PHONY: merge-block-check
+
+## The mechanical merge-block (issue #189 U5, KTD1/R7): a consumer's weekday primitive may be
+## deleted ONLY when its committed gate-verdict record
+## (adapters/nautilus/gate-verdicts/<consumer>.json) is present and PASS — a TECHNICAL gate, not
+## reviewer discipline. Runs the tree-state coupling check (the `#[ignore]`d test, hence
+## `--ignored`), so a staged retirement diff that deletes a weekday primitive without a recorded
+## PASS verdict fails here even though `make adapter-check` stays green. The PASS verdict is
+## written only after the live, operator-attended Consumer Retirement Gate. Wired into CI.
+merge-block-check:
+	cd adapters/nautilus && cargo test -p nautilus-ls-calendar --test merge_block -- --ignored
+
 # ---------------------------------------------------------------------------
 # Docs generation — ls-docgen projects TR Dependency Docs and SDK Reference
 # Docs from ls-metadata. These targets need no credentials, so (unlike the

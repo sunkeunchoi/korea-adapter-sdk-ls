@@ -36,6 +36,8 @@ use nautilus_model::identifiers::InstrumentId;
 use nautilus_model::types::{Price, Quantity};
 use nautilus_ls_calendar::schema::DayStatus;
 use nautilus_ls_calendar::{AsOfView, CalendarAdoption, DateRange, SessionSearch};
+
+use crate::calendar::{emit_divergence, DivergenceObservation};
 use nautilus_persistence::backend::catalog::ParquetDataCatalog;
 use serde::{Deserialize, Serialize};
 
@@ -240,6 +242,49 @@ impl<'c> CalendarGate<'c> {
         }
     }
 
+    /// The calendar's tri-state day status for `target` in the injected view, or `None` when
+    /// there is no view or the query is out-of-range (unavailable). The value the Shadow
+    /// divergence observation classifies the weekday decision against (U3).
+    fn calendar_status(&self, target: NaiveDate) -> Option<DayStatus> {
+        let view = self.view?;
+        view.day(target).ok().map(|fact| fact.status)
+    }
+
+    /// Reduce a range/continuity verdict to the tri-state the divergence classifier compares
+    /// against: a proven session → `TradingSession`, all-Closed → `Closed`, indeterminate →
+    /// `Unknown` (or `None` when there is no view at all — unavailable).
+    fn continuity_status(&self, decision: ContinuityDecision) -> Option<DayStatus> {
+        if self.view.is_none() {
+            return None;
+        }
+        Some(match decision {
+            ContinuityDecision::TradingPresent => DayStatus::TradingSession,
+            ContinuityDecision::AllClosed => DayStatus::Closed,
+            ContinuityDecision::Indeterminate => DayStatus::Unknown,
+        })
+    }
+
+    /// The classified, redacted Shadow-divergence observation for a single-date boundary
+    /// (accumulate next-fetch / probe anchor): the weekday path treats the date as fetchable
+    /// (open), and the calendar's tri-state is the comparison (U3, KTD6). Assertable, and the
+    /// value the Shadow arm emits to the non-persisted diagnostic channel.
+    pub fn divergence(&self, consumer: &str, target: NaiveDate) -> DivergenceObservation {
+        DivergenceObservation::new(consumer, target, true, self.calendar_status(target))
+    }
+
+    /// The classified, redacted Shadow-divergence observation for a range/continuity boundary
+    /// at representative date `at`: `weekday_open` is the weekday path's verdict for the span,
+    /// the calendar verdict is reduced from `decision` (U3, KTD6).
+    pub fn continuity_divergence(
+        &self,
+        consumer: &str,
+        at: NaiveDate,
+        weekday_open: bool,
+        decision: ContinuityDecision,
+    ) -> DivergenceObservation {
+        DivergenceObservation::new(consumer, at, weekday_open, self.continuity_status(decision))
+    }
+
     /// The next-fetch action for `target` under the adoption seam (U9, KTD8). Legacy never
     /// consults the calendar; Shadow computes + RECORDS the decision to the non-persisted
     /// diagnostic channel but still yields [`Proceed`](GateAction::Proceed) so the weekday
@@ -249,16 +294,11 @@ impl<'c> CalendarGate<'c> {
         match self.adoption {
             CalendarAdoption::Legacy => GateAction::Proceed,
             CalendarAdoption::Shadow => {
-                let decision = self.calendar_decision(target);
-                // Non-persisted diagnostic channel only (tracing): a Shadow recording never
-                // touches a persisted artifact a Legacy reader consumes, so the accumulate
-                // request-count + checkpoint/watermark state stay byte-identical to Legacy.
-                tracing::info!(
-                    target = %fmt_ymd(target),
-                    decision = ?decision,
-                    adoption = "shadow",
-                    "calendar shadow next-fetch decision (recorded; weekday path authoritative)"
-                );
+                // Non-persisted diagnostic channel only: a Shadow recording never touches a
+                // persisted artifact a Legacy reader consumes, so the accumulate request-count +
+                // checkpoint/watermark state stay byte-identical to Legacy. The record is a
+                // classified, assertable, redacted divergence observation (U3, KTD6).
+                emit_divergence(&self.divergence("ingest-accumulate", target));
                 GateAction::Proceed
             }
             CalendarAdoption::Enforced => match self.calendar_decision(target) {
@@ -289,13 +329,12 @@ impl<'c> CalendarGate<'c> {
             CalendarAdoption::Legacy => GateAction::Proceed,
             CalendarAdoption::Shadow => {
                 let decision = self.scan_inclusive(start, last_closed);
-                tracing::info!(
-                    start = %fmt_ymd(start),
-                    last_closed = %fmt_ymd(last_closed),
-                    decision = ?decision,
-                    adoption = "shadow",
-                    "calendar shadow range next-fetch decision (recorded; weekday path authoritative)"
-                );
+                emit_divergence(&self.continuity_divergence(
+                    "ingest-accumulate-range",
+                    start,
+                    true,
+                    decision,
+                ));
                 GateAction::Proceed
             }
             CalendarAdoption::Enforced => match self.scan_inclusive(start, last_closed) {
@@ -331,13 +370,7 @@ impl<'c> CalendarGate<'c> {
         match self.adoption {
             CalendarAdoption::Legacy => ProbeAnchor::Use(weekday_anchor),
             CalendarAdoption::Shadow => {
-                let selected = self.select_recent_session(weekday_anchor);
-                tracing::info!(
-                    weekday_anchor = %fmt_ymd(weekday_anchor),
-                    calendar_anchor = ?selected.map(fmt_ymd),
-                    adoption = "shadow",
-                    "calendar shadow probe anchor (recorded; weekday anchor authoritative)"
-                );
+                emit_divergence(&self.divergence("ingest-probe-anchor", weekday_anchor));
                 ProbeAnchor::Use(weekday_anchor)
             }
             CalendarAdoption::Enforced => match self.select_recent_session(weekday_anchor) {
@@ -431,13 +464,12 @@ impl<'c> CalendarGate<'c> {
             CalendarAdoption::Legacy => WidenAction::EmitPersist,
             CalendarAdoption::Shadow => {
                 let decision = self.widen_evidence(floor, earliest_stored);
-                tracing::info!(
-                    floor = %fmt_ymd(floor),
-                    earliest_stored = %fmt_ymd(earliest_stored),
-                    decision = ?decision,
-                    adoption = "shadow",
-                    "calendar shadow backward-widen verdict (recorded; weekday warning authoritative)"
-                );
+                emit_divergence(&self.continuity_divergence(
+                    "ingest-backward-widen",
+                    floor,
+                    true,
+                    decision,
+                ));
                 WidenAction::EmitPersist
             }
             CalendarAdoption::Enforced => match self.widen_evidence(floor, earliest_stored) {

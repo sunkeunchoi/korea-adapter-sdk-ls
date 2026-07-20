@@ -1,0 +1,8 @@
+{
+  "consumer": "ingest",
+  "gate": "Consumer Retirement Gate — ingest (accumulate/probe + checkpoint continuity + backward-widen)",
+  "verdict": "HOLD",
+  "software_version": "<adapter-version>",
+  "schema_version": "<calendar-schema-version>",
+  "note": "Awaiting the live, operator-attended ingest Consumer Retirement Gate (AC8 accumulate post-close canary; AC9 checkpoint + backward-widen canaries). Flip verdict to PASS only after the owner-local canary + restart-after-activation + rehearsed rollback are recorded per RUNBOOK-retire-ingest.md. Verdict-only: never add KRX-derived dates or snapshot identities to this file (R17/KTD9)."
+}
