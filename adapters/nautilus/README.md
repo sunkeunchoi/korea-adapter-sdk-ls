@@ -59,6 +59,25 @@ cargo test --workspace   # offline, no credentials, no network
 cargo build --bins       # ls-ingest, node_data_tester, node_exec_tester
 ```
 
+### Calendar Foundation Gate
+
+```
+make foundation-gate     # from the repo ROOT (mirrors `make adapter-check`)
+```
+
+The **Calendar Foundation Gate** (issue #189) is the named, reproducible offline invocation that
+proves the shared KRX calendar machinery is trustworthy before any consumer's weekday-era
+workaround is retired. It asserts the entire calendar surface — core, refresh, activation,
+diagnostics (the ten `calendar status` outcomes, redacted), the reproducible fixtures, the six
+consumer seams, the composition roots, the failure-inversion suite, the traceability drift check
+(`nautilus-ls-calendar/TRACEABILITY.md`), the rollback rehearsal, and the Shadow-divergence
+classification — fixed-clock, with no production snapshot, credentials, network, or real
+KRX-derived rows. It also runs the closeout publication-boundary scan, which fails the gate if
+[`CLOSEOUT.md`](CLOSEOUT.md) leaks a snapshot identity or an ISO date (the closeout is
+verdict-only). Passing the Foundation Gate does NOT by itself authorize enforcing any consumer —
+that is each consumer's own **Consumer Retirement Gate** (an operator-attended live ceremony; see
+the retirement runbooks).
+
 ## Operator run-book (live, paper-only)
 
 All three binaries are **operator-gated**: paper-only, session-windowed, and never
@@ -80,35 +99,84 @@ advisory lockfile beside the catalog (`.ls-ingest.lock` / `.ls-live.lock`) and
 **refuse to start while the counterpart lock is held**. A stale lock from a crash
 blocks until cleared manually (`rm <catalog>/.ls-*.lock`) — a deliberate fail-safe.
 
-### KRX calendar configuration and adoption
+### Offline KRX calendar (adoption states)
 
-`ls-ingest` resolves `LS_CALENDAR_SNAPSHOT` once per invocation after acquiring the
-ingest lock and evaluates it at one fixed instant. `LS_CALENDAR_ADOPTION` accepts:
+Two consumers — `lab-research catalog status` (the ingest→backtest go/no-go) and
+`budget-probe` (the IGW00201 measurement) — read the shared offline KRX calendar
+(`nautilus-ls-calendar`, issues #184/#185, PR #190) at their composition root. Two env
+vars configure it, both resolved once per invocation (single load, single as-of):
 
-- `legacy`: the existing civil-date/weekday-compatible path remains authoritative.
-- `shadow` (the composed default): the calendar plan and divergence are recorded on
-  the redacted, non-persisted diagnostic channel, while gateway requests, checkpoint
-  bytes, markers, and exit behavior remain Legacy-compatible.
-- `enforced`: automatic `accumulate`, `probe-lookback`, and `rebase` fail closed before
-  SDK construction when the explicit snapshot is missing, unauthorized, expired, or
-  cannot cover the relevant date. No weekday fallback is used.
+- `LS_CALENDAR_SNAPSHOT` — an **explicit** path to an immutable, authorized calendar
+  snapshot. Unset/empty means no snapshot configured (the normal slice-deploy state);
+  the calendar core never picks a default path. A missing/failed snapshot is non-fatal
+  under Legacy/Shadow and fail-closed under Enforced.
+- `LS_CALENDAR_ADOPTION` — `legacy` | `shadow` | `enforced`. Unset/invalid → the
+  **composed default `shadow`**. The live Enforced cutover and a production snapshot are
+  the deferred Consumer Retirement Gate (#189); the composed default stays Shadow.
 
-The 16:30 KST close buffer determines only the latest eligible civil date. In
-Enforced mode, calendar facts then select the established prefix: requests end on
-the last reachable Trading Session, proven trailing Closed dates advance only after
-successful coverage, and scanning stops before the first Unknown/unavailable date.
-An all-Closed prefix can advance without a gateway request. `probe-lookback` cannot
-jump across an Unknown boundary, and `rebase` performs the same admission before it
-writes epoch marks or wipes a series.
+Every invocation emits one redacted, decision-relevant **startup record** to stderr
+(never a persisted artifact): adoption, snapshot identity, coverage, freshness, the
+factual query, and the resulting action — with authority/credential identities masked.
 
-Checkpoint migration merges legacy ranges across a proven all-Closed gap only when
-full-history freshness is `fresh`; stale or unevaluated evidence keeps the ranges
-separate for conservative over-fetch. Staleness remains a diagnostic and never
-rewrites a day fact. `BACKWARD WIDEN UNCERTAIN` is likewise non-persisted and is
-reevaluated after evidence changes.
+> **`LS_CALENDAR_ADOPTION` is process-wide.** Setting it to `enforced` flips **every**
+> not-yet-retired consumer in that process at once — during a canary, use per-consumer scoping
+> (a dedicated invocation), never a global `enforced` flip. Independence between consumers is
+> achieved by per-consumer arm removal in each staged retirement diff, not by this env var.
 
-Shadow remains the supported default. This runbook does not claim that the live
-Enforced cutover or the parent Consumer Retirement Gate is complete.
+**Retirement (issue #189).** Each consumer advances Shadow → **Enforced** only through its
+operator-attended **Consumer Retirement Gate**, after which its weekday primitive and stale
+guidance are removed. The operator runbooks:
+[production-snapshot validation](RUNBOOK-calendar-snapshot.md),
+[activation + rollback rehearsal](RUNBOOK-calendar-rollback.md), and the generic
+[Consumer Retirement Gate template](RUNBOOK-consumer-retirement-gate.md) (per-consumer:
+`RUNBOOK-retire-{ingest,catalog,budget-probe,ladder}.md`). Merge of a staged retirement diff is
+blocked **mechanically** — `make merge-block-check` fails any diff that deletes a consumer's
+weekday primitive unless its committed [`gate-verdicts/<consumer>.json`](gate-verdicts/README.md)
+is present and `PASS` (written only after the live gate). The public
+[`CLOSEOUT.md`](CLOSEOUT.md) is verdict-only.
+
+**`catalog status` behavior by adoption:**
+
+- **Legacy** — weekday/civil-date authoritative (the `last_weekday_on_or_before`
+  walk-back). Output unchanged from before the calendar.
+- **Shadow** (default) — byte-identical stdout, exit code, and verdict to Legacy, while
+  recording the calendar's boundary verdict to the stderr diagnostic channel.
+- **Enforced** — watermark and expected-range boundaries resolve against **proven
+  Trading Sessions**: a real holiday closure no longer false-flags; a boundary-relevant
+  Unknown is `NO-GO — calendar indeterminate`; an out-of-coverage/unavailable boundary is
+  `NO-GO — calendar unavailable`; a stale-but-established boundary is a **GO** with a
+  prominent warning naming the freshness dimension(s) that bound the queried dates.
+
+**`budget-probe` behavior by adoption:** Legacy/Shadow keep the weekday
+`recent_trading_day` anchor authoritative (Shadow records the calendar-selected session);
+Enforced selects the **most recent proven Trading Session** and makes **no gateway call**
+when none can be proven (or the calendar is unavailable) until an explicit
+`LS_PROBE_SDATE`/`LS_PROBE_EDATE` range is supplied. An explicit range is an auditable
+**bypass** — it records the operator, run context, and the calendar condition automatic
+selection skipped, and changes neither probe status nor any dispatch authorization.
+
+**`ls-ingest` behavior by adoption (issue #186).** `ls-ingest` also reads the shared calendar,
+resolving `LS_CALENDAR_SNAPSHOT` once per invocation after acquiring the ingest lock and evaluating
+it at one fixed instant:
+
+- **Legacy** — the existing civil-date/weekday-compatible path remains authoritative.
+- **Shadow** (default) — the calendar plan and divergence are recorded on the redacted,
+  non-persisted diagnostic channel, while gateway requests, checkpoint bytes, markers, and exit
+  behavior stay Legacy-compatible (byte-identical).
+- **Enforced** — automatic `accumulate`, `probe-lookback`, and `rebase` fail closed before SDK
+  construction when the explicit snapshot is missing, unauthorized, expired, or cannot cover the
+  relevant date; no weekday fallback is used. The 16:30 KST close buffer determines only the latest
+  eligible civil date, then calendar facts select the established prefix: requests end on the last
+  reachable Trading Session, proven trailing Closed dates advance only after successful coverage,
+  and scanning stops before the first Unknown/unavailable date. An all-Closed prefix can advance
+  without a gateway request; `probe-lookback` cannot jump across an Unknown boundary; `rebase`
+  performs the same admission before it writes epoch marks or wipes a series.
+
+Checkpoint migration merges legacy ranges across a proven all-Closed gap only when full-history
+freshness is `fresh`; stale or unevaluated evidence keeps the ranges separate for conservative
+over-fetch. Staleness remains a diagnostic and never rewrites a day fact. `BACKWARD WIDEN UNCERTAIN`
+is likewise non-persisted and reevaluated after evidence changes. Shadow remains the supported
+default; the live Enforced cutover and Consumer Retirement Gate are not claimed complete here.
 
 ### Max-lookback probe (run FIRST — sizes the backfill)
 

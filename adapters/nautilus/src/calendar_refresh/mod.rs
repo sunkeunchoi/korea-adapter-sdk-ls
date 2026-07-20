@@ -33,8 +33,8 @@ use chrono::{DateTime, Duration, NaiveDate, Utc};
 use nautilus_ls_calendar::schema::Snapshot;
 
 pub use activate::{
-    acknowledgment_key, activate, required_acknowledgments, ActivationApproval, ActivationError,
-    ActivationRecord, PARTIAL_ACK_KEY,
+    acknowledgment_key, activate, required_acknowledgments, rollback, ActivationApproval,
+    ActivationError, ActivationRecord, RollbackError, RollbackRecord, PARTIAL_ACK_KEY,
 };
 pub use candidate::{build_candidate, RefreshMode};
 pub use diff::{diff_against_predecessor, CategorizedDiff, DiffCategory, DiffEntry};

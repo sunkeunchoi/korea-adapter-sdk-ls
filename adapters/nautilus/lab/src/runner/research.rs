@@ -23,8 +23,10 @@ use std::process::ExitCode;
 
 use chrono::{DateTime, Datelike, NaiveDate, Utc, Weekday};
 
+use nautilus_ls::calendar::{emit_divergence, DivergenceObservation};
 use nautilus_ls::ingest::checkpoint::Checkpoint;
 use nautilus_ls::ingest::{compact_catalog, kst_date_of, read_all_bars, CompactOutcome};
+use nautilus_ls_calendar::schema::DayStatus;
 use nautilus_ls_calendar::{AsOfView, CalendarAdoption, DateRange, SessionSearch};
 use nautilus_model::data::Bar;
 use nautilus_model::enums::BarAggregation;
@@ -128,8 +130,14 @@ fn bar_label(bar: &Bar) -> String {
 /// watermark still advances"). A tail check comparing the last bar against the
 /// raw watermark therefore false-flags a healthy Friday-closed catalog whenever
 /// the most recent ingest ran over a weekend — comparing against the last
-/// weekday instead flags only a genuine undershoot. (Holidays remain
-/// undetectable: the repo carries no trading calendar.)
+/// weekday instead flags only a genuine undershoot.
+///
+/// This weekday walk-back is the Legacy/Shadow path only. Under the Enforced adoption the
+/// catalog resolves boundaries against PROVEN Trading Sessions from the shared offline KRX
+/// calendar ([`CatalogCalendarGate`], `nautilus-ls-calendar`), so a real holiday closure no
+/// longer false-flags and a boundary the calendar cannot prove fails closed — holidays are
+/// no longer undetectable. Adoption is selected by `LS_CALENDAR_ADOPTION`
+/// (composed-default Shadow) and the snapshot by `LS_CALENDAR_SNAPSHOT`.
 fn last_weekday_on_or_before(mut date: NaiveDate) -> NaiveDate {
     while matches!(date.weekday(), Weekday::Sat | Weekday::Sun) {
         date = date.pred_opt().expect("a date always has a predecessor");
@@ -238,11 +246,67 @@ impl<'c> CatalogCalendarGate<'c> {
         }
     }
 
+    /// The classified, redacted Shadow-divergence observation for a catalog boundary (U3,
+    /// KTD6): the weekday walk-back (`last_weekday_on_or_before`) always finds a weekday, so it
+    /// treats the boundary as open; the calendar's [`SessionBoundary`] reduces to the tri-state
+    /// it disagrees on (a proven session → open, proven all-Closed → closed, Unknown →
+    /// indeterminate, out-of-coverage → unavailable). Assertable, and the value the Shadow arm
+    /// emits to the non-persisted diagnostic channel.
+    pub fn divergence(
+        &self,
+        consumer: &str,
+        date: NaiveDate,
+        boundary: SessionBoundary,
+    ) -> DivergenceObservation {
+        let calendar = match boundary {
+            SessionBoundary::Session(_) => Some(DayStatus::TradingSession),
+            SessionBoundary::NoSession => Some(DayStatus::Closed),
+            SessionBoundary::Indeterminate => Some(DayStatus::Unknown),
+            SessionBoundary::Unavailable => None,
+        };
+        DivergenceObservation::new(consumer, date, true, calendar)
+    }
+
     /// Whether the injected calendar's freshness is stale at the view's as-of instant.
     /// `false` when no view is injected (there is nothing to be stale). Advisory only — a
     /// stale-but-established boundary is a GO with a prominent warning, never a status flip.
     pub fn is_stale(&self) -> bool {
         self.view.map(|v| v.freshness().any_stale()).unwrap_or(false)
+    }
+
+    /// The freshness dimension(s) that BOUND a queried boundary date and are STALE at the
+    /// as-of instant (U11, KTD5). Consumer-owned relevance: the calendar core exposes only
+    /// snapshot-global dimensions, so the catalog decides which one bounds a given date —
+    /// a boundary already retrospectively re-checked (`<= retrospectively_checked_through`)
+    /// keys on the historical dimensions (`incremental`, `full_history`, `kasi_holiday_facts`);
+    /// a boundary in the forward/unverified zone (past `retrospectively_checked_through`)
+    /// keys on `forward_readiness`. A snapshot stale only in a dimension that does NOT bound
+    /// the date returns empty here (no spurious warning). Empty when no view is injected.
+    pub fn stale_bounding_dimensions(&self, boundary: NaiveDate) -> Vec<&'static str> {
+        let Some(view) = self.view else {
+            return Vec::new();
+        };
+        let fresh = view.freshness();
+        let coverage = view.calendar().coverage();
+        let mut dims = Vec::new();
+        if boundary > coverage.retrospectively_checked_through {
+            // Forward/unverified zone — forward readiness is the dimension that bounds it.
+            if fresh.forward_readiness.is_stale() {
+                dims.push("forward_readiness");
+            }
+        } else {
+            // Retrospectively re-checked historical zone — the historical dimensions bound it.
+            if fresh.incremental.is_stale() {
+                dims.push("incremental");
+            }
+            if fresh.full_history.is_stale() {
+                dims.push("full_history");
+            }
+            if fresh.kasi_holiday_facts.is_stale() {
+                dims.push("kasi_holiday_facts");
+            }
+        }
+        dims
     }
 }
 
@@ -1212,6 +1276,10 @@ pub async fn catalog_status_gated(
     // cases (U11). Collected separately so the per-triple facts stay stable and these
     // NO-GO lines render just before the final status verdict.
     let mut calendar_notes: Vec<String> = Vec::new();
+    // The civil boundary dates the Enforced GO evaluation actually keyed on (watermark +
+    // expected-range endpoints). The dimension-relevant stale warning (U11, KTD5) names only
+    // the freshness dimensions that bound THESE dates — not a blanket `any_stale()`.
+    let mut enforced_boundaries: Vec<NaiveDate> = Vec::new();
     for ((instrument, bar_kind), group) in groups {
         let first = group.iter().map(|b| kst_date_of(b.ts_event)).min().expect("non-empty group");
         let last = group.iter().map(|b| kst_date_of(b.ts_event)).max().expect("non-empty group");
@@ -1226,6 +1294,7 @@ pub async fn catalog_status_gated(
         // no longer false-flags, and an Unknown/unavailable boundary fails closed.
         if let Some(wm) = checkpoint.watermark(&instrument, &bar_kind) {
             if enforced {
+                enforced_boundaries.push(wm);
                 match gate.last_session_on_or_before(wm) {
                     SessionBoundary::Session(sess) => {
                         if last < sess {
@@ -1256,17 +1325,14 @@ pub async fn catalog_status_gated(
                     ));
                 }
                 if shadow {
-                    // Non-persisted diagnostic channel only (tracing): a Shadow recording
-                    // never touches stdout/a persisted artifact, so the report lines stay
-                    // byte-identical to Legacy while the calendar verdict is captured.
-                    tracing::info!(
-                        instrument = %instrument,
-                        bar_kind = %bar_kind,
-                        watermark = %wm,
-                        boundary = ?gate.last_session_on_or_before(wm),
-                        adoption = "shadow",
-                        "calendar shadow watermark boundary (recorded; weekday path authoritative)"
-                    );
+                    // Non-persisted diagnostic channel only: a Shadow recording never touches
+                    // stdout/a persisted artifact, so the report lines stay byte-identical to
+                    // Legacy while the classified, assertable divergence is captured (U3, KTD6).
+                    emit_divergence(&gate.divergence(
+                        "catalog-watermark",
+                        wm,
+                        gate.last_session_on_or_before(wm),
+                    ));
                 }
             }
         }
@@ -1274,6 +1340,7 @@ pub async fn catalog_status_gated(
         if let Some(exp) = &cfg.expected_range {
             if let Ok(exp_start) = NaiveDate::parse_from_str(exp.start.trim(), "%Y%m%d") {
                 if enforced {
+                    enforced_boundaries.push(exp_start);
                     match gate.first_session_on_or_after(exp_start) {
                         SessionBoundary::Session(sess) => {
                             if first > sess {
@@ -1301,19 +1368,17 @@ pub async fn catalog_status_gated(
                         flags.push(format!("front truncation: first {first} > expected start {exp_start}"));
                     }
                     if shadow {
-                        tracing::info!(
-                            instrument = %instrument,
-                            bar_kind = %bar_kind,
-                            expected_start = %exp_start,
-                            boundary = ?gate.first_session_on_or_after(exp_start),
-                            adoption = "shadow",
-                            "calendar shadow expected-start boundary (recorded; weekday path authoritative)"
-                        );
+                        emit_divergence(&gate.divergence(
+                            "catalog-expected-start",
+                            exp_start,
+                            gate.first_session_on_or_after(exp_start),
+                        ));
                     }
                 }
             }
             if let Ok(exp_end) = NaiveDate::parse_from_str(exp.end.trim(), "%Y%m%d") {
                 if enforced {
+                    enforced_boundaries.push(exp_end);
                     match gate.last_session_on_or_before(exp_end) {
                         SessionBoundary::Session(sess) => {
                             if last < sess {
@@ -1341,14 +1406,11 @@ pub async fn catalog_status_gated(
                         flags.push(format!("tail undershoot: last {last} < expected end {exp_end}"));
                     }
                     if shadow {
-                        tracing::info!(
-                            instrument = %instrument,
-                            bar_kind = %bar_kind,
-                            expected_end = %exp_end,
-                            boundary = ?gate.last_session_on_or_before(exp_end),
-                            adoption = "shadow",
-                            "calendar shadow expected-end boundary (recorded; weekday path authoritative)"
-                        );
+                        emit_divergence(&gate.divergence(
+                            "catalog-expected-end",
+                            exp_end,
+                            gate.last_session_on_or_before(exp_end),
+                        ));
                     }
                 }
             }
@@ -1372,12 +1434,31 @@ pub async fn catalog_status_gated(
     }
     // Stale-but-established (Enforced): the boundary facts are proven (no calendar note,
     // still a GO) but the calendar's freshness is stale at the as-of instant — surface a
-    // PROMINENT warning without flipping the verdict.
-    if enforced && go && gate.is_stale() {
-        lines.push(
-            "WARNING: calendar evidence is STALE — boundary facts established, proceeding (GO)"
-                .to_string(),
-        );
+    // PROMINENT warning without flipping the verdict. The warning names ONLY the freshness
+    // dimension(s) that actually bound the queried boundary dates (U11, KTD5): a snapshot
+    // stale only in an unrelated dimension raises no spurious catalog warning. Where there is
+    // no boundary date to key on, fall back to the snapshot-global `any_stale()`.
+    if enforced && go {
+        let mut stale_dims: BTreeSet<&'static str> = BTreeSet::new();
+        for boundary in &enforced_boundaries {
+            for dim in gate.stale_bounding_dimensions(*boundary) {
+                stale_dims.insert(dim);
+            }
+        }
+        if !stale_dims.is_empty() {
+            lines.push(format!(
+                "WARNING: calendar evidence is STALE in the bounding dimension(s) [{}] — \
+                 boundary facts established, proceeding (GO)",
+                stale_dims.into_iter().collect::<Vec<_>>().join(", ")
+            ));
+        } else if enforced_boundaries.is_empty() && gate.is_stale() {
+            // No boundary date cleanly bounds a dimension (no watermark, no expected range) —
+            // fall back to the snapshot-global staleness signal (KTD5).
+            lines.push(
+                "WARNING: calendar evidence is STALE — boundary facts established, proceeding (GO)"
+                    .to_string(),
+            );
+        }
     }
     // The Enforced-only NO-GO calendar lines render just before the verdict.
     lines.extend(calendar_notes);
@@ -1721,8 +1802,15 @@ pub fn main_cli() -> ExitCode {
     nautilus_ls::scrub::install();
     // Mandatory startup calendar record (U8): one redacted line to the non-persisted
     // diagnostic channel (stderr). Default adoption = Shadow; a missing snapshot is
-    // non-fatal (KTD8). Startup record ONLY — the catalog watermark migration is U11.
-    nautilus_ls::calendar::emit_startup_from_env("lab-research");
+    // non-fatal (KTD8).
+    //
+    // The `catalog status` path (U1) emits its OWN decision-relevant startup record from a
+    // single shared load inside its CLI branch — so it is skipped here to keep exactly one
+    // load and one startup record per invocation. Every other subcommand emits the generic
+    // record here.
+    if !is_catalog_status_invocation() {
+        nautilus_ls::calendar::emit_startup_from_env("lab-research");
+    }
     match dispatch() {
         Ok(code) => code,
         Err(e) => {
@@ -1738,6 +1826,13 @@ fn ok_fail(pass: bool) -> ExitCode {
     } else {
         ExitCode::FAILURE
     }
+}
+
+/// Whether this invocation is `catalog status` — which owns its decision-relevant startup
+/// record from a single shared load (U1), so `main_cli` must not also emit the generic one.
+fn is_catalog_status_invocation() -> bool {
+    let mut args = std::env::args().skip(1);
+    args.next().as_deref() == Some("catalog") && args.next().as_deref() == Some("status")
 }
 
 fn print_lines(lines: &[String]) {
@@ -1800,16 +1895,39 @@ fn dispatch() -> anyhow::Result<ExitCode> {
         }
         Some("catalog") => match std::env::args().nth(2).as_deref() {
             Some("status") => {
-                let rt = tokio::runtime::Runtime::new()?;
-                let cfg = status_config_from_env()?;
-                // Composition root (KTD5/KTD8): resolve the EXPLICIT snapshot path +
-                // adoption from env, load once, and inject one calendar gate. The composed
-                // default is Shadow; at slice-deploy the production snapshot is deferred, so
-                // the path is normally absent → no view → byte-identical to Legacy.
+                // Composition root (KTD5/KTD8, U1): resolve the EXPLICIT snapshot path +
+                // adoption from env and load ONCE, then emit the mandatory startup record
+                // BEFORE the fallible config parse / runtime build — a malformed LS_STATUS_*
+                // or LS_DATA_HOME must NOT drop the always-emit startup invariant (the same
+                // discipline ProbeContext::resolve applies for budget-probe). The single
+                // loaded calendar is shared with the catalog gate below. The composed default
+                // is Shadow; at slice-deploy the production snapshot is deferred, so the path
+                // is normally absent → no view → byte-identical to Legacy.
                 let as_of = Utc::now();
                 let adoption = nautilus_ls::calendar::adoption_from_env();
                 let path = nautilus_ls::calendar::snapshot_path_from_env();
                 let loaded = nautilus_ls::calendar::resolve_and_load(path.as_deref(), as_of, adoption);
+                // The decision-relevant startup target (KTD2): catalog has no single per-triple
+                // decision date at the startup emit point, so it reports posture plus a defined
+                // representative target — the operator-supplied expected-range END when present,
+                // else the coverage watermark `materialized_through`. Read the endpoint straight
+                // from env so the emit never depends on the fallible full-config parse below.
+                let target = std::env::var("LS_STATUS_EDATE")
+                    .ok()
+                    .and_then(|s| NaiveDate::parse_from_str(s.trim(), "%Y%m%d").ok())
+                    .or_else(|| loaded.calendar().map(|cal| cal.coverage().materialized_through));
+                let record = nautilus_ls::calendar::build_startup_record_targeted(
+                    "lab-research",
+                    adoption,
+                    &loaded,
+                    as_of,
+                    target,
+                );
+                nautilus_ls::calendar::emit_startup_record(&record);
+
+                // The fallible config parse + go/no-go run AFTER the record is already emitted.
+                let rt = tokio::runtime::Runtime::new()?;
+                let cfg = status_config_from_env()?;
                 let view = loaded.calendar().and_then(|cal| cal.as_of(as_of).ok());
                 let gate = CatalogCalendarGate::new(adoption, view);
                 let out = rt.block_on(catalog_status_gated(&cfg, gate))?;

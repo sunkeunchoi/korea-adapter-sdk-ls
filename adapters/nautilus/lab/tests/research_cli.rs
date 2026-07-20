@@ -1452,6 +1452,62 @@ fn ymd(y: i32, m: u32, d: u32) -> NaiveDate {
 /// block: fresh (all dimensions current at [`cal_as_of`]) or stale (holiday facts far in
 /// the past) — staleness never rewrites a day status.
 fn build_calendar(overrides: &[(NaiveDate, DayStatus)], stale: bool) -> KrxCalendar {
+    let as_of = cal_as_of();
+    let holiday_anchor = if stale {
+        // 14-day KASI threshold: far in the past → stale at cal_as_of.
+        Some(Utc.with_ymd_and_hms(2023, 1, 1, 0, 0, 0).unwrap())
+    } else {
+        Some(as_of)
+    };
+    let freshness = Freshness {
+        evidence_refreshed_at: as_of,
+        holiday_facts_checked_at: holiday_anchor,
+        full_history_reconciled_at: Some(as_of),
+        forward_readiness_through: Some(as_of.date_naive() + Duration::days(365)),
+        last_incremental_at: Some(as_of),
+    };
+    build_calendar_with_freshness(overrides, freshness)
+}
+
+/// A fresh-in-every-dimension `Freshness` block at [`cal_as_of`], for tests that then flip
+/// exactly one dimension stale to prove dimension-relevant warnings (U11, KTD5).
+fn fresh_freshness() -> Freshness {
+    let as_of = cal_as_of();
+    Freshness {
+        evidence_refreshed_at: as_of,
+        holiday_facts_checked_at: Some(as_of),
+        full_history_reconciled_at: Some(as_of),
+        forward_readiness_through: Some(as_of.date_naive() + Duration::days(365)),
+        last_incremental_at: Some(as_of),
+    }
+}
+
+/// The 14-day-plus-past instant that makes an instant-anchored dimension stale at
+/// [`cal_as_of`] (well past every instant threshold: KASI 14d, incremental 2d, full 120d).
+fn stale_anchor() -> DateTime<Utc> {
+    Utc.with_ymd_and_hms(2023, 1, 1, 0, 0, 0).unwrap()
+}
+
+/// Build the 2024-01 calendar with an explicit [`Freshness`] block — the freshness-varying
+/// twin of [`build_calendar`] (staleness never rewrites a day status; U11, KTD5).
+/// `retrospectively_checked_through` == `materialized_through`.
+fn build_calendar_with_freshness(
+    overrides: &[(NaiveDate, DayStatus)],
+    freshness: Freshness,
+) -> KrxCalendar {
+    build_calendar_full(overrides, freshness, ymd(2024, 1, 31))
+}
+
+/// Build the 2024-01 calendar with an explicit freshness block AND an explicit
+/// `retrospectively_checked_through`. When `retro_through` < `materialized_through`
+/// (2024-01-31), the dates in `(retro_through, materialized_through]` form the forward/
+/// unverified zone — the only zone that exercises the `forward_readiness` bounding
+/// dimension in [`CatalogCalendarGate::stale_bounding_dimensions`] (U11, KTD5).
+fn build_calendar_full(
+    overrides: &[(NaiveDate, DayStatus)],
+    freshness: Freshness,
+    retro_through: NaiveDate,
+) -> KrxCalendar {
     let from = ymd(2024, 1, 1);
     let through = ymd(2024, 1, 31);
     let mut rows = Vec::new();
@@ -1476,19 +1532,6 @@ fn build_calendar(overrides: &[(NaiveDate, DayStatus)], stale: bool) -> KrxCalen
         d = d.succ_opt().unwrap();
     }
     let as_of = cal_as_of();
-    let holiday_anchor = if stale {
-        // 14-day KASI threshold: far in the past → stale at cal_as_of.
-        Some(Utc.with_ymd_and_hms(2023, 1, 1, 0, 0, 0).unwrap())
-    } else {
-        Some(as_of)
-    };
-    let freshness = Freshness {
-        evidence_refreshed_at: as_of,
-        holiday_facts_checked_at: holiday_anchor,
-        full_history_reconciled_at: Some(as_of),
-        forward_readiness_through: Some(as_of.date_naive() + Duration::days(365)),
-        last_incremental_at: Some(as_of),
-    };
     let authorization = Authorization {
         authorized: true,
         authority: "SYNTHETIC-MAINTAINER".to_string(),
@@ -1512,7 +1555,7 @@ fn build_calendar(overrides: &[(NaiveDate, DayStatus)], stale: bool) -> KrxCalen
         coverage: Coverage {
             materialized_from: from,
             materialized_through: through,
-            retrospectively_checked_through: through,
+            retrospectively_checked_through: retro_through,
             scheduled_closure_evaluated_through: through,
             source_availability: vec![],
         },
@@ -1664,6 +1707,332 @@ async fn shadow_is_byte_identical_to_legacy_while_recording_the_calendar_verdict
         SessionBoundary::Session(ymd(2024, 1, 5)),
         "the disagreeing calendar boundary is computed (recorded), not the weekday one"
     );
+}
+
+/// U3: catalog Shadow records a CLASSIFIED, assertable, redacted divergence — the weekday
+/// walk-back treats every boundary as open, so a proven all-Closed boundary is
+/// `CalendarClosedWeekdayOpen`, a proven session `Agree`, and an out-of-coverage boundary
+/// `Unavailable`.
+#[test]
+fn shadow_divergence_is_classified_and_redacted() {
+    use nautilus_ls::calendar::DivergenceClass;
+    let cal = build_calendar(&[(ymd(2024, 1, 8), DayStatus::Closed)], false);
+    let view = cal.as_of(cal_as_of()).unwrap();
+    let gate = CatalogCalendarGate::new(CalendarAdoption::Shadow, Some(view));
+
+    let obs = gate.divergence("catalog-watermark", ymd(2024, 1, 8), SessionBoundary::NoSession);
+    assert_eq!(obs.class, DivergenceClass::CalendarClosedWeekdayOpen);
+    assert_eq!(obs.consumer, "catalog-watermark");
+    assert_eq!(
+        gate.divergence("catalog-watermark", ymd(2024, 1, 5), SessionBoundary::Session(ymd(2024, 1, 5))).class,
+        DivergenceClass::Agree
+    );
+    assert_eq!(
+        gate.divergence("catalog-watermark", ymd(2024, 1, 8), SessionBoundary::Unavailable).class,
+        DivergenceClass::Unavailable
+    );
+
+    let line = obs.render_line();
+    assert!(line.contains("class=calendar-closed-weekday-open"), "{line}");
+    assert!(!line.to_lowercase().contains("authority"), "{line}");
+}
+
+/// AE3 (U3): a watermark after a multi-day holiday cluster whose last proven session
+/// precedes the cluster is NOT a false tail undershoot (the proven last session is the
+/// pre-cluster Friday the catalog reaches). Flipping that pre-cluster boundary to Unknown
+/// flips only between GO and `NO-GO — calendar indeterminate`.
+#[tokio::test]
+async fn enforced_holiday_cluster_watermark_does_not_false_flag() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    // Watermark = Wed 20240110, after a 3-day holiday cluster (Mon–Wed 20240108/09/10).
+    // Last daily bar = Friday 20240105 (the proven session before the cluster).
+    set_daily_watermark(dir.path(), ymd(2024, 1, 10));
+    let cfg = StatusConfig { data_home: dir.path().to_path_buf(), expected_range: None };
+
+    let cluster = [
+        (ymd(2024, 1, 8), DayStatus::Closed),
+        (ymd(2024, 1, 9), DayStatus::Closed),
+        (ymd(2024, 1, 10), DayStatus::Closed),
+    ];
+    let cal = build_calendar(&cluster, false);
+    let view = cal.as_of(cal_as_of()).unwrap();
+    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let out = catalog_status_gated(&cfg, gate).await.unwrap();
+    assert!(out.go, "the cluster walk-back reaches the pre-cluster Friday: {:?}", out.lines);
+    assert!(
+        out.triples.iter().all(|t| t.flags.is_empty()),
+        "no tail flag once the pre-cluster session (Friday) is proven: {:?}",
+        out.triples
+    );
+    // Sanity: the boundary genuinely walked back across the whole cluster.
+    assert_eq!(
+        gate.last_session_on_or_before(ymd(2024, 1, 10)),
+        SessionBoundary::Session(ymd(2024, 1, 5)),
+    );
+
+    // Flip the pre-cluster boundary (Friday 20240105) to Unknown: the walk-back now hits an
+    // Unknown before any proven session → indeterminate NO-GO (never collapses to Closed).
+    let mut with_unknown = cluster.to_vec();
+    with_unknown.push((ymd(2024, 1, 5), DayStatus::Unknown));
+    let cal_u = build_calendar(&with_unknown, false);
+    let view_u = cal_u.as_of(cal_as_of()).unwrap();
+    let gate_u = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view_u));
+    let out_u = catalog_status_gated(&cfg, gate_u).await.unwrap();
+    assert!(!out_u.go, "an Unknown pre-cluster boundary is indeterminate: {:?}", out_u.lines);
+    assert!(
+        out_u.lines.iter().any(|l| l.contains("NO-GO — calendar indeterminate")),
+        "the indeterminate message is present: {:?}",
+        out_u.lines
+    );
+}
+
+/// AE4 (U3): an expected range whose civil endpoints are weekend dates is validated against
+/// the interval's first/last PROVEN sessions — clearing a Legacy raw-civil-date false flag —
+/// while an out-of-coverage endpoint yields `NO-GO — calendar unavailable`.
+#[tokio::test]
+async fn enforced_expected_range_weekend_endpoints_use_proven_sessions() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    // No watermark: isolate the expected-range check (front + tail vs the range).
+    let cfg = StatusConfig {
+        data_home: dir.path().to_path_buf(),
+        // Sat 20240106 .. Sun 20240107 — both weekend/closed civil endpoints.
+        expected_range: Some(DataRange { start: "20240106".into(), end: "20240107".into() }),
+    };
+
+    // Legacy compares raw civil endpoints: last bar 20240105 < raw end 20240107 → NO-GO.
+    let legacy = catalog_status(&cfg).await.unwrap();
+    assert!(!legacy.go, "Legacy false-flags the weekend end: {:?}", legacy.lines);
+
+    // Enforced resolves the weekend end to the proven Friday session 20240105 the catalog
+    // reaches (and the weekend start to the Monday session 20240108, which the earlier
+    // catalog start does not undershoot) → GO.
+    let cal = build_calendar(&[], false);
+    let view = cal.as_of(cal_as_of()).unwrap();
+    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let enforced = catalog_status_gated(&cfg, gate).await.unwrap();
+    assert!(enforced.go, "weekend endpoints resolve to proven sessions → GO: {:?}", enforced.lines);
+
+    // An out-of-coverage expected end (past materialized_through 20240131) is unavailable.
+    let cfg_oob = StatusConfig {
+        data_home: dir.path().to_path_buf(),
+        expected_range: Some(DataRange { start: "20240106".into(), end: "20240215".into() }),
+    };
+    let cal2 = build_calendar(&[], false);
+    let view2 = cal2.as_of(cal_as_of()).unwrap();
+    let gate2 = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view2));
+    let out_oob = catalog_status_gated(&cfg_oob, gate2).await.unwrap();
+    assert!(!out_oob.go, "an out-of-coverage endpoint is a no-go: {:?}", out_oob.lines);
+    assert!(
+        out_oob.lines.iter().any(|l| l.contains("NO-GO — calendar unavailable")),
+        "the unavailable message is present: {:?}",
+        out_oob.lines
+    );
+}
+
+/// AE5 (U3, KTD5): a boundary fact stale in the dimension that BOUNDS it yields GO with a
+/// prominent warning that NAMES that dimension.
+#[tokio::test]
+async fn enforced_stale_warning_names_the_bounding_dimension() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    set_daily_watermark(dir.path(), ymd(2024, 1, 8));
+    let cfg = StatusConfig { data_home: dir.path().to_path_buf(), expected_range: None };
+
+    // Watermark boundary 20240108 is retrospectively re-checked (historical zone), so it is
+    // bounded by the historical dimensions. Make `incremental` stale (a bounding dimension)
+    // AND `forward_readiness` stale (NOT a bounding dimension for a historical boundary) — so
+    // the exclusion assertion below is meaningful, not vacuous.
+    let mut freshness = fresh_freshness();
+    freshness.last_incremental_at = Some(stale_anchor());
+    freshness.forward_readiness_through = Some(ymd(2024, 2, 20)); // 5 days remaining < 45 → stale
+    let cal = build_calendar_with_freshness(&[(ymd(2024, 1, 8), DayStatus::Closed)], freshness);
+    let view = cal.as_of(cal_as_of()).unwrap();
+    assert!(view.freshness().forward_readiness.is_stale(), "forward_readiness IS stale here");
+    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let out = catalog_status_gated(&cfg, gate).await.unwrap();
+    assert!(out.go, "an established boundary stays a GO even when stale: {:?}", out.lines);
+    let warning = out
+        .lines
+        .iter()
+        .find(|l| l.contains("WARNING") && l.contains("STALE"))
+        .expect("a prominent stale warning is present");
+    assert!(warning.contains("incremental"), "the warning names the bounding dimension: {warning}");
+    // forward_readiness is stale but does NOT bound a historical boundary → excluded.
+    assert!(
+        !warning.contains("forward_readiness"),
+        "a stale-but-non-bounding dimension is excluded: {warning}"
+    );
+}
+
+/// U3 (KTD5): a snapshot stale ONLY in a dimension that does not bound the queried boundary
+/// raises NO catalog warning; staleness in the bounding dimension does warn. Proven by
+/// varying `forward_readiness` (does not bound a retrospectively-checked historical boundary)
+/// against `incremental` (does) independently.
+#[tokio::test]
+async fn enforced_unrelated_dimension_staleness_does_not_warn() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    set_daily_watermark(dir.path(), ymd(2024, 1, 8));
+    let cfg = StatusConfig { data_home: dir.path().to_path_buf(), expected_range: None };
+
+    // Stale ONLY in forward_readiness (horizon nearly exhausted at cal_as_of 2024-02-15).
+    // The watermark boundary 20240108 is historical, so forward_readiness does NOT bound it.
+    let mut unrelated = fresh_freshness();
+    unrelated.forward_readiness_through = Some(ymd(2024, 2, 20)); // 5 days remaining < 45 → stale
+    let cal = build_calendar_with_freshness(&[(ymd(2024, 1, 8), DayStatus::Closed)], unrelated);
+    let view = cal.as_of(cal_as_of()).unwrap();
+    assert!(view.freshness().any_stale(), "the snapshot IS stale (forward_readiness)");
+    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let out = catalog_status_gated(&cfg, gate).await.unwrap();
+    assert!(out.go, "GO: {:?}", out.lines);
+    assert!(
+        !out.lines.iter().any(|l| l.contains("WARNING") && l.contains("STALE")),
+        "an unrelated stale dimension raises NO catalog warning: {:?}",
+        out.lines
+    );
+
+    // The bounding dimension (incremental) stale on the SAME boundary DOES warn.
+    let mut bounding = fresh_freshness();
+    bounding.last_incremental_at = Some(stale_anchor());
+    let cal2 = build_calendar_with_freshness(&[(ymd(2024, 1, 8), DayStatus::Closed)], bounding);
+    let view2 = cal2.as_of(cal_as_of()).unwrap();
+    let gate2 = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view2));
+    let out2 = catalog_status_gated(&cfg, gate2).await.unwrap();
+    assert!(
+        out2.lines.iter().any(|l| l.contains("WARNING") && l.contains("incremental")),
+        "the bounding dimension does warn: {:?}",
+        out2.lines
+    );
+}
+
+/// U3 (KTD5): the FORWARD/unverified zone exercises the `forward_readiness` bounding
+/// dimension — the mirror of the historical-zone tests above (which all key on boundaries
+/// at/below `retrospectively_checked_through`). With retrospectively_checked_through
+/// (20240103) < materialized_through (20240131), the watermark boundary 20240105 (the
+/// catalog's last daily bar, a proven Friday session → no undershoot, go stays true) sits in
+/// the forward zone. A stale `forward_readiness` warns and names it; a stale HISTORICAL
+/// dimension does NOT bound a forward boundary, so it raises no warning.
+#[tokio::test]
+async fn enforced_forward_zone_boundary_keys_on_forward_readiness() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+    // Watermark 20240105 == the catalog's last daily bar (proven Trading Session) → no
+    // undershoot; and > retrospectively_checked_through 20240103 → the forward zone.
+    set_daily_watermark(dir.path(), ymd(2024, 1, 5));
+    let cfg = StatusConfig { data_home: dir.path().to_path_buf(), expected_range: None };
+    let retro = ymd(2024, 1, 3);
+
+    // forward_readiness stale (bounds the forward boundary); every historical dimension fresh.
+    let mut fwd = fresh_freshness();
+    fwd.forward_readiness_through = Some(ymd(2024, 2, 20)); // < 45 days remaining → stale
+    let cal = build_calendar_full(&[], fwd, retro);
+    let view = cal.as_of(cal_as_of()).unwrap();
+    assert!(view.freshness().forward_readiness.is_stale(), "forward_readiness IS stale");
+    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let out = catalog_status_gated(&cfg, gate).await.unwrap();
+    assert!(out.go, "the forward boundary is a proven session the catalog reaches: {:?}", out.lines);
+    let warning = out
+        .lines
+        .iter()
+        .find(|l| l.contains("WARNING") && l.contains("STALE"))
+        .expect("a forward-zone stale warning is present");
+    assert!(warning.contains("forward_readiness"), "names the forward dimension: {warning}");
+    assert!(!warning.contains("incremental"), "no historical dimension named: {warning}");
+
+    // Mirror: a stale HISTORICAL dimension (incremental) does NOT bound a forward-zone
+    // boundary → the snapshot is stale, yet the forward boundary raises no warning.
+    let mut hist = fresh_freshness();
+    hist.last_incremental_at = Some(stale_anchor());
+    let cal2 = build_calendar_full(&[], hist, retro);
+    let view2 = cal2.as_of(cal_as_of()).unwrap();
+    assert!(view2.freshness().any_stale(), "the snapshot IS stale (incremental)");
+    let gate2 = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view2));
+    let out2 = catalog_status_gated(&cfg, gate2).await.unwrap();
+    assert!(out2.go, "GO: {:?}", out2.lines);
+    assert!(
+        !out2.lines.iter().any(|l| l.contains("WARNING") && l.contains("STALE")),
+        "a stale historical dimension does not warn for a forward-zone boundary: {:?}",
+        out2.lines
+    );
+}
+
+/// AE1 (U4, scenario 2): the `lab-research catalog status` composition-root smoke — an
+/// explicit temporary synthetic snapshot resolves once via `LS_CALENDAR_SNAPSHOT`, the
+/// single startup record names the adoption and stays redacted, and the verdict is produced
+/// with no production snapshot, credentials, or network.
+#[tokio::test]
+async fn catalog_status_composition_root_smoke() {
+    let dir = tempdir().unwrap();
+    build_fixture(dir.path()).await;
+
+    // A deletable, explicitly synthetic snapshot at a temporary path (never a production one).
+    let fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../nautilus-ls-calendar/fixtures/base_2010_2012.json");
+    let snap = dir.path().join("calendar.json");
+    std::fs::copy(&fixture, &snap).expect("fixture copies");
+
+    let out = bin()
+        .args(["catalog", "status"])
+        .env("LS_DATA_HOME", dir.path())
+        .env("LS_CALENDAR_ADOPTION", "shadow")
+        .env("LS_CALENDAR_SNAPSHOT", &snap)
+        .output()
+        .unwrap();
+
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+
+    // The verdict is produced offline (no watermark set + no expected range → GO).
+    assert!(out.status.success(), "catalog status is a GO offline: {stdout}\n{stderr}");
+    assert!(stdout.contains("status: GO"), "the verdict line is present: {stdout}");
+
+    // Exactly one startup record, naming the adoption, redacted — and only ONE load (the
+    // generic `main_cli` startup emit is suppressed for `catalog status`).
+    assert_eq!(
+        stderr.matches("calendar-startup").count(),
+        1,
+        "exactly one startup record (single load): {stderr}"
+    );
+    assert!(stderr.contains("adoption=shadow"), "startup names the adoption: {stderr}");
+    assert!(
+        !stderr.contains("SYNTHETIC-MAINTAINER"),
+        "the granting authority must never leak into the startup line: {stderr}"
+    );
+    assert!(stderr.contains("artifact_id="), "the redacted snapshot identity is reported: {stderr}");
+}
+
+/// U1 always-emit invariant (catalog side): `catalog status` emits its mandatory startup
+/// record BEFORE the fallible config parse, so a config error (here: missing LS_DATA_HOME)
+/// still emits exactly one record before it fails — the generic `main_cli` emit is
+/// suppressed for this subcommand, so a late emit would have dropped the invariant.
+#[tokio::test]
+async fn catalog_status_emits_startup_record_even_on_config_error() {
+    let dir = tempdir().unwrap();
+    let fixture = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../nautilus-ls-calendar/fixtures/base_2010_2012.json");
+    let snap = dir.path().join("calendar.json");
+    std::fs::copy(&fixture, &snap).expect("fixture copies");
+
+    let out = bin()
+        .args(["catalog", "status"])
+        // LS_DATA_HOME intentionally unset → status_config_from_env() fails.
+        .env_remove("LS_DATA_HOME")
+        .env("LS_CALENDAR_ADOPTION", "shadow")
+        .env("LS_CALENDAR_SNAPSHOT", &snap)
+        .output()
+        .unwrap();
+
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "a config error exits non-zero: {stderr}");
+    assert_eq!(
+        stderr.matches("calendar-startup").count(),
+        1,
+        "the startup record still fires exactly once before the config error: {stderr}"
+    );
+    assert!(stderr.contains("adoption=shadow"), "the record names the adoption: {stderr}");
+    assert!(stderr.contains("LS_DATA_HOME"), "the config error is the failure cause: {stderr}");
 }
 
 // ===========================================================================
