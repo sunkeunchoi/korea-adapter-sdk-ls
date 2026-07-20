@@ -155,6 +155,29 @@ when none can be proven (or the calendar is unavailable) until an explicit
 **bypass** — it records the operator, run context, and the calendar condition automatic
 selection skipped, and changes neither probe status nor any dispatch authorization.
 
+**`ls-ingest` behavior by adoption (issue #186).** `ls-ingest` also reads the shared calendar,
+resolving `LS_CALENDAR_SNAPSHOT` once per invocation after acquiring the ingest lock and evaluating
+it at one fixed instant:
+
+- **Legacy** — the existing civil-date/weekday-compatible path remains authoritative.
+- **Shadow** (default) — the calendar plan and divergence are recorded on the redacted,
+  non-persisted diagnostic channel, while gateway requests, checkpoint bytes, markers, and exit
+  behavior stay Legacy-compatible (byte-identical).
+- **Enforced** — automatic `accumulate`, `probe-lookback`, and `rebase` fail closed before SDK
+  construction when the explicit snapshot is missing, unauthorized, expired, or cannot cover the
+  relevant date; no weekday fallback is used. The 16:30 KST close buffer determines only the latest
+  eligible civil date, then calendar facts select the established prefix: requests end on the last
+  reachable Trading Session, proven trailing Closed dates advance only after successful coverage,
+  and scanning stops before the first Unknown/unavailable date. An all-Closed prefix can advance
+  without a gateway request; `probe-lookback` cannot jump across an Unknown boundary; `rebase`
+  performs the same admission before it writes epoch marks or wipes a series.
+
+Checkpoint migration merges legacy ranges across a proven all-Closed gap only when full-history
+freshness is `fresh`; stale or unevaluated evidence keeps the ranges separate for conservative
+over-fetch. Staleness remains a diagnostic and never rewrites a day fact. `BACKWARD WIDEN UNCERTAIN`
+is likewise non-persisted and reevaluated after evidence changes. Shadow remains the supported
+default; the live Enforced cutover and Consumer Retirement Gate are not claimed complete here.
+
 ### Max-lookback probe (run FIRST — sizes the backfill)
 
 Before the first minute backfill, run the staged probe to learn how deep the server

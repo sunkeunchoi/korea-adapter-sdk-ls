@@ -40,7 +40,7 @@
 
 use std::path::PathBuf;
 
-use chrono::{Duration, NaiveDate, Utc};
+use chrono::{DateTime, Duration, NaiveDate, Utc};
 use nautilus_ls::config::LsAdapterConfig;
 use nautilus_ls::ingest::{
     last_closed_session, BarKind, CoverageReport, IngestConfig, Ingestor, ACCUMULATE_CLOSE_BUFFER,
@@ -76,16 +76,23 @@ fn exit_code_for(report: &CoverageReport) -> u8 {
     }
 }
 
+fn backward_widen_uncertainty_line(
+    uncertainty: &nautilus_ls::ingest::BackwardWidenUncertainty,
+) -> String {
+    format!(
+        "BACKWARD WIDEN UNCERTAIN: {} {} — lookback floor {} precedes earliest stored coverage {}; the interval contains Unknown/unavailable calendar evidence (calendar_stale={}) and no marker was persisted. Resolve calendar evidence and re-run.",
+        uncertainty.instrument,
+        uncertainty.bar_type,
+        uncertainty.floor,
+        uncertainty.earliest_stored,
+        uncertainty.calendar_stale,
+    )
+}
+
 #[tokio::main]
 async fn main() -> std::process::ExitCode {
     // Credential hygiene before any output (mirrors the repo's smoke convention).
     scrub::install();
-    // Mandatory startup calendar record (U8): resolves the explicit snapshot path +
-    // adoption from env at the composition root, emits one redacted line to the
-    // non-persisted diagnostic channel (stderr). Default adoption = Shadow; a missing
-    // snapshot is non-fatal (Shadow degradation contract, KTD8). Startup record ONLY —
-    // the ingest decision migration is U9/U10.
-    nautilus_ls::calendar::emit_startup_from_env("ls-ingest");
     // Scrub the terminal error too — a `?`-propagated SDK error would otherwise be
     // printed unscrubbed by the runtime, leaking a raw broker message.
     match run().await {
@@ -158,6 +165,22 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
     // load (t8430 + 2x t9945) against the shared per-process rate buckets.
     let _lock = AdvisoryLock::acquire(&catalog, LockKind::Ingest)?;
 
+    // Freeze one invocation clock, adoption posture, path, and loaded snapshot after the
+    // lock wait and before constructing anything gateway-capable.
+    let calendar = nautilus_ls::calendar::IngestCalendarContext::from_env(Utc::now());
+    let calendar_target = calendar_target_for_mode(&mode, calendar.as_of())?;
+    let startup = calendar.startup_record("ls-ingest", calendar_target);
+    nautilus_ls::calendar::emit_startup_record(&startup);
+    if automatic_mode_requires_calendar(&mode)
+        && startup.action == nautilus_ls::calendar::ResultingAction::EnforcedFailClosed
+    {
+        return Err(format!(
+            "calendar admission refused {mode} before gateway construction: {}",
+            startup.render_line()
+        )
+        .into());
+    }
+
     let adapter_cfg = match std::env::var("LS_INGEST_LANE_FILE") {
         Ok(path) => LsAdapterConfig::from_lane_file(path),
         Err(_) => LsAdapterConfig::from_env(),
@@ -168,7 +191,7 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
     // for a pilot symbol and write <data>/probes/minute-lookback.json. No universe
     // load — the probe walks a single pilot symbol. Operator-gated.
     if mode == "probe-lookback" {
-        run_probe(&sdk, catalog).await?;
+        run_probe(&sdk, catalog, &calendar).await?;
         return Ok(None);
     }
 
@@ -229,9 +252,7 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
     // Resolve the per-mode date range.
     let (sdate, edate) = if accumulate {
         let floor = env_required("LS_INGEST_LOOKBACK")?;
-        let now_kst = (Utc::now() + Duration::hours(9)).naive_utc();
-        let last_closed = last_closed_session(now_kst, ACCUMULATE_CLOSE_BUFFER);
-        (floor, last_closed.format("%Y%m%d").to_string())
+        automatic_date_range(floor, calendar_target)
     } else {
         (env_required("LS_INGEST_SDATE")?, env_required("LS_INGEST_EDATE")?)
     };
@@ -249,19 +270,15 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
     let report = if accumulate {
         let floor = parse_yyyymmdd(&sdate)?;
         let last_closed = parse_yyyymmdd(&edate)?;
+        let gate = nautilus_ls::ingest::CalendarGate::new(
+            calendar.adoption(),
+            calendar.view(),
+        );
         if mode == "rebase" {
-            ingestor.run_rebase(&universe, last_closed, floor).await?
+            ingestor
+                .run_rebase_gated(&universe, last_closed, floor, gate)
+                .await?
         } else {
-            // U9/KTD8: resolve the explicit snapshot path + adoption at the composition root
-            // and inject one calendar gate. Default adoption = Shadow; a missing/failed
-            // snapshot is non-fatal in Shadow/Legacy (the weekday path stays authoritative).
-            // `loaded` owns the calendar for the duration of this call.
-            let as_of = Utc::now();
-            let adoption = nautilus_ls::calendar::adoption_from_env();
-            let path = nautilus_ls::calendar::snapshot_path_from_env();
-            let loaded = nautilus_ls::calendar::resolve_and_load(path.as_deref(), as_of, adoption);
-            let view = loaded.calendar().and_then(|cal| cal.as_of(as_of).ok());
-            let gate = nautilus_ls::ingest::CalendarGate::new(adoption, view);
             ingestor
                 .run_accumulate_gated(&universe, last_closed, floor, gate)
                 .await?
@@ -334,6 +351,9 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
             );
         }
     }
+    for uncertainty in &report.backward_widen_uncertainties {
+        println!("{}", backward_widen_uncertainty_line(uncertainty));
+    }
     if !report.budget_deferrals.is_empty() {
         for d in &report.budget_deferrals {
             println!(
@@ -355,12 +375,16 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
 /// Staged max-lookback probe (KTD10). Uses a single liquid pilot symbol (default
 /// `005930`) and a windowed backward search anchored at the last closed session,
 /// writing the result to `<data>/probes/minute-lookback.json`.
-async fn run_probe(sdk: &ls_sdk::LsSdk, catalog: PathBuf) -> Result<(), Box<dyn std::error::Error>> {
+async fn run_probe(
+    sdk: &ls_sdk::LsSdk,
+    catalog: PathBuf,
+    calendar: &nautilus_ls::calendar::IngestCalendarContext,
+) -> Result<(), Box<dyn std::error::Error>> {
     let pilot = std::env::var("LS_PROBE_SYMBOL").unwrap_or_else(|_| "005930".into());
     let ncnt: u32 = std::env::var("LS_PROBE_NCNT").ok().and_then(|s| s.parse().ok()).unwrap_or(1);
-    let now_kst = (Utc::now() + Duration::hours(9)).naive_utc();
+    let now_kst = (calendar.as_of() + Duration::hours(9)).naive_utc();
     let anchor = last_closed_session(now_kst, ACCUMULATE_CLOSE_BUFFER);
-    let probed_at = Utc::now().to_rfc3339();
+    let probed_at = calendar.as_of().to_rfc3339();
 
     // A dummy config carrying the catalog path (the probe uses the fetcher, not the
     // range fields).
@@ -373,15 +397,7 @@ async fn run_probe(sdk: &ls_sdk::LsSdk, catalog: PathBuf) -> Result<(), Box<dyn 
         overlap_days: DEFAULT_OVERLAP_DAYS,
     };
     let ingestor = Ingestor::new(sdk.clone(), config);
-    // U9/KTD8: inject the calendar gate for the probe anchor. Default adoption = Shadow (the
-    // weekday anchor stays authoritative); Enforced selects the most recent proven session or
-    // stops. `loaded` owns the calendar for the duration of the probe call.
-    let as_of = Utc::now();
-    let adoption = nautilus_ls::calendar::adoption_from_env();
-    let cal_path = nautilus_ls::calendar::snapshot_path_from_env();
-    let loaded = nautilus_ls::calendar::resolve_and_load(cal_path.as_deref(), as_of, adoption);
-    let view = loaded.calendar().and_then(|cal| cal.as_of(as_of).ok());
-    let gate = nautilus_ls::ingest::CalendarGate::new(adoption, view);
+    let gate = nautilus_ls::ingest::CalendarGate::new(calendar.adoption(), calendar.view());
     match ingestor
         .run_probe_lookback_gated(&pilot, ncnt, anchor, probed_at, gate)
         .await?
@@ -406,6 +422,23 @@ fn env_required(key: &str) -> Result<String, String> {
 
 fn parse_yyyymmdd(s: &str) -> Result<NaiveDate, String> {
     NaiveDate::parse_from_str(s.trim(), "%Y%m%d").map_err(|e| format!("bad date {s:?}: {e}"))
+}
+
+fn automatic_mode_requires_calendar(mode: &str) -> bool {
+    matches!(mode, "accumulate" | "rebase" | "probe-lookback")
+}
+
+fn calendar_target_for_mode(mode: &str, as_of: DateTime<Utc>) -> Result<NaiveDate, String> {
+    if automatic_mode_requires_calendar(mode) {
+        let now_kst = (as_of + Duration::hours(9)).naive_utc();
+        Ok(last_closed_session(now_kst, ACCUMULATE_CLOSE_BUFFER))
+    } else {
+        parse_yyyymmdd(&env_required("LS_INGEST_EDATE")?)
+    }
+}
+
+fn automatic_date_range(floor: String, calendar_target: NaiveDate) -> (String, String) {
+    (floor, calendar_target.format("%Y%m%d").to_string())
 }
 
 fn require_paper() -> Result<(), Box<dyn std::error::Error>> {
@@ -539,7 +572,11 @@ fn parse_symbol_ids(list: &str) -> Vec<InstrumentId> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nautilus_ls::ingest::{AppendRefusal, BackwardWidenWarning, BudgetEstimate, HealRefusal, RangeRefusal};
+    use chrono::TimeZone;
+    use nautilus_ls::ingest::{
+        AppendRefusal, BackwardWidenUncertainty, BackwardWidenWarning, BudgetEstimate,
+        HealRefusal, RangeRefusal,
+    };
 
     /// A zero-refusal, zero-warning coverage report — the base each case mutates.
     fn empty_report() -> CoverageReport {
@@ -575,6 +612,19 @@ mod tests {
             earliest_stored: "20240618".to_string(),
         });
         assert_eq!(exit_code_for(&report), 0, "backward-widen warnings never affect the exit code");
+    }
+
+    #[test]
+    fn exit_zero_for_backward_widen_uncertainty() {
+        let mut report = empty_report();
+        report.backward_widen_uncertainties.push(BackwardWidenUncertainty {
+            instrument: "005930.XKRX".to_string(),
+            bar_type: "1-DAY".to_string(),
+            floor: "20100615".to_string(),
+            earliest_stored: "20100618".to_string(),
+            calendar_stale: false,
+        });
+        assert_eq!(exit_code_for(&report), 0);
     }
 
     /// R8: each genuine refusal vec independently forces a nonzero exit — and it is
@@ -637,6 +687,48 @@ mod tests {
         std::env::set_var("LS_TEST_FLAG_XYZ", "0");
         assert!(!env_flag("LS_TEST_FLAG_XYZ"), "0 → false");
         std::env::remove_var("LS_TEST_FLAG_XYZ");
+    }
+
+    #[test]
+    fn automatic_calendar_target_is_the_close_buffer_civil_ceiling() {
+        let after = Utc.with_ymd_and_hms(2026, 7, 18, 8, 0, 0).unwrap(); // 17:00 KST Saturday
+        let before = Utc.with_ymd_and_hms(2026, 7, 18, 6, 0, 0).unwrap(); // 15:00 KST Saturday
+
+        assert_eq!(
+            calendar_target_for_mode("accumulate", after).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 7, 18).unwrap()
+        );
+        assert_eq!(
+            calendar_target_for_mode("probe-lookback", before).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 7, 17).unwrap()
+        );
+    }
+
+    #[test]
+    fn automatic_date_range_uses_the_frozen_calendar_target() {
+        assert_eq!(
+            automatic_date_range(
+                "20100101".to_string(),
+                NaiveDate::from_ymd_opt(2026, 7, 18).unwrap(),
+            ),
+            ("20100101".to_string(), "20260718".to_string())
+        );
+    }
+
+    #[test]
+    fn backward_widen_uncertainty_output_is_distinct_and_complete() {
+        let line = backward_widen_uncertainty_line(&BackwardWidenUncertainty {
+            instrument: "005930.XKRX".to_string(),
+            bar_type: "1-DAY".to_string(),
+            floor: "20100615".to_string(),
+            earliest_stored: "20100618".to_string(),
+            calendar_stale: true,
+        });
+
+        assert!(line.starts_with("BACKWARD WIDEN UNCERTAIN:"));
+        for expected in ["005930.XKRX", "1-DAY", "20100615", "20100618", "calendar_stale=true"] {
+            assert!(line.contains(expected), "missing {expected}: {line}");
+        }
     }
 
     mod stratified {

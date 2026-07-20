@@ -35,7 +35,7 @@ use nautilus_model::enums::{AggregationSource, BarAggregation, PriceType};
 use nautilus_model::identifiers::InstrumentId;
 use nautilus_model::types::{Price, Quantity};
 use nautilus_ls_calendar::schema::DayStatus;
-use nautilus_ls_calendar::{AsOfView, CalendarAdoption, DateRange, SessionSearch};
+use nautilus_ls_calendar::{AsOfView, CalendarAdoption, DimensionStaleness};
 
 use crate::calendar::{emit_divergence, DivergenceObservation};
 use nautilus_persistence::backend::catalog::ParquetDataCatalog;
@@ -143,6 +143,25 @@ pub enum ProbeAnchor {
     Stop,
 }
 
+/// The consumer-owned proof plan for one inclusive pending span.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CalendarRangePlan {
+    /// Last positively-established Trading Session eligible as a request endpoint.
+    pub request_through: Option<NaiveDate>,
+    /// Last established date that may become covered after the request succeeds.
+    pub advance_through: Option<NaiveDate>,
+    /// First Unknown, unavailable, or out-of-coverage date, if scanning stopped.
+    pub stop_before: Option<NaiveDate>,
+}
+
+impl CalendarRangePlan {
+    /// A wipe-and-repull heal cannot commit a partial prefix because it deletes the
+    /// whole series first. Admit it only when the complete planned span is established.
+    fn destructive_request_through(self) -> Option<NaiveDate> {
+        self.stop_before.is_none().then_some(self.request_through).flatten()
+    }
+}
+
 /// The adoption-INDEPENDENT calendar continuity verdict for an OPEN civil-date interval —
 /// the checkpoint merge-hole test (U10, KTD8). Legacy checkpoint ranges either side of a
 /// gap merge into one watermark ONLY when every intervening date is a proven Closed date; a
@@ -179,8 +198,8 @@ pub enum WidenAction {
     /// Emit + PERSIST the normal backward-widen warning (Legacy/Shadow always; Enforced when
     /// a proven Trading Session lies in the pre-coverage region — real un-fetched history).
     EmitPersist,
-    /// Emit the DISTINCT NON-PERSISTED uncertainty warning (Enforced + Unknown/unavailable
-    /// evidence, no proven session): do NOT record a history floor, so a later run with
+    /// Emit the DISTINCT NON-PERSISTED uncertainty warning (Enforced + any
+    /// Unknown/unavailable evidence): do NOT record a history floor, so a later run with
     /// newly-resolved calendar evidence re-evaluates the region.
     EmitUncertain,
     /// Emit nothing (Enforced + an all-proven-Closed pre-coverage region — no trading history
@@ -220,6 +239,15 @@ impl<'c> CalendarGate<'c> {
     /// The adoption posture this gate runs under.
     pub fn adoption(&self) -> CalendarAdoption {
         self.adoption
+    }
+
+    /// Full-history freshness for conservative checkpoint continuity decisions.
+    pub fn full_history_freshness(&self) -> Option<DimensionStaleness> {
+        self.view.map(|view| view.freshness().full_history)
+    }
+
+    pub fn has_stale_evidence(&self) -> bool {
+        self.view.map(|view| view.freshness().any_stale()).unwrap_or(false)
     }
 
     /// The adoption-INDEPENDENT calendar decision for `target` (U9). Consults the injected
@@ -345,6 +373,79 @@ impl<'c> CalendarGate<'c> {
         }
     }
 
+    fn established_prefix(&self, start: NaiveDate, ceiling: NaiveDate) -> CalendarRangePlan {
+        let mut plan = CalendarRangePlan {
+            request_through: None,
+            advance_through: None,
+            stop_before: None,
+        };
+        if start > ceiling {
+            return plan;
+        }
+        let Some(view) = self.view else {
+            plan.stop_before = Some(start);
+            return plan;
+        };
+        let coverage = view.calendar().coverage();
+        if start < coverage.materialized_from || start > coverage.materialized_through {
+            plan.stop_before = Some(start);
+            return plan;
+        }
+        let scan_end = ceiling.min(coverage.materialized_through);
+        for row in view
+            .calendar()
+            .snapshot()
+            .rows
+            .iter()
+            .filter(|row| row.date >= start)
+            .take_while(|row| row.date <= scan_end)
+        {
+            match row.status {
+                DayStatus::TradingSession => {
+                    plan.request_through = Some(row.date);
+                    plan.advance_through = Some(row.date);
+                }
+                DayStatus::Closed => plan.advance_through = Some(row.date),
+                DayStatus::Unknown => {
+                    plan.stop_before = Some(row.date);
+                    break;
+                }
+            }
+        }
+        if plan.stop_before.is_none() && ceiling > coverage.materialized_through {
+            plan.stop_before = coverage.materialized_through.succ_opt();
+        }
+        plan
+    }
+
+    /// Plan one pending accumulate span. Legacy and Shadow execute the unchanged civil
+    /// range; Shadow records the counterfactual proof plan. Enforced acts only on the
+    /// established prefix and never selects an endpoint beyond its first uncertainty.
+    fn accumulate_plan(&self, start: NaiveDate, ceiling: NaiveDate) -> CalendarRangePlan {
+        let legacy = CalendarRangePlan {
+            request_through: (start <= ceiling).then_some(ceiling),
+            advance_through: (start <= ceiling).then_some(ceiling),
+            stop_before: None,
+        };
+        match self.adoption {
+            CalendarAdoption::Legacy => legacy,
+            CalendarAdoption::Shadow => {
+                let observed = self.established_prefix(start, ceiling);
+                tracing::info!(
+                    start = %fmt_ymd(start),
+                    ceiling = %fmt_ymd(ceiling),
+                    request_through = ?observed.request_through.map(fmt_ymd),
+                    advance_through = ?observed.advance_through.map(fmt_ymd),
+                    stop_before = ?observed.stop_before.map(fmt_ymd),
+                    adoption = "shadow",
+                    "calendar shadow accumulate plan (recorded; legacy range authoritative)"
+                );
+                legacy
+            }
+            CalendarAdoption::Enforced => self.established_prefix(start, ceiling),
+        }
+    }
+
     /// The most recent proven Trading Session at or before `anchor` in the injected view, or
     /// `None` if there is no view, no proven session, or an `Unknown` sits at/before the
     /// anchor with no proven session first (proof-preserving — an `Unknown` never manufactures
@@ -352,14 +453,24 @@ impl<'c> CalendarGate<'c> {
     fn select_recent_session(&self, anchor: NaiveDate) -> Option<NaiveDate> {
         let view = self.view?;
         let coverage = view.calendar().coverage();
-        // Clamp the scan window to the materialized coverage; an anchor past the window end
-        // scans only within it (an out-of-window anchor cannot be proven a session itself).
-        let end = anchor.min(coverage.materialized_through);
-        let range = DateRange::inclusive(coverage.materialized_from, end).ok()?;
-        match view.last_session(&range) {
-            Ok(SessionSearch::Found(d)) => Some(d),
-            _ => None,
+        if anchor < coverage.materialized_from || anchor > coverage.materialized_through {
+            return None;
         }
+        for row in view
+            .calendar()
+            .snapshot()
+            .rows
+            .iter()
+            .rev()
+            .skip_while(|row| row.date > anchor)
+        {
+            match row.status {
+                DayStatus::TradingSession => return Some(row.date),
+                DayStatus::Closed => {}
+                DayStatus::Unknown => return None,
+            }
+        }
+        None
     }
 
     /// The probe anchor under the adoption seam (U9). Legacy/Shadow keep `weekday_anchor`
@@ -449,7 +560,43 @@ impl<'c> CalendarGate<'c> {
         floor: NaiveDate,
         earliest_stored: NaiveDate,
     ) -> ContinuityDecision {
-        self.scan_continuity(floor, earliest_stored)
+        if floor >= earliest_stored {
+            return ContinuityDecision::AllClosed;
+        }
+        let Some(view) = self.view else {
+            return ContinuityDecision::Indeterminate;
+        };
+        let coverage = view.calendar().coverage();
+        let last = match earliest_stored.pred_opt() {
+            Some(last) => last,
+            None => return ContinuityDecision::Indeterminate,
+        };
+        if floor < coverage.materialized_from || last > coverage.materialized_through {
+            return ContinuityDecision::Indeterminate;
+        }
+        let mut saw_session = false;
+        let mut indeterminate = false;
+        for row in view
+            .calendar()
+            .snapshot()
+            .rows
+            .iter()
+            .filter(|row| row.date >= floor)
+            .take_while(|row| row.date < earliest_stored)
+        {
+            match row.status {
+                DayStatus::TradingSession => saw_session = true,
+                DayStatus::Closed => {}
+                DayStatus::Unknown => indeterminate = true,
+            }
+        }
+        if indeterminate {
+            ContinuityDecision::Indeterminate
+        } else if saw_session {
+            ContinuityDecision::TradingPresent
+        } else {
+            ContinuityDecision::AllClosed
+        }
     }
 
     /// The backward-widen warning action for the pre-coverage region `[floor, earliest_stored)`
@@ -1402,8 +1549,8 @@ pub struct BackwardWidenWarning {
 }
 
 /// A backward-widen uncertainty (U10/KTD8, Enforced only): the pre-coverage region
-/// `[floor, earliest_stored)` contains an Unknown or unavailable calendar date and NO proven
-/// Trading Session, so whether it holds un-fetched trading history is undetermined. Unlike
+/// `[floor, earliest_stored)` contains an Unknown or unavailable calendar date, so whether
+/// the complete interval holds un-fetched trading history is undetermined. Unlike
 /// [`BackwardWidenWarning`], this is deliberately NOT persisted (no `history_floor` is
 /// recorded), so a later run with newly-resolved calendar evidence re-evaluates the region
 /// and can escalate it to a real warning or clear it. Surfaced, never silent; never reddens
@@ -1418,6 +1565,8 @@ pub struct BackwardWidenUncertainty {
     pub floor: String,
     /// The earliest stored coverage date (`YYYYMMDD`) the floor precedes.
     pub earliest_stored: String,
+    /// Whether another calendar freshness dimension was stale at the fixed as-of instant.
+    pub calendar_stale: bool,
 }
 
 /// A symbol/triple deferred pre-dispatch because its estimated page cost exceeds
@@ -1804,6 +1953,7 @@ impl Ingestor {
         // (Legacy/Shadow stay weekday-authoritative and byte-identical).
         let mut checkpoint = Checkpoint::load_gated(&checkpoint_path, &calendar)?;
         checkpoint.adjusted_prices = self.config.adjusted_prices;
+        let mut checkpoint_committed = false;
 
         let mut bars_written = 0usize;
         let mut ingested = 0usize;
@@ -1823,67 +1973,54 @@ impl Ingestor {
                 let bar_type = kind.bar_type(*id)?;
                 // Decide whether this triple heals or appends. Set only on the
                 // normal (append) path.
-                let mut pending_start: Option<NaiveDate> = None;
+                let mut pending_plan: Option<CalendarRangePlan> = None;
+                let mut heal_plan: Option<CalendarRangePlan> = None;
                 // The shifted mark outranks the watermark as authority (KTD-2): a
                 // marked symbol heals regardless of watermark state, BEFORE the
                 // already-current skip below.
                 let heal_now = if matches!(kind, BarKind::Daily) && checkpoint.is_shifted(&instrument, &label) {
+                    let plan = calendar.accumulate_plan(lookback_floor, last_closed);
+                    let required_through = checkpoint
+                        .watermark(&instrument, &label)
+                        .into_iter()
+                        .chain(
+                            checkpoint
+                                .shifted_detected(&instrument, &label)
+                                .and_then(|date| NaiveDate::parse_from_str(date, "%Y%m%d").ok()),
+                        )
+                        .max();
+                    let heal_through = plan.destructive_request_through();
+                    if heal_through.is_none()
+                        || required_through.is_some_and(|required| {
+                            heal_through.is_some_and(|through| through < required)
+                        })
+                    {
+                        skipped += 1;
+                        continue;
+                    }
+                    heal_plan = Some(plan);
                     true
                 } else {
-                    // U9/KTD8 calendar next-fetch gate on the target session `last_closed`.
-                    // Legacy/Shadow fall through (weekday-authoritative; Shadow only records).
-                    // Enforced acts BEFORE any gateway request (backward-widen reads parquet,
-                    // detect_shift fetches) so Closed/Stop issue exactly zero requests.
-                    match calendar.action(last_closed) {
-                        GateAction::Proceed => {}
-                        GateAction::SkipAdvance => {
-                            // The endpoint `last_closed` is proven Closed, but the fetch this
-                            // SkipAdvance replaces covers the WHOLE range [start, last_closed]
-                            // (start = watermark+1, or lookback_floor for the initial backfill).
-                            // Advancing coverage over that span without a fetch is only safe when
-                            // EVERY date in it is proven Closed — otherwise a Trading Session in
-                            // the range would be silently skipped and marked covered with zero
-                            // bars (the "advance coverage without evidence" hazard, via the range
-                            // endpoint rather than the endpoint alone, KTD8). Re-scan the range.
-                            let wm = checkpoint.watermark(&instrument, &label);
-                            let start = match wm {
-                                Some(d) => d.succ_opt().expect("a date always has a successor"),
-                                None => lookback_floor,
-                            };
-                            match calendar.range_action(start, last_closed) {
-                                GateAction::SkipAdvance => {
-                                    // Whole range proven Closed: advance FROM closure evidence
-                                    // with NO gateway call — but only forward, never below the
-                                    // watermark (provenance guard; Unknown never reaches here).
-                                    if wm.map_or(true, |w| last_closed > w) {
-                                        checkpoint.set_watermark(&instrument, &label, last_closed);
-                                        checkpoint.save(&checkpoint_path)?;
-                                    }
-                                    skipped += 1;
-                                    continue;
-                                }
-                                GateAction::Stop => {
-                                    // An Unknown/unavailable date lies in the range with no
-                                    // proven session: stop before dispatch, preserve state.
-                                    skipped += 1;
-                                    continue;
-                                }
-                                GateAction::Proceed => {
-                                    // A proven Trading Session lies in the range: do NOT skip it.
-                                    // Fall through to the normal FETCH path (fetch the range as
-                                    // Legacy would), so the session is never silently skipped.
+                    let wm = checkpoint.watermark(&instrument, &label);
+                    let start = match wm {
+                        Some(d) => d.succ_opt().expect("a date always has a successor"),
+                        None => lookback_floor,
+                    };
+                    if start <= last_closed {
+                        let plan = calendar.accumulate_plan(start, last_closed);
+                        if plan.request_through.is_none() {
+                            if let Some(advance) = plan.advance_through {
+                                if wm.map_or(true, |watermark| advance > watermark) {
+                                    checkpoint.set_watermark(&instrument, &label, advance);
+                                    checkpoint.save(&checkpoint_path)?;
+                                    checkpoint_committed = true;
                                 }
                             }
-                        }
-                        GateAction::Stop => {
-                            // Unknown/unavailable: stop before dispatch. No watermark advance,
-                            // no save on this triple — checkpoint + watermark preserved
-                            // byte-for-byte, zero gateway requests for this target.
                             skipped += 1;
                             continue;
                         }
+                        pending_plan = Some(plan);
                     }
-                    let wm = checkpoint.watermark(&instrument, &label);
                     // R4/KTD-6 backward-widen loud no-op: accumulate fetches from
                     // watermark+1, never below it, so a floor earlier than the
                     // earliest stored coverage cannot be reached. Warn and name the
@@ -1942,6 +2079,7 @@ impl Ingestor {
                                         // this closes.
                                         checkpoint.set_history_floor(&instrument, &label, lookback_floor);
                                         checkpoint.save(&checkpoint_path)?;
+                                        checkpoint_committed = true;
                                     }
                                     WidenAction::EmitUncertain => {
                                         // Enforced + Unknown/unavailable evidence: the region MAY
@@ -1959,6 +2097,7 @@ impl Ingestor {
                                             bar_type: label.clone(),
                                             floor: fmt_ymd(lookback_floor),
                                             earliest_stored: fmt_ymd(earliest_stored),
+                                            calendar_stale: calendar.has_stale_evidence(),
                                         });
                                     }
                                     WidenAction::Suppress => {
@@ -1970,18 +2109,12 @@ impl Ingestor {
                             }
                         }
                     }
-                    // Range = watermark+1 .. last closed session (or floor if unseen).
-                    let start = match wm {
-                        Some(d) => d.succ_opt().expect("a date always has a successor"),
-                        None => lookback_floor,
-                    };
-                    if start > last_closed {
-                        // Already current — the sole skip authority makes this a no-op
-                        // (no bar fetch), even though the universe re-snapshot still ran.
+                    if pending_plan.is_none() {
+                        // Already current. Backward-widen evidence above remains observable,
+                        // but there is no pending forward span to plan or fetch.
                         skipped += 1;
                         continue;
                     }
-                    pending_start = Some(start);
                     // Basis-shift detection (KTD-3): before appending new daily bars,
                     // re-fetch the overlap window ending at the watermark and compare
                     // against stored bars. No watermark (first-ever accumulate) or an
@@ -1989,13 +2122,24 @@ impl Ingestor {
                     let mut detected = false;
                     if matches!(kind, BarKind::Daily) {
                         if let Some(wm) = checkpoint.watermark(&instrument, &label) {
-                            if self.detect_shift(&shcode, bar_type, wm).await? {
+                            let candidate = calendar.accumulate_plan(lookback_floor, last_closed);
+                            let detection_authorized = candidate
+                                .destructive_request_through()
+                                .is_some_and(|heal_through| heal_through >= wm)
+                                && (calendar.adoption() != CalendarAdoption::Enforced
+                                    || matches!(calendar.calendar_decision(wm), CalendarDecision::Fetch));
+                            if detection_authorized && self.detect_shift(&shcode, bar_type, wm).await? {
+                                let heal_through = candidate
+                                    .destructive_request_through()
+                                    .expect("an authorized detection has a complete heal endpoint");
                                 // Save the mark atomically BEFORE any delete (KTD-2:
                                 // mark-before-wipe is load-bearing — the reverse order
                                 // plus a crash would leave a high watermark over an
                                 // empty store and silently truncate history forever).
-                                checkpoint.mark_shifted(&instrument, &label, last_closed, RebaseOrigin::Heal);
+                                checkpoint.mark_shifted(&instrument, &label, heal_through, RebaseOrigin::Heal);
                                 checkpoint.save(&checkpoint_path)?;
+                                checkpoint_committed = true;
+                                heal_plan = Some(candidate);
                                 tracing::warn!(instrument = %instrument, "adjustment-basis shift detected; healing");
                                 detected = true;
                             }
@@ -2004,29 +2148,54 @@ impl Ingestor {
                     detected
                 };
                 if heal_now {
+                    let plan = heal_plan.expect("every admitted heal has a complete calendar plan");
+                    let heal_through = plan
+                        .destructive_request_through()
+                        .expect("every admitted heal has an established request endpoint");
                     match self
-                        .heal_daily(&mut checkpoint, &checkpoint_path, &shcode, &instrument, &label, bar_type, last_closed, lookback_floor)
+                        .heal_daily(&mut checkpoint, &checkpoint_path, &shcode, &instrument, &label, bar_type, heal_through, lookback_floor)
                         .await?
                     {
                         HealOutcome::Healed(n) => {
                             bars_written += n;
                             ingested += 1;
+                            if let Some(advance) = plan.advance_through {
+                                if advance > heal_through {
+                                    checkpoint.set_watermark(&instrument, &label, advance);
+                                    checkpoint.save(&checkpoint_path)?;
+                                }
+                            }
+                            checkpoint_committed = true;
                         }
                         HealOutcome::Refused(r) => heal_refusals.push(r),
                         // #104/R7: a heal re-pull append that hit an overlap
                         // refusal is per-triple, not run-fatal — record it and
                         // move on to the remaining triples (the mark stays).
-                        HealOutcome::AppendRefused(r) => append_refusals.push(r),
-                        HealOutcome::Incomplete => gaps_this_run.push(CoverageGap {
-                            instrument: instrument.clone(),
-                            bar_type: label.clone(),
-                            range: format!("{}..{}", fmt_ymd(lookback_floor), fmt_ymd(last_closed)),
-                            reason: GapReason::PaperThin,
-                        }),
+                        HealOutcome::AppendRefused(r) => {
+                            append_refusals.push(r);
+                            checkpoint_committed = true;
+                        }
+                        HealOutcome::Incomplete => {
+                            gaps_this_run.push(CoverageGap {
+                                instrument: instrument.clone(),
+                                bar_type: label.clone(),
+                                range: format!("{}..{}", fmt_ymd(lookback_floor), fmt_ymd(last_closed)),
+                                reason: GapReason::PaperThin,
+                            });
+                            checkpoint_committed = true;
+                        }
                     }
                     continue;
                 }
-                let start = pending_start.expect("the append path always computed a start");
+                let plan = pending_plan.expect("the append path always computed a calendar plan");
+                let start = match checkpoint.watermark(&instrument, &label) {
+                    Some(d) => d.succ_opt().expect("a date always has a successor"),
+                    None => lookback_floor,
+                };
+                let request_through = plan
+                    .request_through
+                    .expect("the append path always has a request endpoint");
+                let advance_through = plan.advance_through.unwrap_or(request_through);
                 // #102/KTD-1: trim the fetch window [start, last_closed] against the
                 // coverage the checkpoint already records above the watermark, using
                 // the in-memory checkpoint — never parquet, never a calendar (R3). In
@@ -2049,10 +2218,16 @@ impl Ingestor {
                 // range even when `last_closed` sits at or below its edate.
                 let highest_covered = covered
                     .iter()
-                    .filter(|(cs, _)| *cs <= last_closed)
-                    .map(|(_, e)| *e)
+                    .filter(|(cs, _)| *cs <= request_through)
+                    .map(|(_, e)| {
+                        if calendar.adoption() == CalendarAdoption::Enforced {
+                            (*e).min(advance_through)
+                        } else {
+                            *e
+                        }
+                    })
                     .max();
-                let sub_ranges = subtract_covered(start, last_closed, &covered);
+                let sub_ranges = subtract_covered(start, request_through, &covered);
 
                 // Pre-dispatch budget plan (AE3/KTD-3): under a measured budget, stop
                 // before a triple whose estimated page cost exceeds the remaining
@@ -2139,12 +2314,18 @@ impl Ingestor {
                                 Err(e) => return Err(e),
                             }
                         }
-                        TripleOutcome::Bars(_) => gaps_this_run.push(CoverageGap {
-                            instrument: instrument.clone(),
-                            bar_type: label.clone(),
-                            range,
-                            reason: GapReason::EmptyHistory,
-                        }),
+                        TripleOutcome::Bars(_) => {
+                            gaps_this_run.push(CoverageGap {
+                                instrument: instrument.clone(),
+                                bar_type: label.clone(),
+                                range,
+                                reason: GapReason::EmptyHistory,
+                            });
+                            if calendar.adoption() == CalendarAdoption::Enforced {
+                                halt_before = Some(*s);
+                                break;
+                            }
+                        }
                         TripleOutcome::Gap(reason) => {
                             let paper_thin = reason == GapReason::PaperThin;
                             gaps_this_run.push(CoverageGap {
@@ -2156,7 +2337,7 @@ impl Ingestor {
                             // A truncated fetch means the sub-range is only partially
                             // retrieved: pin before it and stop, or the un-fetched
                             // older history is skipped forever (R2/R10).
-                            if paper_thin {
+                            if paper_thin || calendar.adoption() == CalendarAdoption::Enforced {
                                 halt_before = Some(*s);
                                 break;
                             }
@@ -2184,19 +2365,26 @@ impl Ingestor {
                     // max(last_closed, highest recorded far edate). Advance there so
                     // the next run is a steady-state single-segment fetch (R1).
                     None => {
-                        let target = highest_covered.map_or(last_closed, |hc| last_closed.max(hc));
+                        let target = highest_covered.map_or(advance_through, |hc| advance_through.max(hc));
                         checkpoint.set_watermark(&instrument, &label, target);
                     }
                 }
-                // Persist after each triple for crash safety.
-                checkpoint.save(&checkpoint_path)?;
+                // Persist after each authorized triple for crash safety. Enforced stop/
+                // incomplete paths with no progress leave legacy input bytes untouched.
+                let changed = wrote_any || checkpoint.watermark(&instrument, &label) != wm;
+                if calendar.adoption() != CalendarAdoption::Enforced || changed {
+                    checkpoint.save(&checkpoint_path)?;
+                    checkpoint_committed = true;
+                }
             }
         }
 
         // Prune legacy completed/gap rows below the watermarks so daily runs stay
         // bounded (KTD7); the run's own gaps report comes from memory.
-        checkpoint.prune_below_watermarks();
-        checkpoint.save(&checkpoint_path)?;
+        if calendar.adoption() != CalendarAdoption::Enforced || checkpoint_committed {
+            checkpoint.prune_below_watermarks();
+            checkpoint.save(&checkpoint_path)?;
+        }
 
         // Each pending daily triple now costs a detection overlap fetch ON TOP
         // of the append fetch (KTD-3/KTD-4) — the printed lower bound must say
@@ -2254,26 +2442,66 @@ impl Ingestor {
         last_closed: NaiveDate,
         lookback_floor: NaiveDate,
     ) -> AdapterResult<CoverageReport> {
-        std::fs::create_dir_all(&self.config.catalog_path).map_err(|e| {
-            AdapterError::Ingest(format!("mkdir catalog {}: {e}", self.config.catalog_path.display()))
-        })?;
+        self.run_rebase_gated(
+            universe,
+            last_closed,
+            lookback_floor,
+            CalendarGate::legacy(),
+        )
+        .await
+    }
+
+    /// Calendar-aware epoch rebase. Admission and prefix selection happen before the
+    /// durable mark-all boundary; an unusable or zero-length Enforced prefix therefore
+    /// cannot mutate markers, wipe data, or dispatch to LS.
+    pub async fn run_rebase_gated(
+        &mut self,
+        universe: &[InstrumentId],
+        last_closed: NaiveDate,
+        lookback_floor: NaiveDate,
+        calendar: CalendarGate<'_>,
+    ) -> AdapterResult<CoverageReport> {
         if !self.config.bar_kinds.iter().any(|k| matches!(k, BarKind::Daily)) {
             return Err(AdapterError::Ingest(
                 "epoch re-base requires the daily bar kind (a mark with no daily lane would never heal)".to_string(),
             ));
         }
+        let plan = calendar.accumulate_plan(lookback_floor, last_closed);
+        let Some(rebase_end) = plan.request_through else {
+            return Ok(CoverageReport {
+                bars_written: 0,
+                triples_ingested: 0,
+                triples_skipped: universe.len() * self.config.bar_kinds.len(),
+                gaps: Vec::new(),
+                heal_refusals: Vec::new(),
+                range_refusals: Vec::new(),
+                append_refusals: Vec::new(),
+                backward_widen_warnings: Vec::new(),
+                backward_widen_uncertainties: Vec::new(),
+                budget_deferrals: Vec::new(),
+                budget: BudgetEstimate {
+                    symbols: universe.len(),
+                    bar_kinds: self.config.bar_kinds.len(),
+                    per_sec_cap: self.fetcher.daily_pacer_cap(),
+                    min_requests: 0,
+                },
+            });
+        };
+        std::fs::create_dir_all(&self.config.catalog_path).map_err(|e| {
+            AdapterError::Ingest(format!("mkdir catalog {}: {e}", self.config.catalog_path.display()))
+        })?;
         let checkpoint_path = self.config.checkpoint_path();
-        let mut checkpoint = Checkpoint::load(&checkpoint_path)?;
+        let mut checkpoint = Checkpoint::load_gated(&checkpoint_path, &calendar)?;
         let daily_label = BarKind::Daily.label();
         for id in universe {
             // Epoch origin — the one-time rollout, kept out of the organic audit
             // metric (KTD5/R8). A series already heal-marked keeps its heal origin
             // (keep-original-on-re-mark).
-            checkpoint.mark_shifted(&id.to_string(), &daily_label, last_closed, RebaseOrigin::Epoch);
+            checkpoint.mark_shifted(&id.to_string(), &daily_label, rebase_end, RebaseOrigin::Epoch);
         }
         checkpoint.save(&checkpoint_path)?;
         tracing::info!(symbols = universe.len(), "epoch re-base: all daily triples marked; healing");
-        self.run_accumulate(universe, last_closed, lookback_floor).await
+        self.run_accumulate_gated(universe, rebase_end, lookback_floor, calendar).await
     }
 
     /// Detect a basis shift for one daily triple (KTD-3): fetch the overlap
