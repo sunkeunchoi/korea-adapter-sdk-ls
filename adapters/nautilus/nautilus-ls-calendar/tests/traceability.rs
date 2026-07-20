@@ -161,8 +161,7 @@ const CONSUMER_BRANCHES: &[Anchor] = &[
     Anchor { label: "backward-widen Enforced Trading → warn + persist", file: "../tests/ingest.rs", needles: &["fn enforced_backward_widen_trading_session_warns_and_persists"] },
     Anchor { label: "backward-widen Enforced all-closed → silent", file: "../tests/ingest.rs", needles: &["fn enforced_backward_widen_all_closed_region_is_silent"] },
     Anchor { label: "backward-widen Enforced Unknown → uncertain", file: "../tests/ingest.rs", needles: &["fn enforced_backward_widen_unknown_region_is_uncertain_and_reevaluates"] },
-    // Catalog readiness.
-    Anchor { label: "catalog Shadow byte-identical", file: "../lab/tests/research_cli.rs", needles: &["fn shadow_is_byte_identical_to_legacy_while_recording_the_calendar_verdict"] },
+    // Catalog readiness (Enforced-only after U7 retirement).
     Anchor { label: "catalog Enforced Closed boundary no false-flag", file: "../lab/tests/research_cli.rs", needles: &["fn enforced_closed_watermark_boundary_does_not_false_flag"] },
     Anchor { label: "catalog Enforced Unknown → NO-GO indeterminate", file: "../lab/tests/research_cli.rs", needles: &["fn enforced_boundary_relevant_unknown_is_a_no_go_indeterminate"] },
     Anchor { label: "catalog Enforced out-of-coverage → NO-GO unavailable", file: "../lab/tests/research_cli.rs", needles: &["fn enforced_out_of_coverage_watermark_is_a_no_go_unavailable"] },
@@ -203,7 +202,7 @@ const DIVERGENCE_CLASSIFICATION: &[Anchor] = &[
     Anchor { label: "DivergenceClass type + classify", file: "../src/calendar.rs", needles: &["enum DivergenceClass", "fn classify_divergence"] },
     Anchor { label: "divergence redaction + non-persistence test", file: "../src/calendar.rs", needles: &["fn divergence_observation_is_redacted_and_classified"] },
     Anchor { label: "ingest emits classified divergence", file: "../tests/ingest.rs", needles: &["fn shadow_divergence_is_classified_and_redacted"] },
-    Anchor { label: "catalog emits classified divergence", file: "../lab/tests/research_cli.rs", needles: &["fn shadow_divergence_is_classified_and_redacted"] },
+    // catalog's Shadow divergence anchor was removed with its U7 Enforced-only retirement.
     Anchor { label: "budget-probe emits classified divergence", file: "../src/bin/budget-probe.rs", needles: &["fn shadow_divergence_is_classified_and_redacted"] },
     Anchor { label: "ladder emits classified divergence", file: "../lab/src/runner/live.rs", needles: &["fn shadow_divergence_is_classified_and_redacted"] },
 ];

@@ -107,9 +107,10 @@ Trading/Closed/Unknown/unavailable branch to its owning assertion in the consume
 
 ### Catalog readiness — `../lab/src/runner/research.rs`
 
+Enforced-only after the U7 retirement (weekday walk-back + Legacy/Shadow branches removed).
+
 | Branch | Owning assertion (`../lab/tests/research_cli.rs`) |
 |--------|---------------------------------------------------|
-| Shadow byte-identical | `shadow_is_byte_identical_to_legacy_while_recording_the_calendar_verdict` |
 | Enforced Closed boundary no false-flag | `enforced_closed_watermark_boundary_does_not_false_flag` |
 | Enforced Unknown → NO-GO indeterminate | `enforced_boundary_relevant_unknown_is_a_no_go_indeterminate` |
 | Enforced out-of-coverage → NO-GO unavailable | `enforced_out_of_coverage_watermark_is_a_no_go_unavailable` |
@@ -163,6 +164,5 @@ Each consumer emits a classified, redacted, non-persisted Shadow-divergence obse
 | `DivergenceClass` + `classify_divergence` | `enum DivergenceClass`, `fn classify_divergence` (`../src/calendar.rs`) |
 | Redacted, non-persisted, classified | `divergence_observation_is_redacted_and_classified` (`../src/calendar.rs`) |
 | Ingest emits classified divergence | `shadow_divergence_is_classified_and_redacted` (`../tests/ingest.rs`) |
-| Catalog emits classified divergence | `shadow_divergence_is_classified_and_redacted` (`../lab/tests/research_cli.rs`) |
 | Budget-probe emits classified divergence | `shadow_divergence_is_classified_and_redacted` (`../src/bin/budget-probe.rs`) |
 | Ladder emits classified divergence | `shadow_divergence_is_classified_and_redacted` (`../lab/src/runner/live.rs`) |

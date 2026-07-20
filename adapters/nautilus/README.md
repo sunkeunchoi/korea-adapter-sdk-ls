@@ -135,17 +135,13 @@ weekday primitive unless its committed [`gate-verdicts/<consumer>.json`](gate-ve
 is present and `PASS` (written only after the live gate). The public
 [`CLOSEOUT.md`](CLOSEOUT.md) is verdict-only.
 
-**`catalog status` behavior by adoption:**
-
-- **Legacy** — weekday/civil-date authoritative (the `last_weekday_on_or_before`
-  walk-back). Output unchanged from before the calendar.
-- **Shadow** (default) — byte-identical stdout, exit code, and verdict to Legacy, while
-  recording the calendar's boundary verdict to the stderr diagnostic channel.
-- **Enforced** — watermark and expected-range boundaries resolve against **proven
-  Trading Sessions**: a real holiday closure no longer false-flags; a boundary-relevant
-  Unknown is `NO-GO — calendar indeterminate`; an out-of-coverage/unavailable boundary is
-  `NO-GO — calendar unavailable`; a stale-but-established boundary is a **GO** with a
-  prominent warning naming the freshness dimension(s) that bound the queried dates.
+**`catalog status` behavior (Enforced, after the #189 U7 Consumer Retirement Gate):**
+watermark and expected-range boundaries resolve against **proven Trading Sessions** — a real
+holiday closure no longer false-flags; a boundary-relevant Unknown is `NO-GO — calendar
+indeterminate`; an out-of-coverage/unavailable boundary is `NO-GO — calendar unavailable`; a
+stale-but-established boundary is a **GO** with a prominent warning naming the freshness
+dimension(s) that bound the queried dates. There is no weekday fallback; the
+`last_weekday_on_or_before` walk-back is retired.
 
 **`budget-probe` behavior by adoption:** Legacy/Shadow keep the weekday
 `recent_trading_day` anchor authoritative (Shadow records the calendar-selected session);
