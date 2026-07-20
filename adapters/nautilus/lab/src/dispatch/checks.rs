@@ -14,7 +14,7 @@
 //! empty-store-with-current-watermark trap (a fresh watermark paired with a bar-presence
 //! sample).
 
-use chrono::{DateTime, Datelike, NaiveDate, Timelike, Utc};
+use chrono::{DateTime, NaiveDate, Timelike, Utc};
 use chrono_tz::Asia::Seoul;
 
 use nautilus_ls::error::AdapterResult;
@@ -61,45 +61,24 @@ pub enum CalendarDateFact {
     Unavailable,
 }
 
-/// A "is this a trading session" seam (Dependencies), SPLIT into the DATE fact and the
-/// time-of-day window (U12). The date fact is a proven tri-state calendar fact; the time
-/// window is the PRESERVED 09:00–15:30 KST minute test. `WeekdayKrxCalendar` remains the
-/// Legacy/Shadow implementation; `KrxCalendar` is adapted onto the date fact under Enforced
-/// via [`date_fact_from_view`].
+/// The PRESERVED time-of-day window seam (U12/#189 U9, KTD7). After the Production Ladder
+/// Consumer Retirement Gate the weekday DATE decision is retired — the date fact comes only
+/// from the real calendar via [`date_fact_from_view`] (Enforced) — but the 09:00–15:30 KST
+/// minute test is kept unchanged, so this trait carries just the time-of-day half.
 pub trait TradingCalendar {
-    /// The tri-state DATE fact for the KST civil date of `now` (date-of-day only).
-    fn date_fact(&self, now: DateTime<Utc>) -> CalendarDateFact;
-
     /// Whether `now` falls inside the PRESERVED 09:00–15:30 KST minute window
     /// (time-of-day only — the unchanged half of the old fused test).
     fn in_time_window(&self, now: DateTime<Utc>) -> bool;
-
-    /// Back-compat fused convenience: a session is open iff the date is a proven Trading
-    /// Session AND the time-of-day is inside the window. Retained so existing callers of
-    /// the seam (and its unit test) keep working; the gate itself consumes the two split
-    /// parts.
-    fn is_trading_session(&self, now: DateTime<Utc>) -> bool {
-        self.date_fact(now) == CalendarDateFact::TradingSession && self.in_time_window(now)
-    }
 }
 
-/// The weekday-only KRX date fact (Mon–Fri = Trading Session, Sat/Sun = Closed) + the
-/// preserved 09:00–15:30 KST minute window. The Legacy/Shadow implementation: a KRX
-/// holiday still reads as a Trading Session here (it never yields `Unknown`), so Enforced
-/// (the real `KrxCalendar`) is what closes that gap.
+/// The preserved weekday time-of-day window (09:00–15:30 KST). The weekday DATE decision
+/// (`date_fact`) was retired with the Ladder cutover (#189 U9) — a KRX holiday used to read as
+/// a Trading Session here; the real `KrxCalendar` ([`date_fact_from_view`]) now owns the date
+/// fact. Only the time-of-day window remains (KTD7).
 #[derive(Debug, Clone, Copy, Default)]
 pub struct WeekdayKrxCalendar;
 
 impl TradingCalendar for WeekdayKrxCalendar {
-    fn date_fact(&self, now: DateTime<Utc>) -> CalendarDateFact {
-        let weekday = now.with_timezone(&Seoul).weekday();
-        if weekday == chrono::Weekday::Sat || weekday == chrono::Weekday::Sun {
-            CalendarDateFact::Closed
-        } else {
-            CalendarDateFact::TradingSession
-        }
-    }
-
     fn in_time_window(&self, now: DateTime<Utc>) -> bool {
         let kst = now.with_timezone(&Seoul);
         // 09:00–15:30 KST inclusive of the open, exclusive of the close minute. PRESERVED

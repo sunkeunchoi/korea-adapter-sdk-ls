@@ -277,8 +277,7 @@ use crate::dispatch::ladder::apply_deescalation;
 use crate::dispatch::readiness::{compute_readiness, readiness_summary, ReadinessVerdict};
 use crate::dispatch::{UnknownOverride, RUNG_MIN};
 
-use nautilus_ls::calendar::{DivergenceObservation, StartupRecord};
-use nautilus_ls_calendar::schema::DayStatus;
+use nautilus_ls::calendar::StartupRecord;
 use nautilus_ls_calendar::CalendarAdoption;
 
 /// The dispatch gate's resolved configuration (env-gathered, but constructible directly
@@ -511,64 +510,26 @@ fn resolve_calendar_for_dispatch(
     cfg: &DispatchCliConfig,
     now_utc: chrono::DateTime<Utc>,
 ) -> (CalendarDateFact, StartupRecord) {
-    // The deterministic offline seam: a stubbed fact is authoritative; still emit a record
-    // reflecting the stub + adoption so the composition-root diagnostic path is exercised
-    // (no snapshot is loaded, so it renders `snapshot=not-configured`).
+    // Enforced-only after the Ladder Consumer Retirement Gate (#189 U9, KTD3): the date gate no
+    // longer consults LS_CALENDAR_ADOPTION, and the startup record names the enforced posture.
+    // The deterministic offline seam: a stubbed fact is authoritative; still emit a record so the
+    // composition-root diagnostic path is exercised (no snapshot loaded → `snapshot=not-configured`).
     if let Some(fact) = cfg.date_fact_stub {
-        return (fact, stub_startup_record(cfg.adoption, fact));
+        return (fact, stub_startup_record(CalendarAdoption::Enforced, fact));
     }
     let path = nautilus_ls::calendar::snapshot_path_from_env();
     let loaded = nautilus_ls::calendar::resolve_and_load(path.as_deref(), now_utc, cfg.adoption);
-    let resolved = resolve_date_fact_and_record(cfg.adoption, &loaded, now_utc);
-    // Shadow-divergence classification (U3): the classified weekday-vs-calendar date-fact
-    // disagreement, on the same non-persisted channel (Shadow only). Non-fatal, recorded after
-    // the fact is resolved; the weekday date fact stays authoritative.
-    if let Some(obs) = ladder_divergence(cfg.adoption, &loaded, now_utc) {
-        nautilus_ls::calendar::emit_divergence(&obs);
-    }
-    resolved
-}
-
-/// The classified Shadow-divergence for the Production Ladder date gate (U3, KTD6): the weekday
-/// `date_fact` (Sat/Sun → Closed, else Trading Session — a KRX holiday still reads open) vs the
-/// calendar's tri-state fact for the same KST date. `Some` only under Shadow (Legacy records no
-/// divergence; Enforced acts on the calendar fact). Pure + assertable — env-free, so the tests
-/// inject a fixture-built `LoadedCalendar` directly.
-fn ladder_divergence(
-    adoption: CalendarAdoption,
-    loaded: &nautilus_ls::calendar::LoadedCalendar,
-    now_utc: chrono::DateTime<Utc>,
-) -> Option<DivergenceObservation> {
-    if adoption != CalendarAdoption::Shadow {
-        return None;
-    }
-    let kst_date = (now_utc + chrono::Duration::hours(9)).date_naive();
-    let weekday_open = WeekdayKrxCalendar.date_fact(now_utc) == CalendarDateFact::TradingSession;
-    let view = loaded.calendar().and_then(|cal| cal.as_of(now_utc).ok());
-    let calendar = match date_fact_from_view(view.as_ref(), kst_date) {
-        CalendarDateFact::TradingSession => Some(DayStatus::TradingSession),
-        CalendarDateFact::Closed => Some(DayStatus::Closed),
-        CalendarDateFact::Unknown => Some(DayStatus::Unknown),
-        CalendarDateFact::Unavailable => None,
-    };
-    Some(DivergenceObservation::new(
-        "lab-live-dispatch",
-        kst_date,
-        weekday_open,
-        calendar,
-    ))
+    resolve_date_fact_and_record(CalendarAdoption::Enforced, &loaded, now_utc)
 }
 
 /// Derive the authoritative [`CalendarDateFact`] and the dispatch-date-targeted
 /// [`StartupRecord`] from ONE already-loaded calendar (KTD2, load-once-derive-twice). Pure
 /// and env-free so the resolver tests inject a fixture-built `LoadedCalendar` directly.
 ///
-/// - Legacy → the weekday date fact is authoritative; the calendar is loaded + recorded but
-///   never authoritative (a load error is strictly non-fatal, `action=weekday-authoritative`).
-/// - Shadow → the weekday date fact stays authoritative; the calendar fact is recorded in the
-///   startup record only, so the dispatch outcome/chain is byte-identical to Legacy.
-/// - Enforced → the `KrxCalendar` fact from the snapshot, or [`CalendarDateFact::Unavailable`]
-///   on ANY load/use/query failure (no weekday fallback), never `Unknown`.
+/// Enforced-only after the Ladder Consumer Retirement Gate (#189 U9, KTD3): the `KrxCalendar`
+/// fact from the snapshot is authoritative, or [`CalendarDateFact::Unavailable`] on ANY
+/// load/use/query failure (no weekday fallback), never `Unknown`. The weekday date decision is
+/// retired; only the time-of-day window (`in_time_window`) survives (KTD7).
 fn resolve_date_fact_and_record(
     adoption: CalendarAdoption,
     loaded: &nautilus_ls::calendar::LoadedCalendar,
@@ -583,16 +544,9 @@ fn resolve_date_fact_and_record(
         now_utc,
         Some(kst_date),
     );
-    let date_fact = match adoption {
-        // The calendar is loaded + recorded but the weekday fact acts (Legacy/Shadow).
-        CalendarAdoption::Legacy | CalendarAdoption::Shadow => WeekdayKrxCalendar.date_fact(now_utc),
-        // Enforced: the snapshot fact is authoritative; any load/use/query failure →
-        // Unavailable, never a weekday fallback.
-        CalendarAdoption::Enforced => {
-            let view = loaded.calendar().and_then(|cal| cal.as_of(now_utc).ok());
-            date_fact_from_view(view.as_ref(), kst_date)
-        }
-    };
+    // The snapshot fact is authoritative; any load/use/query failure → Unavailable.
+    let view = loaded.calendar().and_then(|cal| cal.as_of(now_utc).ok());
+    let date_fact = date_fact_from_view(view.as_ref(), kst_date);
     (date_fact, record)
 }
 
@@ -1453,51 +1407,8 @@ mod tests {
         nautilus_ls::calendar::resolve_and_load(Some(&path), dispatch_now(), adoption)
     }
 
-    #[test]
-    fn u188_shadow_over_fixture_records_but_weekday_stays_authoritative() {
-        use nautilus_ls_calendar::schema::DayStatus;
-        let dir = tempfile::TempDir::new().unwrap();
-        // A Closed calendar row proves the weekday fact stays authoritative under Shadow:
-        // the returned fact is the weekday Trading Session, NOT the calendar's Closed.
-        let loaded = loaded_fixture(dir.path(), DayStatus::Closed, chrono::NaiveDate::from_ymd_opt(2026, 12, 31).unwrap(), CalendarAdoption::Shadow);
-        let (fact, rec) = resolve_date_fact_and_record(CalendarAdoption::Shadow, &loaded, dispatch_now());
-        assert_eq!(fact, CalendarDateFact::TradingSession, "Shadow keeps the weekday fact authoritative");
-        assert_eq!(rec.action, ResultingAction::ShadowRecorded);
-        let diag = rec.diagnostic.as_ref().expect("a loaded snapshot carries a diagnostic");
-        assert!(diag.artifact_id.is_some() && diag.calendar_id.is_some(), "snapshot identity recorded");
-        assert!(diag.coverage.is_some(), "coverage recorded");
-        let line = rec.render_line();
-        assert!(line.contains("adoption=shadow"), "{line}");
-        assert!(line.contains("action=shadow-recorded"), "{line}");
-        assert!(line.contains("artifact_id="), "{line}");
-    }
-
-    /// U3: the Ladder Shadow arm records a CLASSIFIED, assertable, redacted divergence — a
-    /// weekday (weekday-open) date the calendar proves Closed is `CalendarClosedWeekdayOpen`;
-    /// Legacy/Enforced record no divergence (Legacy never records, Enforced acts on the fact).
-    #[test]
-    fn shadow_divergence_is_classified_and_redacted() {
-        use nautilus_ls::calendar::DivergenceClass;
-        use nautilus_ls_calendar::schema::DayStatus;
-        let dir = tempfile::TempDir::new().unwrap();
-        // dispatch_now()'s KST date (2026-07-16) is a weekday; the calendar proves it Closed.
-        let loaded = loaded_fixture(
-            dir.path(),
-            DayStatus::Closed,
-            chrono::NaiveDate::from_ymd_opt(2026, 12, 31).unwrap(),
-            CalendarAdoption::Shadow,
-        );
-        let obs = ladder_divergence(CalendarAdoption::Shadow, &loaded, dispatch_now())
-            .expect("shadow emits a divergence");
-        assert_eq!(obs.class, DivergenceClass::CalendarClosedWeekdayOpen);
-        assert_eq!(obs.consumer, "lab-live-dispatch");
-        assert!(ladder_divergence(CalendarAdoption::Legacy, &loaded, dispatch_now()).is_none());
-        assert!(ladder_divergence(CalendarAdoption::Enforced, &loaded, dispatch_now()).is_none());
-
-        let line = obs.render_line();
-        assert!(line.contains("class=calendar-closed-weekday-open"), "{line}");
-        assert!(!line.to_lowercase().contains("authority"), "{line}");
-    }
+    // (The Shadow byte-identical + Shadow-divergence-classification tests were retired with the
+    //  Ladder Enforced-only cutover — the date gate no longer has a Legacy/Shadow path.)
 
     #[test]
     fn u188_enforced_trading_session_from_calendar_not_weekday() {
@@ -1536,28 +1447,7 @@ mod tests {
         assert!(rec.render_line().contains("action=enforced-fail-closed"));
     }
 
-    #[test]
-    fn u188_legacy_over_fixture_is_weekday_authoritative_and_still_loads() {
-        use nautilus_ls_calendar::schema::DayStatus;
-        let dir = tempfile::TempDir::new().unwrap();
-        let loaded = loaded_fixture(dir.path(), DayStatus::Closed, chrono::NaiveDate::from_ymd_opt(2026, 12, 31).unwrap(), CalendarAdoption::Legacy);
-        let (fact, rec) = resolve_date_fact_and_record(CalendarAdoption::Legacy, &loaded, dispatch_now());
-        assert_eq!(fact, CalendarDateFact::TradingSession, "Legacy weekday fact is authoritative");
-        assert_eq!(rec.action, ResultingAction::WeekdayAuthoritative);
-        // The calendar is still loaded + recorded (KTD6 uniform composition root).
-        assert!(rec.diagnostic.is_some(), "Legacy still loads + records the calendar");
-        assert!(rec.render_line().contains("action=weekday-authoritative"));
-    }
-
-    #[test]
-    fn u188_legacy_load_error_is_non_fatal_and_leaves_weekday_outcome() {
-        let dir = tempfile::TempDir::new().unwrap();
-        let missing = dir.path().join("does-not-exist.json");
-        let loaded = nautilus_ls::calendar::resolve_and_load(Some(&missing), dispatch_now(), CalendarAdoption::Legacy);
-        let (fact, rec) = resolve_date_fact_and_record(CalendarAdoption::Legacy, &loaded, dispatch_now());
-        assert_eq!(fact, CalendarDateFact::TradingSession, "a Legacy load error cannot alter the weekday outcome");
-        assert_eq!(rec.action, ResultingAction::WeekdayAuthoritative);
-    }
+    // (The Legacy weekday-authoritative tests were retired with the Ladder Enforced-only cutover.)
 
     #[test]
     fn u188_startup_line_is_redacted_no_authority_leak() {
