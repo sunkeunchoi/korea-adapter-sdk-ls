@@ -314,9 +314,10 @@ fn u12_unknown_override_refused_when_unattended() {
 #[test]
 fn u12_shadow_dispatch_record_is_byte_identical_to_legacy() {
     // With no stub and no configured snapshot, the weekday fact stays authoritative under
-    // BOTH Legacy and Shadow; Shadow's calendar recording goes only to stderr (non-persisted),
-    // so the persisted chain record is byte-identical.
-    fn run_with(adoption: CalendarAdoption) -> Vec<u8> {
+    // BOTH Legacy and Shadow; Shadow's calendar recording (the startup record, U1) goes only
+    // to stderr (non-persisted), so the persisted chain record AND the stdout report
+    // (`out.lines`) are byte-identical (R2, AC2, KTD4).
+    fn run_with(adoption: CalendarAdoption) -> (Vec<u8>, Vec<String>) {
         let tmp = TempDir::new().unwrap();
         seed_genesis(tmp.path());
         let mut cfg = green_cfg(tmp.path());
@@ -324,11 +325,13 @@ fn u12_shadow_dispatch_record_is_byte_identical_to_legacy() {
         cfg.date_fact_stub = None; // exercise the resolution path
         let out = run_dispatch(&cfg).unwrap();
         assert_eq!(out.result, GateResult::Green);
-        std::fs::read(DispatchChain::open(tmp.path()).unwrap().chain_path()).unwrap()
+        let bytes = std::fs::read(DispatchChain::open(tmp.path()).unwrap().chain_path()).unwrap();
+        (bytes, out.lines)
     }
-    let legacy = run_with(CalendarAdoption::Legacy);
-    let shadow = run_with(CalendarAdoption::Shadow);
-    assert_eq!(legacy, shadow, "Shadow dispatch record is byte-identical to Legacy");
+    let (legacy_bytes, legacy_lines) = run_with(CalendarAdoption::Legacy);
+    let (shadow_bytes, shadow_lines) = run_with(CalendarAdoption::Shadow);
+    assert_eq!(legacy_bytes, shadow_bytes, "Shadow chain record is byte-identical to Legacy");
+    assert_eq!(legacy_lines, shadow_lines, "Shadow stdout report is identical to Legacy");
 }
 
 // ---------------------------------------------------------------------------
@@ -349,7 +352,10 @@ fn bin_dispatch(home: &std::path::Path, extra: &[(&str, &str)]) -> std::process:
         .env("LS_DISPATCH_STUB_BUDGET", "ok")
         .env("LS_DISPATCH_NOW_UNIX", weekday_ts().to_string())
         .env_remove("LS_DISPATCH_DEFER")
-        .env_remove("LS_DISPATCH_NONCE");
+        .env_remove("LS_DISPATCH_NONCE")
+        // Hermetic calendar env: each case sets adoption/snapshot explicitly via `extra`.
+        .env_remove("LS_CALENDAR_SNAPSHOT")
+        .env_remove("LS_CALENDAR_ADOPTION");
     for (k, v) in extra {
         cmd.env(k, v);
     }
@@ -369,7 +375,338 @@ fn bin_green_dispatch_exits_zero_and_records() {
 #[test]
 fn bin_no_chain_exits_nonzero_and_names_genesis() {
     let tmp = TempDir::new().unwrap();
-    let out = bin_dispatch(tmp.path(), &[]);
+    let out = bin_dispatch(tmp.path(), &[("LS_CALENDAR_ADOPTION", "shadow")]);
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stdout).contains("--genesis"));
+    // The mandatory startup diagnostic fires on the no-chain refusal path too — the emit is
+    // hoisted ABOVE run_dispatch's NoChain early return, so exactly one calendar-startup line
+    // still appears (the retired main_cli emit used to be the only thing covering this path).
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        stderr.matches("calendar-startup").count(),
+        1,
+        "the startup record fires even when the chain is absent: {stderr}"
+    );
+    assert!(stderr.contains("consumer=lab-live-dispatch"), "{stderr}");
+}
+
+// ---------------------------------------------------------------------------
+// U3 (#188) — dispatch composition-root smoke: explicit config → single load →
+// injection → startup diagnostic → adoption reporting, with NO production-snapshot
+// dependency in CI (fixture-only + not-configured). The fixture lives only in a TempDir;
+// no test reads any path under `adapters/nautilus/state/` or a committed snapshot.
+// ---------------------------------------------------------------------------
+
+/// A human-shaped granting authority the redaction guard must never see reach stderr
+/// (mirrors `calendar_composition.rs` SECRET_AUTHORITY).
+const SECRET_AUTHORITY: &str = "Jane Doe / Agreement-7";
+
+/// Write a valid snapshot bracketing the pinned `weekday_ts()` KST date (2026-07-16) whose
+/// mid row carries `mid_status`, re-dated to load in-range/authorized at the harness's 2026
+/// `now` (the illustrative 2010/2012 `write_snapshot` in `calendar_composition.rs` would load
+/// out-of-range → EnforcedFailClosed). Returns the TempDir-only path.
+fn write_now_relative_snapshot(
+    dir: &std::path::Path,
+    mid_status: nautilus_ls_calendar::schema::DayStatus,
+) -> std::path::PathBuf {
+    // Fresh horizon: well past the 45-day forward-readiness threshold from the pinned now.
+    write_snapshot_with_horizon(dir, mid_status, chrono::NaiveDate::from_ymd_opt(2026, 12, 31).unwrap())
+}
+
+/// As [`write_now_relative_snapshot`] but with an explicit forward-readiness horizon, so a
+/// caller can build a STALE fixture (horizon within 45 days of the pinned now → `freshness=stale`).
+fn write_snapshot_with_horizon(
+    dir: &std::path::Path,
+    mid_status: nautilus_ls_calendar::schema::DayStatus,
+    forward_through: chrono::NaiveDate,
+) -> std::path::PathBuf {
+    use nautilus_ls_calendar::schema::{
+        Authorization, CalendarScope, Coverage, DayRow, DayStatus, Freshness, Snapshot,
+        SourceAvailabilityBound,
+    };
+    use nautilus_ls_calendar::{compute_artifact_id, compute_calendar_id};
+    let d = |y, m, day| chrono::NaiveDate::from_ymd_opt(y, m, day).unwrap();
+    let mut snap = Snapshot {
+        schema_version: "1.0.0".to_string(),
+        artifact_id: String::new(),
+        calendar_id: String::new(),
+        predecessor_artifact_id: None,
+        scope: CalendarScope {
+            calendar_name: "KRX domestic equity (SYNTHETIC)".to_string(),
+            venue: "XKRX".to_string(),
+            instrument_class: "domestic-equity".to_string(),
+            timezone: "Asia/Seoul".to_string(),
+            synthetic: true,
+        },
+        authorization: Authorization {
+            authorized: true,
+            authority: SECRET_AUTHORITY.to_string(),
+            granted_at: Utc.with_ymd_and_hms(2020, 1, 1, 0, 0, 0).unwrap(),
+            expires_at: Some(Utc.with_ymd_and_hms(2099, 1, 1, 0, 0, 0).unwrap()),
+            terminated_at: None,
+        },
+        coverage: Coverage {
+            materialized_from: d(2026, 7, 15),
+            materialized_through: d(2026, 7, 17),
+            retrospectively_checked_through: d(2026, 7, 17),
+            scheduled_closure_evaluated_through: d(2026, 7, 17),
+            source_availability: vec![SourceAvailabilityBound {
+                source_id: "s".to_string(),
+                available_from: None,
+                available_through: None,
+            }],
+        },
+        freshness: Freshness {
+            evidence_refreshed_at: Utc.with_ymd_and_hms(2026, 7, 16, 0, 0, 0).unwrap(),
+            holiday_facts_checked_at: Some(Utc.with_ymd_and_hms(2026, 7, 15, 0, 0, 0).unwrap()),
+            full_history_reconciled_at: Some(Utc.with_ymd_and_hms(2026, 6, 1, 0, 0, 0).unwrap()),
+            forward_readiness_through: Some(forward_through),
+            last_incremental_at: Some(Utc.with_ymd_and_hms(2026, 7, 16, 0, 0, 0).unwrap()),
+        },
+        sources: vec![],
+        evidence: vec![],
+        alerts: vec![],
+        rows: vec![
+            DayRow { date: d(2026, 7, 15), status: DayStatus::TradingSession, decisive_evidence: vec![], conflicting_evidence: vec![], alerts: vec![] },
+            DayRow { date: d(2026, 7, 16), status: mid_status, decisive_evidence: vec![], conflicting_evidence: vec![], alerts: vec![] },
+            DayRow { date: d(2026, 7, 17), status: DayStatus::TradingSession, decisive_evidence: vec![], conflicting_evidence: vec![], alerts: vec![] },
+        ],
+    };
+    snap.artifact_id = compute_artifact_id(&snap);
+    snap.calendar_id = compute_calendar_id(&snap);
+    let path = dir.join("calendar.json");
+    std::fs::write(&path, serde_json::to_vec_pretty(&snap).unwrap()).unwrap();
+    path
+}
+
+#[test]
+fn bin_shadow_over_fixture_emits_one_startup_record_and_greens() {
+    use nautilus_ls_calendar::schema::DayStatus;
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+    // A Closed calendar row proves Shadow does not mutate the decision: the gate still greens
+    // on the authoritative weekday Trading Session while the calendar decision is recorded.
+    let snap = write_now_relative_snapshot(tmp.path(), DayStatus::Closed);
+    let out = bin_dispatch(
+        tmp.path(),
+        &[("LS_CALENDAR_ADOPTION", "shadow"), ("LS_CALENDAR_SNAPSHOT", snap.to_str().unwrap())],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "Shadow greens on the weekday fact: stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("DISPATCH green"), "{stdout}");
+    // Exactly ONE calendar-startup line (the generic main_cli emit is retired for --dispatch).
+    assert_eq!(stderr.matches("calendar-startup").count(), 1, "exactly one startup record: {stderr}");
+    assert!(stderr.contains("consumer=lab-live-dispatch"), "{stderr}");
+    assert!(stderr.contains("adoption=shadow"), "{stderr}");
+    assert!(stderr.contains("action=shadow-recorded"), "{stderr}");
+    assert!(stderr.contains("artifact_id="), "redacted snapshot identity reported: {stderr}");
+    assert!(stderr.contains("coverage="), "{stderr}");
+    // Redaction across the FULL captured stderr (startup + gate lines end-to-end).
+    assert!(!stderr.contains(SECRET_AUTHORITY), "authority leaked to stderr: {stderr}");
+    assert!(!stderr.contains("Jane Doe"), "{stderr}");
+}
+
+#[test]
+fn bin_enforced_trading_session_proceeds_through_the_calendar_fact() {
+    use nautilus_ls_calendar::schema::DayStatus;
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+    let snap = write_now_relative_snapshot(tmp.path(), DayStatus::TradingSession);
+    let out = bin_dispatch(
+        tmp.path(),
+        &[("LS_CALENDAR_ADOPTION", "enforced"), ("LS_CALENDAR_SNAPSHOT", snap.to_str().unwrap())],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "Enforced Trading Session greens: stdout={stdout} stderr={stderr}");
+    assert_eq!(stderr.matches("calendar-startup").count(), 1, "{stderr}");
+    assert!(stderr.contains("adoption=enforced"), "{stderr}");
+    assert!(stderr.contains("action=enforced-active"), "{stderr}");
+    assert!(stderr.contains("day=2026-07-16:TradingSession"), "{stderr}");
+}
+
+#[test]
+fn bin_enforced_closed_refuses_with_calendar_active_diagnostic() {
+    use nautilus_ls_calendar::schema::DayStatus;
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+    // 2026-07-16 is a weekday, but the calendar proves it Closed — Enforced refuses.
+    let snap = write_now_relative_snapshot(tmp.path(), DayStatus::Closed);
+    let out = bin_dispatch(
+        tmp.path(),
+        &[("LS_CALENDAR_ADOPTION", "enforced"), ("LS_CALENDAR_SNAPSHOT", snap.to_str().unwrap())],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "Enforced Closed refuses: stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("DISPATCH refused"), "{stdout}");
+    assert_eq!(stderr.matches("calendar-startup").count(), 1, "{stderr}");
+    assert!(stderr.contains("day=2026-07-16:Closed"), "{stderr}");
+    assert!(stderr.contains("action=enforced-active"), "the calendar is authoritative: {stderr}");
+}
+
+#[test]
+fn bin_legacy_over_fixture_is_weekday_authoritative_and_greens() {
+    use nautilus_ls_calendar::schema::DayStatus;
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+    // Legacy: the weekday fact is authoritative even though the calendar proves the day Closed;
+    // the calendar is still loaded + recorded (KTD6 uniform composition root).
+    let snap = write_now_relative_snapshot(tmp.path(), DayStatus::Closed);
+    let out = bin_dispatch(
+        tmp.path(),
+        &[("LS_CALENDAR_ADOPTION", "legacy"), ("LS_CALENDAR_SNAPSHOT", snap.to_str().unwrap())],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "Legacy greens on the weekday fact: stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("DISPATCH green"), "{stdout}");
+    assert_eq!(stderr.matches("calendar-startup").count(), 1, "{stderr}");
+    assert!(stderr.contains("adoption=legacy"), "{stderr}");
+    assert!(stderr.contains("action=weekday-authoritative"), "{stderr}");
+    assert!(stderr.contains("artifact_id="), "the calendar is still loaded + recorded: {stderr}");
+}
+
+#[test]
+fn bin_enforced_corrupt_snapshot_fails_closed() {
+    // AC5: a corrupt snapshot (not just a missing one) → Unavailable → EnforcedFailClosed,
+    // no weekday fallback. Exercises a different LoadFailure than the missing-path case.
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+    let snap = tmp.path().join("calendar.json");
+    std::fs::write(&snap, b"{ not valid snapshot json").unwrap();
+    let out = bin_dispatch(
+        tmp.path(),
+        &[("LS_CALENDAR_ADOPTION", "enforced"), ("LS_CALENDAR_SNAPSHOT", snap.to_str().unwrap())],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "a corrupt snapshot fails closed under Enforced: stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("DISPATCH refused"), "{stdout}");
+    assert_eq!(stderr.matches("calendar-startup").count(), 1, "{stderr}");
+    assert!(stderr.contains("action=enforced-fail-closed"), "no weekday fallback: {stderr}");
+}
+
+#[test]
+fn bin_no_snapshot_configured_is_non_fatal_and_greens() {
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+    // No LS_CALENDAR_SNAPSHOT: the default Shadow start is non-fatal, weekday path greens,
+    // and NO production snapshot is read (proves the no-production-dependency claim).
+    let out = bin_dispatch(tmp.path(), &[("LS_CALENDAR_ADOPTION", "shadow")]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "no-snapshot Shadow greens: stdout={stdout} stderr={stderr}");
+    assert_eq!(stderr.matches("calendar-startup").count(), 1, "{stderr}");
+    assert!(stderr.contains("snapshot=not-configured"), "{stderr}");
+    assert!(stderr.contains("consumer=lab-live-dispatch"), "{stderr}");
+}
+
+// ---------------------------------------------------------------------------
+// U4 (#188) — AC-to-test coverage-gap closure at the COMPOSITION ROOT (not just the pure
+// check): AC11 (paired failure-inversion), AC8/AC12 (override refusal across classes), and
+// AC9 (stale surfaced via the diagnostic — `check_calendar_date` drops the freshness
+// dimension, so the startup/gate diagnostic is the only surfacing mechanism).
+// ---------------------------------------------------------------------------
+
+/// AC11 — failure-inversion at the gate: an Enforced Unknown date authorizes NO dispatch;
+/// the same context with ONLY the calendar row flipped to Trading Session greens.
+#[test]
+fn u188_cli_failure_inversion_unknown_refuses_but_trading_greens() {
+    // Enforced Unknown → refused, no authorized (Green) dispatch appended.
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+    let mut cfg = green_cfg(tmp.path());
+    cfg.adoption = CalendarAdoption::Enforced;
+    cfg.date_fact_stub = Some(CalendarDateFact::Unknown);
+    let out = run_dispatch(&cfg).unwrap();
+    assert_eq!(out.result, GateResult::Refused, "{:?}", out.lines);
+    assert_eq!(last_dispatch(tmp.path()).unwrap().0, DispatchOutcome::Refused, "no authorized dispatch");
+
+    // Flip ONLY the calendar fact to Trading Session (window + every other gate unchanged) → Green.
+    let tmp2 = TempDir::new().unwrap();
+    seed_genesis(tmp2.path());
+    let mut cfg = green_cfg(tmp2.path());
+    cfg.adoption = CalendarAdoption::Enforced;
+    cfg.date_fact_stub = Some(CalendarDateFact::TradingSession);
+    let out = run_dispatch(&cfg).unwrap();
+    assert_eq!(out.result, GateResult::Green, "the same context with a Trading Session authorizes: {:?}", out.lines);
+    assert_eq!(last_dispatch(tmp2.path()).unwrap().0, DispatchOutcome::Green);
+}
+
+/// AC8/AC12 — an attended, well-formed `UnknownOverride` cannot green a proven Closed or a
+/// Unavailable date at the gate (the override is Unknown-only; refusal across classes).
+#[test]
+fn u188_cli_override_cannot_green_closed_or_unavailable() {
+    fn override_for(kst_date: &str, run_id: &str, now_unix: i64) -> UnknownOverride {
+        UnknownOverride {
+            kst_date: kst_date.into(),
+            run_id: run_id.into(),
+            operator: "operator-alice".into(),
+            authorized_at_unix: now_unix,
+            snapshot_artifact_id: "artifact-abc".into(),
+            snapshot_calendar_id: "calendar-abc".into(),
+            alerts: Vec::new(),
+            reason: "reviewed the cited first-party basis".into(),
+            citation: Citation { reference: "KRX-NOTICE-01".into(), issuer: "KRX".into(), note: None },
+        }
+    }
+    for fact in [CalendarDateFact::Closed, CalendarDateFact::Unavailable] {
+        let tmp = TempDir::new().unwrap();
+        seed_genesis(tmp.path());
+        let mut cfg = green_cfg(tmp.path());
+        cfg.adoption = CalendarAdoption::Enforced;
+        cfg.date_fact_stub = Some(fact);
+        cfg.run_id = Some("run-cli-1".into());
+        cfg.nonce = Some(cfg.now_unix.to_string());
+        cfg.attended_override = Some(true);
+        cfg.unknown_override = Some(override_for("2026-07-16", "run-cli-1", cfg.now_unix));
+        let out = run_dispatch(&cfg).unwrap();
+        assert_eq!(
+            out.result,
+            GateResult::Refused,
+            "an override cannot proceed a {fact:?} date: {:?}",
+            out.lines
+        );
+    }
+}
+
+/// AC9 — staleness is surfaced through the diagnostic, independent of the day status:
+/// a stale Trading Session still greens (with `freshness=stale` in the diagnostic), a stale
+/// Closed still refuses, and a stale Unknown still refuses by default (needs the override).
+#[test]
+fn u188_cli_stale_freshness_surfaced_independent_of_day_status() {
+    use nautilus_ls_calendar::schema::DayStatus;
+    // A horizon 2 days past the pinned now → < 45 evaluated days remaining → stale.
+    let stale_horizon = chrono::NaiveDate::from_ymd_opt(2026, 7, 18).unwrap();
+
+    // Stale Trading Session (Enforced): gate GREENS, diagnostic carries freshness=stale.
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+    let snap = write_snapshot_with_horizon(tmp.path(), DayStatus::TradingSession, stale_horizon);
+    let out = bin_dispatch(tmp.path(), &[("LS_CALENDAR_ADOPTION", "enforced"), ("LS_CALENDAR_SNAPSHOT", snap.to_str().unwrap())]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "a stale Trading Session still greens: {stderr}");
+    assert!(stderr.contains("freshness=stale"), "staleness surfaced in the diagnostic: {stderr}");
+    assert!(stderr.contains("day=2026-07-16:TradingSession"), "{stderr}");
+
+    // Stale Closed (Enforced): still refuses; staleness surfaced.
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+    let snap = write_snapshot_with_horizon(tmp.path(), DayStatus::Closed, stale_horizon);
+    let out = bin_dispatch(tmp.path(), &[("LS_CALENDAR_ADOPTION", "enforced"), ("LS_CALENDAR_SNAPSHOT", snap.to_str().unwrap())]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "a stale Closed still refuses: {stderr}");
+    assert!(stderr.contains("freshness=stale"), "{stderr}");
+
+    // Stale Unknown (Enforced): refuses by default (needs the exact override); staleness surfaced.
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+    let snap = write_snapshot_with_horizon(tmp.path(), DayStatus::Unknown, stale_horizon);
+    let out = bin_dispatch(tmp.path(), &[("LS_CALENDAR_ADOPTION", "enforced"), ("LS_CALENDAR_SNAPSHOT", snap.to_str().unwrap())]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "a stale Unknown refuses without the override: {stderr}");
+    assert!(stderr.contains("freshness=stale"), "{stderr}");
+    assert!(stderr.contains("day=2026-07-16:Unknown"), "{stderr}");
 }

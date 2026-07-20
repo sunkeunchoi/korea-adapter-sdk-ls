@@ -109,6 +109,20 @@ pub enum ResultingAction {
     EnforcedFailClosed,
 }
 
+/// The canonical `(adoption, calendar-usable)` → [`ResultingAction`] mapping. This is the
+/// SINGLE source of truth for the resulting action: [`build_startup_record_targeted`] derives
+/// it from a loaded calendar's usability, and offline seams (e.g. the dispatch gate's stubbed
+/// date fact) call it directly so a stub-built record cannot drift from a real one.
+pub fn resulting_action(adoption: CalendarAdoption, available: bool) -> ResultingAction {
+    match (adoption, available) {
+        (CalendarAdoption::Legacy, _) => ResultingAction::WeekdayAuthoritative,
+        (CalendarAdoption::Shadow, true) => ResultingAction::ShadowRecorded,
+        (CalendarAdoption::Shadow, false) => ResultingAction::ShadowUnavailable,
+        (CalendarAdoption::Enforced, true) => ResultingAction::EnforcedActive,
+        (CalendarAdoption::Enforced, false) => ResultingAction::EnforcedFailClosed,
+    }
+}
+
 impl ResultingAction {
     /// The stable token used in the startup record line.
     pub fn token(self) -> &'static str {
@@ -236,13 +250,7 @@ pub fn build_startup_record_targeted(
         LoadedCalendar::NotConfigured => (None, false),
     };
 
-    let action = match (adoption, available) {
-        (CalendarAdoption::Legacy, _) => ResultingAction::WeekdayAuthoritative,
-        (CalendarAdoption::Shadow, true) => ResultingAction::ShadowRecorded,
-        (CalendarAdoption::Shadow, false) => ResultingAction::ShadowUnavailable,
-        (CalendarAdoption::Enforced, true) => ResultingAction::EnforcedActive,
-        (CalendarAdoption::Enforced, false) => ResultingAction::EnforcedFailClosed,
-    };
+    let action = resulting_action(adoption, available);
 
     StartupRecord {
         consumer: consumer.to_string(),

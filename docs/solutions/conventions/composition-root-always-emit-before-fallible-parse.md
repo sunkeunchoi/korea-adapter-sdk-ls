@@ -1,8 +1,8 @@
 ---
-title: "A mandatory always-emit side effect at a composition root must fire BEFORE the fallible env/config parse — consolidating the load silently drops it on error paths"
+title: "A mandatory always-emit side effect at a composition root must fire BEFORE any early exit — a fallible parse OR a deliberate early-return refusal guard — or consolidating the load silently drops it on those paths"
 date: 2026-07-20
 category: conventions
-module: "nautilus adapter composition root — budget-probe (adapters/nautilus/src/bin/budget-probe.rs), lab catalog status (adapters/nautilus/lab/src/runner/research.rs), calendar scaffold (adapters/nautilus/src/calendar.rs)"
+module: "nautilus adapter composition root — budget-probe (adapters/nautilus/src/bin/budget-probe.rs), lab catalog status (adapters/nautilus/lab/src/runner/research.rs), lab dispatch gate (adapters/nautilus/lab/src/runner/live.rs run_dispatch), calendar scaffold (adapters/nautilus/src/calendar.rs)"
 problem_type: convention
 component: tooling
 severity: medium
@@ -13,10 +13,11 @@ tags:
   - always-emit-invariant
   - budget-probe
   - catalog-status
+  - dispatch-gate
 applies_when:
   - "Consolidating a per-invocation resolve/load and moving a mandatory startup/diagnostic emit into a per-consumer branch"
-  - "Adding or editing the budget-probe or lab catalog-status composition root, or any new calendar-adoption consumer"
-  - "Any consumer that must emit a mandatory record on EVERY invocation, including non-paper / parse-error / config-error paths"
+  - "Adding or editing the budget-probe, lab catalog-status, or lab dispatch-gate composition root, or any new calendar-adoption consumer"
+  - "Any consumer that must emit a mandatory record on EVERY invocation, including non-paper / parse-error / config-error paths AND early-return refusal branches (e.g. a no-chain / defective-precondition guard that returns before the emit)"
 ---
 
 ## Context
@@ -35,18 +36,32 @@ the trap lives: the emit is now easy to place *after* a fallible env/config pars
 an early `?` on a bad input returns before the record is ever written — silently
 dropping the invariant on exactly the error paths where a diagnostic is most useful.
 
-This bit the same slice twice. `budget-probe` was written carefully (emit before the
+This has now bit the same slice three times. `budget-probe` was written carefully (emit before the
 paper gate and the stage/ceiling parses). The `catalog status` branch reintroduced the
 identical bug — it emitted *after* `status_config_from_env()?` — and it was caught only
 in code review, not by the passing test suite (no test exercised the config-error path
 until one was added).
 
+Then it bit a **third** consumer (issue #188, the Production Ladder dispatch gate) in a
+form the "before the fallible parse" framing does not cover. `run_dispatch` opens the
+chain and matches its status, with `ChainStatus::NoChain` / `ChainStatus::Defective` arms
+that `return Ok(DispatchGateOutcome { .. })` — a **deliberate early-return refusal guard**,
+not a `?`-propagated parse failure. The single-load resolve + `emit_startup_record` were
+placed *after* that match, so `lab-live --dispatch` against a missing/defective chain
+emitted **zero** `calendar-startup` lines — the retired unconditional `main_cli` emit used
+to be the only thing covering that path. Same invariant, same silent drop, but the trap is
+control flow (an early `return`), not a fallible parse. Generalize the rule accordingly:
+the emit must precede **any** early exit, `?`-propagated or hand-written `return`.
+
 ## Guidance
 
 At a composition root, resolve the state the mandatory side effect needs and **emit it
-before any fallible parse or fallible resource construction** (`?`-returning env parses,
-`Runtime::new()?`, config loads). Treat the emit as an unconditional prologue, not a step
-interleaved with parsing.
+before any early exit** — both `?`-returning fallible work (env parses, `Runtime::new()?`,
+config loads) **and** deliberate early-return refusal guards (a no-chain / defective-state /
+non-paper branch that `return`s before the emit). Treat the emit as an unconditional
+prologue, not a step interleaved with parsing or sequenced after a precondition guard. The
+test is not "is this line fallible?" but "can control leave this function before the emit?"
+— if any path can, the emit is in the wrong place.
 
 Concretely for the calendar consumers:
 
@@ -81,12 +96,14 @@ the fallible work satisfies both.
 
 ## When to Apply
 
-- Any edit to `ProbeContext::resolve` (budget-probe) or the `catalog status` branch in
-  `main_cli`/`dispatch` (lab research).
+- Any edit to `ProbeContext::resolve` (budget-probe), the `catalog status` branch in
+  `main_cli`/`dispatch` (lab research), or `run_dispatch` (lab dispatch gate).
 - Adding a new calendar-adoption consumer (the ingest / production-ladder consumers under
   parent issue #184 will hit the same shape).
 - Any composition root with a "must emit / must record on every invocation" side effect
   that is being moved to share a resolved/loaded value with the main decision.
+- **Any function with early-return precondition guards ahead of the emit** — reorder so the
+  resolve + emit is the prologue, ABOVE the guards, not below them.
 
 ## Examples
 
@@ -124,6 +141,48 @@ emit_startup_record(&build_startup_record_targeted("lab-research", adoption, &lo
 
 let rt = tokio::runtime::Runtime::new()?;            // fallible — record already emitted
 let cfg = status_config_from_env()?;                 // fallible — record already emitted
+```
+
+Dispatch gate — the bug (emit sequenced after an early-return refusal guard) and the fix:
+
+```rust
+// WRONG — the NoChain / Defective arms return before the emit at the bottom of the fn:
+pub fn run_dispatch(cfg: &DispatchCliConfig) -> anyhow::Result<DispatchGateOutcome> {
+    let chain = DispatchChain::open(&cfg.data_home)?;
+    let mut state = chain.load();
+    match &state.status {
+        ChainStatus::Valid => {}
+        ChainStatus::NoChain   => return Ok(refuse("no dispatch chain ...")),   // no record
+        ChainStatus::Defective(why) => return Ok(refuse(...)),                   // no record
+    }
+    // ... 100 lines later ...
+    let (date_fact, rec) = resolve_calendar_for_dispatch(cfg, now_dt);
+    emit_startup_record(&rec);   // unreachable on the two early returns above
+}
+
+// RIGHT — resolve + emit as the prologue, ABOVE the status match:
+pub fn run_dispatch(cfg: &DispatchCliConfig) -> anyhow::Result<DispatchGateOutcome> {
+    let chain = DispatchChain::open(&cfg.data_home)?;
+    let mut state = chain.load();
+    let now_dt = Utc.timestamp_opt(cfg.now_unix, 0).single().unwrap_or_else(Utc::now);
+    let (date_fact, rec) = resolve_calendar_for_dispatch(cfg, now_dt); // infallible load
+    emit_startup_record(&rec);                                          // fires on EVERY path
+    match &state.status {
+        ChainStatus::Valid => {}
+        ChainStatus::NoChain => return Ok(refuse("no dispatch chain ...")), // record already emitted
+        ChainStatus::Defective(why) => return Ok(refuse(...)),              // record already emitted
+    }
+    // ... decision reuses `date_fact` ...
+}
+```
+
+Regression test for the early-return path (subprocess, no chain seeded):
+
+```rust
+// bin_no_chain_exits_nonzero_and_names_genesis
+let out = bin_dispatch(tmp.path(), &[("LS_CALENDAR_ADOPTION", "shadow")]); // no genesis
+assert!(!out.status.success());
+assert_eq!(String::from_utf8_lossy(&out.stderr).matches("calendar-startup").count(), 1);
 ```
 
 Regression test (subprocess, drives the config-error path):
