@@ -105,8 +105,18 @@ run ids, dates, account or symbol-embedded values appear here.
     and `catalog status`'s tail check compared the last bar against the raw
     watermark — false-flagging a healthy Friday-closed catalog as a NO-GO. The
     tail check now compares against the last weekday on-or-before the watermark
-    (`last_weekday_on_or_before`); holidays remain undetectable (no trading
-    calendar in the repo).
+    (`last_weekday_on_or_before`).
+    **Retired — shipped (calendar-backed, issues #185/#187):** the
+    weekday walk-back is now the Legacy/Shadow path only. The shared offline KRX
+    calendar (`nautilus-ls-calendar`, PR #190) added the Enforced adoption, under
+    which `catalog status` resolves watermark and expected-range boundaries against
+    PROVEN Trading Sessions (`CatalogCalendarGate`) — a real holiday closure no
+    longer false-flags, a boundary-relevant Unknown is `NO-GO — calendar
+    indeterminate`, and an out-of-coverage/unavailable boundary is `NO-GO —
+    calendar unavailable`. Holidays are no longer undetectable. The composed default
+    stays Shadow (byte-identical to Legacy while recording the calendar verdict);
+    the live Enforced cutover is the deferred Consumer Retirement Gate (#189). See
+    the adapter README "Offline KRX calendar" section for configuration.
 
 ## Retired — shipped (operability minors)
 

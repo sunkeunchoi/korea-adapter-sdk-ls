@@ -80,6 +80,45 @@ advisory lockfile beside the catalog (`.ls-ingest.lock` / `.ls-live.lock`) and
 **refuse to start while the counterpart lock is held**. A stale lock from a crash
 blocks until cleared manually (`rm <catalog>/.ls-*.lock`) — a deliberate fail-safe.
 
+### Offline KRX calendar (adoption states)
+
+Two consumers — `lab-research catalog status` (the ingest→backtest go/no-go) and
+`budget-probe` (the IGW00201 measurement) — read the shared offline KRX calendar
+(`nautilus-ls-calendar`, issues #184/#185, PR #190) at their composition root. Two env
+vars configure it, both resolved once per invocation (single load, single as-of):
+
+- `LS_CALENDAR_SNAPSHOT` — an **explicit** path to an immutable, authorized calendar
+  snapshot. Unset/empty means no snapshot configured (the normal slice-deploy state);
+  the calendar core never picks a default path. A missing/failed snapshot is non-fatal
+  under Legacy/Shadow and fail-closed under Enforced.
+- `LS_CALENDAR_ADOPTION` — `legacy` | `shadow` | `enforced`. Unset/invalid → the
+  **composed default `shadow`**. The live Enforced cutover and a production snapshot are
+  the deferred Consumer Retirement Gate (#189); the composed default stays Shadow.
+
+Every invocation emits one redacted, decision-relevant **startup record** to stderr
+(never a persisted artifact): adoption, snapshot identity, coverage, freshness, the
+factual query, and the resulting action — with authority/credential identities masked.
+
+**`catalog status` behavior by adoption:**
+
+- **Legacy** — weekday/civil-date authoritative (the `last_weekday_on_or_before`
+  walk-back). Output unchanged from before the calendar.
+- **Shadow** (default) — byte-identical stdout, exit code, and verdict to Legacy, while
+  recording the calendar's boundary verdict to the stderr diagnostic channel.
+- **Enforced** — watermark and expected-range boundaries resolve against **proven
+  Trading Sessions**: a real holiday closure no longer false-flags; a boundary-relevant
+  Unknown is `NO-GO — calendar indeterminate`; an out-of-coverage/unavailable boundary is
+  `NO-GO — calendar unavailable`; a stale-but-established boundary is a **GO** with a
+  prominent warning naming the freshness dimension(s) that bound the queried dates.
+
+**`budget-probe` behavior by adoption:** Legacy/Shadow keep the weekday
+`recent_trading_day` anchor authoritative (Shadow records the calendar-selected session);
+Enforced selects the **most recent proven Trading Session** and makes **no gateway call**
+when none can be proven (or the calendar is unavailable) until an explicit
+`LS_PROBE_SDATE`/`LS_PROBE_EDATE` range is supplied. An explicit range is an auditable
+**bypass** — it records the operator, run context, and the calendar condition automatic
+selection skipped, and changes neither probe status nor any dispatch authorization.
+
 ### Max-lookback probe (run FIRST — sizes the backfill)
 
 Before the first minute backfill, run the staged probe to learn how deep the server

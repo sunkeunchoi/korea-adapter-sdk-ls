@@ -277,6 +277,42 @@ impl CalendarDiagnostic {
         }
     }
 
+    /// Build a diagnostic from a loaded calendar view with NO queried day — a
+    /// posture/coverage summary rather than a per-date decision. The snapshot facts
+    /// (identities, redacted authorization, coverage, freshness) are populated, and the
+    /// outcome is [`Stale`](DiagnosticOutcome::Stale) when a freshness dimension is stale,
+    /// else [`Healthy`](DiagnosticOutcome::Healthy). `target_day`/`day_status` stay `None`,
+    /// so the render omits the `day=` marker — the honest representation when a consumer
+    /// has no single decision date (a catalog posture summary, or a probe that refused to
+    /// select any day). No day is queried, so this never yields `OutOfRange`.
+    pub fn from_view_untargeted(view: &AsOfView<'_>) -> Self {
+        let calendar = view.calendar();
+        let freshness = view.freshness();
+        let outcome = if freshness.any_stale() {
+            DiagnosticOutcome::Stale
+        } else {
+            DiagnosticOutcome::Healthy
+        };
+        Self {
+            outcome,
+            as_of: view.as_of(),
+            artifact_id: Some(calendar.artifact_id().to_string()),
+            calendar_id: Some(calendar.calendar_id().to_string()),
+            authorization: Some(AuthorizationView::redacted(
+                &calendar.snapshot().authorization,
+            )),
+            coverage: Some(CoverageSummary::from(calendar.coverage())),
+            freshness: Some(freshness),
+            target_day: None,
+            day_status: None,
+            alerts: Vec::new(),
+            detail: format!(
+                "posture summary; calendar {}",
+                if freshness.any_stale() { "stale" } else { "healthy" }
+            ),
+        }
+    }
+
     /// Build a diagnostic from a loaded calendar view + a queried civil date. The
     /// snapshot facts (identities, redacted authorization, coverage, freshness) are
     /// populated, and the outcome reflects the day fact:
