@@ -1709,6 +1709,34 @@ async fn shadow_is_byte_identical_to_legacy_while_recording_the_calendar_verdict
     );
 }
 
+/// U3: catalog Shadow records a CLASSIFIED, assertable, redacted divergence — the weekday
+/// walk-back treats every boundary as open, so a proven all-Closed boundary is
+/// `CalendarClosedWeekdayOpen`, a proven session `Agree`, and an out-of-coverage boundary
+/// `Unavailable`.
+#[test]
+fn shadow_divergence_is_classified_and_redacted() {
+    use nautilus_ls::calendar::DivergenceClass;
+    let cal = build_calendar(&[(ymd(2024, 1, 8), DayStatus::Closed)], false);
+    let view = cal.as_of(cal_as_of()).unwrap();
+    let gate = CatalogCalendarGate::new(CalendarAdoption::Shadow, Some(view));
+
+    let obs = gate.divergence("catalog-watermark", ymd(2024, 1, 8), SessionBoundary::NoSession);
+    assert_eq!(obs.class, DivergenceClass::CalendarClosedWeekdayOpen);
+    assert_eq!(obs.consumer, "catalog-watermark");
+    assert_eq!(
+        gate.divergence("catalog-watermark", ymd(2024, 1, 5), SessionBoundary::Session(ymd(2024, 1, 5))).class,
+        DivergenceClass::Agree
+    );
+    assert_eq!(
+        gate.divergence("catalog-watermark", ymd(2024, 1, 8), SessionBoundary::Unavailable).class,
+        DivergenceClass::Unavailable
+    );
+
+    let line = obs.render_line();
+    assert!(line.contains("class=calendar-closed-weekday-open"), "{line}");
+    assert!(!line.to_lowercase().contains("authority"), "{line}");
+}
+
 /// AE3 (U3): a watermark after a multi-day holiday cluster whose last proven session
 /// precedes the cluster is NOT a false tail undershoot (the proven last session is the
 /// pre-cluster Friday the catalog reaches). Flipping that pre-cluster boundary to Unknown

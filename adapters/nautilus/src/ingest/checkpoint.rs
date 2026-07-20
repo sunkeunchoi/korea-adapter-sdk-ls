@@ -13,6 +13,7 @@ use chrono::{Datelike, NaiveDate};
 use nautilus_ls_calendar::CalendarAdoption;
 use serde::{Deserialize, Serialize};
 
+use crate::calendar::emit_divergence;
 use crate::error::{AdapterError, AdapterResult};
 use crate::ingest::{CalendarGate, ContinuityDecision};
 
@@ -510,16 +511,17 @@ impl Checkpoint {
             match gate.adoption() {
                 CalendarAdoption::Legacy => weekday_strictly_between(cm, sd),
                 CalendarAdoption::Shadow => {
+                    // Classified, assertable, redacted divergence on the non-persisted channel;
+                    // the weekday hole test stays authoritative (U3, KTD6). `weekday` = the
+                    // weekday's "there is a session/hole between" verdict (open in the span).
                     let decision = gate.continuity_decision(cm, sd);
                     let weekday = weekday_strictly_between(cm, sd);
-                    tracing::info!(
-                        after = %cm.format("%Y%m%d"),
-                        before = %sd.format("%Y%m%d"),
-                        calendar_decision = ?decision,
-                        weekday_breaks = weekday,
-                        adoption = "shadow",
-                        "calendar shadow checkpoint continuity verdict (recorded; weekday hole test authoritative)"
-                    );
+                    emit_divergence(&gate.continuity_divergence(
+                        "ingest-checkpoint-continuity",
+                        cm,
+                        weekday,
+                        decision,
+                    ));
                     weekday
                 }
                 CalendarAdoption::Enforced => {

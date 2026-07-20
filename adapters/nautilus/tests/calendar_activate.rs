@@ -7,8 +7,9 @@ use std::os::unix::fs::PermissionsExt;
 
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use nautilus_ls::calendar_refresh::{
-    activate, refresh, required_acknowledgments, write_candidate, ActivationApproval,
-    ActivationError, RefreshInputs, RefreshMode, RefreshScope, SourceOutcome, StaticEvidencePort,
+    activate, refresh, required_acknowledgments, rollback, write_candidate, ActivationApproval,
+    ActivationError, RefreshInputs, RefreshMode, RefreshScope, RollbackError, SourceOutcome,
+    StaticEvidencePort,
 };
 use nautilus_ls_calendar::schema::{
     Authorization, CalendarScope, Citation, Coverage, DayRow, DayStatus, EvidenceKind,
@@ -407,4 +408,161 @@ fn publication_boundary_active_snapshot_path_is_gitignored() {
         gitignore.contains("*.calendar.json.candidate.diff.json"),
         "the candidate diff artifact must be gitignored"
     );
+}
+
+// ---------------------------------------------------------------------------
+// U2 rollback rehearsal — forward-activate of a PRIOR snapshot over the atomic install
+// machinery, proving the prior artifact + adoption/activation identity is restored offline,
+// with a coverage-for-as_of guard so a lapsed-coverage rollback is surfaced not silently
+// installed. All synthetic, offline, fixed-clock (AE3, R4).
+
+/// A rollback as-of whose KST civil date (2012-06-04) sits inside the prior snapshot's
+/// materialized coverage (2012-06-01..2012-06-05), so the coverage guard passes.
+fn rollback_as_of() -> DateTime<Utc> {
+    t(2012, 6, 4)
+}
+
+/// Set up a rolled-forward state: write prior A, activate candidate B over it (active is now
+/// B), and keep A in a separate `prior` file the operator retains for rollback. Returns the
+/// active path, the prior (A) file path, the prior snapshot A, and B's refresh outcome.
+fn stage_activated(
+    dir: &std::path::Path,
+) -> (
+    std::path::PathBuf,
+    std::path::PathBuf,
+    Snapshot,
+    nautilus_ls::calendar_refresh::RefreshOutcome,
+) {
+    let prior = prior_snapshot();
+    let (active_path, candidate_path, outcome) = stage(dir, &prior, ok_inputs_additive());
+    let approval = approval(&outcome.candidate.artifact_id, vec![]);
+    activate(&active_path, &candidate_path, &approval, refresh_now()).unwrap();
+    let prior_path = dir.join("cal.json.prior");
+    std::fs::write(&prior_path, serde_json::to_vec_pretty(&prior).unwrap()).unwrap();
+    (active_path, prior_path, prior, outcome)
+}
+
+#[test]
+fn rollback_restores_prior_artifact_and_adoption_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    let (active_path, prior_path, prior, outcome) = stage_activated(dir.path());
+
+    // The activation chain is intact: candidate B records prior A as its predecessor.
+    assert_eq!(
+        outcome.candidate.predecessor_artifact_id.as_deref(),
+        Some(prior.artifact_id.as_str()),
+        "candidate B must record A as its predecessor for the chain to be consistent"
+    );
+
+    let approval = approval(&prior.artifact_id, vec![]);
+    let record = rollback(&active_path, &prior_path, &approval, rollback_as_of()).unwrap();
+
+    assert_eq!(record.restored_artifact_id, prior.artifact_id, "restored must be A");
+    assert_eq!(
+        record.superseded_artifact_id, outcome.candidate.artifact_id,
+        "superseded must be the just-active B"
+    );
+    assert_eq!(record.operator, "maintainer-1");
+
+    // The active file is now byte-identical to the prior snapshot, and reloads with A's id —
+    // the prior artifact + adoption/activation identity is restored, no production artifact.
+    assert_eq!(
+        std::fs::read(&active_path).unwrap(),
+        std::fs::read(&prior_path).unwrap(),
+        "rollback must install the prior bytes verbatim"
+    );
+    let cal = KrxCalendar::load_from_path(&active_path, rollback_as_of()).unwrap();
+    assert_eq!(cal.artifact_id(), prior.artifact_id);
+}
+
+#[test]
+fn rollback_preserves_owner_only_permissions() {
+    let dir = tempfile::tempdir().unwrap();
+    let (active_path, prior_path, prior, _outcome) = stage_activated(dir.path());
+    let approval = approval(&prior.artifact_id, vec![]);
+    rollback(&active_path, &prior_path, &approval, rollback_as_of()).unwrap();
+
+    let mode = std::fs::metadata(&active_path).unwrap().permissions().mode();
+    assert_eq!(
+        mode & 0o777,
+        0o600,
+        "restored snapshot must be owner read/write only, got {:o}",
+        mode & 0o777
+    );
+}
+
+#[test]
+fn rollback_of_an_unusable_prior_snapshot_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let (active_path, _prior_path, prior, _outcome) = stage_activated(dir.path());
+    let active_before = std::fs::read(&active_path).unwrap();
+
+    // A prior snapshot whose authorization has already expired at as_of is unusable — the
+    // real loader rejects it, so rollback fails closed (never a silent Unknown/install).
+    let mut expired = prior.clone();
+    expired.authorization.expires_at = Some(t(2012, 1, 1));
+    let expired = stamp(expired);
+    let expired_path = dir.path().join("cal.json.expired");
+    std::fs::write(&expired_path, serde_json::to_vec_pretty(&expired).unwrap()).unwrap();
+
+    let approval = approval(&expired.artifact_id, vec![]);
+    let err = rollback(&active_path, &expired_path, &approval, rollback_as_of()).unwrap_err();
+    assert!(
+        matches!(err, RollbackError::PriorInvalid(CalendarLoadError::Expired)),
+        "got {err:?}"
+    );
+    assert_eq!(
+        active_before,
+        std::fs::read(&active_path).unwrap(),
+        "a refusal must leave the active file unchanged"
+    );
+}
+
+#[test]
+fn rollback_of_a_prior_snapshot_not_covering_as_of_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let (active_path, prior_path, prior, _outcome) = stage_activated(dir.path());
+    let active_before = std::fs::read(&active_path).unwrap();
+
+    // A covers 2012-06-01..2012-06-05; roll back with an as_of whose KST date (2012-06-06) is
+    // past that window — the prior loads and authorizes but no longer covers today, which the
+    // per-date coverage query surfaces as an explicit refusal rather than a silent install
+    // that would leave every Enforced consumer returning OutOfRange.
+    let approval = approval(&prior.artifact_id, vec![]);
+    let err = rollback(&active_path, &prior_path, &approval, t(2012, 6, 6)).unwrap_err();
+    assert!(
+        matches!(err, RollbackError::PriorDoesNotCoverAsOf { .. }),
+        "got {err:?}"
+    );
+    assert_eq!(active_before, std::fs::read(&active_path).unwrap());
+}
+
+#[test]
+fn rollback_with_blank_approval_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let (active_path, prior_path, prior, _outcome) = stage_activated(dir.path());
+    let active_before = std::fs::read(&active_path).unwrap();
+
+    let mut blank = approval(&prior.artifact_id, vec![]);
+    blank.operator = "   ".to_string();
+    let err = rollback(&active_path, &prior_path, &blank, rollback_as_of()).unwrap_err();
+    assert!(
+        matches!(&err, RollbackError::ApprovalMissing { field } if field == "operator"),
+        "got {err:?}"
+    );
+    assert_eq!(active_before, std::fs::read(&active_path).unwrap());
+}
+
+#[test]
+fn rollback_of_an_unreviewed_prior_is_refused() {
+    let dir = tempfile::tempdir().unwrap();
+    let (active_path, prior_path, _prior, _outcome) = stage_activated(dir.path());
+    let active_before = std::fs::read(&active_path).unwrap();
+
+    // The approval names a different artifact than the prior being restored — a rollback must
+    // not rubber-stamp restoring a snapshot the operator did not review.
+    let approval = approval("some-other-artifact-id", vec![]);
+    let err = rollback(&active_path, &prior_path, &approval, rollback_as_of()).unwrap_err();
+    assert!(matches!(err, RollbackError::Unreviewed { .. }), "got {err:?}");
+    assert_eq!(active_before, std::fs::read(&active_path).unwrap());
 }

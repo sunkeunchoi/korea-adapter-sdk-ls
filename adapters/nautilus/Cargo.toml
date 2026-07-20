@@ -46,6 +46,10 @@ name = "calendar-activate"
 path = "src/bin/calendar-activate.rs"
 
 [[bin]]
+name = "calendar-rollback"
+path = "src/bin/calendar-rollback.rs"
+
+[[bin]]
 name = "node_data_tester"
 path = "src/bin/node_data_tester.rs"
 

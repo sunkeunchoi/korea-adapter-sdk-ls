@@ -267,6 +267,150 @@ pub fn emit_startup_record(record: &StartupRecord) {
     eprintln!("{}", record.render_line());
 }
 
+/// The classified disagreement between a consumer's WEEKDAY decision and the calendar's
+/// [`DayStatus`] at a boundary (U3, KTD6). A small closed set so a Shadow window's divergences
+/// can be reviewed and signed off before that consumer is enforced (R5, AC7). The axis is
+/// "does the weekday path treat the boundary as an open/trading day, and does the calendar
+/// agree" — every consumer reduces its decision to that axis (a range/continuity consumer maps
+/// "a real session breaks the chain" to a `TradingSession`, "all-closed" to `Closed`,
+/// "uncertain" to `Unknown`, "unavailable" to `None`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DivergenceClass {
+    /// The weekday and calendar decisions agree.
+    Agree,
+    /// The calendar proves the day Closed where the weekday path treats it as open — the
+    /// safety-relevant case (the weekday path would act on a proven non-session).
+    CalendarClosedWeekdayOpen,
+    /// The calendar cannot prove the day (Unknown) where the weekday path treats it as open.
+    CalendarUnknownWeekdayOpen,
+    /// The calendar proves a session where the weekday path treats the day as closed — the
+    /// weekday path would have skipped a real session.
+    CalendarOpenWeekdayClosed,
+    /// The calendar cannot prove the day (Unknown) where the weekday path treats it as closed.
+    CalendarUnknownWeekdayClosed,
+    /// The calendar is unavailable/indeterminate for the query — no comparison is possible;
+    /// the weekday path stays authoritative (non-fatal in Shadow).
+    Unavailable,
+}
+
+impl DivergenceClass {
+    /// The stable token used in the divergence observation line.
+    pub fn token(self) -> &'static str {
+        match self {
+            DivergenceClass::Agree => "agree",
+            DivergenceClass::CalendarClosedWeekdayOpen => "calendar-closed-weekday-open",
+            DivergenceClass::CalendarUnknownWeekdayOpen => "calendar-unknown-weekday-open",
+            DivergenceClass::CalendarOpenWeekdayClosed => "calendar-open-weekday-closed",
+            DivergenceClass::CalendarUnknownWeekdayClosed => "calendar-unknown-weekday-closed",
+            DivergenceClass::Unavailable => "unavailable",
+        }
+    }
+
+    /// `true` iff the weekday and calendar decisions actually disagree (everything but
+    /// [`Agree`](DivergenceClass::Agree)). [`Unavailable`](DivergenceClass::Unavailable) counts
+    /// as a divergence to review — the calendar could not confirm the weekday call.
+    pub fn is_divergent(self) -> bool {
+        !matches!(self, DivergenceClass::Agree)
+    }
+}
+
+/// Classify the disagreement between a weekday "is this an open/trading day" decision and the
+/// calendar's tri-state [`DayStatus`] (`None` = the calendar was unavailable/out-of-range for
+/// the query). The single source of truth every consumer boundary reduces its decision to.
+pub fn classify_divergence(
+    weekday_open: bool,
+    calendar: Option<nautilus_ls_calendar::schema::DayStatus>,
+) -> DivergenceClass {
+    use nautilus_ls_calendar::schema::DayStatus;
+    match calendar {
+        None => DivergenceClass::Unavailable,
+        Some(DayStatus::TradingSession) => {
+            if weekday_open {
+                DivergenceClass::Agree
+            } else {
+                DivergenceClass::CalendarOpenWeekdayClosed
+            }
+        }
+        Some(DayStatus::Closed) => {
+            if weekday_open {
+                DivergenceClass::CalendarClosedWeekdayOpen
+            } else {
+                DivergenceClass::Agree
+            }
+        }
+        Some(DayStatus::Unknown) => {
+            if weekday_open {
+                DivergenceClass::CalendarUnknownWeekdayOpen
+            } else {
+                DivergenceClass::CalendarUnknownWeekdayClosed
+            }
+        }
+    }
+}
+
+/// A structured, testable Shadow-divergence observation for one consumer boundary (KTD6):
+/// the consumer, the boundary civil date, the human renderings of both decisions, and the
+/// classified [`DivergenceClass`]. Redacted by construction — it carries only calendar
+/// decisions and a date (never an authority/credential identity) — and non-persisted: it is
+/// emitted on the stderr diagnostic channel, never into checkpoint/watermark state or a stdout
+/// data product, so Shadow stays byte-identical to Legacy.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DivergenceObservation {
+    /// Which consumer boundary observed the divergence.
+    pub consumer: String,
+    /// The boundary civil date the decisions bear on.
+    pub date: NaiveDate,
+    /// The weekday path's decision, human-rendered (e.g. `open`/`closed`, or a debug rendering).
+    pub weekday_decision: String,
+    /// The calendar's decision, human-rendered (e.g. a `DayStatus`, or `unavailable`).
+    pub calendar_decision: String,
+    /// The classified relationship between the two decisions.
+    pub class: DivergenceClass,
+}
+
+impl DivergenceObservation {
+    /// Build an observation, classifying the weekday-vs-calendar decision. `weekday_open` is
+    /// the weekday path's open/trading verdict for `date`; `calendar` is the calendar's tri-state
+    /// verdict (`None` when unavailable/out-of-range).
+    pub fn new(
+        consumer: &str,
+        date: NaiveDate,
+        weekday_open: bool,
+        calendar: Option<nautilus_ls_calendar::schema::DayStatus>,
+    ) -> Self {
+        Self {
+            consumer: consumer.to_string(),
+            date,
+            weekday_decision: if weekday_open { "open".to_string() } else { "closed".to_string() },
+            calendar_decision: match calendar {
+                Some(status) => format!("{status:?}"),
+                None => "unavailable".to_string(),
+            },
+            class: classify_divergence(weekday_open, calendar),
+        }
+    }
+
+    /// Render the observation as ONE concise, redacted line for the diagnostic channel.
+    pub fn render_line(&self) -> String {
+        format!(
+            "calendar-divergence consumer={} date={} weekday={} calendar={} class={}",
+            self.consumer,
+            self.date,
+            self.weekday_decision,
+            self.calendar_decision,
+            self.class.token()
+        )
+    }
+}
+
+/// Emit a Shadow-divergence observation to the non-persisted diagnostic channel (stderr, KTD6).
+/// Like [`emit_startup_record`], a Shadow recording never touches stdout or a tracked artifact,
+/// so the byte-identical-to-Legacy guarantee holds — this is the durable review corpus each
+/// Consumer Retirement Gate signs off against once the operator captures the channel (U5).
+pub fn emit_divergence(observation: &DivergenceObservation) {
+    eprintln!("{}", observation.render_line());
+}
+
 /// Read the explicit snapshot path from [`SNAPSHOT_PATH_ENV`] (`None` when unset/empty).
 pub fn snapshot_path_from_env() -> Option<std::path::PathBuf> {
     std::env::var(SNAPSHOT_PATH_ENV)
@@ -341,5 +485,54 @@ mod tests {
         // A diagnostic whose outcome is OutOfRange is not a usable factual day, so the
         // resulting action is the unavailable branch even though a snapshot loaded.
         assert!(!DiagnosticOutcome::OutOfRange.is_usable());
+    }
+
+    #[test]
+    fn divergence_observation_is_redacted_and_classified() {
+        use nautilus_ls_calendar::schema::DayStatus;
+
+        // The full classification matrix over the (weekday_open, calendar) axis.
+        assert_eq!(
+            classify_divergence(true, Some(DayStatus::Closed)),
+            DivergenceClass::CalendarClosedWeekdayOpen
+        );
+        assert_eq!(
+            classify_divergence(true, Some(DayStatus::Unknown)),
+            DivergenceClass::CalendarUnknownWeekdayOpen
+        );
+        assert_eq!(
+            classify_divergence(false, Some(DayStatus::TradingSession)),
+            DivergenceClass::CalendarOpenWeekdayClosed
+        );
+        assert_eq!(
+            classify_divergence(false, Some(DayStatus::Unknown)),
+            DivergenceClass::CalendarUnknownWeekdayClosed
+        );
+        assert_eq!(
+            classify_divergence(true, Some(DayStatus::TradingSession)),
+            DivergenceClass::Agree
+        );
+        assert_eq!(
+            classify_divergence(false, Some(DayStatus::Closed)),
+            DivergenceClass::Agree
+        );
+        assert_eq!(classify_divergence(true, None), DivergenceClass::Unavailable);
+
+        // The observation renders a concise, classified, redacted line — a calendar-closed
+        // day the weekday path treats as open is the safety-relevant divergence.
+        let obs = DivergenceObservation::new(
+            "unit-test",
+            NaiveDate::from_ymd_opt(2011, 9, 21).unwrap(),
+            true,
+            Some(DayStatus::Closed),
+        );
+        assert_eq!(obs.class, DivergenceClass::CalendarClosedWeekdayOpen);
+        assert!(obs.class.is_divergent());
+        let line = obs.render_line();
+        assert!(line.contains("class=calendar-closed-weekday-open"), "{line}");
+        assert!(line.contains("consumer=unit-test date=2011-09-21"), "{line}");
+        // Redacted by construction: the observation has no authority/credential field, so no
+        // identity can appear in either the struct or its render line.
+        assert!(!line.to_lowercase().contains("authority"), "{line}");
     }
 }

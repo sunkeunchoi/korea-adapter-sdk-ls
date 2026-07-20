@@ -32,11 +32,11 @@ use std::io::Write;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 
 use nautilus_ls_calendar::schema::Snapshot;
-use nautilus_ls_calendar::{compute_artifact_id, CalendarLoadError, KrxCalendar};
+use nautilus_ls_calendar::{compute_artifact_id, CalendarLoadError, KrxCalendar, QueryError};
 
 use super::diff::{CategorizedDiff, DiffEntry};
 use super::diff_path_for;
@@ -79,6 +79,27 @@ pub struct ActivationRecord {
     pub candidate_artifact_id: String,
     /// The high-risk / partial keys the approval acknowledged.
     pub acknowledged_high_risk: Vec<String>,
+}
+
+/// The recorded outcome of a successful rollback (U2, KTD5). A rollback is a forward-activate
+/// of a PRIOR snapshot — it supersedes the current active snapshot with an earlier one — so
+/// the record names the direction explicitly: which `artifact_id` was restored to active and
+/// which was superseded. Parallels [`ActivationRecord`]'s shape so the operator's gate log and
+/// the rollback rehearsal read the same fields.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RollbackRecord {
+    /// The approving maintainer.
+    pub operator: String,
+    /// The recorded reason.
+    pub reason: String,
+    /// When the maintainer approved.
+    pub approved_at: DateTime<Utc>,
+    /// The as-of instant the rollback was performed at.
+    pub rolled_back_at: DateTime<Utc>,
+    /// The `artifact_id` of the prior snapshot restored to active.
+    pub restored_artifact_id: String,
+    /// The recomputed `artifact_id` of the snapshot that was superseded (the just-active one).
+    pub superseded_artifact_id: String,
 }
 
 /// A distinct, typed reason an activation was refused. Every variant leaves the active file
@@ -133,6 +154,63 @@ pub enum ActivationError {
     UnacknowledgedHighRisk {
         /// The acknowledgment keys that were required but missing from the approval.
         entries: Vec<String>,
+    },
+
+    /// The atomic install (tempfile create / write / rename) failed.
+    #[error("atomic install failed: {message}")]
+    Io {
+        /// The underlying I/O rendering.
+        message: String,
+    },
+}
+
+/// A distinct, typed reason a rollback was refused (U2). Like [`ActivationError`], every
+/// variant leaves the active file byte-identical (installation is the last step) — a refused
+/// rollback is fail-closed, never a silent partial install.
+#[derive(Debug, thiserror::Error)]
+pub enum RollbackError {
+    /// A required approval field (operator / reason) was blank.
+    #[error("rollback approval is missing a required field: {field}")]
+    ApprovalMissing {
+        /// Which field was blank.
+        field: String,
+    },
+
+    /// The current active snapshot could not be read/parsed to establish the superseded
+    /// identity.
+    #[error("could not read the current active snapshot: {message}")]
+    ActiveUnreadable {
+        /// The underlying rendering.
+        message: String,
+    },
+
+    /// The prior snapshot to restore could not be read/parsed.
+    #[error("could not read the prior snapshot: {message}")]
+    PriorUnreadable {
+        /// The underlying rendering.
+        message: String,
+    },
+
+    /// The approval does not review the prior snapshot being restored (a rollback cannot
+    /// rubber-stamp restoring a different snapshot than the one signed off).
+    #[error("prior snapshot is unreviewed: {detail}")]
+    Unreviewed {
+        /// Why the prior snapshot is considered unreviewed.
+        detail: String,
+    },
+
+    /// The prior snapshot failed to load/authorize at `as_of` — corrupt, unauthorized,
+    /// expired, or an integrity/coverage failure. Fail-closed; never silently Unknown.
+    #[error("prior snapshot is unusable at as_of: {0}")]
+    PriorInvalid(#[source] CalendarLoadError),
+
+    /// The prior snapshot loads and authorizes, but its materialized coverage no longer
+    /// includes the `as_of` operating date — restoring it would leave every Enforced consumer
+    /// refusing on `OutOfRange`. Surfaced explicitly, not silently installed.
+    #[error("prior snapshot does not cover the as_of date {as_of_date} (coverage lapsed)")]
+    PriorDoesNotCoverAsOf {
+        /// The as-of civil date (KST) the prior snapshot fails to cover.
+        as_of_date: chrono::NaiveDate,
     },
 
     /// The atomic install (tempfile create / write / rename) failed.
@@ -272,6 +350,106 @@ pub fn activate(
         acknowledged_high_risk: approval.acknowledged.clone(),
     };
     atomic_install_owner_only(active_path, &candidate_bytes).map_err(|e| ActivationError::Io {
+        message: e.to_string(),
+    })?;
+    Ok(record)
+}
+
+/// Roll the active snapshot back to a `prior_path` snapshot under explicit maintainer
+/// `approval`, evaluating authorization/validity/coverage at `as_of` (U2, KTD5).
+///
+/// Rollback is a forward-activate of an EARLIER snapshot over the same atomic install path
+/// ([`atomic_install_owner_only`]) — it deliberately supersedes the current active, so it does
+/// NOT apply the stale-base guard `activate` uses (that guard rejects a candidate built off a
+/// different predecessor; a rollback is a chosen supersession). Instead it proves the prior
+/// snapshot is a valid, authorized [`KrxCalendar`] at `as_of` AND that its materialized
+/// coverage still includes the `as_of` operating date — because [`KrxCalendar::from_snapshot`]
+/// proves load-validity/authorization but NOT that the snapshot's coverage still reaches today
+/// (that is a per-date query returning [`QueryError::OutOfRange`], not a load failure). Without
+/// the coverage check an emergency rollback could silently install a snapshot whose coverage
+/// has lapsed, leaving every Enforced consumer refusing on `OutOfRange` — an operational halt
+/// the operator misreads as "rollback failed" rather than "prior snapshot no longer covers
+/// today". Rollback therefore refuses (surfaces) a prior snapshot that is stale for `as_of`.
+///
+/// Like activation, rollback installs a file and requires a process restart to take effect
+/// (the restart-identity proof is the operator's, F4); no hot-reload, no global mutable state.
+/// Every refusal leaves the active file byte-identical (installation is the last step).
+pub fn rollback(
+    active_path: &Path,
+    prior_path: &Path,
+    approval: &ActivationApproval,
+    as_of: DateTime<Utc>,
+) -> Result<RollbackRecord, RollbackError> {
+    // 1. Explicit approval: operator + reason must be non-blank.
+    if approval.operator.trim().is_empty() {
+        return Err(RollbackError::ApprovalMissing {
+            field: "operator".to_string(),
+        });
+    }
+    if approval.reason.trim().is_empty() {
+        return Err(RollbackError::ApprovalMissing {
+            field: "reason".to_string(),
+        });
+    }
+
+    // 2. Current active snapshot → recomputed superseded identity.
+    let active_bytes = std::fs::read(active_path).map_err(|e| RollbackError::ActiveUnreadable {
+        message: e.to_string(),
+    })?;
+    let active: Snapshot =
+        serde_json::from_slice(&active_bytes).map_err(|e| RollbackError::ActiveUnreadable {
+            message: e.to_string(),
+        })?;
+    let superseded_artifact_id = compute_artifact_id(&active);
+
+    // 3. Prior snapshot → revalidate through the REAL loader at `as_of` (auth + integrity).
+    let prior_bytes = std::fs::read(prior_path).map_err(|e| RollbackError::PriorUnreadable {
+        message: e.to_string(),
+    })?;
+    let prior: Snapshot =
+        serde_json::from_slice(&prior_bytes).map_err(|e| RollbackError::PriorUnreadable {
+            message: e.to_string(),
+        })?;
+    let validated =
+        KrxCalendar::from_snapshot(prior.clone(), as_of).map_err(RollbackError::PriorInvalid)?;
+    let restored_artifact_id = validated.artifact_id().to_string();
+
+    // 4. Reviewed: the approval must name the prior snapshot being restored — a rollback
+    //    cannot rubber-stamp restoring a different snapshot than the one signed off.
+    if approval.reviewed_artifact_id != restored_artifact_id {
+        return Err(RollbackError::Unreviewed {
+            detail: format!(
+                "approval reviewed {:?}, prior snapshot is {restored_artifact_id}",
+                approval.reviewed_artifact_id
+            ),
+        });
+    }
+
+    // 5. Coverage-for-`as_of`: the prior snapshot must still cover the operating date, or every
+    //    Enforced consumer would refuse on OutOfRange. KRX civil dates are KST (UTC+9). This is
+    //    a per-date query — a lapsed-coverage snapshot loads and authorizes cleanly but returns
+    //    OutOfRange here, which is exactly the silent-halt this guard turns into an explicit
+    //    refusal.
+    let as_of_date = (as_of + Duration::hours(9)).date_naive();
+    let view = validated.as_of(as_of).map_err(RollbackError::PriorInvalid)?;
+    match view.day(as_of_date) {
+        Ok(_) => {}
+        Err(QueryError::OutOfRange { .. }) | Err(QueryError::DateOverflow) => {
+            return Err(RollbackError::PriorDoesNotCoverAsOf { as_of_date });
+        }
+    }
+
+    // 6. Record + atomically install the prior bytes (owner-readable 0o600). The record names
+    //    the restored + superseded identities so the operator's gate log (F4) is self-evident.
+    let record = RollbackRecord {
+        operator: approval.operator.clone(),
+        reason: approval.reason.clone(),
+        approved_at: approval.approved_at,
+        rolled_back_at: as_of,
+        restored_artifact_id,
+        superseded_artifact_id,
+    };
+    atomic_install_owner_only(active_path, &prior_bytes).map_err(|e| RollbackError::Io {
         message: e.to_string(),
     })?;
     Ok(record)
