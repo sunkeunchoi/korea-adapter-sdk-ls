@@ -143,13 +143,13 @@ stale-but-established boundary is a **GO** with a prominent warning naming the f
 dimension(s) that bound the queried dates. There is no weekday fallback; the
 `last_weekday_on_or_before` walk-back is retired.
 
-**`budget-probe` behavior by adoption:** Legacy/Shadow keep the weekday
-`recent_trading_day` anchor authoritative (Shadow records the calendar-selected session);
-Enforced selects the **most recent proven Trading Session** and makes **no gateway call**
+**`budget-probe` behavior (Enforced, after the #189 U8 Consumer Retirement Gate):** automatic
+selection is the **most recent proven Trading Session**, and the probe makes **no gateway call**
 when none can be proven (or the calendar is unavailable) until an explicit
 `LS_PROBE_SDATE`/`LS_PROBE_EDATE` range is supplied. An explicit range is an auditable
-**bypass** — it records the operator, run context, and the calendar condition automatic
-selection skipped, and changes neither probe status nor any dispatch authorization.
+**bypass** (the preserved reproducibility/recovery lever, KTD8) — it records the operator, run
+context, and the calendar condition automatic selection skipped, and changes neither probe
+status nor any dispatch authorization. The weekday `recent_trading_day` anchor is retired.
 
 **`ls-ingest` behavior by adoption (issue #186).** `ls-ingest` also reads the shared calendar,
 resolving `LS_CALENDAR_SNAPSHOT` once per invocation after acquiring the ingest lock and evaluating

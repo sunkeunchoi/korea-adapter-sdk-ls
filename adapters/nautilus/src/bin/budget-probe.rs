@@ -25,13 +25,12 @@
 //! - `LS_PROBE_CEILING`: hard per-session call ceiling (default `40`, R5).
 //! - `LS_PROBE_SYMBOL`: the MarketData probe shcode (default `005930`).
 //! - `LS_PROBE_SDATE` / `LS_PROBE_EDATE`: the t8412 trading-day range (YYYYMMDD).
-//!   Default = the last weekday on/before today (KST) under the composed-default Shadow
-//!   adoption, which also records the calendar-selected proven Trading Session to the
-//!   diagnostic channel (U13, KTD8); under Enforced the default IS the most recent proven
-//!   Trading Session, and the probe refuses (no live call) when none can be proven. Setting
-//!   either endpoint is an explicit BYPASS — a servable known-data day when the gateway
-//!   errors (e.g. holiday); the probe only needs the call to serve. Adoption is chosen by
-//!   `LS_CALENDAR_ADOPTION` and the snapshot by `LS_CALENDAR_SNAPSHOT` (composition root).
+//!   Default = the most recent proven KRX Trading Session from the calendar (U13, KTD8); the
+//!   probe refuses (no live call) when none can be proven and no explicit range is supplied.
+//!   Setting either endpoint is an explicit BYPASS — a servable known-data day for
+//!   reproducibility/recovery when automatic selection can prove no session; the probe only
+//!   needs the call to serve. The snapshot is chosen by `LS_CALENDAR_SNAPSHOT` (composition
+//!   root).
 //! - `LS_PROBE_PACE_MS`: inter-call pace in ms for stage 1 (default `1000`; must stay
 //!   at or under the published per-second cap — **t8412 is 1/s, so keep `>=1000`**;
 //!   a faster pace would trip t8412's per-second cap and confound the measurement).
@@ -47,7 +46,6 @@ use chrono::{Duration, NaiveDate};
 use nautilus_ls_calendar::schema::DayStatus;
 use nautilus_ls_calendar::{AsOfView, CalendarAdoption};
 
-use nautilus_ls::calendar::DivergenceObservation;
 use nautilus_ls::config::LsAdapterConfig;
 use nautilus_ls::ingest::budget::{
     self, spend_ledger_path, BucketScope, CallCeiling, CrossClassReport, ProbeCaller, ProbeReport,
@@ -88,18 +86,15 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     // invocation still emits exactly one startup record) while collapsing the former
     // double load (main startup + resolve_probe_dates) into a single load and as-of.
     //
-    // U13 (KTD8): the t8412 probe range is resolved through the calendar adoption seam.
-    // Shadow (the composed default) keeps the weekday `recent_trading_day` default
-    // authoritative — byte-identical to Legacy — while recording the calendar default to
-    // the non-persisted diagnostic channel; Enforced (offline-tested) selects the most
-    // recent proven Trading Session and refuses (no live call) when none can be proven and
-    // no explicit LS_PROBE_SDATE/EDATE range is supplied. An explicit range is a BYPASS.
-    let weekday_anchor = recent_trading_day();
+    // U13/U8 (KTD8/KTD3): budget-probe is Enforced-only after its Consumer Retirement Gate —
+    // it selects the most recent proven Trading Session from the calendar and refuses (no live
+    // call) when none can be proven and no explicit LS_PROBE_SDATE/EDATE range is supplied. An
+    // explicit range is an auditable BYPASS (reproducibility/recovery).
     let explicit = ExplicitRange {
         sdate: std::env::var("LS_PROBE_SDATE").ok().filter(|s| !s.trim().is_empty()),
         edate: std::env::var("LS_PROBE_EDATE").ok().filter(|s| !s.trim().is_empty()),
     };
-    let ctx = ProbeContext::resolve(&weekday_anchor, &explicit);
+    let ctx = ProbeContext::resolve(&explicit);
 
     if !paper_ok(std::env::var("LS_TRADING_ENV").ok().as_deref()) {
         return Err("refusing to run: set LS_TRADING_ENV=paper (this probe is paper-only)".into());
@@ -271,19 +266,6 @@ fn paper_ok(env: Option<&str>) -> bool {
     env == Some("paper")
 }
 
-/// The last weekday on/before today in KST (`YYYYMMDD`) — the default t8412 probe
-/// day. A weekend rolls back to Friday so the gateway does not `01715`; holidays
-/// still need an `LS_PROBE_SDATE`/`EDATE` override (the probe only needs a servable
-/// day, not real data).
-fn recent_trading_day() -> String {
-    use chrono::{Datelike, Duration, Weekday};
-    let mut day = (chrono::Utc::now() + Duration::hours(9)).date_naive();
-    while matches!(day.weekday(), Weekday::Sat | Weekday::Sun) {
-        day -= Duration::days(1);
-    }
-    day.format("%Y%m%d").to_string()
-}
-
 // ---------------------------------------------------------------------------
 // U13 (KTD8) — calendar-backed default-date selection behind the adoption seam.
 //
@@ -324,13 +306,11 @@ enum SessionScan {
 /// Where the resolved probe range came from — recorded to the diagnostic channel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DateSource {
-    /// The weekday `recent_trading_day` default (Legacy / Shadow authoritative).
-    WeekdayDefault,
     /// The calendar-selected most-recent proven Trading Session (Enforced).
     CalendarSession,
     /// An explicit `LS_PROBE_SDATE`/`EDATE` override — a bypass, not a calendar default.
     Bypass,
-    /// Enforced could prove no session and no explicit range was supplied → no default.
+    /// The calendar could prove no session and no explicit range was supplied → no default.
     NoDefault,
 }
 
@@ -338,7 +318,6 @@ impl DateSource {
     /// The stable token used in the diagnostic line.
     fn token(self) -> &'static str {
         match self {
-            DateSource::WeekdayDefault => "weekday-default",
             DateSource::CalendarSession => "calendar-session",
             DateSource::Bypass => "bypass",
             DateSource::NoDefault => "no-default",
@@ -538,69 +517,23 @@ fn scan_recent_session(view: Option<&AsOfView<'_>>, anchor: NaiveDate) -> Sessio
     SessionScan::NoSession
 }
 
-/// The classified Shadow-divergence for budget-probe automatic selection (U3, KTD6): the
-/// weekday `recent_trading_day` anchor is treated as a trading day (open); the calendar's
-/// bounded recent-session scan reduces to the tri-state it disagrees on (the anchor itself
-/// proven a session → agree; an earlier session was the most recent → the anchor is a proven
-/// non-session; no session in the lookback → the calendar could not confirm; unavailable →
-/// no comparison). `Some` only under Shadow — Legacy never consults the calendar and Enforced
-/// acts on the scan rather than recording it. Pure + assertable.
-fn probe_divergence(
-    adoption: CalendarAdoption,
-    weekday_anchor: NaiveDate,
-    scan: SessionScan,
-) -> Option<DivergenceObservation> {
-    if adoption != CalendarAdoption::Shadow {
-        return None;
-    }
-    let calendar = match scan {
-        SessionScan::Session { date, .. } if date == weekday_anchor => {
-            Some(DayStatus::TradingSession)
-        }
-        SessionScan::Session { .. } => Some(DayStatus::Closed),
-        SessionScan::NoSession => Some(DayStatus::Unknown),
-        SessionScan::Unavailable => None,
-    };
-    Some(DivergenceObservation::new(
-        "budget-probe",
-        weekday_anchor,
-        true,
-        calendar,
-    ))
-}
-
-/// The pure default-date decision (U13/U2, KTD8/KTD4). Legacy/Shadow keep the weekday anchor
-/// authoritative (Shadow additionally RECORDS the calendar default); Enforced selects the
-/// proven session, or refuses (no live call) when nothing is proven and no explicit range is
+/// The pure default-date decision (U13/U2/U8, KTD8/KTD4/KTD3). Enforced-only after the
+/// budget-probe Consumer Retirement Gate: automatic selection is the most recent proven Trading
+/// Session, or a refusal (no live call) when nothing is proven and no explicit range is
 /// supplied. An explicit range is always a BYPASS — recorded as a [`BypassAudit`] naming the
 /// (pre-sanitized) operator + run context and the calendar condition automatic selection
 /// skipped. The bypass NEVER changes probe status or authorizes dispatch. No calendar, no
 /// I/O, no wall-clock — fully testable.
-fn plan_probe_dates(
-    adoption: CalendarAdoption,
-    scan: SessionScan,
-    weekday_anchor: &str,
-    explicit: &ExplicitRange,
-    run: &RunContext,
-) -> ProbeDatePlan {
-    // The weekday-authoritative range, byte-identical to the pre-migration behavior: each
-    // endpoint is the explicit override if present, else the weekday `recent_trading_day`.
-    let weekday_range = || {
-        (
-            explicit.sdate.clone().unwrap_or_else(|| weekday_anchor.to_string()),
-            explicit.edate.clone().unwrap_or_else(|| weekday_anchor.to_string()),
-        )
-    };
-    // The calendar-selected session (recorded in Shadow, used in Enforced). Legacy never
-    // consults the calendar, so it records nothing.
-    let calendar_default = match (adoption, scan) {
-        (CalendarAdoption::Legacy, _) => None,
-        (_, SessionScan::Session { date, .. }) => Some(fmt_ymd(date)),
+fn plan_probe_dates(scan: SessionScan, explicit: &ExplicitRange, run: &RunContext) -> ProbeDatePlan {
+    // The calendar-selected session, recorded for the diagnostic (used when no explicit range
+    // bypasses it).
+    let calendar_default = match scan {
+        SessionScan::Session { date, .. } => Some(fmt_ymd(date)),
         _ => None,
     };
     let bypass = explicit.is_supplied();
-    // On a bypass, record WHICH calendar condition automatic selection skipped — derived
-    // purely from the scan (the same value on every adoption). Absent when no explicit range.
+    // On a bypass, record WHICH calendar condition automatic selection skipped — derived purely
+    // from the scan. Absent when no explicit range.
     let bypass_audit = if bypass {
         Some(BypassAudit {
             operator: run.operator.clone(),
@@ -611,87 +544,70 @@ fn plan_probe_dates(
         None
     };
 
-    match adoption {
-        // Legacy / Shadow: the weekday path acts. Shadow differs only by recording the
-        // calendar default (the `calendar_default` field above); the range + request
-        // decision are identical, so byte-identical-to-Legacy holds. A bypass audit is
-        // recorded to the non-persisted channel only — it never touches the range/request.
-        CalendarAdoption::Legacy | CalendarAdoption::Shadow => {
-            let (sdate, edate) = weekday_range();
+    if bypass {
+        // An explicit range wins — it unblocks the live call automatic selection would refuse.
+        // A partial range fills the missing endpoint from the supplied one (single-day probe);
+        // the weekday anchor is gone (KTD3), so there is no weekday fallback.
+        let sdate = explicit.sdate.clone().or_else(|| explicit.edate.clone()).unwrap_or_default();
+        let edate = explicit.edate.clone().or_else(|| explicit.sdate.clone()).unwrap_or_default();
+        return ProbeDatePlan {
+            sdate: Some(sdate),
+            edate: Some(edate),
+            live_request: true,
+            source: DateSource::Bypass,
+            calendar_default,
+            warnings: Vec::new(),
+            bypass_audit,
+        };
+    }
+
+    match scan {
+        SessionScan::Session { date, stale } => {
+            let mut warnings = Vec::new();
+            if stale {
+                warnings.push(format!(
+                    "stale-but-established calendar evidence — using proven session {} anyway \
+                     (refresh the snapshot)",
+                    fmt_ymd(date)
+                ));
+            }
+            let d = fmt_ymd(date);
             ProbeDatePlan {
-                sdate: Some(sdate),
-                edate: Some(edate),
+                sdate: Some(d.clone()),
+                edate: Some(d),
                 live_request: true,
-                source: if bypass { DateSource::Bypass } else { DateSource::WeekdayDefault },
+                source: DateSource::CalendarSession,
                 calendar_default,
-                warnings: Vec::new(),
-                bypass_audit,
+                warnings,
+                bypass_audit: None,
             }
         }
-        CalendarAdoption::Enforced => {
-            if bypass {
-                // An explicit override wins even under Enforced — recorded as a bypass, and
-                // it unblocks the live call the (unavailable/Unknown) calendar would refuse.
-                let (sdate, edate) = weekday_range();
-                return ProbeDatePlan {
-                    sdate: Some(sdate),
-                    edate: Some(edate),
-                    live_request: true,
-                    source: DateSource::Bypass,
-                    calendar_default,
-                    warnings: Vec::new(),
-                    bypass_audit,
-                };
-            }
-            match scan {
-                SessionScan::Session { date, stale } => {
-                    let mut warnings = Vec::new();
-                    if stale {
-                        warnings.push(format!(
-                            "stale-but-established calendar evidence — using proven session {} \
-                             anyway (refresh the snapshot)",
-                            fmt_ymd(date)
-                        ));
-                    }
-                    let d = fmt_ymd(date);
-                    ProbeDatePlan {
-                        sdate: Some(d.clone()),
-                        edate: Some(d),
-                        live_request: true,
-                        source: DateSource::CalendarSession,
-                        calendar_default,
-                        warnings,
-                        bypass_audit: None,
-                    }
-                }
-                SessionScan::NoSession => ProbeDatePlan {
-                    sdate: None,
-                    edate: None,
-                    live_request: false,
-                    source: DateSource::NoDefault,
-                    calendar_default: None,
-                    warnings: vec![
-                        "no proven Trading Session in the calendar lookback — NO live call \
-                         until an explicit LS_PROBE_SDATE/EDATE range is supplied"
-                            .to_string(),
-                    ],
-                    bypass_audit: None,
-                },
-                SessionScan::Unavailable => ProbeDatePlan {
-                    sdate: None,
-                    edate: None,
-                    live_request: false,
-                    source: DateSource::NoDefault,
-                    calendar_default: None,
-                    warnings: vec![
-                        "calendar unavailable — NO live call until an explicit \
-                         LS_PROBE_SDATE/EDATE range is supplied"
-                            .to_string(),
-                    ],
-                    bypass_audit: None,
-                },
-            }
-        }
+        SessionScan::NoSession => ProbeDatePlan {
+            sdate: None,
+            edate: None,
+            live_request: false,
+            source: DateSource::NoDefault,
+            calendar_default: None,
+            warnings: vec![
+                "no proven Trading Session in the calendar lookback — NO live call until an \
+                 explicit LS_PROBE_SDATE/EDATE range is supplied"
+                    .to_string(),
+            ],
+            bypass_audit: None,
+        },
+        SessionScan::Unavailable => ProbeDatePlan {
+            sdate: None,
+            edate: None,
+            live_request: false,
+            source: DateSource::NoDefault,
+            calendar_default: None,
+            warnings: vec![
+                "calendar unavailable — NO live call until an explicit LS_PROBE_SDATE/EDATE \
+                 range is supplied"
+                    .to_string(),
+            ],
+            bypass_audit: None,
+        },
     }
 }
 
@@ -713,32 +629,29 @@ impl ProbeContext {
     /// the non-persisted channel (stderr, KTD8). The load is non-fatal (a missing/failed
     /// snapshot is a recorded unavailable state); the Enforced refusal is deferred to
     /// [`resolved_range`](Self::resolved_range) so the paper gate stays the primary refusal.
-    fn resolve(weekday_anchor: &str, explicit: &ExplicitRange) -> Self {
-        let adoption = nautilus_ls::calendar::adoption_from_env();
+    fn resolve(explicit: &ExplicitRange) -> Self {
+        // Enforced-only after the budget-probe Consumer Retirement Gate (#189 U8, KTD3): the
+        // date decision no longer consults LS_CALENDAR_ADOPTION.
+        let adoption = CalendarAdoption::Enforced;
         let as_of = chrono::Utc::now();
         let path = nautilus_ls::calendar::snapshot_path_from_env();
         let loaded = nautilus_ls::calendar::resolve_and_load(path.as_deref(), as_of, adoption);
         // A usable view requires a loaded calendar that authorizes at `as_of`.
         let view = loaded.calendar().and_then(|c| c.as_of(as_of).ok());
-        // The anchor is `recent_trading_day` output (always valid `YYYYMMDD`); a defensive
-        // parse failure is treated as an unavailable scan rather than a panic.
-        let anchor_date = NaiveDate::parse_from_str(weekday_anchor, "%Y%m%d").ok();
-        let scan = match anchor_date {
-            Some(a) => scan_recent_session(view.as_ref(), a),
-            None => SessionScan::Unavailable,
-        };
+        // Scan back from today's KST civil date for the most recent proven Trading Session
+        // (skipping Closed AND Unknown) over the bounded lookback — no weekday anchor.
+        let anchor_date = (as_of + Duration::hours(9)).date_naive();
+        let scan = scan_recent_session(view.as_ref(), anchor_date);
         // Resolve the (sanitized) operator + run context once at the composition root and
         // thread it into the pure plan (U2, KTD4) — it only lands in the audit on a bypass.
         let run = RunContext::from_env();
-        let plan = plan_probe_dates(adoption, scan, weekday_anchor, explicit, &run);
+        let plan = plan_probe_dates(scan, explicit, &run);
 
         // Mandatory startup record (U1/KTD2, R2): one redacted line to the non-persisted
         // diagnostic channel, targeting the day the probe will ACTUALLY query — the resolved
-        // probe date (`plan.sdate`) — or NO target when the plan refuses (Enforced, no proven
-        // session / unavailable). For Legacy/Shadow this IS the weekday anchor; for Enforced it
-        // is the proven session (guaranteed in-coverage), and for a bypass it is the explicit
-        // date — never the discarded anchor, whose day status would misrepresent the decision
-        // (and could even read OutOfRange while the probe proceeds on a proven session).
+        // probe date (`plan.sdate`) — or NO target when the plan refuses (no proven session /
+        // unavailable). For a proven session it is the session (guaranteed in-coverage); for a
+        // bypass it is the explicit date.
         let target = plan
             .sdate
             .as_deref()
@@ -753,16 +666,8 @@ impl ProbeContext {
         nautilus_ls::calendar::emit_startup_record(&record);
 
         // Record the calendar date decision to the non-persisted diagnostic channel only
-        // (stderr) so a Shadow/Legacy recording never touches stdout or a persisted artifact.
+        // (stderr) so the recording never touches stdout or a persisted artifact.
         Self::emit_probe_date_diagnostics(adoption, &plan);
-
-        // Shadow-divergence classification (U3): the classified weekday-vs-calendar
-        // disagreement for the anchor, on the same non-persisted channel (Shadow only).
-        if let Some(anchor) = anchor_date {
-            if let Some(obs) = probe_divergence(adoption, anchor, scan) {
-                nautilus_ls::calendar::emit_divergence(&obs);
-            }
-        }
 
         Self { plan }
     }
@@ -851,22 +756,11 @@ mod tests {
         assert!(parse_i64_list("30,abc").is_err());
     }
 
-    #[test]
-    fn recent_trading_day_is_a_weekday_yyyymmdd() {
-        use chrono::{Datelike, NaiveDate, Weekday};
-        let day = recent_trading_day();
-        assert_eq!(day.len(), 8, "YYYYMMDD");
-        let parsed = NaiveDate::parse_from_str(&day, "%Y%m%d").expect("parses");
-        assert!(!matches!(parsed.weekday(), Weekday::Sat | Weekday::Sun));
-    }
-
     // -----------------------------------------------------------------------
-    // U13 (KTD8) — budget-probe default-date selection migration behind the
-    // calendar adoption seam. The pure `plan_probe_dates` decides the selected
-    // default, warnings, bypass record, and WHETHER a live request is attempted;
-    // `scan_recent_session` walks a fixture-loaded real `KrxCalendar` (no live
-    // gateway). Shadow stays byte-identical to Legacy (weekday authoritative);
-    // Enforced (offline-tested) selects the most recent proven Trading Session.
+    // U13/U8 — budget-probe Enforced-only default-date selection. The pure
+    // `plan_probe_dates` decides the selected default, warnings, bypass record, and WHETHER a
+    // live request is attempted; `scan_recent_session` walks a fixture-loaded real
+    // `KrxCalendar` (no live gateway). Selection is the most recent proven Trading Session.
     //
     // Fixture facts (nautilus-ls-calendar/fixtures/base_2010_2012.json):
     //   Trading Session : 2010-06-15, 2010-06-17, 2011-06-15
@@ -877,7 +771,7 @@ mod tests {
     mod calendar_default_selection {
         use super::super::*;
         use chrono::{DateTime, NaiveDate, TimeZone, Utc};
-        use nautilus_ls_calendar::{CalendarAdoption, KrxCalendar};
+        use nautilus_ls_calendar::KrxCalendar;
 
         fn fixture_calendar() -> KrxCalendar {
             let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -915,7 +809,7 @@ mod tests {
                 matches!(scan, SessionScan::Session { date, stale: false } if date == ymd(2010, 6, 17)),
                 "walk-back skips the trailing Closed/Unknown run to the proven session: {scan:?}"
             );
-            let plan = plan_probe_dates(CalendarAdoption::Enforced, scan, "20100620", &no_explicit(), &run_ctx());
+            let plan = plan_probe_dates(scan, &no_explicit(), &run_ctx());
             assert_eq!(plan.sdate.as_deref(), Some("20100617"));
             assert_eq!(plan.edate.as_deref(), Some("20100617"));
             assert!(plan.live_request, "a proven session is servable → live request");
@@ -933,7 +827,7 @@ mod tests {
             // (first session is 2010-06-15) → no proven session.
             let scan = scan_recent_session(Some(&view), ymd(2010, 1, 20));
             assert!(matches!(scan, SessionScan::NoSession), "{scan:?}");
-            let plan = plan_probe_dates(CalendarAdoption::Enforced, scan, "20100120", &no_explicit(), &run_ctx());
+            let plan = plan_probe_dates(scan, &no_explicit(), &run_ctx());
             assert!(!plan.live_request, "no proven session → no live call");
             assert_eq!(plan.source, DateSource::NoDefault);
             assert!(plan.sdate.is_none() && plan.edate.is_none());
@@ -942,8 +836,7 @@ mod tests {
             // Unavailable calendar (no injected view) → the same refusal.
             let scan_u = scan_recent_session(None, ymd(2010, 1, 20));
             assert!(matches!(scan_u, SessionScan::Unavailable));
-            let plan_u =
-                plan_probe_dates(CalendarAdoption::Enforced, scan_u, "20100120", &no_explicit(), &run_ctx());
+            let plan_u = plan_probe_dates(scan_u, &no_explicit(), &run_ctx());
             assert!(!plan_u.live_request);
             assert_eq!(plan_u.source, DateSource::NoDefault);
 
@@ -952,11 +845,23 @@ mod tests {
                 sdate: Some("20100617".into()),
                 edate: Some("20100617".into()),
             };
-            let plan_b =
-                plan_probe_dates(CalendarAdoption::Enforced, scan_u, "20100120", &explicit, &run_ctx());
+            let plan_b = plan_probe_dates(scan_u, &explicit, &run_ctx());
             assert!(plan_b.live_request, "an explicit range unblocks the live call");
             assert_eq!(plan_b.source, DateSource::Bypass);
             assert_eq!(plan_b.sdate.as_deref(), Some("20100617"));
+        }
+
+        /// A partial explicit range under Enforced fills the missing endpoint from the supplied
+        /// one (single-day probe) — there is no weekday-anchor fallback after retirement.
+        #[test]
+        fn partial_explicit_range_fills_the_missing_endpoint() {
+            let scan = scan_recent_session(None, ymd(2010, 1, 20)); // unavailable
+            let only_sdate = ExplicitRange { sdate: Some("20100617".into()), edate: None };
+            let plan = plan_probe_dates(scan, &only_sdate, &run_ctx());
+            assert_eq!(plan.sdate.as_deref(), Some("20100617"));
+            assert_eq!(plan.edate.as_deref(), Some("20100617"), "missing endpoint fills from sdate");
+            assert_eq!(plan.source, DateSource::Bypass);
+            assert!(plan.live_request);
         }
 
         /// Explicit range: recorded as a bypass, not a calendar override — even when a
@@ -971,7 +876,7 @@ mod tests {
                 sdate: Some("20111231".into()),
                 edate: Some("20111231".into()),
             };
-            let plan = plan_probe_dates(CalendarAdoption::Enforced, scan, "20100620", &explicit, &run_ctx());
+            let plan = plan_probe_dates(scan, &explicit, &run_ctx());
             assert_eq!(plan.source, DateSource::Bypass);
             assert_eq!(plan.sdate.as_deref(), Some("20111231"));
             assert_eq!(plan.edate.as_deref(), Some("20111231"));
@@ -987,7 +892,7 @@ mod tests {
             let view = cal.as_of(stale_as_of()).unwrap();
             let scan = scan_recent_session(Some(&view), ymd(2010, 6, 20));
             assert!(matches!(scan, SessionScan::Session { stale: true, .. }), "{scan:?}");
-            let plan = plan_probe_dates(CalendarAdoption::Enforced, scan, "20100620", &no_explicit(), &run_ctx());
+            let plan = plan_probe_dates(scan, &no_explicit(), &run_ctx());
             assert_eq!(plan.sdate.as_deref(), Some("20100617"), "stale evidence is still usable");
             assert!(plan.live_request);
             assert_eq!(plan.source, DateSource::CalendarSession);
@@ -996,74 +901,6 @@ mod tests {
                 "staleness surfaces a warning: {:?}",
                 plan.warnings
             );
-        }
-
-        /// Shadow: default + request behavior byte-identical to Legacy while the calendar
-        /// default is recorded — asserted both where the calendar DISAGREES and where it
-        /// finds a session the weekday anchor ignores.
-        #[test]
-        fn shadow_default_and_request_are_byte_identical_to_legacy() {
-            let cal = fixture_calendar();
-            let view = cal.as_of(fresh_as_of()).unwrap();
-
-            // Disagreement: weekday anchor 2010-01-20 is Unknown to the calendar (no
-            // session in the lookback) — Shadow keeps the weekday anchor authoritative.
-            let scan = scan_recent_session(Some(&view), ymd(2010, 1, 20));
-            let legacy = plan_probe_dates(CalendarAdoption::Legacy, scan, "20100120", &no_explicit(), &run_ctx());
-            let shadow = plan_probe_dates(CalendarAdoption::Shadow, scan, "20100120", &no_explicit(), &run_ctx());
-            assert_eq!(legacy.sdate, shadow.sdate, "byte-identical sdate");
-            assert_eq!(legacy.edate, shadow.edate, "byte-identical edate");
-            assert_eq!(legacy.live_request, shadow.live_request, "same request decision");
-            assert_eq!(shadow.sdate.as_deref(), Some("20100120"));
-            assert!(shadow.live_request);
-            assert_eq!(legacy.calendar_default, None, "Legacy never consults the calendar");
-
-            // Session-bearing anchor: Shadow records the calendar default (2010-06-17) but
-            // still uses the weekday anchor (2010-06-20) authoritatively.
-            let scan2 = scan_recent_session(Some(&view), ymd(2010, 6, 20));
-            let shadow2 =
-                plan_probe_dates(CalendarAdoption::Shadow, scan2, "20100620", &no_explicit(), &run_ctx());
-            assert_eq!(shadow2.sdate.as_deref(), Some("20100620"), "weekday anchor authoritative");
-            assert_eq!(shadow2.source, DateSource::WeekdayDefault);
-            assert_eq!(
-                shadow2.calendar_default.as_deref(),
-                Some("20100617"),
-                "the calendar default is recorded in Shadow"
-            );
-        }
-
-        /// U3: budget-probe Shadow records a CLASSIFIED, assertable, redacted divergence —
-        /// the weekday anchor is treated as a trading day, so a most-recent proven session
-        /// EARLIER than the anchor makes the anchor a proven non-session
-        /// (`CalendarClosedWeekdayOpen`); the anchor itself proven a session is `Agree`; an
-        /// unavailable scan is `Unavailable`. Legacy/Enforced record nothing here.
-        #[test]
-        fn shadow_divergence_is_classified_and_redacted() {
-            use nautilus_ls::calendar::DivergenceClass;
-            let anchor = ymd(2010, 6, 21);
-            let scan = SessionScan::Session { date: ymd(2010, 6, 18), stale: false };
-
-            let obs = probe_divergence(CalendarAdoption::Shadow, anchor, scan).expect("shadow emits");
-            assert_eq!(obs.class, DivergenceClass::CalendarClosedWeekdayOpen);
-            assert_eq!(obs.consumer, "budget-probe");
-            assert!(probe_divergence(CalendarAdoption::Legacy, anchor, scan).is_none());
-            assert!(probe_divergence(CalendarAdoption::Enforced, anchor, scan).is_none());
-
-            let same = SessionScan::Session { date: anchor, stale: false };
-            assert_eq!(
-                probe_divergence(CalendarAdoption::Shadow, anchor, same).unwrap().class,
-                DivergenceClass::Agree
-            );
-            assert_eq!(
-                probe_divergence(CalendarAdoption::Shadow, anchor, SessionScan::Unavailable)
-                    .unwrap()
-                    .class,
-                DivergenceClass::Unavailable
-            );
-
-            let line = obs.render_line();
-            assert!(line.contains("class=calendar-closed-weekday-open"), "{line}");
-            assert!(!line.to_lowercase().contains("authority"), "{line}");
         }
     }
 
@@ -1077,7 +914,7 @@ mod tests {
     mod bypass_audit {
         use super::super::*;
         use chrono::{DateTime, TimeZone, Utc};
-        use nautilus_ls_calendar::{CalendarAdoption, KrxCalendar};
+        use nautilus_ls_calendar::KrxCalendar;
 
         fn fixture_calendar() -> KrxCalendar {
             let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -1096,9 +933,6 @@ mod tests {
         fn explicit() -> ExplicitRange {
             ExplicitRange { sdate: Some("20111231".into()), edate: Some("20111231".into()) }
         }
-        fn no_explicit() -> ExplicitRange {
-            ExplicitRange { sdate: None, edate: None }
-        }
 
         /// Scenario 1: explicit range under Enforced with an UNAVAILABLE calendar records a
         /// bypass audit naming the operator + run context + condition `unavailable`, with
@@ -1107,8 +941,7 @@ mod tests {
         fn enforced_unavailable_records_unavailable_condition_and_still_calls() {
             let scan = scan_recent_session(None, ymd(2010, 1, 20));
             assert!(matches!(scan, SessionScan::Unavailable));
-            let plan =
-                plan_probe_dates(CalendarAdoption::Enforced, scan, "20100120", &explicit(), &run_ctx());
+            let plan = plan_probe_dates(scan, &explicit(), &run_ctx());
             let audit = plan.bypass_audit.as_ref().expect("a bypass records an audit");
             assert_eq!(audit.condition, BypassedCondition::Unavailable);
             assert_eq!(audit.operator, "op-alice");
@@ -1127,8 +960,7 @@ mod tests {
             // Early-2010 anchor: the whole bounded lookback is Unknown/weekend-Closed.
             let scan = scan_recent_session(Some(&view), ymd(2010, 1, 20));
             assert!(matches!(scan, SessionScan::NoSession), "{scan:?}");
-            let plan =
-                plan_probe_dates(CalendarAdoption::Enforced, scan, "20100120", &explicit(), &run_ctx());
+            let plan = plan_probe_dates(scan, &explicit(), &run_ctx());
             let audit = plan.bypass_audit.as_ref().expect("a bypass records an audit");
             assert_eq!(audit.condition, BypassedCondition::NoProvenSession);
             assert!(plan.live_request);
@@ -1141,35 +973,27 @@ mod tests {
             let cal = fixture_calendar();
             let view = cal.as_of(fresh_as_of()).unwrap();
             let scan = scan_recent_session(Some(&view), ymd(2010, 6, 20)); // would select 2010-06-17
-            let plan =
-                plan_probe_dates(CalendarAdoption::Enforced, scan, "20100620", &explicit(), &run_ctx());
+            let plan = plan_probe_dates(scan, &explicit(), &run_ctx());
             let audit = plan.bypass_audit.as_ref().expect("a bypass records an audit");
             assert_eq!(audit.condition, BypassedCondition::ProvenSessionNotSelected);
             assert_eq!(plan.calendar_default.as_deref(), Some("20100617"), "the default is still recorded");
         }
 
-        /// Scenario 4 + 5: explicit range under Legacy and Shadow records the audit but keeps
-        /// the resolved range/request byte-identical to a NON-audited Legacy weekday run — the
-        /// audit alters neither the range nor the request decision.
+        /// The bypass records the audit but keeps the resolved range/request equal to the
+        /// explicit endpoints — the audit alters neither the range nor the request decision
+        /// (the KTD8 recovery lever survives retirement).
         #[test]
-        fn legacy_and_shadow_bypass_audit_does_not_change_range_or_request() {
+        fn enforced_bypass_audit_does_not_change_range_or_request() {
             let cal = fixture_calendar();
             let view = cal.as_of(fresh_as_of()).unwrap();
-            let scan = scan_recent_session(Some(&view), ymd(2010, 6, 20));
+            let scan = scan_recent_session(Some(&view), ymd(2010, 6, 20)); // proven session exists
 
-            // The non-audited baseline: Legacy, no explicit range.
-            let baseline =
-                plan_probe_dates(CalendarAdoption::Legacy, scan, "20111231", &no_explicit(), &run_ctx());
-            assert!(baseline.bypass_audit.is_none());
-
-            for adoption in [CalendarAdoption::Legacy, CalendarAdoption::Shadow] {
-                let audited =
-                    plan_probe_dates(adoption, scan, "20111231", &explicit(), &run_ctx());
-                assert!(audited.bypass_audit.is_some(), "{adoption:?} records the audit");
-                assert_eq!(audited.sdate, baseline.sdate, "{adoption:?} range byte-identical");
-                assert_eq!(audited.edate, baseline.edate);
-                assert_eq!(audited.live_request, baseline.live_request, "same request decision");
-            }
+            let audited = plan_probe_dates(scan, &explicit(), &run_ctx());
+            assert!(audited.bypass_audit.is_some(), "an explicit range records the audit");
+            assert_eq!(audited.sdate.as_deref(), Some("20111231"), "range is the explicit endpoint");
+            assert_eq!(audited.edate.as_deref(), Some("20111231"));
+            assert!(audited.live_request, "the explicit range is servable → live request");
+            assert_eq!(audited.source, DateSource::Bypass);
         }
 
         /// Scenario 6: the audit line is scrubbed of any credential/appkey material.
@@ -1219,8 +1043,8 @@ mod tests {
         #[test]
         fn audit_is_deterministic_no_wall_clock() {
             let scan = scan_recent_session(None, ymd(2010, 1, 20));
-            let a = plan_probe_dates(CalendarAdoption::Enforced, scan, "20100120", &explicit(), &run_ctx());
-            let b = plan_probe_dates(CalendarAdoption::Enforced, scan, "20100120", &explicit(), &run_ctx());
+            let a = plan_probe_dates(scan, &explicit(), &run_ctx());
+            let b = plan_probe_dates(scan, &explicit(), &run_ctx());
             assert_eq!(a.bypass_audit, b.bypass_audit, "no hidden clock/random in the pure path");
             let line = a.bypass_audit.unwrap().render_line();
             assert!(line.contains("run_id=run-42"), "the injected run id renders: {line}");

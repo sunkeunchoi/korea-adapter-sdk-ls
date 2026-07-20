@@ -166,12 +166,11 @@ const CONSUMER_BRANCHES: &[Anchor] = &[
     Anchor { label: "catalog Enforced Unknown → NO-GO indeterminate", file: "../lab/tests/research_cli.rs", needles: &["fn enforced_boundary_relevant_unknown_is_a_no_go_indeterminate"] },
     Anchor { label: "catalog Enforced out-of-coverage → NO-GO unavailable", file: "../lab/tests/research_cli.rs", needles: &["fn enforced_out_of_coverage_watermark_is_a_no_go_unavailable"] },
     Anchor { label: "catalog Enforced stale → GO + warning", file: "../lab/tests/research_cli.rs", needles: &["fn enforced_stale_but_established_is_a_go_with_a_prominent_warning"] },
-    // Budget-probe automatic selection.
-    Anchor { label: "budget-probe Shadow byte-identical", file: "../src/bin/budget-probe.rs", needles: &["fn shadow_default_and_request_are_byte_identical_to_legacy"] },
+    // Budget-probe automatic selection (Enforced-only after U8 retirement).
     Anchor { label: "budget-probe Enforced selects proven, skips closed/unknown", file: "../src/bin/budget-probe.rs", needles: &["fn enforced_selects_most_recent_proven_session_skipping_trailing_closed_unknown"] },
     Anchor { label: "budget-probe Enforced no session → no live call", file: "../src/bin/budget-probe.rs", needles: &["fn enforced_no_session_makes_no_live_call_until_explicit_range"] },
     Anchor { label: "budget-probe Enforced unavailable records condition", file: "../src/bin/budget-probe.rs", needles: &["fn enforced_unavailable_records_unavailable_condition_and_still_calls"] },
-    Anchor { label: "budget-probe explicit-range bypass unchanged", file: "../src/bin/budget-probe.rs", needles: &["fn legacy_and_shadow_bypass_audit_does_not_change_range_or_request"] },
+    Anchor { label: "budget-probe explicit-range bypass unchanged", file: "../src/bin/budget-probe.rs", needles: &["fn enforced_bypass_audit_does_not_change_range_or_request"] },
     Anchor { label: "budget-probe Enforced no-session refuses before gateway", file: "../tests/budget_probe_composition.rs", needles: &["fn enforced_no_session_refuses_before_any_gateway_call"] },
     // Production Ladder date-fact gate.
     Anchor { label: "ladder Shadow records, weekday authoritative", file: "../lab/src/runner/live.rs", needles: &["fn u188_shadow_over_fixture_records_but_weekday_stays_authoritative"] },
@@ -203,7 +202,7 @@ const DIVERGENCE_CLASSIFICATION: &[Anchor] = &[
     Anchor { label: "divergence redaction + non-persistence test", file: "../src/calendar.rs", needles: &["fn divergence_observation_is_redacted_and_classified"] },
     Anchor { label: "ingest emits classified divergence", file: "../tests/ingest.rs", needles: &["fn shadow_divergence_is_classified_and_redacted"] },
     // catalog's Shadow divergence anchor was removed with its U7 Enforced-only retirement.
-    Anchor { label: "budget-probe emits classified divergence", file: "../src/bin/budget-probe.rs", needles: &["fn shadow_divergence_is_classified_and_redacted"] },
+    // budget-probe's Shadow divergence anchor was removed with its U8 Enforced-only retirement.
     Anchor { label: "ladder emits classified divergence", file: "../lab/src/runner/live.rs", needles: &["fn shadow_divergence_is_classified_and_redacted"] },
 ];
 

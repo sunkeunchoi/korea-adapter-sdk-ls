@@ -118,13 +118,14 @@ Enforced-only after the U7 retirement (weekday walk-back + Legacy/Shadow branche
 
 ### Budget-probe automatic selection — `../src/bin/budget-probe.rs`
 
+Enforced-only after the U8 retirement (weekday anchor + Legacy/Shadow arm removed).
+
 | Branch | Owning assertion |
 |--------|------------------|
-| Shadow byte-identical | `shadow_default_and_request_are_byte_identical_to_legacy` (`../src/bin/budget-probe.rs`) |
 | Enforced selects proven, skips closed/unknown | `enforced_selects_most_recent_proven_session_skipping_trailing_closed_unknown` (`../src/bin/budget-probe.rs`) |
 | Enforced no session → no live call | `enforced_no_session_makes_no_live_call_until_explicit_range` (`../src/bin/budget-probe.rs`) |
 | Enforced unavailable records condition | `enforced_unavailable_records_unavailable_condition_and_still_calls` (`../src/bin/budget-probe.rs`) |
-| Explicit-range bypass unchanged | `legacy_and_shadow_bypass_audit_does_not_change_range_or_request` (`../src/bin/budget-probe.rs`) |
+| Explicit-range bypass unchanged (KTD8 recovery lever) | `enforced_bypass_audit_does_not_change_range_or_request` (`../src/bin/budget-probe.rs`) |
 | Enforced no-session refuses before gateway | `enforced_no_session_refuses_before_any_gateway_call` (`../tests/budget_probe_composition.rs`) |
 
 ### Production Ladder date-fact gate — `../lab/src/runner/live.rs`, `../lab/src/dispatch/checks.rs`
@@ -164,5 +165,6 @@ Each consumer emits a classified, redacted, non-persisted Shadow-divergence obse
 | `DivergenceClass` + `classify_divergence` | `enum DivergenceClass`, `fn classify_divergence` (`../src/calendar.rs`) |
 | Redacted, non-persisted, classified | `divergence_observation_is_redacted_and_classified` (`../src/calendar.rs`) |
 | Ingest emits classified divergence | `shadow_divergence_is_classified_and_redacted` (`../tests/ingest.rs`) |
-| Budget-probe emits classified divergence | `shadow_divergence_is_classified_and_redacted` (`../src/bin/budget-probe.rs`) |
 | Ladder emits classified divergence | `shadow_divergence_is_classified_and_redacted` (`../lab/src/runner/live.rs`) |
+
+_(Budget-probe's Shadow divergence row was removed with its U8 Enforced-only retirement.)_
