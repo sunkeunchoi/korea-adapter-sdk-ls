@@ -23,7 +23,7 @@ use nautilus_ls_lab::artifacts::manifest::{hash_bytes, DataRange, Manifest};
 use nautilus_ls_lab::artifacts::{list_runs, MANIFEST_FILE};
 use nautilus_ls_lab::runner::backtest::{run as backtest_run, BacktestConfig};
 use nautilus_ls_lab::runner::research::{
-    analyze_scaffold, catalog_compact, catalog_status, catalog_status_gated, compare,
+    analyze_scaffold, catalog_compact, catalog_status_gated, compare,
     latest_finalized_run, replay_guard, turn, CatalogCalendarGate, CompactConfig, CompareConfig,
     CompareMode, GovernedFlip, ReplayConfig, ScaffoldConfig, SessionBoundary, StatusConfig,
     TurnConfig,
@@ -1275,10 +1275,16 @@ async fn evaluated_stream_reports_a_divergence_under_a_tighter_cap() {
 async fn healthy_catalog_prints_per_triple_facts_and_is_a_go() {
     let dir = tempdir().unwrap();
     build_fixture(dir.path()).await;
-    let out = catalog_status(&StatusConfig {
-        data_home: dir.path().to_path_buf(),
-        expected_range: None,
-    })
+    let cal = build_calendar(&[], false);
+    let view = cal.as_of(cal_as_of()).unwrap();
+    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let out = catalog_status_gated(
+        &StatusConfig {
+            data_home: dir.path().to_path_buf(),
+            expected_range: None,
+        },
+        gate,
+    )
     .await
     .unwrap();
     assert!(out.go, "healthy fixture is a go: {:?}", out.lines);
@@ -1298,10 +1304,18 @@ async fn ae5_tail_undershoot_vs_the_watermark_is_flagged() {
     cp.set_watermark("005930.XKRX", "1-DAY", chrono::NaiveDate::from_ymd_opt(2024, 1, 31).unwrap());
     cp.save(&cp_path).unwrap();
 
-    let out = catalog_status(&StatusConfig {
-        data_home: dir.path().to_path_buf(),
-        expected_range: None,
-    })
+    // Enforced: 2024-01-31 (Wed) is a proven session, so last session (01-31) > last bar
+    // (01-05) → genuine tail undershoot flags.
+    let cal = build_calendar(&[], false);
+    let view = cal.as_of(cal_as_of()).unwrap();
+    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let out = catalog_status_gated(
+        &StatusConfig {
+            data_home: dir.path().to_path_buf(),
+            expected_range: None,
+        },
+        gate,
+    )
     .await
     .unwrap();
     assert!(!out.go, "undershoot is a no-go");
@@ -1312,85 +1326,27 @@ async fn ae5_tail_undershoot_vs_the_watermark_is_flagged() {
     );
 }
 
-#[tokio::test]
-async fn weekend_watermark_does_not_false_flag_a_friday_closed_catalog() {
-    // Accumulate advances the checkpoint watermark to the calendar last-closed
-    // session even when that lands on a weekend (documented `last_closed_session`
-    // behavior). A catalog whose last bar is the immediately preceding Friday is
-    // healthy — the raw watermark comparison used to false-flag it as a tail
-    // undershoot, turning a fine catalog into a NO-GO. (Turn-2b certification.)
-    let dir = tempdir().unwrap();
-    build_fixture(dir.path()).await;
-    let cp_path = dir.path().join("catalog").join("ingest-checkpoint.json");
-    let mut cp = Checkpoint::load(&cp_path).unwrap();
-    // Last bar in the fixture is 20240105 (Friday); watermark advances to
-    // 20240106 (Saturday) and 20240107 (Sunday) — both non-sessions.
-    for wm in ["20240106", "20240107"] {
-        cp.set_watermark(
-            "005930.XKRX",
-            "1-DAY",
-            chrono::NaiveDate::parse_from_str(wm, "%Y%m%d").unwrap(),
-        );
-        cp.save(&cp_path).unwrap();
-        let out = catalog_status(&StatusConfig {
-            data_home: dir.path().to_path_buf(),
-            expected_range: None,
-        })
-        .await
-        .unwrap();
-        assert!(
-            out.go,
-            "a Friday-closed catalog under a {wm} watermark is a go, not a false undershoot: {:?}",
-            out.lines
-        );
-        assert!(
-            out.triples.iter().all(|t| t.flags.is_empty()),
-            "no tail flag when the watermark is a weekend ({wm}): {:?}",
-            out.triples
-        );
-    }
-}
-
-#[tokio::test]
-async fn genuine_undershoot_across_a_weekend_still_flags() {
-    // The walk-back must not OVER-suppress: a Monday watermark (20240108) with the
-    // last bar on the prior Friday (20240105) is a real tail undershoot — Monday is
-    // a weekday, so last_weekday_on_or_before(Mon) = Mon, and Fri < Mon flags. This
-    // guards against the walk-back ever being widened to skip a session day.
-    let dir = tempdir().unwrap();
-    build_fixture(dir.path()).await;
-    let cp_path = dir.path().join("catalog").join("ingest-checkpoint.json");
-    let mut cp = Checkpoint::load(&cp_path).unwrap();
-    cp.set_watermark(
-        "005930.XKRX",
-        "1-DAY",
-        chrono::NaiveDate::from_ymd_opt(2024, 1, 8).unwrap(), // Monday
-    );
-    cp.save(&cp_path).unwrap();
-    let out = catalog_status(&StatusConfig {
-        data_home: dir.path().to_path_buf(),
-        expected_range: None,
-    })
-    .await
-    .unwrap();
-    assert!(!out.go, "a Friday last bar under a Monday watermark is a genuine undershoot");
-    assert!(
-        out.triples.iter().any(|t| t.bar_kind == "1-DAY" && !t.flags.is_empty()),
-        "the daily triple is flagged: {:?}",
-        out.triples
-    );
-}
+// (Legacy weekday walk-back tests `weekend_watermark_does_not_false_flag_a_friday_closed_catalog`
+//  and `genuine_undershoot_across_a_weekend_still_flags` were retired with the catalog cutover;
+//  their Enforced equivalent is `enforced_closed_watermark_boundary_does_not_false_flag`.)
 
 #[tokio::test]
 async fn front_truncation_is_flagged_only_with_an_expected_range() {
     let dir = tempdir().unwrap();
     build_fixture(dir.path()).await;
-    // Bars start 20240104; an expected range starting earlier reveals front
-    // truncation — undetectable from the checkpoint alone.
-    let with_expected = catalog_status(&StatusConfig {
-        data_home: dir.path().to_path_buf(),
-        expected_range: Some(DataRange { start: "20240101".into(), end: "20240105".into() }),
-    })
+    // Bars start 20240104; an expected range starting earlier reveals front truncation —
+    // undetectable from the checkpoint alone. Enforced: 20240101 (Mon) is a proven session, so
+    // first session (01-01) < first bar (01-04) → front truncation flags.
+    let cal = build_calendar(&[], false);
+    let view = cal.as_of(cal_as_of()).unwrap();
+    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let with_expected = catalog_status_gated(
+        &StatusConfig {
+            data_home: dir.path().to_path_buf(),
+            expected_range: Some(DataRange { start: "20240101".into(), end: "20240105".into() }),
+        },
+        gate,
+    )
     .await
     .unwrap();
     assert!(!with_expected.go, "front truncation is a no-go");
@@ -1401,10 +1357,16 @@ async fn front_truncation_is_flagged_only_with_an_expected_range() {
 
     // Without the expected range, the same catalog is a go (checkpoint watermark
     // is unset in the fixture).
-    let without = catalog_status(&StatusConfig {
-        data_home: dir.path().to_path_buf(),
-        expected_range: None,
-    })
+    let cal2 = build_calendar(&[], false);
+    let view2 = cal2.as_of(cal_as_of()).unwrap();
+    let gate2 = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view2));
+    let without = catalog_status_gated(
+        &StatusConfig {
+            data_home: dir.path().to_path_buf(),
+            expected_range: None,
+        },
+        gate2,
+    )
     .await
     .unwrap();
     assert!(without.go, "no front check without an expected range: {:?}", without.lines);
@@ -1413,11 +1375,15 @@ async fn front_truncation_is_flagged_only_with_an_expected_range() {
 #[tokio::test]
 async fn missing_catalog_dir_is_a_clean_no_go_not_a_panic() {
     let dir = tempdir().unwrap();
-    // No fixture — the catalog dir does not exist.
-    let err = catalog_status(&StatusConfig {
-        data_home: dir.path().to_path_buf(),
-        expected_range: None,
-    })
+    // No fixture — the catalog dir does not exist (bails before any calendar query).
+    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, None);
+    let err = catalog_status_gated(
+        &StatusConfig {
+            data_home: dir.path().to_path_buf(),
+            expected_range: None,
+        },
+        gate,
+    )
     .await
     .unwrap_err();
     assert!(err.to_string().contains("no catalog"), "clean error: {err}");
@@ -1590,11 +1556,8 @@ async fn enforced_closed_watermark_boundary_does_not_false_flag() {
     set_daily_watermark(dir.path(), ymd(2024, 1, 8));
     let cfg = StatusConfig { data_home: dir.path().to_path_buf(), expected_range: None };
 
-    // Legacy: Monday is a weekday → last_weekday(Mon)=Mon, Fri < Mon → NO-GO.
-    let legacy = catalog_status(&cfg).await.unwrap();
-    assert!(!legacy.go, "Legacy false-flags the holiday-Monday watermark: {:?}", legacy.lines);
-
     // Enforced with 20240108 proven Closed: last session = Friday 20240105 → no undershoot.
+    // (The weekday walk-back would have flagged Monday-as-weekday; retired with the cutover.)
     let cal = build_calendar(&[(ymd(2024, 1, 8), DayStatus::Closed)], false);
     let view = cal.as_of(cal_as_of()).unwrap();
     let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
@@ -1678,64 +1641,8 @@ async fn enforced_stale_but_established_is_a_go_with_a_prominent_warning() {
     );
 }
 
-/// Shadow: GO/NO-GO + lines are byte-identical to Legacy (the weekday path stays
-/// authoritative) even when the calendar verdict DISAGREES — the disagreeing verdict is
-/// recorded (a real, observable calendar boundary) but never alters the output.
-#[tokio::test]
-async fn shadow_is_byte_identical_to_legacy_while_recording_the_calendar_verdict() {
-    let dir = tempdir().unwrap();
-    build_fixture(dir.path()).await;
-    // The closed-boundary disagreement: Legacy NO-GO (Monday undershoot), calendar GO.
-    set_daily_watermark(dir.path(), ymd(2024, 1, 8));
-    let cfg = StatusConfig { data_home: dir.path().to_path_buf(), expected_range: None };
-
-    let legacy = catalog_status(&cfg).await.unwrap();
-
-    let cal = build_calendar(&[(ymd(2024, 1, 8), DayStatus::Closed)], false);
-    let view = cal.as_of(cal_as_of()).unwrap();
-    let shadow_gate = CatalogCalendarGate::new(CalendarAdoption::Shadow, Some(view));
-    let shadow = catalog_status_gated(&cfg, shadow_gate).await.unwrap();
-
-    assert_eq!(shadow.go, legacy.go, "Shadow verdict matches Legacy");
-    assert_eq!(shadow.lines, legacy.lines, "Shadow lines are byte-identical to Legacy");
-    assert!(!legacy.go, "the scenario is a Legacy NO-GO (a genuine disagreement)");
-
-    // The recorded calendar verdict is real + disagreeing: the proven last session at/before
-    // the watermark is the Friday the catalog reaches — a GO the weekday path did not grant.
-    assert_eq!(
-        shadow_gate.last_session_on_or_before(ymd(2024, 1, 8)),
-        SessionBoundary::Session(ymd(2024, 1, 5)),
-        "the disagreeing calendar boundary is computed (recorded), not the weekday one"
-    );
-}
-
-/// U3: catalog Shadow records a CLASSIFIED, assertable, redacted divergence — the weekday
-/// walk-back treats every boundary as open, so a proven all-Closed boundary is
-/// `CalendarClosedWeekdayOpen`, a proven session `Agree`, and an out-of-coverage boundary
-/// `Unavailable`.
-#[test]
-fn shadow_divergence_is_classified_and_redacted() {
-    use nautilus_ls::calendar::DivergenceClass;
-    let cal = build_calendar(&[(ymd(2024, 1, 8), DayStatus::Closed)], false);
-    let view = cal.as_of(cal_as_of()).unwrap();
-    let gate = CatalogCalendarGate::new(CalendarAdoption::Shadow, Some(view));
-
-    let obs = gate.divergence("catalog-watermark", ymd(2024, 1, 8), SessionBoundary::NoSession);
-    assert_eq!(obs.class, DivergenceClass::CalendarClosedWeekdayOpen);
-    assert_eq!(obs.consumer, "catalog-watermark");
-    assert_eq!(
-        gate.divergence("catalog-watermark", ymd(2024, 1, 5), SessionBoundary::Session(ymd(2024, 1, 5))).class,
-        DivergenceClass::Agree
-    );
-    assert_eq!(
-        gate.divergence("catalog-watermark", ymd(2024, 1, 8), SessionBoundary::Unavailable).class,
-        DivergenceClass::Unavailable
-    );
-
-    let line = obs.render_line();
-    assert!(line.contains("class=calendar-closed-weekday-open"), "{line}");
-    assert!(!line.to_lowercase().contains("authority"), "{line}");
-}
+// (The Shadow byte-identical + Shadow-divergence-classification tests were retired with the
+//  catalog Enforced-only cutover — catalog no longer has a Legacy/Shadow path.)
 
 /// AE3 (U3): a watermark after a multi-day holiday cluster whose last proven session
 /// precedes the cluster is NOT a false tail undershoot (the proven last session is the
@@ -1801,13 +1708,10 @@ async fn enforced_expected_range_weekend_endpoints_use_proven_sessions() {
         expected_range: Some(DataRange { start: "20240106".into(), end: "20240107".into() }),
     };
 
-    // Legacy compares raw civil endpoints: last bar 20240105 < raw end 20240107 → NO-GO.
-    let legacy = catalog_status(&cfg).await.unwrap();
-    assert!(!legacy.go, "Legacy false-flags the weekend end: {:?}", legacy.lines);
-
     // Enforced resolves the weekend end to the proven Friday session 20240105 the catalog
     // reaches (and the weekend start to the Monday session 20240108, which the earlier
-    // catalog start does not undershoot) → GO.
+    // catalog start does not undershoot) → GO. (The retired weekday path compared raw civil
+    // endpoints and false-flagged the weekend end.)
     let cal = build_calendar(&[], false);
     let view = cal.as_of(cal_as_of()).unwrap();
     let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
@@ -1995,7 +1899,9 @@ async fn catalog_status_composition_root_smoke() {
         1,
         "exactly one startup record (single load): {stderr}"
     );
-    assert!(stderr.contains("adoption=shadow"), "startup names the adoption: {stderr}");
+    // Enforced-only after the catalog cutover: LS_CALENDAR_ADOPTION=shadow is IGNORED — the
+    // startup record names the enforced posture the consumer now always runs under.
+    assert!(stderr.contains("adoption=enforced"), "startup names the enforced adoption: {stderr}");
     assert!(
         !stderr.contains("SYNTHETIC-MAINTAINER"),
         "the granting authority must never leak into the startup line: {stderr}"
@@ -2031,7 +1937,7 @@ async fn catalog_status_emits_startup_record_even_on_config_error() {
         1,
         "the startup record still fires exactly once before the config error: {stderr}"
     );
-    assert!(stderr.contains("adoption=shadow"), "the record names the adoption: {stderr}");
+    assert!(stderr.contains("adoption=enforced"), "the record names the enforced adoption: {stderr}");
     assert!(stderr.contains("LS_DATA_HOME"), "the config error is the failure cause: {stderr}");
 }
 
@@ -2146,11 +2052,18 @@ async fn compact_cli_exits_zero_on_a_clean_catalog_and_status_stays_go() {
         String::from_utf8_lossy(&out.stderr)
     );
     assert!(String::from_utf8_lossy(&out.stdout).contains("compact: OK"), "reports OK");
-    // The compacted fixture is still a go.
-    let status = catalog_status(&StatusConfig {
-        data_home: dir.path().to_path_buf(),
-        expected_range: None,
-    })
+    // The compacted fixture is still a go (Enforced, no watermark/expected range → no boundary
+    // check → GO).
+    let cal = build_calendar(&[], false);
+    let view = cal.as_of(cal_as_of()).unwrap();
+    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let status = catalog_status_gated(
+        &StatusConfig {
+            data_home: dir.path().to_path_buf(),
+            expected_range: None,
+        },
+        gate,
+    )
     .await
     .unwrap();
     assert!(status.go, "the compacted fixture is still a go: {:?}", status.lines);
