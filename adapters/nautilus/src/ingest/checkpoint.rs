@@ -9,11 +9,10 @@
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 
-use chrono::{Datelike, NaiveDate};
+use chrono::NaiveDate;
 use nautilus_ls_calendar::{CalendarAdoption, DimensionStaleness};
 use serde::{Deserialize, Serialize};
 
-use crate::calendar::emit_divergence;
 use crate::error::{AdapterError, AdapterResult};
 use crate::ingest::{CalendarGate, ContinuityDecision};
 
@@ -63,28 +62,6 @@ pub struct MigrationRemainder {
     pub bar_type: String,
     /// The `completed` range keys left beyond the coverage hole.
     pub ranges: Vec<String>,
-}
-
-/// Whether a trading weekday lies strictly between `after` and `before`
-/// (exclusive) — the coverage-hole test for the migration chain (KTD-3). A
-/// weekend-only or empty gap is contiguous (no weekday between), so ranges either
-/// side of it chain; a weekday in the gap is un-attested history and breaks the
-/// chain.
-fn weekday_strictly_between(after: NaiveDate, before: NaiveDate) -> bool {
-    let mut d = match after.succ_opt() {
-        Some(d) => d,
-        None => return false,
-    };
-    while d < before {
-        if d.weekday().num_days_from_monday() < 5 {
-            return true;
-        }
-        d = match d.succ_opt() {
-            Some(d) => d,
-            None => return false,
-        };
-    }
-    false
 }
 
 /// The origin of a basis-shift mark / re-base event (KTD6): an organic forward
@@ -467,91 +444,57 @@ impl Checkpoint {
         }
     }
 
-    /// Migrate legacy `completed` ranges to `watermarks` (U2/KTD-3, R1/R2/R3), a
-    /// pure in-memory transform run on load. For each `(instrument, bar type)` with
-    /// **no existing watermark**, its `completed` range keys are sorted by start
-    /// date and chained while no trading weekday lies strictly between the chain's
-    /// running-maximum `edate` and the next range's start (the running-max
-    /// comparison, so a contained range chains trivially). A `PaperThin`-gapped
-    /// range terminates the chain before it (a truncated fetch left un-fetched
-    /// history — deriving past it would silently gap, R2). The derived watermark is
-    /// the chain's max `edate`, trusted as attested (the same trust
-    /// [`Self::prune_below_watermarks`] applies). Ranges beyond the hole stay in
-    /// `completed` and surface as a [`MigrationRemainder`]. Existing watermarks are
-    /// never overridden, so a double-load derives nothing new (R3). Returns the
-    /// per-triple remainders for the caller to warn about.
-    ///
-    /// The un-gated entry point is Legacy: the weekday hole test
-    /// ([`weekday_strictly_between`]) stays authoritative, so behavior is byte-identical to the
-    /// pre-migration path for every existing caller/test.
-    pub fn migrate_completed_watermarks(&mut self) -> Vec<MigrationRemainder> {
-        self.migrate_completed_watermarks_gated(&CalendarGate::legacy())
-    }
-
     /// Migrate legacy `completed` ranges to `watermarks` under an injected [`CalendarGate`]
-    /// (U10/KTD8). Identical to [`migrate_completed_watermarks`](Self::migrate_completed_watermarks)
-    /// except the merge-hole test is routed through the calendar seam:
-    ///
-    /// - **Legacy** — the weekday hole test ([`weekday_strictly_between`]) decides (a weekday in
-    ///   the gap breaks the chain).
-    /// - **Shadow** — the weekday hole test still decides (byte-identical to Legacy), but the
-    ///   calendar continuity verdict is RECORDED to the non-persisted diagnostic channel.
-    /// - **Enforced** — the calendar decides: ranges merge ONLY when every intervening date is a
-    ///   proven Closed date; a proven Trading Session in the gap breaks the chain (un-attested
-    ///   history), and Unknown/unavailable evidence breaks it too (conservative over-fetch, with
-    ///   a diagnostic) so newly-resolved evidence can re-chain the ranges on a later load.
+    /// (U10/KTD8). Enforced-only after the ingest Consumer Retirement Gate (#189 U6): the
+    /// merge-hole test is the calendar continuity verdict — ranges merge ONLY when every
+    /// intervening date is a proven Closed date and the full-history evidence is fresh; a proven
+    /// Trading Session in the gap breaks the chain (un-attested history), and Unknown/unavailable
+    /// or stale evidence breaks it too (conservative over-fetch, with a diagnostic) so
+    /// newly-resolved evidence can re-chain the ranges on a later load.
     pub fn migrate_completed_watermarks_gated(
         &mut self,
         gate: &CalendarGate,
     ) -> Vec<MigrationRemainder> {
-        // The merge-hole test under the adoption seam: `true` breaks the chain (keeps the far
-        // range in `completed`). Legacy/Shadow keep the weekday result authoritative; Enforced
-        // acts on the calendar continuity verdict.
+        // The merge-hole test: `true` breaks the chain (keeps the far range in `completed`).
         let hole_breaks = |cm: NaiveDate, sd: NaiveDate| -> bool {
-            match gate.adoption() {
-                CalendarAdoption::Legacy => weekday_strictly_between(cm, sd),
-                CalendarAdoption::Shadow => {
-                    // Classified, assertable, redacted divergence on the non-persisted channel;
-                    // the weekday hole test stays authoritative (U3, KTD6). `weekday` = the
-                    // weekday's "there is a session/hole between" verdict (open in the span).
-                    let decision = gate.continuity_decision(cm, sd);
-                    let weekday = weekday_strictly_between(cm, sd);
-                    emit_divergence(&gate.continuity_divergence(
-                        "ingest-checkpoint-continuity",
-                        cm,
-                        weekday,
-                        decision,
-                    ));
-                    weekday
+            let freshness = gate.full_history_freshness();
+            if freshness != Some(DimensionStaleness::Fresh) {
+                // `None` freshness means NO calendar view was injected (a structural no-view load
+                // via `Checkpoint::load` — manual `range` mode and downstream readiness/backtest
+                // readers): continuity can never be proven, so keeping legacy multi-range holes
+                // separate is expected and NOT actionable — log at debug. `Some(non-fresh)` means
+                // a view IS present but its full-history evidence is stale/unevaluated under an
+                // accumulate/rebase gate — the operator's snapshot needs attention — log at warn.
+                if freshness.is_none() {
+                    tracing::debug!(
+                        after = %cm.format("%Y%m%d"),
+                        before = %sd.format("%Y%m%d"),
+                        "checkpoint continuity has no calendar view (no-view load); keeping legacy multi-range holes separate (conservative over-fetch) — expected for range mode / downstream readers"
+                    );
+                } else {
+                    tracing::warn!(
+                        after = %cm.format("%Y%m%d"),
+                        before = %sd.format("%Y%m%d"),
+                        full_history_freshness = ?freshness,
+                        "checkpoint continuity lacks fresh full-history evidence; keeping the ranges separate (conservative over-fetch) — the calendar snapshot is stale/unevaluated"
+                    );
                 }
-                CalendarAdoption::Enforced => {
-                    let freshness = gate.full_history_freshness();
-                    if freshness != Some(DimensionStaleness::Fresh) {
-                        tracing::warn!(
-                            after = %cm.format("%Y%m%d"),
-                            before = %sd.format("%Y%m%d"),
-                            full_history_freshness = ?freshness,
-                            "checkpoint continuity lacks fresh full-history evidence; keeping the ranges separate (conservative over-fetch)"
-                        );
-                        return true;
-                    }
-                    let decision = gate.continuity_decision(cm, sd);
-                    if matches!(decision, ContinuityDecision::Indeterminate) {
-                        tracing::warn!(
-                            after = %cm.format("%Y%m%d"),
-                            before = %sd.format("%Y%m%d"),
-                            "checkpoint continuity INDETERMINATE: Unknown/unavailable calendar evidence in the gap and no proven Trading Session; keeping the ranges separate (conservative over-fetch) until the evidence resolves"
-                        );
-                    }
-                    decision.breaks_chain()
-                }
+                return true;
             }
+            let decision = gate.continuity_decision(cm, sd);
+            if matches!(decision, ContinuityDecision::Indeterminate) {
+                tracing::warn!(
+                    after = %cm.format("%Y%m%d"),
+                    before = %sd.format("%Y%m%d"),
+                    "checkpoint continuity INDETERMINATE: Unknown/unavailable calendar evidence in the gap and no proven Trading Session; keeping the ranges separate (conservative over-fetch) until the evidence resolves"
+                );
+            }
+            decision.breaks_chain()
         };
         self.migrate_completed_watermarks_inner(hole_breaks)
     }
 
-    /// The shared migration transform (U2/U10), parameterized on the merge-hole predicate so the
-    /// weekday (Legacy/Shadow) and calendar (Enforced) paths share one implementation.
+    /// The shared migration transform (U2/U10), parameterized on the merge-hole predicate.
     fn migrate_completed_watermarks_inner(
         &mut self,
         hole_breaks: impl Fn(NaiveDate, NaiveDate) -> bool,
@@ -642,23 +585,27 @@ impl Checkpoint {
         remainders
     }
 
-    /// Load a checkpoint from `path`, returning an empty checkpoint if the file
-    /// does not exist. A legacy `completed`-only checkpoint is migrated to
-    /// `watermarks` on load (U2/KTD-3); non-contiguous remainder ranges are logged
-    /// per triple, naming the escape hatch.
+    /// Load a checkpoint from `path` for a caller that only inspects it (no calendar context),
+    /// e.g. a downstream readiness/backtest reader. Enforced-only after the ingest Consumer
+    /// Retirement Gate (#189 U6): the legacy `completed`→`watermarks` migration runs under a
+    /// no-view Enforced gate, which keeps legacy multi-range holes conservatively separate while
+    /// a single covered range still derives its watermark (a checkpoint already carrying
+    /// watermarks — the steady state — migrates nothing on load). Returns an empty checkpoint if
+    /// the file does not exist.
     ///
     /// # Errors
     ///
     /// [`AdapterError::Ingest`] if the file exists but cannot be read/parsed.
     pub fn load(path: &Path) -> AdapterResult<Self> {
-        Self::load_gated(path, &CalendarGate::legacy())
+        Self::load_gated(path, &CalendarGate::new(CalendarAdoption::Enforced, None))
     }
 
     /// Load a checkpoint from `path` under an injected [`CalendarGate`] (U10/KTD8): the
     /// legacy `completed`→`watermarks` migration's merge-hole test is routed through the
-    /// calendar seam. Legacy (what [`load`](Self::load) injects) keeps the weekday hole test
-    /// authoritative — byte-identical to the pre-migration path; Shadow records the calendar
-    /// verdict; Enforced merges only fully-proven-Closed gaps.
+    /// calendar seam. Enforced-only after the ingest Consumer Retirement Gate (#189 U6): the
+    /// migration merges only fully-proven-Closed gaps with fresh full-history evidence, keeping
+    /// ranges separate on a proven Trading Session, Unknown/unavailable, or stale evidence.
+    /// Returns an empty checkpoint if the file does not exist.
     ///
     /// # Errors
     ///
@@ -747,12 +694,22 @@ impl Checkpoint {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nautilus_ls_calendar::CalendarAdoption;
     use tempfile::tempdir;
+
+    /// A no-view Enforced gate for load/migration round-trips (#189 U6): with no calendar the
+    /// merge-hole test keeps ranges conservatively separate, so a single-range migration still
+    /// derives its watermark while multi-range legacy holes stay split. The calendar-driven
+    /// merge/split semantics (all-Closed chains, proven-session splits) are covered by the
+    /// Enforced integration tests in `../../tests/ingest.rs`.
+    fn no_calendar_gate() -> CalendarGate<'static> {
+        CalendarGate::new(CalendarAdoption::Enforced, None)
+    }
 
     #[test]
     fn missing_file_loads_empty() {
         let dir = tempdir().unwrap();
-        let cp = Checkpoint::load(&dir.path().join("nope.json")).unwrap();
+        let cp = Checkpoint::load_gated(&dir.path().join("nope.json"), &no_calendar_gate()).unwrap();
         assert_eq!(cp.completed_count(), 0);
     }
 
@@ -782,7 +739,7 @@ mod tests {
             r#"{"completed":["005930.XKRX|1-DAY|20240101..20240105"],"gaps":[],"adjusted_prices":true}"#,
         )
         .unwrap();
-        let cp = Checkpoint::load(&path).expect("legacy checkpoint loads");
+        let cp = Checkpoint::load_gated(&path, &no_calendar_gate()).expect("legacy checkpoint loads");
         assert!(cp.is_done("005930.XKRX", "1-DAY", "20240101..20240105"));
         assert_eq!(
             cp.watermark("005930.XKRX", "1-DAY"),
@@ -810,7 +767,7 @@ mod tests {
         cp.save(&path).unwrap();
         let b = std::fs::read_to_string(&path).unwrap();
         assert_eq!(a, b, "the marker serializes deterministically (byte-identical double-save)");
-        let loaded = Checkpoint::load(&path).unwrap();
+        let loaded = Checkpoint::load_gated(&path, &no_calendar_gate()).unwrap();
         assert_eq!(
             loaded.history_floor("005930.XKRX", "1-DAY"),
             Some(ymd(2024, 5, 25)),
@@ -829,7 +786,7 @@ mod tests {
             r#"{"completed":[],"gaps":[],"watermarks":{"005930.XKRX|1-DAY":"20240703"},"adjusted_prices":true}"#,
         )
         .unwrap();
-        let cp = Checkpoint::load(&path).expect("legacy checkpoint loads");
+        let cp = Checkpoint::load_gated(&path, &no_calendar_gate()).expect("legacy checkpoint loads");
         assert!(cp.history_floor("005930.XKRX", "1-DAY").is_none(), "absent field → first-seen");
     }
 
@@ -860,7 +817,7 @@ mod tests {
             r#"{"completed":[],"gaps":[],"watermarks":{"005930.XKRX|1-DAY":"20240105"},"adjusted_prices":true}"#,
         )
         .unwrap();
-        let cp = Checkpoint::load(&path).expect("legacy checkpoint loads");
+        let cp = Checkpoint::load_gated(&path, &no_calendar_gate()).expect("legacy checkpoint loads");
         assert!(!cp.is_shifted("005930.XKRX", "1-DAY"));
         assert!(cp.rebase_events().is_empty());
         assert!(cp.watermark("005930.XKRX", "1-DAY").is_some());
@@ -877,7 +834,7 @@ mod tests {
         cp.mark_shifted("005930.XKRX", "1-DAY", NaiveDate::from_ymd_opt(2024, 1, 8).unwrap(), RebaseOrigin::Epoch);
         cp.save(&path).unwrap();
 
-        let mut loaded = Checkpoint::load(&path).unwrap();
+        let mut loaded = Checkpoint::load_gated(&path, &no_calendar_gate()).unwrap();
         assert!(loaded.is_shifted("005930.XKRX", "1-DAY"));
         assert_eq!(loaded.shifted_detected("005930.XKRX", "1-DAY"), Some("20240105"));
         assert_eq!(loaded.shifted_origin("005930.XKRX", "1-DAY"), RebaseOrigin::Heal, "re-mark keeps the original origin");
@@ -923,7 +880,7 @@ mod tests {
         let b = std::fs::read_to_string(&path).unwrap();
         assert_eq!(a, b, "serialization is deterministic");
 
-        let loaded = Checkpoint::load(&path).unwrap();
+        let loaded = Checkpoint::load_gated(&path, &no_calendar_gate()).unwrap();
         assert_eq!(loaded.rebase_events().len(), 2);
         assert_eq!(loaded.rebase_events()[0].instrument, "005930.XKRX");
         assert_eq!(loaded.rebase_events()[1].instrument, "000660.XKRX");
@@ -956,7 +913,7 @@ mod tests {
                 "adjusted_prices":true}"#,
         )
         .unwrap();
-        let cp = Checkpoint::load(&path).expect("legacy checkpoint loads");
+        let cp = Checkpoint::load_gated(&path, &no_calendar_gate()).expect("legacy checkpoint loads");
         // The legacy shifted mark reads as unknown origin.
         assert_eq!(cp.shifted_origin("005930.XKRX", "1-DAY"), RebaseOrigin::Unknown);
         // The legacy re-base row reads as unknown, and unknown is presumed organic.
@@ -1005,7 +962,7 @@ mod tests {
         cp.save(&path).unwrap();
         let b = std::fs::read_to_string(&path).unwrap();
         assert_eq!(a, b, "serialization stays deterministic over origin + evicted fields");
-        let loaded = Checkpoint::load(&path).unwrap();
+        let loaded = Checkpoint::load_gated(&path, &no_calendar_gate()).unwrap();
         assert_eq!(loaded.rebase_origin_totals().organic(), 5, "totals survive save/load");
     }
 
@@ -1040,7 +997,7 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("legacy.json");
         std::fs::write(&path, r#"{"completed":[],"gaps":[],"adjusted_prices":false}"#).unwrap();
-        let cp = Checkpoint::load(&path).unwrap();
+        let cp = Checkpoint::load_gated(&path, &no_calendar_gate()).unwrap();
         let totals = cp.rebase_origin_totals();
         assert_eq!(totals, RebaseOriginTotals::default(), "no events, no evicted counters");
     }
@@ -1055,63 +1012,27 @@ mod tests {
     fn migration_derives_watermark_from_a_covered_range() {
         let mut cp = Checkpoint::default();
         cp.mark_done("005930.XKRX", "1-DAY", "20240101..20240105");
-        let rem = cp.migrate_completed_watermarks();
+        let rem = cp.migrate_completed_watermarks_gated(&no_calendar_gate());
         assert!(rem.is_empty(), "a single covered range has no remainder");
         assert_eq!(cp.watermark("005930.XKRX", "1-DAY"), Some(ymd(2024, 1, 5)));
     }
 
-    #[test]
-    fn migration_gap_reasons_discriminate_coverage() {
-        // EmptyHistory + NonTradingDay attest coverage (chain like a bars range); a
-        // PaperThin range terminates the chain BEFORE it (un-fetched history).
-        let mut cp = Checkpoint::default();
-        // A bars-attested range then an EmptyHistory-gapped contiguous range.
-        cp.mark_done("A.XKRX", "1-DAY", "20240101..20240103");
-        cp.record_gap("A.XKRX", "1-DAY", "20240104..20240105", GapReason::EmptyHistory);
-        // A separate triple with a NonTradingDay gap only.
-        cp.record_gap("B.XKRX", "1-DAY", "20240101..20240105", GapReason::NonTradingDay);
-        // A triple whose second range is a PaperThin (truncated) fetch.
-        cp.mark_done("C.XKRX", "1-DAY", "20240101..20240105");
-        cp.record_gap("C.XKRX", "1-DAY", "20240108..20240112", GapReason::PaperThin);
-
-        let rem = cp.migrate_completed_watermarks();
-        assert_eq!(cp.watermark("A.XKRX", "1-DAY"), Some(ymd(2024, 1, 5)), "EmptyHistory attests");
-        assert_eq!(cp.watermark("B.XKRX", "1-DAY"), Some(ymd(2024, 1, 5)), "NonTradingDay attests");
-        assert_eq!(
-            cp.watermark("C.XKRX", "1-DAY"),
-            Some(ymd(2024, 1, 5)),
-            "the chain stops BEFORE the PaperThin range — never at or past it"
-        );
-        let c_rem = rem.iter().find(|r| r.instrument == "C.XKRX").expect("C has a remainder");
-        assert_eq!(c_rem.ranges, vec!["20240108..20240112".to_string()], "the PaperThin range stays in completed");
-    }
-
-    #[test]
-    fn migration_chains_across_a_weekend_but_breaks_on_a_weekday_hole() {
-        // Two ranges separated only by a weekend chain into one watermark.
-        let mut weekend = Checkpoint::default();
-        weekend.mark_done("005930.XKRX", "1-DAY", "20240101..20240105"); // Mon..Fri
-        weekend.mark_done("005930.XKRX", "1-DAY", "20240108..20240112"); // next Mon..Fri
-        let rem = weekend.migrate_completed_watermarks();
-        assert!(rem.is_empty(), "a weekend-only gap is contiguous");
-        assert_eq!(weekend.watermark("005930.XKRX", "1-DAY"), Some(ymd(2024, 1, 12)));
-
-        // A range straddling an intervening weekday (Jan 8/9) derives the prefix only.
-        let mut hole = Checkpoint::default();
-        hole.mark_done("005930.XKRX", "1-DAY", "20240101..20240105"); // Mon..Fri
-        hole.mark_done("005930.XKRX", "1-DAY", "20240110..20240112"); // Wed..Fri (Mon/Tue un-covered)
-        let rem = hole.migrate_completed_watermarks();
-        assert_eq!(hole.watermark("005930.XKRX", "1-DAY"), Some(ymd(2024, 1, 5)), "prefix watermark only");
-        assert_eq!(rem.len(), 1);
-        assert_eq!(rem[0].ranges, vec!["20240110..20240112".to_string()]);
-        // The remainder key stays in `completed`.
-        assert!(hole.is_done("005930.XKRX", "1-DAY", "20240110..20240112"));
-    }
+    // The weekday-hole chaining tests (`migration_gap_reasons_discriminate_coverage`,
+    // `migration_chains_across_a_weekend_but_breaks_on_a_weekday_hole`,
+    // `migration_contained_range_chains_via_running_maximum`) were retired with the ingest
+    // Consumer Retirement Gate (#189 U6): the merge-hole test is now the calendar continuity
+    // verdict, so chaining across a proven all-Closed gap and splitting on a proven Trading
+    // Session are covered by the Enforced integration tests in `../../tests/ingest.rs`
+    // (`enforced_merges_an_all_closed_gap`, `enforced_trading_session_in_the_gap_prevents_merge`,
+    // `enforced_keeps_separate_across_an_unknown_gap`). The gate-independent structural cases
+    // (single-range derive, PaperThin/existing-watermark short-circuits, no-view keeps-separate)
+    // stay below.
 
     #[test]
     fn migration_report_entry_names_the_escape_hatch_via_load() {
-        // The load-time warning path: a hole-straddling checkpoint file surfaces the
-        // remainder (the load logs it; here we assert the derivation result directly).
+        // The no-view load path (`Checkpoint::load_gated` with no calendar) surfaces the
+        // remainder: a multi-range checkpoint derives the prefix watermark and keeps the far
+        // range in `completed` (the load logs it; here we assert the derivation result directly).
         let dir = tempdir().unwrap();
         let path = dir.path().join("legacy.json");
         std::fs::write(
@@ -1119,22 +1040,9 @@ mod tests {
             r#"{"completed":["005930.XKRX|1-DAY|20240101..20240105","005930.XKRX|1-DAY|20240110..20240112"],"gaps":[],"adjusted_prices":true}"#,
         )
         .unwrap();
-        let cp = Checkpoint::load(&path).unwrap();
+        let cp = Checkpoint::load_gated(&path, &no_calendar_gate()).unwrap();
         assert_eq!(cp.watermark("005930.XKRX", "1-DAY"), Some(ymd(2024, 1, 5)));
         assert!(cp.is_done("005930.XKRX", "1-DAY", "20240110..20240112"), "remainder kept in completed");
-    }
-
-    #[test]
-    fn migration_contained_range_chains_via_running_maximum() {
-        // A contained range (0618..0703 inside 0601..0703) chains — the hole test
-        // compares the next start against the running chain MAX edate, not the
-        // adjacent sorted pair.
-        let mut cp = Checkpoint::default();
-        cp.mark_done("005930.XKRX", "1-DAY", "20240601..20240703");
-        cp.mark_done("005930.XKRX", "1-DAY", "20240618..20240703");
-        let rem = cp.migrate_completed_watermarks();
-        assert!(rem.is_empty(), "a contained range never breaks the chain");
-        assert_eq!(cp.watermark("005930.XKRX", "1-DAY"), Some(ymd(2024, 7, 3)));
     }
 
     #[test]
@@ -1143,7 +1051,7 @@ mod tests {
         cp.set_watermark("005930.XKRX", "1-DAY", ymd(2024, 1, 10));
         // A completed range that would derive a LATER or EARLIER watermark must not win.
         cp.mark_done("005930.XKRX", "1-DAY", "20240101..20240131");
-        cp.migrate_completed_watermarks();
+        cp.migrate_completed_watermarks_gated(&no_calendar_gate());
         assert_eq!(cp.watermark("005930.XKRX", "1-DAY"), Some(ymd(2024, 1, 10)), "existing watermark preserved");
     }
 
@@ -1156,10 +1064,10 @@ mod tests {
             r#"{"completed":["005930.XKRX|1-DAY|20240101..20240105"],"gaps":[],"adjusted_prices":true}"#,
         )
         .unwrap();
-        let cp1 = Checkpoint::load(&path).unwrap();
+        let cp1 = Checkpoint::load_gated(&path, &no_calendar_gate()).unwrap();
         cp1.save(&path).unwrap();
         let a = std::fs::read_to_string(&path).unwrap();
-        let cp2 = Checkpoint::load(&path).unwrap();
+        let cp2 = Checkpoint::load_gated(&path, &no_calendar_gate()).unwrap();
         cp2.save(&path).unwrap();
         let b = std::fs::read_to_string(&path).unwrap();
         assert_eq!(a, b, "double load→save is byte-identical (R3)");
@@ -1173,7 +1081,7 @@ mod tests {
         let mut cp = Checkpoint::default();
         cp.mark_done("005930.XKRX", "1-DAY", "20240101..20240105");
         cp.record_gap("005930.XKRX", "1-DAY", "20240102..20240103", GapReason::EmptyHistory);
-        cp.migrate_completed_watermarks();
+        cp.migrate_completed_watermarks_gated(&no_calendar_gate());
         assert_eq!(cp.watermark("005930.XKRX", "1-DAY"), Some(ymd(2024, 1, 5)));
         cp.prune_below_watermarks();
         assert!(!cp.is_done("005930.XKRX", "1-DAY", "20240101..20240105"), "migrated completed pruned");
@@ -1181,16 +1089,27 @@ mod tests {
     }
 
     #[test]
-    fn migration_failure_inversion_never_derives_past_a_hole() {
-        // Failure-inversion (Success Criteria): a non-contiguous fixture must NOT
-        // derive a watermark at or past the hole — an over-derivation bug fails HERE
-        // rather than silently gapping un-fetched history.
+    fn no_view_migration_keeps_a_multi_range_checkpoint_separate() {
+        // No-view semantics (`Checkpoint::load` default, manual range mode, downstream readers):
+        // with no calendar view the merge-hole test conservatively BREAKS every multi-range
+        // chain, so a multi-range checkpoint derives only its PREFIX watermark and keeps the far
+        // range in `completed` (never over-deriving past un-fetched history). This is the
+        // no-view case ONLY — the calendar-backed hole discrimination (all-Closed merges,
+        // proven-session/Unknown split) is asserted in the `calendar_gate_migration` integration
+        // tests, which under `no_calendar_gate` here would be vacuous (every gap breaks).
         let mut cp = Checkpoint::default();
-        cp.mark_done("005930.XKRX", "1-DAY", "20240101..20240105"); // Mon..Fri
-        cp.mark_done("005930.XKRX", "1-DAY", "20240110..20240112"); // hole: Mon/Tue un-covered
-        cp.migrate_completed_watermarks();
-        let wm = cp.watermark("005930.XKRX", "1-DAY").unwrap();
-        assert!(wm < ymd(2024, 1, 10), "watermark stays before the hole, got {wm}");
+        cp.mark_done("005930.XKRX", "1-DAY", "20240101..20240105");
+        cp.mark_done("005930.XKRX", "1-DAY", "20240110..20240112");
+        cp.migrate_completed_watermarks_gated(&no_calendar_gate());
+        assert_eq!(
+            cp.watermark("005930.XKRX", "1-DAY"),
+            Some(ymd(2024, 1, 5)),
+            "no view → prefix watermark only (conservative over-fetch)",
+        );
+        assert!(
+            cp.is_done("005930.XKRX", "1-DAY", "20240110..20240112"),
+            "the far range stays in completed — never folded into the watermark without a view",
+        );
     }
 
     #[test]
@@ -1203,7 +1122,7 @@ mod tests {
         cp.adjusted_prices = true;
         cp.save(&path).unwrap();
 
-        let loaded = Checkpoint::load(&path).unwrap();
+        let loaded = Checkpoint::load_gated(&path, &no_calendar_gate()).unwrap();
         assert!(loaded.is_done("005930.XKRX", "1-DAY", "20240101..20241231"));
         assert!(loaded.is_done("000660.XKRX", "1-MINUTE", "20240101..20240105")); // gap marks done
         assert_eq!(loaded.gaps().len(), 1);

@@ -142,22 +142,18 @@ const DIAGNOSTIC_OUTCOMES: &[Anchor] = &[
 /// would appear here as an explicit `GAP:` row, never a silent omission).
 const CONSUMER_BRANCHES: &[Anchor] = &[
     // Accumulate / probe (ingest CalendarGate::action / range_action / probe_anchor).
-    Anchor { label: "accumulate Shadow records but proceeds", file: "../tests/ingest.rs", needles: &["fn shadow_records_the_disagreeing_decision_but_proceeds"] },
-    Anchor { label: "accumulate Shadow byte-identical to Legacy", file: "../tests/ingest.rs", needles: &["fn shadow_disagreement_is_byte_identical_to_legacy"] },
-    Anchor { label: "accumulate Shadow unavailable byte-identical", file: "../tests/ingest.rs", needles: &["fn shadow_unavailable_is_byte_identical_to_legacy"] },
+    // Enforced-only after the U6 retirement (weekday primitive + Legacy/Shadow branches removed).
     Anchor { label: "accumulate Enforced Unknown → no request/advance", file: "../tests/ingest.rs", needles: &["fn enforced_unknown_target_makes_no_request_and_no_advance"] },
     Anchor { label: "accumulate Enforced Trading → fetch", file: "../tests/ingest.rs", needles: &["fn enforced_trading_session_target_fetches"] },
     Anchor { label: "accumulate Enforced Closed → advance no request", file: "../tests/ingest.rs", needles: &["fn enforced_closed_target_advances_without_request"] },
     Anchor { label: "accumulate Enforced unavailable → stop + preserve", file: "../tests/ingest.rs", needles: &["fn enforced_unavailable_calendar_stops_and_preserves_state"] },
     Anchor { label: "probe Enforced Unknown anchor → no request", file: "../tests/ingest.rs", needles: &["fn enforced_probe_unknown_anchor_makes_no_request"] },
     Anchor { label: "probe Enforced session anchor → probes", file: "../tests/ingest.rs", needles: &["fn enforced_probe_session_anchor_probes"] },
-    // Checkpoint continuity.
-    Anchor { label: "checkpoint Shadow migration byte-identical", file: "../tests/ingest.rs", needles: &["fn shadow_migration_is_byte_identical_to_legacy_even_when_calendar_disagrees"] },
-    Anchor { label: "checkpoint Enforced merges all-closed gap", file: "../tests/ingest.rs", needles: &["fn enforced_merges_an_all_closed_gap_that_legacy_splits"] },
+    // Checkpoint continuity (Enforced-only after the U6 retirement).
+    Anchor { label: "checkpoint Enforced merges all-closed gap", file: "../tests/ingest.rs", needles: &["fn enforced_merges_an_all_closed_gap"] },
     Anchor { label: "checkpoint Enforced Trading in gap prevents merge", file: "../tests/ingest.rs", needles: &["fn enforced_trading_session_in_the_gap_prevents_merge"] },
-    Anchor { label: "checkpoint Enforced Unknown gap kept separate", file: "../tests/ingest.rs", needles: &["fn enforced_keeps_separate_across_an_unknown_gap_that_legacy_merges"] },
-    // Backward-widen.
-    Anchor { label: "backward-widen Shadow byte-identical", file: "../tests/ingest.rs", needles: &["fn shadow_backward_widen_is_byte_identical_to_legacy"] },
+    Anchor { label: "checkpoint Enforced Unknown gap kept separate", file: "../tests/ingest.rs", needles: &["fn enforced_keeps_separate_across_an_unknown_gap"] },
+    // Backward-widen (Enforced-only after the U6 retirement).
     Anchor { label: "backward-widen Enforced Trading → warn + persist", file: "../tests/ingest.rs", needles: &["fn enforced_backward_widen_trading_session_warns_and_persists"] },
     Anchor { label: "backward-widen Enforced all-closed → silent", file: "../tests/ingest.rs", needles: &["fn enforced_backward_widen_all_closed_region_is_silent"] },
     Anchor { label: "backward-widen Enforced Unknown → uncertain", file: "../tests/ingest.rs", needles: &["fn enforced_backward_widen_unknown_region_is_uncertain_and_reevaluates"] },
@@ -200,7 +196,7 @@ const ROLLBACK_REHEARSAL: &[Anchor] = &[
 const DIVERGENCE_CLASSIFICATION: &[Anchor] = &[
     Anchor { label: "DivergenceClass type + classify", file: "../src/calendar.rs", needles: &["enum DivergenceClass", "fn classify_divergence"] },
     Anchor { label: "divergence redaction + non-persistence test", file: "../src/calendar.rs", needles: &["fn divergence_observation_is_redacted_and_classified"] },
-    Anchor { label: "ingest emits classified divergence", file: "../tests/ingest.rs", needles: &["fn shadow_divergence_is_classified_and_redacted"] },
+    // ingest's Shadow divergence anchor was removed with its U6 Enforced-only retirement.
     // catalog's Shadow divergence anchor was removed with its U7 Enforced-only retirement.
     // budget-probe's Shadow divergence anchor was removed with its U8 Enforced-only retirement.
     Anchor { label: "ladder emits classified divergence", file: "../lab/src/runner/live.rs", needles: &["fn shadow_divergence_is_classified_and_redacted"] },
