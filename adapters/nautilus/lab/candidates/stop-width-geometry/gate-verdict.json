@@ -1,0 +1,75 @@
+{
+  "schema_version": 1,
+  "slug": "stop-width-geometry",
+  "family": "class-b",
+  "decision": "STOP",
+  "stop_gate": "threshold-fail",
+  "stop_reason": "threshold on 'ror_shift' failed: 0.*** not Ge 0.005",
+  "diagnostic_readings": {
+    "collin_abs_ratio_atr": 0.134,
+    "collin_abs_rps": 0.2467,
+    "resolution_mix_shift": 0.0779,
+    "ror_shift": 0.000827,
+    "stop_width_ref": 35.0,
+    "stop_width_w_hi": 1.32287566,
+    "stop_width_w_lo": 0.38348249,
+    "winning_signal_id": 2.0
+  },
+  "twin_readings": {
+    "collin_abs_ratio_atr": 0.134,
+    "collin_abs_rps": 0.2467,
+    "resolution_mix_shift": 0.0779,
+    "ror_shift": 0.000827,
+    "stop_width_ref": 35.0,
+    "stop_width_w_hi": 1.32287566,
+    "stop_width_w_lo": 0.38348249,
+    "winning_signal_id": 2.0
+  },
+  "agreed_readings": {
+    "collin_abs_ratio_atr": 0.134,
+    "collin_abs_rps": 0.2467,
+    "resolution_mix_shift": 0.0779,
+    "ror_shift": 0.000827,
+    "stop_width_ref": 35.0,
+    "stop_width_w_hi": 1.32287566,
+    "stop_width_w_lo": 0.38348249,
+    "winning_signal_id": 2.0
+  },
+  "pre_register_hash": "cbdfe1fd07f6910648c31fb04f210854997c35e6bf09739f889c60d9b6b2e7a9",
+  "catalog_fingerprint": "3b6be31bdf8d29a8d774d42d490020d65753455acfc1b2214a0b13f14b589200",
+  "freeze_commit": "53e9a2747170f64af04e76d6e886d44767398730",
+  "flip_param": "stop_width_alpha",
+  "flip_value": 0.5,
+  "prior_trials": [
+    {
+      "schema_version": 1,
+      "recorded_utc": "2026-07-16T07:20:53.668842+00:00",
+      "candidate": "amihud-liquidity-tilt",
+      "family": "class-b",
+      "look": "gate-reading",
+      "lineage": {
+        "catalog_fingerprint": "3b6be31bdf8d29a8d774d42d490020d65753455acfc1b2214a0b13f14b589200"
+      },
+      "readings": {
+        "collin_abs_ratio_atr": 0.2885,
+        "collin_abs_rps": 0.4989,
+        "qty_change_frac": 0.4491,
+        "ror_shift": 0.030882
+      },
+      "verdict": "GO"
+    },
+    {
+      "schema_version": 1,
+      "recorded_utc": "2026-07-16T07:52:42.496004+00:00",
+      "candidate": "amihud-liquidity-tilt",
+      "family": "class-b",
+      "look": "flip",
+      "lineage": {
+        "catalog_fingerprint": "3b6be31bdf8d29a8d774d42d490020d65753455acfc1b2214a0b13f14b589200"
+      },
+      "readings": {},
+      "verdict": "REVERT ror-negative"
+    }
+  ],
+  "recorded_utc": "2026-07-21T13:02:30.040012+00:00"
+}
