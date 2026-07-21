@@ -323,20 +323,178 @@ async fn accumulate_empty_session_reports_a_gap_without_advancing() {
     let last_closed = ymd(2024, 1, 5);
     let floor = ymd(2024, 1, 1);
 
-    let mut ingestor = Ingestor::new(sdk.clone(), daily_config(&catalog_path));
+    // Pin a high empty-retry bound so this behavior test (conservative re-attempt on an empty
+    // proven session) is independent of the ambient `LS_INGEST_EMPTY_RETRY_MAX` — the bounded
+    // convergence is exercised separately below.
+    let mut ingestor = Ingestor::new(sdk.clone(), daily_config(&catalog_path)).with_empty_retry_max(100);
     let first = ingestor.run_accumulate_gated(&universe, last_closed, floor, all_sessions_gate()).await.unwrap();
     assert_eq!(first.gaps.len(), 1, "the empty history is reported as a gap");
 
     // The watermark did NOT advance over the empty session → a re-run re-attempts it (it is not
     // marked covered on zero bars). The day is re-attested only once the gateway serves bars or
     // the calendar proves it Closed.
-    let mut ingestor2 = Ingestor::new(sdk, daily_config(&catalog_path));
+    let mut ingestor2 = Ingestor::new(sdk, daily_config(&catalog_path)).with_empty_retry_max(100);
     let second = ingestor2.run_accumulate_gated(&universe, last_closed, floor, all_sessions_gate()).await.unwrap();
-    assert_eq!(second.triples_skipped, 0, "an empty proven session is re-attempted, not marked covered on zero bars");
+    assert_eq!(second.triples_skipped, 0, "an empty proven session is re-attempted (below the bound), not marked covered on zero bars");
     assert_eq!(
         read_watermark_top(&catalog_path),
         None,
         "no watermark advance over an empty session (Enforced conservative halt)"
+    );
+}
+
+/// Load a catalog checkpoint (no-view Enforced gate) for direct inspection.
+fn checkpoint_top(catalog: &Path) -> Checkpoint {
+    Checkpoint::load_gated(&catalog.join("ingest-checkpoint.json"), &no_calendar_gate()).unwrap()
+}
+
+/// #189 follow-up: a proven Trading Session that persistently serves zero bars is
+/// re-fetched conservatively BELOW the bound, then CONVERGES at the bound — it
+/// records a documented persistent-empty gap (never coverage), stops re-fetching
+/// every run (so it stops charging the cumulative IGW00201 budget), and never
+/// advances the watermark. A run whose target advances re-arms (a later session may
+/// serve bars).
+#[tokio::test]
+async fn accumulate_persistent_empty_session_converges_and_stops_refetching() {
+    let dir = tempdir().unwrap();
+    let catalog_path = dir.path().join("catalog");
+    let server = MockServer::start().await;
+    let sdk = sdk_over(&server, daily_body_empty()).await;
+    let universe = [InstrumentId::from("005930.XKRX")];
+    let last_closed = ymd(2024, 1, 5);
+    let floor = ymd(2024, 1, 1);
+    // Bound = 2: run 1 is a conservative retry, run 2 reaches the bound and converges.
+    let make = |sdk: LsSdk| Ingestor::new(sdk, daily_config(&catalog_path)).with_empty_retry_max(2);
+
+    // Run 1: empty → conservative halt (below the bound). One gateway call.
+    let r1 = make(sdk.clone())
+        .run_accumulate_gated(&universe, last_closed, floor, all_sessions_gate())
+        .await
+        .unwrap();
+    assert_eq!(r1.gaps.len(), 1, "run 1 reports the empty history as a gap");
+    assert_eq!(count_t8410(&server).await, 1, "run 1 fetched once");
+    assert_eq!(checkpoint_top(&catalog_path).empty_retry_count("005930.XKRX", "1-DAY"), 1);
+
+    // Run 2: empty again → reaches the bound → converges (records a gap, warns).
+    make(sdk.clone())
+        .run_accumulate_gated(&universe, last_closed, floor, all_sessions_gate())
+        .await
+        .unwrap();
+    assert_eq!(count_t8410(&server).await, 2, "run 2 fetched once more (reaching the bound)");
+
+    // Run 3 (same target): converged → skipped, NO further gateway call / budget charge.
+    let r3 = make(sdk.clone())
+        .run_accumulate_gated(&universe, last_closed, floor, all_sessions_gate())
+        .await
+        .unwrap();
+    assert_eq!(
+        count_t8410(&server).await,
+        2,
+        "run 3 converged — the persistently-empty triple is NOT re-fetched"
+    );
+    assert_eq!(r3.triples_skipped, 1, "the converged triple counts as skipped");
+    assert_eq!(
+        read_watermark_top(&catalog_path),
+        None,
+        "convergence never advances the watermark (coverage is never fabricated)"
+    );
+    let cp = checkpoint_top(&catalog_path);
+    assert!(
+        cp.gaps()
+            .iter()
+            .any(|g| g.instrument == "005930.XKRX" && g.reason == GapReason::EmptyHistory),
+        "a persistent-empty gap documents the hole"
+    );
+    assert!(cp.empty_retry_count("005930.XKRX", "1-DAY") >= 2, "the counter persisted at the bound");
+
+    // Run 4 with an ADVANCED target (a new session closed) → re-arms and fetches again
+    // (a later run where the session finally serves bars must still fetch).
+    make(sdk)
+        .run_accumulate_gated(&universe, ymd(2024, 1, 8), floor, all_sessions_gate())
+        .await
+        .unwrap();
+    assert_eq!(
+        count_t8410(&server).await,
+        3,
+        "an advanced target re-arms the converged triple (one more fetch)"
+    );
+    // The re-armed convergence REPLACES the prior persistent-empty gap rather than
+    // appending — the documented-hole list stays bounded (one row per triple), never
+    // one per session.
+    assert_eq!(
+        checkpoint_top(&catalog_path)
+            .gaps()
+            .iter()
+            .filter(|g| g.instrument == "005930.XKRX" && g.reason == GapReason::EmptyHistory)
+            .count(),
+        1,
+        "the uncovered-gap list is bounded across re-arms"
+    );
+}
+
+/// #189 follow-up: a session that serves bars BEFORE the bound resets the counter and
+/// behaves as today — the watermark advances and no persistent-empty state lingers.
+#[tokio::test]
+async fn accumulate_empty_then_bars_before_the_bound_resets() {
+    let dir = tempdir().unwrap();
+    let catalog_path = dir.path().join("catalog");
+    let universe = [InstrumentId::from("005930.XKRX")];
+    let last_closed = ymd(2024, 1, 5);
+    let floor = ymd(2024, 1, 1);
+
+    // Run 1: an empty feed → one conservative retry recorded (bound is 3, well above).
+    let server_empty = MockServer::start().await;
+    let sdk_empty = sdk_over(&server_empty, daily_body_empty()).await;
+    Ingestor::new(sdk_empty, daily_config(&catalog_path))
+        .with_empty_retry_max(3)
+        .run_accumulate_gated(&universe, last_closed, floor, all_sessions_gate())
+        .await
+        .unwrap();
+    assert_eq!(
+        checkpoint_top(&catalog_path).empty_retry_count("005930.XKRX", "1-DAY"),
+        1,
+        "one empty attempt below the bound"
+    );
+
+    // Run 2 over the SAME catalog: the feed now serves bars → written, counter reset.
+    let server_bars = MockServer::start().await;
+    let sdk_bars = sdk_over(&server_bars, daily_body_three_rows()).await;
+    let r2 = Ingestor::new(sdk_bars, daily_config(&catalog_path))
+        .with_empty_retry_max(3)
+        .run_accumulate_gated(&universe, last_closed, floor, all_sessions_gate())
+        .await
+        .unwrap();
+    assert_eq!(r2.bars_written, 3, "the session finally serves bars");
+    let cp = checkpoint_top(&catalog_path);
+    assert_eq!(
+        cp.empty_retry_count("005930.XKRX", "1-DAY"),
+        0,
+        "serving bars resets the persistent-empty counter"
+    );
+    assert!(
+        cp.watermark("005930.XKRX", "1-DAY").is_some(),
+        "the watermark advances on real bars (unchanged behavior)"
+    );
+}
+
+/// #189 follow-up: a normal first backfill never arms the persistent-empty counter
+/// (the initial-backfill path is unaffected).
+#[tokio::test]
+async fn accumulate_normal_backfill_does_not_arm_empty_retry() {
+    let dir = tempdir().unwrap();
+    let catalog_path = dir.path().join("catalog");
+    let server = MockServer::start().await;
+    let sdk = sdk_over(&server, daily_body_three_rows()).await;
+    let universe = [InstrumentId::from("005930.XKRX")];
+
+    Ingestor::new(sdk, daily_config(&catalog_path))
+        .run_accumulate_gated(&universe, ymd(2024, 1, 5), ymd(2024, 1, 1), all_sessions_gate())
+        .await
+        .unwrap();
+    assert_eq!(
+        checkpoint_top(&catalog_path).empty_retry_count("005930.XKRX", "1-DAY"),
+        0,
+        "a backfill that serves bars never arms the empty-retry counter"
     );
 }
 

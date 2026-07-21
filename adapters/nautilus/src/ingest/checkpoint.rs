@@ -132,6 +132,32 @@ pub struct RebaseEvent {
     pub origin: RebaseOrigin,
 }
 
+/// Bounded persistent-empty retry state for a `(instrument, bar type)` (#189
+/// follow-up): how many consecutive runs the frontier **proven Trading Session**
+/// served zero bars, plus the run target (`last_closed`, `YYYYMMDD`) of the most
+/// recent empty attempt. The Enforced accumulate deliberately does NOT advance the
+/// watermark over an empty proven session (it refuses to attest coverage on zero
+/// bars) — so a persistently-empty session (a multi-day trading halt, or a
+/// listed-but-non-serving symbol still in the universe) would otherwise be
+/// re-fetched on every invocation at the same target — and since the per-symbol
+/// drip re-invokes the binary many times per dispatch cycle, that repeatedly
+/// charges the cumulative `IGW00201` budget. Once `count` reaches the configured
+/// bound the triple **converges**: a [`GapReason::EmptyHistory`] gap is recorded
+/// (documenting the hole — coverage is never fabricated) and the gateway call is
+/// skipped for further runs *at the same target*, until the run target advances
+/// beyond `through` (a later session may serve bars → re-arm, at most one fetch per
+/// new session) or the triple serves bars / advances its watermark (→ reset). The
+/// watermark is NEVER advanced over the empty session — the conservative posture is
+/// preserved, merely bounded.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct EmptyRetry {
+    /// Consecutive runs the frontier proven Trading Session served zero bars.
+    pub count: u32,
+    /// The run target (`last_closed`, `YYYYMMDD`) of the most recent empty attempt.
+    /// A later run whose target exceeds this re-arms the fetch (the input changed).
+    pub through: String,
+}
+
 /// The persisted ingest state.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Checkpoint {
@@ -154,6 +180,12 @@ pub struct Checkpoint {
     /// never warned. `#[serde(default)]` so legacy files load with an empty map.
     #[serde(default)]
     history_floors: BTreeMap<String, String>,
+    /// Per-`(instrument, bar type)` bounded persistent-empty retry state (#189
+    /// follow-up), keyed like `watermarks`. Absent = the frontier has never served
+    /// zero bars. `#[serde(default)]` so pre-follow-up checkpoint files load with an
+    /// empty map (every triple reads as never-empty).
+    #[serde(default)]
+    empty_retries: BTreeMap<String, EmptyRetry>,
     /// Per-`(instrument, bar type)` basis-shift marks: detection date (`YYYYMMDD`)
     /// keyed like `watermarks`. A marked triple heals (wipe → re-pull → re-verify)
     /// before any append; the mark outranks the watermark as authority (KTD-2).
@@ -226,6 +258,66 @@ impl Checkpoint {
             Self::watermark_key(instrument, bar_type),
             floor.format("%Y%m%d").to_string(),
         );
+    }
+
+    /// The consecutive persistent-empty retry count for a `(instrument, bar type)`
+    /// (#189 follow-up); `0` if the frontier has never served zero bars.
+    pub fn empty_retry_count(&self, instrument: &str, bar_type: &str) -> u32 {
+        self.empty_retries
+            .get(&Self::watermark_key(instrument, bar_type))
+            .map_or(0, |r| r.count)
+    }
+
+    /// Whether a `(instrument, bar type)` has **converged** on a persistently-empty
+    /// proven Trading Session (#189 follow-up): its empty-retry count has reached
+    /// `max` AND the run target has not advanced beyond the last empty attempt
+    /// (`last_closed <= through`). A converged triple skips the gateway call this run
+    /// (no budget charge); a later run whose target advances beyond `through` re-arms
+    /// (the input changed — a new session may serve bars). An unparseable/absent
+    /// `through` reads as not-converged (fail toward fetching, never toward a silent
+    /// skip). `max` is expected to be ≥ 1 (clamped by the caller).
+    pub fn empty_retry_converged(
+        &self,
+        instrument: &str,
+        bar_type: &str,
+        last_closed: NaiveDate,
+        max: u32,
+    ) -> bool {
+        match self
+            .empty_retries
+            .get(&Self::watermark_key(instrument, bar_type))
+        {
+            Some(r) if r.count >= max => NaiveDate::parse_from_str(r.through.trim(), "%Y%m%d")
+                .map(|through| last_closed <= through)
+                .unwrap_or(false),
+            _ => false,
+        }
+    }
+
+    /// Increment the persistent-empty retry count for a `(instrument, bar type)` and
+    /// stamp the run target (`last_closed`) of this empty attempt; returns the new
+    /// count (#189 follow-up). Called on an empty-proven-session halt.
+    pub fn bump_empty_retry(
+        &mut self,
+        instrument: &str,
+        bar_type: &str,
+        last_closed: NaiveDate,
+    ) -> u32 {
+        let entry = self
+            .empty_retries
+            .entry(Self::watermark_key(instrument, bar_type))
+            .or_default();
+        entry.count += 1;
+        entry.through = last_closed.format("%Y%m%d").to_string();
+        entry.count
+    }
+
+    /// Clear the persistent-empty retry state for a `(instrument, bar type)` (#189
+    /// follow-up) — the triple made forward progress (bars written, or the watermark
+    /// advanced over the frontier), so any prior empty-frontier state is stale.
+    pub fn reset_empty_retry(&mut self, instrument: &str, bar_type: &str) {
+        self.empty_retries
+            .remove(&Self::watermark_key(instrument, bar_type));
     }
 
     /// Clear the coverage watermark for a `(instrument, bar type)` — the heal's
@@ -680,6 +772,36 @@ impl Checkpoint {
         });
     }
 
+    /// Record a coverage gap WITHOUT marking the triple covered (#189 follow-up).
+    /// Unlike [`Self::record_gap`], this does NOT add the range to `completed`, so the
+    /// load-time `completed`→`watermarks` migration never derives a watermark from it
+    /// — an empty **proven** Trading Session is a documented hole, never coverage
+    /// (advancing the watermark over it is exactly the advance-on-empty the Enforced
+    /// posture refuses). Keeps at most ONE uncovered row per `(instrument, bar type,
+    /// reason)`: a re-armed convergence at a later target supersedes the prior span
+    /// (the range grows with `last_closed`), so it REPLACES rather than appends —
+    /// otherwise a never-serving symbol would accrue one row per session without
+    /// bound, and `prune_below_watermarks` cannot reclaim them (the watermark never
+    /// advances past an uncovered empty span). Only accumulate convergence calls this,
+    /// so it never contends with a `record_gap` (covered) row for the same triple.
+    pub fn record_gap_uncovered(
+        &mut self,
+        instrument: &str,
+        bar_type: &str,
+        range: &str,
+        reason: GapReason,
+    ) {
+        self.gaps.retain(|g| {
+            !(g.instrument == instrument && g.bar_type == bar_type && g.reason == reason)
+        });
+        self.gaps.push(CoverageGap {
+            instrument: instrument.to_string(),
+            bar_type: bar_type.to_string(),
+            range: range.to_string(),
+            reason,
+        });
+    }
+
     /// The recorded coverage gaps.
     pub fn gaps(&self) -> &[CoverageGap] {
         &self.gaps
@@ -772,6 +894,88 @@ mod tests {
             Some(ymd(2024, 5, 25)),
             "the marker round-trips through save/load"
         );
+    }
+
+    #[test]
+    fn empty_retry_bumps_converges_resets_and_round_trips() {
+        // #189 follow-up: the bounded persistent-empty retry state.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("state.json");
+        let mut cp = Checkpoint::default();
+        assert_eq!(cp.empty_retry_count("005930.XKRX", "1-DAY"), 0, "unset reads zero");
+        assert!(
+            !cp.empty_retry_converged("005930.XKRX", "1-DAY", ymd(2024, 1, 5), 3),
+            "never-empty is not converged"
+        );
+
+        // Two empty attempts at the same target: below the bound (3), not converged.
+        assert_eq!(cp.bump_empty_retry("005930.XKRX", "1-DAY", ymd(2024, 1, 5)), 1);
+        assert_eq!(cp.bump_empty_retry("005930.XKRX", "1-DAY", ymd(2024, 1, 5)), 2);
+        assert!(!cp.empty_retry_converged("005930.XKRX", "1-DAY", ymd(2024, 1, 5), 3));
+        // Third attempt reaches the bound → converged at this target.
+        assert_eq!(cp.bump_empty_retry("005930.XKRX", "1-DAY", ymd(2024, 1, 5)), 3);
+        assert!(cp.empty_retry_converged("005930.XKRX", "1-DAY", ymd(2024, 1, 5), 3));
+        // A later target (a new session may serve bars) re-arms: NOT converged.
+        assert!(
+            !cp.empty_retry_converged("005930.XKRX", "1-DAY", ymd(2024, 1, 8), 3),
+            "an advanced target re-arms even at/above the bound"
+        );
+        // A distinct series is independent.
+        assert!(!cp.empty_retry_converged("005930.XKRX", "1-MINUTE", ymd(2024, 1, 5), 3));
+
+        // Round-trips deterministically.
+        cp.save(&path).unwrap();
+        let a = std::fs::read_to_string(&path).unwrap();
+        cp.save(&path).unwrap();
+        let b = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(a, b, "empty-retry state serializes deterministically");
+        let mut loaded = Checkpoint::load_gated(&path, &no_calendar_gate()).unwrap();
+        assert_eq!(loaded.empty_retry_count("005930.XKRX", "1-DAY"), 3, "count round-trips");
+        assert!(loaded.empty_retry_converged("005930.XKRX", "1-DAY", ymd(2024, 1, 5), 3));
+
+        // Reset (forward progress) clears it.
+        loaded.reset_empty_retry("005930.XKRX", "1-DAY");
+        assert_eq!(loaded.empty_retry_count("005930.XKRX", "1-DAY"), 0);
+        assert!(!loaded.empty_retry_converged("005930.XKRX", "1-DAY", ymd(2024, 1, 5), 3));
+    }
+
+    #[test]
+    fn record_gap_uncovered_replaces_and_never_marks_covered() {
+        let mut cp = Checkpoint::default();
+        // First convergence span.
+        cp.record_gap_uncovered("005930.XKRX", "1-DAY", "20240101..20240105", GapReason::EmptyHistory);
+        // A re-armed convergence at a later target REPLACES the prior row (bounded — one
+        // uncovered row per (instrument, bar type, reason), never accruing per session).
+        cp.record_gap_uncovered("005930.XKRX", "1-DAY", "20240101..20240108", GapReason::EmptyHistory);
+        assert_eq!(cp.gaps().len(), 1, "the later span supersedes the prior — no unbounded growth");
+        assert_eq!(cp.gaps()[0].range, "20240101..20240108");
+        // Crucially it is NOT marked done → the load-time migration cannot derive a
+        // watermark from it (an empty proven session is never coverage).
+        assert!(!cp.is_done("005930.XKRX", "1-DAY", "20240101..20240108"), "uncovered gap is not in completed");
+        cp.migrate_completed_watermarks_gated(&no_calendar_gate());
+        assert!(
+            cp.watermark("005930.XKRX", "1-DAY").is_none(),
+            "migration never derives a watermark from an uncovered empty gap (no fabricated coverage)"
+        );
+        // A distinct series keeps its own row.
+        cp.record_gap_uncovered("000660.XKRX", "1-DAY", "20240101..20240108", GapReason::EmptyHistory);
+        assert_eq!(cp.gaps().len(), 2, "a distinct series is independent");
+    }
+
+    #[test]
+    fn legacy_checkpoint_without_empty_retries_loads_as_never_empty() {
+        // A pre-follow-up checkpoint file has no `empty_retries` field: it loads with
+        // an empty map, so every triple reads as never-empty (count 0, not converged).
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("legacy.json");
+        std::fs::write(
+            &path,
+            r#"{"completed":[],"gaps":[],"watermarks":{"005930.XKRX|1-DAY":"20240703"},"adjusted_prices":true}"#,
+        )
+        .unwrap();
+        let cp = Checkpoint::load_gated(&path, &no_calendar_gate()).expect("legacy checkpoint loads");
+        assert_eq!(cp.empty_retry_count("005930.XKRX", "1-DAY"), 0, "absent field → never-empty");
+        assert!(!cp.empty_retry_converged("005930.XKRX", "1-DAY", ymd(2024, 7, 3), 3));
     }
 
     #[test]

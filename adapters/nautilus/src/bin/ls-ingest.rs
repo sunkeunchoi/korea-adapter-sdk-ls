@@ -17,6 +17,13 @@
 //! - `LS_INGEST_LOOKBACK`: accumulate/rebase-mode floor `YYYYMMDD` for an
 //!   unseen/newly listed instrument — and, in `rebase` mode, the re-pull floor
 //!   for every symbol (required; pin at or before the original backfill start).
+//! - `LS_INGEST_EMPTY_RETRY_MAX`: accumulate-mode bound (default `3`, clamped ≥ 1)
+//!   on consecutive re-fetches of a proven Trading Session that serves zero bars
+//!   before the triple converges — records a documented persistent-empty gap and
+//!   stops re-fetching every run (skips until its target advances or it serves
+//!   bars), so a multi-day halt / listed-but-non-serving symbol stops charging the
+//!   cumulative `IGW00201` budget. Never advances the watermark (coverage is never
+//!   fabricated over an empty session).
 //! - `LS_INGEST_LANE_FILE`: optional lane env-file (else the process env is used).
 //! - `LS_INGEST_SYMBOLS`: optional comma-separated shcodes to bound the universe
 //!   (else the whole loaded universe; minute backfills MUST be bounded).

@@ -220,6 +220,19 @@ the initial bounded backfill). "Last closed session" includes today only once
 now-KST is past **16:30 KST**, so a post-close cron delivers the just-closed session
 rather than lagging a day; the watermark never advances into an in-session day.
 
+An empty **proven Trading Session** (a session the calendar attests open that serves
+zero bars) does not advance the watermark — it is conservatively re-fetched rather
+than marked covered on zero bars. To keep a *persistently*-empty session (a multi-day
+halt, or a listed-but-non-serving symbol still in the universe) from re-fetching on
+every same-target invocation — the per-symbol drip re-invokes the binary many times per
+dispatch cycle, repeatedly charging the cumulative `IGW00201` budget — that retry is
+**bounded** by `LS_INGEST_EMPTY_RETRY_MAX` (default `3`): after that many consecutive
+empty runs the triple **converges** — it records a documented persistent-empty gap
+(never coverage — the watermark still does not advance) and skips the gateway call for
+further runs at the same target. It re-arms when the target advances (a later session
+may serve bars, so it retries at most once per new session) and resets when it serves
+bars. Convergence is *skip*, not *cover*.
+
 ```
 LS_TRADING_ENV=paper LS_INGEST_LANE_FILE=.env.domestic \
 LS_INGEST_MODE=accumulate LS_INGEST_CATALOG=./data/catalog \
