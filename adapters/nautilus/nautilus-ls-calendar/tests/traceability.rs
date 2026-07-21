@@ -189,17 +189,9 @@ const ROLLBACK_REHEARSAL: &[Anchor] = &[
     Anchor { label: "rollback refuses blank approval", file: "../tests/calendar_activate.rs", needles: &["fn rollback_with_blank_approval_is_refused"] },
 ];
 
-/// The Shadow-divergence classification (U3) and its owning assertions — part of the
-/// Foundation Gate matrix (U4 test scenario 2). Every consumer emits a classified, redacted,
-/// non-persisted divergence observation, asserted by the rows below.
-const DIVERGENCE_CLASSIFICATION: &[Anchor] = &[
-    Anchor { label: "DivergenceClass type + classify", file: "../src/calendar.rs", needles: &["enum DivergenceClass", "fn classify_divergence"] },
-    Anchor { label: "divergence redaction + non-persistence test", file: "../src/calendar.rs", needles: &["fn divergence_observation_is_redacted_and_classified"] },
-    // ingest's Shadow divergence anchor was removed with its U6 Enforced-only retirement.
-    // catalog's Shadow divergence anchor was removed with its U7 Enforced-only retirement.
-    // budget-probe's Shadow divergence anchor was removed with its U8 Enforced-only retirement.
-    // ladder's Shadow divergence anchor was removed with its U9 Enforced-only retirement.
-];
+// The Shadow-divergence classification group (U3) was retired with the shared calendar
+// scaffold in #189 U10 — all four consumers are Enforced-only, so the divergence types and
+// their per-consumer observations no longer exist.
 
 /// Run one group of anchors, appending a human-readable failure line per unresolved needle.
 fn check_group(cache: &mut FileCache, group: &str, anchors: &[Anchor], failures: &mut Vec<String>) {
@@ -224,8 +216,8 @@ fn check_group(cache: &mut FileCache, group: &str, anchors: &[Anchor], failures:
 }
 
 /// The drift check: every matrix row resolves to a live anchor, or the whole set of misses is
-/// reported at once. A renamed/removed fixture scenario, render token, consumer test, rollback
-/// rehearsal, or divergence assertion fails here — the check the Foundation Gate runs.
+/// reported at once. A renamed/removed fixture scenario, render token, consumer test, or
+/// rollback rehearsal fails here — the check the Foundation Gate runs.
 #[test]
 fn traceability_matrix_has_no_drift() {
     let mut cache = FileCache::default();
@@ -236,7 +228,6 @@ fn traceability_matrix_has_no_drift() {
     check_group(&mut cache, "diagnostic-outcome", DIAGNOSTIC_OUTCOMES, &mut failures);
     check_group(&mut cache, "consumer-branch", CONSUMER_BRANCHES, &mut failures);
     check_group(&mut cache, "rollback-rehearsal", ROLLBACK_REHEARSAL, &mut failures);
-    check_group(&mut cache, "divergence-classification", DIVERGENCE_CLASSIFICATION, &mut failures);
 
     assert!(
         failures.is_empty(),
@@ -259,7 +250,6 @@ fn traceability_document_covers_every_group() {
         "Diagnostic outcomes",
         "Consumer policy branches",
         "Rollback rehearsal",
-        "Shadow-divergence classification",
     ] {
         assert!(
             doc.contains(section),

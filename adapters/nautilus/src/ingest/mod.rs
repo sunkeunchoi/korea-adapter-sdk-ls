@@ -35,7 +35,7 @@ use nautilus_model::enums::{AggregationSource, BarAggregation, PriceType};
 use nautilus_model::identifiers::InstrumentId;
 use nautilus_model::types::{Price, Quantity};
 use nautilus_ls_calendar::schema::DayStatus;
-use nautilus_ls_calendar::{AsOfView, CalendarAdoption, DimensionStaleness};
+use nautilus_ls_calendar::{AsOfView, DimensionStaleness};
 
 use nautilus_persistence::backend::catalog::ParquetDataCatalog;
 use serde::{Deserialize, Serialize};
@@ -206,28 +206,21 @@ pub enum WidenAction {
 }
 
 /// The per-consumer calendar seam injected into the ingest accumulate + lookback-probe
-/// boundaries (KTD8). Carries the adoption posture and, when a snapshot loaded and
-/// authorized, an [`AsOfView`]. `Copy` (the view is `Copy` — a borrow + an instant), so it
-/// threads cheaply through the per-triple loop. Enforced-only after the ingest Consumer
-/// Retirement Gate (#189 U6): construct [`new`](Self::new) at the composition root.
+/// boundaries (KTD8). Carries, when a snapshot loaded and authorized, an [`AsOfView`].
+/// `Copy` (the view is `Copy` — a borrow + an instant), so it threads cheaply through the
+/// per-triple loop. Enforced-only after the ingest Consumer Retirement Gate (#189 U6) and
+/// the shared-scaffold teardown (U10): construct [`new`](Self::new) at the composition root.
 #[derive(Debug, Clone, Copy)]
 pub struct CalendarGate<'c> {
-    adoption: CalendarAdoption,
     view: Option<AsOfView<'c>>,
 }
 
 impl<'c> CalendarGate<'c> {
-    /// Build a gate for `adoption` with an optional as-of view (`None` = calendar unavailable
-    /// — a missing/failed snapshot; Enforced fails closed). Enforced-only after the ingest
-    /// Consumer Retirement Gate (#189 U6): the decision methods act on the injected calendar
-    /// regardless of `adoption`, and a missing view stops before dispatch.
-    pub fn new(adoption: CalendarAdoption, view: Option<AsOfView<'c>>) -> Self {
-        Self { adoption, view }
-    }
-
-    /// The adoption posture this gate runs under.
-    pub fn adoption(&self) -> CalendarAdoption {
-        self.adoption
+    /// Build a gate with an optional as-of view (`None` = calendar unavailable — a
+    /// missing/failed snapshot, which fails closed). Enforced-only (#189 U6/U10): the
+    /// decision methods act on the injected calendar, and a missing view stops before dispatch.
+    pub fn new(view: Option<AsOfView<'c>>) -> Self {
+        Self { view }
     }
 
     /// Full-history freshness for conservative checkpoint continuity decisions.
@@ -2087,13 +2080,7 @@ impl Ingestor {
                 let highest_covered = covered
                     .iter()
                     .filter(|(cs, _)| *cs <= request_through)
-                    .map(|(_, e)| {
-                        if calendar.adoption() == CalendarAdoption::Enforced {
-                            (*e).min(advance_through)
-                        } else {
-                            *e
-                        }
-                    })
+                    .map(|(_, e)| (*e).min(advance_through))
                     .max();
                 let sub_ranges = subtract_covered(start, request_through, &covered);
 
@@ -2189,13 +2176,12 @@ impl Ingestor {
                                 range,
                                 reason: GapReason::EmptyHistory,
                             });
-                            if calendar.adoption() == CalendarAdoption::Enforced {
-                                halt_before = Some(*s);
-                                break;
-                            }
+                            // Enforced-only (#189 U6/U10): an empty proven-session sub-range
+                            // pins before it rather than advancing over a zero-bar span.
+                            halt_before = Some(*s);
+                            break;
                         }
                         TripleOutcome::Gap(reason) => {
-                            let paper_thin = reason == GapReason::PaperThin;
                             gaps_this_run.push(CoverageGap {
                                 instrument: instrument.clone(),
                                 bar_type: label.clone(),
@@ -2204,11 +2190,11 @@ impl Ingestor {
                             });
                             // A truncated fetch means the sub-range is only partially
                             // retrieved: pin before it and stop, or the un-fetched
-                            // older history is skipped forever (R2/R10).
-                            if paper_thin || calendar.adoption() == CalendarAdoption::Enforced {
-                                halt_before = Some(*s);
-                                break;
-                            }
+                            // older history is skipped forever (R2/R10). Enforced-only
+                            // (#189 U6/U10) always halts here (a PaperThin truncation
+                            // did too under the retired postures).
+                            halt_before = Some(*s);
+                            break;
                         }
                     }
                 }
@@ -2237,19 +2223,21 @@ impl Ingestor {
                         checkpoint.set_watermark(&instrument, &label, target);
                     }
                 }
-                // Persist after each authorized triple for crash safety. Enforced stop/
-                // incomplete paths with no progress leave legacy input bytes untouched.
+                // Persist after each authorized triple for crash safety. Enforced-only
+                // (#189 U6/U10): a stop/incomplete path with no progress leaves the input
+                // bytes untouched (no save when nothing changed).
                 let changed = wrote_any || checkpoint.watermark(&instrument, &label) != wm;
-                if calendar.adoption() != CalendarAdoption::Enforced || changed {
+                if changed {
                     checkpoint.save(&checkpoint_path)?;
                     checkpoint_committed = true;
                 }
             }
         }
 
-        // Prune legacy completed/gap rows below the watermarks so daily runs stay
-        // bounded (KTD7); the run's own gaps report comes from memory.
-        if calendar.adoption() != CalendarAdoption::Enforced || checkpoint_committed {
+        // Prune stale completed/gap rows below the watermarks so daily runs stay
+        // bounded (KTD7); the run's own gaps report comes from memory. Enforced-only
+        // (#189 U6/U10): prune only after a triple committed this run.
+        if checkpoint_committed {
             checkpoint.prune_below_watermarks();
             checkpoint.save(&checkpoint_path)?;
         }

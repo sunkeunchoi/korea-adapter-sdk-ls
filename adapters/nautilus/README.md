@@ -70,8 +70,8 @@ proves the shared KRX calendar machinery is trustworthy before any consumer's we
 workaround is retired. It asserts the entire calendar surface — core, refresh, activation,
 diagnostics (the ten `calendar status` outcomes, redacted), the reproducible fixtures, the six
 consumer seams, the composition roots, the failure-inversion suite, the traceability drift check
-(`nautilus-ls-calendar/TRACEABILITY.md`), the rollback rehearsal, and the Shadow-divergence
-classification — fixed-clock, with no production snapshot, credentials, network, or real
+(`nautilus-ls-calendar/TRACEABILITY.md`), and the rollback rehearsal — fixed-clock, with no
+production snapshot, credentials, network, or real
 KRX-derived rows. It also runs the closeout publication-boundary scan, which fails the gate if
 [`CLOSEOUT.md`](CLOSEOUT.md) leaks a snapshot identity or an ISO date (the closeout is
 verdict-only). Passing the Foundation Gate does NOT by itself authorize enforcing any consumer —
@@ -107,33 +107,24 @@ Two consumers — `lab-research catalog status` (the ingest→backtest go/no-go)
 vars configure it, both resolved once per invocation (single load, single as-of):
 
 - `LS_CALENDAR_SNAPSHOT` — an **explicit** path to an immutable, authorized calendar
-  snapshot. Unset/empty means no snapshot configured (the normal slice-deploy state);
-  the calendar core never picks a default path. A missing/failed snapshot is non-fatal
-  under Legacy/Shadow and fail-closed under Enforced.
-- `LS_CALENDAR_ADOPTION` — `legacy` | `shadow` | `enforced`. Unset/invalid → the
-  **composed default `shadow`**. The live Enforced cutover and a production snapshot are
-  the deferred Consumer Retirement Gate (#189); the composed default stays Shadow.
+  snapshot. Unset/empty means no snapshot configured; the calendar core never picks a
+  default path. A missing/failed snapshot **fails closed** (the sole Enforced posture).
+- `LS_CALENDAR_ADOPTION` — `enforced` (the only posture after the #189 weekday retirement).
+  Unset/invalid → `enforced`. The retired `legacy`/`shadow` tokens no longer parse.
 
 Every invocation emits one redacted, decision-relevant **startup record** to stderr
 (never a persisted artifact): adoption, snapshot identity, coverage, freshness, the
 factual query, and the resulting action — with authority/credential identities masked.
 
-> **`LS_CALENDAR_ADOPTION` is process-wide.** Setting it to `enforced` flips **every**
-> not-yet-retired consumer in that process at once — during a canary, use per-consumer scoping
-> (a dedicated invocation), never a global `enforced` flip. Independence between consumers is
-> achieved by per-consumer arm removal in each staged retirement diff, not by this env var.
-
-**Retirement (issue #189).** Each consumer advances Shadow → **Enforced** only through its
-operator-attended **Consumer Retirement Gate**, after which its weekday primitive and stale
-guidance are removed. The operator runbooks:
-[production-snapshot validation](RUNBOOK-calendar-snapshot.md),
+**Retirement (issue #189, closed).** All four consumers (ingest, catalog, budget-probe, the
+Production Ladder date gate) were advanced from the former Shadow posture to **Enforced** through
+their operator-attended **Consumer Retirement Gates**, and the shared `Legacy`/`Shadow` scaffold —
+the weekday primitives, the adoption arms, and the Shadow-divergence machinery — was then removed
+(U10). The calendar is now authoritative with no weekday fallback. The operator runbooks remain
+for reference: [production-snapshot validation](RUNBOOK-calendar-snapshot.md),
 [activation + rollback rehearsal](RUNBOOK-calendar-rollback.md), and the generic
-[Consumer Retirement Gate template](RUNBOOK-consumer-retirement-gate.md) (per-consumer:
-`RUNBOOK-retire-{ingest,catalog,budget-probe,ladder}.md`). Merge of a staged retirement diff is
-blocked **mechanically** — `make merge-block-check` fails any diff that deletes a consumer's
-weekday primitive unless its committed [`gate-verdicts/<consumer>.json`](gate-verdicts/README.md)
-is present and `PASS` (written only after the live gate). The public
-[`CLOSEOUT.md`](CLOSEOUT.md) is verdict-only.
+[Consumer Retirement Gate template](RUNBOOK-consumer-retirement-gate.md). The public
+[`CLOSEOUT.md`](CLOSEOUT.md) records the verdict-only close-out.
 
 **`catalog status` behavior (Enforced, after the #189 U7 Consumer Retirement Gate):**
 watermark and expected-range boundaries resolve against **proven Trading Sessions** — a real

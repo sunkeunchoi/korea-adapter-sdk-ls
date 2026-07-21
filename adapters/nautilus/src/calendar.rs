@@ -5,19 +5,16 @@
 //! never reads env or picks a default path (KTD5) — that resolution lives here, at the
 //! composition root each affected process calls at startup.
 //!
-//! ## Shadow degradation contract (KTD8)
+//! ## Fail-closed contract (KTD8)
 //!
-//! At slice-deploy time the production snapshot is deferred (a maintainer U14/U15 run),
-//! so the configured path is normally ABSENT. In [`Shadow`](CalendarAdoption::Shadow)
-//! (and [`Legacy`](CalendarAdoption::Legacy)) a missing path or ANY typed
-//! [`CalendarLoadError`] is NON-FATAL: [`resolve_and_load`] returns a recorded
-//! unavailable state, the weekday path stays authoritative, and the process starts
-//! cleanly. Only [`Enforced`](CalendarAdoption::Enforced) fails closed — and even then
-//! this helper just SURFACES the typed result; the consumer (U9–U13) decides.
+//! After the #189 weekday retirement the sole adoption posture is
+//! [`Enforced`](CalendarAdoption::Enforced): the calendar is authoritative and there is
+//! no weekday fallback. [`resolve_and_load`] still SURFACES a typed result for every
+//! case — a missing path is [`NotConfigured`], a load failure is [`Unavailable`] — and
+//! the consumer decides what to do; under Enforced an unusable calendar fails closed.
 //!
-//! The startup record is emitted to a NON-PERSISTED diagnostic channel (stderr) so a
-//! Shadow recording never touches a tracked/persisted artifact a Legacy reader consumes
-//! (KTD8 byte-identical guarantee). Every field is REDACTED via the calendar crate's
+//! The startup record is emitted to a NON-PERSISTED diagnostic channel (stderr), never a
+//! tracked/persisted artifact. Every field is REDACTED via the calendar crate's
 //! [`diagnostics`](nautilus_ls_calendar::diagnostics) layer — no credential or
 //! authorization identity is ever printed.
 
@@ -32,8 +29,8 @@ use nautilus_ls_calendar::{AsOfView, CalendarDiagnostic, CalendarLoadError, KrxC
 /// or empty means "no snapshot configured" — the Shadow degradation contract applies.
 pub const SNAPSHOT_PATH_ENV: &str = "LS_CALENDAR_SNAPSHOT";
 
-/// The env var naming the per-process adoption state. Unset/invalid → the composed
-/// default [`CalendarAdoption::Shadow`] (KTD8).
+/// The env var naming the per-process adoption state. Unset/invalid → the default
+/// [`CalendarAdoption::Enforced`] (the only posture after the #189 weekday retirement, KTD8).
 pub const ADOPTION_ENV: &str = "LS_CALENDAR_ADOPTION";
 
 /// The outcome of resolving + loading a calendar at the composition root.
@@ -46,7 +43,7 @@ pub enum LoadedCalendar {
     /// The snapshot loaded and validated at the as-of instant — inject this calendar.
     Available(KrxCalendar),
     /// A snapshot path was configured but loading failed — the typed reason is retained
-    /// (non-fatal in Shadow/Legacy; the consumer fails closed in Enforced).
+    /// (the consumer fails closed under Enforced).
     Unavailable(CalendarLoadError),
     /// No snapshot path was configured at all (the normal slice-deploy state).
     NotConfigured,
@@ -115,10 +112,10 @@ impl IngestCalendarContext {
 /// failure is [`Unavailable`], a success is [`Available`]. Never reads env, never picks a
 /// default path, never panics.
 ///
-/// `adoption` is accepted so the composition root's intent is explicit at the call site
-/// (and so this signature matches what Phase C consumers wire); the load itself is
-/// adoption-independent — the helper only SURFACES the typed result, and the consumer
-/// decides whether an unavailable state is fatal (Enforced) or not (Shadow/Legacy).
+/// `adoption` is accepted so the composition root's intent is explicit at the call site;
+/// the load itself is adoption-independent — the helper only SURFACES the typed result,
+/// and the consumer decides. Under the sole surviving Enforced posture an unavailable
+/// state is fatal (the consumer fails closed).
 pub fn resolve_and_load(
     path: Option<&Path>,
     as_of: DateTime<Utc>,
@@ -140,12 +137,6 @@ pub fn resolve_and_load(
 /// are U9–U13).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResultingAction {
-    /// Legacy: the weekday path is authoritative; the calendar is not consulted.
-    WeekdayAuthoritative,
-    /// Shadow: the calendar decision is recorded; the weekday path stays authoritative.
-    ShadowRecorded,
-    /// Shadow/Legacy: the calendar is unavailable (non-fatal); the weekday path acts.
-    ShadowUnavailable,
     /// Enforced: the calendar is authoritative.
     EnforcedActive,
     /// Enforced: the calendar failed to load → fail closed (the consumer refuses).
@@ -157,12 +148,12 @@ pub enum ResultingAction {
 /// it from a loaded calendar's usability, and offline seams (e.g. the dispatch gate's stubbed
 /// date fact) call it directly so a stub-built record cannot drift from a real one.
 pub fn resulting_action(adoption: CalendarAdoption, available: bool) -> ResultingAction {
-    match (adoption, available) {
-        (CalendarAdoption::Legacy, _) => ResultingAction::WeekdayAuthoritative,
-        (CalendarAdoption::Shadow, true) => ResultingAction::ShadowRecorded,
-        (CalendarAdoption::Shadow, false) => ResultingAction::ShadowUnavailable,
-        (CalendarAdoption::Enforced, true) => ResultingAction::EnforcedActive,
-        (CalendarAdoption::Enforced, false) => ResultingAction::EnforcedFailClosed,
+    // The sole surviving posture after the #189 weekday retirement.
+    let CalendarAdoption::Enforced = adoption;
+    if available {
+        ResultingAction::EnforcedActive
+    } else {
+        ResultingAction::EnforcedFailClosed
     }
 }
 
@@ -170,9 +161,6 @@ impl ResultingAction {
     /// The stable token used in the startup record line.
     pub fn token(self) -> &'static str {
         match self {
-            ResultingAction::WeekdayAuthoritative => "weekday-authoritative",
-            ResultingAction::ShadowRecorded => "shadow-recorded",
-            ResultingAction::ShadowUnavailable => "shadow-unavailable",
             ResultingAction::EnforcedActive => "enforced-active",
             ResultingAction::EnforcedFailClosed => "enforced-fail-closed",
         }
@@ -310,150 +298,6 @@ pub fn emit_startup_record(record: &StartupRecord) {
     eprintln!("{}", record.render_line());
 }
 
-/// The classified disagreement between a consumer's WEEKDAY decision and the calendar's
-/// [`DayStatus`] at a boundary (U3, KTD6). A small closed set so a Shadow window's divergences
-/// can be reviewed and signed off before that consumer is enforced (R5, AC7). The axis is
-/// "does the weekday path treat the boundary as an open/trading day, and does the calendar
-/// agree" — every consumer reduces its decision to that axis (a range/continuity consumer maps
-/// "a real session breaks the chain" to a `TradingSession`, "all-closed" to `Closed`,
-/// "uncertain" to `Unknown`, "unavailable" to `None`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DivergenceClass {
-    /// The weekday and calendar decisions agree.
-    Agree,
-    /// The calendar proves the day Closed where the weekday path treats it as open — the
-    /// safety-relevant case (the weekday path would act on a proven non-session).
-    CalendarClosedWeekdayOpen,
-    /// The calendar cannot prove the day (Unknown) where the weekday path treats it as open.
-    CalendarUnknownWeekdayOpen,
-    /// The calendar proves a session where the weekday path treats the day as closed — the
-    /// weekday path would have skipped a real session.
-    CalendarOpenWeekdayClosed,
-    /// The calendar cannot prove the day (Unknown) where the weekday path treats it as closed.
-    CalendarUnknownWeekdayClosed,
-    /// The calendar is unavailable/indeterminate for the query — no comparison is possible;
-    /// the weekday path stays authoritative (non-fatal in Shadow).
-    Unavailable,
-}
-
-impl DivergenceClass {
-    /// The stable token used in the divergence observation line.
-    pub fn token(self) -> &'static str {
-        match self {
-            DivergenceClass::Agree => "agree",
-            DivergenceClass::CalendarClosedWeekdayOpen => "calendar-closed-weekday-open",
-            DivergenceClass::CalendarUnknownWeekdayOpen => "calendar-unknown-weekday-open",
-            DivergenceClass::CalendarOpenWeekdayClosed => "calendar-open-weekday-closed",
-            DivergenceClass::CalendarUnknownWeekdayClosed => "calendar-unknown-weekday-closed",
-            DivergenceClass::Unavailable => "unavailable",
-        }
-    }
-
-    /// `true` iff the weekday and calendar decisions actually disagree (everything but
-    /// [`Agree`](DivergenceClass::Agree)). [`Unavailable`](DivergenceClass::Unavailable) counts
-    /// as a divergence to review — the calendar could not confirm the weekday call.
-    pub fn is_divergent(self) -> bool {
-        !matches!(self, DivergenceClass::Agree)
-    }
-}
-
-/// Classify the disagreement between a weekday "is this an open/trading day" decision and the
-/// calendar's tri-state [`DayStatus`] (`None` = the calendar was unavailable/out-of-range for
-/// the query). The single source of truth every consumer boundary reduces its decision to.
-pub fn classify_divergence(
-    weekday_open: bool,
-    calendar: Option<nautilus_ls_calendar::schema::DayStatus>,
-) -> DivergenceClass {
-    use nautilus_ls_calendar::schema::DayStatus;
-    match calendar {
-        None => DivergenceClass::Unavailable,
-        Some(DayStatus::TradingSession) => {
-            if weekday_open {
-                DivergenceClass::Agree
-            } else {
-                DivergenceClass::CalendarOpenWeekdayClosed
-            }
-        }
-        Some(DayStatus::Closed) => {
-            if weekday_open {
-                DivergenceClass::CalendarClosedWeekdayOpen
-            } else {
-                DivergenceClass::Agree
-            }
-        }
-        Some(DayStatus::Unknown) => {
-            if weekday_open {
-                DivergenceClass::CalendarUnknownWeekdayOpen
-            } else {
-                DivergenceClass::CalendarUnknownWeekdayClosed
-            }
-        }
-    }
-}
-
-/// A structured, testable Shadow-divergence observation for one consumer boundary (KTD6):
-/// the consumer, the boundary civil date, the human renderings of both decisions, and the
-/// classified [`DivergenceClass`]. Redacted by construction — it carries only calendar
-/// decisions and a date (never an authority/credential identity) — and non-persisted: it is
-/// emitted on the stderr diagnostic channel, never into checkpoint/watermark state or a stdout
-/// data product, so Shadow stays byte-identical to Legacy.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DivergenceObservation {
-    /// Which consumer boundary observed the divergence.
-    pub consumer: String,
-    /// The boundary civil date the decisions bear on.
-    pub date: NaiveDate,
-    /// The weekday path's decision, human-rendered (e.g. `open`/`closed`, or a debug rendering).
-    pub weekday_decision: String,
-    /// The calendar's decision, human-rendered (e.g. a `DayStatus`, or `unavailable`).
-    pub calendar_decision: String,
-    /// The classified relationship between the two decisions.
-    pub class: DivergenceClass,
-}
-
-impl DivergenceObservation {
-    /// Build an observation, classifying the weekday-vs-calendar decision. `weekday_open` is
-    /// the weekday path's open/trading verdict for `date`; `calendar` is the calendar's tri-state
-    /// verdict (`None` when unavailable/out-of-range).
-    pub fn new(
-        consumer: &str,
-        date: NaiveDate,
-        weekday_open: bool,
-        calendar: Option<nautilus_ls_calendar::schema::DayStatus>,
-    ) -> Self {
-        Self {
-            consumer: consumer.to_string(),
-            date,
-            weekday_decision: if weekday_open { "open".to_string() } else { "closed".to_string() },
-            calendar_decision: match calendar {
-                Some(status) => format!("{status:?}"),
-                None => "unavailable".to_string(),
-            },
-            class: classify_divergence(weekday_open, calendar),
-        }
-    }
-
-    /// Render the observation as ONE concise, redacted line for the diagnostic channel.
-    pub fn render_line(&self) -> String {
-        format!(
-            "calendar-divergence consumer={} date={} weekday={} calendar={} class={}",
-            self.consumer,
-            self.date,
-            self.weekday_decision,
-            self.calendar_decision,
-            self.class.token()
-        )
-    }
-}
-
-/// Emit a Shadow-divergence observation to the non-persisted diagnostic channel (stderr, KTD6).
-/// Like [`emit_startup_record`], a Shadow recording never touches stdout or a tracked artifact,
-/// so the byte-identical-to-Legacy guarantee holds — this is the durable review corpus each
-/// Consumer Retirement Gate signs off against once the operator captures the channel (U5).
-pub fn emit_divergence(observation: &DivergenceObservation) {
-    eprintln!("{}", observation.render_line());
-}
-
 /// Read the explicit snapshot path from [`SNAPSHOT_PATH_ENV`] (`None` when unset/empty).
 pub fn snapshot_path_from_env() -> Option<std::path::PathBuf> {
     std::env::var(SNAPSHOT_PATH_ENV)
@@ -462,8 +306,8 @@ pub fn snapshot_path_from_env() -> Option<std::path::PathBuf> {
         .map(std::path::PathBuf::from)
 }
 
-/// Read the adoption state from [`ADOPTION_ENV`], defaulting to the composed default
-/// [`CalendarAdoption::Shadow`] (KTD8).
+/// Read the adoption state from [`ADOPTION_ENV`], defaulting to
+/// [`CalendarAdoption::Enforced`] — the only posture after the #189 weekday retirement (KTD8).
 pub fn adoption_from_env() -> CalendarAdoption {
     std::env::var(ADOPTION_ENV)
         .ok()
@@ -497,25 +341,23 @@ mod tests {
     use nautilus_ls_calendar::DiagnosticOutcome;
 
     #[test]
-    fn missing_path_is_not_configured_and_non_fatal_in_shadow() {
+    fn missing_path_is_not_configured_and_fails_closed_under_enforced() {
         let rec = build_startup_record(
             "unit-test",
-            CalendarAdoption::Shadow,
+            CalendarAdoption::Enforced,
             &LoadedCalendar::NotConfigured,
             Utc::now(),
             Utc::now().date_naive(),
         );
-        assert_eq!(rec.action, ResultingAction::ShadowUnavailable);
+        assert_eq!(rec.action, ResultingAction::EnforcedFailClosed);
         assert!(rec.diagnostic.is_none());
         assert!(rec.render_line().contains("snapshot=not-configured"));
     }
 
     #[test]
-    fn unavailable_maps_to_shadow_unavailable_but_enforced_fail_closed() {
+    fn unavailable_fails_closed_under_enforced() {
         let loaded = LoadedCalendar::Unavailable(CalendarLoadError::Missing);
         let now = Utc::now();
-        let shadow = build_startup_record("t", CalendarAdoption::Shadow, &loaded, now, now.date_naive());
-        assert_eq!(shadow.action, ResultingAction::ShadowUnavailable);
         let enforced =
             build_startup_record("t", CalendarAdoption::Enforced, &loaded, now, now.date_naive());
         assert_eq!(enforced.action, ResultingAction::EnforcedFailClosed);
@@ -524,56 +366,7 @@ mod tests {
     #[test]
     fn out_of_range_query_records_as_unavailable_outcome() {
         // A diagnostic whose outcome is OutOfRange is not a usable factual day, so the
-        // resulting action is the unavailable branch even though a snapshot loaded.
+        // resulting action is the fail-closed branch even though a snapshot loaded.
         assert!(!DiagnosticOutcome::OutOfRange.is_usable());
-    }
-
-    #[test]
-    fn divergence_observation_is_redacted_and_classified() {
-        use nautilus_ls_calendar::schema::DayStatus;
-
-        // The full classification matrix over the (weekday_open, calendar) axis.
-        assert_eq!(
-            classify_divergence(true, Some(DayStatus::Closed)),
-            DivergenceClass::CalendarClosedWeekdayOpen
-        );
-        assert_eq!(
-            classify_divergence(true, Some(DayStatus::Unknown)),
-            DivergenceClass::CalendarUnknownWeekdayOpen
-        );
-        assert_eq!(
-            classify_divergence(false, Some(DayStatus::TradingSession)),
-            DivergenceClass::CalendarOpenWeekdayClosed
-        );
-        assert_eq!(
-            classify_divergence(false, Some(DayStatus::Unknown)),
-            DivergenceClass::CalendarUnknownWeekdayClosed
-        );
-        assert_eq!(
-            classify_divergence(true, Some(DayStatus::TradingSession)),
-            DivergenceClass::Agree
-        );
-        assert_eq!(
-            classify_divergence(false, Some(DayStatus::Closed)),
-            DivergenceClass::Agree
-        );
-        assert_eq!(classify_divergence(true, None), DivergenceClass::Unavailable);
-
-        // The observation renders a concise, classified, redacted line — a calendar-closed
-        // day the weekday path treats as open is the safety-relevant divergence.
-        let obs = DivergenceObservation::new(
-            "unit-test",
-            NaiveDate::from_ymd_opt(2011, 9, 21).unwrap(),
-            true,
-            Some(DayStatus::Closed),
-        );
-        assert_eq!(obs.class, DivergenceClass::CalendarClosedWeekdayOpen);
-        assert!(obs.class.is_divergent());
-        let line = obs.render_line();
-        assert!(line.contains("class=calendar-closed-weekday-open"), "{line}");
-        assert!(line.contains("consumer=unit-test date=2011-09-21"), "{line}");
-        // Redacted by construction: the observation has no authority/credential field, so no
-        // identity can appear in either the struct or its render line.
-        assert!(!line.to_lowercase().contains("authority"), "{line}");
     }
 }

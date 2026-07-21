@@ -46,7 +46,7 @@ fn green_cfg(home: &std::path::Path) -> DispatchCliConfig {
         prereg_path: None,
         // U12: a stubbed proven Trading Session so the base green path is unchanged; the
         // stub is the Enforced offline seam (it wins over adoption resolution).
-        adoption: CalendarAdoption::Legacy,
+        adoption: CalendarAdoption::Enforced,
         run_id: Some("run-cli-1".into()),
         date_fact_stub: Some(CalendarDateFact::TradingSession),
         unknown_override: None,

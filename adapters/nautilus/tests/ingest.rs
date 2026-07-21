@@ -75,7 +75,7 @@ async fn sdk_over(server: &MockServer, body: serde_json::Value) -> LsSdk {
 
 use nautilus_ls::ingest::CalendarGate;
 use nautilus_ls_calendar::schema::{DayRow, DayStatus as CalDayStatus};
-use nautilus_ls_calendar::{compute_artifact_id, compute_calendar_id, CalendarAdoption, KrxCalendar};
+use nautilus_ls_calendar::{compute_artifact_id, compute_calendar_id, KrxCalendar};
 
 /// The as-of instant every offline calendar gate here is evaluated at (inside the fixture's
 /// authorization grant, 2013-01-01 .. 2099-01-01).
@@ -130,12 +130,12 @@ fn all_sessions_calendar() -> &'static KrxCalendar {
 /// An Enforced gate over the wide all-Trading-Session calendar.
 fn all_sessions_gate() -> CalendarGate<'static> {
     let view = all_sessions_calendar().as_of(cal_as_of()).unwrap();
-    CalendarGate::new(CalendarAdoption::Enforced, Some(view))
+    CalendarGate::new(Some(view))
 }
 
 /// A no-view Enforced gate for checkpoint load/migration round-trips.
 fn no_calendar_gate() -> CalendarGate<'static> {
-    CalendarGate::new(CalendarAdoption::Enforced, None)
+    CalendarGate::new(None)
 }
 
 fn daily_config(catalog: &Path) -> IngestConfig {
@@ -2469,9 +2469,7 @@ mod calendar_gate_migration {
     use std::path::PathBuf;
     use chrono::{DateTime, TimeZone, Utc};
     use nautilus_ls::ingest::{CalendarDecision, CalendarGate, GateAction, ProbeAnchor};
-    use nautilus_ls_calendar::{
-        compute_artifact_id, compute_calendar_id, CalendarAdoption, KrxCalendar,
-    };
+    use nautilus_ls_calendar::{compute_artifact_id, compute_calendar_id, KrxCalendar};
     use nautilus_ls_calendar::schema::DayStatus;
 
     const SAMSUNG: &str = "005930.XKRX";
@@ -2558,7 +2556,7 @@ mod calendar_gate_migration {
     fn enforced_acts_on_the_calendar_decision() {
         let cal = fixture_calendar();
         let view = cal.as_of(as_of()).unwrap();
-        let enforced = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        let enforced = CalendarGate::new(Some(view));
         assert_eq!(enforced.action(ymd(2010, 6, 19)), GateAction::SkipAdvance, "proven Closed → skip-advance");
         assert_eq!(enforced.action(ymd(2010, 6, 15)), GateAction::Proceed, "proven Trading Session → fetch");
         assert_eq!(enforced.action(ymd(2010, 1, 5)), GateAction::Stop, "Unknown → fail closed");
@@ -2578,7 +2576,7 @@ mod calendar_gate_migration {
         // "watermark advanced onto a weekend/holiday closure, prior session below it" shape.
         let cal = calendar_with_statuses(&[(ymd(2010, 6, 16), DayStatus::Closed)]);
         let view = cal.as_of(as_of()).unwrap();
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        let gate = CalendarGate::new(Some(view));
 
         // The bug: a watermark advanced onto the Closed date was NOT a `Fetch`, so the old
         // gate (`calendar_decision(wm) == Fetch`) skipped detection.
@@ -2600,7 +2598,7 @@ mod calendar_gate_migration {
             "an Unknown watermark (no proven session first) stays fail-closed — no destructive detection",
         );
         // No view (calendar unavailable) authorizes nothing.
-        let no_view = CalendarGate::new(CalendarAdoption::Enforced, None);
+        let no_view = CalendarGate::new(None);
         assert!(!no_view.proven_session_at_or_before(ymd(2010, 6, 16)), "no view → no detection authority");
     }
 
@@ -2618,7 +2616,7 @@ mod calendar_gate_migration {
 
         let cal = fixture_calendar();
         let view = cal.as_of(as_of()).unwrap();
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        let gate = CalendarGate::new(Some(view));
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
         // last_closed = 2010-01-05 is Unknown in the fixture.
@@ -2644,7 +2642,7 @@ mod calendar_gate_migration {
 
         let cal = fixture_calendar();
         let view = cal.as_of(as_of()).unwrap();
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        let gate = CalendarGate::new(Some(view));
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
         // last_closed = 2010-06-15 is a proven Trading Session.
@@ -2672,7 +2670,7 @@ mod calendar_gate_migration {
 
         let cal = fixture_calendar();
         let view = cal.as_of(as_of()).unwrap();
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        let gate = CalendarGate::new(Some(view));
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
         // last_closed = 2010-06-19 is a proven Closed date; watermark 2010-06-18 → start = 06-19.
@@ -2699,7 +2697,7 @@ mod calendar_gate_migration {
         seed_watermark(&catalog, ymd(2010, 1, 2));
         let before = std::fs::read(&cp_path(&catalog)).unwrap();
 
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, None);
+        let gate = CalendarGate::new(None);
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
         let report = ing
             .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2010, 1, 5), ymd(2010, 1, 1), gate)
@@ -2723,7 +2721,7 @@ mod calendar_gate_migration {
         let server = MockServer::start().await;
         let sdk = sdk_over(&server, daily_body_three_rows()).await;
         let cal = fixture_calendar();
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(cal.as_of(as_of()).unwrap()));
+        let gate = CalendarGate::new(Some(cal.as_of(as_of()).unwrap()));
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
         ing.run_accumulate_gated(
@@ -2745,7 +2743,7 @@ mod calendar_gate_migration {
         let catalog = dir.path().join("catalog");
         let server = MockServer::start().await;
         let sdk = sdk_over(&server, daily_body_three_rows()).await;
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, None);
+        let gate = CalendarGate::new(None);
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
         ing.run_accumulate_gated(
@@ -2769,7 +2767,7 @@ mod calendar_gate_migration {
         let before = std::fs::read(cp_path(&catalog)).unwrap();
         let server = MockServer::start().await;
         let sdk = sdk_over(&server, daily_body_three_rows()).await;
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, None);
+        let gate = CalendarGate::new(None);
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
         let report = ing
@@ -2794,7 +2792,7 @@ mod calendar_gate_migration {
         let server = MockServer::start().await;
         let sdk = sdk_over(&server, daily_body_three_rows()).await;
         let cal = fixture_calendar();
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(cal.as_of(as_of()).unwrap()));
+        let gate = CalendarGate::new(Some(cal.as_of(as_of()).unwrap()));
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
         let report = ing
@@ -2829,7 +2827,7 @@ mod calendar_gate_migration {
         let server = MockServer::start().await;
         let sdk = sdk_over(&server, daily_body_three_rows()).await;
         let cal = fixture_calendar();
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(cal.as_of(as_of()).unwrap()));
+        let gate = CalendarGate::new(Some(cal.as_of(as_of()).unwrap()));
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
         ing.run_accumulate_gated(
@@ -2864,7 +2862,7 @@ mod calendar_gate_migration {
             (ymd(2010, 6, 17), DayStatus::Unknown),
             (ymd(2010, 6, 18), DayStatus::TradingSession),
         ]);
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(cal.as_of(as_of()).unwrap()));
+        let gate = CalendarGate::new(Some(cal.as_of(as_of()).unwrap()));
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
         ing.run_accumulate_gated(
@@ -2898,7 +2896,7 @@ mod calendar_gate_migration {
         let sdk = sdk_over(&server, daily_body_three_rows()).await;
         let cal = fixture_calendar();
         let view = cal.as_of(as_of()).unwrap();
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        let gate = CalendarGate::new(Some(view));
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
         ing
@@ -2925,7 +2923,7 @@ mod calendar_gate_migration {
 
         let cal = fixture_calendar();
         let view = cal.as_of(as_of()).unwrap();
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        let gate = CalendarGate::new(Some(view));
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
         let report = ing
@@ -2954,7 +2952,7 @@ mod calendar_gate_migration {
 
         let cal = fixture_calendar();
         let view = cal.as_of(as_of()).unwrap();
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        let gate = CalendarGate::new(Some(view));
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
         // start = 2010-06-18 (Unknown), last_closed = 2010-06-19 (Closed): the range holds an
@@ -2983,7 +2981,7 @@ mod calendar_gate_migration {
             (ymd(2010, 6, 17), DayStatus::Unknown),
             (ymd(2010, 6, 18), DayStatus::TradingSession),
         ]);
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(cal.as_of(as_of()).unwrap()));
+        let gate = CalendarGate::new(Some(cal.as_of(as_of()).unwrap()));
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
         ing.run_accumulate_gated(
@@ -3017,7 +3015,7 @@ mod calendar_gate_migration {
             (ymd(2010, 6, 15), DayStatus::TradingSession),
             (ymd(2010, 6, 16), DayStatus::Closed),
         ]);
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(cal.as_of(as_of()).unwrap()));
+        let gate = CalendarGate::new(Some(cal.as_of(as_of()).unwrap()));
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
         ing.run_accumulate_gated(
@@ -3052,14 +3050,14 @@ mod calendar_gate_migration {
     fn enforced_probe_anchor_selects_session_or_stops() {
         let cal = fixture_calendar();
         let view = cal.as_of(as_of()).unwrap();
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        let gate = CalendarGate::new(Some(view));
 
         // Anchor IS a proven session → select it.
         assert_eq!(gate.probe_anchor(ymd(2010, 6, 15)), ProbeAnchor::Use(ymd(2010, 6, 15)));
         // Anchor is Unknown → stop (an Unknown at the boundary never manufactures an anchor).
         assert_eq!(gate.probe_anchor(ymd(2010, 1, 5)), ProbeAnchor::Stop);
         // Unavailable calendar → stop.
-        let blind = CalendarGate::new(CalendarAdoption::Enforced, None);
+        let blind = CalendarGate::new(None);
         assert_eq!(blind.probe_anchor(ymd(2010, 6, 15)), ProbeAnchor::Stop);
     }
 
@@ -3070,7 +3068,7 @@ mod calendar_gate_migration {
             (ymd(2010, 6, 16), DayStatus::Closed),
             (ymd(2010, 6, 17), DayStatus::Unknown),
         ]);
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(cal.as_of(as_of()).unwrap()));
+        let gate = CalendarGate::new(Some(cal.as_of(as_of()).unwrap()));
 
         assert_eq!(gate.probe_anchor(ymd(2010, 6, 16)), ProbeAnchor::Use(ymd(2010, 6, 15)));
         assert_eq!(
@@ -3091,7 +3089,7 @@ mod calendar_gate_migration {
 
         let cal = fixture_calendar();
         let view = cal.as_of(as_of()).unwrap();
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        let gate = CalendarGate::new(Some(view));
 
         let ing = Ingestor::new(sdk, probe_config(&catalog));
         let out = ing
@@ -3114,7 +3112,7 @@ mod calendar_gate_migration {
 
         let cal = fixture_calendar();
         let view = cal.as_of(as_of()).unwrap();
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        let gate = CalendarGate::new(Some(view));
 
         let ing = Ingestor::new(sdk, probe_config(&catalog));
         let out = ing
@@ -3164,7 +3162,7 @@ mod calendar_gate_migration {
     fn enforced_merges_an_all_closed_gap() {
         let cal = fixture_calendar();
         let view = cal.as_of(fresh_history_as_of()).unwrap();
-        let enforced = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        let enforced = CalendarGate::new(Some(view));
         // Gap open interval (2011-02-01, 2011-02-05) = {02-02, 02-03, 02-04}, all proven Closed.
         let ranges = ["20110115..20110201", "20110205..20110210"];
         let (wm, rem) = migrate_with(&enforced, &ranges);
@@ -3183,7 +3181,7 @@ mod calendar_gate_migration {
     fn paper_thin_range_terminates_the_chain_even_across_a_merging_all_closed_gap() {
         let cal = fixture_calendar();
         let view = cal.as_of(fresh_history_as_of()).unwrap();
-        let enforced = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        let enforced = CalendarGate::new(Some(view));
 
         let mut cp = Checkpoint::default();
         cp.mark_done(SAMSUNG, DAILY, "20110115..20110201");
@@ -3207,7 +3205,7 @@ mod calendar_gate_migration {
     #[test]
     fn enforced_stale_full_history_keeps_all_closed_ranges_separate() {
         let cal = fixture_calendar();
-        let stale = CalendarGate::new(CalendarAdoption::Enforced, Some(cal.as_of(as_of()).unwrap()));
+        let stale = CalendarGate::new(Some(cal.as_of(as_of()).unwrap()));
         let ranges = ["20110115..20110201", "20110205..20110210"];
 
         let (wm, rem) = migrate_with(&stale, &ranges);
@@ -3222,7 +3220,7 @@ mod calendar_gate_migration {
     fn enforced_trading_session_in_the_gap_prevents_merge() {
         let cal = fixture_calendar();
         let view = cal.as_of(as_of()).unwrap();
-        let enforced = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        let enforced = CalendarGate::new(Some(view));
         // Gap open (2010-06-14, 2010-06-16) = {2010-06-15}, a proven Trading Session.
         let (wm, rem) = migrate_with(&enforced, &["20100610..20100614", "20100616..20100620"]);
         assert_eq!(wm, Some(ymd(2010, 6, 14)), "the chain stops before the un-attested session");
@@ -3236,7 +3234,7 @@ mod calendar_gate_migration {
     fn enforced_keeps_separate_across_an_unknown_gap() {
         let cal = fixture_calendar();
         let view = cal.as_of(as_of()).unwrap();
-        let enforced = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        let enforced = CalendarGate::new(Some(view));
         // Gap open (2010-01-08 Fri, 2010-01-11 Mon) = {01-09 Sat, 01-10 Sun}, both Unknown.
         let ranges = ["20100104..20100108", "20100111..20100115"];
         let (wm, rem) = migrate_with(&enforced, &ranges);
@@ -3293,7 +3291,7 @@ mod calendar_gate_migration {
 
         let cal = fixture_calendar();
         let view = cal.as_of(as_of()).unwrap();
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        let gate = CalendarGate::new(Some(view));
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
         let report = ing
             .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2011, 6, 15), ymd(2010, 6, 15), gate)
@@ -3320,7 +3318,7 @@ mod calendar_gate_migration {
 
         let cal = fixture_calendar();
         let view = cal.as_of(as_of()).unwrap();
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        let gate = CalendarGate::new(Some(view));
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
         let report = ing
             .run_accumulate_gated(&[InstrumentId::from(SAMSUNG)], ymd(2011, 6, 15), ymd(2011, 2, 2), gate)
@@ -3348,7 +3346,7 @@ mod calendar_gate_migration {
 
         let cal = fixture_calendar();
         let view = cal.as_of(as_of()).unwrap();
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+        let gate = CalendarGate::new(Some(view));
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
 
         let r1 = ing
@@ -3381,7 +3379,7 @@ mod calendar_gate_migration {
             (ymd(2010, 6, 16), DayStatus::Unknown),
             (ymd(2010, 6, 17), DayStatus::TradingSession),
         ]);
-        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(cal.as_of(as_of()).unwrap()));
+        let gate = CalendarGate::new(Some(cal.as_of(as_of()).unwrap()));
 
         let mut ing = Ingestor::new(sdk, daily_config(&catalog));
         let report = ing
