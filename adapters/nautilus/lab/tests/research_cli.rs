@@ -31,7 +31,7 @@ use nautilus_ls_lab::runner::research::{
 use nautilus_ls_calendar::schema::{
     Authorization, CalendarScope, Coverage, DayRow, DayStatus, Freshness, Snapshot,
 };
-use nautilus_ls_calendar::{compute_artifact_id, compute_calendar_id, CalendarAdoption, KrxCalendar};
+use nautilus_ls_calendar::{compute_artifact_id, compute_calendar_id, KrxCalendar};
 use nautilus_ls_lab::runner::diagnose::GateExit;
 use nautilus_ls_lab::trials::{LookKind, SampleLineage, TrialRecord, TrialsLedger};
 use nautilus_model::data::Bar;
@@ -1277,7 +1277,7 @@ async fn healthy_catalog_prints_per_triple_facts_and_is_a_go() {
     build_fixture(dir.path()).await;
     let cal = build_calendar(&[], false);
     let view = cal.as_of(cal_as_of()).unwrap();
-    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let gate = CatalogCalendarGate::new(Some(view));
     let out = catalog_status_gated(
         &StatusConfig {
             data_home: dir.path().to_path_buf(),
@@ -1308,7 +1308,7 @@ async fn ae5_tail_undershoot_vs_the_watermark_is_flagged() {
     // (01-05) → genuine tail undershoot flags.
     let cal = build_calendar(&[], false);
     let view = cal.as_of(cal_as_of()).unwrap();
-    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let gate = CatalogCalendarGate::new(Some(view));
     let out = catalog_status_gated(
         &StatusConfig {
             data_home: dir.path().to_path_buf(),
@@ -1339,7 +1339,7 @@ async fn front_truncation_is_flagged_only_with_an_expected_range() {
     // first session (01-01) < first bar (01-04) → front truncation flags.
     let cal = build_calendar(&[], false);
     let view = cal.as_of(cal_as_of()).unwrap();
-    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let gate = CatalogCalendarGate::new(Some(view));
     let with_expected = catalog_status_gated(
         &StatusConfig {
             data_home: dir.path().to_path_buf(),
@@ -1359,7 +1359,7 @@ async fn front_truncation_is_flagged_only_with_an_expected_range() {
     // is unset in the fixture).
     let cal2 = build_calendar(&[], false);
     let view2 = cal2.as_of(cal_as_of()).unwrap();
-    let gate2 = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view2));
+    let gate2 = CatalogCalendarGate::new(Some(view2));
     let without = catalog_status_gated(
         &StatusConfig {
             data_home: dir.path().to_path_buf(),
@@ -1376,7 +1376,7 @@ async fn front_truncation_is_flagged_only_with_an_expected_range() {
 async fn missing_catalog_dir_is_a_clean_no_go_not_a_panic() {
     let dir = tempdir().unwrap();
     // No fixture — the catalog dir does not exist (bails before any calendar query).
-    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, None);
+    let gate = CatalogCalendarGate::new(None);
     let err = catalog_status_gated(
         &StatusConfig {
             data_home: dir.path().to_path_buf(),
@@ -1390,12 +1390,11 @@ async fn missing_catalog_dir_is_a_clean_no_go_not_a_panic() {
 }
 
 // ===========================================================================
-// U11 (KTD8) — catalog watermark + expected-range migration behind the calendar
-// adoption seam. Enforced bases the tail/expected-range boundary checks on PROVEN
-// first/last Trading Sessions (a real holiday closure no longer false-flags, an
-// Unknown/unavailable boundary fails closed with distinct messaging); Shadow records
-// the verdict but stays byte-identical to Legacy. PROOF-FIRST: assert the OBSERVABLE
-// GO/NO-GO, boundary dates, and operator messages — never the weekday helper.
+// U11 (KTD8) — catalog watermark + expected-range migration under the Enforced calendar
+// (#189). The tail/expected-range boundary checks are based on PROVEN first/last Trading
+// Sessions (a real holiday closure no longer false-flags, an Unknown/unavailable boundary
+// fails closed with distinct messaging); there is no weekday fallback. PROOF-FIRST: assert
+// the OBSERVABLE GO/NO-GO, boundary dates, and operator messages — never the weekday helper.
 //
 // The 2024 catalog bars (last daily = 20240105 Friday) are covered by a small
 // in-memory calendar over 2024-01-01..2024-01-31 (default: weekends Closed, weekdays
@@ -1560,7 +1559,7 @@ async fn enforced_closed_watermark_boundary_does_not_false_flag() {
     // (The weekday walk-back would have flagged Monday-as-weekday; retired with the cutover.)
     let cal = build_calendar(&[(ymd(2024, 1, 8), DayStatus::Closed)], false);
     let view = cal.as_of(cal_as_of()).unwrap();
-    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let gate = CatalogCalendarGate::new(Some(view));
     let enforced = catalog_status_gated(&cfg, gate).await.unwrap();
     assert!(enforced.go, "the calendar clears the false undershoot: {:?}", enforced.lines);
     assert!(
@@ -1581,7 +1580,7 @@ async fn enforced_boundary_relevant_unknown_is_a_no_go_indeterminate() {
 
     let cal = build_calendar(&[(ymd(2024, 1, 8), DayStatus::Unknown)], false);
     let view = cal.as_of(cal_as_of()).unwrap();
-    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let gate = CatalogCalendarGate::new(Some(view));
     let out = catalog_status_gated(&cfg, gate).await.unwrap();
     assert!(!out.go, "an Unknown boundary is a no-go: {:?}", out.lines);
     assert!(
@@ -1603,7 +1602,7 @@ async fn enforced_out_of_coverage_watermark_is_a_no_go_unavailable() {
 
     let cal = build_calendar(&[], false);
     let view = cal.as_of(cal_as_of()).unwrap();
-    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let gate = CatalogCalendarGate::new(Some(view));
     let out = catalog_status_gated(&cfg, gate).await.unwrap();
     assert!(!out.go, "an out-of-coverage watermark is a no-go: {:?}", out.lines);
     assert!(
@@ -1613,7 +1612,7 @@ async fn enforced_out_of_coverage_watermark_is_a_no_go_unavailable() {
     );
 
     // A missing calendar (no view injected) is equally unavailable under Enforced.
-    let blind = CatalogCalendarGate::new(CalendarAdoption::Enforced, None);
+    let blind = CatalogCalendarGate::new(None);
     let out_blind = catalog_status_gated(&cfg, blind).await.unwrap();
     assert!(!out_blind.go, "no calendar → unavailable no-go: {:?}", out_blind.lines);
     assert!(out_blind.lines.iter().any(|l| l.contains("NO-GO — calendar unavailable")));
@@ -1631,7 +1630,7 @@ async fn enforced_stale_but_established_is_a_go_with_a_prominent_warning() {
     // 20240108 proven Closed (established boundary → GO) but freshness is stale.
     let cal = build_calendar(&[(ymd(2024, 1, 8), DayStatus::Closed)], true);
     let view = cal.as_of(cal_as_of()).unwrap();
-    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let gate = CatalogCalendarGate::new(Some(view));
     let out = catalog_status_gated(&cfg, gate).await.unwrap();
     assert!(out.go, "an established boundary stays a GO even when stale: {:?}", out.lines);
     assert!(
@@ -1664,7 +1663,7 @@ async fn enforced_holiday_cluster_watermark_does_not_false_flag() {
     ];
     let cal = build_calendar(&cluster, false);
     let view = cal.as_of(cal_as_of()).unwrap();
-    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let gate = CatalogCalendarGate::new(Some(view));
     let out = catalog_status_gated(&cfg, gate).await.unwrap();
     assert!(out.go, "the cluster walk-back reaches the pre-cluster Friday: {:?}", out.lines);
     assert!(
@@ -1684,7 +1683,7 @@ async fn enforced_holiday_cluster_watermark_does_not_false_flag() {
     with_unknown.push((ymd(2024, 1, 5), DayStatus::Unknown));
     let cal_u = build_calendar(&with_unknown, false);
     let view_u = cal_u.as_of(cal_as_of()).unwrap();
-    let gate_u = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view_u));
+    let gate_u = CatalogCalendarGate::new(Some(view_u));
     let out_u = catalog_status_gated(&cfg, gate_u).await.unwrap();
     assert!(!out_u.go, "an Unknown pre-cluster boundary is indeterminate: {:?}", out_u.lines);
     assert!(
@@ -1714,7 +1713,7 @@ async fn enforced_expected_range_weekend_endpoints_use_proven_sessions() {
     // endpoints and false-flagged the weekend end.)
     let cal = build_calendar(&[], false);
     let view = cal.as_of(cal_as_of()).unwrap();
-    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let gate = CatalogCalendarGate::new(Some(view));
     let enforced = catalog_status_gated(&cfg, gate).await.unwrap();
     assert!(enforced.go, "weekend endpoints resolve to proven sessions → GO: {:?}", enforced.lines);
 
@@ -1725,7 +1724,7 @@ async fn enforced_expected_range_weekend_endpoints_use_proven_sessions() {
     };
     let cal2 = build_calendar(&[], false);
     let view2 = cal2.as_of(cal_as_of()).unwrap();
-    let gate2 = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view2));
+    let gate2 = CatalogCalendarGate::new(Some(view2));
     let out_oob = catalog_status_gated(&cfg_oob, gate2).await.unwrap();
     assert!(!out_oob.go, "an out-of-coverage endpoint is a no-go: {:?}", out_oob.lines);
     assert!(
@@ -1754,7 +1753,7 @@ async fn enforced_stale_warning_names_the_bounding_dimension() {
     let cal = build_calendar_with_freshness(&[(ymd(2024, 1, 8), DayStatus::Closed)], freshness);
     let view = cal.as_of(cal_as_of()).unwrap();
     assert!(view.freshness().forward_readiness.is_stale(), "forward_readiness IS stale here");
-    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let gate = CatalogCalendarGate::new(Some(view));
     let out = catalog_status_gated(&cfg, gate).await.unwrap();
     assert!(out.go, "an established boundary stays a GO even when stale: {:?}", out.lines);
     let warning = out
@@ -1788,7 +1787,7 @@ async fn enforced_unrelated_dimension_staleness_does_not_warn() {
     let cal = build_calendar_with_freshness(&[(ymd(2024, 1, 8), DayStatus::Closed)], unrelated);
     let view = cal.as_of(cal_as_of()).unwrap();
     assert!(view.freshness().any_stale(), "the snapshot IS stale (forward_readiness)");
-    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let gate = CatalogCalendarGate::new(Some(view));
     let out = catalog_status_gated(&cfg, gate).await.unwrap();
     assert!(out.go, "GO: {:?}", out.lines);
     assert!(
@@ -1802,7 +1801,7 @@ async fn enforced_unrelated_dimension_staleness_does_not_warn() {
     bounding.last_incremental_at = Some(stale_anchor());
     let cal2 = build_calendar_with_freshness(&[(ymd(2024, 1, 8), DayStatus::Closed)], bounding);
     let view2 = cal2.as_of(cal_as_of()).unwrap();
-    let gate2 = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view2));
+    let gate2 = CatalogCalendarGate::new(Some(view2));
     let out2 = catalog_status_gated(&cfg, gate2).await.unwrap();
     assert!(
         out2.lines.iter().any(|l| l.contains("WARNING") && l.contains("incremental")),
@@ -1834,7 +1833,7 @@ async fn enforced_forward_zone_boundary_keys_on_forward_readiness() {
     let cal = build_calendar_full(&[], fwd, retro);
     let view = cal.as_of(cal_as_of()).unwrap();
     assert!(view.freshness().forward_readiness.is_stale(), "forward_readiness IS stale");
-    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let gate = CatalogCalendarGate::new(Some(view));
     let out = catalog_status_gated(&cfg, gate).await.unwrap();
     assert!(out.go, "the forward boundary is a proven session the catalog reaches: {:?}", out.lines);
     let warning = out
@@ -1852,7 +1851,7 @@ async fn enforced_forward_zone_boundary_keys_on_forward_readiness() {
     let cal2 = build_calendar_full(&[], hist, retro);
     let view2 = cal2.as_of(cal_as_of()).unwrap();
     assert!(view2.freshness().any_stale(), "the snapshot IS stale (incremental)");
-    let gate2 = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view2));
+    let gate2 = CatalogCalendarGate::new(Some(view2));
     let out2 = catalog_status_gated(&cfg, gate2).await.unwrap();
     assert!(out2.go, "GO: {:?}", out2.lines);
     assert!(
@@ -2056,7 +2055,7 @@ async fn compact_cli_exits_zero_on_a_clean_catalog_and_status_stays_go() {
     // check → GO).
     let cal = build_calendar(&[], false);
     let view = cal.as_of(cal_as_of()).unwrap();
-    let gate = CatalogCalendarGate::new(CalendarAdoption::Enforced, Some(view));
+    let gate = CatalogCalendarGate::new(Some(view));
     let status = catalog_status_gated(
         &StatusConfig {
             data_home: dir.path().to_path_buf(),

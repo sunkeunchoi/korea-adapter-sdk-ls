@@ -35,9 +35,9 @@ pub const ADOPTION_ENV: &str = "LS_CALENDAR_ADOPTION";
 
 /// The outcome of resolving + loading a calendar at the composition root.
 ///
-/// This is what the Phase C consumers (U9–U13) inject: either an [`Available`] calendar
-/// or a recorded non-fatal unavailable state. The helper never panics — a load failure
-/// is a typed value, not a crash.
+/// This is what each calendar consumer injects: either an [`Available`] calendar or a
+/// recorded non-fatal unavailable state. The helper never panics — a load failure is a
+/// typed value, not a crash.
 #[derive(Debug)]
 pub enum LoadedCalendar {
     /// The snapshot loaded and validated at the as-of instant — inject this calendar.
@@ -112,10 +112,10 @@ impl IngestCalendarContext {
 /// failure is [`Unavailable`], a success is [`Available`]. Never reads env, never picks a
 /// default path, never panics.
 ///
-/// `adoption` is accepted so the composition root's intent is explicit at the call site;
-/// the load itself is adoption-independent — the helper only SURFACES the typed result,
-/// and the consumer decides. Under the sole surviving Enforced posture an unavailable
-/// state is fatal (the consumer fails closed).
+/// `adoption` is threaded uniformly as the recorded posture (see [`CalendarAdoption`]); it
+/// does not affect the load — the helper only SURFACES the typed result, and the consumer
+/// decides. Under the sole surviving Enforced posture an unavailable state is fatal (the
+/// consumer fails closed).
 pub fn resolve_and_load(
     path: Option<&Path>,
     as_of: DateTime<Utc>,
@@ -132,9 +132,8 @@ pub fn resolve_and_load(
     }
 }
 
-/// The action a process takes as a result of the calendar resolution + adoption state.
-/// Recorded in the startup record; drives nothing in this unit (the decision migrations
-/// are U9–U13).
+/// The action a process takes as a result of the calendar resolution. Recorded in the
+/// startup record; the consumer acts on the injected calendar (Enforced-only, #189).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResultingAction {
     /// Enforced: the calendar is authoritative.
@@ -291,9 +290,9 @@ pub fn build_startup_record_targeted(
     }
 }
 
-/// Emit the startup record to the non-persisted diagnostic channel (stderr, KTD8). A
-/// Shadow/Legacy recording never touches stdout or a tracked artifact, so the
-/// byte-identical-to-Legacy guarantee the consumer suites (U9–U13) rely on holds.
+/// Emit the startup record to the non-persisted diagnostic channel (stderr, KTD8). The
+/// record never touches stdout or a tracked artifact — it is redacted diagnostics only,
+/// so it cannot perturb a consumer's data product.
 pub fn emit_startup_record(record: &StartupRecord) {
     eprintln!("{}", record.render_line());
 }
@@ -323,8 +322,8 @@ pub fn startup_from_env(consumer: &str) -> StartupRecord {
     let as_of = Utc::now();
     let context = IngestCalendarContext::from_env(as_of);
     // The date the process cares about at startup: today's civil date in KST (KST = UTC+9,
-    // no DST). Consumers that care about a specific other date compute it themselves in
-    // Phase C; the startup record just needs a representative in-scope target.
+    // no DST). Consumers that care about a specific other date compute it themselves; the
+    // startup record just needs a representative in-scope target.
     let target = (as_of + Duration::hours(9)).date_naive();
     context.startup_record(consumer, target)
 }

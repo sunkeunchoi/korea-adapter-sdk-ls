@@ -122,8 +122,8 @@ fn bar_label(bar: &Bar) -> String {
 }
 
 /// A proven Trading-Session boundary for a catalog readiness check (U11, KTD8). Computed
-/// purely from the injected calendar view, so it is adoption-INDEPENDENT: Shadow RECORDS
-/// it while the weekday path acts, and Enforced ACTS on it. The proof-preserving
+/// purely from the injected calendar view; the Enforced calendar ACTS on it, with no
+/// weekday fallback (#189). The proof-preserving
 /// tri-state distinction is intact — an `Unknown` at the boundary is never collapsed into
 /// a session or a proven absence.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,27 +141,21 @@ pub enum SessionBoundary {
     Unavailable,
 }
 
-/// The per-consumer calendar seam for `catalog status` (U11, KTD8). Carries the adoption
-/// posture and, when a snapshot loaded and authorized, an [`AsOfView`]. `Copy` (the view
-/// is a borrow + an instant). Construct [`legacy`](Self::legacy) for the weekday-only path
-/// or [`new`](Self::new) at the composition root.
+/// The per-consumer calendar seam for `catalog status` (U11, KTD8). Carries, when a snapshot
+/// loaded and authorized, an [`AsOfView`]. `Copy` (the view is a borrow + an instant).
+/// Construct [`new`](Self::new) at the composition root. Enforced-only after the #189 weekday
+/// retirement (U7/U10): the calendar is authoritative with no weekday fallback.
 #[derive(Debug, Clone, Copy)]
 pub struct CatalogCalendarGate<'c> {
-    adoption: CalendarAdoption,
     view: Option<AsOfView<'c>>,
 }
 
 impl<'c> CatalogCalendarGate<'c> {
-    /// Build a gate for `adoption` with an optional as-of view (`None` = calendar
-    /// unavailable — a missing/failed snapshot, which fails closed under the sole surviving
-    /// Enforced posture, #189 U7/U10).
-    pub fn new(adoption: CalendarAdoption, view: Option<AsOfView<'c>>) -> Self {
-        Self { adoption, view }
-    }
-
-    /// The adoption posture this gate runs under.
-    pub fn adoption(&self) -> CalendarAdoption {
-        self.adoption
+    /// Build a gate with an optional as-of view (`None` = calendar unavailable — a
+    /// missing/failed snapshot, which fails closed under the sole surviving Enforced posture,
+    /// #189 U7/U10).
+    pub fn new(view: Option<AsOfView<'c>>) -> Self {
+        Self { view }
     }
 
     /// The LAST proven Trading Session on or before `date` (proof-preserving). The real
@@ -1693,8 +1687,8 @@ fn env_f64(key: &str) -> anyhow::Result<Option<f64>> {
 pub fn main_cli() -> ExitCode {
     nautilus_ls::scrub::install();
     // Mandatory startup calendar record (U8): one redacted line to the non-persisted
-    // diagnostic channel (stderr). Default adoption = Shadow; a missing snapshot is
-    // non-fatal (KTD8).
+    // diagnostic channel (stderr). adoption = Enforced (the sole posture, #189); a missing
+    // snapshot fails closed (KTD8).
     //
     // The `catalog status` path (U1) emits its OWN decision-relevant startup record from a
     // single shared load inside its CLI branch — so it is skipped here to keep exactly one
@@ -1821,7 +1815,7 @@ fn dispatch() -> anyhow::Result<ExitCode> {
                 let rt = tokio::runtime::Runtime::new()?;
                 let cfg = status_config_from_env()?;
                 let view = loaded.calendar().and_then(|cal| cal.as_of(as_of).ok());
-                let gate = CatalogCalendarGate::new(adoption, view);
+                let gate = CatalogCalendarGate::new(view);
                 let out = rt.block_on(catalog_status_gated(&cfg, gate))?;
                 print_lines(&out.lines);
                 Ok(ok_fail(out.go))

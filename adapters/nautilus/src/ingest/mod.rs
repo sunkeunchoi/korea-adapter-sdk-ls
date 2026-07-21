@@ -160,9 +160,9 @@ impl CalendarRangePlan {
     }
 }
 
-/// The adoption-INDEPENDENT calendar continuity verdict for an OPEN civil-date interval —
-/// the checkpoint merge-hole test (U10, KTD8). Legacy checkpoint ranges either side of a
-/// gap merge into one watermark ONLY when every intervening date is a proven Closed date; a
+/// The calendar continuity verdict for an OPEN civil-date interval — the checkpoint
+/// merge-hole test (U10, KTD8). Legacy-format checkpoint ranges either side of a gap merge
+/// into one watermark ONLY when every intervening date is a proven Closed date; a
 /// proven Trading Session in the gap is un-attested history that must keep the ranges
 /// separate; Unknown/unavailable evidence is treated conservatively (stay separate +
 /// over-fetch) so newly-resolved evidence can re-chain the ranges later. Computed purely
@@ -232,7 +232,7 @@ impl<'c> CalendarGate<'c> {
         self.view.map(|view| view.freshness().any_stale()).unwrap_or(false)
     }
 
-    /// The adoption-INDEPENDENT calendar decision for `target` (U9). Consults the injected
+    /// The calendar decision for `target` (U9). Consults the injected
     /// view: a proven Trading Session → [`Fetch`](CalendarDecision::Fetch), proven Closed →
     /// [`ClosedAdvance`](CalendarDecision::ClosedAdvance), a successful Unknown →
     /// [`UnknownStop`](CalendarDecision::UnknownStop), and a missing view or any
@@ -264,8 +264,8 @@ impl<'c> CalendarGate<'c> {
         }
     }
 
-    /// The next-fetch action for the INCLUSIVE range `[start, last_closed]` under the adoption
-    /// seam — the range-aware form of [`action`](Self::action) that guards advance-without-fetch
+    /// The next-fetch action for the INCLUSIVE range `[start, last_closed]` under the Enforced
+    /// calendar — the range-aware form of [`action`](Self::action) that guards advance-without-fetch
     /// against false coverage. The single-date [`action`](Self::action) only inspects the
     /// endpoint, but a SkipAdvance replaces a fetch of the WHOLE range `[start, last_closed]`
     /// (`start` = watermark+1, or the lookback floor for the initial backfill); skip-advancing

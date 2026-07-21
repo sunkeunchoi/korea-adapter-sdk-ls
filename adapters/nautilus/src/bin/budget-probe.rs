@@ -267,13 +267,13 @@ fn paper_ok(env: Option<&str>) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// U13 (KTD8) — calendar-backed default-date selection behind the adoption seam.
+// U13 (KTD8) — calendar-backed default-date selection (Enforced-only, #189).
 //
 // The date selection is split into two side-effect-free, unit-testable pieces:
 //   * `scan_recent_session` walks a loaded `KrxCalendar` view back from the anchor
 //     over a bounded lookback and yields the most recent PROVEN Trading Session
 //     (skipping Closed AND Unknown), or a `NoSession` / `Unavailable` outcome.
-//   * `plan_probe_dates` is a pure decision over (adoption, scan, weekday anchor,
+//   * `plan_probe_dates` is a pure decision over (scan, weekday anchor,
 //     explicit override) → the selected range, warnings, bypass record, and WHETHER
 //     a live request is attempted. No calendar, no gateway — fully testable.
 // `ProbeContext` is the composition-root glue (U1): it reads env, builds the view from ONE
@@ -288,7 +288,7 @@ fn paper_ok(env: Option<&str>) -> bool {
 /// never scans unboundedly.
 const PROBE_LOOKBACK_DAYS: i64 = 30;
 
-/// The most-recent-proven-Trading-Session scan outcome (adoption-independent). `Copy` so a
+/// The most-recent-proven-Trading-Session scan outcome. `Copy` so a
 /// caller can inspect it and still pass it to [`plan_probe_dates`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum SessionScan {
@@ -350,9 +350,8 @@ struct ProbeDatePlan {
     edate: Option<String>,
     live_request: bool,
     source: DateSource,
-    /// The calendar-selected session date, recorded for the diagnostic (Shadow records it;
-    /// Enforced uses it). `None` under Legacy (never consults the calendar), or when no
-    /// session was proven.
+    /// The calendar-selected session date, recorded for the diagnostic and used by the
+    /// Enforced calendar. `None` when no session was proven.
     calendar_default: Option<String>,
     warnings: Vec<String>,
     /// The bypass audit — `Some` iff the operator supplied an explicit `LS_PROBE_SDATE`/
@@ -486,8 +485,8 @@ fn fmt_ymd(date: NaiveDate) -> String {
 /// coverage) and return the most recent PROVEN Trading Session — skipping Closed AND Unknown
 /// dates (an Unknown never manufactures a servable default). A missing view is
 /// [`Unavailable`](SessionScan::Unavailable); an exhausted lookback with no proven session is
-/// [`NoSession`](SessionScan::NoSession). Adoption-independent (the value Shadow records and
-/// Enforced acts on); side-effect-free.
+/// [`NoSession`](SessionScan::NoSession). The value the Enforced calendar acts on;
+/// side-effect-free.
 fn scan_recent_session(view: Option<&AsOfView<'_>>, anchor: NaiveDate) -> SessionScan {
     let view = match view {
         Some(v) => v,
