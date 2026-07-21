@@ -41,9 +41,14 @@ the next bar). For each candidate weight the stop distance scales to `w·rps` (f
 
   * resolution_mix_shift = fraction of trades whose stop/target/timeout class differs from the
     w=1 simulation. It is FILL-PRICE-INDEPENDENT (pure geometry) — the primary materiality gate.
-  * ror_shift = RoR(w) − RoR(w=1), both under the same pessimistic-fill model, so systematic
-    fill bias cancels (sim(w=1) RoR ≈ 0.152 vs the run's 0.1876 reflects favorable
-    gap-through-limit fills the run books and this screen does not — immaterial to the shift).
+  * ror_shift = RoR(w) − RoR(w=1), both under the same pessimistic-fill model. Sizing (qty) is
+    reconstructed EXACTLY (0/77 vs the run), so the whole sim(w=1) RoR ≈ 0.152 vs run 0.1876 gap
+    is the favorable gap-through-limit fills the run books and this screen does not. The bias
+    cancels only to FIRST order: the lever's mechanism is to convert a trade's resolution class,
+    and a stop/timeout→target conversion earns that omitted premium in reality but only the flat
+    target here — so the shift carries a residual DOWNWARD bias over the ≤ resolution_mix_shift·N
+    converted trades (bounded ~0.0016 here, toward NO-BUILD). ror_shift is therefore a
+    conservative lower bound on the true improvement, not an unbiased estimate.
 
 All four signals passing Gate 1 with near-inert materiality is the honest CLASS-B-absorption
 result the plan anticipated (the stop re-scale is auto-absorbed on the risk axis; the modest
@@ -89,7 +94,15 @@ R_REF, R_WLO, R_WHI, R_ALPHA = 0.07315764, 0.70269755, 1.44548956, 1.0
 # ---- frozen screen pre-register (candidate.json is the machine home; this mirrors it) ----
 ALPHA = 0.5                        # screen weight exponent == the arm's flip_value
 COLLIN_THRESH = 0.70
-ROR_SHIFT_FLOOR = 0.005            # min build-worthy projected RoR improvement (< smallest kept-lever gain +0.0091; > sim noise)
+# Min build-worthy projected RoR improvement. Anchored to the amihud-materiality precedent
+# (docs/solutions/conventions/first-order-materiality-prediction-ignores-notional-ceiling.md):
+# a screen ror_shift of +0.0309 there landed −0.0116 live (mis-sign ~0.04), so sub-0.001
+# projected shifts are within demonstrated screen-prediction noise and do NOT predict a KEEP —
+# the amihud lever cleared the looser 0.00065 floor, built, and REVERTED. 0.005 sits below the
+# smallest historically-KEPT lever's realized gain (ratio-ATR +0.0091) yet far above the
+# pessimistic-fill downward bias on the decisive reading (bounded ~0.0016 over the ≤6 converted
+# trades), so the NO-BUILD is robust even generously fill-corrected.
+ROR_SHIFT_FLOOR = 0.005
 RES_MIX_FLOOR = 0.05               # min fraction of trades whose resolution class must move (mirrors amihud qty floor)
 # Signal ids (documented, stable) — winning_signal_id carries one of these.
 SIGNALS = [
@@ -208,8 +221,12 @@ def percentile(sorted_v, q):
 
 
 def clamp_weight(signal, ref, w_lo, w_hi):
-    """clamp((ref/signal)^alpha, w_lo, w_hi); fail-closed neutral on missing/degenerate input."""
-    if signal is None or signal <= 0.0:
+    """clamp((ref/signal)^alpha, w_lo, w_hi); fail-closed neutral on missing/degenerate input.
+    `ref <= 0.0` is guarded too: a non-positive base under the fractional `alpha` would be a
+    Python complex number and crash `min/max` (reachable if a future signal — e.g. a negative
+    overnight gap — makes the median `ref` non-positive; every v32 signal here is strictly
+    positive, so this is fail-closed defence for reuse, not a live path)."""
+    if signal is None or signal <= 0.0 or ref <= 0.0:
         return 1.0
     return min(max((ref / signal) ** ALPHA, w_lo), w_hi)
 
@@ -311,6 +328,10 @@ def signal_band(rows, key):
     ref = percentile(sv, 0.5)
     p10 = percentile(sv, 0.10)
     p90 = percentile(sv, 0.90)
+    # Non-positive ref/percentiles (a mixed- or negative-sign signal distribution) would make
+    # the fractional-power band complex → crash; fail closed to a neutral (all-weight-1.0) band.
+    if ref <= 0.0 or p10 <= 0.0 or p90 <= 0.0:
+        return ref, 1.0, 1.0
     w_lo = (ref / p90) ** ALPHA
     w_hi = (ref / p10) ** ALPHA
     return ref, w_lo, w_hi

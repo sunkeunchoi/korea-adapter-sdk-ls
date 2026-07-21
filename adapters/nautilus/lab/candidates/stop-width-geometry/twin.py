@@ -120,7 +120,10 @@ def qtile(vals, q):
 
 
 def wclamp(sig, ref, lo, hi):
-    if sig is None or sig <= 0.0:
+    # `ref <= 0.0` guarded too — a non-positive base under the fractional exponent is complex
+    # and crashes the comparison; fail closed to neutral (defence for reuse on a negative-signal
+    # distribution; every v32 signal here is strictly positive).
+    if sig is None or sig <= 0.0 or ref <= 0.0:
         return 1.0
     raw = (ref / sig) ** A
     return lo if raw < lo else (hi if raw > hi else raw)
@@ -231,8 +234,12 @@ def main():
         ref = qtile(avail, 0.5)
         p10 = qtile(avail, 0.10)
         p90 = qtile(avail, 0.90)
-        lo = (ref / p90) ** A
-        hi = (ref / p10) ** A
+        # Non-positive ref/percentiles → complex fractional-power band → crash; fail closed neutral.
+        if ref <= 0.0 or p10 <= 0.0 or p90 <= 0.0:
+            lo = hi = 1.0
+        else:
+            lo = (ref / p90) ** A
+            hi = (ref / p10) ** A
         coh = [r for r in recs if r[key] is not None]
         ws = [wclamp(r[key], ref, lo, hi) for r in coh]
         c_rps = abs(corr(ws, [r["rps"] for r in coh]))

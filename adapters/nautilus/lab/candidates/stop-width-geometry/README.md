@@ -35,10 +35,15 @@ projection is read at the value that would be armed.
 - **1a** `|Pearson r(w, risk_per_share)| < 0.70` — new axis, not a re-expression of the stop.
 - **1b** `|Pearson r(w, w_ratio_atr)| < 0.70` — not a re-expression of the KEPT ratio-ATR tilt.
 - **2a** `ror_shift ≥ 0.005` — projected RoR improvement, ceiling-aware, from an offline geometry
-  re-sim (baseline = sim at `w=1`, so systematic fill bias cancels). Floor set **below the
-  smallest historically-KEPT lever gain** (ratio-ATR +0.0091) and **above the screen's absolute
-  sim error** (sim(w=1) RoR ≈ 0.152 vs the run's 0.1876 = favorable gap-through-limit fills) so a
-  pass is genuinely build-worthy, not noise.
+  re-sim (baseline = sim at `w=1`). Floor anchored to the **amihud materiality precedent**: a
+  screen `ror_shift` of +0.0309 there landed −0.0116 live (mis-sign ~0.04), and that lever cleared
+  the looser `0.00065` floor, built, and **REVERTED** — so sub-0.001 projected shifts are within
+  demonstrated screen-prediction noise and do not predict a KEEP. `0.005` sits **below the
+  smallest historically-KEPT lever gain** (ratio-ATR +0.0091) yet far enough above the winner's
+  +0.0008 that the NO-BUILD survives the pessimistic-fill downward bias (bounded ~0.0016 — see
+  Limitations). Note: under the raw amihud `0.00065` floor the minutes signal nominally clears —
+  that floor is inappropriate here precisely because the amihud precedent showed it does not
+  predict KEEP.
 - **2b** `resolution_mix_shift ≥ 0.05` — fraction of trades whose stop/target/timeout class the
   re-scaled stop moves. **Fill-price-independent** (pure geometry) — the primary materiality
   reading (KTD3), replacing amihud's `qty_change_frac` which a geometry lever changes by
@@ -53,3 +58,28 @@ four canonical readings feed the gate; `winning_signal_id` (tolerance 0) forces 
 on the winner, and `stop_width_ref`/`w_lo`/`w_hi` ride along as the arm's companion seeds.
 
 `gate-verdict.json` is a command output, not a frozen input.
+
+## Limitations (what this screen does NOT establish)
+
+The NO-BUILD is a screen verdict, not a reconciled one. Honest bounds (from the Turn 11 code
+review):
+
+- **Single direction.** Each signal is tested only in the `(ref/signal)^alpha` direction (high
+  signal → tighter stop). A signal whose edge is the *inverse* direction reads as a negative
+  tested-direction `ror_shift` and is discarded — so the result is "no edge **in the tested
+  direction**", not "no edge exists". The inverse direction and asymmetric stop-vs-target levers
+  were out of Turn 11 scope.
+- **`ror_shift` is a conservative lower bound.** The re-sim books targets at the flat target
+  price and omits the run's favorable gap-through-limit fills. Sizing is reconstructed exactly
+  (0/77), so the whole sim(w=1) 0.152 vs run 0.1876 gap is fills; the bias cancels only to first
+  order because the lever *converts* trade resolutions, leaving a residual **downward** bias on
+  the decisive reading (bounded ~0.0016 over ≤6 converted trades). Even generously corrected, the
+  best signal stays ~0.002–0.003 — marginal, and within demonstrated screen-prediction noise.
+- **Twin certifies reproducibility, not fidelity.** `twin.py` re-derives reconstruction and
+  statistics independently but shares the barrier SEMANTICS by design, so its byte-identical
+  agreement cannot catch a shared fill/rounding/window error. Barrier-model fidelity is the main
+  residual uncertainty; correctness review cross-checked it against `orb.rs` and found it faithful.
+- **Marginal candidate for a future turn.** The entry-timing (`minutes`) signal is the one weakly
+  positive result (+0.0008 tested-direction, 6/77 resolutions moved). A future stop-geometry turn
+  should start there, screen BOTH directions, and improve the fill model — not re-derive from
+  scratch.
