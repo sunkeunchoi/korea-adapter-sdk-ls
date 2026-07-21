@@ -131,16 +131,17 @@ Enforced-only after the U8 retirement (weekday anchor + Legacy/Shadow arm remove
 
 ### Production Ladder date-fact gate — `../lab/src/runner/live.rs`, `../lab/src/dispatch/checks.rs`
 
+Enforced-only after the U9 retirement (weekday `date_fact` + Legacy/Shadow arm removed; the
+time-of-day window is preserved, KTD7).
+
 | Branch | Owning assertion |
 |--------|------------------|
-| Shadow records, weekday authoritative | `u188_shadow_over_fixture_records_but_weekday_stays_authoritative` (`../lab/src/runner/live.rs`) |
-| Legacy weekday-authoritative | `u188_legacy_over_fixture_is_weekday_authoritative_and_still_loads` (`../lab/src/runner/live.rs`) |
 | Enforced Trading from calendar | `u188_enforced_trading_session_from_calendar_not_weekday` (`../lab/src/runner/live.rs`) |
 | Enforced Closed fails + records active | `u188_enforced_closed_from_calendar_fails_and_records_active` (`../lab/src/runner/live.rs`) |
 | Enforced missing snapshot → fail-closed | `u188_enforced_missing_snapshot_is_unavailable_and_fail_closed` (`../lab/src/runner/live.rs`) |
 | Enforced Unknown refuses / Trading greens | `u12_failure_inversion_unknown_refuses_but_trading_session_greens` (`../lab/tests/dispatch_checks.rs`) |
 | Time-window half preserved (KTD7) | `u12_time_window_preserved_for_a_proven_session_and_an_overridden_unknown` (`../lab/tests/dispatch_checks.rs`) |
-| Weekday seam splits date-fact from time-window | `weekday_seam_splits_date_fact_from_time_window` (`../lab/tests/dispatch_checks.rs`) |
+| Weekday time-window preserved (KTD7) | `weekday_time_window_is_preserved` (`../lab/tests/dispatch_checks.rs`) |
 
 ## Rollback rehearsal (U2, R4; AE3)
 
@@ -165,6 +166,5 @@ Each consumer emits a classified, redacted, non-persisted Shadow-divergence obse
 |--------|------------------|
 | `DivergenceClass` + `classify_divergence` | `enum DivergenceClass`, `fn classify_divergence` (`../src/calendar.rs`) |
 | Redacted, non-persisted, classified | `divergence_observation_is_redacted_and_classified` (`../src/calendar.rs`) |
-| Ladder emits classified divergence | `shadow_divergence_is_classified_and_redacted` (`../lab/src/runner/live.rs`) |
 
-_(Budget-probe's Shadow divergence row was removed with its U8 Enforced-only retirement.)_
+_(Each consumer's Shadow divergence row was removed as that consumer reached its Enforced-only retirement (ingest U6, catalog U7, budget-probe U8, Ladder U9); the shared divergence machinery is retired in U10.)_

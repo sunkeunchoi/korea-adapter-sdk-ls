@@ -169,14 +169,13 @@ const CONSUMER_BRANCHES: &[Anchor] = &[
     Anchor { label: "budget-probe explicit-range bypass unchanged", file: "../src/bin/budget-probe.rs", needles: &["fn enforced_bypass_audit_does_not_change_range_or_request"] },
     Anchor { label: "budget-probe Enforced no-session refuses before gateway", file: "../tests/budget_probe_composition.rs", needles: &["fn enforced_no_session_refuses_before_any_gateway_call"] },
     // Production Ladder date-fact gate.
-    Anchor { label: "ladder Shadow records, weekday authoritative", file: "../lab/src/runner/live.rs", needles: &["fn u188_shadow_over_fixture_records_but_weekday_stays_authoritative"] },
-    Anchor { label: "ladder Legacy weekday-authoritative", file: "../lab/src/runner/live.rs", needles: &["fn u188_legacy_over_fixture_is_weekday_authoritative_and_still_loads"] },
+    // Ladder Enforced-only after U9 retirement (weekday date_fact + Legacy/Shadow arm removed).
     Anchor { label: "ladder Enforced Trading from calendar", file: "../lab/src/runner/live.rs", needles: &["fn u188_enforced_trading_session_from_calendar_not_weekday"] },
     Anchor { label: "ladder Enforced Closed fails + records", file: "../lab/src/runner/live.rs", needles: &["fn u188_enforced_closed_from_calendar_fails_and_records_active"] },
     Anchor { label: "ladder Enforced missing snapshot → fail-closed", file: "../lab/src/runner/live.rs", needles: &["fn u188_enforced_missing_snapshot_is_unavailable_and_fail_closed"] },
     Anchor { label: "ladder Enforced Unknown refuses / Trading greens", file: "../lab/tests/dispatch_checks.rs", needles: &["fn u12_failure_inversion_unknown_refuses_but_trading_session_greens"] },
     Anchor { label: "ladder time-window preserved (KTD7)", file: "../lab/tests/dispatch_checks.rs", needles: &["fn u12_time_window_preserved_for_a_proven_session_and_an_overridden_unknown"] },
-    Anchor { label: "ladder weekday seam splits date-fact from time-window", file: "../lab/tests/dispatch_checks.rs", needles: &["fn weekday_seam_splits_date_fact_from_time_window"] },
+    Anchor { label: "ladder weekday time-window preserved (KTD7)", file: "../lab/tests/dispatch_checks.rs", needles: &["fn weekday_time_window_is_preserved"] },
 ];
 
 /// The rollback rehearsal (U2) and its owning assertions — part of the Foundation Gate matrix
@@ -199,7 +198,7 @@ const DIVERGENCE_CLASSIFICATION: &[Anchor] = &[
     // ingest's Shadow divergence anchor was removed with its U6 Enforced-only retirement.
     // catalog's Shadow divergence anchor was removed with its U7 Enforced-only retirement.
     // budget-probe's Shadow divergence anchor was removed with its U8 Enforced-only retirement.
-    Anchor { label: "ladder emits classified divergence", file: "../lab/src/runner/live.rs", needles: &["fn shadow_divergence_is_classified_and_redacted"] },
+    // ladder's Shadow divergence anchor was removed with its U9 Enforced-only retirement.
 ];
 
 /// Run one group of anchors, appending a human-readable failure line per unresolved needle.

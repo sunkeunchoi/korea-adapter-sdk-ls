@@ -190,32 +190,21 @@ fn parse_deferrals_splits_and_trims() {
     assert!(parse_deferrals(Some("")).is_empty());
 }
 
-#[test]
-fn weekday_calendar_seam() {
-    use chrono::{TimeZone, Utc};
-    let cal = WeekdayKrxCalendar;
-    // 2026-07-16 is a Thursday. 10:00 KST = 01:00 UTC -> open; 16:00 KST = 07:00 UTC -> closed.
-    assert!(cal.is_trading_session(Utc.with_ymd_and_hms(2026, 7, 16, 1, 0, 0).unwrap()));
-    assert!(!cal.is_trading_session(Utc.with_ymd_and_hms(2026, 7, 16, 7, 0, 0).unwrap()));
-    // 2026-07-18 is a Saturday -> closed all day.
-    assert!(!cal.is_trading_session(Utc.with_ymd_and_hms(2026, 7, 18, 1, 0, 0).unwrap()));
-}
+// (The weekday DATE-fact tests `weekday_calendar_seam` (is_trading_session) and
+//  `weekday_seam_splits_date_fact_from_time_window` (date_fact) were retired with the Ladder
+//  Enforced-only cutover — the weekday date decision is gone. Only the PRESERVED time-of-day
+//  window remains, asserted below (KTD7).)
 
 #[test]
-fn weekday_seam_splits_date_fact_from_time_window() {
+fn weekday_time_window_is_preserved() {
     use chrono::{TimeZone, Utc};
     let cal = WeekdayKrxCalendar;
-    // 2026-07-16 Thu: the DATE is a Trading Session regardless of the time-of-day.
+    // KTD7: the weekday DATE decision is retired, but the PRESERVED 09:00–15:30 KST time
+    // window (`in_time_window`) is kept unchanged.
     let thu_open = Utc.with_ymd_and_hms(2026, 7, 16, 1, 0, 0).unwrap(); // 10:00 KST
     let thu_after = Utc.with_ymd_and_hms(2026, 7, 16, 7, 0, 0).unwrap(); // 16:00 KST
-    assert_eq!(cal.date_fact(thu_open), CalendarDateFact::TradingSession);
-    assert_eq!(cal.date_fact(thu_after), CalendarDateFact::TradingSession);
-    // The PRESERVED 09:00–15:30 KST time window is a distinct bool.
-    assert!(cal.in_time_window(thu_open));
-    assert!(!cal.in_time_window(thu_after));
-    // A weekend DATE maps to Closed (never Unknown — the weekday path can't yield Unknown).
-    let sat = Utc.with_ymd_and_hms(2026, 7, 18, 1, 0, 0).unwrap();
-    assert_eq!(cal.date_fact(sat), CalendarDateFact::Closed);
+    assert!(cal.in_time_window(thu_open), "10:00 KST is inside the window");
+    assert!(!cal.in_time_window(thu_after), "16:00 KST is outside the window");
 }
 
 // ---------------------------------------------------------------------------

@@ -10,7 +10,7 @@ watchdog **90 s** heartbeat, **300,000 KRW** session breaker, **5** clean sessio
 
 ## 0. Preconditions (all must hold)
 
-- [ ] KRX regular session open (09:00–15:30 KST) — the window check is weekday-only until the calendar plan lands; **you** confirm it is not a KRX holiday.
+- [ ] KRX regular session open (09:00–15:30 KST).
 - [ ] `LS_TRADING_ENV=paper` (today `RunSource::Live` is paper-live; the live-lane flip is separate).
 - [ ] The per-lane env file present and correct (`.env.domestic` by default) — token-bound account; a wrong lane reads silently wrong.
 - [ ] Account **flat**, no stranded resting orders (the gate checks this; clear or defer explicitly).

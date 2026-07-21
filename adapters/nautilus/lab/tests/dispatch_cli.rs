@@ -311,28 +311,8 @@ fn u12_unknown_override_refused_when_unattended() {
     assert!(out.lines.iter().any(|l| l.contains("override rejected")), "{:?}", out.lines);
 }
 
-#[test]
-fn u12_shadow_dispatch_record_is_byte_identical_to_legacy() {
-    // With no stub and no configured snapshot, the weekday fact stays authoritative under
-    // BOTH Legacy and Shadow; Shadow's calendar recording (the startup record, U1) goes only
-    // to stderr (non-persisted), so the persisted chain record AND the stdout report
-    // (`out.lines`) are byte-identical (R2, AC2, KTD4).
-    fn run_with(adoption: CalendarAdoption) -> (Vec<u8>, Vec<String>) {
-        let tmp = TempDir::new().unwrap();
-        seed_genesis(tmp.path());
-        let mut cfg = green_cfg(tmp.path());
-        cfg.adoption = adoption;
-        cfg.date_fact_stub = None; // exercise the resolution path
-        let out = run_dispatch(&cfg).unwrap();
-        assert_eq!(out.result, GateResult::Green);
-        let bytes = std::fs::read(DispatchChain::open(tmp.path()).unwrap().chain_path()).unwrap();
-        (bytes, out.lines)
-    }
-    let (legacy_bytes, legacy_lines) = run_with(CalendarAdoption::Legacy);
-    let (shadow_bytes, shadow_lines) = run_with(CalendarAdoption::Shadow);
-    assert_eq!(legacy_bytes, shadow_bytes, "Shadow chain record is byte-identical to Legacy");
-    assert_eq!(legacy_lines, shadow_lines, "Shadow stdout report is identical to Legacy");
-}
+// (The Shadow==Legacy byte-identity test was retired with the Ladder Enforced-only cutover —
+//  the date gate no longer has a Legacy/Shadow path.)
 
 // ---------------------------------------------------------------------------
 // Bin-level dispatch (CARGO_BIN_EXE_lab-live)
@@ -364,9 +344,13 @@ fn bin_dispatch(home: &std::path::Path, extra: &[(&str, &str)]) -> std::process:
 
 #[test]
 fn bin_green_dispatch_exits_zero_and_records() {
+    use nautilus_ls_calendar::schema::DayStatus;
     let tmp = TempDir::new().unwrap();
     seed_genesis(tmp.path());
-    let out = bin_dispatch(tmp.path(), &[]);
+    // Enforced-only: a green dispatch needs a snapshot proving the KST date a Trading Session
+    // (no weekday fallback). 2026-07-16 is a proven session in the fixture.
+    let snap = write_now_relative_snapshot(tmp.path(), DayStatus::TradingSession);
+    let out = bin_dispatch(tmp.path(), &[("LS_CALENDAR_SNAPSHOT", snap.to_str().unwrap())]);
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "stdout={stdout} stderr={}", String::from_utf8_lossy(&out.stderr));
     assert!(stdout.contains("DISPATCH green"), "{stdout}");
@@ -479,33 +463,7 @@ fn write_snapshot_with_horizon(
     path
 }
 
-#[test]
-fn bin_shadow_over_fixture_emits_one_startup_record_and_greens() {
-    use nautilus_ls_calendar::schema::DayStatus;
-    let tmp = TempDir::new().unwrap();
-    seed_genesis(tmp.path());
-    // A Closed calendar row proves Shadow does not mutate the decision: the gate still greens
-    // on the authoritative weekday Trading Session while the calendar decision is recorded.
-    let snap = write_now_relative_snapshot(tmp.path(), DayStatus::Closed);
-    let out = bin_dispatch(
-        tmp.path(),
-        &[("LS_CALENDAR_ADOPTION", "shadow"), ("LS_CALENDAR_SNAPSHOT", snap.to_str().unwrap())],
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(out.status.success(), "Shadow greens on the weekday fact: stdout={stdout} stderr={stderr}");
-    assert!(stdout.contains("DISPATCH green"), "{stdout}");
-    // Exactly ONE calendar-startup line (the generic main_cli emit is retired for --dispatch).
-    assert_eq!(stderr.matches("calendar-startup").count(), 1, "exactly one startup record: {stderr}");
-    assert!(stderr.contains("consumer=lab-live-dispatch"), "{stderr}");
-    assert!(stderr.contains("adoption=shadow"), "{stderr}");
-    assert!(stderr.contains("action=shadow-recorded"), "{stderr}");
-    assert!(stderr.contains("artifact_id="), "redacted snapshot identity reported: {stderr}");
-    assert!(stderr.contains("coverage="), "{stderr}");
-    // Redaction across the FULL captured stderr (startup + gate lines end-to-end).
-    assert!(!stderr.contains(SECRET_AUTHORITY), "authority leaked to stderr: {stderr}");
-    assert!(!stderr.contains("Jane Doe"), "{stderr}");
-}
+// (The Shadow-greens-on-weekday-fixture test was retired with the Ladder Enforced-only cutover.)
 
 #[test]
 fn bin_enforced_trading_session_proceeds_through_the_calendar_fact() {
@@ -546,27 +504,7 @@ fn bin_enforced_closed_refuses_with_calendar_active_diagnostic() {
     assert!(stderr.contains("action=enforced-active"), "the calendar is authoritative: {stderr}");
 }
 
-#[test]
-fn bin_legacy_over_fixture_is_weekday_authoritative_and_greens() {
-    use nautilus_ls_calendar::schema::DayStatus;
-    let tmp = TempDir::new().unwrap();
-    seed_genesis(tmp.path());
-    // Legacy: the weekday fact is authoritative even though the calendar proves the day Closed;
-    // the calendar is still loaded + recorded (KTD6 uniform composition root).
-    let snap = write_now_relative_snapshot(tmp.path(), DayStatus::Closed);
-    let out = bin_dispatch(
-        tmp.path(),
-        &[("LS_CALENDAR_ADOPTION", "legacy"), ("LS_CALENDAR_SNAPSHOT", snap.to_str().unwrap())],
-    );
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(out.status.success(), "Legacy greens on the weekday fact: stdout={stdout} stderr={stderr}");
-    assert!(stdout.contains("DISPATCH green"), "{stdout}");
-    assert_eq!(stderr.matches("calendar-startup").count(), 1, "{stderr}");
-    assert!(stderr.contains("adoption=legacy"), "{stderr}");
-    assert!(stderr.contains("action=weekday-authoritative"), "{stderr}");
-    assert!(stderr.contains("artifact_id="), "the calendar is still loaded + recorded: {stderr}");
-}
+// (The Legacy weekday-authoritative bin test was retired with the Ladder Enforced-only cutover.)
 
 #[test]
 fn bin_enforced_corrupt_snapshot_fails_closed() {
@@ -589,17 +527,20 @@ fn bin_enforced_corrupt_snapshot_fails_closed() {
 }
 
 #[test]
-fn bin_no_snapshot_configured_is_non_fatal_and_greens() {
+fn bin_no_snapshot_configured_fails_closed_and_reads_no_production_snapshot() {
     let tmp = TempDir::new().unwrap();
     seed_genesis(tmp.path());
-    // No LS_CALENDAR_SNAPSHOT: the default Shadow start is non-fatal, weekday path greens,
-    // and NO production snapshot is read (proves the no-production-dependency claim).
-    let out = bin_dispatch(tmp.path(), &[("LS_CALENDAR_ADOPTION", "shadow")]);
+    // Enforced-only: with no LS_CALENDAR_SNAPSHOT the calendar is Unavailable → the date gate
+    // fails closed (refused), with NO weekday fallback and NO production snapshot read (proves
+    // the no-production-dependency claim). The startup record still fires exactly once.
+    let out = bin_dispatch(tmp.path(), &[]);
     let stdout = String::from_utf8_lossy(&out.stdout);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(out.status.success(), "no-snapshot Shadow greens: stdout={stdout} stderr={stderr}");
+    assert!(!out.status.success(), "no-snapshot Enforced fails closed: stdout={stdout} stderr={stderr}");
+    assert!(stdout.contains("DISPATCH refused"), "{stdout}");
     assert_eq!(stderr.matches("calendar-startup").count(), 1, "{stderr}");
     assert!(stderr.contains("snapshot=not-configured"), "{stderr}");
+    assert!(stderr.contains("action=enforced-fail-closed"), "no weekday fallback: {stderr}");
     assert!(stderr.contains("consumer=lab-live-dispatch"), "{stderr}");
 }
 

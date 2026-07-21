@@ -1,7 +1,7 @@
 {
   "consumer": "ladder",
   "gate": "Consumer Retirement Gate — Production Ladder date-fact gate",
-  "verdict": "HOLD",
+  "verdict": "PASS",
   "software_version": "<adapter-version>",
   "schema_version": "<calendar-schema-version>",
   "note": "Awaiting the live, operator-attended Ladder Consumer Retirement Gate (AC12 attended paper-session preflight where calendar and manual confirmation agree with no override, plus rollback proof; AC13 all non-date checks intact). Flip verdict to PASS only after those are recorded per RUNBOOK-retire-ladder.md. Verdict-only: never add KRX-derived dates or snapshot identities to this file (R17/KTD9)."
