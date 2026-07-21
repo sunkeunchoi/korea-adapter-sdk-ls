@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 
 use chrono::NaiveDate;
-use nautilus_ls_calendar::{CalendarAdoption, DimensionStaleness};
+use nautilus_ls_calendar::DimensionStaleness;
 use serde::{Deserialize, Serialize};
 
 use crate::error::{AdapterError, AdapterResult};
@@ -597,7 +597,7 @@ impl Checkpoint {
     ///
     /// [`AdapterError::Ingest`] if the file exists but cannot be read/parsed.
     pub fn load(path: &Path) -> AdapterResult<Self> {
-        Self::load_gated(path, &CalendarGate::new(CalendarAdoption::Enforced, None))
+        Self::load_gated(path, &CalendarGate::new(None))
     }
 
     /// Load a checkpoint from `path` under an injected [`CalendarGate`] (U10/KTD8): the
@@ -694,7 +694,6 @@ impl Checkpoint {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use nautilus_ls_calendar::CalendarAdoption;
     use tempfile::tempdir;
 
     /// A no-view Enforced gate for load/migration round-trips (#189 U6): with no calendar the
@@ -703,7 +702,7 @@ mod tests {
     /// merge/split semantics (all-Closed chains, proven-session splits) are covered by the
     /// Enforced integration tests in `../../tests/ingest.rs`.
     fn no_calendar_gate() -> CalendarGate<'static> {
-        CalendarGate::new(CalendarAdoption::Enforced, None)
+        CalendarGate::new(None)
     }
 
     #[test]

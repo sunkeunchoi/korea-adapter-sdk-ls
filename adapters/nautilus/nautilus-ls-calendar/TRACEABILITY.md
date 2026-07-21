@@ -158,13 +158,6 @@ incomplete.
 | Refuses prior not covering `as_of` | `rollback_of_a_prior_snapshot_not_covering_as_of_is_refused` (`../tests/calendar_activate.rs`) |
 | Refuses blank approval | `rollback_with_blank_approval_is_refused` (`../tests/calendar_activate.rs`) |
 
-## Shadow-divergence classification (U3, R5/R6; AE4)
-
-Each consumer emits a classified, redacted, non-persisted Shadow-divergence observation.
-
-| Anchor | Owning assertion |
-|--------|------------------|
-| `DivergenceClass` + `classify_divergence` | `enum DivergenceClass`, `fn classify_divergence` (`../src/calendar.rs`) |
-| Redacted, non-persisted, classified | `divergence_observation_is_redacted_and_classified` (`../src/calendar.rs`) |
-
-_(Each consumer's Shadow divergence row was removed as that consumer reached its Enforced-only retirement (ingest U6, catalog U7, budget-probe U8, Ladder U9); the shared divergence machinery is retired in U10.)_
+_(The Shadow-divergence classification group (U3) was retired with the shared calendar scaffold
+in #189 U10 — all four consumers are Enforced-only, so the divergence types and their
+per-consumer observations no longer exist.)_

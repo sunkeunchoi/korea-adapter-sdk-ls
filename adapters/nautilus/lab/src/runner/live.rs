@@ -1473,13 +1473,5 @@ mod tests {
             stub_startup_record(CalendarAdoption::Enforced, CalendarDateFact::Unavailable).action,
             ResultingAction::EnforcedFailClosed
         );
-        assert_eq!(
-            stub_startup_record(CalendarAdoption::Shadow, CalendarDateFact::TradingSession).action,
-            ResultingAction::ShadowRecorded
-        );
-        assert_eq!(
-            stub_startup_record(CalendarAdoption::Legacy, CalendarDateFact::Closed).action,
-            ResultingAction::WeekdayAuthoritative
-        );
     }
 }

@@ -15,18 +15,18 @@ and versions only; keep dates and identities in the owner-local log.
 
 | Component | Version |
 |-----------|---------|
-| `nautilus-ls-calendar` schema | `<schema-version>` |
-| Adapter workspace | `<adapter-version>` |
+| `nautilus-ls-calendar` schema | `1.0.0` |
+| Adapter workspace | `0.1.0` |
 | Calendar migration plan | issue #189 |
 
 ## Calendar Foundation Gate (offline)
 
 | Gate | Verdict |
 |------|---------|
-| `make foundation-gate` (core, refresh, activation, diagnostics, fixtures, six consumers, composition-root, failure-inversion, traceability, rollback rehearsal, divergence classification) | `<PASS / HOLD>` |
-| `make adapter-check` (standalone workspace, offline) | `<PASS / HOLD>` |
-| Traceability drift check | `<PASS / HOLD>` |
-| Closeout publication-boundary scan | `<PASS / HOLD>` |
+| `make foundation-gate` (core, refresh, activation, diagnostics, fixtures, six consumers, composition-root, failure-inversion, traceability, rollback rehearsal) | `PASS` |
+| `make adapter-check` (standalone workspace, offline) | `PASS` |
+| Traceability drift check | `PASS` |
+| Closeout publication-boundary scan | `PASS` |
 
 ## Consumer Retirement Gates (live, operator-attended)
 
@@ -35,15 +35,15 @@ identities, and affected dates that justify it stay in the operator's local gate
 
 | Consumer Retirement Gate | Verdict |
 |--------------------------|---------|
-| Ingest (accumulate/probe + checkpoint + backward-widen) | `<PASS / HOLD>` |
-| Catalog readiness | `<PASS / HOLD>` |
-| Budget-probe automatic selection | `<PASS / HOLD>` |
-| Production Ladder date-fact gate | `<PASS / HOLD>` |
+| Ingest (accumulate/probe + checkpoint + backward-widen) | `PASS` |
+| Catalog readiness | `PASS` |
+| Budget-probe automatic selection | `PASS` |
+| Production Ladder date-fact gate | `PASS` |
 
 ## Retirement completion
 
 | Milestone | Verdict |
 |-----------|---------|
-| Shared adoption scaffold removed (Enforced-only) | `<PASS / HOLD>` |
-| README + `CONCEPTS.md` reflect completed retirement | `<PASS / HOLD>` |
-| Final offline gate green | `<PASS / HOLD>` |
+| Shared adoption scaffold removed (Enforced-only) | `PASS` |
+| README + `CONCEPTS.md` reflect completed retirement | `PASS` |
+| Final offline gate green | `PASS` |

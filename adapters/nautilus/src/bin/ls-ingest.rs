@@ -324,10 +324,7 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
     let report = if accumulate {
         let floor = parse_yyyymmdd(&sdate)?;
         let last_closed = parse_yyyymmdd(&edate)?;
-        let gate = nautilus_ls::ingest::CalendarGate::new(
-            calendar.adoption(),
-            calendar.view(),
-        );
+        let gate = nautilus_ls::ingest::CalendarGate::new(calendar.view());
         if mode == "rebase" {
             ingestor
                 .run_rebase_gated(&universe, last_closed, floor, gate)
@@ -451,7 +448,7 @@ async fn run_probe(
         overlap_days: DEFAULT_OVERLAP_DAYS,
     };
     let ingestor = Ingestor::new(sdk.clone(), config);
-    let gate = nautilus_ls::ingest::CalendarGate::new(calendar.adoption(), calendar.view());
+    let gate = nautilus_ls::ingest::CalendarGate::new(calendar.view());
     match ingestor
         .run_probe_lookback_gated(&pilot, ncnt, anchor, probed_at, gate)
         .await?

@@ -152,20 +152,9 @@ pub struct CatalogCalendarGate<'c> {
 }
 
 impl<'c> CatalogCalendarGate<'c> {
-    /// A Legacy no-op gate: never consults a calendar, so the weekday tail/expected-range
-    /// checks stay authoritative and output is byte-identical to the pre-migration path.
-    /// This is what the un-gated [`catalog_status`] wrapper injects so every existing
-    /// caller (and test) is unchanged.
-    pub fn legacy() -> Self {
-        Self {
-            adoption: CalendarAdoption::Legacy,
-            view: None,
-        }
-    }
-
     /// Build a gate for `adoption` with an optional as-of view (`None` = calendar
-    /// unavailable — a missing/failed snapshot, non-fatal in Shadow/Legacy, fail-closed in
-    /// Enforced).
+    /// unavailable — a missing/failed snapshot, which fails closed under the sole surviving
+    /// Enforced posture, #189 U7/U10).
     pub fn new(adoption: CalendarAdoption, view: Option<AsOfView<'c>>) -> Self {
         Self { adoption, view }
     }
