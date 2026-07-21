@@ -231,7 +231,8 @@ empty runs the triple **converges** — it records a documented persistent-empty
 (never coverage — the watermark still does not advance) and skips the gateway call for
 further runs at the same target. It re-arms when the target advances (a later session
 may serve bars, so it retries at most once per new session) and resets when it serves
-bars. Convergence is *skip*, not *cover*.
+bars or its watermark advances (a later proven Closed range covers the frontier).
+Convergence is *skip*, not *cover*.
 
 ```
 LS_TRADING_ENV=paper LS_INGEST_LANE_FILE=.env.domestic \

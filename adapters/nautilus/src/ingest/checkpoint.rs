@@ -779,11 +779,14 @@ impl Checkpoint {
     /// (advancing the watermark over it is exactly the advance-on-empty the Enforced
     /// posture refuses). Keeps at most ONE uncovered row per `(instrument, bar type,
     /// reason)`: a re-armed convergence at a later target supersedes the prior span
-    /// (the range grows with `last_closed`), so it REPLACES rather than appends —
-    /// otherwise a never-serving symbol would accrue one row per session without
-    /// bound, and `prune_below_watermarks` cannot reclaim them (the watermark never
-    /// advances past an uncovered empty span). Only accumulate convergence calls this,
-    /// so it never contends with a `record_gap` (covered) row for the same triple.
+    /// (the range grows with `last_closed`), so it REPLACES the prior uncovered row
+    /// rather than appending — otherwise a never-serving symbol would accrue one row
+    /// per session without bound, and `prune_below_watermarks` cannot reclaim them
+    /// (the watermark never advances past an uncovered empty span). The replace
+    /// deliberately spares a **covered** gap row (one whose range is in `completed`,
+    /// e.g. a range-mode [`Self::record_gap`] row on a catalog shared across modes):
+    /// that row is real attested coverage, not a convergence placeholder, so it is
+    /// preserved in the audit trail.
     pub fn record_gap_uncovered(
         &mut self,
         instrument: &str,
@@ -791,9 +794,21 @@ impl Checkpoint {
         range: &str,
         reason: GapReason,
     ) {
-        self.gaps.retain(|g| {
-            !(g.instrument == instrument && g.bar_type == bar_type && g.reason == reason)
-        });
+        // Drop prior UNCOVERED rows for this triple+reason; keep covered ones (in
+        // `completed`). Rebuild via an immutable filter (retain's closure cannot also
+        // borrow `self.completed`), then reassign.
+        let retained: Vec<CoverageGap> = self
+            .gaps
+            .iter()
+            .filter(|g| {
+                g.instrument != instrument
+                    || g.bar_type != bar_type
+                    || g.reason != reason
+                    || self.completed.contains(&Self::key(&g.instrument, &g.bar_type, &g.range))
+            })
+            .cloned()
+            .collect();
+        self.gaps = retained;
         self.gaps.push(CoverageGap {
             instrument: instrument.to_string(),
             bar_type: bar_type.to_string(),
@@ -960,6 +975,23 @@ mod tests {
         // A distinct series keeps its own row.
         cp.record_gap_uncovered("000660.XKRX", "1-DAY", "20240101..20240108", GapReason::EmptyHistory);
         assert_eq!(cp.gaps().len(), 2, "a distinct series is independent");
+
+        // A COVERED gap row (marked done by range-mode `record_gap`) for the same triple
+        // is preserved — the replace spares real attested coverage, only superseding the
+        // prior uncovered convergence row.
+        let mut cp2 = Checkpoint::default();
+        cp2.record_gap("005930.XKRX", "1-DAY", "20231201..20231205", GapReason::EmptyHistory); // covered (mark_done)
+        cp2.record_gap_uncovered("005930.XKRX", "1-DAY", "20240101..20240105", GapReason::EmptyHistory);
+        cp2.record_gap_uncovered("005930.XKRX", "1-DAY", "20240101..20240108", GapReason::EmptyHistory);
+        assert_eq!(cp2.gaps().len(), 2, "covered row kept; uncovered row replaced (not appended)");
+        assert!(
+            cp2.gaps().iter().any(|g| g.range == "20231201..20231205"),
+            "the covered range-mode row survives"
+        );
+        assert!(
+            cp2.gaps().iter().any(|g| g.range == "20240101..20240108"),
+            "the latest uncovered row is present"
+        );
     }
 
     #[test]

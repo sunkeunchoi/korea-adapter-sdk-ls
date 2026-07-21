@@ -1642,6 +1642,13 @@ impl Ingestor {
     /// exercise the convergence path without the process-global env var; production
     /// resolves it from `LS_INGEST_EMPTY_RETRY_MAX`. Clamped to ≥ 1 (at least one
     /// fetch attempt).
+    ///
+    /// Deliberately an `Ingestor` builder rather than an [`IngestConfig`] field (unlike
+    /// `overlap_days`): the bound is an env-resolved operational knob with no per-run
+    /// meaning, so it lives beside the other env/file-resolved `Ingestor` state
+    /// (`budget_model`, `ledger`) that `new()` loads — not in the per-invocation
+    /// `IngestConfig` the bin populates. This also avoids churning all `IngestConfig`
+    /// literals for a knob every test would otherwise have to set.
     #[must_use]
     pub fn with_empty_retry_max(mut self, max: u32) -> Self {
         self.empty_retry_max = max.max(1);
@@ -1906,14 +1913,18 @@ impl Ingestor {
                 // Persistent-empty convergence (#189 follow-up): a proven Trading
                 // Session at this triple's frontier that has served zero bars for
                 // `empty_retry_max` consecutive runs stops charging the cumulative
-                // IGW00201 budget — skip ALL gateway calls (the append fetch AND the
-                // basis-shift overlap detection below) until the run target advances
-                // (a later session may serve bars → re-arm) or bars/closure reset the
-                // counter. A shifted triple still heals (the mark outranks the
-                // watermark, KTD-2), so it is exempt; in practice a converged triple
-                // is never shifted (convergence skips before detection can mark it),
-                // making the guard belt-and-suspenders. The watermark is NOT advanced
-                // (coverage is never fabricated over an empty proven session).
+                // IGW00201 budget — skip ALL gateway calls (the append fetch, the
+                // basis-shift overlap detection, AND the backward-widen probe below)
+                // until the run target advances (a later session may serve bars →
+                // re-arm) or bars/closure reset the counter. The skip keys ONLY on the
+                // target (`last_closed`): a same-target re-run that deepens the lookback
+                // floor or resolves Unknown calendar dates does NOT re-arm — the operator
+                // clears the checkpoint (or waits for the target to advance) to force a
+                // re-pull. A shifted triple still heals (the mark outranks the watermark,
+                // KTD-2), so it is exempt; a converged triple with prior stored bars
+                // therefore has its basis-shift detection DEFERRED (never lost — it re-runs
+                // on the next target-advanced run before any append). The watermark is NOT
+                // advanced (coverage is never fabricated over an empty proven session).
                 if !checkpoint.is_shifted(&instrument, &label)
                     && checkpoint.empty_retry_converged(
                         &instrument,
@@ -2280,31 +2291,15 @@ impl Ingestor {
                             }
                         }
                         // An empty proven-session sub-range: zero bars for a session the
-                        // calendar proves open (`collect_minute` may surface this as an
-                        // empty `Bars` vec; `collect_daily`/`collect_minute` both map it
-                        // to `Gap(EmptyHistory)`). Enforced-only (#189 U6/U10): pin before
-                        // it rather than advancing over a zero-bar span. #189 follow-up:
-                        // bump the bounded persistent-empty counter and, at the bound,
-                        // converge (record a documented gap + warn once).
-                        TripleOutcome::Bars(_) => {
-                            note_empty_frontier(
-                                &mut checkpoint,
-                                &instrument,
-                                &label,
-                                &range,
-                                last_closed,
-                                self.empty_retry_max,
-                            );
-                            gaps_this_run.push(CoverageGap {
-                                instrument: instrument.clone(),
-                                bar_type: label.clone(),
-                                range,
-                                reason: GapReason::EmptyHistory,
-                            });
-                            halt_before = Some(*s);
-                            break;
-                        }
-                        TripleOutcome::Gap(GapReason::EmptyHistory) => {
+                        // calendar proves open. `collect_daily`/`collect_minute` map an
+                        // empty result to `Gap(EmptyHistory)`; the `Bars(_)` alternative
+                        // (an empty `Bars` vec) is defensive — the collectors never return
+                        // it — kept so a future collector change cannot silently bypass the
+                        // bound. Enforced-only (#189 U6/U10): pin before it rather than
+                        // advancing over a zero-bar span. #189 follow-up: bump the bounded
+                        // persistent-empty counter and, at the bound, converge (record a
+                        // documented gap + warn once).
+                        TripleOutcome::Bars(_) | TripleOutcome::Gap(GapReason::EmptyHistory) => {
                             note_empty_frontier(
                                 &mut checkpoint,
                                 &instrument,

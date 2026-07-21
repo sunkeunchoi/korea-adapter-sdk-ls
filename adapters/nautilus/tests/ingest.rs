@@ -3175,7 +3175,9 @@ mod calendar_gate_migration {
         ]);
         let gate = CalendarGate::new(Some(cal.as_of(as_of()).unwrap()));
 
-        let mut ing = Ingestor::new(sdk, daily_config(&catalog));
+        // Pin a high bound so this single-run behavior test is independent of the ambient
+        // LS_INGEST_EMPTY_RETRY_MAX (matches the sibling empty-session tests).
+        let mut ing = Ingestor::new(sdk, daily_config(&catalog)).with_empty_retry_max(100);
         ing.run_accumulate_gated(
             &[InstrumentId::from(SAMSUNG)],
             ymd(2010, 6, 16),
