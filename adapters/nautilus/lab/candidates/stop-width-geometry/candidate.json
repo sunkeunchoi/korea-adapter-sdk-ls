@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "slug": "stop-width-geometry",
+  "family": "class-b",
+  "phase_a": "bespoke",
+  "flip_param": "stop_width_alpha",
+  "flip_value": 0.5,
+  "diagnostic": {
+    "argv": ["uv", "run", "--with", "pyarrow", "python3", "diagnostic.py"],
+    "file": "diagnostic.py",
+    "content_hash": "7f6aaabe6897b1efdc3d04a3e4e7410af00811c9db76f1b576fdc4e3a7735fbd"
+  },
+  "twin": {
+    "argv": ["uv", "run", "--with", "pyarrow", "python3", "twin.py"],
+    "file": "twin.py",
+    "content_hash": "11fb2d869f104d09116be792479caf7a2aa168216a450ca5fc4441c3bbed39d4"
+  },
+  "readings": {
+    "collin_abs_rps": { "tolerance": 0.02, "precision": 4 },
+    "collin_abs_ratio_atr": { "tolerance": 0.02, "precision": 4 },
+    "ror_shift": { "tolerance": 0.001, "precision": 6 },
+    "resolution_mix_shift": { "tolerance": 0.02, "precision": 4 },
+    "winning_signal_id": { "tolerance": 0.0, "precision": 0 }
+  },
+  "thresholds": [
+    { "reading": "collin_abs_rps", "comparator": "lt", "value": 0.7 },
+    { "reading": "collin_abs_ratio_atr", "comparator": "lt", "value": 0.7 },
+    { "reading": "ror_shift", "comparator": "ge", "value": 0.005 },
+    { "reading": "resolution_mix_shift", "comparator": "ge", "value": 0.05 }
+  ],
+  "keep_anchor": "size-invariant return-on-risk strictly beats head v32 (0.1876) with risk-cap dominance <= 0.40; the winning stop-width signal's alpha arms to flip_value 0.5 within PROPOSAL_BOUNDS_CAP"
+}
