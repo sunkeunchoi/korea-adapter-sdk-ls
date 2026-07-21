@@ -85,8 +85,33 @@ The best signal (entry-minutes) is genuinely a new axis AND actually moves the r
 (7.8% of trades), yet its projected RoR shift is +0.0008 — 6× below the build floor, and three
 of four signals *degrade* RoR. A governed stop move within CAP simply reshuffles which trades
 stop out without net benefit: the decoupled RangeLow target is fixed, the breakeven ratchet
-caps the downside independent of `w`, and CLASS B pins risk_capital. **A decorrelated
-stop-geometry signal that materially improves RoR does not exist in `data/turn4-fresh`.**
+caps the downside independent of `w`, and CLASS B pins risk_capital. **No decorrelated
+stop-geometry signal that materially improves RoR exists in `data/turn4-fresh` in the tested
+`(ref/signal)^alpha` direction.**
+
+**Honest bounds (Turn 11 code review — the NO-BUILD is a screen verdict, not a reconciled one).**
+The verdict hinges on a single reading (`ror_shift 0.000827 < 0.005`); it survives scrutiny but
+only with these caveats stated:
+
+- **One direction only.** Each signal is screened as high-signal→tighter-stop; an *inverse*-direction
+  edge reads negative and is discarded. So this is "no edge in the tested direction," and the
+  inverse direction + asymmetric stop-vs-target levers were unscreened (out of scope).
+- **`ror_shift` is a conservative lower bound.** The offline re-sim books flat target fills and
+  omits the run's favorable gap-through-limit fills; sizing is exact (0/77) so the whole
+  sim 0.152 vs run 0.1876 gap is fills. Because the lever *converts* resolutions, the bias does
+  not fully cancel in the shift — it pushes the decisive reading DOWN (bounded ~0.0016 over ≤6
+  converted trades). Even fully corrected the best signal is ~0.002–0.003 — still below the floor
+  and within the amihud-demonstrated ~0.04 screen-prediction noise.
+- **Floor is precedent-anchored, not "above sim error."** `0.005` is justified because the amihud
+  precedent cleared the looser `0.00065` `ror_shift` floor, built, and REVERTED (a +0.0309 screen
+  shift landed −0.0116) — sub-0.001 projected shifts do not predict a KEEP. Under the raw `0.00065`
+  floor the minutes signal nominally clears, which is exactly why that floor is inappropriate here.
+- **The twin certifies reproducibility, not barrier fidelity** (it shares the sim semantics by
+  design). Correctness review cross-checked the sim against `orb.rs` and found it faithful; that
+  fidelity is the main residual assumption.
+
+The one weakly-positive result (entry-minutes) is the seed for any future stop-geometry turn:
+start there, screen BOTH directions, and model favorable fills — do not re-derive from scratch.
 
 So the honest lesson is two-part: (a) the collinearity gate is not the whole story for a
 geometry lever — add a **fill-independent resolution-mix** materiality gate; and (b) the
