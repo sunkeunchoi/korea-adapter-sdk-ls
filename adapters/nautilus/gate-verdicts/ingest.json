@@ -4,5 +4,5 @@
   "verdict": "PASS",
   "software_version": "<adapter-version>",
   "schema_version": "<calendar-schema-version>",
-  "note": "Awaiting the live, operator-attended ingest Consumer Retirement Gate (AC8 accumulate post-close canary; AC9 checkpoint + backward-widen canaries). Flip verdict to PASS only after the owner-local canary + restart-after-activation + rehearsed rollback are recorded per RUNBOOK-retire-ingest.md. Verdict-only: never add KRX-derived dates or snapshot identities to this file (R17/KTD9)."
+  "note": "Recorded PASS: the live, operator-attended ingest Consumer Retirement Gate (AC8 accumulate post-close canary; AC9 checkpoint + backward-widen canaries) was run and passed — owner-local canary + restart-after-activation + rehearsed rollback per RUNBOOK-retire-ingest.md. Retained as an audit-trail record after the #189 U10 teardown. Verdict-only: never add KRX-derived dates or snapshot identities to this file (R17/KTD9)."
 }

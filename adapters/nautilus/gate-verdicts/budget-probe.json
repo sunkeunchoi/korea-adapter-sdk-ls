@@ -4,5 +4,5 @@
   "verdict": "PASS",
   "software_version": "<adapter-version>",
   "schema_version": "<calendar-schema-version>",
-  "note": "Awaiting the live, operator-attended budget-probe Consumer Retirement Gate (AC11 local canary). Flip verdict to PASS only after the owner-local canary + restart-after-activation + rehearsed rollback are recorded per RUNBOOK-retire-budget-probe.md. Verdict-only: never add KRX-derived dates or snapshot identities to this file (R17/KTD9)."
+  "note": "Recorded PASS: the live, operator-attended budget-probe Consumer Retirement Gate (AC11 local canary) was run and passed — owner-local canary + restart-after-activation + rehearsed rollback per RUNBOOK-retire-budget-probe.md. Retained as an audit-trail record after the #189 U10 teardown. Verdict-only: never add KRX-derived dates or snapshot identities to this file (R17/KTD9)."
 }

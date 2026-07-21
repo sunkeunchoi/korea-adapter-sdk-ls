@@ -1,5 +1,11 @@
 //! Mechanical merge-block (U5, KTD1/R7; the plan's central safety guarantee made technical).
 //!
+//! STATUS (post-#189 U10): all four Consumer Retirement Gates are recorded `PASS` and every
+//! consumer's weekday primitive is already deleted, so this check now passes unconditionally.
+//! It is **retained as an audit trail** (verdict records + the coupling rule) and as a standing
+//! guard against silently re-introducing a weekday primitive without a gate — it no longer
+//! blocks any in-flight retirement.
+//!
 //! A consumer's weekday primitive (and its `Legacy | Shadow` arm) may be deleted ONLY when that
 //! consumer's committed, non-sensitive gate-verdict record
 //! (`adapters/nautilus/gate-verdicts/<consumer>.json`) is present and `PASS`. That verdict is

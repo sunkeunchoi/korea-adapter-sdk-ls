@@ -323,10 +323,10 @@ pub struct DispatchCliConfig {
     /// The pre-registration values file (`preregistration.json`) the reducer + record
     /// citation load, when present (KTD9). Absent in phase 1.
     pub prereg_path: Option<std::path::PathBuf>,
-    /// The per-consumer calendar adoption posture (U12, KTD8). Composed default Shadow: the
-    /// calendar date decision is computed + recorded to stderr while the weekday
-    /// `window_open`/date-fact path stays authoritative. Enforced makes the calendar the
-    /// authoritative date fact (no weekday fallback); Legacy leaves the weekday path.
+    /// The per-consumer calendar adoption posture (U12, KTD8). Enforced-only after the #189
+    /// weekday retirement: the calendar is the authoritative date fact with no weekday
+    /// fallback. Retained as a startup-record field; the offline `date_fact_stub` seam still
+    /// wins over env resolution for tests.
     pub adoption: CalendarAdoption,
     /// The current dispatch run identity the attended Unknown override binds to (U12).
     /// Absent → an empty run id (no override can bind).
@@ -421,7 +421,7 @@ pub fn dispatch_gate_config_from_env() -> anyhow::Result<DispatchCliConfig> {
             .ok()
             .filter(|s| !s.trim().is_empty())
             .map(std::path::PathBuf::from),
-        // The per-consumer adoption posture (U12, KTD8): composed default Shadow.
+        // The per-consumer adoption posture (U12, KTD8): Enforced-only (#189).
         adoption: nautilus_ls::calendar::adoption_from_env(),
         run_id: std::env::var("LS_DISPATCH_RUN_ID").ok().filter(|s| !s.trim().is_empty()),
         // Never stubbed from the environment: the real date fact is always resolved.
