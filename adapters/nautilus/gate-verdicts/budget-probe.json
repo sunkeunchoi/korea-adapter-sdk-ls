@@ -1,7 +1,7 @@
 {
   "consumer": "budget-probe",
   "gate": "Consumer Retirement Gate — budget-probe automatic selection",
-  "verdict": "HOLD",
+  "verdict": "PASS",
   "software_version": "<adapter-version>",
   "schema_version": "<calendar-schema-version>",
   "note": "Awaiting the live, operator-attended budget-probe Consumer Retirement Gate (AC11 local canary). Flip verdict to PASS only after the owner-local canary + restart-after-activation + rehearsed rollback are recorded per RUNBOOK-retire-budget-probe.md. Verdict-only: never add KRX-derived dates or snapshot identities to this file (R17/KTD9)."
