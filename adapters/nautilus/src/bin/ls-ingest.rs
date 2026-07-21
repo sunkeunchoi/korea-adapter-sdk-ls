@@ -76,6 +76,30 @@ fn exit_code_for(report: &CoverageReport) -> u8 {
     }
 }
 
+/// Backfill-floor admission (#189 U6 follow-up). The startup admission validates only the
+/// target date, but an automatic run also backfills fresh instruments FROM the
+/// `LS_INGEST_LOOKBACK` floor. Under Enforced-only, a floor the frozen calendar cannot cover
+/// makes every fresh triple's established prefix stop before it starts (`start <
+/// materialized_from` → `stop_before`), so those triples skip with zero bars, the run still
+/// exits 0, and — worst — a metadata pin is written attesting a selection whose bars never
+/// landed. Fail closed here exactly as the target admission does, rather than skipping silently.
+/// `coverage` is `None` only when no calendar view is present, which the target admission
+/// (`EnforcedFailClosed`) already fails closed on for automatic modes — so a missing view is not
+/// this check's concern and passes through `Ok`.
+fn floor_admission(floor: NaiveDate, coverage: Option<(NaiveDate, NaiveDate)>) -> Result<(), String> {
+    if let Some((from, through)) = coverage {
+        if floor < from || floor > through {
+            return Err(format!(
+                "backfill floor {} is outside the frozen calendar coverage [{}, {}] — a fresh instrument could not be attested from it (its prefix would skip with zero bars and the run would mis-pin). Widen the calendar snapshot or raise LS_INGEST_LOOKBACK.",
+                floor.format("%Y%m%d"),
+                from.format("%Y%m%d"),
+                through.format("%Y%m%d"),
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn backward_widen_uncertainty_line(
     uncertainty: &nautilus_ls::ingest::BackwardWidenUncertainty,
 ) -> String {
@@ -169,8 +193,13 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
     // constructing anything gateway-capable. Enforced-only after the ingest Consumer Retirement
     // Gate (#189 U6): the date decision no longer consults LS_CALENDAR_ADOPTION — accumulate /
     // rebase / probe resolve against proven Trading Sessions and fail closed when the calendar
-    // is unavailable. The mandatory startup record is still emitted BEFORE any fallible config
-    // parse / runtime build (always-emit-before-fallible-parse, KTD2).
+    // is unavailable. The startup record is emitted BEFORE the SDK / runtime build and before
+    // any gateway request (always-emit-before-fallible-build, KTD2), so an admission refusal is
+    // recorded before anything gateway-capable exists. NOTE: in manual `range` mode the record's
+    // target IS `LS_INGEST_EDATE`, so that one env parse necessarily precedes the emit — a
+    // missing/malformed EDATE returns before the record is written. Range mode requires no
+    // calendar admission, so this is an audit gap, not a safety gap; see
+    // docs/solutions/conventions/composition-root-always-emit-before-fallible-parse.md.
     let calendar = nautilus_ls::calendar::IngestCalendarContext::resolve(
         nautilus_ls::calendar::snapshot_path_from_env(),
         Utc::now(),
@@ -187,6 +216,23 @@ async fn run() -> Result<Option<CoverageReport>, Box<dyn std::error::Error>> {
             startup.render_line()
         )
         .into());
+    }
+    // Backfill-floor admission (#189 U6): the check above validates only the target date, but an
+    // automatic run also backfills fresh instruments FROM the LS_INGEST_LOOKBACK floor. Fail
+    // closed here — before the universe load / any gateway construction — when that floor is
+    // outside calendar coverage, so a fresh triple cannot silently skip with zero bars and then
+    // mis-pin a selection whose bars never landed (see `floor_admission`).
+    if accumulate {
+        let floor = parse_yyyymmdd(&env_required("LS_INGEST_LOOKBACK")?)?;
+        let coverage = calendar.view().map(|view| {
+            let c = view.calendar().coverage();
+            (c.materialized_from, c.materialized_through)
+        });
+        if let Err(msg) = floor_admission(floor, coverage) {
+            return Err(
+                format!("calendar admission refused {mode} before gateway construction: {msg}").into(),
+            );
+        }
     }
 
     let adapter_cfg = match std::env::var("LS_INGEST_LANE_FILE") {
@@ -606,6 +652,29 @@ mod tests {
     #[test]
     fn exit_zero_for_empty_report() {
         assert_eq!(exit_code_for(&empty_report()), 0);
+    }
+
+    /// #189 U6 follow-up: an automatic run whose LS_INGEST_LOOKBACK floor is outside calendar
+    /// coverage fails closed BEFORE dispatch — otherwise a fresh instrument's prefix skips with
+    /// zero bars, the run exits 0, and a metadata pin is mis-written on un-ingested data.
+    #[test]
+    fn floor_admission_refuses_a_floor_below_coverage() {
+        let from = NaiveDate::from_ymd_opt(2025, 1, 1).unwrap();
+        let through = NaiveDate::from_ymd_opt(2026, 12, 31).unwrap();
+        let cov = Some((from, through));
+        // Floor before coverage → refused (the exact #1 cascade trigger).
+        let err = floor_admission(NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(), cov)
+            .expect_err("a floor below coverage must be refused");
+        assert!(err.contains("outside the frozen calendar coverage"), "actionable message: {err}");
+        // Floor after coverage → refused.
+        assert!(floor_admission(NaiveDate::from_ymd_opt(2027, 1, 1).unwrap(), cov).is_err());
+        // Floor at each coverage boundary and inside → admitted.
+        assert!(floor_admission(from, cov).is_ok(), "floor == materialized_from is in coverage");
+        assert!(floor_admission(through, cov).is_ok(), "floor == materialized_through is in coverage");
+        assert!(floor_admission(NaiveDate::from_ymd_opt(2025, 6, 1).unwrap(), cov).is_ok());
+        // No calendar view → not this check's concern (the target admission already fails closed
+        // on an unavailable calendar for automatic modes).
+        assert!(floor_admission(NaiveDate::from_ymd_opt(2024, 1, 1).unwrap(), None).is_ok());
     }
 
     /// R9: a report carrying only backward-widen warnings is still exit 0 —

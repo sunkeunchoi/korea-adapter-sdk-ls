@@ -459,12 +459,26 @@ impl Checkpoint {
         let hole_breaks = |cm: NaiveDate, sd: NaiveDate| -> bool {
             let freshness = gate.full_history_freshness();
             if freshness != Some(DimensionStaleness::Fresh) {
-                tracing::warn!(
-                    after = %cm.format("%Y%m%d"),
-                    before = %sd.format("%Y%m%d"),
-                    full_history_freshness = ?freshness,
-                    "checkpoint continuity lacks fresh full-history evidence; keeping the ranges separate (conservative over-fetch)"
-                );
+                // `None` freshness means NO calendar view was injected (a structural no-view load
+                // via `Checkpoint::load` — manual `range` mode and downstream readiness/backtest
+                // readers): continuity can never be proven, so keeping legacy multi-range holes
+                // separate is expected and NOT actionable — log at debug. `Some(non-fresh)` means
+                // a view IS present but its full-history evidence is stale/unevaluated under an
+                // accumulate/rebase gate — the operator's snapshot needs attention — log at warn.
+                if freshness.is_none() {
+                    tracing::debug!(
+                        after = %cm.format("%Y%m%d"),
+                        before = %sd.format("%Y%m%d"),
+                        "checkpoint continuity has no calendar view (no-view load); keeping legacy multi-range holes separate (conservative over-fetch) — expected for range mode / downstream readers"
+                    );
+                } else {
+                    tracing::warn!(
+                        after = %cm.format("%Y%m%d"),
+                        before = %sd.format("%Y%m%d"),
+                        full_history_freshness = ?freshness,
+                        "checkpoint continuity lacks fresh full-history evidence; keeping the ranges separate (conservative over-fetch) — the calendar snapshot is stale/unevaluated"
+                    );
+                }
                 return true;
             }
             let decision = gate.continuity_decision(cm, sd);
@@ -1016,8 +1030,9 @@ mod tests {
 
     #[test]
     fn migration_report_entry_names_the_escape_hatch_via_load() {
-        // The load-time warning path: a hole-straddling checkpoint file surfaces the
-        // remainder (the load logs it; here we assert the derivation result directly).
+        // The no-view load path (`Checkpoint::load_gated` with no calendar) surfaces the
+        // remainder: a multi-range checkpoint derives the prefix watermark and keeps the far
+        // range in `completed` (the load logs it; here we assert the derivation result directly).
         let dir = tempdir().unwrap();
         let path = dir.path().join("legacy.json");
         std::fs::write(
@@ -1074,16 +1089,27 @@ mod tests {
     }
 
     #[test]
-    fn migration_failure_inversion_never_derives_past_a_hole() {
-        // Failure-inversion (Success Criteria): a non-contiguous fixture must NOT
-        // derive a watermark at or past the hole — an over-derivation bug fails HERE
-        // rather than silently gapping un-fetched history.
+    fn no_view_migration_keeps_a_multi_range_checkpoint_separate() {
+        // No-view semantics (`Checkpoint::load` default, manual range mode, downstream readers):
+        // with no calendar view the merge-hole test conservatively BREAKS every multi-range
+        // chain, so a multi-range checkpoint derives only its PREFIX watermark and keeps the far
+        // range in `completed` (never over-deriving past un-fetched history). This is the
+        // no-view case ONLY — the calendar-backed hole discrimination (all-Closed merges,
+        // proven-session/Unknown split) is asserted in the `calendar_gate_migration` integration
+        // tests, which under `no_calendar_gate` here would be vacuous (every gap breaks).
         let mut cp = Checkpoint::default();
-        cp.mark_done("005930.XKRX", "1-DAY", "20240101..20240105"); // Mon..Fri
-        cp.mark_done("005930.XKRX", "1-DAY", "20240110..20240112"); // hole: Mon/Tue un-covered
+        cp.mark_done("005930.XKRX", "1-DAY", "20240101..20240105");
+        cp.mark_done("005930.XKRX", "1-DAY", "20240110..20240112");
         cp.migrate_completed_watermarks_gated(&no_calendar_gate());
-        let wm = cp.watermark("005930.XKRX", "1-DAY").unwrap();
-        assert!(wm < ymd(2024, 1, 10), "watermark stays before the hole, got {wm}");
+        assert_eq!(
+            cp.watermark("005930.XKRX", "1-DAY"),
+            Some(ymd(2024, 1, 5)),
+            "no view → prefix watermark only (conservative over-fetch)",
+        );
+        assert!(
+            cp.is_done("005930.XKRX", "1-DAY", "20240110..20240112"),
+            "the far range stays in completed — never folded into the watermark without a view",
+        );
     }
 
     #[test]

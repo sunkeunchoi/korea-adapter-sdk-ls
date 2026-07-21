@@ -100,9 +100,8 @@ pub fn last_closed_session(now_kst: NaiveDateTime, close_buffer: NaiveTime) -> N
     }
 }
 
-/// The calendar-derived decision for a single target civil date (U9, KTD8), independent of
-/// the adoption posture. Computed purely from the injected calendar view (or its absence),
-/// so Shadow can RECORD it while the weekday path acts and Enforced can ACT on it.
+/// The calendar-derived decision for a single target civil date (U9, KTD8). Computed purely
+/// from the injected calendar view (or its absence); the Enforced next-fetch path acts on it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CalendarDecision {
     /// A proven Trading Session: eligible to fetch (respecting the close buffer already
@@ -117,23 +116,23 @@ pub enum CalendarDecision {
     UnavailableStop,
 }
 
-/// The action the ingest next-fetch path takes for a target date under the adoption seam
-/// (U9, KTD8). Only Enforced ever yields anything but [`Proceed`].
+/// The action the ingest next-fetch path takes for a target date (U9, KTD8). Enforced-only
+/// after the ingest Consumer Retirement Gate (#189 U6): a proven Trading Session yields
+/// [`Proceed`], a proven Closed date [`SkipAdvance`], and Unknown/unavailable [`Stop`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GateAction {
-    /// Run the existing weekday-authoritative (Legacy/Shadow) or proven-session (Enforced)
-    /// fetch path unchanged.
+    /// Proven Trading Session: run the proven-session fetch path.
     Proceed,
-    /// Enforced + proven Closed: advance the watermark to the target WITHOUT a gateway call.
+    /// Proven Closed: advance the watermark to the target WITHOUT a gateway call.
     SkipAdvance,
-    /// Enforced + Unknown/unavailable: stop before dispatch; preserve checkpoint + watermark
+    /// Unknown/unavailable: stop before dispatch; preserve checkpoint + watermark
     /// byte-for-byte and issue zero gateway requests for the target.
     Stop,
 }
 
-/// The probe-anchor decision under the adoption seam (U9). Legacy/Shadow keep the weekday
-/// anchor authoritative (Shadow records the calendar-selected one); Enforced replaces it with
-/// the most recent proven Trading Session, or stops when none can be proven.
+/// The probe-anchor decision (U9). Enforced-only after the ingest Consumer Retirement Gate
+/// (#189 U6): the anchor is the most recent proven Trading Session at or before the requested
+/// date, or [`Stop`](ProbeAnchor::Stop) when the calendar is unavailable or none can be proven.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProbeAnchor {
     /// Probe using this anchor date.
@@ -167,7 +166,7 @@ impl CalendarRangePlan {
 /// proven Trading Session in the gap is un-attested history that must keep the ranges
 /// separate; Unknown/unavailable evidence is treated conservatively (stay separate +
 /// over-fetch) so newly-resolved evidence can re-chain the ranges later. Computed purely
-/// from the injected view, so Shadow can RECORD it while the weekday hole test acts.
+/// from the injected view.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContinuityDecision {
     /// Every intervening date is a proven Closed date (or the gap is empty) — contiguous,
@@ -189,20 +188,20 @@ impl ContinuityDecision {
     }
 }
 
-/// The backward-widen warning action under the adoption seam (U10, KTD8). Legacy/Shadow keep
-/// the unconditional weekday warning authoritative (Shadow records the calendar verdict);
-/// Enforced gates the warning on proven calendar evidence in the pre-coverage region.
+/// The backward-widen warning action (U10, KTD8). Enforced-only after the ingest Consumer
+/// Retirement Gate (#189 U6): the warning is gated on proven calendar evidence in the
+/// pre-coverage region.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WidenAction {
-    /// Emit + PERSIST the normal backward-widen warning (Legacy/Shadow always; Enforced when
-    /// a proven Trading Session lies in the pre-coverage region — real un-fetched history).
+    /// Emit + PERSIST the normal backward-widen warning (a proven Trading Session lies in the
+    /// pre-coverage region — real un-fetched history).
     EmitPersist,
-    /// Emit the DISTINCT NON-PERSISTED uncertainty warning (Enforced + any
-    /// Unknown/unavailable evidence): do NOT record a history floor, so a later run with
-    /// newly-resolved calendar evidence re-evaluates the region.
+    /// Emit the DISTINCT NON-PERSISTED uncertainty warning (any Unknown/unavailable evidence):
+    /// do NOT record a history floor, so a later run with newly-resolved calendar evidence
+    /// re-evaluates the region.
     EmitUncertain,
-    /// Emit nothing (Enforced + an all-proven-Closed pre-coverage region — no trading history
-    /// was missed, so there is nothing to widen).
+    /// Emit nothing (an all-proven-Closed pre-coverage region — no trading history was missed,
+    /// so there is nothing to widen).
     Suppress,
 }
 
@@ -245,7 +244,7 @@ impl<'c> CalendarGate<'c> {
     /// [`ClosedAdvance`](CalendarDecision::ClosedAdvance), a successful Unknown →
     /// [`UnknownStop`](CalendarDecision::UnknownStop), and a missing view or any
     /// out-of-range/query error → [`UnavailableStop`](CalendarDecision::UnavailableStop). This
-    /// is the value Shadow records and Enforced acts on.
+    /// is the value the Enforced next-fetch path acts on.
     pub fn calendar_decision(&self, target: NaiveDate) -> CalendarDecision {
         match self.view {
             None => CalendarDecision::UnavailableStop,
@@ -282,8 +281,7 @@ impl<'c> CalendarGate<'c> {
     /// all-proven-Closed range (or a single proven-Closed date) →
     /// [`SkipAdvance`](GateAction::SkipAdvance); any proven Trading Session →
     /// [`Proceed`](GateAction::Proceed) (fetch the range, never skip a session); any
-    /// Unknown/unavailable date with no proven session → [`Stop`](GateAction::Stop). Legacy/Shadow
-    /// keep the weekday path authoritative (Shadow records the range verdict). Passing
+    /// Unknown/unavailable date with no proven session → [`Stop`](GateAction::Stop). Passing
     /// `start == last_closed` recovers the single-date semantics exactly.
     pub fn range_action(&self, start: NaiveDate, last_closed: NaiveDate) -> GateAction {
         match self.scan_inclusive(start, last_closed) {
@@ -372,6 +370,23 @@ impl<'c> CalendarGate<'c> {
         None
     }
 
+    /// Whether a proven Trading Session exists at or before `anchor` in the injected view —
+    /// the basis-shift detection authority (KTD-3). The daily Enforced accumulate run advances
+    /// the watermark onto a proven Closed date whenever a run spans only weekend/holiday
+    /// closures (the all-Closed skip-advance), so the stored watermark can legitimately sit on
+    /// a Closed date. Detection must still run — anchored on the prior session's stored history,
+    /// which [`detect_shift`](Ingestor::detect_shift) already resolves via the stored overlap
+    /// tail — rather than being gated on the watermark date *itself* being a session. Gating on
+    /// `calendar_decision(wm) == Fetch` would skip detection on the first trading day after any
+    /// weekend/holiday and append a post-split bar onto stale basis until a later run healed it.
+    /// Returns `false` for no view, an out-of-coverage anchor, or an Unknown at/before the
+    /// anchor with no proven session first — the fail-closed provenance guard is preserved
+    /// (a strict superset of the retired `Fetch`-at-`wm` check, adding only the proven-Closed
+    /// watermark case).
+    pub fn proven_session_at_or_before(&self, anchor: NaiveDate) -> bool {
+        self.select_recent_session(anchor).is_some()
+    }
+
     /// The probe anchor (U9). Enforced-only after the ingest Consumer Retirement Gate (#189
     /// U6): the anchor is the most recent proven Trading Session at or before `anchor`, or
     /// [`Stop`](ProbeAnchor::Stop) when the calendar is unavailable or no session can be proven
@@ -433,10 +448,9 @@ impl<'c> CalendarGate<'c> {
         }
     }
 
-    /// The adoption-INDEPENDENT continuity verdict for the OPEN interval `(after, before)` —
-    /// the checkpoint merge-hole test (U10). Walks each civil date strictly between the two.
-    /// This is the value Shadow records and Enforced acts on (via
-    /// [`breaks_chain`](ContinuityDecision::breaks_chain)).
+    /// The continuity verdict for the OPEN interval `(after, before)` — the checkpoint
+    /// merge-hole test (U10). Walks each civil date strictly between the two. The Enforced
+    /// migration acts on it (via [`breaks_chain`](ContinuityDecision::breaks_chain)).
     pub fn continuity_decision(&self, after: NaiveDate, before: NaiveDate) -> ContinuityDecision {
         match after.succ_opt() {
             Some(first) => self.scan_continuity(first, before),
@@ -444,9 +458,9 @@ impl<'c> CalendarGate<'c> {
         }
     }
 
-    /// The adoption-INDEPENDENT continuity verdict for the backward-widen pre-coverage region
-    /// `[floor, earliest_stored)` (U10) — the half-open span accumulate would NOT fetch. This
-    /// is the value Shadow records and Enforced acts on (via [`Self::widen_action`]).
+    /// The continuity verdict for the backward-widen pre-coverage region
+    /// `[floor, earliest_stored)` (U10) — the half-open span accumulate would NOT fetch. The
+    /// Enforced backward-widen path acts on it (via [`Self::widen_action`]).
     pub fn widen_evidence(
         &self,
         floor: NaiveDate,
@@ -1489,7 +1503,7 @@ pub struct CoverageReport {
     /// Backward-widen uncertainties (U10/KTD8, Enforced only): triples whose pre-coverage
     /// region has Unknown/unavailable calendar evidence and no proven Trading Session —
     /// surfaced as a DISTINCT non-persisted warning so a later run with resolved evidence
-    /// re-evaluates. Always empty under Legacy/Shadow (weekday warning authoritative).
+    /// re-evaluates.
     pub backward_widen_uncertainties: Vec<BackwardWidenUncertainty>,
     /// Triples deferred pre-dispatch under a measured budget (AE3/KTD-3) — stopped
     /// before the cliff with the remainder scheduled, never provoking IGW00201.
@@ -1802,8 +1816,7 @@ impl Ingestor {
         })?;
         let checkpoint_path = self.config.checkpoint_path();
         // U10/KTD8: the legacy `completed`→`watermark` migration runs on load; route it
-        // through the same calendar seam so Enforced merges only fully-proven-Closed gaps
-        // (Legacy/Shadow stay weekday-authoritative and byte-identical).
+        // through the calendar seam so Enforced merges only fully-proven-Closed gaps.
         let mut checkpoint = Checkpoint::load_gated(&checkpoint_path, &calendar)?;
         checkpoint.adjusted_prices = self.config.adjusted_prices;
         let mut checkpoint_committed = false;
@@ -1903,10 +1916,8 @@ impl Ingestor {
                             let earliest_stored = kst_date_of(UnixNanos::from(earliest_ns));
                             if lookback_floor < earliest_stored {
                                 // U10/KTD8: gate the widen warning on calendar evidence in the
-                                // pre-coverage region [floor, earliest_stored). Legacy/Shadow
-                                // keep the unconditional weekday warning (Shadow records the
-                                // calendar verdict, non-persisted); Enforced acts on proven
-                                // facts — a proven Trading Session still warns + persists, an
+                                // pre-coverage region [floor, earliest_stored). Enforced acts on
+                                // proven facts — a proven Trading Session warns + persists, an
                                 // all-Closed region emits nothing, and Unknown/unavailable emits
                                 // the DISTINCT non-persisted uncertainty (no floor recorded, so a
                                 // later run with resolved evidence re-evaluates).
@@ -1976,10 +1987,15 @@ impl Ingestor {
                     if matches!(kind, BarKind::Daily) {
                         if let Some(wm) = checkpoint.watermark(&instrument, &label) {
                             let candidate = calendar.accumulate_plan(lookback_floor, last_closed);
+                            // Authorize on a proven session AT OR BEFORE the watermark, not on
+                            // the watermark itself being a session: the daily Enforced run can
+                            // advance the watermark onto a proven Closed date (weekend/holiday),
+                            // and detection must still run so a split/dividend appearing on the
+                            // first trading day back is not appended onto stale basis (KTD-3).
                             let detection_authorized = candidate
                                 .destructive_request_through()
                                 .is_some_and(|heal_through| heal_through >= wm)
-                                && matches!(calendar.calendar_decision(wm), CalendarDecision::Fetch);
+                                && calendar.proven_session_at_or_before(wm);
                             if detection_authorized && self.detect_shift(&shcode, bar_type, wm).await? {
                                 let heal_through = candidate
                                     .destructive_request_through()

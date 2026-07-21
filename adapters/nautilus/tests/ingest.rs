@@ -2258,7 +2258,7 @@ mod reingest_trim {
     /// path at all: with no explicit watermark seeded, the load-time migration merges the far
     /// range across a proven all-Closed gap.)
     #[tokio::test]
-    async fn legacy_multi_range_stall_flips_to_stable_and_advanced() {
+    async fn legacy_multi_range_stall_holds_the_watermark_at_the_prefix() {
         let dir = tempdir().unwrap();
         let catalog = dir.path().join("catalog");
         let server = MockServer::start().await;
@@ -2468,7 +2468,7 @@ mod calendar_gate_migration {
     use super::*;
     use std::path::PathBuf;
     use chrono::{DateTime, TimeZone, Utc};
-    use nautilus_ls::ingest::{CalendarGate, GateAction, ProbeAnchor};
+    use nautilus_ls::ingest::{CalendarDecision, CalendarGate, GateAction, ProbeAnchor};
     use nautilus_ls_calendar::{
         compute_artifact_id, compute_calendar_id, CalendarAdoption, KrxCalendar,
     };
@@ -2562,6 +2562,46 @@ mod calendar_gate_migration {
         assert_eq!(enforced.action(ymd(2010, 6, 19)), GateAction::SkipAdvance, "proven Closed → skip-advance");
         assert_eq!(enforced.action(ymd(2010, 6, 15)), GateAction::Proceed, "proven Trading Session → fetch");
         assert_eq!(enforced.action(ymd(2010, 1, 5)), GateAction::Stop, "Unknown → fail closed");
+    }
+
+    /// KTD-3 regression: basis-shift detection is authorized when a proven Trading Session
+    /// exists AT OR BEFORE the watermark, not only when the watermark date is itself a session.
+    /// The daily Enforced accumulate advances the watermark onto a proven Closed date whenever a
+    /// run spans only weekend/holiday closures, so a Closed watermark must still authorize
+    /// detection (anchored on the prior session's stored history) — otherwise the first trading
+    /// day after a weekend/holiday would append a post-split bar onto stale basis until a later
+    /// run healed it. The retired `calendar_decision(wm) == Fetch` gate returned `false` for the
+    /// Closed-watermark case (asserted here so the regression is explicit).
+    #[test]
+    fn basis_shift_detection_is_authorized_on_a_proven_closed_watermark() {
+        // Make 2010-06-16 a proven Closed date; 2010-06-15 stays a proven Trading Session — the
+        // "watermark advanced onto a weekend/holiday closure, prior session below it" shape.
+        let cal = calendar_with_statuses(&[(ymd(2010, 6, 16), DayStatus::Closed)]);
+        let view = cal.as_of(as_of()).unwrap();
+        let gate = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+
+        // The bug: a watermark advanced onto the Closed date was NOT a `Fetch`, so the old
+        // gate (`calendar_decision(wm) == Fetch`) skipped detection.
+        assert_ne!(
+            gate.calendar_decision(ymd(2010, 6, 16)),
+            CalendarDecision::Fetch,
+            "a proven Closed watermark is not itself a fetchable session (the retired gate's blind spot)",
+        );
+        // The fix: a proven session exists at/before the Closed watermark → detection authorized.
+        assert!(
+            gate.proven_session_at_or_before(ymd(2010, 6, 16)),
+            "a proven Closed watermark with a prior session authorizes basis-shift detection",
+        );
+        // A proven Trading Session watermark is still authorized (superset preserves the old case).
+        assert!(gate.proven_session_at_or_before(ymd(2010, 6, 15)), "a proven session watermark still authorizes");
+        // Fail-closed provenance is preserved: an Unknown at/before the watermark authorizes nothing.
+        assert!(
+            !gate.proven_session_at_or_before(ymd(2010, 1, 5)),
+            "an Unknown watermark (no proven session first) stays fail-closed — no destructive detection",
+        );
+        // No view (calendar unavailable) authorizes nothing.
+        let no_view = CalendarGate::new(CalendarAdoption::Enforced, None);
+        assert!(!no_view.proven_session_at_or_before(ymd(2010, 6, 16)), "no view → no detection authority");
     }
 
     // -- Enforced accumulate next-fetch --
@@ -3130,6 +3170,38 @@ mod calendar_gate_migration {
         let (wm, rem) = migrate_with(&enforced, &ranges);
         assert_eq!(wm, Some(ymd(2011, 2, 10)), "an all-Closed holiday-cluster gap chains into one watermark");
         assert!(rem.is_empty(), "no remainder — the ranges merged");
+    }
+
+    /// #189 U6 regression (restores the coverage the retired unit test
+    /// `migration_gap_reasons_discriminate_coverage` provided): a `PaperThin` range terminates
+    /// the chain BEFORE it — a truncated fetch is un-attested history — INDEPENDENT of the
+    /// calendar merge-hole verdict. Uses the SAME proven all-Closed holiday-cluster gap that
+    /// `enforced_merges_an_all_closed_gap` merges, so the ONLY difference is the far range's
+    /// `PaperThin` reason: it must NOT merge here, proving the gap-reason discrimination is not
+    /// subsumed by the (merging) continuity gate.
+    #[test]
+    fn paper_thin_range_terminates_the_chain_even_across_a_merging_all_closed_gap() {
+        let cal = fixture_calendar();
+        let view = cal.as_of(fresh_history_as_of()).unwrap();
+        let enforced = CalendarGate::new(CalendarAdoption::Enforced, Some(view));
+
+        let mut cp = Checkpoint::default();
+        cp.mark_done(SAMSUNG, DAILY, "20110115..20110201");
+        // The far range is a truncated (PaperThin) fetch across the SAME all-Closed gap that
+        // would otherwise merge — the chain must stop before it.
+        cp.record_gap(SAMSUNG, DAILY, "20110205..20110210", GapReason::PaperThin);
+        let rem = cp.migrate_completed_watermarks_gated(&enforced);
+
+        assert_eq!(
+            cp.watermark(SAMSUNG, DAILY),
+            Some(ymd(2011, 2, 1)),
+            "the PaperThin far range terminates the chain (prefix watermark only), even though the intervening gap is a proven all-Closed cluster that WOULD merge two non-PaperThin ranges",
+        );
+        assert_eq!(
+            rem.into_iter().map(|r| r.ranges).collect::<Vec<_>>(),
+            vec![vec!["20110205..20110210".to_string()]],
+            "the truncated far range stays in completed as a remainder, never folded into the watermark",
+        );
     }
 
     #[test]
