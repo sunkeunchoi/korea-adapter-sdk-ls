@@ -1152,6 +1152,41 @@ fn with_gateway_context(
     }
 }
 
+/// Record an empty-proven-session halt against the bounded persistent-empty retry
+/// counter (#189 follow-up). Bumps the per-triple counter; when it reaches `max`
+/// the triple **converges** — a [`GapReason::EmptyHistory`] gap is durably recorded
+/// (documenting the hole; coverage is never fabricated over a zero-bar proven
+/// session) and one structured `warn!` fires. The convergence *skip* itself happens
+/// on the next run via [`Checkpoint::empty_retry_converged`] (the pre-dispatch check
+/// in `run_accumulate_gated`), so the triple stops re-fetching every run and stops
+/// charging the cumulative IGW00201 budget until its target advances or it serves
+/// bars. Never advances the watermark — the caller still pins before the empty span.
+fn note_empty_frontier(
+    checkpoint: &mut Checkpoint,
+    instrument: &str,
+    label: &str,
+    range: &str,
+    last_closed: NaiveDate,
+    max: u32,
+) {
+    let count = checkpoint.bump_empty_retry(instrument, label, last_closed);
+    if count >= max {
+        // Document the hole WITHOUT marking it covered (`record_gap_uncovered`, not
+        // `record_gap`): adding the range to `completed` would let the load-time
+        // migration derive a watermark from it — fabricating coverage over a zero-bar
+        // proven session, the exact advance-on-empty the Enforced posture refuses.
+        checkpoint.record_gap_uncovered(instrument, label, range, GapReason::EmptyHistory);
+        tracing::warn!(
+            instrument = %instrument,
+            bar_type = %label,
+            range = %range,
+            empty_retries = count,
+            bound = max,
+            "proven Trading Session persistently serves zero bars; recorded a persistent-empty gap and converged — skipping this triple until its target advances or it serves bars (bounds the cumulative IGW00201 budget spend)"
+        );
+    }
+}
+
 /// Split a `[s, e]` date range into two halves. Returns `None` if `s == e` (a
 /// single day cannot be narrowed).
 fn split_range(s: NaiveDate, e: NaiveDate) -> Option<((NaiveDate, NaiveDate), (NaiveDate, NaiveDate))> {
@@ -1193,6 +1228,25 @@ fn requeue_halves(queue: &mut VecDeque<(NaiveDate, NaiveDate)>, s: NaiveDate, e:
 /// Default overlap-window size: the last N stored trading days ending at the
 /// watermark (the `IngestConfig::overlap_days` knob).
 pub const DEFAULT_OVERLAP_DAYS: usize = 5;
+
+/// Default bound on consecutive empty-proven-session re-fetches before an
+/// accumulate triple converges (#189 follow-up). Small on purpose: a couple of
+/// conservative retries absorb a transient empty page, then the triple stops
+/// re-fetching a persistently-empty proven session every run (which would keep
+/// charging the cumulative IGW00201 budget). Override with
+/// `LS_INGEST_EMPTY_RETRY_MAX`.
+pub const DEFAULT_EMPTY_RETRY_MAX: u32 = 3;
+
+/// Resolve the persistent-empty retry bound from `LS_INGEST_EMPTY_RETRY_MAX`
+/// (default [`DEFAULT_EMPTY_RETRY_MAX`]), clamped to ≥ 1 so at least one fetch
+/// attempt always happens. An unset/unparseable value falls back to the default.
+fn empty_retry_max_from_env() -> u32 {
+    std::env::var("LS_INGEST_EMPTY_RETRY_MAX")
+        .ok()
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .map(|n| n.max(1))
+        .unwrap_or(DEFAULT_EMPTY_RETRY_MAX)
+}
 
 /// Minimum mutually-present dates for an overlap comparison to be meaningful
 /// (KTD-3): fewer — including the no-watermark first-ever accumulate — skips
@@ -1547,6 +1601,14 @@ pub struct Ingestor {
     budget_model: BudgetModel,
     /// This lane's credential-hash ledger key.
     cred_hash: String,
+    /// Bound on consecutive empty-proven-session re-fetches before an accumulate
+    /// triple converges (#189 follow-up): after this many runs where the frontier
+    /// proven Trading Session serves zero bars, the triple records a persistent-empty
+    /// gap and stops re-fetching every run (skips until its target advances or it
+    /// serves bars), so it stops charging the cumulative IGW00201 budget. Resolved
+    /// from `LS_INGEST_EMPTY_RETRY_MAX` (default [`DEFAULT_EMPTY_RETRY_MAX`], clamped
+    /// to ≥ 1); overridable in tests via [`Ingestor::with_empty_retry_max`].
+    empty_retry_max: u32,
 }
 
 impl Ingestor {
@@ -1572,7 +1634,25 @@ impl Ingestor {
             ledger_path,
             budget_model,
             cred_hash,
+            empty_retry_max: empty_retry_max_from_env(),
         }
+    }
+
+    /// Override the persistent-empty retry bound (#189 follow-up). Tests use this to
+    /// exercise the convergence path without the process-global env var; production
+    /// resolves it from `LS_INGEST_EMPTY_RETRY_MAX`. Clamped to ≥ 1 (at least one
+    /// fetch attempt).
+    ///
+    /// Deliberately an `Ingestor` builder rather than an [`IngestConfig`] field (unlike
+    /// `overlap_days`): the bound is an env-resolved operational knob with no per-run
+    /// meaning, so it lives beside the other env/file-resolved `Ingestor` state
+    /// (`budget_model`, `ledger`) that `new()` loads — not in the per-invocation
+    /// `IngestConfig` the bin populates. This also avoids churning all `IngestConfig`
+    /// literals for a knob every test would otherwise have to set.
+    #[must_use]
+    pub fn with_empty_retry_max(mut self, max: u32) -> Self {
+        self.empty_retry_max = max.max(1);
+        self
     }
 
     /// Persist the shared spend ledger (best-effort, advisory): a failure warns but
@@ -1830,6 +1910,32 @@ impl Ingestor {
             for &kind in &self.config.bar_kinds {
                 let label = kind.label();
                 let bar_type = kind.bar_type(*id)?;
+                // Persistent-empty convergence (#189 follow-up): a proven Trading
+                // Session at this triple's frontier that has served zero bars for
+                // `empty_retry_max` consecutive runs stops charging the cumulative
+                // IGW00201 budget — skip ALL gateway calls (the append fetch, the
+                // basis-shift overlap detection, AND the backward-widen probe below)
+                // until the run target advances (a later session may serve bars →
+                // re-arm) or bars/closure reset the counter. The skip keys ONLY on the
+                // target (`last_closed`): a same-target re-run that deepens the lookback
+                // floor or resolves Unknown calendar dates does NOT re-arm — the operator
+                // clears the checkpoint (or waits for the target to advance) to force a
+                // re-pull. A shifted triple still heals (the mark outranks the watermark,
+                // KTD-2), so it is exempt; a converged triple with prior stored bars
+                // therefore has its basis-shift detection DEFERRED (never lost — it re-runs
+                // on the next target-advanced run before any append). The watermark is NOT
+                // advanced (coverage is never fabricated over an empty proven session).
+                if !checkpoint.is_shifted(&instrument, &label)
+                    && checkpoint.empty_retry_converged(
+                        &instrument,
+                        &label,
+                        last_closed,
+                        self.empty_retry_max,
+                    )
+                {
+                    skipped += 1;
+                    continue;
+                }
                 // Decide whether this triple heals or appends. Set only on the
                 // normal (append) path.
                 let mut pending_plan: Option<CalendarRangePlan> = None;
@@ -1871,6 +1977,11 @@ impl Ingestor {
                             if let Some(advance) = plan.advance_through {
                                 if wm.map_or(true, |watermark| advance > watermark) {
                                     checkpoint.set_watermark(&instrument, &label, advance);
+                                    // The watermark advanced over a proven Closed range
+                                    // — reset any persistent-empty retry state (#189
+                                    // follow-up): the frontier moved past the empty
+                                    // session, so prior empty state is stale.
+                                    checkpoint.reset_empty_retry(&instrument, &label);
                                     checkpoint.save(&checkpoint_path)?;
                                     checkpoint_committed = true;
                                 }
@@ -2020,12 +2131,18 @@ impl Ingestor {
                         HealOutcome::Healed(n) => {
                             bars_written += n;
                             ingested += 1;
+                            // #189 follow-up: a completed heal re-pulled real bars —
+                            // clear any persistent-empty retry state defensively (a
+                            // shifted triple is exempt from the converge skip and in
+                            // practice never carries a converged counter, but this keeps
+                            // the invariant "forward progress resets" whole regardless).
+                            checkpoint.reset_empty_retry(&instrument, &label);
                             if let Some(advance) = plan.advance_through {
                                 if advance > heal_through {
                                     checkpoint.set_watermark(&instrument, &label, advance);
-                                    checkpoint.save(&checkpoint_path)?;
                                 }
                             }
+                            checkpoint.save(&checkpoint_path)?;
                             checkpoint_committed = true;
                         }
                         HealOutcome::Refused(r) => heal_refusals.push(r),
@@ -2131,6 +2248,10 @@ impl Ingestor {
                 // attested, and no higher (disjoint) sub-range is fetched or written,
                 // so no bars are orphaned above a low-pinned watermark (KTD-1).
                 let mut halt_before: Option<NaiveDate> = None;
+                // #189 follow-up: snapshot the persistent-empty retry count so the
+                // per-triple save fires when only that counter changed (a pure-empty
+                // halt bumps it but advances neither bars nor the watermark).
+                let empty_retry_before = checkpoint.empty_retry_count(&instrument, &label);
                 for (s, e) in &sub_ranges {
                     let sdate = s.format("%Y%m%d").to_string();
                     let edate = e.format("%Y%m%d").to_string();
@@ -2169,15 +2290,30 @@ impl Ingestor {
                                 Err(e) => return Err(e),
                             }
                         }
-                        TripleOutcome::Bars(_) => {
+                        // An empty proven-session sub-range: zero bars for a session the
+                        // calendar proves open. `collect_daily`/`collect_minute` map an
+                        // empty result to `Gap(EmptyHistory)`; the `Bars(_)` alternative
+                        // (an empty `Bars` vec) is defensive — the collectors never return
+                        // it — kept so a future collector change cannot silently bypass the
+                        // bound. Enforced-only (#189 U6/U10): pin before it rather than
+                        // advancing over a zero-bar span. #189 follow-up: bump the bounded
+                        // persistent-empty counter and, at the bound, converge (record a
+                        // documented gap + warn once).
+                        TripleOutcome::Bars(_) | TripleOutcome::Gap(GapReason::EmptyHistory) => {
+                            note_empty_frontier(
+                                &mut checkpoint,
+                                &instrument,
+                                &label,
+                                &range,
+                                last_closed,
+                                self.empty_retry_max,
+                            );
                             gaps_this_run.push(CoverageGap {
                                 instrument: instrument.clone(),
                                 bar_type: label.clone(),
                                 range,
                                 reason: GapReason::EmptyHistory,
                             });
-                            // Enforced-only (#189 U6/U10): an empty proven-session sub-range
-                            // pins before it rather than advancing over a zero-bar span.
                             halt_before = Some(*s);
                             break;
                         }
@@ -2188,11 +2324,13 @@ impl Ingestor {
                                 range,
                                 reason,
                             });
-                            // A truncated fetch means the sub-range is only partially
-                            // retrieved: pin before it and stop, or the un-fetched
-                            // older history is skipped forever (R2/R10). Enforced-only
-                            // (#189 U6/U10) always halts here (a PaperThin truncation
-                            // did too under the retired postures).
+                            // A truncated (`PaperThin`) or non-trading (`NonTradingDay`)
+                            // sub-range is only partially retrieved / uncertain — NOT an
+                            // empty proven session: pin before it and stop, or the
+                            // un-fetched older history is skipped forever (R2/R10). It is
+                            // deliberately excluded from the persistent-empty bound —
+                            // there is recoverable/partial data, so converging (skipping)
+                            // would orphan it. Enforced-only (#189 U6/U10) always halts.
                             halt_before = Some(*s);
                             break;
                         }
@@ -2223,10 +2361,23 @@ impl Ingestor {
                         checkpoint.set_watermark(&instrument, &label, target);
                     }
                 }
+                // #189 follow-up: reset the persistent-empty retry counter on forward
+                // progress — bars written, or the watermark advanced (a later proven
+                // session / trailing closure covered the frontier). A converged triple
+                // that now serves bars re-arms fully. A pure-empty halt makes neither,
+                // so its bump (above) survives.
+                let watermark_advanced = checkpoint.watermark(&instrument, &label) != wm;
+                if wrote_any || watermark_advanced {
+                    checkpoint.reset_empty_retry(&instrument, &label);
+                }
                 // Persist after each authorized triple for crash safety. Enforced-only
                 // (#189 U6/U10): a stop/incomplete path with no progress leaves the input
-                // bytes untouched (no save when nothing changed).
-                let changed = wrote_any || checkpoint.watermark(&instrument, &label) != wm;
+                // bytes untouched (no save when nothing changed) — but a persistent-empty
+                // bump/reset IS a change and must be persisted (#189 follow-up), else the
+                // counter never accumulates across runs.
+                let changed = wrote_any
+                    || watermark_advanced
+                    || checkpoint.empty_retry_count(&instrument, &label) != empty_retry_before;
                 if changed {
                     checkpoint.save(&checkpoint_path)?;
                     checkpoint_committed = true;
