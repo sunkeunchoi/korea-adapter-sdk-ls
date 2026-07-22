@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "slug": "failed-break-reversal",
+  "family": "entry-stream",
+  "decision": "STOP",
+  "stop_gate": "threshold-fail",
+  "stop_reason": "threshold on 'ror_shift' failed: -0.*** not Ge 0.005",
+  "diagnostic_readings": {
+    "population_count": 14.0,
+    "resolution_stop_share": 0.6429,
+    "resolution_target_share": 0.2857,
+    "resolution_timeflat_share": 0.0714,
+    "ror_shift": -0.006241,
+    "stop_anchor_id": 2.0,
+    "winning_grammar_id": 2.0
+  },
+  "twin_readings": {
+    "population_count": 14.0,
+    "resolution_stop_share": 0.6429,
+    "resolution_target_share": 0.2857,
+    "resolution_timeflat_share": 0.0714,
+    "ror_shift": -0.006241,
+    "stop_anchor_id": 2.0,
+    "winning_grammar_id": 2.0
+  },
+  "agreed_readings": {
+    "population_count": 14.0,
+    "resolution_stop_share": 0.6429,
+    "resolution_target_share": 0.2857,
+    "resolution_timeflat_share": 0.0714,
+    "ror_shift": -0.006241,
+    "stop_anchor_id": 2.0,
+    "winning_grammar_id": 2.0
+  },
+  "pre_register_hash": "e1494d0239fa4c32563f1a58fe48281d89123670e96c3edaf6e135b1958beccf",
+  "catalog_fingerprint": "3b6be31bdf8d29a8d774d42d490020d65753455acfc1b2214a0b13f14b589200",
+  "freeze_commit": "eaee1cbd82fb49dd91e27ffbc1351e013a527392",
+  "flip_param": "reversal_arm",
+  "flip_value": 0.5,
+  "prior_trials": [],
+  "recorded_utc": "2026-07-22T09:18:17.780352+00:00"
+}
