@@ -2372,6 +2372,29 @@ fn is_booking_ab_merits_reject(rsp_cd: &str) -> bool {
     ls_core::is_ingress_validation_reject(rsp_cd) || rsp_cd == "01407"
 }
 
+/// Whether the fired omitted-field submit produced a FILL (pure, offline-twinnable).
+/// A `BnsTpCode`-omitted fire is direction-defaulted, so it can EXECUTE rather than
+/// rest — this is what makes cancel-all teardown insufficient. Untrusted reads are
+/// never evidence (`reads_trusted` gates everything). A fill is any of: a `janqty`
+/// balance delta (T0424), a partial-fill row (`cheqty>0`) in the trusted scan, or an
+/// acceptance ack whose surfaced child is NOT resting in a trusted book (a fully
+/// filled row vanishes from `chegb="2"` by construction). A child that IS resting is
+/// a rested order, not a fill.
+fn detect_fill(
+    reads_trusted: bool,
+    janqty_pre: i64,
+    janqty_post: i64,
+    partial_fill: bool,
+    accepted: bool,
+    child_present: bool,
+    child_resting: bool,
+) -> bool {
+    reads_trusted
+        && (janqty_post != janqty_pre
+            || partial_fill
+            || (accepted && child_present && !child_resting))
+}
+
 fn classify_booking_ab(
     fire: Option<(u16, &str)>,
     reads_trusted: bool,
@@ -2699,10 +2722,15 @@ async fn run_booking_determining_ab_probe() {
     });
     let partial_fill = rows_post.iter().any(|r| parse_qty(&r.cheqty) > 0);
     let accepted = is_order_placement_success(fire_http, &fire_rsp_cd);
-    let fill_detected = reads_trusted
-        && (janqty_post != janqty_pre
-            || partial_fill
-            || (accepted && child.is_some() && !child_resting));
+    let fill_detected = detect_fill(
+        reads_trusted,
+        janqty_pre,
+        janqty_post,
+        partial_fill,
+        accepted,
+        child.is_some(),
+        child_resting,
+    );
 
     let verdict = classify_booking_ab(
         Some((fire_http, &fire_rsp_cd)),
@@ -3906,6 +3934,24 @@ fn booking_ab_field_gate_accepts_only_annotated_fields() {
     // An unknown field → refused, no dispatch.
     let err = booking_ab_field_gate(schema, "NoSuchField").expect_err("unknown must be refused");
     assert!(err.contains("not a field"), "msg names the unknown field: {err}");
+}
+
+#[test]
+fn detect_fill_covers_every_channel() {
+    // Untrusted reads are NEVER a fill (gates everything) — even a janqty delta.
+    assert!(!detect_fill(false, 0, 1, true, true, true, false));
+    // janqty (T0424) balance delta alone → fill.
+    assert!(detect_fill(true, 0, 1, false, false, false, false));
+    // a partial-fill row (cheqty>0) alone → fill.
+    assert!(detect_fill(true, 0, 0, true, false, false, false));
+    // acceptance ack + surfaced child ABSENT from the trusted book → fill.
+    assert!(detect_fill(true, 0, 0, false, true, true, false));
+    // acceptance ack + child still RESTING → NOT a fill (it's a rested order).
+    assert!(!detect_fill(true, 0, 0, false, true, true, true));
+    // acceptance ack with NO surfaced child, no delta, no partial → not a fill.
+    assert!(!detect_fill(true, 0, 0, false, true, false, false));
+    // nothing observed on trusted reads → not a fill.
+    assert!(!detect_fill(true, 0, 0, false, false, false, false));
 }
 
 #[test]
