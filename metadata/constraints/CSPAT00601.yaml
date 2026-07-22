@@ -10,6 +10,10 @@
 # Per KTD3 the order-TR negative probe fires ONLY type- and required-class
 # variants (a wire-shape break the gateway rejects before placement); enum/range/
 # format variants are recorded `held`, never fired against a live order endpoint.
+# Route C (§30) on top of that: a (field, class) pair marked
+# `booking_determining` is NEVER dispatched — the fire loop records-not-fires it
+# (`order_variant_may_fire`, crates/ls-sdk/tests/negative_probe.rs), because the
+# violation changes WHAT gets booked rather than whether the request is rejected.
 #
 # Grounded against crates/ls-trackers/baselines/api-drift/normalized/trs/
 # CSPAT00601.json (nine fields, all required on the wire; numeric OrdQty/OrdPrc).
@@ -18,36 +22,69 @@ fields:
   - name: IsuNo
     type: string          # baseline: String, required (종목번호).
     required: true
+    # AUDIT (U2): reject-expected, PROVEN — live removal → 01407 reject, placed
+    # nothing (§30). NOT booking-determining; the required variant may fire.
     enum: { applicable: false }
     range: { applicable: false }
     format: { applicable: true, kind: symbol, confirmed: false }
   - name: OrdQty
     type: integer         # baseline: Number, required (주문수량, JSON number).
     required: true
+    # AUDIT (U2): reject-expected, PROVEN — IGW40011 ingress reject observed
+    # live (§30). NOT booking-determining; type/required variants may fire.
     enum: { applicable: false }
     range: { applicable: false }
     format: { applicable: false }
   - name: OrdPrc
     type: number          # baseline: Number, required (주문가, JSON number).
     required: true
+    # AUDIT (U2): reject-expected, PROVEN — IGW40011 ingress reject observed
+    # live (§30). NOT booking-determining; type/required variants may fire.
     enum: { applicable: false }
     range: { applicable: false }
     format: { applicable: false }
   - name: BnsTpCode
     type: string          # baseline: String, required (매매구분: "1" sell / "2" buy).
     required: true
+    # BOOKING-DETERMINING, PROVEN live (Route C; ledger §30 item 4, 2026-07-13):
+    # the BnsTpCode-omitted submit did NOT fail closed — the gateway defaulted the
+    # direction and placed a REAL resting order (ordno=17093; 005930 confirmed
+    # flat only after the fallback cancel). Stays `required: true`, unmarked and
+    # never `gateway_tolerant`: a hard caller contract exists precisely because
+    # omission silently books a direction-defaulted order.
+    # SENSOR-BLINDING BOUND (accepted, bounded — Route B precedent style): this
+    # annotation makes the differential probe RECORD-NOT-FIRE the required
+    # variant forever — a future gateway change that cleanly rejects the omission
+    # can no longer be observed by the differential. Ground truth = §30
+    # ordno=17093; re-characterization ONLY via the attended harness
+    # (`make live-smoke-cspat00601-booking-ab`); a harness `rejected` verdict
+    # RE-OPENS this annotation (plan R8). See docs/solutions/conventions/
+    # order-negative-probe-modify-vs-submit-policy.md.
+    booking_determining: [required]
     enum: { applicable: true, values: ["1", "2"], confirmed: false }
     range: { applicable: false }
     format: { applicable: false }
   - name: OrdprcPtnCode
     type: string          # baseline: String, required (호가유형코드, e.g. "00" limit).
     required: true
+    # BOOKING-DETERMINING, PROVISIONAL (R11, fail-closed): never fired live on
+    # 00601. Semantic lean: a price-pattern mode selector — a gateway-defaulted
+    # pattern would alter the booked order's price semantics (limit vs market),
+    # not merely reject the request. Lift ONLY on a harness-confirmed `rejected`
+    # verdict; semantic judgment never clears a field for live fire.
+    booking_determining: [required]
     enum: { applicable: false }
     range: { applicable: false }
     format: { applicable: false }
   - name: MgntrnCode
     type: string          # baseline: String, required (신용거래코드, e.g. "000" cash).
     required: true
+    # BOOKING-DETERMINING, PROVISIONAL (R11, fail-closed): never fired live on
+    # 00601. Semantic lean: a financing mode selector — a gateway-defaulted code
+    # would alter the booked order's financing (cash vs margin/credit), not
+    # merely reject the request. Lift ONLY on a harness-confirmed `rejected`
+    # verdict; semantic judgment never clears a field for live fire.
+    booking_determining: [required]
     enum: { applicable: false }
     range: { applicable: false }
     format: { applicable: false }
@@ -55,11 +92,20 @@ fields:
     type: string          # baseline: String, required on the wire — but the
     required: false        # certified cash-order flow sends it EMPTY, so declared
     enum: { applicable: false }   # caller-optional (the struct wins, permissive).
+                                  # AUDIT (U2): n/a — required: false, out of the
+                                  # required-variant question; no annotation.
     range: { applicable: false }
     format: { applicable: false }
   - name: OrdCndiTpCode
     type: string          # baseline: String, required (주문조건구분, e.g. "0").
     required: true
+    # BOOKING-DETERMINING, PROVISIONAL (R11, fail-closed): never fired live on
+    # 00601. Semantic lean: an execution-condition mode selector — a
+    # gateway-defaulted condition (e.g. IOC/FOK vs none) would alter the booked
+    # order's execution condition, not merely reject the request. Lift ONLY on a
+    # harness-confirmed `rejected` verdict; semantic judgment never clears a
+    # field for live fire.
+    booking_determining: [required]
     enum: { applicable: false }
     range: { applicable: false }
     format: { applicable: false }
@@ -70,3 +116,5 @@ fields:
     range: { applicable: false }  # submit path does; default-venue routing), so
     format: { applicable: false } # caller-optional like LoanDt: the struct wins
                                   # on disagreement (permissive direction).
+                                  # AUDIT (U2): n/a — required: false, out of the
+                                  # required-variant question; no annotation.

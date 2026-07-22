@@ -2672,10 +2672,12 @@ fn is_booking_determining_is_scoped_to_the_exact_marked_field_class_pair() {
     assert!(!is_booking_determining(&schema, "OrdQty", "required"));
     // An unknown field → false.
     assert!(!is_booking_determining(&schema, "Nonexistent", "required"));
-    // The real embedded CSPAT00601 schema carries no annotation yet (the metadata
-    // edit is a separate unit) → nothing skips today.
+    // The real embedded CSPAT00601 schema now carries the U2 audit's annotations
+    // (constraints/CSPAT00601.yaml) — the proven BnsTpCode pair resolves, and an
+    // unannotated reject-expected sibling (IsuNo) still misses.
     let embedded = ls_core::schema_for("CSPAT00601").expect("CSPAT00601 schema");
-    assert!(!is_booking_determining(embedded, "BnsTpCode", "required"));
+    assert!(is_booking_determining(embedded, "BnsTpCode", "required"));
+    assert!(!is_booking_determining(embedded, "IsuNo", "required"));
 }
 
 #[test]
@@ -2720,6 +2722,54 @@ fn order_variant_fire_decision_skips_only_annotated_generated_variants() {
     assert!(
         order_variant_may_fire(&schema, &bns_type),
         "only the marked class skips — the marked field's type variant still fires"
+    );
+}
+
+#[test]
+fn embedded_cspat00601_schema_skips_audited_booking_determining_variants_only() {
+    // U2 pin against the REAL embedded metadata (constraints/CSPAT00601.yaml):
+    // the audited booking-determining fields — BnsTpCode (PROVEN, §30
+    // ordno=17093) and the three PROVISIONAL mode selectors (R11:
+    // OrdprcPtnCode / OrdCndiTpCode / MgntrnCode) — are marked
+    // `booking_determining: [required]`, so their generated required-omit
+    // variants are structurally unroutable; the reject-expected PROVEN fields
+    // (IsuNo → 01407, OrdQty → IGW40011) still fire.
+    let schema = ls_core::schema_for("CSPAT00601").expect("CSPAT00601 schema");
+    let seed = serde_json::json!({
+        "IsuNo": "005930",
+        "OrdQty": 1,
+        "OrdPrc": 50000,
+        "BnsTpCode": "2",
+        "OrdprcPtnCode": "00",
+        "MgntrnCode": "000",
+        "OrdCndiTpCode": "0"
+    });
+    let variants = generate_invalid_variants(schema, &seed);
+    let find = |field: &str, class: &str| {
+        variants
+            .iter()
+            .find(|v| v.field == field && v.class == class)
+            .unwrap_or_else(|| panic!("{field}/{class} variant is generated"))
+    };
+    for field in ["BnsTpCode", "OrdprcPtnCode", "OrdCndiTpCode", "MgntrnCode"] {
+        assert!(
+            is_booking_determining(schema, field, "required"),
+            "{field}/required must be annotated booking-determining"
+        );
+        assert!(
+            !order_variant_may_fire(schema, find(field, "required")),
+            "{field}/required must never be dispatched"
+        );
+    }
+    // Reject-expected, PROVEN fields (§30): omission is refused before
+    // placement, so their variants still fire.
+    assert!(
+        order_variant_may_fire(schema, find("IsuNo", "required")),
+        "IsuNo/required still fires (01407 reject observed, §30)"
+    );
+    assert!(
+        order_variant_may_fire(schema, find("OrdQty", "required")),
+        "OrdQty/required still fires (IGW40011 reject observed, §30)"
     );
 }
 
