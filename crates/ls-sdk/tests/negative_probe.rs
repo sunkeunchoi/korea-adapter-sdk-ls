@@ -2357,6 +2357,21 @@ enum BookingAbVerdict {
 /// (never `rejected`), a non-ingress 5xx stays may-rest-shaped — only a positive
 /// placed-nothing merits reject (via the shared [`classify_fired_variant`])
 /// yields `Rejected`.
+/// A booking-AB `Rejected` verdict LIFTS a booking-determining annotation (R8/R11),
+/// so it must rest on a code proven to be an ON-MERITS placed-nothing reject of the
+/// omitted submit field — never a bare `classify_fired_variant` "placed nothing"
+/// inference. `classify_fired_variant`'s `else` arm returns `PlacedNothing` for ANY
+/// non-success, non-5xx-may-rest answer, so a throttle degraded to an empty `rsp_cd`
+/// (HTTP 429 / non-JSON body), or a business reject for a reason UNRELATED to the
+/// injected omission (inventory, invalid-combination), would otherwise lift a field
+/// that places real orders. The allowlist is the shared ingress-validation rejects
+/// (`ls_core::is_ingress_validation_reject`, e.g. `IGW40011`) plus the catalogued
+/// business reject observed for an omitted order field (`01407`, §30 IsuNo removal).
+/// An empty/degraded or un-catalogued `rsp_cd` is NOT a merits answer → `Inconclusive`.
+fn is_booking_ab_merits_reject(rsp_cd: &str) -> bool {
+    ls_core::is_ingress_validation_reject(rsp_cd) || rsp_cd == "01407"
+}
+
 fn classify_booking_ab(
     fire: Option<(u16, &str)>,
     reads_trusted: bool,
@@ -2379,7 +2394,14 @@ fn classify_booking_ab(
         return BookingAbVerdict::Inconclusive;
     }
     match classify_fired_variant(http, rsp_cd) {
-        FiredVariantOutcome::PlacedNothing => BookingAbVerdict::Rejected,
+        // Placed nothing, AND on a proven omission-reject code: the gateway refused
+        // the omission on its merits → safe to re-open/lift the annotation.
+        FiredVariantOutcome::PlacedNothing if is_booking_ab_merits_reject(rsp_cd) => {
+            BookingAbVerdict::Rejected
+        }
+        // Placed nothing but on an empty/degraded or un-catalogued code (429, non-JSON
+        // body, unrelated business reject): NOT a merits answer — never lift.
+        FiredVariantOutcome::PlacedNothing => BookingAbVerdict::Inconclusive,
         // An ack with nothing observable, or a non-ingress 5xx: ambiguous.
         FiredVariantOutcome::Accepted | FiredVariantOutcome::MayHaveRested => {
             BookingAbVerdict::Inconclusive
@@ -3955,6 +3977,26 @@ fn classify_booking_ab_covers_every_verdict_arm() {
         classify_booking_ab(Some((500, "IGW50008")), true, false, false),
         BookingAbVerdict::Inconclusive
     );
+    // FALSE-LIFT GUARD (adversarial + cross-model): a `PlacedNothing`-shaped answer
+    // is NOT a merits reject unless the code is allowlisted. Pre-fix these returned
+    // `Rejected` and would have LIFTED a booking-determining annotation on a field
+    // that places real orders.
+    //   - HTTP 429 throttle degraded to an empty rsp_cd (4xx, so not may-rest-5xx):
+    assert_eq!(
+        classify_booking_ab(Some((429, "")), true, false, false),
+        BookingAbVerdict::Inconclusive
+    );
+    //   - a placed-nothing business reject for a reason UNRELATED to the omission
+    //     (e.g. an un-catalogued inventory/combination code):
+    assert_eq!(
+        classify_booking_ab(Some((200, "09999")), true, false, false),
+        BookingAbVerdict::Inconclusive
+    );
+    // is_booking_ab_merits_reject allowlist is exactly {ingress-validation, 01407}.
+    assert!(is_booking_ab_merits_reject("IGW40011"));
+    assert!(is_booking_ab_merits_reject("01407"));
+    assert!(!is_booking_ab_merits_reject(""));
+    assert!(!is_booking_ab_merits_reject("09999"));
 }
 
 #[test]
