@@ -2516,8 +2516,13 @@ async fn run_booking_determining_ab_probe() {
     let schema = ls_core::schema_for("CSPAT00601")
         .expect("CSPAT00601 carries an embedded constraint schema");
     if let Err(e) = booking_ab_field_gate(schema, &field) {
-        println!("{tag} verdict=refused [{e}]");
-        return;
+        // A refused field is an operator MISCONFIGURATION (a mistyped or
+        // non-booking-determining LS_AB_FIELD), not a legitimate no-op like the
+        // pre-placement inconclusive aborts below. The Make target greps "1 passed",
+        // so a green return here would let a typo masquerade as a successful
+        // characterization run — fail loudly instead (the gate message is
+        // credential-free by construction: a field name and the reason).
+        panic!("{tag} verdict=refused [{e}]");
     }
     let config = match LsConfig::from_env() {
         Ok(c) => c,
@@ -2740,7 +2745,11 @@ async fn run_booking_determining_ab_probe() {
     );
 
     // Per-verdict handling. The fail-closed cancel-all teardown + flat report
-    // runs in EVERY branch after this match.
+    // runs in EVERY branch after this match. A filled fire that cannot be closed
+    // back to the pre-probe baseline leaves a REAL open paper position; the Make
+    // target greps "1 passed", so the run must FAIL (not return green) in that case
+    // — recorded here and raised after teardown + diagnostics have printed.
+    let mut filled_unflattened: Option<String> = None;
     let label = match verdict {
         BookingAbVerdict::PlacesDefaultedOrderRested => {
             // Cancel the defaulted child directly (teardown would also sweep it,
@@ -2811,24 +2820,35 @@ async fn run_booking_determining_ab_probe() {
                         ),
                     }
                 }
-                None => println!(
-                    "{tag} close-out=none [fill detected but no closable janqty delta \
-                     (unsettled/absence-only signal)] — operator must reconcile the position"
-                ),
+                None => {
+                    println!(
+                        "{tag} close-out=none [fill detected but no closable janqty delta \
+                         (unsettled/absence-only signal)] — operator must reconcile the position"
+                    );
+                    filled_unflattened =
+                        Some("fill detected but no closable janqty delta".to_string());
+                }
             }
             // Verify flat: the position must be back at the baseline.
             match read_symbol_position(&sdk, symbol).await {
                 Ok((j, _)) if j == janqty_pre => {
                     println!("{tag} close-out flat=confirmed (janqty back at baseline)")
                 }
-                Ok((j, _)) => println!(
-                    "{tag} close-out flat=NOT-confirmed (janqty delta {} remains) — operator must \
-                     reconcile",
-                    j - janqty_pre
-                ),
-                Err(e) => println!(
-                    "{tag} close-out flat=UNVERIFIED [{e}] — operator must confirm the position"
-                ),
+                Ok((j, _)) => {
+                    println!(
+                        "{tag} close-out flat=NOT-confirmed (janqty delta {} remains) — operator \
+                         must reconcile",
+                        j - janqty_pre
+                    );
+                    filled_unflattened =
+                        Some(format!("janqty delta {} remains after close-out", j - janqty_pre));
+                }
+                Err(e) => {
+                    println!(
+                        "{tag} close-out flat=UNVERIFIED [{e}] — operator must confirm the position"
+                    );
+                    filled_unflattened = Some("final flatness could not be verified".to_string());
+                }
             }
             "places-defaulted-order(filled)"
         }
@@ -2853,6 +2873,14 @@ async fn run_booking_determining_ab_probe() {
         "{tag} verdict={label} [fire http={fire_http} rsp_cd={fire_rsp_cd}] \
          (credential-free; rejected → re-open/lift the annotation per R8/R11)"
     );
+    // A defaulted fire that EXECUTED and could not be closed back to the pre-probe
+    // baseline leaves a real open paper position that cancel-all teardown cannot
+    // flatten. FAIL the run so `make live-smoke-cspat00601-booking-ab` does not report
+    // success over an un-flattened position (finding: verdict line says filled while
+    // the position remains).
+    if let Some(reason) = filled_unflattened {
+        panic!("{tag} POSITION NOT FLAT after filled-fire close-out [{reason}] — operator must reconcile before any further run");
+    }
 }
 
 #[tokio::test]
