@@ -2065,3 +2065,47 @@ the order probe had none — mirrors t8412).
 
 **Count tally.** **`recommended` 8 → 9** (CSPAT00701 modify joins CSPAT00801 cancel in the orders class;
 CSPAT00601 submit stays HELD — its `BnsTpCode/required` places a real directional order, §30 (4)).
+
+## 32. CSPAT00601 booking-determining Route C skip + promotion (2026-07-22)
+
+Plan `docs/plans/2026-07-22-001-feat-cspat00601-booking-determining-probe-skip-plan.md` (PR #205,
+merged `de89f0b`). Closes the last §30 open thread: CSPAT00601 (submit) stayed HELD because its
+negative differential could not complete safely — omitting `BnsTpCode` does NOT fail closed; the
+gateway defaults the direction and places a real resting order (§30 item 4, `ordno=17093`).
+
+**Mechanism — Route C (code-enforced never-fire).** A third route beside Route A (`gateway_tolerant`)
+and Route B (`placed_nothing_codes`): a probe-only `booking_determining: Vec<String>` facet on the
+ls-core `FieldConstraint` (not mirrored into the ls-metadata copy — dual-registry precedent), consumed
+by the order fire loop (`order_variant_may_fire`/`is_booking_determining`, `negative_probe.rs`). An
+annotated `(field, required)` variant is **recorded, never dispatched** — it prints
+`outcome=booking-determining-skip (never fired by design)`. Preflight is untouched (the facet never
+weakens it); the runtime dispatch seam is untouched. Audit (U2): `BnsTpCode` annotated from the §30
+proof; `OrdprcPtnCode`/`OrdCndiTpCode`/`MgntrnCode` annotated **provisionally** (R11, fail-closed —
+never fired live; only an attended harness `rejected` verdict lifts a provisional mark).
+
+**Attended re-cert (operator TTY, open-KRX regular window, 2026-07-22).**
+- **Differential** (`make live-smoke-cspat00601-negative`) — **CLEAN**: `IsuNo/required` → `01407`
+  (business reject, placed nothing); `OrdQty`/`OrdPrc` type+required → `IGW40011` (ingress reject);
+  the four booking-determining `required` variants recorded-not-fired; control placed → variants fired
+  → canceled → `flat=confirmed`.
+- **Order-chain** (`make live-smoke-order-chain`) — submit/modify/cancel `00040`/`00462`/`00463`, each
+  `cert=certified`, `flat=confirmed`. The submit leg (`rsp_cd=00040`, order_no scrubbed) is the
+  Focused Evidence.
+
+**Governed characterization harness (U3, offline landed; attended leg operator-run on demand).**
+`run_booking_determining_ab_probe` / `make live-smoke-cspat00601-booking-ab` — the R8/R11 lift path,
+the only sanctioned way to fire a booking-determining omission. Hardened post-review: `rejected`
+requires an allowlisted omission-reject code (a 429/throttle/unrelated reject → `inconclusive`, never a
+false lift); a non-flat filled position or a field-gate refusal fails the test rather than exiting
+green under `grep "1 passed"`.
+
+**Promotion.** `evidence/CSPAT00601.yaml` refreshed (scrubbed, Korean `rsp_msg` dropped, date
+2026-07-22 == `last_reviewed`); `error-coverage/CSPAT00601.yaml` `probe_status: clean` (fired classes
+`confirmed`, the four booking-determining `booking_determining`); recommendation block with the Route C
+scope exclusion in `excludes`; docgen banner move; `constraints_ref` added. `CSPAT00601 BnsTpCode`
+stays `required: true`, unmarked-`gateway_tolerant` — a direction field whose omission places a real
+order is exactly the hard caller contract case.
+
+**Count tally.** **`recommended` 9 → 10** (CSPAT00601 submit joins CSPAT00701 modify + CSPAT00801
+cancel — the full order quartet's submit/modify/cancel now Recommended; `CSPAT00601` was the last HELD
+member). Spans the same 6 owner classes.

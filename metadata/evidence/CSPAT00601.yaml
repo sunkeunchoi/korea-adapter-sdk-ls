@@ -1,31 +1,44 @@
-# Focused Evidence — CSPAT00601 (cash-equity order SUBMIT)
+# Focused Evidence — CSPAT00601 (현물 정규주문 — cash-equity order SUBMIT)
 #
 # A durable, credential-free record of a genuine Paper Live Smoke that placed a
-# REAL paper order. The `line` below is captured VERBATIM from the order harness
-# stdout of `make live-smoke-order-chain`
-# (crates/ls-sdk/tests/order_smoke.rs::order_chained_smoke). The order harness
-# emits an `ORDER-SMOKE` line per leg (not the single `LIVE-SMOKE` line the
-# read-smoke recipe records) — note that divergence. Each line is already routed
-# through the harness `scrub_secrets` (account numbers, `-NN` suffixes, and
-# bearer tokens/appkeys masked) before printing.
+# REAL paper order-submit (the chain's opening leg). The `line` below is captured
+# from the order harness stdout of `make live-smoke-order-chain`
+# (crates/ls-sdk/tests/order_smoke.rs::order_chained_smoke) and reshaped for the
+# record: the order harness emits an `ORDER-SMOKE` line per leg (not the single
+# `LIVE-SMOKE` line the read-smoke recipe records) — note that divergence. The raw
+# line's localized `msg=[...]` and the transient `recon=unknown` are DROPPED here
+# (secret-safety, matching the CSPAT00801 convention); only the response code and
+# the public 5-digit order number are retained.
 #
-# Source note: the in-window order-chain run (2026-06-30) is the canonical
-# evidence source for the four order TRs — it is where the Implemented gate
-# certified them (plan -005), and its first leg IS gate-1 (submit) evidence
-# (order_smoke.rs). The `live-smoke-order` matrix is NOT used for the autonomous
-# wave: its marketable scenario fills on an open market and leaves a position
-# that needs an out-of-band paper reset, whereas the chain leaves the account
-# positively confirmed flat.
+# CSPAT00601 booking-determining certification (attended TTY 2026-07-22, open-KRX
+# regular window). The operator ran the two attended legs:
+#   1. `make live-smoke-cspat00601-negative` — the differential re-probe returned
+#      CLEAN across every fired class: IsuNo/required → 01407 (business reject,
+#      placed nothing); OrdQty/OrdPrc type+required → IGW40011 (ingress reject,
+#      placed nothing); the four booking-determining `required` variants (BnsTpCode
+#      plus the provisional OrdprcPtnCode/MgntrnCode/OrdCndiTpCode) printed
+#      `outcome=booking-determining-skip (never fired by design)` — the Route C
+#      code-enforced skip confirmed on the real gateway — and the control was placed,
+#      variants fired, canceled, and `flat=confirmed`.
+#   2. `make live-smoke-order-chain` — a full submit → modify → cancel lifecycle
+#      (rsp_cd 00040 / 00462 / 00463, each `cert=certified`), `flat=confirmed`
+#      afterward. The submit leg below is CSPAT00601's positive Focused Evidence.
 #
-# Secret-safety: response code + a public 5-digit order number + the gateway's
-# Korean success text only — never a token, appkey, secret, or account number.
-# `rsp_cd=00040` is the submit-accepted code; `order_no` is a public order
-# reference (<6 digits, not an account number).
+# So CSPAT00601 promotes on a CLEAN differential whose booking-determining variants
+# are structurally never fired (recorded, not sent — Route C) plus this green submit
+# round-trip. The tier split that held it Implemented through §30 (its submit-leg
+# differential could not complete safely because omitting BnsTpCode places a real
+# direction-defaulted order, §30 ordno=17093) is now closed by the Route C skip.
+#
+# Secret-safety: response code + a public 5-digit order number only — never a token,
+# appkey, secret, account number, or localized `rsp_msg`. `rsp_cd=00040` is the
+# submit-accepted (매수주문 완료) code; `order_no` is a public order reference
+# (<6 digits, not an account number).
 tr_code: CSPAT00601
-date: 2026-06-30
+date: 2026-07-22
 env: paper
 target: live-smoke-order-chain
-line: "ORDER-SMOKE tr=CSPAT00601 scenario=submit_resting_buy cert=certified rsp_cd=00040 order_no=22123 recon=unknown production_not_run=true msg=[모의투자 매수주문이 완료 되었습니다.]"
+line: "ORDER-SMOKE tr=CSPAT00601 scenario=submit_resting_buy cert=certified rsp_cd=00040 order_no=16319 production_not_run=true (live-smoke-order-chain, 2026-07-22); chain flat=confirmed"
 
 attested_normalizer_version: 2
 attested_shape:
