@@ -6,17 +6,19 @@ Source: `ce-code-review` run `20260722-104138-5e981472` (6 personas + learnings 
 - **P0 — untracked error-coverage artifact.** `metadata/trs/CSPAT00601.yaml` declared `error_coverage_ref` but `metadata/error-coverage/CSPAT00601.yaml` was left untracked; a clean checkout would fail validation. Committed `68355e5`. (Found independently by agent-native, project-standards, correctness.)
 - **Pre-existing P1 — stale freshness count.** `ls-trackers` `cli.rs` real-metadata freshness test asserted 8 Recommended TRs; CSPAT00701's promotion (§31/#151) took the real set to 9 on main. Not caused by this branch; surfaced by the full gate. Committed `8f0dda9`.
 
-## Residual (harden the attended U4 harness before it runs)
+## Applied (post-review pass)
 
-1. **P1 — `rejected` verdict needs a submit-leg merits-reject allowlist.** *(in-process adversarial + Codex cross-model, agreed; the strongest signal in the run.)* `classify_booking_ab` reaches `Rejected` for any placed-nothing outcome, including a degraded/empty `rsp_cd` (HTTP 429 throttle, non-JSON body, or a reject for a reason unrelated to the injected omission). A `Rejected` verdict drives an R8/R11 annotation **lift**, so a false `Rejected` un-blinds a field that places real orders. Fix: require a parsed, non-empty `rsp_cd` in an explicit allowlist (at least `IGW40011` via `ls_core::is_ingress_validation_reject`, and `01407`); everything else → `Inconclusive`. Add classifier cases for 429+empty and unrelated-code rejects.
+1. **DONE (`dd364b6`) — `rejected` verdict gated behind a submit-leg merits-reject allowlist.** *(adversarial + Codex cross-model, agreed; the strongest signal in the run.)* `is_booking_ab_merits_reject` (ingress-validation via `ls_core::is_ingress_validation_reject`, plus catalogued `01407`) now gates `BookingAbVerdict::Rejected`; a 429/empty/uncatalogued reject → `Inconclusive`, never lifts an annotation. False-lift regression cases added to `classify_booking_ab_covers_every_verdict_arm`.
 
-2. **P1 — a non-flat / filled final state must fail the attended test.** `plan_close_out` returns `None` when the fill delta is positive but `sellable_post` (mdposqt) is zero (same-day T+2-unsettled BUY fill), so the harness can finish with a real open paper position while the test returns `Ok(())` and only prints `flat=NOT-confirmed`. The Makefile greps `"1 passed"`, so green ships with an open position. Fix: panic (scrubbed, credential-free) on a non-confirmed-flat final read or an un-plannable required close-out.
+2. **DONE (`f27c0c6`) — non-flat filled final state now fails the attended test.** A filled fire whose close-out leaves the position non-flat (NOT-confirmed / UNVERIFIED / no-closable-delta) records `filled_unflattened` and panics after teardown + diagnostics print, so `make ... | grep "1 passed"` can't ship over an open position.
 
-3. **P2 — a `refused` gate outcome must not exit green.** `booking_ab_field_gate` refusal prints `verdict=refused` and returns from the unit-returning tokio test → success under `grep "1 passed"`; a mistyped `LS_AB_FIELD` looks like a passing run with no evidence. Fix: the live `run_*` wrapper panics on refusal (the pure `booking_ab_field_gate` keeps returning its Result for offline assertions).
+3. **DONE (`f27c0c6`) — field-gate refusal now fails instead of exiting green.** A mistyped/unannotated `LS_AB_FIELD` panics (credential-free) rather than returning `Ok(())`. Pre-placement inconclusive aborts still return green no-op, unchanged.
 
-4. **P1 — extract inline fill-detection into a pure tested fn.** *(testing + correctness.)* The three-way fill decision (`reads_trusted && (janqty delta || partial_fill || accepted&&child&&!resting)`) is inline and untested. Extract `detect_fill(...)` with a unit-test table (untrusted→false; delta alone→true; partial alone→true; accepted+child+not-resting→true; accepted+child+resting→false; accepted+no-child→false).
+4. **DONE (`cd6c24a`) — inline fill-detection extracted to a pure tested fn.** `detect_fill(...)` with a channel-coverage table (`detect_fill_covers_every_channel`).
 
-5. **P2 — extract the duplicated AB-probe setup helper.** *(maintainability.)* `run_igw00000_ab_probe` and `run_booking_determining_ab_probe` copy-paste the guard chain + SDK/band/token construction + pre-assert-flat scan. Extract one shared async setup helper; behavior-preserving.
+## Residual (still open — behavior-preserving cleanup, no safety impact)
+
+5. **P2 — extract the duplicated AB-probe setup helper.** *(maintainability.)* `run_igw00000_ab_probe` and `run_booking_determining_ab_probe` copy-paste the guard chain + SDK/band/token construction + pre-assert-flat scan. Extract one shared async setup helper; behavior-preserving. Deferred: pure dedup, touches the unrelated igw00000 probe, no correctness/safety bearing.
 
 ## Also noted (advisory, no action required)
 - `negative_probe.rs` is well over the file-size guideline (pre-existing); candidate to split generic helpers into `ls-sdk-test-support`.
