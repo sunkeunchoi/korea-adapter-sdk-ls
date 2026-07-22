@@ -4,6 +4,56 @@ Committed record of each loop turn's verdict + the bar conditions it held. The
 full artifacts (`analysis.md`, manifests, performance) live in the gitignored data
 home; this file is the durable, reviewable outcome trail.
 
+## Turn — failed-break reversal entry stream (lever 8, new-alpha axis): dual-grammar Phase-A STOP, NO-BUILD, head stays v32 (2026-07-22) — plan 2026-07-22-001
+
+- **Verdict: STOP at the pre-code Phase-A gate — no strategy code written, no run; head stays
+  v32** (`20260717T094841Z-backtest-orb-v32`, hash `d7a9820b`, RoR 0.1876). The diagnose CLI
+  signalled it with typed **exit 11 (threshold-fail)** and wrote the STOP `gate-verdict.json`;
+  the NO-BUILD is a complete outcome of the turn, not a failure of it. Lever 8 — the queue's one
+  genuinely new alpha mechanism — would add a second, **long-only** entry stream trading the
+  *failure* of a confirmed downside break of the opening range (breakdown then recovery back into
+  the range), leaving the v32 breakout leg untouched. The plan gated the whole build on a
+  diagnostic-first dual-grammar screen over the existing v32 bars *before any state-machine code*.
+- **The frozen gate** (`candidate.json`, freeze commit `eaee1cb`; pre-register hash
+  `e1494d02`). An additive stream has no incumbent signal to correlate against, so the
+  stop-geometry collinearity gates are dropped (KTD3); the screen keeps two STOP gates —
+  `population_count ≥ 12` and the ceiling-aware **additive** `ror_shift ≥ 0.005`
+  (`RoR(base+winner) − RoR(base)`, both under the screen's own flat-fill re-sim so the fill bias
+  cancels). `resolution_target_share` is the recorded fill-independent primary reading;
+  `winning_grammar_id` / `stop_anchor_id` (tolerance 0) force the independently-authored twin to
+  agree on the argmax. The entry-local `diagnostic.py` and catalog-wide `twin.py` agreed
+  byte-identically on every reading.
+- **The measurement** (v32 baseline re-sim RoR **0.1522**, sizing reconstructed **77/77 exactly**
+  — the barrier + CLASS-B model is faithful; matches the independent stop-geometry re-sim):
+
+  | grammar | n | `ror_shift` | target / stop / flat share | anchor |
+  |---|---|---|---|---|
+  | **1 — breakdown-recovery (PRIMARY)** | 53 | **−0.063198** | 0.038 / **0.736** / 0.226 | breakdown-low |
+  | 2 — post-stop re-entry (secondary) | 14 | −0.006241 | 0.286 / 0.643 / 0.071 | range-low |
+
+  Both grammars have ample population (count gate passes) but both are RoR-negative; the winner
+  (grammar 2, the least-negative, best-by-`ror_shift`) fails `ror_shift ≥ 0.005` at −0.006241 →
+  STOP threshold-fail.
+- **Why NO-BUILD (the crux).** The PRIMARY hypothesis is decisively **falsified**: over the pure
+  additive population (selected symbol-sessions that took no v32 trade, same session gates as a
+  breakout entry), the failed-break reversal long **stops out 73.6 % of the time and reaches
+  target only 3.8 %** — on this large-cap KRX universe a confirmed breakdown tends to *continue*,
+  not recover into a sustained move, so a long that buys the recovery is buying into a
+  down-trend. Grammar A's `ror_shift −0.063` is an order of magnitude below the floor; grammar B
+  (re-entering after a stop-out) is also negative. Because the diagnostic scores an *unconstrained*
+  population (an upper bound — the realized flip population would be thinner still under the shared
+  `max_concurrent 7` budget), the negative screen is a **robust** NO-BUILD.
+- **No override, no tuning-to-escape.** With the primary grammar an order of magnitude below the
+  floor and negative, there is no operator-override rationale, and softening the pre-registered
+  0.005 floor to proceed would be the forbidden overfit (Stop conditions). The long-only inverse
+  (shorting the continuation) is out of scope by the standing constraint — a *future* direction,
+  not this turn.
+- **Registry state.** Head unchanged: **v32**. No `params.rs` / `orb.rs` edit → the head-identity
+  gate is untouched; U3–U7 do not execute. The frozen candidate package (`candidate.json` +
+  `diagnostic.py` + `twin.py` + `README.md`), the tool-written `gate-verdict.json`, and the
+  `entry-stream`-family gate-reading ledger trial are committed together. Offline throughout; no
+  gateway.
+
 ## Turn — opening-range gap-retention session gate (entry-filter axis): Phase-A GO, armed via the governed command, KEEP → v32 (2026-07-17) — plan 2026-07-17-001
 
 - **Verdict: KEEP — the gap-retention session gate `gap_retention_min 1.0 → 0.50` strictly
