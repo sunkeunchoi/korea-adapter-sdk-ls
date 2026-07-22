@@ -1291,6 +1291,32 @@ fn resolve_fired_outcome(
     }
 }
 
+/// `true` if `schema` marks this exact `(field, class)` pair **booking-determining**
+/// (Route C, §30): the class's violation, when fired live, changes WHAT gets booked
+/// rather than whether the request is rejected (CSPAT00601 `BnsTpCode` omission →
+/// a direction-defaulted REAL order, ledger §30 ordno=17093). The never-fire
+/// analogue of [`is_gateway_tolerant`] / [`order_code_placed_nothing`]: a pure
+/// per-pair lookup over a field's `booking_determining` list, so the skip decision
+/// is offline-twinnable without a live fire. See
+/// `docs/solutions/conventions/order-negative-probe-modify-vs-submit-policy.md`.
+fn is_booking_determining(schema: &ConstraintSchema, field: &str, class: &str) -> bool {
+    schema
+        .fields
+        .iter()
+        .find(|f| f.name == field)
+        .is_some_and(|f| f.booking_determining.iter().any(|c| c == class))
+}
+
+/// The Route-C fire-vs-skip decision for one order-probe variant (pure, §30): a
+/// variant whose `(field, class)` is marked booking-determining is NEVER dispatched
+/// — recorded, not sent — so an annotated variant is structurally unroutable at
+/// the fire site, not merely filtered by class. Every other variant fires as
+/// before. Extracted from the fire loop so the decision is testable against
+/// `generate_invalid_variants` output without a live dispatch.
+fn order_variant_may_fire(schema: &ConstraintSchema, v: &InvalidVariant) -> bool {
+    !is_booking_determining(schema, &v.field, &v.class)
+}
+
 // ===========================================================================
 // IGW00000 A/B characterization (plan 2026-07-14-001 U5). A one-shot attended
 // seed → snapshot → fire → re-snapshot → cancel cycle that classifies the
@@ -1746,6 +1772,20 @@ async fn run_order_negative_probe(
     let mut used_scoped_downgrade = false;
 
     for v in variants.iter().filter(|v| order_probe_classes(v)) {
+        // Route C (§30): a booking-determining (field, class) variant is NEVER
+        // dispatched — its live firing changes WHAT gets booked (CSPAT00601
+        // `BnsTpCode` omission → a direction-defaulted REAL order), so it is
+        // recorded, not sent. No request is constructed and no pace is consumed;
+        // the skip is decided by the same pure `order_variant_may_fire` the
+        // offline twin asserts, so the fire site and the twin cannot drift.
+        if !order_variant_may_fire(&schema, v) {
+            println!(
+                "NEG-PROBE target={tr_cd}-negative variant field={} class={} \
+                 outcome=booking-determining-skip (never fired by design)",
+                v.field, v.class
+            );
+            continue;
+        }
         // Pace every order dispatch (ORDER_PROBE_PACE) so the differential does not
         // self-inflict an `IGW00201` throttle and halt mid-run before reaching the
         // later required-omit variants. Paces after the control submit and between
@@ -2580,6 +2620,106 @@ fn placed_nothing_binding_matches_the_live_invalidvariant_field_and_class_string
     assert!(
         order_code_placed_nothing(&schema, &variant.field, &variant.class, "IGW00000"),
         "the generated variant's field/class strings must resolve the annotation key"
+    );
+}
+
+/// A synthetic order-constraint fixture declaring the **intended CSPAT00601
+/// annotation shape** (Route C, §30): `BnsTpCode` marked
+/// `booking_determining: [required]` next to an UNMARKED integer sibling
+/// (`OrdQty`, which generates both type and required variants). Built through the
+/// real `ConstraintSchema` deserialize path (same serde derive as the embedded
+/// YAML), so these offline tests prove the live `InvalidVariant.field` /
+/// `v.class` string binding matches the annotation key BEFORE the metadata edit
+/// lands — it must NOT depend on the not-yet-annotated embedded CSPAT00601
+/// schema.
+fn booking_determining_fixture_schema() -> ConstraintSchema {
+    serde_json::from_value(serde_json::json!({
+        "tr_code": "FIXTURE",
+        "fields": [
+            {
+                "name": "BnsTpCode",
+                "type": "string",
+                "required": true,
+                "booking_determining": ["required"],
+                "enum": { "applicable": false },
+                "range": { "applicable": false },
+                "format": { "applicable": false }
+            },
+            {
+                "name": "OrdQty",
+                "type": "integer",
+                "required": true,
+                "enum": { "applicable": false },
+                "range": { "applicable": false },
+                "format": { "applicable": false }
+            }
+        ]
+    }))
+    .expect("fixture schema deserializes")
+}
+
+#[test]
+fn is_booking_determining_is_scoped_to_the_exact_marked_field_class_pair() {
+    // Route C (§30): the never-fire predicate fires ONLY for the exact marked
+    // (field, class) pair — a different class or field misses, and an
+    // empty/absent declaration is never booking-determining.
+    let schema = booking_determining_fixture_schema();
+    assert!(is_booking_determining(&schema, "BnsTpCode", "required"));
+    // Same field, a DIFFERENT class → false (the marked field's type variant
+    // still fires).
+    assert!(!is_booking_determining(&schema, "BnsTpCode", "type"));
+    // An UNMARKED sibling field → false (its required variant still fires).
+    assert!(!is_booking_determining(&schema, "OrdQty", "required"));
+    // An unknown field → false.
+    assert!(!is_booking_determining(&schema, "Nonexistent", "required"));
+    // The real embedded CSPAT00601 schema carries no annotation yet (the metadata
+    // edit is a separate unit) → nothing skips today.
+    let embedded = ls_core::schema_for("CSPAT00601").expect("CSPAT00601 schema");
+    assert!(!is_booking_determining(embedded, "BnsTpCode", "required"));
+}
+
+#[test]
+fn order_variant_fire_decision_skips_only_annotated_generated_variants() {
+    // Real-binding round-trip (Route C, §30): the live fire loop keys the skip on
+    // `v.field` / `v.class` produced by `generate_invalid_variants`. Generate the
+    // variants from the fixture and assert the SAME pure decision fn the loop
+    // calls: the marked BnsTpCode required-omit variant is SKIP (never
+    // dispatched); the unmarked sibling's required variant and a type-class
+    // variant on the marked field both FIRE (negative anchors).
+    let schema = booking_determining_fixture_schema();
+    let seed = serde_json::json!({ "BnsTpCode": "2", "OrdQty": 1 });
+    let variants = generate_invalid_variants(&schema, &seed);
+    let find = |field: &str, class: &str| {
+        variants
+            .iter()
+            .find(|v| v.field == field && v.class == class)
+            .unwrap_or_else(|| panic!("{field}/{class} variant is generated"))
+    };
+    // The annotated (field, class) pair → skip: never fired by design.
+    assert!(
+        !order_variant_may_fire(&schema, find("BnsTpCode", "required")),
+        "the marked BnsTpCode required variant must never be dispatched"
+    );
+    // The UNMARKED sibling's required variant → fires.
+    assert!(
+        order_variant_may_fire(&schema, find("OrdQty", "required")),
+        "an unmarked sibling's required variant still fires"
+    );
+    // The unmarked sibling's type variant → fires.
+    assert!(
+        order_variant_may_fire(&schema, find("OrdQty", "type")),
+        "an unmarked type variant still fires"
+    );
+    // The marked field's OTHER class → fires (a string field generates no type
+    // variant, so anchor on a hand-built one with the same strings the loop sees).
+    let bns_type = InvalidVariant {
+        field: "BnsTpCode".into(),
+        class: "type".into(),
+        request: seed.clone(),
+    };
+    assert!(
+        order_variant_may_fire(&schema, &bns_type),
+        "only the marked class skips — the marked field's type variant still fires"
     );
 }
 

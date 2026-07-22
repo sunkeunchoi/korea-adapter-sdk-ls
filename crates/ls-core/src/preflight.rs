@@ -141,6 +141,19 @@ pub struct FieldConstraint {
     /// every existing constraint file deserializes unchanged.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub placed_nothing_codes: BTreeMap<String, Vec<String>>,
+    /// Input classes (in practice `["required"]`) whose live firing is FORBIDDEN
+    /// for this field — the field is **booking-determining** (Route C, §30,
+    /// CSPAT00601 `BnsTpCode`): omitting it does not get the request rejected, it
+    /// changes WHAT gets booked (the gateway direction-defaults and places a REAL
+    /// order — ledger §30, ordno=17093). The differential probe must never fire an
+    /// annotated `(field, class)` variant — it is recorded, not sent. A probe-only
+    /// facet like [`Self::gateway_tolerant`] and [`Self::placed_nothing_codes`]:
+    /// never rendered by docgen, and it never weakens preflight (a `required:true`
+    /// field still fails preflight when omitted, regardless of this facet).
+    /// Empty/absent = none (backward-compatible default). See
+    /// `docs/solutions/conventions/order-negative-probe-modify-vs-submit-policy.md`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub booking_determining: Vec<String>,
 }
 
 /// A cross-field / combination-invalidity rule (R7): fields individually valid
@@ -680,6 +693,7 @@ mod tests {
             },
             gateway_tolerant: vec![],
             placed_nothing_codes: BTreeMap::new(),
+            booking_determining: vec![],
         }
     }
 
@@ -950,6 +964,65 @@ fields:
         let err = validate_request(&schema, &serde_json::json!({"OrdprcPtnCode": ""}))
             .expect_err("omitted required field must still reject");
         assert_eq!(err.field, "OrdprcPtnCode");
+    }
+
+    #[test]
+    fn booking_determining_round_trips_through_yaml() {
+        // Route C (§30, CSPAT00601 `BnsTpCode`): a field carrying a
+        // `booking_determining` class list parses with the classes present on the
+        // field.
+        let yaml = r#"
+tr_code: TEST
+fields:
+  - name: BnsTpCode
+    type: string
+    required: true
+    booking_determining: [required]
+    enum: {applicable: false}
+    range: {applicable: false}
+    format: {applicable: false}
+"#;
+        let schema: ConstraintSchema = serde_yaml::from_str(yaml).expect("parses");
+        assert_eq!(
+            schema.fields[0].booking_determining,
+            vec!["required".to_string()]
+        );
+    }
+
+    #[test]
+    fn missing_booking_determining_key_defaults_empty() {
+        // Backward-compat: a schema with no `booking_determining` key parses with
+        // an empty vec — every existing constraint file round-trips unchanged.
+        let yaml = r#"
+tr_code: TEST
+fields:
+  - name: shcode
+    type: string
+    required: true
+    enum: {applicable: false}
+    range: {applicable: false}
+    format: {applicable: false}
+"#;
+        let schema: ConstraintSchema = serde_yaml::from_str(yaml).expect("parses");
+        assert!(schema.fields[0].booking_determining.is_empty());
+    }
+
+    #[test]
+    fn booking_determining_does_not_weaken_preflight() {
+        // Route C analogue of the Route A/B pins: a `required: true` field that
+        // also marks `booking_determining: [required]` still fails preflight when
+        // omitted — the facet only forbids the probe from firing, never weakens
+        // preflight.
+        let mut f = field("BnsTpCode", FieldType::String, true);
+        f.booking_determining = vec!["required".into()];
+        let schema = ConstraintSchema {
+            tr_code: "TEST".into(),
+            fields: vec![f],
+            cross_field: vec![],
+        };
+        let err = validate_request(&schema, &serde_json::json!({"BnsTpCode": ""}))
+            .expect_err("omitted required field must still reject");
+        assert_eq!(err.field, "BnsTpCode");
     }
 
     #[test]
