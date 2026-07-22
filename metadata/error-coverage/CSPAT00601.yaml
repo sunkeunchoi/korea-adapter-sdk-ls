@@ -1,0 +1,106 @@
+# Error-coverage evidence for CSPAT00601 (현물 정규주문 — cash-equity order SUBMIT).
+# Records the per-(field, class) coverage derived from constraints/CSPAT00601.yaml
+# and the reachable gateway codes the Reference page explains from the shared
+# catalog. Per KTD3 the order-TR negative probe fires ONLY the type/required
+# classes (it never places a spurious priced order); enum/range/format are not
+# generated for order TRs.
+#
+# NOT PROBED YET: no differential negative probe has completed under the Route C
+# booking-determining skip (the U2 audit landed the annotations; U4's attended run
+# flips this to clean). The per-field entries below carry the §30 (2026-07-13)
+# live observations that ground the audit:
+#   - IsuNo/required → 01407 rejected distinctly (the gateway DOES enforce the
+#     symbol for a submit; placed nothing);
+#   - OrdQty/OrdPrc type+required → IGW40011, rejected distinctly (ingress
+#     input-validation reject, placed nothing);
+#   - BnsTpCode/required → 00000 "accepted": the gateway DEFAULTED the direction
+#     and placed a REAL resting order (ordno=17093; 005930 confirmed flat only
+#     after the fallback cancel) — the Route C booking-determining pole. The
+#     variant is never fired again by design (constraints/CSPAT00601.yaml
+#     `booking_determining: [required]`, enforced in the fire loop by
+#     `order_variant_may_fire`).
+#   - OrdprcPtnCode / OrdCndiTpCode / MgntrnCode required → never fired live on
+#     00601; annotated booking-determining PROVISIONALLY (R11, fail-closed): all
+#     three are mode selectors whose gateway-defaulting would alter the booked
+#     order's price pattern / execution condition / financing. Only a
+#     harness-confirmed `rejected` verdict lifts a provisional annotation.
+#
+# SENSOR-BLINDING NOTE (Route C, accepted+bounded): annotating a (field, required)
+# pair booking-determining makes the differential RECORD-NOT-FIRE that variant
+# forever — a future gateway change that cleanly rejects the omission can no
+# longer be observed by the differential probe. The bounded re-observation path is
+# the attended booking A/B harness (`make live-smoke-cspat00601-booking-ab`):
+# seed-controlled, teardown-reconciled, the ONLY sanctioned characterization path
+# for a submit-leg booking field. A harness `rejected` verdict RE-OPENS the
+# corresponding annotation (plan R8); a provisional (R11) annotation is lifted by
+# nothing else.
+#
+# `status` legend: declared = authored offline, not yet probed; confirmed = the
+# differential probe confirmed the bound (rejected distinctly); booking_determining
+# = characterized live or provisionally excluded — the variant is never fired by
+# design (Route C); see the constraint file's annotation comments; tolerant = the
+# gateway accepted the injected violation but the SDK enforces it at preflight as a
+# caller contract (gateway_tolerant, expected-tolerant — non-blocking); held =
+# inconclusive; divergent = observed behavior disagreed with the declaration;
+# n_a = the class does not apply to the field (or is not fired by the order-TR probe).
+tr_code: CSPAT00601
+probe_status: not_probed
+seed: "IsuNo=005930 OrdQty=<min qty> OrdPrc=<band-floor, non-marketable> BnsTpCode=2 OrdprcPtnCode=00 MgntrnCode=000 OrdCndiTpCode=0"
+input_classes:
+  - { field: IsuNo, class: type, status: n_a }                 # string field — no type-mutation variant is generated
+  - { field: IsuNo, class: required, status: declared }         # reject-expected, PROVEN: live removal → 01407 rejected distinctly, placed nothing (§30)
+  - { field: IsuNo, class: enum, status: n_a }
+  - { field: IsuNo, class: range, status: n_a }
+  - { field: IsuNo, class: format, status: n_a }                # symbol format declared in the schema but not fired by the order-TR probe (type/required only, KTD3)
+  - { field: OrdQty, class: type, status: declared }           # numeric field — a quoted string was rejected distinctly live (IGW40011, §30)
+  - { field: OrdQty, class: required, status: declared }        # reject-expected, PROVEN: omit → IGW40011 ingress reject, placed nothing (§30)
+  - { field: OrdQty, class: enum, status: n_a }
+  - { field: OrdQty, class: range, status: n_a }
+  - { field: OrdQty, class: format, status: n_a }
+  - { field: OrdPrc, class: type, status: declared }           # numeric field — IGW40011 ingress reject expected (observed on the sibling numeric, §30)
+  - { field: OrdPrc, class: required, status: declared }        # reject-expected, PROVEN class: IGW40011 ingress reject, placed nothing (§30)
+  - { field: OrdPrc, class: enum, status: n_a }
+  - { field: OrdPrc, class: range, status: n_a }
+  - { field: OrdPrc, class: format, status: n_a }
+  - { field: BnsTpCode, class: type, status: n_a }              # string field — no type-mutation variant is generated
+  - { field: BnsTpCode, class: required, status: booking_determining }  # PROVEN live (§30): omission → direction-defaulted REAL order ordno=17093 — never fired again by design (Route C)
+  - { field: BnsTpCode, class: enum, status: n_a }              # declared ["1","2"] but not fired by the order-TR probe (type/required only, KTD3)
+  - { field: BnsTpCode, class: range, status: n_a }
+  - { field: BnsTpCode, class: format, status: n_a }
+  - { field: OrdprcPtnCode, class: type, status: n_a }          # string field — no type-mutation variant is generated
+  - { field: OrdprcPtnCode, class: required, status: booking_determining }  # provisional (R11) — never observed live; price-pattern mode selector; lift only on harness-confirmed rejection
+  - { field: OrdprcPtnCode, class: enum, status: n_a }
+  - { field: OrdprcPtnCode, class: range, status: n_a }
+  - { field: OrdprcPtnCode, class: format, status: n_a }
+  - { field: MgntrnCode, class: type, status: n_a }             # string field — no type-mutation variant is generated
+  - { field: MgntrnCode, class: required, status: booking_determining }  # provisional (R11) — never observed live; financing mode selector; lift only on harness-confirmed rejection
+  - { field: MgntrnCode, class: enum, status: n_a }
+  - { field: MgntrnCode, class: range, status: n_a }
+  - { field: MgntrnCode, class: format, status: n_a }
+  - { field: LoanDt, class: type, status: n_a }                 # string field — no type-mutation variant is generated
+  - { field: LoanDt, class: required, status: n_a }             # required: false (certified struct sends it EMPTY) — out of the required-variant question
+  - { field: LoanDt, class: enum, status: n_a }
+  - { field: LoanDt, class: range, status: n_a }
+  - { field: LoanDt, class: format, status: n_a }
+  - { field: OrdCndiTpCode, class: type, status: n_a }          # string field — no type-mutation variant is generated
+  - { field: OrdCndiTpCode, class: required, status: booking_determining }  # provisional (R11) — never observed live on 00601; execution-condition mode selector; lift only on harness-confirmed rejection
+  - { field: OrdCndiTpCode, class: enum, status: n_a }
+  - { field: OrdCndiTpCode, class: range, status: n_a }
+  - { field: OrdCndiTpCode, class: format, status: n_a }
+  - { field: MbrNo, class: type, status: n_a }                  # string field — no type-mutation variant is generated
+  - { field: MbrNo, class: required, status: n_a }              # required: false (plain KRX order sends it EMPTY) — out of the required-variant question
+  - { field: MbrNo, class: enum, status: n_a }
+  - { field: MbrNo, class: range, status: n_a }
+  - { field: MbrNo, class: format, status: n_a }
+# Reachable gateway codes for this order TR, explained once from the shared catalog
+# (R8/R9). Environment/entitlement codes (session-closed 904, paper-incompatible
+# 01900, account-not-order-capable 01491) are not reproduced per TR — they point at
+# the same catalog entries. The 00040 submit-accepted ack is a success code recorded
+# in the certification evidence, not a catalog error entry.
+gateway_codes:
+  - "00000"
+  - "904"
+  - "01900"
+  - "01491"
+  - "01407"
+  - IGW40011

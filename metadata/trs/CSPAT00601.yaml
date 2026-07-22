@@ -30,3 +30,4 @@ support:
 maintenance:
   source_spec_hash: f6a1b2c3d4e5
   last_reviewed: 2026-06-30
+error_coverage_ref: error-coverage/CSPAT00601.yaml

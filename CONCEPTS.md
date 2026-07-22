@@ -62,6 +62,9 @@ A variant response the gateway produced by **evaluating the injected violation o
 ### Non-evaluation
 A gateway response that carries **no signal about the injected constraint** because the gateway never judged the variant on its merits — canonically the `IGW00201` throttle (the request was refused for pacing/budget — see [[Rolling call budget]] — before evaluation), plus transport failures and unknown codes. A [[Differential negative probe]] variant that meets a non-evaluation is inconclusive → HELD, never CLEAN; treating a non-evaluation as a rejection is the false-CLEAN a strict merits-allowlist classifier exists to prevent.
 
+### Booking-determining field
+A submit-leg request field whose omission changes **what order gets booked** rather than whether the request is rejected — canonically `CSPAT00601 BnsTpCode`, where the gateway defaults the buy/sell direction and places a real order (ledger §30, `ordno=17093`). Such a field stays `required: true` as a hard caller contract and is **never fired live** by the [[Differential negative probe]]: the exclusion is code-enforced — its [[Constraint schema]] marks the exact pair `booking_determining: [required]`, and the probe's fire loop consumes the annotation (`order_variant_may_fire`) to record-not-dispatch the variant, so it is structurally unroutable rather than an operator convention. A never-observed submit field with booking-shaped semantics is annotated provisionally (fail-closed); only a harness-confirmed rejection lifts it, never semantic judgment or schema relaxation. See `docs/solutions/conventions/order-negative-probe-modify-vs-submit-policy.md`.
+
 ### Error coverage
 The per-TR evidence artifact (`metadata/error-coverage/<tr>.yaml`) recording the [[Differential negative probe]]'s per-(field, class) outcomes plus the reachable gateway codes the Reference page explains from the shared error catalog. Required on a Recommended TR by the validator ([[Error-resilience gate]]).
 

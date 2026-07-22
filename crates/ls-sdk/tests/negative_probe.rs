@@ -27,6 +27,7 @@ use ls_core::{
     ConstraintSchema, CrossFieldRule, InvalidVariant, LsConfig, LsError, LsResult, ProbeOutcome,
     VariantVerdict,
 };
+use ls_sdk::account::T0424Request;
 use ls_sdk::market_session::T1102Request;
 use ls_sdk::orders::{
     CSPAT00601Request, CSPAT00801Request, T0425InBlock, T0425OutBlock1, T0425Request,
@@ -936,6 +937,22 @@ impl Band {
     fn resting_buy_price(&self) -> u64 {
         self.dnlmt
     }
+
+    /// Marketable SELL price — AT the floor: an aggressive limit that crosses the
+    /// book DOWNWARD and fills against resting bids. Mirrors `order_smoke.rs`
+    /// `marketable_sell_price` (the paper-reset flatten pattern); used by the
+    /// booking A/B sign-aware close-out to flatten a defaulted BUY fill.
+    fn marketable_sell_price(&self) -> u64 {
+        self.dnlmt
+    }
+
+    /// Marketable BUY price — AT the cap: the mirror aggressive limit that crosses
+    /// the book UPWARD and fills against resting asks. Used by the booking A/B
+    /// sign-aware close-out to buy back a defaulted SELL fill (close-only: the
+    /// bought-back qty is exactly the observed delta, never beyond the pre state).
+    fn marketable_buy_price(&self) -> u64 {
+        self.uplmt
+    }
 }
 
 /// The account-flatness verdict from a symbol-scoped `t0425` working-orders scan.
@@ -1289,6 +1306,32 @@ fn resolve_fired_outcome(
         }
         other => other,
     }
+}
+
+/// `true` if `schema` marks this exact `(field, class)` pair **booking-determining**
+/// (Route C, §30): the class's violation, when fired live, changes WHAT gets booked
+/// rather than whether the request is rejected (CSPAT00601 `BnsTpCode` omission →
+/// a direction-defaulted REAL order, ledger §30 ordno=17093). The never-fire
+/// analogue of [`is_gateway_tolerant`] / [`order_code_placed_nothing`]: a pure
+/// per-pair lookup over a field's `booking_determining` list, so the skip decision
+/// is offline-twinnable without a live fire. See
+/// `docs/solutions/conventions/order-negative-probe-modify-vs-submit-policy.md`.
+fn is_booking_determining(schema: &ConstraintSchema, field: &str, class: &str) -> bool {
+    schema
+        .fields
+        .iter()
+        .find(|f| f.name == field)
+        .is_some_and(|f| f.booking_determining.iter().any(|c| c == class))
+}
+
+/// The Route-C fire-vs-skip decision for one order-probe variant (pure, §30): a
+/// variant whose `(field, class)` is marked booking-determining is NEVER dispatched
+/// — recorded, not sent — so an annotated variant is structurally unroutable at
+/// the fire site, not merely filtered by class. Every other variant fires as
+/// before. Extracted from the fire loop so the decision is testable against
+/// `generate_invalid_variants` output without a live dispatch.
+fn order_variant_may_fire(schema: &ConstraintSchema, v: &InvalidVariant) -> bool {
+    !is_booking_determining(schema, &v.field, &v.class)
 }
 
 // ===========================================================================
@@ -1746,6 +1789,20 @@ async fn run_order_negative_probe(
     let mut used_scoped_downgrade = false;
 
     for v in variants.iter().filter(|v| order_probe_classes(v)) {
+        // Route C (§30): a booking-determining (field, class) variant is NEVER
+        // dispatched — its live firing changes WHAT gets booked (CSPAT00601
+        // `BnsTpCode` omission → a direction-defaulted REAL order), so it is
+        // recorded, not sent. No request is constructed and no pace is consumed;
+        // the skip is decided by the same pure `order_variant_may_fire` the
+        // offline twin asserts, so the fire site and the twin cannot drift.
+        if !order_variant_may_fire(&schema, v) {
+            println!(
+                "NEG-PROBE target={tr_cd}-negative variant field={} class={} \
+                 outcome=booking-determining-skip (never fired by design)",
+                v.field, v.class
+            );
+            continue;
+        }
         // Pace every order dispatch (ORDER_PROBE_PACE) so the differential does not
         // self-inflict an `IGW00201` throttle and halt mid-run before reaching the
         // later required-omit variants. Paces after the control submit and between
@@ -2233,6 +2290,606 @@ async fn live_smoke_cspat00701_igw00000_ab() {
 }
 
 // ===========================================================================
+// Governed booking-determining A/B characterization (CSPAT00601, Route C §30).
+// The ONLY sanctioned path to fire a booking-determining omission: a one-shot
+// attended seed → S_pre → fire (the annotated field's required-omit submit) →
+// paced S_post + t0424 position fill-check → sign-aware close/cancel →
+// fail-closed teardown cycle. A `rejected` verdict RE-OPENS/LIFTS the
+// annotation (plan R8; a provisional R11 annotation is lifted by nothing
+// else). Probe-only: the runtime seam and the fire-loop skip are untouched.
+// ===========================================================================
+
+/// The env var naming the annotated CSPAT00601 field whose required-omission the
+/// attended booking A/B fires. Empty/unset defaults to the §30-proven `BnsTpCode`.
+const BOOKING_AB_FIELD_ENV: &str = "LS_AB_FIELD";
+const BOOKING_AB_DEFAULT_FIELD: &str = "BnsTpCode";
+
+/// The governed-field gate (pure, no dispatch): the harness fires ONLY a field the
+/// embedded CSPAT00601 schema annotates `booking_determining: [required]` — the
+/// SAME `is_booking_determining` lookup the fire-loop skip keys on, so "what the
+/// differential refuses to fire" and "what the governed harness may fire" cannot
+/// drift. An unknown field and an unannotated (reject-expected) field are both
+/// refused with a clean message BEFORE any credential load or dispatch.
+fn booking_ab_field_gate(schema: &ConstraintSchema, field: &str) -> Result<(), String> {
+    if !schema.fields.iter().any(|f| f.name == field) {
+        return Err(format!(
+            "'{field}' is not a field of the embedded CSPAT00601 constraint schema — refusing \
+             (no dispatch)"
+        ));
+    }
+    if !is_booking_determining(schema, field, "required") {
+        return Err(format!(
+            "'{field}' is not annotated booking_determining[required] — the governed A/B fires \
+             ONLY annotated omissions (its differential variant already fires normally); refusing \
+             (no dispatch)"
+        ));
+    }
+    Ok(())
+}
+
+/// The governed booking A/B verdict (plan U3). `Rejected` is the annotation
+/// re-open/lift trigger (R8/R11); either `PlacesDefaultedOrder*` arm CONFIRMS the
+/// annotation; `Inconclusive` changes nothing and fails closed to a cancel-all
+/// teardown.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BookingAbVerdict {
+    /// The omitted-field submit was accepted and a NEW resting row appeared —
+    /// the gateway defaulted the field and booked a real (resting) order.
+    PlacesDefaultedOrderRested,
+    /// A FILL was detected (position delta, a partial-fill row, or an acceptance
+    /// ack whose child vanished from the book) — the defaulted order EXECUTED.
+    PlacesDefaultedOrderFilled,
+    /// A recognized merits reject with NOTHING observed — the gateway refused the
+    /// omission and placed nothing. RE-OPENS/LIFTS the annotation (R8/R11).
+    Rejected,
+    /// Throttle / transport failure / untrusted reads / ambiguous ack with
+    /// nothing observable — fail-closed cancel-all teardown, re-run.
+    Inconclusive,
+}
+
+/// Classify the governed booking A/B (pure, offline-twinnable). Precedence, in
+/// the fail-safe order: a transport failure or an untrusted post-fire read is
+/// `Inconclusive` (#137: an untrusted read is NEVER evidence — `rejected`
+/// asserts placed-nothing, so it needs trusted reads too); an observed FILL
+/// outranks an observed resting row; any observation outranks the fired
+/// `rsp_cd` (the book is the truth, not the code); with nothing observed, a
+/// throttle/noneval code is not a merits answer, an acceptance ack is ambiguous
+/// (never `rejected`), a non-ingress 5xx stays may-rest-shaped — only a positive
+/// placed-nothing merits reject (via the shared [`classify_fired_variant`])
+/// yields `Rejected`.
+/// A booking-AB `Rejected` verdict LIFTS a booking-determining annotation (R8/R11),
+/// so it must rest on a code proven to be an ON-MERITS placed-nothing reject of the
+/// omitted submit field — never a bare `classify_fired_variant` "placed nothing"
+/// inference. `classify_fired_variant`'s `else` arm returns `PlacedNothing` for ANY
+/// non-success, non-5xx-may-rest answer, so a throttle degraded to an empty `rsp_cd`
+/// (HTTP 429 / non-JSON body), or a business reject for a reason UNRELATED to the
+/// injected omission (inventory, invalid-combination), would otherwise lift a field
+/// that places real orders. The allowlist is the shared ingress-validation rejects
+/// (`ls_core::is_ingress_validation_reject`, e.g. `IGW40011`) plus the catalogued
+/// business reject observed for an omitted order field (`01407`, §30 IsuNo removal).
+/// An empty/degraded or un-catalogued `rsp_cd` is NOT a merits answer → `Inconclusive`.
+fn is_booking_ab_merits_reject(rsp_cd: &str) -> bool {
+    ls_core::is_ingress_validation_reject(rsp_cd) || rsp_cd == "01407"
+}
+
+/// Whether the fired omitted-field submit produced a FILL (pure, offline-twinnable).
+/// A `BnsTpCode`-omitted fire is direction-defaulted, so it can EXECUTE rather than
+/// rest — this is what makes cancel-all teardown insufficient. Untrusted reads are
+/// never evidence (`reads_trusted` gates everything). A fill is any of: a `janqty`
+/// balance delta (T0424), a partial-fill row (`cheqty>0`) in the trusted scan, or an
+/// acceptance ack whose surfaced child is NOT resting in a trusted book (a fully
+/// filled row vanishes from `chegb="2"` by construction). A child that IS resting is
+/// a rested order, not a fill.
+fn detect_fill(
+    reads_trusted: bool,
+    janqty_pre: i64,
+    janqty_post: i64,
+    partial_fill: bool,
+    accepted: bool,
+    child_present: bool,
+    child_resting: bool,
+) -> bool {
+    reads_trusted
+        && (janqty_post != janqty_pre
+            || partial_fill
+            || (accepted && child_present && !child_resting))
+}
+
+fn classify_booking_ab(
+    fire: Option<(u16, &str)>,
+    reads_trusted: bool,
+    new_resting_order: bool,
+    fill_detected: bool,
+) -> BookingAbVerdict {
+    let Some((http, rsp_cd)) = fire else {
+        return BookingAbVerdict::Inconclusive;
+    };
+    if !reads_trusted {
+        return BookingAbVerdict::Inconclusive;
+    }
+    if fill_detected {
+        return BookingAbVerdict::PlacesDefaultedOrderFilled;
+    }
+    if new_resting_order {
+        return BookingAbVerdict::PlacesDefaultedOrderRested;
+    }
+    if is_noneval_code(rsp_cd) {
+        return BookingAbVerdict::Inconclusive;
+    }
+    match classify_fired_variant(http, rsp_cd) {
+        // Placed nothing, AND on a proven omission-reject code: the gateway refused
+        // the omission on its merits → safe to re-open/lift the annotation.
+        FiredVariantOutcome::PlacedNothing if is_booking_ab_merits_reject(rsp_cd) => {
+            BookingAbVerdict::Rejected
+        }
+        // Placed nothing but on an empty/degraded or un-catalogued code (429, non-JSON
+        // body, unrelated business reject): NOT a merits answer — never lift.
+        FiredVariantOutcome::PlacedNothing => BookingAbVerdict::Inconclusive,
+        // An ack with nothing observable, or a non-ingress 5xx: ambiguous.
+        FiredVariantOutcome::Accepted | FiredVariantOutcome::MayHaveRested => {
+            BookingAbVerdict::Inconclusive
+        }
+    }
+}
+
+/// The sign-aware close-out side for a detected fill (close-only semantics).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CloseSide {
+    /// The defaulted order BOUGHT `qty` — flatten with a marketable SELL.
+    Sell(u64),
+    /// The defaulted order SOLD `qty` — buy exactly `qty` back (returns to the
+    /// pre state, never beyond flat).
+    Buy(u64),
+}
+
+/// Plan the sign-aware close-out from the before/after `t0424` position (pure).
+/// A positive `janqty` delta means the defaulted order BOUGHT → SELL the delta,
+/// capped at the currently-sellable qty (`mdposqt`; an unsettled buy with zero
+/// sellable yields NO close now — surfaced to the operator, never an oversell). A
+/// negative delta means it SOLD → BUY exactly the delta back. No delta → no
+/// close order (an absence-from-book fill with no measurable position change is
+/// the operator's to reconcile).
+fn plan_close_out(janqty_pre: i64, janqty_post: i64, sellable_post: u64) -> Option<CloseSide> {
+    let delta = janqty_post - janqty_pre;
+    if delta > 0 {
+        let qty = (delta as u64).min(sellable_post);
+        (qty > 0).then_some(CloseSide::Sell(qty))
+    } else if delta < 0 {
+        Some(CloseSide::Buy(delta.unsigned_abs()))
+    } else {
+        None
+    }
+}
+
+/// Read the `t0424` position for `symbol`: `(janqty, mdposqt)` — `(0, 0)` when the
+/// symbol carries no holdings row. Paced 1500ms (Account bucket) like the `t0425`
+/// scan. A failed read is `Err` — the caller must treat it as UNTRUSTED (never
+/// no-position). The expcode match tolerates an `A`-prefixed issue number.
+async fn read_symbol_position(sdk: &LsSdk, symbol: &str) -> Result<(i64, u64), String> {
+    tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+    match sdk
+        .account()
+        .stock_balance(&T0424Request::new("1", "0", "0", "0"))
+        .await
+    {
+        Ok(resp) => {
+            let row = resp.outblock1.iter().find(|r| {
+                let e = r.expcode.trim();
+                e == symbol || e.trim_start_matches('A') == symbol
+            });
+            Ok((
+                row.map(|r| parse_qty(&r.janqty) as i64).unwrap_or(0),
+                row.map(|r| parse_qty(&r.mdposqt)).unwrap_or(0),
+            ))
+        }
+        Err(e) => Err(format!("t0424 holdings read failed ({})", safe_err(&e))),
+    }
+}
+
+/// The attended governed booking-determining A/B (plan U3). Re-characterizes the
+/// omission behavior of ONE annotated CSPAT00601 field (`LS_AB_FIELD`, default
+/// `BnsTpCode`) under the full negative-probe safety spine: guard chain →
+/// pure field gate (refuse an unknown/unannotated field, no dispatch) → seed a
+/// resting control → S_pre → fire the field-omitted submit → paced S_post +
+/// `t0424` position fill-check → verdict → rested: cancel the child / filled:
+/// sign-aware close-out to flat / rejected: print the R8/R11 re-open notice →
+/// fail-closed cancel-all teardown in EVERY branch. Prints ONE credential-free
+/// `BOOKING-AB field=… verdict=…` line; never leaves a resting order.
+async fn run_booking_determining_ab_probe() {
+    if let Err(e) = install_dispatch_log_suppressor() {
+        panic!("{}", scrub_secrets(&e.to_string()));
+    }
+    if let Err(e) = autonomy_guard() {
+        panic!("{}", scrub_secrets(&e.to_string()));
+    }
+    if let Err(e) = order_smoke_guard() {
+        panic!("{}", scrub_secrets(&e.to_string()));
+    }
+    // The governed-field gate is PURE and runs before any credential load or
+    // dispatch: an unannotated/unknown LS_AB_FIELD refuses cleanly.
+    let field = std::env::var(BOOKING_AB_FIELD_ENV)
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| BOOKING_AB_DEFAULT_FIELD.to_string());
+    let tag = format!("BOOKING-AB target=CSPAT00601 field={field}");
+    let schema = ls_core::schema_for("CSPAT00601")
+        .expect("CSPAT00601 carries an embedded constraint schema");
+    if let Err(e) = booking_ab_field_gate(schema, &field) {
+        // A refused field is an operator MISCONFIGURATION (a mistyped or
+        // non-booking-determining LS_AB_FIELD), not a legitimate no-op like the
+        // pre-placement inconclusive aborts below. The Make target greps "1 passed",
+        // so a green return here would let a typo masquerade as a successful
+        // characterization run — fail loudly instead (the gate message is
+        // credential-free by construction: a field name and the reason).
+        panic!("{tag} verdict=refused [{e}]");
+    }
+    let config = match LsConfig::from_env() {
+        Ok(c) => c,
+        Err(e) => panic!("{}", scrub_secrets(&e.to_string())),
+    };
+    if let Err(e) = assert_resolved_paper(&config.environment) {
+        panic!("{}", scrub_secrets(&e.to_string()));
+    }
+    let sdk = match LsSdk::new(config.clone()) {
+        Ok(s) => s,
+        Err(e) => panic!("{}", scrub_secrets(&e.to_string())),
+    };
+
+    let symbol = "005930";
+    let member = "NXT";
+
+    // Daily band + two DISTINCT non-marketable prices near the floor: P0 (the
+    // seed control) < P1 (the fired violation). P1 != P0 keeps the two orders
+    // visually distinct in the scans; both are far below market, so a
+    // direction-defaulted BUY rests while a defaulted SELL executes — which is
+    // exactly what the fill-check exists to catch.
+    let band = match sdk
+        .market_session()
+        .quote(&T1102Request::new(symbol, "K"))
+        .await
+    {
+        Ok(resp) => match validate_band(&resp.outblock.uplmtprice, &resp.outblock.dnlmtprice) {
+            Ok(b) => b,
+            Err(e) => {
+                println!("{tag} verdict=inconclusive [band: {e}] — no placement");
+                return;
+            }
+        },
+        Err(e) => {
+            println!(
+                "{tag} verdict=inconclusive [band fetch failed: {}] — no placement",
+                safe_err(&e)
+            );
+            return;
+        }
+    };
+    let p0 = band.resting_buy_price();
+    let p1 = p0.saturating_add(tick(p0)).min(band.uplmt);
+    if p1 <= p0 {
+        println!("{tag} verdict=inconclusive [band too narrow for 2 distinct A/B prices]");
+        return;
+    }
+
+    let token = match sdk.standalone().token().await {
+        Ok(t) if !t.is_empty() => t,
+        _ => {
+            println!("{tag} verdict=inconclusive [token acquisition failed]");
+            return;
+        }
+    };
+    let base = ls_core::config::Environment::resolve_base_url(&config);
+    let url = format!("{base}/stock/order");
+    let client = probe_client();
+
+    // `owned` is a teardown HINT only: every teardown in this fn passes
+    // owned_fully_constructed=false (cancel-ALL) — this probe deliberately fires
+    // a variant that can rest an order whose OrdNo may never surface, so the
+    // owned set can never be trusted to enumerate the residue.
+    let mut owned: BTreeSet<String> = BTreeSet::new();
+
+    // PRE-ASSERT-FLAT: refuse unless the symbol is flat & fill-free — a foreign
+    // or stranded row would poison both the new-order detection and the teardown
+    // soundness (do NOT teardown here).
+    match scan_symbol_working_orders(&sdk, symbol).await {
+        Ok(rows) => match require_flat_and_fill_free(&rows) {
+            Ok(()) => {}
+            Err(NotClear::Resting(o)) => {
+                println!(
+                    "{tag} verdict=inconclusive [pre-assert-flat: resting ordnos=[{}]; clear the \
+                     book] — no placement",
+                    o.join(",")
+                );
+                return;
+            }
+            Err(NotClear::Fill(f)) => {
+                println!(
+                    "{tag} verdict=inconclusive [pre-assert-flat: fill ordnos=[{}]; paper-reset] — \
+                     no placement",
+                    f.join(",")
+                );
+                return;
+            }
+        },
+        Err(e) => {
+            println!("{tag} verdict=inconclusive [pre-assert-flat scan failed: {e}] — no placement");
+            return;
+        }
+    }
+
+    // POSITION BASELINE (t0424): the before leg of the fill-check. A defaulted
+    // fire can EXECUTE (a direction-defaulted SELL at a below-market limit is
+    // marketable), so the fill signal is a position delta — never assume it rests.
+    let (janqty_pre, _) = match read_symbol_position(&sdk, symbol).await {
+        Ok(p) => p,
+        Err(e) => {
+            println!("{tag} verdict=inconclusive [position baseline: {e}] — no placement");
+            return;
+        }
+    };
+
+    // (1) SEED — place the resting control at P0 (band floor, non-marketable buy)
+    // and claim it into the owned set.
+    let control_req = CSPAT00601Request::limit(symbol, "1", p0.to_string(), "2", member);
+    let ordno = match sdk.orders().submit(&control_req).await {
+        Ok(resp) => resp.order_no().trim().to_string(),
+        Err(e) => {
+            println!(
+                "{tag} verdict=inconclusive [seed submit failed/ambiguous: {}] — reconciling",
+                safe_err(&e)
+            );
+            order_reconcile_teardown(&sdk, symbol, &owned, false).await;
+            return;
+        }
+    };
+    if ordno.is_empty() || ordno == "0" {
+        println!("{tag} verdict=inconclusive [seed returned no usable order number] — reconciling");
+        order_reconcile_teardown(&sdk, symbol, &owned, false).await;
+        return;
+    }
+    owned.insert(ordno.clone());
+
+    // (2) S_pre — trusted snapshot of the resting seed (existing scan machinery).
+    let s_pre = match scan_symbol_working_orders(&sdk, symbol).await {
+        Ok(rows) => seed_snapshot_from(&rows, &ordno),
+        Err(e) => {
+            println!("{tag} verdict=inconclusive [S_pre scan failed: {e}] — reconciling");
+            order_reconcile_teardown(&sdk, symbol, &owned, false).await;
+            return;
+        }
+    };
+    if !s_pre.present {
+        println!("{tag} verdict=inconclusive [seed absent from S_pre — cannot anchor] — reconciling");
+        order_reconcile_teardown(&sdk, symbol, &owned, false).await;
+        return;
+    }
+
+    // (3) FIRE — the valid 1-lot submit with EXACTLY `field` blanked (the same
+    // empty-string encoding `generate_invalid_variants` uses for required-omit),
+    // at P1. Capture http/rsp_cd/ord_no; claim any surfaced child.
+    let mut violation = order_seed_00601(p1);
+    if let Some(m) = violation.as_object_mut() {
+        m.insert(field.clone(), serde_json::json!(""));
+    }
+    let (fire_http, fire_rsp_cd, child) = match fire_inblock(
+        &client, &url, &token, "CSPAT00601", "CSPAT00601InBlock1", &violation,
+    )
+    .await
+    {
+        Some((http, rsp_cd, child)) => (
+            http,
+            rsp_cd,
+            child.filter(|c| !c.trim().is_empty() && c.trim() != "0"),
+        ),
+        None => {
+            // Transport failure: the variant may have rested with an OrdNo we
+            // never got — fail-closed cancel-all teardown, verdict inconclusive.
+            println!("{tag} fire=[transport-failure] verdict=inconclusive — reconciling");
+            order_reconcile_teardown(&sdk, symbol, &owned, false).await;
+            return;
+        }
+    };
+    println!("{tag} fire=[http={fire_http} rsp_cd={fire_rsp_cd}] ({field} omitted)");
+    if let Some(c) = &child {
+        owned.insert(c.trim().to_string());
+    }
+
+    // (4) Paced S_post — re-scan + new-resting detection (§27/#137 pace), plus
+    // the t0424 position re-read. Any failed read renders the reads UNTRUSTED.
+    tokio::time::sleep(Duration::from_millis(1000)).await;
+    let (rows_post, scan_trusted) = match scan_symbol_working_orders(&sdk, symbol).await {
+        Ok(rows) => (rows, true),
+        Err(e) => {
+            println!("{tag} S_post scan failed [{e}] — untrusted read");
+            (Vec::new(), false)
+        }
+    };
+    let (janqty_post, sellable_post, position_trusted) =
+        match read_symbol_position(&sdk, symbol).await {
+            Ok((j, s)) => (j, s, true),
+            Err(e) => {
+                println!("{tag} S_post position read failed [{e}] — untrusted read");
+                (janqty_pre, 0, false)
+            }
+        };
+    let reads_trusted = scan_trusted && position_trusted;
+
+    // FILL DETECTION (never assume the defaulted order rests): a position delta,
+    // a partial-fill row in the scan (`cheqty>0` — the pre-assert-flat baseline
+    // was fill-free), or an acceptance ack whose surfaced child is ABSENT from a
+    // trusted book (a fully-filled row vanishes from `chegb="2"` by construction).
+    let new_resting = has_new_resting_order(&rows_post, &ordno);
+    let child_resting = child.as_ref().is_some_and(|c| {
+        let want = normalize_ordno(c);
+        rows_post.iter().any(|r| {
+            normalize_ordno(&r.ordno) == want && parse_qty(&r.cheqty) == 0 && parse_qty(&r.ordrem) > 0
+        })
+    });
+    let partial_fill = rows_post.iter().any(|r| parse_qty(&r.cheqty) > 0);
+    let accepted = is_order_placement_success(fire_http, &fire_rsp_cd);
+    let fill_detected = detect_fill(
+        reads_trusted,
+        janqty_pre,
+        janqty_post,
+        partial_fill,
+        accepted,
+        child.is_some(),
+        child_resting,
+    );
+
+    let verdict = classify_booking_ab(
+        Some((fire_http, &fire_rsp_cd)),
+        reads_trusted,
+        new_resting,
+        fill_detected,
+    );
+
+    // Per-verdict handling. The fail-closed cancel-all teardown + flat report
+    // runs in EVERY branch after this match. A filled fire that cannot be closed
+    // back to the pre-probe baseline leaves a REAL open paper position; the Make
+    // target greps "1 passed", so the run must FAIL (not return green) in that case
+    // — recorded here and raised after teardown + diagnostics have printed.
+    let mut filled_unflattened: Option<String> = None;
+    let label = match verdict {
+        BookingAbVerdict::PlacesDefaultedOrderRested => {
+            // Cancel the defaulted child directly (teardown would also sweep it,
+            // but the plan's contract is an explicit child cancel). Cancel every
+            // resting non-seed row when the child OrdNo never surfaced.
+            for r in rows_post.iter().filter(|r| {
+                normalize_ordno(&r.ordno) != normalize_ordno(&ordno)
+                    && parse_qty(&r.cheqty) == 0
+                    && parse_qty(&r.ordrem) > 0
+            }) {
+                let cancel =
+                    CSPAT00801Request::new(r.ordno.trim(), r.expcode.trim(), r.ordrem.trim());
+                match sdk.orders().cancel(&cancel).await {
+                    Ok(_) => println!(
+                        "{tag} defaulted-child cancel ordno={} result=canceled",
+                        r.ordno.trim()
+                    ),
+                    Err(e) => println!(
+                        "{tag} defaulted-child cancel ordno={} result=[{}]",
+                        r.ordno.trim(),
+                        safe_err(&e)
+                    ),
+                }
+            }
+            "places-defaulted-order(rested)"
+        }
+        BookingAbVerdict::PlacesDefaultedOrderFilled => {
+            // Sign-aware close-out (close-only semantics): sell the bought delta
+            // (capped at sellable) or buy back the sold delta; never oversell,
+            // never move beyond the pre-probe position.
+            match plan_close_out(janqty_pre, janqty_post, sellable_post) {
+                Some(CloseSide::Sell(qty)) => {
+                    let close = CSPAT00601Request::limit(
+                        symbol,
+                        qty.to_string(),
+                        band.marketable_sell_price().to_string(),
+                        "1",
+                        member,
+                    );
+                    match sdk.orders().submit(&close).await {
+                        Ok(resp) => {
+                            owned.insert(resp.order_no().trim().to_string());
+                            println!("{tag} close-out=[sell qty={qty} marketable] result=acked");
+                        }
+                        Err(e) => println!(
+                            "{tag} close-out=[sell qty={qty}] result=[{}] — operator must flatten",
+                            safe_err(&e)
+                        ),
+                    }
+                }
+                Some(CloseSide::Buy(qty)) => {
+                    let close = CSPAT00601Request::limit(
+                        symbol,
+                        qty.to_string(),
+                        band.marketable_buy_price().to_string(),
+                        "2",
+                        member,
+                    );
+                    match sdk.orders().submit(&close).await {
+                        Ok(resp) => {
+                            owned.insert(resp.order_no().trim().to_string());
+                            println!("{tag} close-out=[buy-back qty={qty} marketable] result=acked");
+                        }
+                        Err(e) => println!(
+                            "{tag} close-out=[buy-back qty={qty}] result=[{}] — operator must \
+                             flatten",
+                            safe_err(&e)
+                        ),
+                    }
+                }
+                None => {
+                    println!(
+                        "{tag} close-out=none [fill detected but no closable janqty delta \
+                         (unsettled/absence-only signal)] — operator must reconcile the position"
+                    );
+                    filled_unflattened =
+                        Some("fill detected but no closable janqty delta".to_string());
+                }
+            }
+            // Verify flat: the position must be back at the baseline.
+            match read_symbol_position(&sdk, symbol).await {
+                Ok((j, _)) if j == janqty_pre => {
+                    println!("{tag} close-out flat=confirmed (janqty back at baseline)")
+                }
+                Ok((j, _)) => {
+                    println!(
+                        "{tag} close-out flat=NOT-confirmed (janqty delta {} remains) — operator \
+                         must reconcile",
+                        j - janqty_pre
+                    );
+                    filled_unflattened =
+                        Some(format!("janqty delta {} remains after close-out", j - janqty_pre));
+                }
+                Err(e) => {
+                    println!(
+                        "{tag} close-out flat=UNVERIFIED [{e}] — operator must confirm the position"
+                    );
+                    filled_unflattened = Some("final flatness could not be verified".to_string());
+                }
+            }
+            "places-defaulted-order(filled)"
+        }
+        BookingAbVerdict::Rejected => {
+            println!(
+                "{tag} NOTE: verdict=rejected RE-OPENS/LIFTS the booking_determining annotation \
+                 for {field} (plan R8/R11): remove `required` from the field's \
+                 booking_determining list in metadata/constraints/CSPAT00601.yaml, flip its \
+                 error-coverage status from booking_determining to confirmed, then re-run \
+                 `make live-smoke-cspat00601-negative` to observe the omission on the normal \
+                 differential path"
+            );
+            "rejected"
+        }
+        BookingAbVerdict::Inconclusive => "inconclusive",
+    };
+
+    // Fail-closed teardown in EVERY branch: cancel-all (owned untrusted by
+    // design), loud alarms preserved, then the ONE credential-free verdict line.
+    order_reconcile_teardown(&sdk, symbol, &owned, false).await;
+    println!(
+        "{tag} verdict={label} [fire http={fire_http} rsp_cd={fire_rsp_cd}] \
+         (credential-free; rejected → re-open/lift the annotation per R8/R11)"
+    );
+    // A defaulted fire that EXECUTED and could not be closed back to the pre-probe
+    // baseline leaves a real open paper position that cancel-all teardown cannot
+    // flatten. FAIL the run so `make live-smoke-cspat00601-booking-ab` does not report
+    // success over an un-flattened position (finding: verdict line says filled while
+    // the position remains).
+    if let Some(reason) = filled_unflattened {
+        panic!("{tag} POSITION NOT FLAT after filled-fire close-out [{reason}] — operator must reconcile before any further run");
+    }
+}
+
+#[tokio::test]
+#[ignore = "live probe: attended governed booking-determining A/B; needs real LS paper ORDER-account + open KRX window + LS_ORDER_SMOKE=1 + a fresh LS_ORDER_SMOKE_NONCE (attended TTY); optional LS_AB_FIELD (default BnsTpCode); run via `make live-smoke-cspat00601-booking-ab`"]
+async fn live_smoke_cspat00601_booking_determining_ab() {
+    run_booking_determining_ab_probe().await;
+}
+
+// ===========================================================================
 // D. Offline twins (these RUN in CI — no network)
 // ===========================================================================
 
@@ -2580,6 +3237,156 @@ fn placed_nothing_binding_matches_the_live_invalidvariant_field_and_class_string
     assert!(
         order_code_placed_nothing(&schema, &variant.field, &variant.class, "IGW00000"),
         "the generated variant's field/class strings must resolve the annotation key"
+    );
+}
+
+/// A synthetic order-constraint fixture declaring the **intended CSPAT00601
+/// annotation shape** (Route C, §30): `BnsTpCode` marked
+/// `booking_determining: [required]` next to an UNMARKED integer sibling
+/// (`OrdQty`, which generates both type and required variants). Built through the
+/// real `ConstraintSchema` deserialize path (same serde derive as the embedded
+/// YAML), so these offline tests prove the live `InvalidVariant.field` /
+/// `v.class` string binding matches the annotation key BEFORE the metadata edit
+/// lands — it must NOT depend on the not-yet-annotated embedded CSPAT00601
+/// schema.
+fn booking_determining_fixture_schema() -> ConstraintSchema {
+    serde_json::from_value(serde_json::json!({
+        "tr_code": "FIXTURE",
+        "fields": [
+            {
+                "name": "BnsTpCode",
+                "type": "string",
+                "required": true,
+                "booking_determining": ["required"],
+                "enum": { "applicable": false },
+                "range": { "applicable": false },
+                "format": { "applicable": false }
+            },
+            {
+                "name": "OrdQty",
+                "type": "integer",
+                "required": true,
+                "enum": { "applicable": false },
+                "range": { "applicable": false },
+                "format": { "applicable": false }
+            }
+        ]
+    }))
+    .expect("fixture schema deserializes")
+}
+
+#[test]
+fn is_booking_determining_is_scoped_to_the_exact_marked_field_class_pair() {
+    // Route C (§30): the never-fire predicate fires ONLY for the exact marked
+    // (field, class) pair — a different class or field misses, and an
+    // empty/absent declaration is never booking-determining.
+    let schema = booking_determining_fixture_schema();
+    assert!(is_booking_determining(&schema, "BnsTpCode", "required"));
+    // Same field, a DIFFERENT class → false (the marked field's type variant
+    // still fires).
+    assert!(!is_booking_determining(&schema, "BnsTpCode", "type"));
+    // An UNMARKED sibling field → false (its required variant still fires).
+    assert!(!is_booking_determining(&schema, "OrdQty", "required"));
+    // An unknown field → false.
+    assert!(!is_booking_determining(&schema, "Nonexistent", "required"));
+    // The real embedded CSPAT00601 schema now carries the U2 audit's annotations
+    // (constraints/CSPAT00601.yaml) — the proven BnsTpCode pair resolves, and an
+    // unannotated reject-expected sibling (IsuNo) still misses.
+    let embedded = ls_core::schema_for("CSPAT00601").expect("CSPAT00601 schema");
+    assert!(is_booking_determining(embedded, "BnsTpCode", "required"));
+    assert!(!is_booking_determining(embedded, "IsuNo", "required"));
+}
+
+#[test]
+fn order_variant_fire_decision_skips_only_annotated_generated_variants() {
+    // Real-binding round-trip (Route C, §30): the live fire loop keys the skip on
+    // `v.field` / `v.class` produced by `generate_invalid_variants`. Generate the
+    // variants from the fixture and assert the SAME pure decision fn the loop
+    // calls: the marked BnsTpCode required-omit variant is SKIP (never
+    // dispatched); the unmarked sibling's required variant and a type-class
+    // variant on the marked field both FIRE (negative anchors).
+    let schema = booking_determining_fixture_schema();
+    let seed = serde_json::json!({ "BnsTpCode": "2", "OrdQty": 1 });
+    let variants = generate_invalid_variants(&schema, &seed);
+    let find = |field: &str, class: &str| {
+        variants
+            .iter()
+            .find(|v| v.field == field && v.class == class)
+            .unwrap_or_else(|| panic!("{field}/{class} variant is generated"))
+    };
+    // The annotated (field, class) pair → skip: never fired by design.
+    assert!(
+        !order_variant_may_fire(&schema, find("BnsTpCode", "required")),
+        "the marked BnsTpCode required variant must never be dispatched"
+    );
+    // The UNMARKED sibling's required variant → fires.
+    assert!(
+        order_variant_may_fire(&schema, find("OrdQty", "required")),
+        "an unmarked sibling's required variant still fires"
+    );
+    // The unmarked sibling's type variant → fires.
+    assert!(
+        order_variant_may_fire(&schema, find("OrdQty", "type")),
+        "an unmarked type variant still fires"
+    );
+    // The marked field's OTHER class → fires (a string field generates no type
+    // variant, so anchor on a hand-built one with the same strings the loop sees).
+    let bns_type = InvalidVariant {
+        field: "BnsTpCode".into(),
+        class: "type".into(),
+        request: seed.clone(),
+    };
+    assert!(
+        order_variant_may_fire(&schema, &bns_type),
+        "only the marked class skips — the marked field's type variant still fires"
+    );
+}
+
+#[test]
+fn embedded_cspat00601_schema_skips_audited_booking_determining_variants_only() {
+    // U2 pin against the REAL embedded metadata (constraints/CSPAT00601.yaml):
+    // the audited booking-determining fields — BnsTpCode (PROVEN, §30
+    // ordno=17093) and the three PROVISIONAL mode selectors (R11:
+    // OrdprcPtnCode / OrdCndiTpCode / MgntrnCode) — are marked
+    // `booking_determining: [required]`, so their generated required-omit
+    // variants are structurally unroutable; the reject-expected PROVEN fields
+    // (IsuNo → 01407, OrdQty → IGW40011) still fire.
+    let schema = ls_core::schema_for("CSPAT00601").expect("CSPAT00601 schema");
+    let seed = serde_json::json!({
+        "IsuNo": "005930",
+        "OrdQty": 1,
+        "OrdPrc": 50000,
+        "BnsTpCode": "2",
+        "OrdprcPtnCode": "00",
+        "MgntrnCode": "000",
+        "OrdCndiTpCode": "0"
+    });
+    let variants = generate_invalid_variants(schema, &seed);
+    let find = |field: &str, class: &str| {
+        variants
+            .iter()
+            .find(|v| v.field == field && v.class == class)
+            .unwrap_or_else(|| panic!("{field}/{class} variant is generated"))
+    };
+    for field in ["BnsTpCode", "OrdprcPtnCode", "OrdCndiTpCode", "MgntrnCode"] {
+        assert!(
+            is_booking_determining(schema, field, "required"),
+            "{field}/required must be annotated booking-determining"
+        );
+        assert!(
+            !order_variant_may_fire(schema, find(field, "required")),
+            "{field}/required must never be dispatched"
+        );
+    }
+    // Reject-expected, PROVEN fields (§30): omission is refused before
+    // placement, so their variants still fire.
+    assert!(
+        order_variant_may_fire(schema, find("IsuNo", "required")),
+        "IsuNo/required still fires (01407 reject observed, §30)"
+    );
+    assert!(
+        order_variant_may_fire(schema, find("OrdQty", "required")),
+        "OrdQty/required still fires (IGW40011 reject observed, §30)"
     );
 }
 
@@ -3131,4 +3938,156 @@ fn order_no_json_renders_numeric_ordno_as_a_json_number() {
     assert!(order_no_json("12345").is_number());
     assert!(order_no_json(" 12345 ").is_number(), "trimmed then numeric");
     assert!(order_no_json("O-1").is_string(), "non-numeric falls back to string");
+}
+
+// --- Booking-determining A/B offline twins (governed harness, U3) -----------
+
+#[test]
+fn booking_ab_field_gate_accepts_only_annotated_fields() {
+    // The governed harness REFUSES (pure, no dispatch) any field that is not
+    // annotated `booking_determining: [required]` in the embedded CSPAT00601
+    // schema — an unannotated reject-expected sibling and an unknown field are
+    // both refused; the proven BnsTpCode and the three provisional (R11) mode
+    // selectors are accepted.
+    let schema = ls_core::schema_for("CSPAT00601").expect("CSPAT00601 schema");
+    for field in ["BnsTpCode", "OrdprcPtnCode", "OrdCndiTpCode", "MgntrnCode"] {
+        assert!(
+            booking_ab_field_gate(schema, field).is_ok(),
+            "{field} is annotated booking-determining — the gate must accept it"
+        );
+    }
+    // An unannotated (reject-expected, §30-proven) sibling → refused, no dispatch.
+    let err = booking_ab_field_gate(schema, "IsuNo").expect_err("IsuNo must be refused");
+    assert!(err.contains("not annotated"), "msg names the missing annotation: {err}");
+    // An unknown field → refused, no dispatch.
+    let err = booking_ab_field_gate(schema, "NoSuchField").expect_err("unknown must be refused");
+    assert!(err.contains("not a field"), "msg names the unknown field: {err}");
+}
+
+#[test]
+fn detect_fill_covers_every_channel() {
+    // Untrusted reads are NEVER a fill (gates everything) — even a janqty delta.
+    assert!(!detect_fill(false, 0, 1, true, true, true, false));
+    // janqty (T0424) balance delta alone → fill.
+    assert!(detect_fill(true, 0, 1, false, false, false, false));
+    // a partial-fill row (cheqty>0) alone → fill.
+    assert!(detect_fill(true, 0, 0, true, false, false, false));
+    // acceptance ack + surfaced child ABSENT from the trusted book → fill.
+    assert!(detect_fill(true, 0, 0, false, true, true, false));
+    // acceptance ack + child still RESTING → NOT a fill (it's a rested order).
+    assert!(!detect_fill(true, 0, 0, false, true, true, true));
+    // acceptance ack with NO surfaced child, no delta, no partial → not a fill.
+    assert!(!detect_fill(true, 0, 0, false, true, false, false));
+    // nothing observed on trusted reads → not a fill.
+    assert!(!detect_fill(true, 0, 0, false, false, false, false));
+}
+
+#[test]
+fn classify_booking_ab_covers_every_verdict_arm() {
+    // The governed booking A/B verdict (pure, offline-twinnable). Precedence:
+    // transport/untrusted fail closed to inconclusive; an observed FILL outranks
+    // an observed resting row; observations outrank the fired rsp_cd; `rejected`
+    // requires a positive placed-nothing merits reject with NOTHING observed.
+    //
+    // places-defaulted-order(rested): trusted reads + a new resting row.
+    assert_eq!(
+        classify_booking_ab(Some((200, "00040")), true, true, false),
+        BookingAbVerdict::PlacesDefaultedOrderRested
+    );
+    // places-defaulted-order(filled): a detected fill.
+    assert_eq!(
+        classify_booking_ab(Some((200, "00040")), true, false, true),
+        BookingAbVerdict::PlacesDefaultedOrderFilled
+    );
+    // A fill OUTRANKS a resting row (both observed → filled).
+    assert_eq!(
+        classify_booking_ab(Some((200, "00040")), true, true, true),
+        BookingAbVerdict::PlacesDefaultedOrderFilled
+    );
+    // An observation outranks a reject-shaped rsp_cd: a rested row with a reject
+    // code is STILL places-defaulted-order (the book is the truth, not the code).
+    assert_eq!(
+        classify_booking_ab(Some((200, "01407")), true, true, false),
+        BookingAbVerdict::PlacesDefaultedOrderRested
+    );
+    // rejected: a recognized merits reject (placed nothing) with nothing observed —
+    // a 2xx business reject and the IGW40011-at-500 ingress reject both qualify.
+    assert_eq!(
+        classify_booking_ab(Some((200, "01407")), true, false, false),
+        BookingAbVerdict::Rejected
+    );
+    assert_eq!(
+        classify_booking_ab(Some((500, "IGW40011")), true, false, false),
+        BookingAbVerdict::Rejected
+    );
+    // inconclusive: a throttle/noneval code is not a merits answer (any status).
+    assert_eq!(
+        classify_booking_ab(Some((200, "IGW00201")), true, false, false),
+        BookingAbVerdict::Inconclusive
+    );
+    assert_eq!(
+        classify_booking_ab(Some((503, "IGW00201")), true, false, false),
+        BookingAbVerdict::Inconclusive
+    );
+    // inconclusive: transport failure — nothing answered, fail-closed teardown.
+    assert_eq!(
+        classify_booking_ab(None, true, false, false),
+        BookingAbVerdict::Inconclusive
+    );
+    // inconclusive: untrusted post-fire reads are NEVER evidence (#137) — even a
+    // reject-shaped code cannot conclude `rejected` (which asserts placed-nothing).
+    assert_eq!(
+        classify_booking_ab(Some((200, "01407")), false, false, false),
+        BookingAbVerdict::Inconclusive
+    );
+    // inconclusive: an acceptance ack with NOTHING observable is ambiguous —
+    // never `rejected`, never places-defaulted-order.
+    assert_eq!(
+        classify_booking_ab(Some((200, "00040")), true, false, false),
+        BookingAbVerdict::Inconclusive
+    );
+    // inconclusive: any other 5xx stays may-rest-shaped (not a merits reject).
+    assert_eq!(
+        classify_booking_ab(Some((500, "IGW50008")), true, false, false),
+        BookingAbVerdict::Inconclusive
+    );
+    // FALSE-LIFT GUARD (adversarial + cross-model): a `PlacedNothing`-shaped answer
+    // is NOT a merits reject unless the code is allowlisted. Pre-fix these returned
+    // `Rejected` and would have LIFTED a booking-determining annotation on a field
+    // that places real orders.
+    //   - HTTP 429 throttle degraded to an empty rsp_cd (4xx, so not may-rest-5xx):
+    assert_eq!(
+        classify_booking_ab(Some((429, "")), true, false, false),
+        BookingAbVerdict::Inconclusive
+    );
+    //   - a placed-nothing business reject for a reason UNRELATED to the omission
+    //     (e.g. an un-catalogued inventory/combination code):
+    assert_eq!(
+        classify_booking_ab(Some((200, "09999")), true, false, false),
+        BookingAbVerdict::Inconclusive
+    );
+    // is_booking_ab_merits_reject allowlist is exactly {ingress-validation, 01407}.
+    assert!(is_booking_ab_merits_reject("IGW40011"));
+    assert!(is_booking_ab_merits_reject("01407"));
+    assert!(!is_booking_ab_merits_reject(""));
+    assert!(!is_booking_ab_merits_reject("09999"));
+}
+
+#[test]
+fn plan_close_out_is_sign_aware_and_close_only() {
+    // The sign-aware close-out plan (pure): a defaulted order that BOUGHT is
+    // closed by a SELL of the janqty delta (capped at the sellable qty — never
+    // oversell); one that SOLD is closed by a BUY back of the delta (returns to
+    // the pre state, never beyond flat); no delta → no close order.
+    assert_eq!(plan_close_out(0, 1, 1), Some(CloseSide::Sell(1)), "bought 1 → sell 1");
+    assert_eq!(plan_close_out(3, 5, 5), Some(CloseSide::Sell(2)), "bought 2 on a base → sell 2");
+    assert_eq!(plan_close_out(0, 3, 2), Some(CloseSide::Sell(2)), "sell capped at sellable");
+    assert_eq!(
+        plan_close_out(0, 1, 0),
+        None,
+        "bought but zero sellable (unsettled) → no close now; surfaced to the operator"
+    );
+    assert_eq!(plan_close_out(1, 0, 0), Some(CloseSide::Buy(1)), "sold 1 → buy 1 back");
+    assert_eq!(plan_close_out(5, 3, 3), Some(CloseSide::Buy(2)), "sold 2 → buy 2 back");
+    assert_eq!(plan_close_out(2, 2, 2), None, "no delta → no close order");
 }

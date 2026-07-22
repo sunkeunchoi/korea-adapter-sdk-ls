@@ -10,7 +10,7 @@ applies_when:
   - "Deciding whether an order TR's negative differential probe may fire a live `required`-omit variant against the paper gateway"
   - "Authoring a new order TR's constraint schema and choosing whether it is safely probeable"
   - "Reviewing a HELD order TR to decide if a re-probe can conclusively certify it or if it stays permanently HELD"
-tags: [negative-probe, order-safety, required-variant, modify-vs-submit, cspat00701, cspat00601, bnstpcode, placed-nothing]
+tags: [negative-probe, order-safety, required-variant, modify-vs-submit, cspat00701, cspat00601, bnstpcode, placed-nothing, booking-determining]
 ---
 
 # Order negative-probe policy — modify legs are probeable, submit legs with booking-determining fields are not
@@ -45,20 +45,45 @@ booking-determining field creates an **uncontrolled new resting order** with a
 direction/price the gateway defaulted, and no pre-image to compare it to. There is
 no reversible, observable A/B — only a live order placed on a guess.
 
+**The exclusion is CODE-ENFORCED (Route C, §30):** a constraint schema marks the
+exact pair `booking_determining: [required]`
+(`metadata/constraints/CSPAT00601.yaml`), and the fire loop's pure decision fn
+`order_variant_may_fire` (`crates/ls-sdk/tests/negative_probe.rs`, backed by
+`is_booking_determining`) **records-not-dispatches** any annotated variant — the
+variant is structurally unroutable at the fire site, not merely a documented
+convention an operator must remember. The annotation never weakens preflight or
+the runtime seam; it governs only the probe's fire decision.
+
+**Provisional annotations (R11, fail-closed):** a submit-leg required field that
+has *never been observed live* is annotated `booking_determining` by default when
+its semantics are booking-shaped (CSPAT00601's `OrdprcPtnCode` / `OrdCndiTpCode` /
+`MgntrnCode` — mode selectors whose gateway-defaulting would alter the booked
+order's price pattern / execution condition / financing). Semantic judgment never
+*clears* a field for live fire; only a **harness-confirmed `rejected` verdict**
+lifts a provisional annotation. The attended booking A/B harness
+(`make live-smoke-cspat00601-booking-ab`) is the **only sanctioned
+characterization path** for a submit-leg booking field, and a harness `rejected`
+verdict re-opens the corresponding annotation (R8).
+
 ## The two poles
 
 - **`CSPAT00701`** (현물정정주문 — cash-equity modify, keyed by `OrgOrdNo`) —
   **probeable.** A seed + teardown make its `OrdprcPtnCode`/required omit variant
   reversible; it is characterized by the attended A/B in
   [`igw00000-cspat00701-placed-nothing-ab-probe`](../integration-issues/igw00000-cspat00701-placed-nothing-ab-probe.md).
-- **`CSPAT00601`** (현물주문 — cash-equity submit) — **permanently HELD, not
-  probeable.** Operator order-book confirmation (re-cert wave 3, 2026-07-13) proved
-  that omitting `BnsTpCode` does **not** fail closed: the gateway defaulted the
-  direction and placed a **real** resting order (`ordno=17093`, 005930 confirmed
-  flat only after the fallback cancel). `BnsTpCode` therefore stays
-  `required: true`, **unmarked and never `gateway_tolerant`** — a hard caller
-  contract exists precisely because its omission silently books a direction-defaulted
-  order. See `metadata/PROVISIONALITY-LEDGER.md` (§30 BnsTpCode posture,
+- **`CSPAT00601`** (현물주문 — cash-equity submit) — **booking-determining
+  variants are never fired, by code.** Operator order-book confirmation (re-cert
+  wave 3, 2026-07-13) proved that omitting `BnsTpCode` does **not** fail closed:
+  the gateway defaulted the direction and placed a **real** resting order
+  (`ordno=17093`, 005930 confirmed flat only after the fallback cancel).
+  `BnsTpCode` therefore stays `required: true` and **never `gateway_tolerant`** —
+  a hard caller contract exists precisely because its omission silently books a
+  direction-defaulted order — and its `(BnsTpCode, required)` pair is annotated
+  `booking_determining` so the differential skips it structurally
+  (record-not-fire). The three never-observed mode selectors carry the same
+  annotation provisionally (R11). The rest of the differential (reject-expected
+  `IsuNo`/`OrdQty`/`OrdPrc` variants) remains fireable under the skip. See
+  `metadata/PROVISIONALITY-LEDGER.md` (§30 BnsTpCode posture,
   lines ~1977-1989).
 
 ## Why this is a convention, not a per-TR judgment

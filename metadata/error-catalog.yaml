@@ -60,6 +60,13 @@ codes:
       differential re-probe). A required order-condition field was omitted; the
       gateway answered on merits and placed nothing (a distinct reject, not a
       may-rest). The caller fixes it by supplying `OrdCndiTpCode`.
+  "01407":
+    kind: request_shape
+    explanation: >-
+      A business-level order rejection observed on CSPAT00601's `IsuNo`-omitted
+      submit variant (§30 differential, 2026-07-13). The required symbol was
+      omitted; the gateway answered on merits and placed nothing (a distinct
+      reject, not a may-rest). The caller fixes it by supplying `IsuNo`.
   "01458":
     kind: session_closed
     explanation: >-
