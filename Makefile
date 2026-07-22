@@ -1080,6 +1080,28 @@ live-smoke-cspat00701-igw00000-ab:
 	echo "$$out"; \
 	echo "$$out" | grep -q "1 passed" || { echo "FAIL: cspat00701-igw00000-ab probe did not run (0 tests) or did not pass"; exit 1; }
 
+## Attended governed booking-determining A/B (CSPAT00601, Route C §30): a one-shot
+## seed -> S_pre -> fire (LS_AB_FIELD required-omit; default BnsTpCode) -> paced
+## S_post + t0424 position fill-check -> sign-aware close/cancel -> cancel-all
+## teardown cycle that prints ONE credential-free line:
+##   BOOKING-AB target=CSPAT00601 field=<f> verdict=places-defaulted-order(rested)|places-defaulted-order(filled)|rejected|inconclusive|refused
+## The ONLY sanctioned path to fire a booking-determining omission; a `rejected`
+## verdict RE-OPENS/LIFTS the annotation (plan R8/R11). OPERATOR-RUN, in-window;
+## refuses on CI/no-TTY/stale nonce (fail-closed autonomy chain) and on an
+## unannotated/unknown LS_AB_FIELD (pure gate, no dispatch); places REAL paper
+## orders, so a bare `make` invocation reports "0/failed" and this target exits
+## non-zero — it never places autonomously.
+##   LS_ORDER_SMOKE=1 LS_ORDER_SMOKE_NONCE=$$(date +%s) [LS_AB_FIELD=OrdprcPtnCode] make live-smoke-cspat00601-booking-ab
+.PHONY: live-smoke-cspat00601-booking-ab
+live-smoke-cspat00601-booking-ab:
+	@lane="$(LS_SMOKE_LANE)"; [ -n "$$lane" ] || lane="domestic"; \
+	lane_file=".env.$$lane"; \
+	[ -f "$$lane_file" ] || { echo "FAIL: cspat00601-booking-ab: lane file $$lane_file missing (LS_SMOKE_LANE=$$lane); refusing to fall back to .env (wrong-account hazard)"; exit 1; }; \
+	set -a; . "./$$lane_file"; set +a; \
+	out=$$(LS_AB_FIELD="$(LS_AB_FIELD)" cargo test -p ls-sdk --test negative_probe -- --ignored --exact --nocapture live_smoke_cspat00601_booking_determining_ab 2>&1); \
+	echo "$$out"; \
+	echo "$$out" | grep -q "1 passed" || { echo "FAIL: cspat00601-booking-ab probe did not run (0 tests) or did not pass"; exit 1; }
+
 .PHONY: lane-check
 
 ## Offline regression check for the fail-fast lane guard (plan 2026-07-01-002,
