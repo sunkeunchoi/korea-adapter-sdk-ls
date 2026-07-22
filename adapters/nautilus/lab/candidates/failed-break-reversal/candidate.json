@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "slug": "failed-break-reversal",
+  "family": "entry-stream",
+  "phase_a": "bespoke",
+  "flip_param": "reversal_arm",
+  "flip_value": 0.5,
+  "diagnostic": {
+    "argv": ["uv", "run", "--with", "pyarrow", "python3", "diagnostic.py"],
+    "file": "diagnostic.py",
+    "content_hash": "82a428f45711dd41c5f91290d23146109c1c3473da18bebf81db3f402de5358a"
+  },
+  "twin": {
+    "argv": ["uv", "run", "--with", "pyarrow", "python3", "twin.py"],
+    "file": "twin.py",
+    "content_hash": "99c1c946dfc369a641c90066e33c4553191e51475906752fcae4efebd69337aa"
+  },
+  "readings": {
+    "population_count": { "tolerance": 0.0, "precision": 0 },
+    "ror_shift": { "tolerance": 0.0002, "precision": 6 },
+    "resolution_target_share": { "tolerance": 0.02, "precision": 4 },
+    "resolution_stop_share": { "tolerance": 0.02, "precision": 4 },
+    "resolution_timeflat_share": { "tolerance": 0.02, "precision": 4 },
+    "winning_grammar_id": { "tolerance": 0.0, "precision": 0 },
+    "stop_anchor_id": { "tolerance": 0.0, "precision": 0 }
+  },
+  "thresholds": [
+    { "reading": "population_count", "comparator": "ge", "value": 12 },
+    { "reading": "ror_shift", "comparator": "ge", "value": 0.005 }
+  ],
+  "keep_anchor": "size-invariant return-on-risk (sum pnl / sum risk_capital) of the stream-ON run strictly beats head v32 (0.1876) with risk-cap dominance <= 0.40; the reversal_arm gate arms from 1.0 (OFF) to flip_value 0.5, on the inclusive PROPOSAL_BOUNDS_CAP. CAVEAT: the diagnostic scores an UNCONSTRAINED additive population; reversal entries contend for the same max_concurrent 7 slots and risk budget as breakout entries, so the flip run's realized population can be thinner than the projected one and displacement of breakout trades is measured only at the flip (KTD3)."
+}
