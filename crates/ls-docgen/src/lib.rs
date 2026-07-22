@@ -1429,8 +1429,12 @@ mod tests {
             // direction-defaulted BnsTpCode places a real order). The modify leg
             // CSPAT00701 was PROMOTED (2026-07-15): its IGW00000 may-rest halt was
             // characterized placed-nothing by an attended A/B and its full differential
-            // re-probed CLEAN via the Route B OrdprcPtnCode tolerance — moved below.
-            "CSPAT00601",
+            // re-probed CLEAN via the Route B OrdprcPtnCode tolerance — moved below. The
+            // submit leg CSPAT00601 was PROMOTED (2026-07-22): its §30-held differential
+            // (omitting BnsTpCode places a real direction-defaulted order) is closed by the
+            // Route C code-enforced booking-determining skip; the attended re-probe came
+            // back CLEAN with the four booking-determining variants recorded-not-fired —
+            // moved below.
         ];
         for tr in banner_trs {
             let page = reference
@@ -1452,12 +1456,15 @@ mod tests {
         // on a CLEAN in-window re-probe (2026-07-14) once the cross_field date_order
         // gateway-tolerant downgrade (PR #135) closed the last §30 HELD reason. CSPAT00701
         // (modify) promoted 2026-07-15 on a CLEAN differential via the Route B IGW00000
-        // placed-nothing tolerance (plan 2026-07-14-001, ledger §31).
+        // placed-nothing tolerance (plan 2026-07-14-001, ledger §31). CSPAT00601 (submit)
+        // promoted 2026-07-22 on a CLEAN attended differential once the Route C
+        // booking-determining skip made its §30-held direction-defaulting variant
+        // structurally never-fired (plan 2026-07-22-001).
         // Their reference pages must OMIT the not-recommended banner. Re-promotion of the
         // remaining HELD TRs is operator-gated across later windows.
-        let recommended_no_banner: [&str; 9] = [
+        let recommended_no_banner: [&str; 10] = [
             "token", "t1101", "S3_", "CSPAQ12200", "t1102", "t0425", "CSPAT00801", "t8412",
-            "CSPAT00701",
+            "CSPAT00701", "CSPAT00601",
         ];
         for rec in recommended_no_banner {
             let page = reference

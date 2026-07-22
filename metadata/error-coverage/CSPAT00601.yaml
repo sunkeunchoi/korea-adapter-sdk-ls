@@ -44,21 +44,22 @@
 # inconclusive; divergent = observed behavior disagreed with the declaration;
 # n_a = the class does not apply to the field (or is not fired by the order-TR probe).
 tr_code: CSPAT00601
-probe_status: not_probed
+probe_status: clean  # attended differential 2026-07-22 (`make live-smoke-cspat00601-negative`): every fired class Clean/confirmed, the four booking_determining variants recorded-not-fired, control flat=confirmed
+
 seed: "IsuNo=005930 OrdQty=<min qty> OrdPrc=<band-floor, non-marketable> BnsTpCode=2 OrdprcPtnCode=00 MgntrnCode=000 OrdCndiTpCode=0"
 input_classes:
   - { field: IsuNo, class: type, status: n_a }                 # string field — no type-mutation variant is generated
-  - { field: IsuNo, class: required, status: declared }         # reject-expected, PROVEN: live removal → 01407 rejected distinctly, placed nothing (§30)
+  - { field: IsuNo, class: required, status: confirmed }        # reject-expected: omit → 01407 rejected distinctly, placed nothing (§30; differential re-confirmed 2026-07-22)
   - { field: IsuNo, class: enum, status: n_a }
   - { field: IsuNo, class: range, status: n_a }
   - { field: IsuNo, class: format, status: n_a }                # symbol format declared in the schema but not fired by the order-TR probe (type/required only, KTD3)
-  - { field: OrdQty, class: type, status: declared }           # numeric field — a quoted string was rejected distinctly live (IGW40011, §30)
-  - { field: OrdQty, class: required, status: declared }        # reject-expected, PROVEN: omit → IGW40011 ingress reject, placed nothing (§30)
+  - { field: OrdQty, class: type, status: confirmed }          # numeric field — quoted string rejected distinctly (IGW40011; differential re-confirmed 2026-07-22)
+  - { field: OrdQty, class: required, status: confirmed }       # reject-expected: omit → IGW40011 ingress reject, placed nothing (§30; re-confirmed 2026-07-22)
   - { field: OrdQty, class: enum, status: n_a }
   - { field: OrdQty, class: range, status: n_a }
   - { field: OrdQty, class: format, status: n_a }
-  - { field: OrdPrc, class: type, status: declared }           # numeric field — IGW40011 ingress reject expected (observed on the sibling numeric, §30)
-  - { field: OrdPrc, class: required, status: declared }        # reject-expected, PROVEN class: IGW40011 ingress reject, placed nothing (§30)
+  - { field: OrdPrc, class: type, status: confirmed }          # numeric field — IGW40011 ingress reject (differential re-confirmed 2026-07-22)
+  - { field: OrdPrc, class: required, status: confirmed }       # reject-expected: IGW40011 ingress reject, placed nothing (§30; re-confirmed 2026-07-22)
   - { field: OrdPrc, class: enum, status: n_a }
   - { field: OrdPrc, class: range, status: n_a }
   - { field: OrdPrc, class: format, status: n_a }

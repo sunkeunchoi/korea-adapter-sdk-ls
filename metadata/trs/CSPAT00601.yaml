@@ -19,15 +19,30 @@ dependencies:
   # the request; these are the fields that make two submissions "the same order".
   strong_order_fields: [IsuNo, BnsTpCode, OrdQty, OrdPrc]
 support:
-  # Recommended: submit leg certified on a clean in-window guarded paper
-  # order-chain smoke (rsp_cd 00040 매수주문 완료; `make live-smoke-order-chain`,
-  # plan 2026-06-30-002), the live order-placement evidence ADR 0008 deferred the
-  # Recommended endorsement on. The account was positively confirmed flat after the
-  # run. See docs/design/order-safety-design.md.
+  # Recommended (2026-07-22): the submit-leg differential could not complete safely
+  # through §30 — omitting BnsTpCode places a real direction-defaulted order
+  # (ordno=17093) — so the TR stayed Implemented. The Route C booking-determining
+  # skip (code-enforced never-fire annotation) closes that: the attended re-probe
+  # (`make live-smoke-cspat00601-negative`, 2026-07-22) came back CLEAN with the four
+  # booking-determining variants recorded-not-fired, and the in-window order-chain
+  # certified the submit leg (rsp_cd 00040; account flat after). See
+  # docs/design/order-safety-design.md and
+  # docs/solutions/conventions/order-negative-probe-modify-vs-submit-policy.md.
   tracked: true
   implemented: true
-  recommended: false
+  recommended: true
 maintenance:
   source_spec_hash: f6a1b2c3d4e5
-  last_reviewed: 2026-06-30
+  last_reviewed: 2026-07-22
+recommendation:
+  behavior: Paper cash-equity order submit of a single caller-owned resting buy (the opening leg of the submit→modify→cancel chain; rsp_cd 00040, account confirmed flat after)
+  evidence_ref: evidence/CSPAT00601.yaml
+  excludes:
+    - Order submissions for symbols or accounts the caller does not own beyond the single-symbol paper submit exercised
+    - Production-credential order submissions (evidence is paper only)
+    - Fill / settlement or resulting-position correctness beyond a successful submit-accepted (rsp_cd 00040) round-trip
+    - "Gateway-side rejection of an omitted booking-determining field — BnsTpCode (direction) plus the provisional OrdprcPtnCode/OrdCndiTpCode/MgntrnCode: these required variants are NEVER fired by the differential (booking_determining / Route C) because omission places a real direction-defaulted order (§30 ordno=17093). The claim rests on the preflight-enforced caller contract, not gateway-side rejection of the omission."
+    - Rejection semantics of the three provisional (R11) booking-determining fields, which have no live characterization — they are annotated fail-closed and characterizable only via the attended booking A/B harness (make live-smoke-cspat00601-booking-ab)
+    - Stronger freshness automation than the stated policy (no enforcement in code today)
+constraints_ref: constraints/CSPAT00601.yaml
 error_coverage_ref: error-coverage/CSPAT00601.yaml
