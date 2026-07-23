@@ -11,24 +11,18 @@
 
 use std::fmt;
 
-use chrono::NaiveDate;
-use serde::Deserialize;
+use nautilus_ls_calendar::schema::{EvidenceRecord, Source, SourceKind};
 
-use nautilus_ls_calendar::schema::{EvidenceKind, EvidenceRecord, Source, SourceKind};
-use nautilus_ls_calendar::witness::{
-    default_witness_id, witness_from_response, KrxDailyMarketResponse, KrxDailyRow, WitnessOutcome,
+use super::normalize::{
+    holiday_evidence, parse_kasi_holidays_xml, parse_krx_daily, witness_evidence, KASI_SOURCE_ID,
+    KRX_DAILY_SOURCE_ID, KRX_RULE_SOURCE_ID,
 };
-
 use super::port::{EvidenceInputPort, RefreshInputs, RefreshScope, SourceOutcome};
 
 /// Env var naming the KASI holiday-service key (maintainer-local, gitignored).
 pub const KASI_SERVICE_KEY_ENV: &str = "LS_KASI_SERVICE_KEY";
 /// Env var naming the KRX daily-market appkey (maintainer-local, gitignored).
 pub const KRX_APPKEY_ENV: &str = "LS_KRX_APPKEY";
-
-const KASI_SOURCE_ID: &str = "kasi";
-const KRX_RULE_SOURCE_ID: &str = "krx-rule";
-const KRX_DAILY_SOURCE_ID: &str = "krx-daily";
 
 /// Maintainer credentials for the live transport. Resolved from the process env / a named
 /// gitignored maintainer env file — NEVER hardcoded. `Debug` is hand-written to redact.
@@ -144,15 +138,19 @@ where
     }
 
     fn kasi_url(&self, scope: &RefreshScope, key: &str) -> String {
+        // KASI's default response is XML (KTD9's non-DTD-expanding parser consumes it); a wide
+        // page fetches a whole year's holidays in one call. U4's bulk loop paginates properly.
         format!(
-            "https://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/getRestDeInfo?serviceKey={key}&solYear={}&_type=json",
+            "https://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/getRestDeInfo?serviceKey={key}&solYear={}&numOfRows=100",
             scope.from.format("%Y")
         )
     }
 
     fn krx_url(&self, scope: &RefreshScope, appkey: &str) -> String {
+        // The real KRX Open API host (one of the two HTTPS-only hosts, KTD9). The exact
+        // envelope + auth mechanism are reconciled at U8's probe gate.
         format!(
-            "https://data.krx.example/api/stk_bydd_trd?appkey={appkey}&basDd={}",
+            "https://openapi.krx.co.kr/svc/apis/sto/stk_bydd_trd?appkey={appkey}&basDd={}",
             scope.through.format("%Y%m%d")
         )
     }
@@ -171,23 +169,14 @@ where
         if let Some(key) = self.creds.kasi_service_key.as_deref() {
             let url = self.kasi_url(scope, key);
             match self.request(KASI_SOURCE_ID, SourceKind::KasiHoliday, &url) {
-                Ok(body) => match parse_holidays(&body) {
-                    Ok(dates) => {
+                Ok(body) => match parse_kasi_holidays_xml(&body) {
+                    Ok(page) => {
                         sources.push(source(KASI_SOURCE_ID, SourceKind::KasiHoliday));
                         sources.push(source(KRX_RULE_SOURCE_ID, SourceKind::KrxRule));
-                        for date in dates {
-                            evidence.push(fact(
-                                format!("kasi-{date}"),
-                                KASI_SOURCE_ID,
-                                date,
-                                EvidenceKind::HolidayFact,
-                            ));
-                            evidence.push(fact(
-                                format!("rule-{date}"),
-                                KRX_RULE_SOURCE_ID,
-                                date,
-                                EvidenceKind::DeterministicRule,
-                            ));
+                        for date in page.holidays {
+                            let (fact, rule) = holiday_evidence(date);
+                            evidence.push(fact);
+                            evidence.push(rule);
                         }
                         outcomes.push(SourceOutcome::ok(KASI_SOURCE_ID, SourceKind::KasiHoliday));
                     }
@@ -205,12 +194,10 @@ where
         if let Some(appkey) = self.creds.krx_appkey.as_deref() {
             let url = self.krx_url(scope, appkey);
             match self.request(KRX_DAILY_SOURCE_ID, SourceKind::KrxDailyMarket, &url) {
-                Ok(body) => match parse_krx(&body) {
+                Ok(body) => match parse_krx_daily(&body, scope.through) {
                     Ok(resp) => {
                         sources.push(source(KRX_DAILY_SOURCE_ID, SourceKind::KrxDailyMarket));
-                        if let WitnessOutcome::Witness(mut w) = witness_from_response(&resp) {
-                            w.id = default_witness_id(resp.requested_date);
-                            w.source_id = KRX_DAILY_SOURCE_ID.to_string();
+                        if let Some(w) = witness_evidence(&resp) {
                             evidence.push(w);
                         }
                         outcomes.push(SourceOutcome::ok(
@@ -243,64 +230,4 @@ fn source(id: &str, kind: SourceKind) -> Source {
         label: id.to_string(),
         synthetic: false,
     }
-}
-
-fn fact(id: String, source_id: &str, date: NaiveDate, kind: EvidenceKind) -> EvidenceRecord {
-    EvidenceRecord {
-        id,
-        source_id: source_id.to_string(),
-        date,
-        kind,
-        valid: true,
-        superseded_by: None,
-        citation: None,
-        recorded_at: chrono::Utc::now(),
-    }
-}
-
-/// A normalized-transport DTO for KASI holidays (the maintainer's real fetch adapts KASI's
-/// native response to this credential-free, raw-body-free shape).
-#[derive(Debug, Deserialize)]
-struct HolidaysDto {
-    holidays: Vec<NaiveDate>,
-}
-
-fn parse_holidays(body: &str) -> Result<Vec<NaiveDate>, String> {
-    serde_json::from_str::<HolidaysDto>(body)
-        .map(|d| d.holidays)
-        .map_err(|e| format!("KASI response could not be normalized: {e}"))
-}
-
-/// A normalized-transport DTO for a KRX daily-market response.
-#[derive(Debug, Deserialize)]
-struct KrxDto {
-    success: bool,
-    requested_date: NaiveDate,
-    rows: Vec<KrxRowDto>,
-    #[serde(default)]
-    error_code: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct KrxRowDto {
-    date: NaiveDate,
-    market: String,
-}
-
-fn parse_krx(body: &str) -> Result<KrxDailyMarketResponse, String> {
-    let dto: KrxDto = serde_json::from_str(body)
-        .map_err(|e| format!("KRX response could not be normalized: {e}"))?;
-    Ok(KrxDailyMarketResponse {
-        success: dto.success,
-        requested_date: dto.requested_date,
-        rows: dto
-            .rows
-            .into_iter()
-            .map(|r| KrxDailyRow {
-                date: r.date,
-                market: r.market,
-            })
-            .collect(),
-        error_code: dto.error_code,
-    })
 }

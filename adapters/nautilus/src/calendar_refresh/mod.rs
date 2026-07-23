@@ -21,6 +21,7 @@
 pub mod activate;
 pub mod candidate;
 pub mod diff;
+pub mod normalize;
 pub mod port;
 pub mod transport;
 
@@ -41,6 +42,10 @@ pub use candidate::{
     CONSUMER_WINDOW_START,
 };
 pub use diff::{diff_against_predecessor, CategorizedDiff, DiffCategory, DiffEntry};
+pub use normalize::{
+    fixed_closure_rules, generated_rules, holiday_evidence, midnight_utc, parse_kasi_holidays_xml,
+    parse_krx_daily, weekend_rules, witness_evidence, KasiPage,
+};
 pub use port::{
     merge_ranges, uncovered_within, DateRange, EvidenceInputPort, RefreshInputs, RefreshScope,
     SourceFetchStatus, SourceOutcome, StaticEvidencePort,

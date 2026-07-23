@@ -93,6 +93,10 @@ ahash = "0.8"
 sha2 = "0.10"
 async-trait = "0.1"
 futures = "0.3"
+# Non-DTD-expanding XML reader for the KASI `getRestDeInfo` holiday feed (U3, KTD9). quick-xml
+# resolves only the five predefined XML entities and never fetches an external DTD/entity, so a
+# hostile `<!DOCTYPE>` cannot expand. A deliberate direct dep, not an ad-hoc mid-unit pick.
+quick-xml = "0.36"
 
 [dev-dependencies]
 ls-sdk-test-support = { path = "../../crates/ls-sdk-test-support" }
