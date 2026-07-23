@@ -20,7 +20,12 @@ restart the agent cannot perform.
 - [ ] A reviewed candidate B and its signed `ActivationApproval` JSON exist (naming B's exact
       `artifact_id` and acknowledging every HIGH-RISK entry `calendar-refresh` reported).
 - [ ] You retain a copy of the current active snapshot A as a separate file (the rollback
-      target) — e.g. `cp "$LS_CALENDAR_SNAPSHOT" "$LS_CALENDAR_SNAPSHOT.prior"`.
+      target) — e.g. `cp "$LS_CALENDAR_SNAPSHOT" "$LS_CALENDAR_SNAPSHOT.prior"`. This is the
+      mandatory **pre-activation archive** (R10): a verified **copy**, never a move — the active
+      file stays at the consumer path until the successor's atomic install completes, so the
+      rollback target always exists. Confirm the copy is byte-identical (`cmp`) before activating.
+      For the genesis chain root, this archive is first taken in **RUNBOOK-calendar-snapshot.md**
+      (§ Chain continuity) before the first refresh.
 
 ## 1. Record A's identity (owner-local)
 
