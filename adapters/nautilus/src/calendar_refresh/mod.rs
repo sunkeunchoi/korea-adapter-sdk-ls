@@ -36,7 +36,10 @@ pub use activate::{
     acknowledgment_key, activate, required_acknowledgments, rollback, ActivationApproval,
     ActivationError, ActivationRecord, RollbackError, RollbackRecord, PARTIAL_ACK_KEY,
 };
-pub use candidate::{build_candidate, RefreshMode};
+pub use candidate::{
+    build_candidate, build_genesis, GenesisParams, GenesisRefusal, RefreshMode,
+    CONSUMER_WINDOW_START,
+};
 pub use diff::{diff_against_predecessor, CategorizedDiff, DiffCategory, DiffEntry};
 pub use port::{
     merge_ranges, uncovered_within, DateRange, EvidenceInputPort, RefreshInputs, RefreshScope,

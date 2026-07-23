@@ -1,12 +1,13 @@
 //! U14 refresh tooling: candidate build + deterministic categorized diff + source-failure
 //! retention + credential/no-raw-rows boundary. All synthetic, offline, fixed-clock.
 
-use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Utc, Weekday};
 use nautilus_ls::calendar_refresh::{
-    build_candidate, diff_against_predecessor, merge_ranges, refresh, refresh_incremental,
-    strip_url_credentials, uncovered_within, write_candidate, CategorizedDiff, DateRange,
-    DiffCategory, EvidenceInputPort, LiveEvidencePort, MaintainerCredentials, RefreshInputs,
-    RefreshMode, RefreshScope, SourceOutcome, StaticEvidencePort,
+    build_candidate, build_genesis, diff_against_predecessor, merge_ranges, refresh,
+    refresh_incremental, strip_url_credentials, uncovered_within, write_candidate, CategorizedDiff,
+    DateRange, DiffCategory, EvidenceInputPort, GenesisParams, GenesisRefusal, LiveEvidencePort,
+    MaintainerCredentials, RefreshInputs, RefreshMode, RefreshScope, SourceOutcome,
+    StaticEvidencePort,
 };
 use nautilus_ls_calendar::schema::{
     Authorization, CalendarScope, Citation, Coverage, DayRow, DayStatus, EvidenceKind,
@@ -916,4 +917,209 @@ fn date_range_arithmetic_handles_gap_adjacent_and_overlapping() {
         vec![window],
         "no coverage leaves the whole window uncovered"
     );
+}
+
+// ---------------------------------------------------------------------------------------
+// U2 (KTD1/KTD6): genesis support in the candidate machinery. `build_genesis` produces a
+// predecessor-less, non-synthetic, loader-valid snapshot through the SHARED core, refusing
+// consumer-window Unknown weekdays (R12) and inputs that don't span the genesis window (AE9).
+// ---------------------------------------------------------------------------------------
+
+fn genesis_scope() -> CalendarScope {
+    CalendarScope {
+        calendar_name: "KRX domestic equity regular session".to_string(),
+        venue: "XKRX".to_string(),
+        instrument_class: "domestic-equity".to_string(),
+        timezone: "Asia/Seoul".to_string(),
+        synthetic: false,
+    }
+}
+
+fn genesis_auth() -> Authorization {
+    Authorization {
+        authorized: true,
+        authority: "KRX Open API Agreement".to_string(),
+        granted_at: t(2026, 1, 1),
+        expires_at: Some(t(2027, 1, 1)),
+        terminated_at: None,
+    }
+}
+
+fn genesis_params(window: DateRange, krx_through: NaiveDate, consumer: DateRange) -> GenesisParams {
+    GenesisParams {
+        scope: genesis_scope(),
+        authorization: genesis_auth(),
+        source_availability: vec![SourceAvailabilityBound {
+            source_id: "krx-daily".to_string(),
+            available_from: Some(d(2010, 1, 4)),
+            available_through: None,
+        }],
+        window,
+        krx_through,
+        consumer_window: consumer,
+    }
+}
+
+/// Genesis inputs over `window`: a positive witness per date in `witnessed`, a weekend
+/// DeterministicRule for every Sat/Sun, a KASI holiday fact + paired rule per `holidays` date.
+/// KRX covers `[window.from, krx_through]` (its witness horizon); KASI + rule cover the whole
+/// window (checked-and-empty forward dates stay honestly Unknown).
+fn genesis_inputs(
+    window: DateRange,
+    krx_through: NaiveDate,
+    witnessed: &[NaiveDate],
+    holidays: &[NaiveDate],
+) -> RefreshInputs {
+    let mut evidence = Vec::new();
+    let mut cur = window.from;
+    while cur <= window.through {
+        if matches!(cur.weekday(), Weekday::Sat | Weekday::Sun) {
+            evidence.push(ev(&format!("rule-{cur}"), "krx-rule", cur, EvidenceKind::DeterministicRule, false));
+        }
+        cur = cur.succ_opt().unwrap();
+    }
+    for &wd in witnessed {
+        evidence.push(ev(&format!("witness-{wd}"), "krx-daily", wd, EvidenceKind::PositiveWitness, false));
+    }
+    for &h in holidays {
+        evidence.push(ev(&format!("kasi-{h}"), "kasi", h, EvidenceKind::HolidayFact, false));
+        evidence.push(ev(&format!("rule-{h}"), "krx-rule", h, EvidenceKind::DeterministicRule, false));
+    }
+    RefreshInputs {
+        sources: vec![
+            src("krx-daily", SourceKind::KrxDailyMarket),
+            src("kasi", SourceKind::KasiHoliday),
+            src("krx-rule", SourceKind::KrxRule),
+        ],
+        evidence,
+        outcomes: vec![
+            SourceOutcome::ok_covering(
+                "krx-daily",
+                SourceKind::KrxDailyMarket,
+                vec![DateRange::new(window.from, krx_through)],
+            ),
+            SourceOutcome::ok_covering("kasi", SourceKind::KasiHoliday, vec![window]),
+            SourceOutcome::ok_covering("krx-rule", SourceKind::KrxRule, vec![window]),
+        ],
+    }
+}
+
+#[test]
+fn genesis_build_is_predecessor_less_non_synthetic_and_loader_valid() {
+    // Window 2026-06-13 (Sat) .. 2026-06-19 (Fri): weekends 13/14, weekday holiday 16, the
+    // remaining weekdays witnessed. Consumer window is the weekdays 15..19.
+    let window = DateRange::new(d(2026, 6, 13), d(2026, 6, 19));
+    let consumer = DateRange::new(d(2026, 6, 15), d(2026, 6, 19));
+    let inputs = genesis_inputs(
+        window,
+        d(2026, 6, 19),
+        &[d(2026, 6, 15), d(2026, 6, 17), d(2026, 6, 18), d(2026, 6, 19)],
+        &[d(2026, 6, 16)],
+    );
+    let as_of = t(2026, 6, 20);
+    let candidate = build_genesis(&genesis_params(window, d(2026, 6, 19), consumer), &inputs, as_of)
+        .expect("a fully-covered genesis window builds");
+
+    // Predecessor-less, non-synthetic, real authorization.
+    assert_eq!(candidate.predecessor_artifact_id, None, "genesis has no predecessor");
+    assert!(!candidate.scope.synthetic, "genesis snapshot is not synthetic (R6)");
+    assert_eq!(candidate.authorization.authority, "KRX Open API Agreement");
+
+    // Loader-valid at a 2026 as-of (contiguity + hash recompute + authorization current).
+    KrxCalendar::from_snapshot(candidate.clone(), as_of).expect("genesis snapshot loads");
+
+    // Coverage materializes the whole window; rows are contiguous.
+    assert_eq!(candidate.coverage.materialized_from, d(2026, 6, 13));
+    assert_eq!(candidate.coverage.materialized_through, d(2026, 6, 19));
+    assert_eq!(candidate.rows.len(), 7);
+
+    // AE1 (witness → TradingSession), AE2 (holiday+rule → Closed via KASI), AE3 (weekend → Closed).
+    assert_eq!(row_status(&candidate, d(2026, 6, 15)), DayStatus::TradingSession);
+    let holiday_row = candidate.rows.iter().find(|r| r.date == d(2026, 6, 16)).unwrap();
+    assert_eq!(holiday_row.status, DayStatus::Closed);
+    assert!(holiday_row.decisive_evidence.iter().any(|id| id.starts_with("kasi-")), "AE2 decided by KASI");
+    let sat_row = candidate.rows.iter().find(|r| r.date == d(2026, 6, 13)).unwrap();
+    assert_eq!(sat_row.status, DayStatus::Closed);
+    assert!(sat_row.decisive_evidence.iter().any(|id| id.starts_with("rule-")), "AE3 weekend rule");
+}
+
+#[test]
+fn genesis_refuses_an_unwitnessed_non_holiday_weekday_in_the_consumer_window() {
+    // AE4: 2026-06-17 is a weekday with no witness and no holiday → the build refuses, naming it.
+    let window = DateRange::new(d(2026, 6, 13), d(2026, 6, 19));
+    let consumer = DateRange::new(d(2026, 6, 15), d(2026, 6, 19));
+    let inputs = genesis_inputs(
+        window,
+        d(2026, 6, 19),
+        &[d(2026, 6, 15), d(2026, 6, 18), d(2026, 6, 19)],
+        &[d(2026, 6, 16)],
+    );
+    let err = build_genesis(&genesis_params(window, d(2026, 6, 19), consumer), &inputs, t(2026, 6, 20))
+        .expect_err("an uncovered consumer weekday must refuse");
+    match err {
+        GenesisRefusal::UnknownConsumerWeekday { dates } => assert_eq!(dates, vec![d(2026, 6, 17)]),
+        other => panic!("expected UnknownConsumerWeekday, got {other:?}"),
+    }
+}
+
+#[test]
+fn genesis_materializes_a_forward_weekday_as_unknown_without_refusing() {
+    // AE5 + boundary: window runs past the KRX witness horizon. 2026-06-22 (Mon) is a
+    // non-holiday weekday beyond `krx_through` and OUTSIDE the consumer window → it is an
+    // honest Unknown row, and the build does NOT refuse.
+    let window = DateRange::new(d(2026, 6, 13), d(2026, 6, 24));
+    let consumer = DateRange::new(d(2026, 6, 15), d(2026, 6, 19));
+    let inputs = genesis_inputs(
+        window,
+        d(2026, 6, 19),
+        &[d(2026, 6, 15), d(2026, 6, 16), d(2026, 6, 17), d(2026, 6, 18), d(2026, 6, 19)],
+        &[],
+    );
+    let candidate = build_genesis(&genesis_params(window, d(2026, 6, 19), consumer), &inputs, t(2026, 6, 25))
+        .expect("a forward Unknown OUTSIDE the consumer window does not refuse");
+    assert_eq!(row_status(&candidate, d(2026, 6, 22)), DayStatus::Unknown, "forward weekday is honestly Unknown (AE5)");
+    assert_eq!(row_status(&candidate, d(2026, 6, 19)), DayStatus::TradingSession, "last witnessed session");
+    // The weekend just past the horizon is still Closed via the rule generator.
+    assert_eq!(row_status(&candidate, d(2026, 6, 20)), DayStatus::Closed);
+}
+
+#[test]
+fn genesis_refuses_inputs_whose_krx_coverage_falls_short_of_the_window() {
+    // AE9 at build level: KRX covers only 2026-06-13..06-17 but the witness horizon is 06-19
+    // → IncompleteCoverage names the uncovered tail, and NO candidate is produced.
+    let window = DateRange::new(d(2026, 6, 13), d(2026, 6, 19));
+    let consumer = DateRange::new(d(2026, 6, 15), d(2026, 6, 19));
+    let mut inputs = genesis_inputs(
+        window,
+        d(2026, 6, 19),
+        &[d(2026, 6, 15), d(2026, 6, 17), d(2026, 6, 18), d(2026, 6, 19)],
+        &[d(2026, 6, 16)],
+    );
+    // Shrink the KRX covered claim so it no longer spans the witness horizon.
+    inputs.outcomes[0] = SourceOutcome::ok_covering(
+        "krx-daily",
+        SourceKind::KrxDailyMarket,
+        vec![DateRange::new(d(2026, 6, 13), d(2026, 6, 17))],
+    );
+    let err = build_genesis(&genesis_params(window, d(2026, 6, 19), consumer), &inputs, t(2026, 6, 20))
+        .expect_err("incomplete KRX coverage must refuse");
+    match err {
+        GenesisRefusal::IncompleteCoverage { source_id, uncovered } => {
+            assert_eq!(source_id, "krx-daily");
+            assert_eq!(uncovered, vec![DateRange::new(d(2026, 6, 18), d(2026, 6, 19))]);
+        }
+        other => panic!("expected IncompleteCoverage, got {other:?}"),
+    }
+}
+
+#[test]
+fn from_prior_path_stays_byte_identical_through_the_shared_core() {
+    // Regression guard: the KTD1 build-base extraction must not change the from-prior path.
+    // build_candidate still stamps Some(prior) and produces a stable, loadable candidate.
+    let prior = prior_snapshot();
+    let a = build_candidate(&prior, &ok_inputs_flip_0603_to_session(), &build_scope_full(), RefreshMode::Incremental, refresh_now());
+    let b = build_candidate(&prior, &ok_inputs_flip_0603_to_session(), &build_scope_full(), RefreshMode::Incremental, refresh_now());
+    assert_eq!(a, b, "from-prior build is deterministic");
+    assert_eq!(a.predecessor_artifact_id.as_deref(), Some(prior.artifact_id.as_str()));
+    KrxCalendar::from_snapshot(a, refresh_now()).expect("from-prior candidate still loads");
 }
