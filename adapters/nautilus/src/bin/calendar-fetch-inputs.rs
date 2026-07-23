@@ -99,7 +99,13 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         }
         let resp = req.send().map_err(|e| e.to_string())?;
         if !resp.status().is_success() {
-            return Err(format!("HTTP {}", resp.status()));
+            // Include a bounded snippet of the error body so a probe surfaces the API's actual
+            // reason (e.g. KRX `respMsg`). Credential-safe: KRX/KASI error bodies carry no secret,
+            // and the reason is credential-scrubbed before it is ever persisted (KTD9).
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            let snippet: String = body.chars().take(300).collect();
+            return Err(format!("HTTP {status}: {snippet}"));
         }
         let bytes = resp.bytes().map_err(|e| e.to_string())?;
         if bytes.len() > MAX_RESPONSE_BYTES {
