@@ -3,10 +3,10 @@
 
 use chrono::{DateTime, NaiveDate, TimeZone, Utc};
 use nautilus_ls::calendar_refresh::{
-    build_candidate, diff_against_predecessor, refresh, refresh_incremental, strip_url_credentials,
-    write_candidate, CategorizedDiff, DiffCategory, EvidenceInputPort, LiveEvidencePort,
-    MaintainerCredentials, RefreshInputs, RefreshMode, RefreshScope, SourceOutcome,
-    StaticEvidencePort,
+    build_candidate, diff_against_predecessor, merge_ranges, refresh, refresh_incremental,
+    strip_url_credentials, uncovered_within, write_candidate, CategorizedDiff, DateRange,
+    DiffCategory, EvidenceInputPort, LiveEvidencePort, MaintainerCredentials, RefreshInputs,
+    RefreshMode, RefreshScope, SourceOutcome, StaticEvidencePort,
 };
 use nautilus_ls_calendar::schema::{
     Authorization, CalendarScope, Citation, Coverage, DayRow, DayStatus, EvidenceKind,
@@ -694,4 +694,226 @@ fn build_candidate_stamps_identities_and_predecessor() {
     // A pure diff over the same predecessor/candidate is stable.
     let diff: CategorizedDiff = diff_against_predecessor(&prior, &candidate, horizon(), false);
     assert_eq!(diff, diff_against_predecessor(&prior, &candidate, horizon(), false));
+}
+
+// ---------------------------------------------------------------------------------------
+// U1 (KTD2): per-source covered date-ranges gate evidence replacement. `SourceOutcome`
+// gains an optional covered claim; absent = legacy scope-wide replacement, present-but-empty
+// = replace nothing, present = replacement gated to `ranges ∩ scope` and never-retract-in-range.
+// ---------------------------------------------------------------------------------------
+
+/// The reconciled status of `date` in `snap`'s rows (panics if the date is not materialized).
+fn row_status(snap: &Snapshot, date: NaiveDate) -> DayStatus {
+    snap.rows
+        .iter()
+        .find(|r| r.date == date)
+        .unwrap_or_else(|| panic!("no row for {date}"))
+        .status
+}
+
+fn has_evidence(snap: &Snapshot, id: &str) -> bool {
+    snap.evidence.iter().any(|e| e.id == id)
+}
+
+fn build_scope_full() -> RefreshScope {
+    RefreshScope { from: d(2012, 6, 1), through: d(2012, 6, 5) }
+}
+
+#[test]
+fn legacy_absent_covered_field_round_trips_and_omits_from_json() {
+    // A legacy outcome serializes with NO `covered` key (byte-shape preserved for existing
+    // `--inputs` files) and round-trips back to an absent (legacy) claim.
+    let legacy = SourceOutcome::ok("krx-daily", SourceKind::KrxDailyMarket);
+    let json = serde_json::to_string(&legacy).unwrap();
+    assert!(!json.contains("covered"), "legacy outcome must not emit a covered field: {json}");
+    // A legacy inputs document (no `covered` field) still deserializes — to the absent
+    // (legacy scope-wide) claim, never to present-but-empty.
+    let back: SourceOutcome = serde_json::from_str(&json).unwrap();
+    assert_eq!(back, legacy);
+    assert!(back.covered().is_none(), "absent means legacy scope-wide semantics");
+
+    // A present-but-empty claim is DISTINCT from absent and round-trips as such.
+    let empty = SourceOutcome::ok_covering("krx-daily", SourceKind::KrxDailyMarket, vec![]);
+    let empty_json = serde_json::to_string(&empty).unwrap();
+    assert!(empty_json.contains("\"covered\":[]"), "present-but-empty must emit []: {empty_json}");
+    let empty_back: SourceOutcome = serde_json::from_str(&empty_json).unwrap();
+    assert_eq!(empty_back.covered(), Some(&[][..]));
+}
+
+#[test]
+fn absent_covered_replaces_scope_wide_but_present_but_empty_replaces_nothing() {
+    let prior = prior_snapshot();
+    // A successful krx-daily gather that returns NO evidence for the in-scope witness date.
+    let make_inputs = |outcome: SourceOutcome| RefreshInputs {
+        sources: vec![src("krx-daily", SourceKind::KrxDailyMarket)],
+        evidence: vec![],
+        outcomes: vec![outcome],
+    };
+
+    // Absent (legacy) → scope-wide replacement: the prior 2012-06-04 witness is dropped, so
+    // the date reverts to Unknown (today's behavior, preserved verbatim).
+    let legacy = build_candidate(
+        &prior,
+        &make_inputs(SourceOutcome::ok("krx-daily", SourceKind::KrxDailyMarket)),
+        &build_scope_full(),
+        RefreshMode::Incremental,
+        refresh_now(),
+    );
+    assert!(!has_evidence(&legacy, "witness-0604"), "legacy scope-wide replacement drops the witness");
+    assert_eq!(row_status(&legacy, d(2012, 6, 4)), DayStatus::Unknown);
+
+    // Present-but-empty → replace nothing: the prior witness survives, 2012-06-04 stays a
+    // TradingSession.
+    let empty = build_candidate(
+        &prior,
+        &make_inputs(SourceOutcome::ok_covering(
+            "krx-daily",
+            SourceKind::KrxDailyMarket,
+            vec![],
+        )),
+        &build_scope_full(),
+        RefreshMode::Incremental,
+        refresh_now(),
+    );
+    assert!(has_evidence(&empty, "witness-0604"), "present-but-empty replaces nothing");
+    assert_eq!(row_status(&empty, d(2012, 6, 4)), DayStatus::TradingSession);
+}
+
+#[test]
+fn covered_ranges_do_not_drop_prior_witness_outside_the_covered_range() {
+    // The retraction hazard: a source marked Ok whose covered ranges end before a prior
+    // witness must NOT drop that witness. Here krx-daily covers only 2012-06-01..06-03; the
+    // prior 2012-06-04 witness is outside the claim and must survive.
+    let prior = prior_snapshot();
+    let inputs = RefreshInputs {
+        sources: vec![src("krx-daily", SourceKind::KrxDailyMarket)],
+        evidence: vec![ev("witness-0602", "krx-daily", d(2012, 6, 2), EvidenceKind::PositiveWitness, false)],
+        outcomes: vec![SourceOutcome::ok_covering(
+            "krx-daily",
+            SourceKind::KrxDailyMarket,
+            vec![DateRange::new(d(2012, 6, 1), d(2012, 6, 3))],
+        )],
+    };
+    let candidate = build_candidate(&prior, &inputs, &build_scope_full(), RefreshMode::Incremental, refresh_now());
+    assert!(has_evidence(&candidate, "witness-0604"), "a witness outside the covered range is never dropped");
+    assert_eq!(row_status(&candidate, d(2012, 6, 4)), DayStatus::TradingSession);
+}
+
+#[test]
+fn prior_witness_survives_empty_response_inside_a_covered_range_but_yields_to_a_valid_refetch() {
+    let prior = prior_snapshot();
+    // (a) never-retract-in-range: krx-daily covers 2012-06-01..06-05 (INCLUDING 06-04) but the
+    // fresh response for 06-04 is an explicit absence marker (valid == false). The prior
+    // witness must survive — absence never retracts, even inside a covered range.
+    let absence = EvidenceRecord {
+        valid: false,
+        ..ev("absence-0604", "krx-daily", d(2012, 6, 4), EvidenceKind::PositiveWitness, false)
+    };
+    let inputs_empty = RefreshInputs {
+        sources: vec![src("krx-daily", SourceKind::KrxDailyMarket)],
+        evidence: vec![absence],
+        outcomes: vec![SourceOutcome::ok_covering(
+            "krx-daily",
+            SourceKind::KrxDailyMarket,
+            vec![DateRange::new(d(2012, 6, 1), d(2012, 6, 5))],
+        )],
+    };
+    let kept = build_candidate(&prior, &inputs_empty, &build_scope_full(), RefreshMode::Incremental, refresh_now());
+    assert!(has_evidence(&kept, "witness-0604"), "an in-range empty response never retracts the prior witness");
+    assert_eq!(row_status(&kept, d(2012, 6, 4)), DayStatus::TradingSession);
+
+    // (b) a VALID re-attestation on the same in-range date DOES replace the prior record.
+    let inputs_valid = RefreshInputs {
+        sources: vec![src("krx-daily", SourceKind::KrxDailyMarket)],
+        evidence: vec![ev("witness-0604-refetch", "krx-daily", d(2012, 6, 4), EvidenceKind::PositiveWitness, false)],
+        outcomes: vec![SourceOutcome::ok_covering(
+            "krx-daily",
+            SourceKind::KrxDailyMarket,
+            vec![DateRange::new(d(2012, 6, 1), d(2012, 6, 5))],
+        )],
+    };
+    let replaced = build_candidate(&prior, &inputs_valid, &build_scope_full(), RefreshMode::Incremental, refresh_now());
+    assert!(!has_evidence(&replaced, "witness-0604"), "a valid in-range refetch replaces the prior record");
+    assert!(has_evidence(&replaced, "witness-0604-refetch"));
+    assert_eq!(row_status(&replaced, d(2012, 6, 4)), DayStatus::TradingSession);
+}
+
+#[test]
+fn a_failed_source_with_covered_ranges_still_takes_the_no_expansion_branch() {
+    let prior = prior_snapshot();
+    // A failed source carrying covered ranges (the R4 honesty carrier) must not expand
+    // coverage — the materialized window stays at the predecessor's.
+    let inputs = RefreshInputs {
+        sources: vec![src("krx-daily", SourceKind::KrxDailyMarket)],
+        evidence: vec![],
+        outcomes: vec![SourceOutcome::failed_covering(
+            "krx-daily",
+            SourceKind::KrxDailyMarket,
+            "quota exhausted",
+            vec![DateRange::new(d(2012, 6, 6), d(2012, 6, 8))],
+        )],
+    };
+    // Scope extends past the prior window; a failed source must NOT let it grow.
+    let scope = RefreshScope { from: d(2012, 6, 1), through: d(2012, 6, 10) };
+    let candidate = build_candidate(&prior, &inputs, &scope, RefreshMode::Incremental, refresh_now());
+    assert_eq!(
+        candidate.coverage.materialized_through,
+        prior.coverage.materialized_through,
+        "a failed source cannot expand coverage even when it carries covered ranges"
+    );
+    // And the prior witness (from the failed source) is retained.
+    assert!(has_evidence(&candidate, "witness-0604"));
+}
+
+#[test]
+fn date_range_arithmetic_handles_gap_adjacent_and_overlapping() {
+    let dr = DateRange::new;
+    // contains
+    let r = dr(d(2010, 1, 4), d(2010, 1, 10));
+    assert!(r.contains(d(2010, 1, 4)) && r.contains(d(2010, 1, 10)) && r.contains(d(2010, 1, 7)));
+    assert!(!r.contains(d(2010, 1, 3)) && !r.contains(d(2010, 1, 11)));
+
+    // intersect: overlap yields the overlap, disjoint yields None.
+    assert_eq!(
+        dr(d(2010, 1, 1), d(2010, 1, 10)).intersect(&dr(d(2010, 1, 5), d(2010, 1, 20))),
+        Some(dr(d(2010, 1, 5), d(2010, 1, 10)))
+    );
+    assert_eq!(
+        dr(d(2010, 1, 1), d(2010, 1, 4)).intersect(&dr(d(2010, 1, 6), d(2010, 1, 9))),
+        None
+    );
+
+    // merge_ranges: adjacent (through+1 == next.from) and overlapping coalesce; a gap stays.
+    assert_eq!(
+        merge_ranges(&[dr(d(2010, 1, 1), d(2010, 1, 5)), dr(d(2010, 1, 6), d(2010, 1, 10))]),
+        vec![dr(d(2010, 1, 1), d(2010, 1, 10))],
+        "adjacent ranges coalesce"
+    );
+    assert_eq!(
+        merge_ranges(&[dr(d(2010, 1, 1), d(2010, 1, 5)), dr(d(2010, 1, 3), d(2010, 1, 8))]),
+        vec![dr(d(2010, 1, 1), d(2010, 1, 8))],
+        "overlapping ranges coalesce"
+    );
+    assert_eq!(
+        merge_ranges(&[dr(d(2010, 1, 6), d(2010, 1, 8)), dr(d(2010, 1, 1), d(2010, 1, 3))]),
+        vec![dr(d(2010, 1, 1), d(2010, 1, 3)), dr(d(2010, 1, 6), d(2010, 1, 8))],
+        "a genuine gap stays two ranges, sorted"
+    );
+
+    // uncovered_within: containment (empty == fully covered) and the named-gap carrier.
+    let window = dr(d(2010, 1, 1), d(2010, 1, 10));
+    assert_eq!(
+        uncovered_within(window, &[dr(d(2010, 1, 1), d(2010, 1, 3)), dr(d(2010, 1, 6), d(2010, 1, 8))]),
+        vec![dr(d(2010, 1, 4), d(2010, 1, 5)), dr(d(2010, 1, 9), d(2010, 1, 10))],
+        "interior and trailing gaps are named"
+    );
+    assert!(
+        uncovered_within(window, &[dr(d(2010, 1, 1), d(2010, 1, 10))]).is_empty(),
+        "a fully-covering range leaves no gap"
+    );
+    assert_eq!(
+        uncovered_within(window, &[]),
+        vec![window],
+        "no coverage leaves the whole window uncovered"
+    );
 }

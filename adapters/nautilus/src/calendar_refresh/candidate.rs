@@ -17,9 +17,9 @@
 //! PARTIAL candidate that the diff flags for review.
 
 use std::cmp::{max, min};
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 
 use nautilus_ls_calendar::reconcile::reconcile;
 use nautilus_ls_calendar::schema::{
@@ -27,7 +27,7 @@ use nautilus_ls_calendar::schema::{
 };
 use nautilus_ls_calendar::{compute_artifact_id, compute_calendar_id, SCHEMA_VERSION};
 
-use super::port::{RefreshInputs, RefreshScope};
+use super::port::{DateRange, RefreshInputs, RefreshScope};
 
 /// Which refresh mode produced a candidate — drives which freshness dimension advances on
 /// success.
@@ -55,31 +55,60 @@ pub fn build_candidate(
 ) -> Snapshot {
     let all_sources_ok = inputs.outcomes.iter().all(|o| o.is_ok());
 
-    // Source ids that were refreshed SUCCESSFULLY — their prior evidence is replaced by the
-    // fresh gather; a failed (or unmentioned) source keeps its prior evidence (retention).
-    let ok_source_ids: HashSet<&str> = inputs
+    // Sources refreshed SUCCESSFULLY, each mapped to its covered-range claim (KTD2):
+    // `None` = legacy scope-wide replacement; `Some(ranges)` = replacement gated to
+    // `ranges ∩ scope`. A failed (or unmentioned) source is absent here and keeps its prior
+    // evidence (retention).
+    let ok_sources: HashMap<&str, Option<&[DateRange]>> = inputs
         .outcomes
         .iter()
         .filter(|o| o.is_ok())
-        .map(|o| o.source_id.as_str())
+        .map(|o| (o.source_id.as_str(), o.covered()))
+        .collect();
+
+    // The (source, date) pairs the fresh gather re-attested with a VALID record. A date a
+    // source did NOT freshly witness — an empty/non-evidence response emits nothing, and an
+    // explicitly-recorded absence marker is `valid == false` — is absent here, so the
+    // never-retract-by-absence rule keeps the prior record even inside a covered range (KTD2).
+    let fresh_dates: HashSet<(&str, NaiveDate)> = inputs
+        .evidence
+        .iter()
+        .filter(|e| e.valid)
+        .map(|e| (e.source_id.as_str(), e.date))
         .collect();
 
     // Merge evidence by id: retained prior (from non-refreshed / failed sources) + fresh. A
     // successful source's prior record is REPLACED (dropped in favor of the fresh gather)
-    // ONLY when its date falls inside the re-covered scope window — the window the gather
-    // actually re-attested. A partial re-gather (e.g. an incremental refresh of a single
-    // date) that marks a source "ok" must NEVER retract that source's prior positive
-    // witnesses on dates it did not re-cover; dropping them wholesale would revert a
-    // proven-open day back to an inferred Closed ("absence never retracts a prior positive
-    // witness", enforced here at the BUILD layer). A FULL-history re-gather covers every
-    // date, so its replacement stays wholesale — semantics unchanged.
+    // ONLY when the gather actually re-attested that source+date. A partial re-gather (e.g.
+    // an incremental refresh of a single date) that marks a source "ok" must NEVER retract
+    // that source's prior positive witnesses on dates it did not re-cover; dropping them
+    // wholesale would revert a proven-open day back to an inferred Closed ("absence never
+    // retracts a prior positive witness", enforced here at the BUILD layer).
+    //
+    // A LEGACY (absent covered) source keeps the historical scope-wide replacement verbatim.
+    // A source WITH covered ranges only replaces within `ranges ∩ scope`, and even there only
+    // on a date it freshly witnessed — so a mis-windowed or empty-in-range response can never
+    // silently retract a prior witness (KTD2).
     let mut evidence_by_id: BTreeMap<String, _> = BTreeMap::new();
     for e in &prior.evidence {
-        let re_covered = ok_source_ids.contains(e.source_id.as_str())
-            && e.date >= scope.from
-            && e.date <= scope.through;
+        let re_covered = match ok_sources.get(e.source_id.as_str()) {
+            Some(covered) => {
+                let in_scope = e.date >= scope.from && e.date <= scope.through;
+                match covered {
+                    // Legacy: scope-wide replacement (semantics unchanged).
+                    None => in_scope,
+                    // Gated: within a covered range AND freshly re-attested on this date.
+                    Some(ranges) => {
+                        in_scope
+                            && ranges.iter().any(|r| r.contains(e.date))
+                            && fresh_dates.contains(&(e.source_id.as_str(), e.date))
+                    }
+                }
+            }
+            None => false, // not a successful source → retained
+        };
         if re_covered {
-            continue; // replaced by the successful source's fresh gather for this in-scope date
+            continue; // replaced by the successful source's fresh gather for this date
         }
         evidence_by_id.insert(e.id.clone(), e.clone());
     }

@@ -39,8 +39,8 @@ pub use activate::{
 pub use candidate::{build_candidate, RefreshMode};
 pub use diff::{diff_against_predecessor, CategorizedDiff, DiffCategory, DiffEntry};
 pub use port::{
-    EvidenceInputPort, RefreshInputs, RefreshScope, SourceFetchStatus, SourceOutcome,
-    StaticEvidencePort,
+    merge_ranges, uncovered_within, DateRange, EvidenceInputPort, RefreshInputs, RefreshScope,
+    SourceFetchStatus, SourceOutcome, StaticEvidencePort,
 };
 pub use transport::{
     strip_url_credentials, LiveEvidencePort, MaintainerCredentials, KASI_SERVICE_KEY_ENV,
