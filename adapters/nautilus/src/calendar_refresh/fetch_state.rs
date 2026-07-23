@@ -129,6 +129,10 @@ impl FetchState {
 /// never loop forever (a year has ~15 holidays; one 100-row page always suffices).
 const KASI_MAX_PAGES: u32 = 20;
 
+/// Emit a KRX progress heartbeat every this many processed dates. Small windows (a probe) stay
+/// silent; a multi-thousand-call bulk fetch surfaces steady progress.
+const KRX_PROGRESS_EVERY: u32 = 250;
+
 /// Drive the bulk fetch to completion (or a terminal per-source failure), resuming from any
 /// checkpoint at `state_path`, and return the normalized [`RefreshInputs`]. `fetch` performs one
 /// HTTP GET (injected — offline in tests); `sleep` applies pacing (injected — a no-op in tests).
@@ -165,6 +169,10 @@ where
     }
 
     // ---- KRX per-weekday loop through the witness horizon ----
+    // Progress cadence: the KRX fetch is thousands of large per-date responses, so emit a
+    // heartbeat to stderr every `KRX_PROGRESS_EVERY` dates (a small window never trips it) — an
+    // operator watching a multi-thousand-call bulk fetch must be able to see it advancing.
+    let mut krx_processed: u32 = 0;
     while !state.krx_complete() && state.krx_failed.is_none() {
         let date = state.krx_cursor;
         if is_weekday(date) {
@@ -198,6 +206,14 @@ where
             break; // civil-date overflow guard
         }
         checkpoint(&state, state_path)?;
+        krx_processed += 1;
+        if krx_processed % KRX_PROGRESS_EVERY == 0 {
+            eprintln!(
+                "  krx: through {date} — {} witnesses (fetching to {})",
+                state.krx_witnesses.len(),
+                cfg.krx_through
+            );
+        }
     }
 
     // ---- KASI per-year loop ----
@@ -210,6 +226,7 @@ where
                     Some(year_end_clamped(year, cfg.window.through));
                 state.kasi_next_year = year + 1;
                 checkpoint(&state, state_path)?;
+                eprintln!("  kasi: {year} done — {} holidays total", state.kasi_holidays.len());
             }
             Err(message) => {
                 state.kasi_failed = Some(message);
