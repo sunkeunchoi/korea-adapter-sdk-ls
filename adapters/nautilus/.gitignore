@@ -15,5 +15,11 @@
 *.calendar.json
 *.calendar.json.candidate
 *.calendar.json.candidate.diff.json
+# Owner-local calendar bulk-fetch artifacts (U4, KTD9): the normalized-inputs artifact + the
+# resumable 0o600 checkpoint. Confined beneath the owner-local state root (already gitignored via
+# /state); these suffix guards catch a copy placed anywhere at the workspace root too.
+*.calendar-inputs.json
+*.calendar-fetch.ckpt
+
 /*.lock
 !Cargo.lock

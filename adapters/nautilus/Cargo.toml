@@ -50,6 +50,10 @@ name = "calendar-rollback"
 path = "src/bin/calendar-rollback.rs"
 
 [[bin]]
+name = "calendar-fetch-inputs"
+path = "src/bin/calendar-fetch-inputs.rs"
+
+[[bin]]
 name = "node_data_tester"
 path = "src/bin/node_data_tester.rs"
 
@@ -97,6 +101,11 @@ futures = "0.3"
 # resolves only the five predefined XML entities and never fetches an external DTD/entity, so a
 # hostile `<!DOCTYPE>` cannot expand. A deliberate direct dep, not an ad-hoc mid-unit pick.
 quick-xml = "0.36"
+# Blocking HTTP for the maintainer-run `calendar-fetch-inputs` bulk fetch (U4, KTD9). Already a
+# transitive dep in the lockfile; promoted to a direct dep with the `blocking` feature. rustls
+# (no OpenSSL). Constructed ONLY in the bin, behind the injected-fetch seam, hardened with
+# timeouts, redirects disabled, and HTTPS-only.
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
 
 [dev-dependencies]
 ls-sdk-test-support = { path = "../../crates/ls-sdk-test-support" }

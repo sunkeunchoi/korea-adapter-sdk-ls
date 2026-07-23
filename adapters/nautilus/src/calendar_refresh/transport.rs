@@ -51,6 +51,18 @@ impl MaintainerCredentials {
             .flatten()
             .collect()
     }
+
+    /// Mask every configured secret value out of `text` — the defense-in-depth pass the fetch
+    /// driver (U4) applies to any failure reason before it is persisted into a checkpoint or a
+    /// [`SourceOutcome`](super::port::SourceOutcome). Combine with
+    /// [`strip_url_credentials`] for a URL-bearing message.
+    pub fn scrub(&self, text: &str) -> String {
+        let mut safe = text.to_string();
+        for secret in self.secrets() {
+            safe = safe.replace(secret, "***");
+        }
+        safe
+    }
 }
 
 impl fmt::Debug for MaintainerCredentials {

@@ -21,6 +21,7 @@
 pub mod activate;
 pub mod candidate;
 pub mod diff;
+pub mod fetch_state;
 pub mod normalize;
 pub mod port;
 pub mod transport;
@@ -42,6 +43,7 @@ pub use candidate::{
     CONSUMER_WINDOW_START,
 };
 pub use diff::{diff_against_predecessor, CategorizedDiff, DiffCategory, DiffEntry};
+pub use fetch_state::{confine, fetch_inputs, FetchConfig, FetchError, FetchState};
 pub use normalize::{
     fixed_closure_rules, generated_rules, holiday_evidence, midnight_utc, parse_kasi_holidays_xml,
     parse_krx_daily, weekend_rules, witness_evidence, KasiPage,
@@ -188,6 +190,13 @@ pub fn write_candidate(
         candidate_path,
         diff_path,
     })
+}
+
+/// Owner-only (`0o600`) atomic sibling-temp + rename write — the shared primitive the fetch
+/// checkpoint + inputs artifact (U4) and candidate writes use so no KRX/KASI-derived bytes are
+/// ever left world-readable or half-written.
+pub fn atomic_write_owner_only(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    atomic_write(path, bytes)
 }
 
 /// The candidate path for an active snapshot path (`<active>.candidate`).
