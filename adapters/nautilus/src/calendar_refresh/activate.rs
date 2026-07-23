@@ -678,18 +678,22 @@ pub fn first_install(
     }
 }
 
-/// Exclusive-create install (KTD5): write `bytes` to a sibling `0o600` tempfile, then atomically
-/// create `dest` as a hard link — which FAILS with [`AlreadyExists`](std::io::ErrorKind::AlreadyExists)
-/// if `dest` appeared, never clobbering it. The rename-based [`atomic_install_owner_only`] would
-/// silently overwrite, so it is deliberately NOT reused for a chain-root install. The temp is
-/// always cleaned up; on a lost race `dest` is left byte-identical.
+/// Exclusive-create install (KTD5): write `bytes` to a PROCESS-UNIQUE sibling `0o600` tempfile
+/// created with `create_new` (O_EXCL — never reuse, truncate, or follow a symlink at the temp
+/// path), then atomically create `dest` as a hard link — which FAILS with
+/// [`AlreadyExists`](std::io::ErrorKind::AlreadyExists) if `dest` appeared, never clobbering it.
+/// The rename-based [`atomic_install_owner_only`] would silently overwrite, so it is deliberately
+/// NOT reused for a chain-root install. The process-unique temp name means two concurrent
+/// first-installs never share an inode (which would let one install `dest` with the OTHER's bytes
+/// while recording its own identity). The temp is always cleaned up; on a lost race `dest` is left
+/// byte-identical. (A stale same-name temp from a crashed prior run surfaces the temp create's
+/// `AlreadyExists` as a fail-closed refusal, not an install.)
 fn atomic_install_exclusive(dest: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let tmp = first_install_temp(dest);
     {
         let mut file = std::fs::OpenOptions::new()
             .write(true)
-            .create(true)
-            .truncate(true)
+            .create_new(true)
             .mode(0o600)
             .open(&tmp)?;
         file.write_all(bytes)?;
@@ -702,8 +706,10 @@ fn atomic_install_exclusive(dest: &Path, bytes: &[u8]) -> std::io::Result<()> {
 }
 
 fn first_install_temp(dest: &Path) -> PathBuf {
+    // Process-unique so concurrent first-installs never share the same temp inode, and
+    // deterministic within a process so the ceremony's single synchronous call is self-consistent.
     let mut name = dest.as_os_str().to_os_string();
-    name.push(".first-install.tmp");
+    name.push(format!(".first-install.{}.tmp", std::process::id()));
     PathBuf::from(name)
 }
 
@@ -760,5 +766,18 @@ mod exclusive_install_tests {
         // The existing file is byte-identical and no temp residue remains at the destination.
         assert_eq!(std::fs::read(&dest).unwrap(), b"pre-existing-chain-root");
         assert!(!first_install_temp(&dest).exists(), "no temp residue after a lost race");
+    }
+
+    #[test]
+    fn exclusive_install_never_reuses_or_truncates_a_pre_existing_temp() {
+        // create_new (O_EXCL) rejects a stale/planted temp rather than reusing or truncating it —
+        // so a concurrent writer's inode or a symlink at the temp path can never be adopted.
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("cal.json");
+        let tmp = first_install_temp(&dest);
+        std::fs::write(&tmp, b"stale-temp").unwrap();
+        let err = atomic_install_exclusive(&dest, b"genesis-bytes").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists, "a pre-existing temp is rejected");
+        assert!(!dest.exists(), "no install happened");
     }
 }

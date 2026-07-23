@@ -1113,6 +1113,18 @@ fn genesis_refuses_inputs_whose_krx_coverage_falls_short_of_the_window() {
 }
 
 #[test]
+fn genesis_refuses_a_consumer_window_or_krx_horizon_past_the_materialized_window() {
+    // Defensive R12-airtightness: a consumer window (or krx_through) extending past the
+    // materialized window would leave consumer weekdays with no row, slipping the R12 scan.
+    let window = DateRange::new(d(2026, 6, 13), d(2026, 6, 17)); // materialized only through 06-17
+    let consumer = DateRange::new(d(2026, 6, 15), d(2026, 6, 19)); // ...but consumer runs to 06-19
+    let inputs = genesis_inputs(window, d(2026, 6, 17), &[], &[]);
+    let err = build_genesis(&genesis_params(window, d(2026, 6, 19), consumer), &inputs, t(2026, 6, 20))
+        .expect_err("a consumer window past the materialized window must refuse");
+    assert!(matches!(err, GenesisRefusal::WindowInconsistent { .. }), "{err:?}");
+}
+
+#[test]
 fn from_prior_path_stays_byte_identical_through_the_shared_core() {
     // Regression guard: the KTD1 build-base extraction must not change the from-prior path.
     // build_candidate still stamps Some(prior) and produces a stable, loadable candidate.

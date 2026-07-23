@@ -345,6 +345,13 @@ pub enum GenesisRefusal {
         /// The uncovered sub-ranges of the required window, ascending.
         uncovered: Vec<DateRange>,
     },
+    /// The consumer window (or the KRX witness horizon) is not contained in the materialized
+    /// window — a consumer weekday past the materialized window would get NO row and silently
+    /// slip the R12 scan. Refused so R12 stays airtight (defensive; the defaults never trip it).
+    WindowInconsistent {
+        /// The specific inconsistency.
+        detail: String,
+    },
 }
 
 impl std::fmt::Display for GenesisRefusal {
@@ -370,6 +377,9 @@ impl std::fmt::Display for GenesisRefusal {
                     joined.join(", ")
                 )
             }
+            GenesisRefusal::WindowInconsistent { detail } => {
+                write!(f, "genesis refused: inconsistent window — {detail}")
+            }
         }
     }
 }
@@ -392,6 +402,25 @@ pub fn build_genesis(
     inputs: &RefreshInputs,
     as_of: DateTime<Utc>,
 ) -> Result<Snapshot, GenesisRefusal> {
+    // 0. Window containment: the consumer window and the KRX witness horizon must lie within the
+    //    materialized window. Otherwise a consumer weekday past `window.through` would get no row
+    //    at all and slip the R12 scan (which walks materialized rows) — R12 must stay airtight.
+    if params.consumer_window.from < params.window.from
+        || params.consumer_window.through > params.window.through
+        || params.krx_through > params.window.through
+    {
+        return Err(GenesisRefusal::WindowInconsistent {
+            detail: format!(
+                "consumer window {}..{} and krx_through {} must lie within the materialized window {}..{}",
+                params.consumer_window.from,
+                params.consumer_window.through,
+                params.krx_through,
+                params.window.from,
+                params.window.through
+            ),
+        });
+    }
+
     // 1. Inputs completeness (KTD2 / AE9): a mis-windowed or partial fetch is refused BEFORE a
     //    snapshot is ever built — checked against the full genesis window, not just consumer.
     check_coverage_completeness(params, inputs)?;
