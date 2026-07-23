@@ -39,7 +39,8 @@ use nautilus_ls_calendar::schema::Snapshot;
 use nautilus_ls_calendar::{compute_artifact_id, CalendarLoadError, KrxCalendar, QueryError};
 
 use super::diff::{CategorizedDiff, DiffEntry};
-use super::diff_path_for;
+use super::genesis::GenesisDescription;
+use super::{diff_path_for, genesis_description_path_for};
 
 /// Explicit maintainer approval for one activation. Modeled as data (serde-round-trippable)
 /// so the CLI can load a reviewed, signed-off approval file. `reviewed_artifact_id` binds the
@@ -455,6 +456,257 @@ pub fn rollback(
     Ok(record)
 }
 
+/// The acknowledgment key a first-install (genesis) activation REQUIRES — a chain root has no
+/// predecessor, so an all-additive genesis diff yields zero computed acknowledgments; this
+/// explicit key forces the operator to accept the no-predecessor posture (KTD5).
+pub const GENESIS_ACK_KEY: &str = "genesis:no-predecessor";
+
+/// The acknowledgment keys a first-install REQUIRES for `description`: the mandatory
+/// [`GENESIS_ACK_KEY`], plus any computed risk key the description ever surfaces. A clean
+/// genesis (R12 guarantees zero Unknown consumer weekdays) requires only the genesis key.
+pub fn required_genesis_acknowledgments(_description: &GenesisDescription) -> Vec<String> {
+    vec![GENESIS_ACK_KEY.to_string()]
+}
+
+/// The recorded outcome of a successful first-install (genesis) activation (KTD5). A distinct
+/// type beside [`ActivationRecord`] because a chain root has NO predecessor identity to record —
+/// the existing `ActivationRecord` serde shape (with its required `predecessor_artifact_id`)
+/// stays untouched.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GenesisActivationRecord {
+    /// The approving maintainer.
+    pub operator: String,
+    /// The recorded reason.
+    pub reason: String,
+    /// When the maintainer approved.
+    pub approved_at: DateTime<Utc>,
+    /// The as-of instant the chain root was installed at.
+    pub installed_at: DateTime<Utc>,
+    /// The `artifact_id` of the newly-installed genesis snapshot (the chain root).
+    pub candidate_artifact_id: String,
+    /// The acknowledgments the approval carried (includes [`GENESIS_ACK_KEY`]).
+    pub acknowledged: Vec<String>,
+}
+
+/// A distinct, typed reason a first-install was refused (KTD5). Every variant leaves the install
+/// path untouched — the exclusive-create install is the very last step and cannot clobber.
+#[derive(Debug, thiserror::Error)]
+pub enum FirstInstallError {
+    /// A required approval field (operator / reason) was blank.
+    #[error("first-install approval is missing a required field: {field}")]
+    ApprovalMissing {
+        /// Which field was blank.
+        field: String,
+    },
+
+    /// An active snapshot already exists at the install path (AE8) — superseding a live chain
+    /// root requires the normal `activate` path with its stale-base protection, never first-install.
+    #[error("an active snapshot already exists at the install path — use the normal activate path")]
+    AlreadyActive,
+
+    /// The candidate snapshot could not be read/parsed.
+    #[error("could not read the candidate snapshot: {message}")]
+    CandidateUnreadable {
+        /// The underlying rendering.
+        message: String,
+    },
+
+    /// The candidate declares a predecessor — it belongs to the normal `activate` path, not genesis.
+    #[error("candidate declares predecessor {predecessor} — it is not a genesis (predecessor-less) candidate")]
+    HasPredecessor {
+        /// The predecessor id the candidate declares.
+        predecessor: String,
+    },
+
+    /// The candidate failed revalidation through the real loader at `as_of`.
+    #[error("candidate failed revalidation: {0}")]
+    Invalid(#[source] CalendarLoadError),
+
+    /// The approval does not review this candidate, or no genesis description artifact describes it.
+    #[error("candidate is unreviewed: {detail}")]
+    Unreviewed {
+        /// Why the candidate is considered unreviewed.
+        detail: String,
+    },
+
+    /// The genesis description's surfaced authorization does not match the candidate's stamped
+    /// authorization — the ceremony's agreement-term check is mechanical and this mismatch refuses.
+    #[error("authorization mismatch: {detail}")]
+    AuthorizationMismatch {
+        /// The specific mismatch.
+        detail: String,
+    },
+
+    /// One or more required acknowledgments (the genesis key + any computed) were missing.
+    #[error("unacknowledged: {}", entries.join(", "))]
+    Unacknowledged {
+        /// The required-but-missing acknowledgment keys.
+        entries: Vec<String>,
+    },
+
+    /// The install destination appeared AFTER the exists-gate but before the commit — the
+    /// exclusive-create install failed atomically, leaving the existing file byte-identical.
+    #[error("install path appeared during the ceremony — refused to overwrite a concurrent chain root")]
+    RaceLost,
+
+    /// The exclusive-create install (tempfile create / write / link) failed.
+    #[error("exclusive install failed: {message}")]
+    Io {
+        /// The underlying I/O rendering.
+        message: String,
+    },
+}
+
+/// First-install a predecessor-less genesis `candidate` as the chain root at `active_path` under
+/// explicit maintainer `approval`, evaluating authorization/validity at `as_of` (U6, KTD5, R9).
+///
+/// Shares the approval / reviewed-artifact / acknowledgment legs with [`activate`], but replaces
+/// the active-load + stale-base legs with a refuse-if-exists guard (a chain root has no
+/// predecessor to compare), reviews the GENESIS DESCRIPTION artifact (not a diff) and requires
+/// its surfaced authorization to match the candidate's, requires the [`GENESIS_ACK_KEY`]
+/// acknowledgment, and commits with an EXCLUSIVE-CREATE install that fails atomically if the
+/// destination appeared since the exists-gate — the rename-based installer clobbers and is NOT
+/// reused here. Every refusal leaves the install path untouched.
+pub fn first_install(
+    active_path: &Path,
+    candidate_path: &Path,
+    approval: &ActivationApproval,
+    as_of: DateTime<Utc>,
+) -> Result<GenesisActivationRecord, FirstInstallError> {
+    // 1. Explicit approval: operator + reason must be non-blank.
+    if approval.operator.trim().is_empty() {
+        return Err(FirstInstallError::ApprovalMissing {
+            field: "operator".to_string(),
+        });
+    }
+    if approval.reason.trim().is_empty() {
+        return Err(FirstInstallError::ApprovalMissing {
+            field: "reason".to_string(),
+        });
+    }
+
+    // 2. Refuse if the install path already exists (AE8) — superseding a live chain root goes
+    //    through the normal activate path with its stale-base protection.
+    if active_path.exists() {
+        return Err(FirstInstallError::AlreadyActive);
+    }
+
+    // 3. Read + parse the candidate; refuse one that declares a predecessor (normal path).
+    let candidate_bytes = std::fs::read(candidate_path).map_err(|e| {
+        FirstInstallError::CandidateUnreadable {
+            message: e.to_string(),
+        }
+    })?;
+    let candidate: Snapshot = serde_json::from_slice(&candidate_bytes).map_err(|e| {
+        FirstInstallError::CandidateUnreadable {
+            message: e.to_string(),
+        }
+    })?;
+    if let Some(predecessor) = &candidate.predecessor_artifact_id {
+        return Err(FirstInstallError::HasPredecessor {
+            predecessor: predecessor.clone(),
+        });
+    }
+
+    // 3b. Revalidate through the REAL loader at `as_of` (identity + coverage + authorization).
+    let validated = KrxCalendar::from_snapshot(candidate.clone(), as_of)
+        .map_err(FirstInstallError::Invalid)?;
+    let candidate_artifact_id = validated.artifact_id().to_string();
+
+    // 4. Reviewed: the approval must name THIS candidate.
+    if approval.reviewed_artifact_id != candidate_artifact_id {
+        return Err(FirstInstallError::Unreviewed {
+            detail: format!(
+                "approval reviewed {:?}, candidate is {candidate_artifact_id}",
+                approval.reviewed_artifact_id
+            ),
+        });
+    }
+
+    // 5. Genesis description artifact present, names the candidate, and its authorization matches.
+    let desc_path = genesis_description_path_for(candidate_path);
+    let desc_bytes = std::fs::read(&desc_path).map_err(|e| FirstInstallError::Unreviewed {
+        detail: format!("no genesis description at {}: {e}", desc_path.display()),
+    })?;
+    let description: GenesisDescription =
+        serde_json::from_slice(&desc_bytes).map_err(|e| FirstInstallError::Unreviewed {
+            detail: format!("genesis description is unreadable: {e}"),
+        })?;
+    if description.candidate_artifact_id != candidate_artifact_id {
+        return Err(FirstInstallError::Unreviewed {
+            detail: format!(
+                "description describes {}, not the candidate {candidate_artifact_id}",
+                description.candidate_artifact_id
+            ),
+        });
+    }
+    if description.authority != candidate.authorization.authority
+        || description.granted_at != candidate.authorization.granted_at
+        || description.expires_at != candidate.authorization.expires_at
+    {
+        return Err(FirstInstallError::AuthorizationMismatch {
+            detail: "genesis description authorization does not match the candidate's stamped terms"
+                .to_string(),
+        });
+    }
+
+    // 6. Acknowledgments: the genesis key (+ any computed) must all be acknowledged.
+    let missing: Vec<String> = required_genesis_acknowledgments(&description)
+        .into_iter()
+        .filter(|k| !approval.acknowledged.iter().any(|a| a == k))
+        .collect();
+    if !missing.is_empty() {
+        return Err(FirstInstallError::Unacknowledged { entries: missing });
+    }
+
+    // 7. Record + exclusive-create install — fails atomically if the destination appeared since
+    //    gate 2, so emptiness is re-proven at commit time, not just at gate time.
+    let record = GenesisActivationRecord {
+        operator: approval.operator.clone(),
+        reason: approval.reason.clone(),
+        approved_at: approval.approved_at,
+        installed_at: as_of,
+        candidate_artifact_id,
+        acknowledged: approval.acknowledged.clone(),
+    };
+    match atomic_install_exclusive(active_path, &candidate_bytes) {
+        Ok(()) => Ok(record),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Err(FirstInstallError::RaceLost),
+        Err(e) => Err(FirstInstallError::Io {
+            message: e.to_string(),
+        }),
+    }
+}
+
+/// Exclusive-create install (KTD5): write `bytes` to a sibling `0o600` tempfile, then atomically
+/// create `dest` as a hard link — which FAILS with [`AlreadyExists`](std::io::ErrorKind::AlreadyExists)
+/// if `dest` appeared, never clobbering it. The rename-based [`atomic_install_owner_only`] would
+/// silently overwrite, so it is deliberately NOT reused for a chain-root install. The temp is
+/// always cleaned up; on a lost race `dest` is left byte-identical.
+fn atomic_install_exclusive(dest: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    let tmp = first_install_temp(dest);
+    {
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+    }
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+    let result = std::fs::hard_link(&tmp, dest);
+    let _ = std::fs::remove_file(&tmp);
+    result
+}
+
+fn first_install_temp(dest: &Path) -> PathBuf {
+    let mut name = dest.as_os_str().to_os_string();
+    name.push(".first-install.tmp");
+    PathBuf::from(name)
+}
+
 /// Write `bytes` to a sibling tempfile created with `0o600` permissions (owner read/write
 /// ONLY) then `rename` it over `active_path` — atomic, no partial state, never world-readable.
 /// The mode is set BOTH at create time (`OpenOptions::mode`) and re-asserted with
@@ -480,4 +732,33 @@ fn sibling_temp(active_path: &Path) -> PathBuf {
     let mut name = active_path.as_os_str().to_os_string();
     name.push(".activate.tmp");
     PathBuf::from(name)
+}
+
+#[cfg(test)]
+mod exclusive_install_tests {
+    use super::*;
+    use std::os::unix::fs::PermissionsExt;
+
+    #[test]
+    fn exclusive_install_creates_owner_only_and_leaves_no_temp() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("cal.json");
+        atomic_install_exclusive(&dest, b"genesis-bytes").expect("fresh install succeeds");
+        assert_eq!(std::fs::read(&dest).unwrap(), b"genesis-bytes");
+        let mode = std::fs::metadata(&dest).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "installed 0o600");
+        assert!(!first_install_temp(&dest).exists(), "no temp residue");
+    }
+
+    #[test]
+    fn exclusive_install_refuses_to_clobber_an_existing_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("cal.json");
+        std::fs::write(&dest, b"pre-existing-chain-root").unwrap();
+        let err = atomic_install_exclusive(&dest, b"would-clobber").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists, "the race is lost, not clobbered");
+        // The existing file is byte-identical and no temp residue remains at the destination.
+        assert_eq!(std::fs::read(&dest).unwrap(), b"pre-existing-chain-root");
+        assert!(!first_install_temp(&dest).exists(), "no temp residue after a lost race");
+    }
 }

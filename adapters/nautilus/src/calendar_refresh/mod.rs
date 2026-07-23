@@ -36,8 +36,10 @@ use chrono::{DateTime, Duration, NaiveDate, Utc};
 use nautilus_ls_calendar::schema::Snapshot;
 
 pub use activate::{
-    acknowledgment_key, activate, required_acknowledgments, rollback, ActivationApproval,
-    ActivationError, ActivationRecord, RollbackError, RollbackRecord, PARTIAL_ACK_KEY,
+    acknowledgment_key, activate, first_install, required_acknowledgments,
+    required_genesis_acknowledgments, rollback, ActivationApproval, ActivationError,
+    ActivationRecord, FirstInstallError, GenesisActivationRecord, RollbackError, RollbackRecord,
+    GENESIS_ACK_KEY, PARTIAL_ACK_KEY,
 };
 pub use candidate::{
     build_candidate, build_genesis, GenesisParams, GenesisRefusal, RefreshMode,

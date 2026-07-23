@@ -5,11 +5,13 @@
 
 use std::os::unix::fs::PermissionsExt;
 
-use chrono::{DateTime, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Datelike, NaiveDate, TimeZone, Utc, Weekday};
 use nautilus_ls::calendar_refresh::{
-    activate, refresh, required_acknowledgments, rollback, write_candidate, ActivationApproval,
-    ActivationError, RefreshInputs, RefreshMode, RefreshScope, RollbackError, SourceOutcome,
-    StaticEvidencePort,
+    activate, build_genesis, describe_genesis, first_install, genesis_description_path_for, refresh,
+    required_acknowledgments, rollback, write_candidate, write_genesis, ActivationApproval,
+    ActivationError, DateRange, FirstInstallError, GenesisActivationRecord, GenesisDescription,
+    GenesisParams, RefreshInputs, RefreshMode, RefreshScope, RollbackError, SourceOutcome,
+    StaticEvidencePort, GENESIS_ACK_KEY,
 };
 use nautilus_ls_calendar::schema::{
     Authorization, CalendarScope, Citation, Coverage, DayRow, DayStatus, EvidenceKind,
@@ -565,4 +567,268 @@ fn rollback_of_an_unreviewed_prior_is_refused() {
     let err = rollback(&active_path, &prior_path, &approval, rollback_as_of()).unwrap_err();
     assert!(matches!(err, RollbackError::Unreviewed { .. }), "got {err:?}");
     assert_eq!(active_before, std::fs::read(&active_path).unwrap());
+}
+
+// ---------------------------------------------------------------------------------------
+// U6 (KTD5): first-install (genesis) activation — full ceremony minus stale-base/active-load,
+// refuse-if-exists guard, genesis:no-predecessor ack, description-authorization match, and an
+// EXCLUSIVE-CREATE install. Newly-live branch → the full refusal matrix, not diff-scoped.
+// ---------------------------------------------------------------------------------------
+
+use std::path::{Path, PathBuf};
+
+fn genesis_inputs(
+    window: DateRange,
+    krx_through: NaiveDate,
+    witnessed: &[NaiveDate],
+    holidays: &[NaiveDate],
+) -> RefreshInputs {
+    let mut evidence = Vec::new();
+    let mut cur = window.from;
+    while cur <= window.through {
+        if matches!(cur.weekday(), Weekday::Sat | Weekday::Sun) {
+            evidence.push(ev(&format!("rule-{cur}"), "krx-rule", cur, EvidenceKind::DeterministicRule, false));
+        }
+        cur = cur.succ_opt().unwrap();
+    }
+    for &w in witnessed {
+        evidence.push(ev(&format!("witness-{w}"), "krx-daily", w, EvidenceKind::PositiveWitness, false));
+    }
+    for &h in holidays {
+        evidence.push(ev(&format!("kasi-{h}"), "kasi", h, EvidenceKind::HolidayFact, false));
+        evidence.push(ev(&format!("rule-{h}"), "krx-rule", h, EvidenceKind::DeterministicRule, false));
+    }
+    RefreshInputs {
+        sources: vec![
+            src("krx-daily", SourceKind::KrxDailyMarket),
+            src("kasi", SourceKind::KasiHoliday),
+            src("krx-rule", SourceKind::KrxRule),
+        ],
+        evidence,
+        outcomes: vec![
+            SourceOutcome::ok_covering("krx-daily", SourceKind::KrxDailyMarket, vec![DateRange::new(window.from, krx_through)]),
+            SourceOutcome::ok_covering("kasi", SourceKind::KasiHoliday, vec![window]),
+            SourceOutcome::ok_covering("krx-rule", SourceKind::KrxRule, vec![window]),
+        ],
+    }
+}
+
+fn genesis_candidate() -> nautilus_ls_calendar::schema::Snapshot {
+    let window = DateRange::new(d(2026, 6, 13), d(2026, 6, 19));
+    let consumer = DateRange::new(d(2026, 6, 15), d(2026, 6, 19));
+    let inputs = genesis_inputs(
+        window,
+        d(2026, 6, 19),
+        &[d(2026, 6, 15), d(2026, 6, 17), d(2026, 6, 18), d(2026, 6, 19)],
+        &[d(2026, 6, 16)],
+    );
+    let params = GenesisParams {
+        scope: CalendarScope {
+            calendar_name: "KRX domestic equity regular session".to_string(),
+            venue: "XKRX".to_string(),
+            instrument_class: "domestic-equity".to_string(),
+            timezone: "Asia/Seoul".to_string(),
+            synthetic: false,
+        },
+        authorization: Authorization {
+            authorized: true,
+            authority: "KRX Open API Agreement".to_string(),
+            granted_at: t(2026, 1, 1),
+            expires_at: Some(t(2027, 1, 1)),
+            terminated_at: None,
+        },
+        source_availability: vec![SourceAvailabilityBound {
+            source_id: "krx-daily".to_string(),
+            available_from: Some(d(2010, 1, 4)),
+            available_through: None,
+        }],
+        window,
+        krx_through: d(2026, 6, 19),
+        consumer_window: consumer,
+    };
+    build_genesis(&params, &inputs, t(2026, 6, 20)).expect("genesis builds")
+}
+
+fn consumer_window() -> DateRange {
+    DateRange::new(d(2026, 6, 15), d(2026, 6, 19))
+}
+
+fn as_of() -> DateTime<Utc> {
+    t(2026, 6, 20)
+}
+
+/// Lay a genesis candidate + its description artifact on disk. Returns (install dest, candidate
+/// path, candidate). The install dest does NOT exist yet.
+fn genesis_on_disk(dir: &Path) -> (PathBuf, PathBuf, nautilus_ls_calendar::schema::Snapshot) {
+    let candidate = genesis_candidate();
+    let candidate_path = dir.join("cal.json.candidate");
+    let description = describe_genesis(&candidate, consumer_window());
+    write_genesis(&candidate_path, &candidate, &description).unwrap();
+    (dir.join("cal.json"), candidate_path, candidate)
+}
+
+fn genesis_approval(candidate: &nautilus_ls_calendar::schema::Snapshot) -> ActivationApproval {
+    ActivationApproval {
+        operator: "operator@lab".to_string(),
+        reason: "genesis chain root".to_string(),
+        approved_at: t(2026, 6, 20),
+        reviewed_artifact_id: candidate.artifact_id.clone(),
+        acknowledged: vec![GENESIS_ACK_KEY.to_string()],
+    }
+}
+
+#[test]
+fn first_install_succeeds_and_installs_owner_only_chain_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let (active, candidate_path, candidate) = genesis_on_disk(dir.path());
+    let approval = genesis_approval(&candidate);
+
+    let record: GenesisActivationRecord =
+        first_install(&active, &candidate_path, &approval, as_of()).expect("genesis installs");
+    assert_eq!(record.candidate_artifact_id, candidate.artifact_id);
+    assert!(record.acknowledged.contains(&GENESIS_ACK_KEY.to_string()));
+
+    // Installed 0o600, byte-equal to the candidate.
+    let mode = std::fs::metadata(&active).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600);
+    assert_eq!(std::fs::read(&active).unwrap(), std::fs::read(&candidate_path).unwrap());
+}
+
+#[test]
+fn first_install_refuses_when_the_install_path_already_exists() {
+    // AE8: a live chain root is never superseded through first-install.
+    let dir = tempfile::tempdir().unwrap();
+    let (active, candidate_path, candidate) = genesis_on_disk(dir.path());
+    std::fs::write(&active, b"pre-existing-chain-root").unwrap();
+    let approval = genesis_approval(&candidate);
+    let err = first_install(&active, &candidate_path, &approval, as_of()).unwrap_err();
+    assert!(matches!(err, FirstInstallError::AlreadyActive), "{err}");
+    // The existing file is byte-identical.
+    assert_eq!(std::fs::read(&active).unwrap(), b"pre-existing-chain-root");
+}
+
+#[test]
+fn first_install_is_idempotent_second_run_refuses() {
+    let dir = tempfile::tempdir().unwrap();
+    let (active, candidate_path, candidate) = genesis_on_disk(dir.path());
+    let approval = genesis_approval(&candidate);
+    first_install(&active, &candidate_path, &approval, as_of()).expect("first install");
+    let err = first_install(&active, &candidate_path, &approval, as_of()).unwrap_err();
+    assert!(matches!(err, FirstInstallError::AlreadyActive), "second run refuses (now active exists)");
+}
+
+#[test]
+fn first_install_refuses_blank_operator_or_reason() {
+    let dir = tempfile::tempdir().unwrap();
+    let (active, candidate_path, candidate) = genesis_on_disk(dir.path());
+
+    let mut blank_op = genesis_approval(&candidate);
+    blank_op.operator = "  ".to_string();
+    assert!(matches!(
+        first_install(&active, &candidate_path, &blank_op, as_of()).unwrap_err(),
+        FirstInstallError::ApprovalMissing { .. }
+    ));
+    assert!(!active.exists(), "no install on a blank-approval refusal");
+
+    let mut blank_reason = genesis_approval(&candidate);
+    blank_reason.reason = String::new();
+    assert!(matches!(
+        first_install(&active, &candidate_path, &blank_reason, as_of()).unwrap_err(),
+        FirstInstallError::ApprovalMissing { .. }
+    ));
+}
+
+#[test]
+fn first_install_refuses_a_candidate_that_declares_a_predecessor() {
+    let dir = tempfile::tempdir().unwrap();
+    let (active, candidate_path, mut candidate) = genesis_on_disk(dir.path());
+    // Give the candidate a predecessor and re-stamp so it still loads — it belongs to the normal path.
+    candidate.predecessor_artifact_id = Some("some-prior".to_string());
+    let candidate = stamp(candidate);
+    std::fs::write(&candidate_path, serde_json::to_vec_pretty(&candidate).unwrap()).unwrap();
+    let approval = genesis_approval(&candidate);
+    let err = first_install(&active, &candidate_path, &approval, as_of()).unwrap_err();
+    assert!(matches!(err, FirstInstallError::HasPredecessor { .. }), "{err}");
+    assert!(!active.exists());
+}
+
+#[test]
+fn first_install_refuses_an_invalid_candidate() {
+    let dir = tempfile::tempdir().unwrap();
+    let (active, candidate_path, candidate) = genesis_on_disk(dir.path());
+    // Tamper the artifact_id so loader revalidation fails (HashMismatch).
+    let mut tampered = candidate.clone();
+    tampered.artifact_id = "not-the-real-hash".to_string();
+    std::fs::write(&candidate_path, serde_json::to_vec_pretty(&tampered).unwrap()).unwrap();
+    let approval = genesis_approval(&candidate);
+    let err = first_install(&active, &candidate_path, &approval, as_of()).unwrap_err();
+    assert!(matches!(err, FirstInstallError::Invalid(_)), "{err}");
+    assert!(!active.exists());
+}
+
+#[test]
+fn first_install_refuses_an_approval_that_reviews_the_wrong_candidate() {
+    let dir = tempfile::tempdir().unwrap();
+    let (active, candidate_path, candidate) = genesis_on_disk(dir.path());
+    let mut approval = genesis_approval(&candidate);
+    approval.reviewed_artifact_id = "some-other-candidate".to_string();
+    let err = first_install(&active, &candidate_path, &approval, as_of()).unwrap_err();
+    assert!(matches!(err, FirstInstallError::Unreviewed { .. }), "{err}");
+    assert!(!active.exists());
+}
+
+#[test]
+fn first_install_refuses_a_missing_description_artifact() {
+    let dir = tempfile::tempdir().unwrap();
+    let (active, candidate_path, candidate) = genesis_on_disk(dir.path());
+    std::fs::remove_file(genesis_description_path_for(&candidate_path)).unwrap();
+    let approval = genesis_approval(&candidate);
+    let err = first_install(&active, &candidate_path, &approval, as_of()).unwrap_err();
+    assert!(matches!(err, FirstInstallError::Unreviewed { .. }), "{err}");
+}
+
+#[test]
+fn first_install_refuses_a_description_that_names_a_different_candidate() {
+    let dir = tempfile::tempdir().unwrap();
+    let (active, candidate_path, candidate) = genesis_on_disk(dir.path());
+    // Rewrite the description to name a different candidate.
+    let desc_path = genesis_description_path_for(&candidate_path);
+    let mut desc: GenesisDescription =
+        serde_json::from_slice(&std::fs::read(&desc_path).unwrap()).unwrap();
+    desc.candidate_artifact_id = "different-candidate".to_string();
+    std::fs::write(&desc_path, serde_json::to_vec_pretty(&desc).unwrap()).unwrap();
+    let approval = genesis_approval(&candidate);
+    let err = first_install(&active, &candidate_path, &approval, as_of()).unwrap_err();
+    assert!(matches!(err, FirstInstallError::Unreviewed { .. }), "{err}");
+}
+
+#[test]
+fn first_install_refuses_an_authorization_mismatch_between_description_and_candidate() {
+    let dir = tempfile::tempdir().unwrap();
+    let (active, candidate_path, candidate) = genesis_on_disk(dir.path());
+    let desc_path = genesis_description_path_for(&candidate_path);
+    let mut desc: GenesisDescription =
+        serde_json::from_slice(&std::fs::read(&desc_path).unwrap()).unwrap();
+    desc.authority = "A Different Agreement".to_string(); // still names the candidate
+    std::fs::write(&desc_path, serde_json::to_vec_pretty(&desc).unwrap()).unwrap();
+    let approval = genesis_approval(&candidate);
+    let err = first_install(&active, &candidate_path, &approval, as_of()).unwrap_err();
+    assert!(matches!(err, FirstInstallError::AuthorizationMismatch { .. }), "{err}");
+    assert!(!active.exists());
+}
+
+#[test]
+fn first_install_refuses_a_missing_genesis_acknowledgment() {
+    let dir = tempfile::tempdir().unwrap();
+    let (active, candidate_path, candidate) = genesis_on_disk(dir.path());
+    let mut approval = genesis_approval(&candidate);
+    approval.acknowledged.clear(); // drop genesis:no-predecessor
+    let err = first_install(&active, &candidate_path, &approval, as_of()).unwrap_err();
+    match err {
+        FirstInstallError::Unacknowledged { entries } => {
+            assert!(entries.contains(&GENESIS_ACK_KEY.to_string()));
+        }
+        other => panic!("expected Unacknowledged, got {other}"),
+    }
+    assert!(!active.exists());
 }
