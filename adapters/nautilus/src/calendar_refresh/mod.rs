@@ -21,6 +21,9 @@
 pub mod activate;
 pub mod candidate;
 pub mod diff;
+pub mod fetch_state;
+pub mod genesis;
+pub mod normalize;
 pub mod port;
 pub mod transport;
 
@@ -33,14 +36,25 @@ use chrono::{DateTime, Duration, NaiveDate, Utc};
 use nautilus_ls_calendar::schema::Snapshot;
 
 pub use activate::{
-    acknowledgment_key, activate, required_acknowledgments, rollback, ActivationApproval,
-    ActivationError, ActivationRecord, RollbackError, RollbackRecord, PARTIAL_ACK_KEY,
+    acknowledgment_key, activate, first_install, required_acknowledgments,
+    required_genesis_acknowledgments, rollback, ActivationApproval, ActivationError,
+    ActivationRecord, FirstInstallError, GenesisActivationRecord, RollbackError, RollbackRecord,
+    GENESIS_ACK_KEY, PARTIAL_ACK_KEY,
 };
-pub use candidate::{build_candidate, RefreshMode};
+pub use candidate::{
+    build_candidate, build_genesis, GenesisParams, GenesisRefusal, RefreshMode,
+    CONSUMER_WINDOW_START,
+};
 pub use diff::{diff_against_predecessor, CategorizedDiff, DiffCategory, DiffEntry};
+pub use fetch_state::{confine, fetch_inputs, FetchConfig, FetchError, FetchState};
+pub use genesis::{describe_genesis, GenesisDescription, SourceEvidenceCount};
+pub use normalize::{
+    fixed_closure_rules, generated_rules, holiday_evidence, midnight_utc, parse_kasi_holidays_xml,
+    parse_krx_daily, weekend_rules, witness_evidence, KasiPage,
+};
 pub use port::{
-    EvidenceInputPort, RefreshInputs, RefreshScope, SourceFetchStatus, SourceOutcome,
-    StaticEvidencePort,
+    merge_ranges, uncovered_within, DateRange, EvidenceInputPort, RefreshInputs, RefreshScope,
+    SourceFetchStatus, SourceOutcome, StaticEvidencePort,
 };
 pub use transport::{
     strip_url_credentials, LiveEvidencePort, MaintainerCredentials, KASI_SERVICE_KEY_ENV,
@@ -182,6 +196,13 @@ pub fn write_candidate(
     })
 }
 
+/// Owner-only (`0o600`) atomic sibling-temp + rename write — the shared primitive the fetch
+/// checkpoint + inputs artifact (U4) and candidate writes use so no KRX/KASI-derived bytes are
+/// ever left world-readable or half-written.
+pub fn atomic_write_owner_only(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    atomic_write(path, bytes)
+}
+
 /// The candidate path for an active snapshot path (`<active>.candidate`).
 pub fn candidate_path_for(active_path: &Path) -> PathBuf {
     append_ext(active_path, "candidate")
@@ -190,6 +211,43 @@ pub fn candidate_path_for(active_path: &Path) -> PathBuf {
 /// The categorized-diff path for an active snapshot path (`<active>.candidate.diff.json`).
 pub fn diff_path_for(active_path: &Path) -> PathBuf {
     append_ext(active_path, "candidate.diff.json")
+}
+
+/// The genesis description-artifact path for a genesis candidate path
+/// (`<candidate>.genesis-description.json`). The first-install ceremony (U6) resolves the
+/// description from the candidate path exactly as activation resolves the diff via [`diff_path_for`].
+pub fn genesis_description_path_for(candidate_path: &Path) -> PathBuf {
+    append_ext(candidate_path, "genesis-description.json")
+}
+
+/// The filesystem paths a genesis candidate + its description artifact were written to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GenesisArtifacts {
+    /// The genesis candidate snapshot path.
+    pub candidate_path: PathBuf,
+    /// The genesis description-artifact path (`<candidate>.genesis-description.json`).
+    pub description_path: PathBuf,
+}
+
+/// Write a genesis `candidate` + its `description` to `candidate_path` and its derived
+/// description path, both via the owner-only `0o600` atomic write (U5). Returns the paths U6's
+/// first-install ceremony revalidates + reviews.
+pub fn write_genesis(
+    candidate_path: &Path,
+    candidate: &Snapshot,
+    description: &genesis::GenesisDescription,
+) -> std::io::Result<GenesisArtifacts> {
+    let description_path = genesis_description_path_for(candidate_path);
+    let candidate_json = serde_json::to_vec_pretty(candidate)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    let description_json = serde_json::to_vec_pretty(description)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+    atomic_write(candidate_path, &candidate_json)?;
+    atomic_write(&description_path, &description_json)?;
+    Ok(GenesisArtifacts {
+        candidate_path: candidate_path.to_path_buf(),
+        description_path,
+    })
 }
 
 fn append_ext(path: &Path, suffix: &str) -> PathBuf {

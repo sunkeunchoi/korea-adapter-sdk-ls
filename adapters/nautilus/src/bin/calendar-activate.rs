@@ -18,7 +18,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use chrono::{DateTime, Utc};
-use nautilus_ls::calendar_refresh::{activate, ActivationApproval};
+use nautilus_ls::calendar_refresh::{activate, first_install, ActivationApproval};
 use nautilus_ls::scrub;
 
 fn main() -> ExitCode {
@@ -37,6 +37,22 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
 
     let approval_bytes = std::fs::read(&args.approval)?;
     let approval: ActivationApproval = serde_json::from_slice(&approval_bytes)?;
+
+    // First-install (genesis) mode installs a predecessor-less chain root with the full ceremony
+    // minus the stale-base/active-load legs, guarded by an exclusive-create install (KTD5).
+    if args.first_install {
+        return match first_install(&args.active, &args.candidate, &approval, args.as_of) {
+            Ok(record) => {
+                println!("{}", serde_json::to_string_pretty(&record)?);
+                println!("genesis installed: {}", args.active.display());
+                Ok(ExitCode::SUCCESS)
+            }
+            Err(e) => {
+                eprintln!("refused: {}", scrub::scrub_secrets(&e.to_string()));
+                Ok(ExitCode::FAILURE)
+            }
+        };
+    }
 
     match activate(&args.active, &args.candidate, &approval, args.as_of) {
         Ok(record) => {
@@ -60,6 +76,7 @@ struct Args {
     candidate: PathBuf,
     approval: PathBuf,
     as_of: DateTime<Utc>,
+    first_install: bool,
 }
 
 impl Args {
@@ -68,6 +85,7 @@ impl Args {
         let mut candidate: Option<PathBuf> = None;
         let mut approval: Option<PathBuf> = None;
         let mut as_of: Option<DateTime<Utc>> = None;
+        let mut first_install = false;
 
         while let Some(arg) = args.next() {
             match arg.as_str() {
@@ -86,9 +104,10 @@ impl Args {
                         .map_err(|e| format!("bad --as-of {raw:?}: {e}"))?;
                     as_of = Some(parsed.with_timezone(&Utc));
                 }
+                "--first-install" => first_install = true,
                 other => {
                     return Err(format!(
-                        "unknown argument {other:?} (want --active / --candidate / --approval / --as-of)"
+                        "unknown argument {other:?} (want --active / --candidate / --approval / --as-of / --first-install)"
                     ))
                 }
             }
@@ -99,6 +118,7 @@ impl Args {
             candidate: candidate.ok_or("missing required --candidate <path>")?,
             approval: approval.ok_or("missing required --approval <path>")?,
             as_of: as_of.ok_or("missing required --as-of <RFC3339 instant>")?,
+            first_install,
         })
     }
 }
