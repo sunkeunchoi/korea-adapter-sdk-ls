@@ -109,7 +109,7 @@ quick-xml = "0.36"
 # transitive dep in the lockfile; promoted to a direct dep with the `blocking` feature. rustls
 # (no OpenSSL). Constructed ONLY in the bin, behind the injected-fetch seam, hardened with
 # timeouts, redirects disabled, and HTTPS-only.
-reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls"] }
+reqwest = { version = "0.13", default-features = false, features = ["blocking", "rustls", "query"] }
 
 [dev-dependencies]
 ls-sdk-test-support = { path = "../../crates/ls-sdk-test-support" }

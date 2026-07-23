@@ -81,8 +81,23 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         .redirect(reqwest::redirect::Policy::none())
         .https_only(true)
         .build()?;
+    // Credentials are applied HERE (the only place a real client exists) and never embedded in a
+    // URL: the KRX Open API authenticates via the `AUTH_KEY` header (confirmed at the probe gate),
+    // KASI via the `serviceKey` query param (URL-encoded by reqwest's query builder).
+    let krx_appkey = creds.krx_appkey.clone();
+    let kasi_service_key = creds.kasi_service_key.clone();
     let fetch = |url: &str| -> Result<String, String> {
-        let resp = client.get(url).send().map_err(|e| e.to_string())?;
+        let mut req = client.get(url);
+        if url.contains("data-dbg.krx.co.kr") {
+            if let Some(k) = krx_appkey.as_deref() {
+                req = req.header("AUTH_KEY", k);
+            }
+        } else if url.contains("apis.data.go.kr") {
+            if let Some(k) = kasi_service_key.as_deref() {
+                req = req.query(&[("serviceKey", k)]);
+            }
+        }
+        let resp = req.send().map_err(|e| e.to_string())?;
         if !resp.status().is_success() {
             return Err(format!("HTTP {}", resp.status()));
         }

@@ -143,14 +143,15 @@ where
     Fetch: Fn(&str) -> Result<String, String>,
     Sleep: FnMut(Duration),
 {
-    let appkey = creds
-        .krx_appkey
-        .as_deref()
-        .ok_or(FetchError::MissingCredential(super::transport::KRX_APPKEY_ENV))?;
-    let service_key = creds
-        .kasi_service_key
-        .as_deref()
-        .ok_or(FetchError::MissingCredential(super::transport::KASI_SERVICE_KEY_ENV))?;
+    // Credentials are required but are NOT embedded in any URL — the composition-root `fetch`
+    // closure applies them (KRX Open API authenticates via the `AUTH_KEY` header; KASI via the
+    // `serviceKey` query param). fetch_state only builds credential-free URLs (KTD9).
+    if creds.krx_appkey.is_none() {
+        return Err(FetchError::MissingCredential(super::transport::KRX_APPKEY_ENV));
+    }
+    if creds.kasi_service_key.is_none() {
+        return Err(FetchError::MissingCredential(super::transport::KASI_SERVICE_KEY_ENV));
+    }
 
     let mut state = load_or_init(cfg, state_path)?;
 
@@ -167,7 +168,7 @@ where
     while !state.krx_complete() && state.krx_failed.is_none() {
         let date = state.krx_cursor;
         if is_weekday(date) {
-            let url = krx_url(appkey, date);
+            let url = krx_url(date);
             sleep(cfg.pace);
             match fetch(&url) {
                 Ok(body) => match parse_krx_daily(&body, date) {
@@ -202,7 +203,7 @@ where
     // ---- KASI per-year loop ----
     while !state.kasi_complete() && state.kasi_failed.is_none() {
         let year = state.kasi_next_year;
-        match fetch_kasi_year(service_key, year, cfg, creds, &fetch, &mut sleep) {
+        match fetch_kasi_year(year, cfg, creds, &fetch, &mut sleep) {
             Ok(mut holidays) => {
                 state.kasi_holidays.append(&mut holidays);
                 state.kasi_covered_through =
@@ -224,7 +225,6 @@ where
 /// Fetch one KASI year, paginating up to [`KASI_MAX_PAGES`] with a progress guard (a page that
 /// adds nothing while the total is unreached still terminates — never an infinite loop).
 fn fetch_kasi_year<Fetch, Sleep>(
-    service_key: &str,
     year: i32,
     cfg: &FetchConfig,
     creds: &MaintainerCredentials,
@@ -238,7 +238,7 @@ where
     let mut holidays: Vec<NaiveDate> = Vec::new();
     let mut page: u32 = 1;
     loop {
-        let url = kasi_url(service_key, year, page);
+        let url = kasi_url(year, page);
         sleep(cfg.pace);
         let body = fetch(&url).map_err(|m| scrub_reason(&url, &m, creds))?;
         let parsed = parse_kasi_holidays_xml(&body).map_err(|m| creds.scrub(&m))?;
@@ -361,16 +361,22 @@ fn scrub_reason(url: &str, message: &str, creds: &MaintainerCredentials) -> Stri
     creds.scrub(&stripped)
 }
 
-fn krx_url(appkey: &str, date: NaiveDate) -> String {
+/// The KRX daily-market URL for one date — credential-free. The KRX Open API is served from
+/// `data-dbg.krx.co.kr` (confirmed at the U8 probe gate; `openapi.krx.co.kr` is only the portal)
+/// and authenticates via the `AUTH_KEY` HTTP header the composition-root closure adds, NOT a
+/// query param.
+fn krx_url(date: NaiveDate) -> String {
     format!(
-        "https://openapi.krx.co.kr/svc/apis/sto/stk_bydd_trd?appkey={appkey}&basDd={}",
+        "https://data-dbg.krx.co.kr/svc/apis/sto/stk_bydd_trd?basDd={}",
         date.format("%Y%m%d")
     )
 }
 
-fn kasi_url(service_key: &str, year: i32, page: u32) -> String {
+/// The KASI holiday URL for one year/page — credential-free. The composition-root closure adds
+/// the `serviceKey` query param (URL-encoded by the HTTP client).
+fn kasi_url(year: i32, page: u32) -> String {
     format!(
-        "https://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/getRestDeInfo?serviceKey={service_key}&solYear={year}&numOfRows=100&pageNo={page}"
+        "https://apis.data.go.kr/B090041/openapi/service/SpcdeInfoService/getRestDeInfo?solYear={year}&numOfRows=100&pageNo={page}"
     )
 }
 

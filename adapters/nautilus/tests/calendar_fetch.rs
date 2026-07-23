@@ -172,17 +172,18 @@ fn no_credential_material_reaches_the_checkpoint_or_inputs_artifact() {
     let state = dir.path().join("s.ckpt");
     let inputs_out = dir.path().join("inputs.json");
 
-    // A failure whose message echoes the credential-bearing URL — the scrub must remove it.
+    // A failure whose message leaks the raw credential value — the scrub must remove it before
+    // it can reach the checkpoint or the inputs artifact (KTD9 defense-in-depth).
     let krx_calls = Cell::new(0usize);
     let leaky = |url: &str| -> Result<String, String> {
         if url.contains("stk_bydd_trd") {
             krx_calls.set(krx_calls.get() + 1);
             if krx_calls.get() == 2 {
-                return Err(format!("connection to {url} failed"));
+                return Err(format!("KRX call failed (AUTH_KEY={APPKEY})"));
             }
             Ok(krx_body(krx_bas_dd(url)))
         } else {
-            Err(format!("connection to {url} failed"))
+            Err(format!("KASI call failed (serviceKey={SVCKEY})"))
         }
     };
     let inputs = fetch_inputs(&cfg(), &creds(), &state, leaky, |_| {}).unwrap();
