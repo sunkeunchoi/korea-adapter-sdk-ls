@@ -778,7 +778,31 @@ fn bin_reregister_refuses_an_upward_jump_past_the_earned_rung() {
     );
     assert_eq!(out.status.code(), Some(79), "distinct reregister-refusal exit code");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("exceeds the chain-earned rung"), "{stderr}");
+    assert!(stderr.contains("exceeds the re-registration ceiling"), "{stderr}");
+}
+
+#[test]
+fn bin_reregister_cannot_restore_a_de_escalated_peak() {
+    // Regression: after escalate 1->2 then de-escalate 2->1, the ceiling is the CURRENT authorized
+    // rung (1), NOT the historical peak (2). Restoring rung 2 must be refused — it has to be
+    // re-earned through the escalation evidence gate (R15), never handed back by a bare re-register.
+    use chrono::{TimeZone, Utc};
+    use nautilus_ls_lab::dispatch::chain::{DeEscalation, DispatchChain, Escalation, RecordKind};
+    let tmp = TempDir::new().unwrap();
+    let chain = DispatchChain::open(tmp.path()).unwrap();
+    let t = Utc.timestamp_opt(weekday_ts(), 0).unwrap();
+    chain.append(t, 1, 1, None, RecordKind::Genesis).unwrap();
+    chain
+        .append(t, 2, 2, None, RecordKind::Escalation(Escalation { from_rung: 1, to_rung: 2, evidence_run_ids: vec![] }))
+        .unwrap();
+    chain
+        .append(t, 1, 1, None, RecordKind::DeEscalation(DeEscalation { from_rung: 2, to_rung: 1, events: vec!["x".into()], consumed_through: "z".into() }))
+        .unwrap();
+    assert_eq!(chain.load().authorized_rung, 1, "de-escalated back to rung 1");
+    // Target the de-escalated peak (rung 2) -> refused (ceiling is the current rung 1).
+    let out = bin_lab_live("--reregister", tmp.path(), &[("LS_DISPATCH_RUNG", "2"), ("LS_DISPATCH_REASON", "restore attempt")]);
+    assert_eq!(out.status.code(), Some(79), "restoring a de-escalated peak is refused");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("exceeds the re-registration ceiling"));
 }
 
 #[test]

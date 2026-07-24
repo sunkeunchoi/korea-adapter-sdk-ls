@@ -430,7 +430,9 @@ fn stage_finalized_head(data: &std::path::Path, run_id: &str, params: &OrbParams
         data_range: DataRange { start: "20260724".into(), end: "20260724".into() },
         catalog_fingerprint: String::new(),
         universe_hash: universe_hash(&[]),
-        strategy_code_hash: String::new(),
+        // The head is code-pinned: head_governed_params only trusts a run whose code hash matches
+        // the running binary, so the staged head must carry the running binary's hash.
+        strategy_code_hash: nautilus_ls_lab::artifacts::manifest::strategy_code_hash(),
         lab_src_fingerprint: None,
         checkpoint_hash: None,
         universe_metadata_hash: None,

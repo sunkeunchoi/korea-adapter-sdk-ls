@@ -1488,14 +1488,18 @@ fn run_reregister_cli() -> anyhow::Result<ExitCode> {
     let reason = nautilus_ls::scrub::scrub_secrets(&raw_reason);
     let chain = DispatchChain::open(&data_home)?;
     let state = chain.load();
-    // The chain-earned rung: the highest rung the chain has legitimately authorized (genesis +
-    // escalations). A re-registration may requalify to rung 0 or repair to ≤ earned; never above.
-    let earned = state.records.iter().map(|r| r.body.chain_rung).max().unwrap_or(0);
-    if set_rung > earned {
+    // The re-registration ceiling is the CURRENT authorized rung, floored at 1 — NOT the all-time
+    // peak. A re-registration may requalify to rung 0, re-enter to rung 1 after a suspension, or
+    // repair to the current epoch's rung — never restore a rung the ladder was de-escalated or
+    // suspended OUT of. Using the historical peak would let an operator re-register straight back to
+    // a de-escalated rung with only a nonce, bypassing the N-clean re-earn gate (R15).
+    let ceiling = state.authorized_rung.max(1);
+    if set_rung > ceiling {
         eprintln!(
-            "--reregister refused: target rung {set_rung} exceeds the chain-earned rung {earned} — a \
-             re-registration may only requalify to rung 0 or repair the current epoch (≤ earned); an \
-             upward jump would bypass the earned-escalation gate (R15)"
+            "--reregister refused: target rung {set_rung} exceeds the re-registration ceiling \
+             {ceiling} (the current authorized rung, floored at 1) — a re-registration may only \
+             requalify to rung 0/1 or repair the current epoch; restoring a de-escalated rung must \
+             be re-earned through the escalation evidence gate (R15)"
         );
         return Ok(ExitCode::from(REREGISTER_REFUSED));
     }

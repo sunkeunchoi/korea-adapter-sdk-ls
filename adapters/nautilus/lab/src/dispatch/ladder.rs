@@ -47,22 +47,39 @@ pub fn governed_params_hash(params: &OrbParams) -> String {
 
 /// The head's governed `OrbParams` — the identity real live/backtest sessions are keyed
 /// against for clean-session matching (KTD7, option (a) of the rung-1-readiness plan). Sourced
-/// from the latest finalized run's manifest in the data home (the certified head, e.g. the v34
-/// backtest `20260724T014752Z-backtest-orb-v34`); falls back to `OrbParams::default()` when no
-/// finalized run exists, so a fresh data home — and the ladder's own fixtures, which stage
-/// `default()`-param runs — key on the version-invariant default exactly as the shipped code did.
+/// from the newest finalized run **whose `strategy_code_hash` matches the running binary** (the
+/// certified head, e.g. the v34 backtest `20260724T014752Z-backtest-orb-v34`); falls back to
+/// `OrbParams::default()` when no code-matching finalized run exists, so a fresh data home — and
+/// the ladder's own fixtures, which stage `default()`-param runs — key on the version-invariant
+/// default exactly as the shipped code did.
 ///
 /// This is the single source `run_mount` sizes the live strategy from AND `run_escalation` keys
 /// the head params-hash on, so clean-session matching compares **like-for-like**: a real v34
 /// session (built from these params) matches the head instead of mis-keying against `default()`
-/// (which encodes none of v34's governed values and would size to zero). It preserves the
-/// params-change → re-run-N rule (R13): a new governed head changes these params, flips the hash,
-/// and old-params sessions stop qualifying.
+/// (which encodes none of v34's governed values and would size to zero).
+///
+/// **Code-pinned head selection.** The head is the newest finalized run whose `strategy_code_hash`
+/// matches the *running binary* — a run under a DIFFERENT code hash (e.g. a later v35 tuning
+/// backtest sharing the data home) must NOT shift the head params key, or `run_mount` would size
+/// the live strategy from a foreign head and escalation would mis-key. An unreadable manifest is
+/// skipped (it falls through to the next code-matching run) rather than collapsing the head to
+/// `default()`.
+///
+/// **Residual (documented, not fully closed here).** For a PARAMS-ONLY governed head change (same
+/// `strategy_code_hash`), the key is the newest *same-code* run's params, so a later-dated
+/// OLD-params run in the same data home could revert it — the params half is data-derived, not
+/// binary-pinned, so on its own it does not robustly enforce the R13 params-change -> re-run-N
+/// rule. Robustly pinning that needs an explicit head-version pin (`LS_TURN_EXPECT_VERSION`-style)
+/// threaded through escalation — ladder-plan scope. In the rung-1 production data home (only the
+/// v34 head backtest + its same-code live sessions) this revert vector does not arise.
 pub fn head_governed_params(data_home: &Path) -> OrbParams {
-    crate::runner::research::latest_finalized_run(data_home)
-        .ok()
-        .flatten()
-        .map(|(_run_id, manifest)| manifest.params)
+    let code_hash = crate::artifacts::manifest::strategy_code_hash();
+    list_runs(data_home)
+        .into_iter()
+        .filter_map(|rid| read_manifest(data_home, &rid).ok().map(|m| (rid, m)))
+        .filter(|(_rid, m)| m.strategy_code_hash == code_hash)
+        .max_by(|(a, _), (b, _)| a.cmp(b))
+        .map(|(_rid, m)| m.params)
         .unwrap_or_default()
 }
 
