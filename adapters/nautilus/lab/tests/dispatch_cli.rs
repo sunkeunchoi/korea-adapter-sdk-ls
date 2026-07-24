@@ -651,3 +651,68 @@ fn u188_cli_stale_freshness_surfaced_independent_of_day_status() {
     assert!(stderr.contains("freshness=stale"), "{stderr}");
     assert!(stderr.contains("day=2026-07-16:Unknown"), "{stderr}");
 }
+
+// ---------------------------------------------------------------------------
+// Bin-level `--mount` (U2, rung-1 readiness) — the paper interlock + attended gate fire
+// through the CLI with distinct exit codes (the "never look-like-ran" discipline). The full
+// prepared path (node build) needs a live head + universe + green chain and is exercised by the
+// library seams (live_wiring.rs) + the operator-attended session.
+// ---------------------------------------------------------------------------
+
+fn bin_mount(home: &std::path::Path, extra: &[(&str, &str)]) -> std::process::Output {
+    let lane_env = home.join("lane.env");
+    std::fs::write(&lane_env, "APPKEY=x\n").unwrap();
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_lab-live"));
+    cmd.arg("--mount")
+        .env("LS_DATA_HOME", home)
+        .env("LS_DISPATCH_LANE_ENV", &lane_env)
+        .env("LS_DISPATCH_NOW_UNIX", weekday_ts().to_string())
+        .env_remove("LS_TRADING_ENV")
+        .env_remove("LS_DISPATCH_NONCE")
+        .env_remove("LS_CALENDAR_SNAPSHOT")
+        .env_remove("LS_CALENDAR_ADOPTION");
+    for (k, v) in extra {
+        cmd.env(k, v);
+    }
+    cmd.output().unwrap()
+}
+
+#[test]
+fn bin_mount_refuses_unless_paper_with_a_distinct_exit() {
+    // Paper interlock FIRST (R3): LS_TRADING_ENV unset → distinct exit 66, before any chain read.
+    let tmp = TempDir::new().unwrap();
+    let out = bin_mount(tmp.path(), &[]);
+    assert_eq!(out.status.code(), Some(66), "distinct paper-interlock exit code");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("LS_TRADING_ENV must be `paper`"), "{stderr}");
+}
+
+#[test]
+fn bin_mount_refuses_in_a_no_tty_shell_with_a_distinct_exit() {
+    // Attended gate (R3): paper set, but a subprocess is a no-TTY/unattended shell → loud refusal
+    // with a distinct exit code (77), never a look-like-ran success.
+    let tmp = TempDir::new().unwrap();
+    let out = bin_mount(tmp.path(), &[("LS_TRADING_ENV", "paper")]);
+    assert_eq!(out.status.code(), Some(77), "distinct attended-refusal exit code");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("mount refused"), "{stderr}");
+}
+
+#[test]
+fn bin_bare_invocation_points_at_mount_not_u6() {
+    // The bare-invocation "lands in U6" bail is gone (DoD): paper set, no subcommand → guidance
+    // that names --mount and no longer references U6.
+    let tmp = TempDir::new().unwrap();
+    let lane_env = tmp.path().join("lane.env");
+    std::fs::write(&lane_env, "APPKEY=x\n").unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_lab-live"))
+        .env("LS_TRADING_ENV", "paper")
+        .env("LS_DATA_HOME", tmp.path())
+        .env_remove("LS_CALENDAR_SNAPSHOT")
+        .env_remove("LS_CALENDAR_ADOPTION")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--mount"), "bare guidance names --mount: {stderr}");
+    assert!(!stderr.contains("U6"), "the 'lands in U6' bail is gone: {stderr}");
+}

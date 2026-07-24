@@ -217,7 +217,8 @@ use nautilus_ls_lab::dispatch::chain::{
     DispatchChain, DispatchOutcome, MountAuthz, RecordKind, SessionDispatch,
 };
 use nautilus_ls_lab::runner::live::{
-    authorize_mount, build_live_session_node, record_session_spend, MountConfig,
+    authorize_mount, build_live_session_node, parse_mount_universe, record_session_spend,
+    resolve_mount_head_params, MountConfig,
 };
 
 /// A weekday, mid-session KST instant (2026-07-16 Thu 10:00 KST = 01:00 UTC).
@@ -396,6 +397,81 @@ fn session_gateway_dispatches_land_in_the_spend_ledger() {
     );
     // A different credential's bucket is untouched.
     assert_eq!(ledger.spent_within("beefbeef", 60, mount_ts() + 1), 0);
+}
+
+// ---------------------------------------------------------------------------
+// U2 (rung-1 readiness) — the `--mount` session-input seams (KTD5/KTD7).
+// The rung-fraction → sizing numerator invariance (zero param diff) is proven in
+// `orb.rs::rung_fraction_scales_the_risk_budget_numerator_with_zero_param_diff`.
+// ---------------------------------------------------------------------------
+
+/// v34 head governed params — the sized levers a real rung-1 mount trades (never `default()`).
+fn v34_head_params() -> OrbParams {
+    OrbParams {
+        strategy_version: 34,
+        risk_per_trade_krw: 299_340.0,
+        entry_confirm: 1.0,
+        or_width_max_atr: 0.666,
+        breakeven_trigger_r: 0.41,
+        gap_retention_min: 0.5,
+        ..OrbParams::default()
+    }
+}
+
+/// Stage a minimal finalized backtest run (the head the mount sizes from).
+fn stage_finalized_head(data: &std::path::Path, run_id: &str, params: &OrbParams) {
+    let writer = RunWriter::new(data, run_id).unwrap();
+    let manifest = Manifest {
+        run_id: run_id.into(),
+        source: RunSource::Backtest,
+        strategy_id: params.strategy_id.clone(),
+        strategy_version: params.strategy_version,
+        params: params.clone(),
+        data_range: DataRange { start: "20260724".into(), end: "20260724".into() },
+        catalog_fingerprint: String::new(),
+        universe_hash: universe_hash(&[]),
+        strategy_code_hash: String::new(),
+        lab_src_fingerprint: None,
+        checkpoint_hash: None,
+        universe_metadata_hash: None,
+        dispatch: None,
+        created_utc: "2026-07-24T01:00:00Z".into(),
+    };
+    writer.write_manifest(&manifest).unwrap();
+    writer.finalize().unwrap();
+}
+
+#[test]
+fn resolve_mount_head_params_refuses_a_zero_size_default_head() {
+    // KTD7 fail-closed: an empty data home resolves the head to `default()` (risk 0), which would
+    // size every order to zero shares — the mount must refuse rather than trade nothing.
+    let dir = tempdir().unwrap();
+    assert!(
+        resolve_mount_head_params(dir.path()).is_err(),
+        "a zero-size (all-levers-off default) head is refused"
+    );
+}
+
+#[test]
+fn resolve_mount_head_params_returns_the_v34_head_when_present() {
+    // KTD7: with the v34 head finalized in the data home, the mount sizes from its REAL governed
+    // params (risk 299,340), not `default()`.
+    let dir = tempdir().unwrap();
+    stage_finalized_head(dir.path(), "20260724T014752Z-backtest-orb-v34", &v34_head_params());
+    let p = resolve_mount_head_params(dir.path()).unwrap();
+    assert_eq!(p.risk_per_trade_krw, 299_340.0, "the mount sizes from v34's real governed params");
+    assert_eq!(p.strategy_version, 34);
+}
+
+#[test]
+fn parse_mount_universe_builds_selected_symbols_and_fails_closed_on_empty() {
+    let json = br#"[{"shcode":"005930","prior_close":60000,"today_open":63000,"prior_atr":1500.0}]"#;
+    let uni = parse_mount_universe(json).unwrap();
+    assert_eq!(uni.len(), 1);
+    assert_eq!(uni[0].instrument_id.to_string(), "005930.XKRX");
+    assert_eq!(uni[0].prior_atr, Some(1500.0));
+    // Empty universe → fail-closed (never mount an empty session).
+    assert!(parse_mount_universe(b"[]").is_err());
 }
 
 #[test]

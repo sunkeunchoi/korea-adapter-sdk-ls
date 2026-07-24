@@ -875,6 +875,7 @@ fn dispatch_main() -> anyhow::Result<ExitCode> {
             }
             Ok(ExitCode::SUCCESS)
         }
+        Some("--mount") => run_mount(),
         _ => {
             nautilus_ls::calendar::emit_startup_from_env("lab-live");
             if std::env::var("LS_TRADING_ENV").as_deref() != Ok("paper") {
@@ -882,8 +883,8 @@ fn dispatch_main() -> anyhow::Result<ExitCode> {
             }
             anyhow::bail!(
                 "lab-live: run `lab-live --dispatch` for the pre-flight gate (`--genesis` to \
-                 register the chain). The mounted LiveNode session lands in U6 — see \
-                 adapters/nautilus/lab/README.md"
+                 register the chain, `--mount` to prepare a rung-1 live session) — see \
+                 adapters/nautilus/lab/RUNG1-PREFLIGHT.md"
             )
         }
     }
@@ -1154,6 +1155,217 @@ pub fn resolve_lane_hash(lane_env_path: &Path) -> anyhow::Result<String> {
     let adapter_cfg = LsAdapterConfig::from_lane_file(lane_env_path);
     let resolved = adapter_cfg.build_config().map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(SpendLedger::hash_appkey(&resolved.appkey))
+}
+
+// ---------------------------------------------------------------------------
+// U2 (rung-1 readiness) — the `lab-live --mount` operator command (R3; KTD4/KTD5/KTD7).
+//
+// Wires the shipped mount machinery (authorize_mount / build_live_session_node) into a
+// reachable CLI, sizing the live strategy at the pre-registered rung fraction from v34's REAL
+// governed params. The attended live-session DRIVER (node.run -> fail-closed teardown ->
+// finalize) is DEFERRED: no live `LiveSession` adapter (real resting-order cancel / t0425
+// flatness / kill-switch halt) is shipped, and authoring one is safety-critical runtime logic
+// beyond this plan's wiring scope (the plan's teardown-sequence stop condition). So `--mount`
+// resolves every input, BUILDS the node at the real v34 rung-fraction size (proving
+// mountability), does a READ-ONLY mountability check, and stops at the driver seam WITHOUT
+// consuming the green dispatch — never leaving a consumed-but-unrun dispatch in the chain.
+// ---------------------------------------------------------------------------
+
+use serde::Deserialize;
+
+use nautilus_ls::ingest::BarKind;
+use nautilus_model::identifiers::InstrumentId;
+
+use crate::strategy::orb::SessionGapPrices;
+
+/// Distinct `--mount` exit codes — never `0`, so a no-TTY shell never mistakes a prepared-but-
+/// unrun mount for a completed session (the "never look-like-ran" discipline).
+const MOUNT_NOT_PAPER: u8 = 66; // the paper interlock refused (env != paper)
+const MOUNT_REFUSED_ATTEND: u8 = 77; // no fresh nonce / no-TTY / no mountable dispatch
+const MOUNT_PREPARED_DEFERRED: u8 = 70; // node built + mountable; the live driver is deferred
+
+/// One symbol of the resolved live-mount universe. The operator materializes the dispatch
+/// lane's daily/t8407 read into `LS_MOUNT_UNIVERSE_FILE` (a JSON array of these); `SelectedSymbol`
+/// itself is not deserializable (it carries nautilus `InstrumentId`/`BarType`). Distinct from the
+/// offline test path, which builds `SelectedSymbol`s directly.
+#[derive(Debug, Clone, Deserialize)]
+struct MountUniverseSymbol {
+    /// The 6-digit KRX short code (e.g. `005930`); mapped to `{shcode}.XKRX`.
+    shcode: String,
+    /// Canonical integer prior-close and today-open defining this symbol-session's opening gap.
+    prior_close: i64,
+    today_open: i64,
+    #[serde(default)]
+    prior_atr: Option<f64>,
+    #[serde(default)]
+    prior_open_vol_mean: Option<f64>,
+    #[serde(default)]
+    prior_illiq: Option<f64>,
+}
+
+impl MountUniverseSymbol {
+    fn into_selected(self) -> anyhow::Result<SelectedSymbol> {
+        let id = InstrumentId::from(format!("{}.XKRX", self.shcode).as_str());
+        Ok(SelectedSymbol {
+            instrument_id: id,
+            bar_type: BarKind::Minute(1)
+                .bar_type(id)
+                .map_err(|e| anyhow::anyhow!("bar type for {}: {e}", self.shcode))?,
+            gap_prices: SessionGapPrices::new(self.prior_close, self.today_open),
+            prior_atr: self.prior_atr,
+            prior_open_vol_mean: self.prior_open_vol_mean,
+            prior_illiq: self.prior_illiq,
+        })
+    }
+}
+
+/// Resolve the live-mount universe from `LS_MOUNT_UNIVERSE_FILE` (fail-closed if absent/empty).
+///
+/// # Errors
+///
+/// If the env var is unset, the file is unreadable/malformed, or the universe is empty.
+pub fn resolve_mount_universe() -> anyhow::Result<Vec<SelectedSymbol>> {
+    let path = std::env::var("LS_MOUNT_UNIVERSE_FILE").map_err(|_| {
+        anyhow::anyhow!(
+            "mount refused: LS_MOUNT_UNIVERSE_FILE is required — the resolved daily/t8407 universe \
+             (a JSON array of {{shcode, prior_close, today_open, prior_atr?, …}}) the live session trades"
+        )
+    })?;
+    let bytes = std::fs::read(&path).map_err(|e| anyhow::anyhow!("reading mount universe {path}: {e}"))?;
+    parse_mount_universe(&bytes)
+}
+
+/// Parse a mount-universe JSON blob into the live session's `Vec<SelectedSymbol>` (fail-closed on
+/// malformed/empty). Split from the env/file read so it is testable without the process
+/// environment.
+///
+/// # Errors
+///
+/// If the JSON is malformed or the universe is empty.
+pub fn parse_mount_universe(bytes: &[u8]) -> anyhow::Result<Vec<SelectedSymbol>> {
+    let rows: Vec<MountUniverseSymbol> =
+        serde_json::from_slice(bytes).map_err(|e| anyhow::anyhow!("parsing mount universe: {e}"))?;
+    if rows.is_empty() {
+        anyhow::bail!("mount refused: the resolved universe (LS_MOUNT_UNIVERSE_FILE) is empty");
+    }
+    rows.into_iter().map(MountUniverseSymbol::into_selected).collect()
+}
+
+/// Resolve the v34 head governed `OrbParams` for the mount, fail-closed against a zero-size
+/// (all-levers-off `default()`) head (KTD7): a `default()` head has `risk_per_trade_krw == 0`,
+/// which sizes every order to zero shares — the exact bug that would silently trade nothing.
+///
+/// # Errors
+///
+/// If the resolved head params size to zero.
+pub fn resolve_mount_head_params(data_home: &Path) -> anyhow::Result<OrbParams> {
+    let params = crate::dispatch::ladder::head_governed_params(data_home);
+    if params.risk_per_trade_krw <= 0.0 {
+        anyhow::bail!(
+            "mount refused: the resolved head governed params size to ZERO (risk_per_trade_krw={:.0}) \
+             — the data home's latest finalized run must be the v34 head (risk 299,340), never the \
+             all-levers-off default; check LS_DATA_HOME points at the v34 epoch",
+            params.risk_per_trade_krw
+        );
+    }
+    Ok(params)
+}
+
+/// The `lab-live --mount` operator command (R3; KTD4/KTD5/KTD7). Resolves every live-session
+/// input and BUILDS the node at the pre-registered rung fraction from v34's real governed params,
+/// then stops at the deferred live-driver seam WITHOUT consuming the green dispatch. Paper-only,
+/// attended, no-TTY loud refusal; `node.run` stays live-only (and is not wired here).
+fn run_mount() -> anyhow::Result<ExitCode> {
+    nautilus_ls::calendar::emit_startup_from_env("lab-live");
+    // 1. Paper interlock FIRST — before any resolution, chain read, or gate (R3).
+    if std::env::var("LS_TRADING_ENV").as_deref() != Ok("paper") {
+        eprintln!(
+            "mount refused: LS_TRADING_ENV must be `paper` (this adapter is paper-only; the \
+             live-lane flip is a separate later step)"
+        );
+        return Ok(ExitCode::from(MOUNT_NOT_PAPER));
+    }
+    let data_home: PathBuf = std::env::var("LS_DATA_HOME")
+        .map_err(|_| anyhow::anyhow!("mount refused: LS_DATA_HOME is required (absolute path)"))?
+        .into();
+    let requested_rung: u8 =
+        std::env::var("LS_DISPATCH_RUNG").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+    let now_unix: i64 = std::env::var("LS_DISPATCH_NOW_UNIX")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| Utc::now().timestamp());
+    let nonce = std::env::var("LS_DISPATCH_NONCE").ok().filter(|s| !s.trim().is_empty());
+    let lane_name = std::env::var("LS_LANE").unwrap_or_else(|_| "domestic".to_string());
+    let lane_env_path: PathBuf = std::env::var("LS_DISPATCH_LANE_ENV")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(format!(".env.{lane_name}")));
+
+    // 2. Operator attendance/nonce gate — a live mount attempt is attended, no-TTY loud (R3).
+    let gate = OperatorGate { unattended_marker: detect_unattended_marker(), nonce, now_unix };
+    if let Err(e) = gate.authorize("live mount") {
+        eprintln!("mount refused: {}", nautilus_ls::scrub::scrub_secrets(e.as_str()));
+        return Ok(ExitCode::from(MOUNT_REFUSED_ATTEND));
+    }
+
+    // 3. Read-only mountability + the effective rung to size (NO consumption — driver deferred).
+    let chain = DispatchChain::open(&data_home)?;
+    let now = Utc.timestamp_opt(now_unix, 0).single().unwrap_or_else(Utc::now);
+    let today = kst_trading_date(now);
+    let effective_rung = match chain.load().mount_authz(&today) {
+        MountAuthz::Ready { effective_rung, .. } => effective_rung,
+        MountAuthz::Consumed => {
+            eprintln!("mount refused: the latest green dispatch is already consumed — re-run --dispatch");
+            return Ok(ExitCode::from(MOUNT_REFUSED_ATTEND));
+        }
+        MountAuthz::Expired => {
+            eprintln!(
+                "mount refused: the latest green dispatch is expired (previous KST day) — re-run --dispatch today"
+            );
+            return Ok(ExitCode::from(MOUNT_REFUSED_ATTEND));
+        }
+        MountAuthz::None => {
+            eprintln!("mount refused: no green dispatch to mount (rung 0 / refused / none) — run --dispatch");
+            return Ok(ExitCode::from(MOUNT_REFUSED_ATTEND));
+        }
+    };
+    if requested_rung > effective_rung {
+        anyhow::bail!(
+            "mount refused: requested rung {requested_rung} exceeds the authorized effective rung \
+             {effective_rung} — rung selection is a guard rail, not an operator feature (R15)"
+        );
+    }
+
+    // 4. The pre-registered fraction for the effective rung (fail-closed, KTD5).
+    let prereg_path = std::env::var("LS_DISPATCH_PREREG")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("mount refused: LS_DISPATCH_PREREG is required (the frozen fraction + band)"))?;
+    let prereg = crate::dispatch::prereg::load(Path::new(&prereg_path))?;
+    let fraction = prereg.values.rung_fraction(effective_rung)?;
+
+    // 5. v34 real governed params (fail-closed vs zero-size, KTD7) + the session universe + sink.
+    let params = resolve_mount_head_params(&data_home)?;
+    let universe = resolve_mount_universe()?;
+    let sink = DecisionSink::new();
+    let adapter_cfg = LsAdapterConfig::from_lane_file(&lane_env_path);
+
+    // 6. Build the node at the real v34 rung-fraction size — proves mountability. `node.run` stays
+    //    live-only and is NOT driven here (the attended driver is deferred).
+    let _node = build_live_session_node(adapter_cfg, params.clone(), universe.clone(), sink, fraction)?;
+
+    println!(
+        "mount prepared: env=paper rung={effective_rung} rung_fraction={fraction} \
+         head_code_hash={} head_params_hash={} universe={} — node built at v34 size",
+        crate::artifacts::manifest::strategy_code_hash(),
+        crate::dispatch::ladder::governed_params_hash(&params),
+        universe.len()
+    );
+    eprintln!(
+        "mount NOT run: the attended live-session driver (node.run -> fail-closed teardown -> \
+         finalize) is deferred; the green dispatch is NOT consumed. See \
+         adapters/nautilus/lab/RUNG1-PREFLIGHT.md."
+    );
+    Ok(ExitCode::from(MOUNT_PREPARED_DEFERRED))
 }
 
 #[cfg(test)]

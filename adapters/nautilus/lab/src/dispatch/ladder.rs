@@ -44,6 +44,27 @@ pub fn governed_params_hash(params: &OrbParams) -> String {
     hash_bytes(&serde_json::to_vec(params).expect("OrbParams is always serializable"))
 }
 
+/// The head's governed `OrbParams` — the identity real live/backtest sessions are keyed
+/// against for clean-session matching (KTD7, option (a) of the rung-1-readiness plan). Sourced
+/// from the latest finalized run's manifest in the data home (the certified head, e.g. the v34
+/// backtest `20260724T014752Z-backtest-orb-v34`); falls back to `OrbParams::default()` when no
+/// finalized run exists, so a fresh data home — and the ladder's own fixtures, which stage
+/// `default()`-param runs — key on the version-invariant default exactly as the shipped code did.
+///
+/// This is the single source `run_mount` sizes the live strategy from AND `run_escalation` keys
+/// the head params-hash on, so clean-session matching compares **like-for-like**: a real v34
+/// session (built from these params) matches the head instead of mis-keying against `default()`
+/// (which encodes none of v34's governed values and would size to zero). It preserves the
+/// params-change → re-run-N rule (R13): a new governed head changes these params, flips the hash,
+/// and old-params sessions stop qualifying.
+pub fn head_governed_params(data_home: &Path) -> OrbParams {
+    crate::runner::research::latest_finalized_run(data_home)
+        .ok()
+        .flatten()
+        .map(|(_run_id, manifest)| manifest.params)
+        .unwrap_or_default()
+}
+
 /// One limit event (R14) attributed to a session (by run id). Kept as typed strings so the
 /// de-escalation record can list every event.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -398,7 +419,11 @@ pub fn run_escalation(
     let state = chain.load();
     let from_rung = state.authorized_rung;
     let code_hash = crate::artifacts::manifest::strategy_code_hash();
-    let params_hash = governed_params_hash(&OrbParams::default());
+    // KTD7 (option a): key the head params-hash on the ACTUAL head governed params (the data
+    // home's certified head — the same source `run_mount` sizes from), not `OrbParams::default()`.
+    // A real v34 session then matches like-for-like; a fresh/fixture data home falls back to
+    // `default()`, unchanged. Preserves the params-change → re-run-N rule (R13).
+    let params_hash = governed_params_hash(&head_governed_params(data_home));
     match verify_escalation(data_home, &state.records, from_rung, &code_hash, &params_hash, prereg) {
         EscalationCheck::Ready { to_rung, evidence } => {
             let rec = chain.append(
@@ -478,10 +503,38 @@ mod tests {
         rec.body.record_id
     }
 
+    /// v34 head governed params (KTD7): the certified real-universe head's sizing levers
+    /// (risk 299,340 / entry_confirm 1.0 / or_width_max_atr 0.666 / breakeven_trigger_r 0.41 /
+    /// gap_retention 0.5) — NOT the all-levers-off `default()` (which sizes to zero).
+    fn v34_head_params() -> OrbParams {
+        OrbParams {
+            strategy_version: 34,
+            risk_per_trade_krw: 299_340.0,
+            entry_confirm: 1.0,
+            or_width_max_atr: 0.666,
+            breakeven_trigger_r: 0.41,
+            gap_retention_min: 0.5,
+            ..OrbParams::default()
+        }
+    }
+
     /// Stage a finalized live-lane run at `rung` bound to `dispatch_id`, with `realized_pnl`
-    /// and optional dedup hits; writes a produced tracking twin for rung 2+.
+    /// and optional dedup hits; writes a produced tracking twin for rung 2+. Uses `default()`
+    /// governed params (the shipped fixtures' basis).
     fn stage_clean_run(data_home: &Path, run_id: &str, rung: u8, dispatch_id: &str, realized_pnl: f64) {
-        let params = OrbParams::default();
+        stage_clean_run_params(data_home, run_id, rung, dispatch_id, realized_pnl, OrbParams::default());
+    }
+
+    /// As [`stage_clean_run`], but with explicit governed `params` (KTD7 — stage a real-v34-head
+    /// session whose manifest carries the sized levers).
+    fn stage_clean_run_params(
+        data_home: &Path,
+        run_id: &str,
+        rung: u8,
+        dispatch_id: &str,
+        realized_pnl: f64,
+        params: OrbParams,
+    ) {
         let writer = RunWriter::new(data_home, run_id).unwrap();
         let manifest = Manifest {
             run_id: run_id.into(),
@@ -564,6 +617,66 @@ mod tests {
         let mut p = OrbParams::default();
         p.risk_per_trade_krw += 1.0;
         assert_ne!(a, governed_params_hash(&p), "a params change flips the hash");
+    }
+
+    #[test]
+    fn head_governed_params_reads_the_head_and_falls_back_to_default() {
+        // Empty data home → default() (a fresh/fixture home keys on the version-invariant default).
+        let tmp = TempDir::new().unwrap();
+        assert_eq!(head_governed_params(tmp.path()), OrbParams::default());
+        // With a finalized v34-params run present → the head is that run's governed params.
+        let chain = DispatchChain::open(tmp.path()).unwrap();
+        chain.append(now(), 1, 1, None, RecordKind::Genesis).unwrap();
+        let d = dispatch_record(&chain, 1, 1);
+        stage_clean_run_params(tmp.path(), "20260716T010000Z-live-orb-v34", 1, &d, 500.0, v34_head_params());
+        assert_eq!(head_governed_params(tmp.path()).risk_per_trade_krw, 299_340.0, "head = the v34 run's params");
+    }
+
+    #[test]
+    fn ktd7_a_real_v34_session_miskeys_against_default_but_matches_the_head() {
+        // The shipped bug: a real v34 session (sized levers) mis-keys against
+        // `governed_params_hash(&OrbParams::default())`; option (a) keys on the actual head so it
+        // matches like-for-like.
+        let tmp = TempDir::new().unwrap();
+        let chain = DispatchChain::open(tmp.path()).unwrap();
+        chain.append(now(), 1, 1, None, RecordKind::Genesis).unwrap();
+        let d = dispatch_record(&chain, 1, 1);
+        let run = "20260716T010000Z-live-orb-v34";
+        stage_clean_run_params(tmp.path(), run, 1, &d, 500.0, v34_head_params());
+        let code = crate::artifacts::manifest::strategy_code_hash();
+        let recs = chain.load().records;
+        // Old default() key → mis-keyed as non-clean (the bug this plan fixes).
+        assert!(
+            !is_clean_session(tmp.path(), &recs, run, 1, &code, &governed_params_hash(&OrbParams::default()), None),
+            "a real v34 session must NOT match the version-invariant default() key"
+        );
+        // Option-a key (the actual head) → clean.
+        assert!(
+            is_clean_session(tmp.path(), &recs, run, 1, &code, &governed_params_hash(&head_governed_params(tmp.path())), None),
+            "keyed on the actual head, the v34 session is clean"
+        );
+    }
+
+    #[test]
+    fn ktd7_run_escalation_counts_real_v34_sessions_as_clean() {
+        // End-to-end through run_escalation (which now keys on head_governed_params): two clean
+        // real-v34 rung-1 sessions escalate, rather than being silently blocked as non-clean.
+        let tmp = TempDir::new().unwrap();
+        let chain = DispatchChain::open(tmp.path()).unwrap();
+        chain.append(now(), 1, 1, None, RecordKind::Genesis).unwrap();
+        for h in ["01", "02"] {
+            let d = dispatch_record(&chain, 1, 1);
+            stage_clean_run_params(tmp.path(), &format!("20260716T{h}0000Z-live-orb-v34"), 1, &d, 500.0, v34_head_params());
+        }
+        let rec = run_escalation(&chain, tmp.path(), &attended(1_752_600_000), &rung1_prereg(), now()).unwrap();
+        match rec.body.kind {
+            RecordKind::Escalation(e) => {
+                assert_eq!(e.from_rung, 1);
+                assert_eq!(e.to_rung, 2);
+                assert_eq!(e.evidence_run_ids.len(), 2, "both v34 sessions cited as clean evidence");
+            }
+            other => panic!("expected an escalation record, got {other:?}"),
+        }
     }
 
     #[test]
