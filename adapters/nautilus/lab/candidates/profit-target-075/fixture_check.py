@@ -6,6 +6,7 @@ author runs to prove the join + counterfactual + change-tally against known-answ
 Both scripts are invoked exactly as `turn diagnose` invokes them (readings path as argv[-1]),
 via LS_PT075_RUN pointed at a synthesized run dir. Run: `python3 fixture_check.py` (exit 0 = pass).
 """
+import datetime
 import json
 import os
 import subprocess
@@ -13,16 +14,26 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+DAY = 86_400_000_000_000
 NS = 1_779_400_000_000_000_000  # arbitrary base ns; per-trade offsets keep KST dates distinct-per-need
 
 
+def at(off):
+    """Absolute ns for a whole-day offset from the base (the common per-symbol/session case)."""
+    return NS + off * DAY
+
+
+def utc_ns(y, mo, d, h, mi=0):
+    """Absolute unix-ns for a UTC wall-clock — used to build a cross-UTC-midnight KST case."""
+    dt = datetime.datetime(y, mo, d, h, mi, tzinfo=datetime.timezone.utc)
+    return int(dt.timestamp()) * 1_000_000_000
+
+
 def write_run(run_dir, trades, exits):
-    """trades: list of (symbol, day_offset, quantity, risk_capital, realized_r, ts_closed?).
-    exits:  list of (symbol, day_offset, mfe_r_or_None)."""
-    day = 86_400_000_000_000
+    """trades: list of (symbol, ts_opened_ns, quantity, risk_capital, realized_r).
+    exits:  list of (symbol, ts_event_ns, mfe_r_or_None)."""
     perf = {"trades": [], "equity_curve": [], "summary": {}}
-    for (sym, off, qty, rc, r) in trades:
-        ts = NS + off * day
+    for (sym, ts, qty, rc, r) in trades:
         t = {
             "symbol": sym, "entry_side": "BUY", "quantity": qty,
             "avg_px_open": 10000.0, "avg_px_close": 10000.0, "realized_pnl": 0.0,
@@ -36,8 +47,7 @@ def write_run(run_dir, trades, exits):
         json.dump(perf, fh)
 
     lines = []
-    for (sym, off, mfe) in exits:
-        ts = NS + off * day
+    for (sym, ts, mfe) in exits:
         values = {"price": 10000.0, "qty": 1.0, "realized_r": 0.0}
         if mfe is not None:
             values["mfe_r"] = mfe
@@ -59,7 +69,7 @@ def run_script(script, run_dir):
     readings = None
     if os.path.exists(out_path):
         readings = json.load(open(out_path))
-    return proc.returncode, readings, proc.stderr
+    return proc.returncode, readings, proc.stderr, proc.stdout
 
 
 def approx(a, b, tol=1e-6):
@@ -76,11 +86,11 @@ def case_a_hand_computation():
     with tempfile.TemporaryDirectory() as d:
         write_run(
             d,
-            trades=[("AAA", 0, 1, 100.0, -0.5), ("BBB", 0, 1, 100.0, 1.0), ("CCC", 0, 1, 100.0, 0.2)],
-            exits=[("AAA", 0, 0.9), ("BBB", 0, 1.2), ("CCC", 0, 0.3)],
+            trades=[("AAA", at(0), 1, 100.0, -0.5), ("BBB", at(0), 1, 100.0, 1.0), ("CCC", at(0), 1, 100.0, 0.2)],
+            exits=[("AAA", at(0), 0.9), ("BBB", at(0), 1.2), ("CCC", at(0), 0.3)],
         )
         for script in ("diagnostic.py", "twin.py"):
-            rc, rd, err = run_script(script, d)
+            rc, rd, err, _ = run_script(script, d)
             assert rc == 0, f"{script} case-a exited {rc}: {err}"
             assert approx(rd["ror_base"], 0.233333, 1e-4), f"{script} ror_base {rd['ror_base']}"
             assert approx(rd["ror_prime"], 0.566667, 1e-4), f"{script} ror_prime {rd['ror_prime']}"
@@ -94,11 +104,11 @@ def case_b_zero_join():
     with tempfile.TemporaryDirectory() as d:
         write_run(
             d,
-            trades=[("AAA", 0, 1, 100.0, -0.5)],
-            exits=[("ZZZ", 5, 0.9)],  # different symbol AND day
+            trades=[("AAA", at(0), 1, 100.0, -0.5)],
+            exits=[("ZZZ", at(5), 0.9)],  # different symbol AND day
         )
         for script in ("diagnostic.py", "twin.py"):
-            rc, rd, err = run_script(script, d)
+            rc, rd, err, _ = run_script(script, d)
             assert rc != 0, f"{script} case-b should exit nonzero, got {rc}"
             assert "zero join" in err.lower(), f"{script} case-b message unclear: {err!r}"
     print("case (b) zero-join: PASS (both scripts exit nonzero with a clear message)")
@@ -107,20 +117,26 @@ def case_b_zero_join():
 def case_c_missing_mfe_excluded():
     """A trade whose exit envelope lacks mfe_r is excluded + counted, never read as 0.
        t1 (mfe 0.9, realized -0.5) counted; t2 exit missing mfe_r -> dropped.
-       Only t1 remains: RoR_base=-0.5, RoR_prime=0.75, delta=1.25, frac=1/1."""
+       Only t1 remains: RoR_base=-0.5, RoR_prime=0.75, delta=1.25, frac=1/1.
+       Also assert the excluded trade is COUNTED (diagnostic's stdout reports 'excluded 1'),
+       not silently dropped — the 'never read as 0' + 'counted' halves of R2(c)."""
     with tempfile.TemporaryDirectory() as d:
         write_run(
             d,
-            trades=[("AAA", 0, 1, 100.0, -0.5), ("BBB", 0, 1, 100.0, 1.0)],
-            exits=[("AAA", 0, 0.9), ("BBB", 0, None)],  # BBB exit predates telemetry
+            trades=[("AAA", at(0), 1, 100.0, -0.5), ("BBB", at(0), 1, 100.0, 1.0)],
+            exits=[("AAA", at(0), 0.9), ("BBB", at(0), None)],  # BBB exit predates telemetry
         )
         for script in ("diagnostic.py", "twin.py"):
-            rc, rd, err = run_script(script, d)
+            rc, rd, err, out = run_script(script, d)
             assert rc == 0, f"{script} case-c exited {rc}: {err}"
+            # not read as 0: a read-as-0 would give ror_base -0.25 (over both trades), not -0.5.
             assert approx(rd["ror_base"], -0.5, 1e-6), f"{script} ror_base {rd['ror_base']}"
             assert approx(rd["ror_prime"], 0.75, 1e-6), f"{script} ror_prime {rd['ror_prime']}"
             assert approx(rd["exit_change_frac"], 1.0, 1e-6), f"{script} frac {rd['exit_change_frac']}"
-    print("case (c) missing-mfe excluded: PASS (both scripts drop the telemetry-less exit)")
+        # counted (not silently dropped): the diagnostic reports the exclusion tally.
+        _, _, _, diag_out = run_script("diagnostic.py", d)
+        assert "excluded 1" in diag_out, f"diagnostic must count the excluded trade: {diag_out!r}"
+    print("case (c) missing-mfe excluded: PASS (both scripts drop the telemetry-less exit, counted)")
 
 
 def case_d_perturbation_moves_both_identically():
@@ -129,8 +145,8 @@ def case_d_perturbation_moves_both_identically():
         # CCC mfe 0.74 -> untouched; frac = 2/3 (AAA,BBB change)
         write_run(
             d,
-            trades=[("AAA", 0, 1, 100.0, -0.5), ("BBB", 0, 1, 100.0, 1.0), ("CCC", 0, 1, 100.0, 0.2)],
-            exits=[("AAA", 0, 0.9), ("BBB", 0, 1.2), ("CCC", 0, 0.74)],
+            trades=[("AAA", at(0), 1, 100.0, -0.5), ("BBB", at(0), 1, 100.0, 1.0), ("CCC", at(0), 1, 100.0, 0.2)],
+            exits=[("AAA", at(0), 0.9), ("BBB", at(0), 1.2), ("CCC", at(0), 0.74)],
         )
         diag_lo = run_script("diagnostic.py", d)[1]
         twin_lo = run_script("twin.py", d)[1]
@@ -138,8 +154,8 @@ def case_d_perturbation_moves_both_identically():
         # CCC mfe 0.76 -> now touched; frac = 3/3 (CCC realized 0.2 -> booked 0.75, a change)
         write_run(
             d,
-            trades=[("AAA", 0, 1, 100.0, -0.5), ("BBB", 0, 1, 100.0, 1.0), ("CCC", 0, 1, 100.0, 0.2)],
-            exits=[("AAA", 0, 0.9), ("BBB", 0, 1.2), ("CCC", 0, 0.76)],
+            trades=[("AAA", at(0), 1, 100.0, -0.5), ("BBB", at(0), 1, 100.0, 1.0), ("CCC", at(0), 1, 100.0, 0.2)],
+            exits=[("AAA", at(0), 0.9), ("BBB", at(0), 1.2), ("CCC", at(0), 0.76)],
         )
         diag_hi = run_script("diagnostic.py", d)[1]
         twin_hi = run_script("twin.py", d)[1]
@@ -150,9 +166,32 @@ def case_d_perturbation_moves_both_identically():
     print("case (d) perturbation: PASS (both scripts move identically across the 0.75 threshold)")
 
 
+def case_e_kst_offset_is_applied():
+    """The join key is the KST (+9h) session date, not the UTC date. Build a trade and its exit
+       at UTC instants on DIFFERENT UTC days that fall on the SAME KST day:
+         trade opened 2026-05-21 21:00 UTC -> 2026-05-22 06:00 KST
+         exit        2026-05-22 03:00 UTC -> 2026-05-22 12:00 KST
+       A correct +9h implementation joins them (n=1); a UTC-date implementation would place them
+       on 05-21 vs 05-22 and zero-join (exit 2). So this case fails loudly on a wrong offset that
+       the same-day cases (where trade and exit share an instant) structurally cannot catch."""
+    with tempfile.TemporaryDirectory() as d:
+        write_run(
+            d,
+            trades=[("AAA", utc_ns(2026, 5, 21, 21), 1, 100.0, -0.5)],
+            exits=[("AAA", utc_ns(2026, 5, 22, 3), 0.9)],
+        )
+        for script in ("diagnostic.py", "twin.py"):
+            rc, rd, err, _ = run_script(script, d)
+            assert rc == 0, f"{script} case-e should join across UTC midnight via KST, got exit {rc}: {err}"
+            assert approx(rd["ror_base"], -0.5, 1e-6), f"{script} ror_base {rd['ror_base']}"
+            assert approx(rd["ror_prime"], 0.75, 1e-6), f"{script} ror_prime {rd['ror_prime']}"
+    print("case (e) KST offset: PASS (both scripts join across UTC midnight on the shared KST date)")
+
+
 if __name__ == "__main__":
     case_a_hand_computation()
     case_b_zero_join()
     case_c_missing_mfe_excluded()
     case_d_perturbation_moves_both_identically()
+    case_e_kst_offset_is_applied()
     print("ALL FIXTURE CHECKS PASS")
