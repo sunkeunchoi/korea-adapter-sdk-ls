@@ -789,3 +789,22 @@ fn bin_clear_killswitch_refuses_in_no_tty_with_a_distinct_code() {
     let out = bin_lab_live("--clear-killswitch", tmp.path(), &[("LS_DISPATCH_REASON", "re-arm after reconcile")]);
     assert_eq!(out.status.code(), Some(80), "distinct clear-killswitch-refusal exit code");
 }
+
+#[test]
+fn bin_rung_report_prints_the_head_hash_and_is_read_only() {
+    // U4: --rung-report is an agent-runnable, read-only diagnostic (exit 0) that prints the head
+    // hash it evaluated under (KTD6). With an empty rung-1 chain it reports 0 clean sessions.
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+    let prereg = tmp.path().join("prereg.json");
+    std::fs::write(&prereg, br#"{"version":2,"k_window":5,"rungs":[{"rung":1,"fraction":0.1,"n_clean_sessions":5,"expectation_band":{"min_cum_pnl":-148000.0,"max_cum_pnl":266000.0}}]}"#).unwrap();
+    let before = std::fs::read_to_string(tmp.path().join("dispatch").join("chain.jsonl")).unwrap_or_default();
+    let out = bin_lab_live("--rung-report", tmp.path(), &[("LS_DISPATCH_PREREG", prereg.to_str().unwrap())]);
+    assert!(out.status.success(), "rung-report is read-only (exit 0): {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("rung-report head_code_hash="), "{stdout}");
+    assert!(stdout.contains("d7a9820b"), "frames against the documented v34 head: {stdout}");
+    assert!(stdout.contains("clean=0/5"), "empty rung-1 chain → 0/5 clean: {stdout}");
+    let after = std::fs::read_to_string(tmp.path().join("dispatch").join("chain.jsonl")).unwrap_or_default();
+    assert_eq!(before, after, "--rung-report appends nothing to the chain");
+}

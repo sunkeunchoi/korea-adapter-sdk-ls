@@ -883,6 +883,7 @@ fn dispatch_main() -> anyhow::Result<ExitCode> {
         Some("--escalate") => run_escalate_cli(),
         Some("--reregister") => run_reregister_cli(),
         Some("--clear-killswitch") => run_clear_killswitch_cli(),
+        Some("--rung-report") => run_rung_report(),
         _ => {
             nautilus_ls::calendar::emit_startup_from_env("lab-live");
             if std::env::var("LS_TRADING_ENV").as_deref() != Ok("paper") {
@@ -1535,6 +1536,58 @@ fn run_clear_killswitch_cli() -> anyhow::Result<ExitCode> {
             Ok(ExitCode::from(CLEAR_REFUSED))
         }
     }
+}
+
+/// `--rung-report` (R5; KTD6): the agent's read-only post-session verification — clean/limit-event
+/// classification of the trailing live-lane sessions, cumulative rung P&L against the v34 band,
+/// N-progress toward escalation, and the readiness verdict. Appends nothing; no nonce. Prints the
+/// head hash it evaluated under so a stale-binary reading is self-evident.
+fn run_rung_report() -> anyhow::Result<ExitCode> {
+    nautilus_ls::calendar::emit_startup_from_env("lab-live");
+    let data_home = env_data_home()?;
+    let prereg_path = std::env::var("LS_DISPATCH_PREREG")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("--rung-report refused: LS_DISPATCH_PREREG is required (the band + N)"))?;
+    let prereg = crate::dispatch::prereg::load(Path::new(&prereg_path))?;
+    let chain = DispatchChain::open(&data_home)?;
+    let state = chain.load();
+    let from_rung = state.authorized_rung.max(1);
+    let report = crate::dispatch::ladder::build_rung_report(&data_home, &state.records, from_rung, &prereg.values);
+
+    // The head hash the report evaluated under (KTD6) — a stale-binary reading is self-evident.
+    println!(
+        "rung-report head_code_hash={} (v34 IFF == d7a9820b…) head_params_hash={}",
+        report.head_code_hash, report.head_params_hash
+    );
+    println!(
+        "rung-report rung={} clean={}/{} cum_pnl={:.0} band=[{:.0},{:.0}] in_band={}",
+        report.from_rung, report.clean.len(), report.n_required, report.cum_pnl, report.band.0, report.band.1, report.in_band
+    );
+    for rid in &report.clean {
+        println!("  clean {rid}");
+    }
+    for rid in &report.limit_event {
+        println!("  limit-event {rid} (excluded from the clean count)");
+    }
+    for rid in &report.head_mismatched {
+        println!("  head-mismatched {rid} (NOT counted — ran under a different head)");
+    }
+    match &report.escalation {
+        crate::dispatch::ladder::EscalationCheck::Ready { to_rung, evidence } => {
+            println!("rung-report escalation: READY -> rung {to_rung} ({} clean session(s) cited)", evidence.len());
+        }
+        crate::dispatch::ladder::EscalationCheck::Blocked(reason) => {
+            println!("rung-report escalation: BLOCKED — {reason}");
+        }
+    }
+    let verdict = match report.readiness {
+        crate::dispatch::readiness::ReadinessVerdict::Green => "GREEN",
+        crate::dispatch::readiness::ReadinessVerdict::Red => "RED (rung-1 probation)",
+        crate::dispatch::readiness::ReadinessVerdict::NotEvaluated => "NOT-EVALUATED",
+    };
+    println!("rung-report readiness: {verdict} — {}", report.readiness_summary);
+    Ok(ExitCode::SUCCESS)
 }
 
 #[cfg(test)]

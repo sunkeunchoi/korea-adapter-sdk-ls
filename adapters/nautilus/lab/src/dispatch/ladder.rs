@@ -33,6 +33,7 @@ use crate::dispatch::chain::{
 };
 use crate::dispatch::nonce::OperatorGate;
 use crate::dispatch::prereg::PreRegistration;
+use crate::dispatch::readiness::{compute_readiness, readiness_summary, ReadinessVerdict};
 use crate::dispatch::tracking::read_report;
 use crate::params::OrbParams;
 use crate::runner::research::read_manifest;
@@ -457,6 +458,109 @@ pub fn run_reregistration(
 ) -> anyhow::Result<ChainRecord> {
     gate.authorize("chain re-registration").map_err(|e| anyhow::anyhow!(e))?;
     chain.reregister(now, set_rung, prereg_hash, reason)
+}
+
+/// A read-only post-session rung report (U4 of the rung-1-readiness plan; KTD6). Assembles the
+/// clean / limit-event / head-mismatched classification of the trailing live-lane sessions, the
+/// cumulative rung P&L against the pre-registered expectation band, N-progress toward escalation,
+/// the escalation-readiness verdict, and the readiness reducer verdict — WITHOUT mutating the
+/// chain, registry, or any record. Every judgment is keyed on the running binary's head (the hash
+/// is reported so a stale-binary reading is self-evident).
+#[derive(Debug, Clone, PartialEq)]
+pub struct RungReport {
+    /// The running binary's `strategy_code_hash()` — the head every classification is keyed on.
+    pub head_code_hash: String,
+    /// `governed_params_hash(head_governed_params(data_home))` — the head params key (KTD7).
+    pub head_params_hash: String,
+    /// The rung the report evaluates (the chain's authorized rung, floored at 1).
+    pub from_rung: u8,
+    /// N clean sessions required to escalate from `from_rung` (0 if unregistered).
+    pub n_required: u32,
+    /// The clean qualifying rung sessions (run ids).
+    pub clean: Vec<String>,
+    /// Trailing live-lane sessions at the head that are NOT clean (carry a limit event).
+    pub limit_event: Vec<String>,
+    /// Trailing live-lane sessions whose manifest head differs from the running binary's — shown,
+    /// never silently counted (a stale-binary / wrong-head reading is explicit).
+    pub head_mismatched: Vec<String>,
+    /// Cumulative realized P&L across the clean sessions.
+    pub cum_pnl: f64,
+    /// The pre-registered expectation band `[min, max]` for `from_rung`.
+    pub band: (f64, f64),
+    /// Whether `cum_pnl` sits inside the band.
+    pub in_band: bool,
+    /// The read-only escalation-readiness view (evidence + band check; no append).
+    pub escalation: EscalationCheck,
+    /// The readiness reducer verdict.
+    pub readiness: ReadinessVerdict,
+    /// The readiness reducer's human summary.
+    pub readiness_summary: String,
+}
+
+/// Build the read-only [`RungReport`] for `from_rung` (U4, KTD6). Reads only; appends nothing.
+pub fn build_rung_report(
+    data_home: &Path,
+    chain_records: &[ChainRecord],
+    from_rung: u8,
+    prereg: &PreRegistration,
+) -> RungReport {
+    let head_params = head_governed_params(data_home);
+    let code_hash = crate::artifacts::manifest::strategy_code_hash();
+    let params_hash = governed_params_hash(&head_params);
+
+    let mut clean = Vec::new();
+    let mut limit_event = Vec::new();
+    let mut head_mismatched = Vec::new();
+    for rid in list_runs(data_home) {
+        let Ok(m) = read_manifest(data_home, &rid) else { continue };
+        // Only trailing live-lane sessions are in scope — backtests/research (no live dispatch
+        // link) are excluded.
+        if !is_live_lane(&m) {
+            continue;
+        }
+        // Head identity is reported, never silently counted: a session under a different head is
+        // head-mismatched (a stale-binary / wrong-head reading is explicit, KTD6).
+        if m.strategy_code_hash != code_hash || governed_params_hash(&m.params) != params_hash {
+            head_mismatched.push(rid);
+            continue;
+        }
+        if is_clean_session(data_home, chain_records, &rid, from_rung, &code_hash, &params_hash, Some(prereg)) {
+            clean.push(rid);
+        } else {
+            limit_event.push(rid);
+        }
+    }
+
+    let n_required = prereg.n_for_rung(from_rung).unwrap_or(0);
+    let cum_pnl: f64 = clean
+        .iter()
+        .filter_map(|rid| read_perf(data_home, rid))
+        .flat_map(|p| p.trades.into_iter().map(|t| t.realized_pnl))
+        .sum();
+    let band = prereg
+        .expectation_band(from_rung)
+        .map(|b| (b.min_cum_pnl, b.max_cum_pnl))
+        .unwrap_or((f64::NEG_INFINITY, f64::INFINITY));
+    let in_band = cum_pnl >= band.0 && cum_pnl <= band.1;
+    let escalation = verify_escalation(data_home, chain_records, from_rung, &code_hash, &params_hash, prereg);
+    let (readiness, catalog) = compute_readiness(data_home, chain_records, Some(prereg));
+    let readiness_summary = readiness_summary(readiness, &catalog);
+
+    RungReport {
+        head_code_hash: code_hash,
+        head_params_hash: params_hash,
+        from_rung,
+        n_required,
+        clean,
+        limit_event,
+        head_mismatched,
+        cum_pnl,
+        band,
+        in_band,
+        escalation,
+        readiness,
+        readiness_summary,
+    }
 }
 
 #[cfg(test)]
