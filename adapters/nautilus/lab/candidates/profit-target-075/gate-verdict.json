@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "slug": "profit-target-075",
+  "family": "exit-geometry",
+  "decision": "STOP",
+  "stop_gate": "threshold-fail",
+  "stop_reason": "threshold on 'ror_delta' failed: -0.*** not Ge 0.00065",
+  "diagnostic_readings": {
+    "exit_change_frac": 0.2773,
+    "ror_base": 0.039806,
+    "ror_delta": -0.019471,
+    "ror_prime": 0.020336
+  },
+  "twin_readings": {
+    "exit_change_frac": 0.2773,
+    "ror_base": 0.039806,
+    "ror_delta": -0.019471,
+    "ror_prime": 0.020336
+  },
+  "agreed_readings": {
+    "exit_change_frac": 0.2773,
+    "ror_base": 0.039806,
+    "ror_delta": -0.019471,
+    "ror_prime": 0.020336
+  },
+  "pre_register_hash": "6d70584471823415a5090682f4026a35f5481e9376d2199387e79d6e14a83d41",
+  "catalog_fingerprint": "363f199d4357bf665d3bed9c97c36e37551e24c89e89b0bad0b00de50d8908f4",
+  "freeze_commit": "8e925d3c68ba80776ef6a023ab2df0fd32c7ca83",
+  "flip_param": "profit_target_r",
+  "flip_value": 0.75,
+  "prior_trials": [],
+  "recorded_utc": "2026-07-24T02:58:07.628397+00:00"
+}

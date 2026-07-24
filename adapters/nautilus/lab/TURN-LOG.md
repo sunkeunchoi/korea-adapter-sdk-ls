@@ -4,6 +4,58 @@ Committed record of each loop turn's verdict + the bar conditions it held. The
 full artifacts (`analysis.md`, manifests, performance) live in the gitignored data
 home; this file is the durable, reviewable outcome trail.
 
+## Turn — profit_target_r 1.00 → 0.75 (exit-geometry axis): direction Phase-A STOP, NO-BUILD, head stays v34 (2026-07-24) — plan 2026-07-24-001
+
+- **Verdict: STOP at the pre-flip Phase-A gate — no flip run, head stays v34**
+  (`20260724T014752Z-backtest-orb-v34`, catalog fingerprint `363f199d`, real-data RoR **0.0398**).
+  The diagnose CLI signalled it with typed **exit 11 (threshold-fail)** and wrote the STOP
+  `gate-verdict.json`; the NO-BUILD is a complete outcome of the turn, not a failure of it. The
+  lever would flip the ORB exit-geometry param `profit_target_r` `1.00 → 0.75` through the
+  governed `turn` command, grounded in `report mfe`'s give-back diagnosis on v34 (`stop_hit` 48 %
+  of exits, target-exits only 23 %, ~10 % of trades ever exceeding 1.0R; the report's own leg-2
+  reading `p70(mfe_r>0)=0.73 → 0.75`).
+- **The frozen gate is exit-geometry-specific — direction + materiality, no collinearity**
+  (`candidate.json`, freeze commit `8e925d3`; pre-register hash `6d705844`). `profit_target_r`
+  reallocates exit *timing*, not the risk budget, so the sizing dual-gate (collinearity vs
+  `risk_per_share`) is meaningless (KTD3); the screen keeps two STOP gates — the load-bearing
+  **direction** gate `ror_delta ≥ 0.00065` and the **materiality** gate `exit_change_frac ≥ 0.05`,
+  read off an MFE counterfactual (`r_new = 0.75 if mfe_r ≥ 0.75 else realized_r`) that is
+  conservative by construction (KTD2 — the marketable-limit fill books **at or above** 0.75R on a
+  gap-through, so the real flip RoR is ≥ this counterfactual). The `diagnostic.py` and the
+  independently-authored `twin.py` agreed **bit-for-bit** on every reading (n=119, all closed
+  trades joined an `mfe_r` exit envelope).
+- **The measurement** (v34 cohort, 119 closed trades, joined on `(symbol, KST session date)` per
+  `report_mfe`):
+
+  | reading | value | gate | result |
+  |---|---|---|---|
+  | `ror_base` (target 1.00) | 0.039806 | — | — |
+  | `ror_prime` (target 0.75) | 0.020336 | — | — |
+  | **`ror_delta` (signed)** | **−0.019471** | ≥ 0.00065 | **STOP** |
+  | `exit_change_frac` | 0.2773 (33/119) | ≥ 0.05 | PASS |
+
+  Materiality passes — lowering the target changes 28 % of trades' booked outcome — but the
+  **direction** gate STOPs: the counterfactual RoR *falls* by 0.0195, the wrong sign entirely.
+- **Why NO-BUILD (the crux).** The give-back cohort the report flagged is real, but lowering the
+  target to 0.75 **caps the winners more than it rescues the losers**: the ~10 % of trades that
+  ran past 0.75R (former target-exits and time-exits) get booked at +0.75R instead of their higher
+  realized R, and that lost upside outweighs the give-back trades the lower target now saves. Net
+  size-invariant RoR drops from 0.0398 to 0.0203. Because the counterfactual **under-states** the
+  flip's edge (KTD2), a STOP here is a *robust* signal the real v35 backtest would also fail —
+  cheap and honest. The report's `p70 → 0.75` reading is a **distribution statistic** (RUNNABLE
+  band membership), never an improvement — exactly the trap the direction gate exists to catch,
+  and the **turn-9 profit-target falsification** repeating on the real cohort.
+- **No override, no tuning-to-escape.** The reading is not marginal and not merely small — it is
+  **negative**, the opposite sign of the floor. There is no operator-override rationale, and
+  softening the pre-registered `0.00065` floor after seeing −0.0195 would be the forbidden overfit
+  (Definition of Done: no threshold softened after the reading). A `profit_target_r` *sweep* is out
+  of scope by the plan (a fit, not a governed single-flip).
+- **Registry state.** Head unchanged: **v34**. No `params.rs` / `orb.rs` edit → the head-identity
+  gate is untouched; the flip (U4's GO branch) does not execute. The frozen candidate package
+  (`candidate.json` + `diagnostic.py` + `twin.py` + `fixture_check.py`), the tool-written
+  `gate-verdict.json`, and the `exit-geometry`-family gate-reading ledger trial are committed
+  together. Offline throughout; no gateway.
+
 ## Turn — failed-break reversal entry stream (lever 8, new-alpha axis): dual-grammar Phase-A STOP, NO-BUILD, head stays v32 (2026-07-22) — plan 2026-07-22-001
 
 - **Verdict: STOP at the pre-code Phase-A gate — no strategy code written, no run; head stays
