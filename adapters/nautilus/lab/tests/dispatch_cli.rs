@@ -716,3 +716,76 @@ fn bin_bare_invocation_points_at_mount_not_u6() {
     assert!(stderr.contains("--mount"), "bare guidance names --mount: {stderr}");
     assert!(!stderr.contains("U6"), "the 'lands in U6' bail is gone: {stderr}");
 }
+
+// ---------------------------------------------------------------------------
+// Bin-level ladder + diagnostic CLI (U3, rung-1 readiness): --head / --escalate /
+// --reregister / --clear-killswitch. Nonce-gated arms refuse loudly with distinct exit
+// codes in a no-TTY shell; --head is read-only.
+// ---------------------------------------------------------------------------
+
+fn bin_lab_live(arg: &str, home: &std::path::Path, extra: &[(&str, &str)]) -> std::process::Output {
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_lab-live"));
+    cmd.arg(arg)
+        .env("LS_DATA_HOME", home)
+        .env("LS_DISPATCH_NOW_UNIX", weekday_ts().to_string())
+        .env_remove("LS_DISPATCH_NONCE")
+        .env_remove("LS_DISPATCH_REASON")
+        .env_remove("LS_DISPATCH_RUNG")
+        .env_remove("LS_CALENDAR_SNAPSHOT")
+        .env_remove("LS_CALENDAR_ADOPTION");
+    for (k, v) in extra {
+        cmd.env(k, v);
+    }
+    cmd.output().unwrap()
+}
+
+#[test]
+fn bin_head_prints_the_code_hash_and_is_read_only() {
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+    let before = std::fs::read_to_string(tmp.path().join("dispatch").join("chain.jsonl")).unwrap_or_default();
+    let out = bin_lab_live("--head", tmp.path(), &[]);
+    assert!(out.status.success(), "head is a read-only diagnostic (exit 0)");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("strategy_code_hash="), "{stdout}");
+    assert!(stdout.contains("d7a9820b"), "frames the check against the documented v34 head: {stdout}");
+    assert!(stdout.contains("NOT a v34 confirmation"), "the params-hash line is labeled version-invariant: {stdout}");
+    // Read-only: the chain is untouched.
+    let after = std::fs::read_to_string(tmp.path().join("dispatch").join("chain.jsonl")).unwrap_or_default();
+    assert_eq!(before, after, "--head appends nothing to the chain");
+}
+
+#[test]
+fn bin_escalate_refuses_in_no_tty_with_a_distinct_code() {
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+    let prereg = tmp.path().join("prereg.json");
+    std::fs::write(&prereg, br#"{"version":2,"rungs":[{"rung":1,"fraction":0.1,"n_clean_sessions":5,"expectation_band":{"min_cum_pnl":-148000.0,"max_cum_pnl":266000.0}}]}"#).unwrap();
+    // No-TTY + no nonce → the nonce gate refuses; distinct exit 78, nothing escalated.
+    let out = bin_lab_live("--escalate", tmp.path(), &[("LS_DISPATCH_PREREG", prereg.to_str().unwrap())]);
+    assert_eq!(out.status.code(), Some(78), "distinct escalate-refusal exit code");
+}
+
+#[test]
+fn bin_reregister_refuses_an_upward_jump_past_the_earned_rung() {
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path()); // genesis at rung 1 → earned rung = 1
+    // Target rung 3 > earned 1 → refused BEFORE the nonce gate, distinct exit 79.
+    let out = bin_lab_live(
+        "--reregister",
+        tmp.path(),
+        &[("LS_DISPATCH_RUNG", "3"), ("LS_DISPATCH_REASON", "attempted jump")],
+    );
+    assert_eq!(out.status.code(), Some(79), "distinct reregister-refusal exit code");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("exceeds the chain-earned rung"), "{stderr}");
+}
+
+#[test]
+fn bin_clear_killswitch_refuses_in_no_tty_with_a_distinct_code() {
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+    // No-TTY + no nonce → refused; distinct exit 80.
+    let out = bin_lab_live("--clear-killswitch", tmp.path(), &[("LS_DISPATCH_REASON", "re-arm after reconcile")]);
+    assert_eq!(out.status.code(), Some(80), "distinct clear-killswitch-refusal exit code");
+}

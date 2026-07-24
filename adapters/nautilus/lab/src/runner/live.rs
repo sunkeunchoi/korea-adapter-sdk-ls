@@ -192,6 +192,9 @@ pub fn clear_kill_switch(
     chain_rung: u8,
 ) -> anyhow::Result<()> {
     gate.authorize("kill-switch clear").map_err(|e| anyhow::anyhow!(e))?;
+    // Scrub the operator reason before it lands (KTD4 clear-reason capture) — clearing an
+    // auto-halt kill switch is the CLI's most safety-sensitive mutation and must leave an
+    // audited who/why record with no secret in it (mirrors `chain.reregister`'s reason scrub).
     chain.append(
         now,
         chain_rung,
@@ -201,7 +204,7 @@ pub fn clear_kill_switch(
             trip: SafetyTripKind::KillSwitch,
             action: TripAction::Clear,
             run_id: None,
-            detail: reason.to_string(),
+            detail: nautilus_ls::scrub::scrub_secrets(reason),
         }),
     )?;
     Ok(())
@@ -876,6 +879,10 @@ fn dispatch_main() -> anyhow::Result<ExitCode> {
             Ok(ExitCode::SUCCESS)
         }
         Some("--mount") => run_mount(),
+        Some("--head") => run_head_diagnostic(),
+        Some("--escalate") => run_escalate_cli(),
+        Some("--reregister") => run_reregister_cli(),
+        Some("--clear-killswitch") => run_clear_killswitch_cli(),
         _ => {
             nautilus_ls::calendar::emit_startup_from_env("lab-live");
             if std::env::var("LS_TRADING_ENV").as_deref() != Ok("paper") {
@@ -1368,6 +1375,168 @@ fn run_mount() -> anyhow::Result<ExitCode> {
     Ok(ExitCode::from(MOUNT_PREPARED_DEFERRED))
 }
 
+// ---------------------------------------------------------------------------
+// U3 (rung-1 readiness) — the ladder + diagnostic operator CLI (R2/R4; KTD4).
+// Thin argv arms over the already-tested library functions. `--head` is read-only (preflight);
+// `--escalate`/`--reregister`/`--clear-killswitch` are nonce-gated, each with a DISTINCT exit
+// code so a no-TTY shell never mistakes a refusal for a completed mutation.
+// ---------------------------------------------------------------------------
+
+const ESCALATE_REFUSED: u8 = 78;
+const REREGISTER_REFUSED: u8 = 79;
+const CLEAR_REFUSED: u8 = 80;
+
+/// The absolute data home (`LS_DATA_HOME`).
+fn env_data_home() -> anyhow::Result<PathBuf> {
+    Ok(std::env::var("LS_DATA_HOME")
+        .map_err(|_| anyhow::anyhow!("LS_DATA_HOME is required (absolute path)"))?
+        .into())
+}
+
+/// Wall-clock unix seconds (`LS_DISPATCH_NOW_UNIX`, else now).
+fn env_now_unix() -> i64 {
+    std::env::var("LS_DISPATCH_NOW_UNIX").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| Utc::now().timestamp())
+}
+
+/// The operator gate from the environment (nonce + no-TTY detection + clock). The bin can never
+/// suppress the no-TTY refusal — `detect_unattended_marker` is not env-overridable.
+fn operator_gate_from_env(now_unix: i64) -> OperatorGate {
+    OperatorGate {
+        unattended_marker: detect_unattended_marker(),
+        nonce: std::env::var("LS_DISPATCH_NONCE").ok().filter(|s| !s.trim().is_empty()),
+        now_unix,
+    }
+}
+
+/// `--head` (R2): print the running binary's head identity as verbatim fact lines. Read-only, no
+/// nonce, no chain append. `strategy_code_hash()` is the SOLE head discriminator — the operator
+/// confirms the binary embeds v34 by hash-equality against the documented `d7a9820b…`. The printed
+/// `governed_params_hash(&OrbParams::default())` is a version-invariant constant (identical across
+/// v9…v34, KTD7), so it does NOT confirm v34's governed values; it is labeled as such, never as a
+/// version readout (the binary carries no hash→version map).
+fn run_head_diagnostic() -> anyhow::Result<ExitCode> {
+    nautilus_ls::calendar::emit_startup_from_env("lab-live");
+    let code_hash = crate::artifacts::manifest::strategy_code_hash();
+    let params_hash = crate::dispatch::ladder::governed_params_hash(&OrbParams::default());
+    println!("head strategy_code_hash={code_hash}");
+    println!(
+        "head governed_params_hash(default)={params_hash} [version-invariant constant — NOT a v34 confirmation]"
+    );
+    println!(
+        "head-check: the binary embeds v34 IFF strategy_code_hash == the documented head d7a9820b… \
+         (the sole discriminator; the binary carries no hash→version map)"
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `--escalate` (R4): nonce-gated escalation over `run_escalation` — prints the appended
+/// escalation evidence or the blocking reason (AE5 of the ladder plan); a refusal/block is a
+/// distinct non-zero exit.
+fn run_escalate_cli() -> anyhow::Result<ExitCode> {
+    nautilus_ls::calendar::emit_startup_from_env("lab-live");
+    let data_home = env_data_home()?;
+    let now_unix = env_now_unix();
+    let now = Utc.timestamp_opt(now_unix, 0).single().unwrap_or_else(Utc::now);
+    let gate = operator_gate_from_env(now_unix);
+    let prereg_path = std::env::var("LS_DISPATCH_PREREG")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("--escalate refused: LS_DISPATCH_PREREG is required (N + the expectation band)"))?;
+    let prereg = crate::dispatch::prereg::load(Path::new(&prereg_path))?;
+    let chain = DispatchChain::open(&data_home)?;
+    match crate::dispatch::ladder::run_escalation(&chain, &data_home, &gate, &prereg.values, now) {
+        Ok(rec) => {
+            if let RecordKind::Escalation(e) = &rec.body.kind {
+                println!(
+                    "escalate: rung {} -> {} authorized; {} clean session(s) cited",
+                    e.from_rung,
+                    e.to_rung,
+                    e.evidence_run_ids.len()
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(e) => {
+            eprintln!("{}", nautilus_ls::scrub::scrub_secrets(&e.to_string()));
+            Ok(ExitCode::from(ESCALATE_REFUSED))
+        }
+    }
+}
+
+/// `--reregister` (R4): nonce-gated re-registration over `run_reregistration`, bounded to rung-0
+/// requalification or current-epoch repair — an out-of-bound `set_rung` ABOVE the chain-earned
+/// rung is refused (an upward jump would bypass the earned-escalation gate, R15). The reason
+/// (`LS_DISPATCH_REASON`) is scrubbed before it lands (also inside `chain.reregister`).
+fn run_reregister_cli() -> anyhow::Result<ExitCode> {
+    nautilus_ls::calendar::emit_startup_from_env("lab-live");
+    let data_home = env_data_home()?;
+    let now_unix = env_now_unix();
+    let now = Utc.timestamp_opt(now_unix, 0).single().unwrap_or_else(Utc::now);
+    let gate = operator_gate_from_env(now_unix);
+    let set_rung: u8 = std::env::var("LS_DISPATCH_RUNG")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .ok_or_else(|| anyhow::anyhow!(
+            "--reregister refused: LS_DISPATCH_RUNG is required (target: 0 to suspend/requalify, or \
+             ≤ the chain-earned rung to repair)"
+        ))?;
+    let raw_reason = std::env::var("LS_DISPATCH_REASON").unwrap_or_default();
+    if raw_reason.trim().is_empty() {
+        anyhow::bail!("--reregister refused: LS_DISPATCH_REASON is required (the audited who/why)");
+    }
+    let reason = nautilus_ls::scrub::scrub_secrets(&raw_reason);
+    let chain = DispatchChain::open(&data_home)?;
+    let state = chain.load();
+    // The chain-earned rung: the highest rung the chain has legitimately authorized (genesis +
+    // escalations). A re-registration may requalify to rung 0 or repair to ≤ earned; never above.
+    let earned = state.records.iter().map(|r| r.body.chain_rung).max().unwrap_or(0);
+    if set_rung > earned {
+        eprintln!(
+            "--reregister refused: target rung {set_rung} exceeds the chain-earned rung {earned} — a \
+             re-registration may only requalify to rung 0 or repair the current epoch (≤ earned); an \
+             upward jump would bypass the earned-escalation gate (R15)"
+        );
+        return Ok(ExitCode::from(REREGISTER_REFUSED));
+    }
+    match crate::dispatch::ladder::run_reregistration(&chain, &gate, set_rung, &reason, state.last_prereg_hash.clone(), now) {
+        Ok(_rec) => {
+            println!("reregister: chain set to rung {set_rung} (reason recorded, scrubbed)");
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(e) => {
+            eprintln!("{}", nautilus_ls::scrub::scrub_secrets(&e.to_string()));
+            Ok(ExitCode::from(REREGISTER_REFUSED))
+        }
+    }
+}
+
+/// `--clear-killswitch` (R4): nonce + attendance gated clear of a persisted kill-switch trip over
+/// `clear_kill_switch`, capturing a scrubbed operator reason (`LS_DISPATCH_REASON`) — re-arming
+/// trading after an auto-halt must leave an audited who/why.
+fn run_clear_killswitch_cli() -> anyhow::Result<ExitCode> {
+    nautilus_ls::calendar::emit_startup_from_env("lab-live");
+    let data_home = env_data_home()?;
+    let now_unix = env_now_unix();
+    let now = Utc.timestamp_opt(now_unix, 0).single().unwrap_or_else(Utc::now);
+    let gate = operator_gate_from_env(now_unix);
+    let raw_reason = std::env::var("LS_DISPATCH_REASON").unwrap_or_default();
+    if raw_reason.trim().is_empty() {
+        anyhow::bail!("--clear-killswitch refused: LS_DISPATCH_REASON is required (the audited who/why for re-arming trading)");
+    }
+    let chain = DispatchChain::open(&data_home)?;
+    let chain_rung = chain.load().authorized_rung;
+    match clear_kill_switch(&chain, &gate, &raw_reason, now, chain_rung) {
+        Ok(()) => {
+            println!("clear-killswitch: persisted kill-switch trip cleared at rung {chain_rung} (reason recorded, scrubbed)");
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(e) => {
+            eprintln!("{}", nautilus_ls::scrub::scrub_secrets(&e.to_string()));
+            Ok(ExitCode::from(CLEAR_REFUSED))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1528,6 +1697,21 @@ mod tests {
         assert_eq!(state.records.len(), before + 1);
         assert!(state.records.iter().any(|r| matches!(&r.body.kind,
             RecordKind::SafetyTrip(t) if t.trip == SafetyTripKind::KillSwitch && t.action == TripAction::Clear)));
+    }
+
+    #[test]
+    fn kill_switch_clear_scrubs_the_reason(){
+        // KTD4 clear-reason capture: a planted secret in the reason never lands in the chain.
+        use crate::dispatch::chain::{DispatchChain, RecordKind};
+        use crate::dispatch::nonce::OperatorGate;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let chain = DispatchChain::open(tmp.path()).unwrap();
+        let now = Utc.timestamp_opt(1_752_600_000, 0).unwrap();
+        chain.append(now, 1, 1, None, RecordKind::Genesis).unwrap();
+        let attended = OperatorGate { unattended_marker: None, nonce: Some("1752600000".into()), now_unix: 1_752_600_000 };
+        clear_kill_switch(&chain, &attended, "cleared after reconcile on acct 20187511401", now, 1).unwrap();
+        let bytes = std::fs::read_to_string(chain.chain_path()).unwrap();
+        assert!(!bytes.contains("20187511401"), "the kill-switch clear reason is scrubbed: {bytes}");
     }
 
     // -----------------------------------------------------------------------
