@@ -184,7 +184,7 @@ fn rung_report_is_read_only_the_chain_and_registry_bytes_are_unchanged() {
         stage_live_run(tmp.path(), &format!("20260724T{h}0000Z-live-orb-v34"), 1, &d, 500.0, &head, 0);
     }
     let before = snapshot_tree(tmp.path());
-    let _report = build_rung_report(tmp.path(), &chain.load().records, 1, &v34_prereg(3));
+    let _report = build_rung_report(tmp.path(), &chain.load().records, 1, &v34_prereg(3), None);
     let after = snapshot_tree(tmp.path());
     assert_eq!(before, after, "--rung-report appends nothing — the chain + registry bytes are unchanged");
 }
@@ -198,7 +198,7 @@ fn three_clean_v34_sessions_report_n_progress_and_cumulative_pnl() {
         let d = green_dispatch(&chain, 1);
         stage_live_run(tmp.path(), &format!("20260724T{h}0000Z-live-orb-v34"), 1, &d, 500.0 * (i as f64 + 1.0), &head, 0);
     }
-    let report = build_rung_report(tmp.path(), &chain.load().records, 1, &v34_prereg(3));
+    let report = build_rung_report(tmp.path(), &chain.load().records, 1, &v34_prereg(3), None);
     assert_eq!(report.clean.len(), 3, "3 clean rung-1 sessions");
     assert_eq!(report.n_required, 3);
     assert_eq!(report.cum_pnl, 500.0 + 1000.0 + 1500.0, "cumulative clean P&L");
@@ -218,7 +218,7 @@ fn a_limit_event_session_is_classified_and_excluded_from_the_clean_count() {
     stage_live_run(tmp.path(), "20260724T010000Z-live-orb-v34", 1, &d1, 500.0, &head, 0); // clean
     let d2 = green_dispatch(&chain, 1);
     stage_live_run(tmp.path(), "20260724T020000Z-live-orb-v34", 1, &d2, 500.0, &head, 1); // dedup hit → limit event
-    let report = build_rung_report(tmp.path(), &chain.load().records, 1, &v34_prereg(3));
+    let report = build_rung_report(tmp.path(), &chain.load().records, 1, &v34_prereg(3), None);
     assert_eq!(report.clean.len(), 1, "only the clean session counts");
     assert_eq!(report.limit_event.len(), 1, "the dedup-hit session is a limit event");
     assert_eq!(report.cum_pnl, 500.0, "the limit-event session's P&L is excluded from the clean cum");
@@ -232,7 +232,7 @@ fn cumulative_pnl_below_the_v34_floor_reads_outside_band() {
     // One clean session with a P&L below the v34 floor (a normal-variance bad streak).
     let d = green_dispatch(&chain, 1);
     stage_live_run(tmp.path(), "20260724T010000Z-live-orb-v34", 1, &d, -200_000.0, &head, 0);
-    let report = build_rung_report(tmp.path(), &chain.load().records, 1, &v34_prereg(3));
+    let report = build_rung_report(tmp.path(), &chain.load().records, 1, &v34_prereg(3), None);
     assert!(!report.in_band, "-200,000 is below the v34 floor -148,000");
     assert_eq!(report.band.0, -148_000.0, "judged against the v34 band, not v30's -69,000");
 }
@@ -245,7 +245,7 @@ fn interleaved_backtests_are_excluded_from_the_trailing_window() {
     stage_backtest_run(tmp.path(), "20260724T000000Z-backtest-orb-v34", &head);
     let d = green_dispatch(&chain, 1);
     stage_live_run(tmp.path(), "20260724T010000Z-live-orb-v34", 1, &d, 500.0, &head, 0);
-    let report = build_rung_report(tmp.path(), &chain.load().records, 1, &v34_prereg(3));
+    let report = build_rung_report(tmp.path(), &chain.load().records, 1, &v34_prereg(3), None);
     assert_eq!(report.clean.len(), 1, "only the live-lane session is in scope");
     assert!(report.limit_event.is_empty());
     assert!(report.head_mismatched.is_empty(), "the backtest is excluded, not head-mismatched");
@@ -262,7 +262,7 @@ fn a_session_under_a_different_head_is_head_mismatched_not_counted() {
     stage_live_run(tmp.path(), "20260724T010000Z-live-orb-v34", 1, &d, 500.0, &other, 0);
     // With the head = the same `other` params (the data home's only finalized run), it matches;
     // so force a head mismatch by pointing the report at a home whose head is the default.
-    let report = build_rung_report(tmp.path(), &chain.load().records, 1, &v34_prereg(3));
+    let report = build_rung_report(tmp.path(), &chain.load().records, 1, &v34_prereg(3), None);
     // The head is resolved from the latest finalized run (this `other` session), so it MATCHES —
     // demonstrating the report keys on the data home's head. Now stage a genuinely different head.
     assert_eq!(report.clean.len(), 1, "keyed on the data home's own head, the session is clean");
@@ -273,7 +273,7 @@ fn a_session_under_a_different_head_is_head_mismatched_not_counted() {
     stage_backtest_run(tmp2.path(), "20260724T090000Z-backtest-orb-v34", &v34_head_params()); // head = v34
     let d2 = green_dispatch(&chain2, 1);
     stage_live_run(tmp2.path(), "20260724T010000Z-live-orb-v34", 1, &d2, 500.0, &OrbParams::default(), 0); // stale head
-    let report2 = build_rung_report(tmp2.path(), &chain2.load().records, 1, &v34_prereg(3));
+    let report2 = build_rung_report(tmp2.path(), &chain2.load().records, 1, &v34_prereg(3), None);
     assert_eq!(report2.head_mismatched.len(), 1, "the stale-head session is shown head-mismatched");
     assert!(report2.clean.is_empty(), "a head-mismatched session is never silently counted");
 }

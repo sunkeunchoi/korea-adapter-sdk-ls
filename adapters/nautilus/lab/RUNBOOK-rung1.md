@@ -31,6 +31,8 @@ export LS_TRADING_ENV=paper
 export LS_LANE=domestic                                   # → .env.domestic
 export LS_DATA_HOME=/ABSOLUTE/path/to/data-home           # chain, registry, catalog live here
 export LS_DISPATCH_PREREG="$PWD/config/preregistration.json"
+export LS_TURN_EXPECT_VERSION=34                          # head-version pin: keys the head params
+                                                          #   robustly to v34 (mount/escalate/report)
 ```
 
 ## 2. One-time: register the chain (genesis → rung 1)

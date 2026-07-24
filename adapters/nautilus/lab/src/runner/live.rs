@@ -1267,7 +1267,13 @@ pub fn parse_mount_universe(bytes: &[u8]) -> anyhow::Result<Vec<SelectedSymbol>>
 ///
 /// If the resolved head params size to zero.
 pub fn resolve_mount_head_params(data_home: &Path) -> anyhow::Result<OrbParams> {
-    let params = crate::dispatch::ladder::head_governed_params(data_home);
+    // Pin the head to the expected version (LS_TURN_EXPECT_VERSION) when set, so the mount sizes
+    // from the exact certified head even when older-version same-code runs share the data home;
+    // a missing pinned head collapses to default() and is caught by the zero-size guard below.
+    let params = crate::dispatch::ladder::head_governed_params_pinned(
+        data_home,
+        crate::dispatch::ladder::head_version_pin(),
+    );
     if params.risk_per_trade_krw <= 0.0 {
         anyhow::bail!(
             "mount refused: the resolved head governed params size to ZERO (risk_per_trade_krw={:.0}) \
@@ -1445,7 +1451,8 @@ fn run_escalate_cli() -> anyhow::Result<ExitCode> {
         .ok_or_else(|| anyhow::anyhow!("--escalate refused: LS_DISPATCH_PREREG is required (N + the expectation band)"))?;
     let prereg = crate::dispatch::prereg::load(Path::new(&prereg_path))?;
     let chain = DispatchChain::open(&data_home)?;
-    match crate::dispatch::ladder::run_escalation(&chain, &data_home, &gate, &prereg.values, now) {
+    let expected_version = crate::dispatch::ladder::head_version_pin();
+    match crate::dispatch::ladder::run_escalation(&chain, &data_home, &gate, &prereg.values, expected_version, now) {
         Ok(rec) => {
             if let RecordKind::Escalation(e) = &rec.body.kind {
                 println!(
@@ -1557,7 +1564,9 @@ fn run_rung_report() -> anyhow::Result<ExitCode> {
     let chain = DispatchChain::open(&data_home)?;
     let state = chain.load();
     let from_rung = state.authorized_rung.max(1);
-    let report = crate::dispatch::ladder::build_rung_report(&data_home, &state.records, from_rung, &prereg.values);
+    let expected_version = crate::dispatch::ladder::head_version_pin();
+    let report =
+        crate::dispatch::ladder::build_rung_report(&data_home, &state.records, from_rung, &prereg.values, expected_version);
 
     // The head hash the report evaluated under (KTD6) — a stale-binary reading is self-evident.
     println!(

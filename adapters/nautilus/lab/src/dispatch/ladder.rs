@@ -65,22 +65,41 @@ pub fn governed_params_hash(params: &OrbParams) -> String {
 /// skipped (it falls through to the next code-matching run) rather than collapsing the head to
 /// `default()`.
 ///
-/// **Residual (documented, not fully closed here).** For a PARAMS-ONLY governed head change (same
-/// `strategy_code_hash`), the key is the newest *same-code* run's params, so a later-dated
-/// OLD-params run in the same data home could revert it — the params half is data-derived, not
-/// binary-pinned, so on its own it does not robustly enforce the R13 params-change -> re-run-N
-/// rule. Robustly pinning that needs an explicit head-version pin (`LS_TURN_EXPECT_VERSION`-style)
-/// threaded through escalation — ladder-plan scope. In the rung-1 production data home (only the
-/// v34 head backtest + its same-code live sessions) this revert vector does not arise.
+/// **Params-only revert, closed by the head-version pin.** For a PARAMS-ONLY governed head change
+/// the code hash is unchanged but the `strategy_version` bumps (governed turns increment it), so
+/// keying on the newest *same-code* run alone was revertible by a later-dated OLD-version run.
+/// [`head_version_pin`] (`LS_TURN_EXPECT_VERSION`) closes that: when set, the head is pinned to the
+/// run whose `strategy_version` also equals the expected head, so an older-version run can never
+/// shift the key. Set it in the rung-1 operator env (see `head_governed_params_pinned`).
 pub fn head_governed_params(data_home: &Path) -> OrbParams {
+    head_governed_params_pinned(data_home, None)
+}
+
+/// As [`head_governed_params`], but when `expected_version` is `Some(v)` the head is pinned to the
+/// newest finalized run whose `strategy_code_hash` matches the running binary **and** whose
+/// `strategy_version == v` — the robust head identity: an older-version same-code run (different
+/// params) can no longer revert the key. `None` keeps the code-pinned newest-run behavior (for a
+/// fresh data home / fixtures). When a pin is set but no run matches it, the head falls back to
+/// `default()` (fail-closed: escalation blocks, the mount's zero-size guard refuses) so a missing
+/// pinned head can never silently key on the wrong run.
+pub fn head_governed_params_pinned(data_home: &Path, expected_version: Option<u32>) -> OrbParams {
     let code_hash = crate::artifacts::manifest::strategy_code_hash();
     list_runs(data_home)
         .into_iter()
         .filter_map(|rid| read_manifest(data_home, &rid).ok().map(|m| (rid, m)))
         .filter(|(_rid, m)| m.strategy_code_hash == code_hash)
+        .filter(|(_rid, m)| expected_version.map_or(true, |v| m.strategy_version == v))
         .max_by(|(a, _), (b, _)| a.cmp(b))
         .map(|(_rid, m)| m.params)
         .unwrap_or_default()
+}
+
+/// The ladder head-version pin (`LS_TURN_EXPECT_VERSION`) — the expected head `strategy_version`
+/// the mount / escalation / report key the head params on, robustly identifying the head run even
+/// when older-version same-code runs share the data home. `None` when unset (falls back to the
+/// code-pinned newest run). The rung-1 operator sets `LS_TURN_EXPECT_VERSION=34`.
+pub fn head_version_pin() -> Option<u32> {
+    std::env::var("LS_TURN_EXPECT_VERSION").ok().and_then(|v| v.trim().parse().ok())
 }
 
 /// One limit event (R14) attributed to a session (by run id). Kept as typed strings so the
@@ -431,6 +450,7 @@ pub fn run_escalation(
     data_home: &Path,
     gate: &OperatorGate,
     prereg: &PreRegistration,
+    expected_version: Option<u32>,
     now: DateTime<Utc>,
 ) -> anyhow::Result<ChainRecord> {
     gate.authorize("rung escalation").map_err(|e| anyhow::anyhow!(e))?;
@@ -440,8 +460,9 @@ pub fn run_escalation(
     // KTD7 (option a): key the head params-hash on the ACTUAL head governed params (the data
     // home's certified head — the same source `run_mount` sizes from), not `OrbParams::default()`.
     // A real v34 session then matches like-for-like; a fresh/fixture data home falls back to
-    // `default()`, unchanged. Preserves the params-change → re-run-N rule (R13).
-    let params_hash = governed_params_hash(&head_governed_params(data_home));
+    // `default()`, unchanged. `expected_version` (the caller's `LS_TURN_EXPECT_VERSION` pin)
+    // robustly fixes the head so an older-version same-code run cannot revert the params key (R13).
+    let params_hash = governed_params_hash(&head_governed_params_pinned(data_home, expected_version));
     match verify_escalation(data_home, &state.records, from_rung, &code_hash, &params_hash, prereg) {
         EscalationCheck::Ready { to_rung, evidence } => {
             let rec = chain.append(
@@ -515,13 +536,16 @@ pub struct RungReport {
 }
 
 /// Build the read-only [`RungReport`] for `from_rung` (U4, KTD6). Reads only; appends nothing.
+/// `expected_version` is the caller's `LS_TURN_EXPECT_VERSION` head pin (`None` = code-pinned
+/// newest run); it fixes which run's params the report keys clean-session matching on.
 pub fn build_rung_report(
     data_home: &Path,
     chain_records: &[ChainRecord],
     from_rung: u8,
     prereg: &PreRegistration,
+    expected_version: Option<u32>,
 ) -> RungReport {
-    let head_params = head_governed_params(data_home);
+    let head_params = head_governed_params_pinned(data_home, expected_version);
     let code_hash = crate::artifacts::manifest::strategy_code_hash();
     let params_hash = governed_params_hash(&head_params);
 
@@ -754,6 +778,30 @@ mod tests {
     }
 
     #[test]
+    fn head_version_pin_selects_the_pinned_version_not_the_newest() {
+        // Closes the params-only-same-code revert: two same-CODE runs, an older-dated v34 head and
+        // a LATER-dated v30 old-params run. Unpinned, the newest (v30) wins — the revert vector.
+        // Pinned to 34, the v34 head wins regardless of date; an absent pin fails closed to default.
+        let tmp = TempDir::new().unwrap();
+        let chain = DispatchChain::open(tmp.path()).unwrap();
+        chain.append(now(), 1, 1, None, RecordKind::Genesis).unwrap();
+        let d1 = dispatch_record(&chain, 1, 1);
+        stage_clean_run_params(tmp.path(), "20260724T010000Z-backtest-orb-v34", 1, &d1, 0.0, v34_head_params());
+        let v30 = OrbParams { strategy_version: 30, risk_per_trade_krw: 111_111.0, ..OrbParams::default() };
+        let d2 = dispatch_record(&chain, 1, 1);
+        stage_clean_run_params(tmp.path(), "20260724T090000Z-backtest-orb-v30", 1, &d2, 0.0, v30);
+        assert_eq!(head_governed_params_pinned(tmp.path(), None).strategy_version, 30, "unpinned: newest wins");
+        let pinned = head_governed_params_pinned(tmp.path(), Some(34));
+        assert_eq!(pinned.strategy_version, 34, "pinned to 34: the head wins despite the later v30 run");
+        assert_eq!(pinned.risk_per_trade_krw, 299_340.0);
+        assert_eq!(
+            head_governed_params_pinned(tmp.path(), Some(99)),
+            OrbParams::default(),
+            "an absent pinned version fails closed to default()"
+        );
+    }
+
+    #[test]
     fn ktd7_a_real_v34_session_miskeys_against_default_but_matches_the_head() {
         // The shipped bug: a real v34 session (sized levers) mis-keys against
         // `governed_params_hash(&OrbParams::default())`; option (a) keys on the actual head so it
@@ -789,7 +837,7 @@ mod tests {
             let d = dispatch_record(&chain, 1, 1);
             stage_clean_run_params(tmp.path(), &format!("20260716T{h}0000Z-live-orb-v34"), 1, &d, 500.0, v34_head_params());
         }
-        let rec = run_escalation(&chain, tmp.path(), &attended(1_752_600_000), &rung1_prereg(), now()).unwrap();
+        let rec = run_escalation(&chain, tmp.path(), &attended(1_752_600_000), &rung1_prereg(), None, now()).unwrap();
         match rec.body.kind {
             RecordKind::Escalation(e) => {
                 assert_eq!(e.from_rung, 1);
@@ -1045,7 +1093,7 @@ mod tests {
             let d = dispatch_record(&chain, 1, 1);
             stage_clean_run(tmp.path(), &format!("20260716T{h}0000Z-live-orb-v30"), 1, &d, 500.0);
         }
-        run_escalation(&chain, tmp.path(), &attended(1_752_600_000), &pre, now()).unwrap();
+        run_escalation(&chain, tmp.path(), &attended(1_752_600_000), &pre, None, now()).unwrap();
         assert_eq!(chain.load().authorized_rung, 2, "escalated to rung 2");
 
         // A limit event at rung 2 de-escalates to rung 1.

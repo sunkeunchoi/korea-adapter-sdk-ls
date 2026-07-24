@@ -71,8 +71,9 @@ watchdog/breaker discipline: [`RUNBOOK-rung1.md`](RUNBOOK-rung1.md).
 ## Head identity (KTD7) — how "clean" is keyed
 
 Clean-session matching and escalation key the head params-hash on the **actual head governed
-params** (the data home's latest finalized run — the v34 backtest), not the all-levers-off
-`default()`. So a real v34 session (sized from risk 299,340 / entry_confirm 1.0 / or_width_max_atr
+params** — the newest finalized run whose `strategy_code_hash` matches the running binary, pinned
+to `strategy_version == LS_TURN_EXPECT_VERSION` (set `LS_TURN_EXPECT_VERSION=34`) so an older-version
+same-code run in the data home can never revert the key — not the all-levers-off `default()`. So a real v34 session (sized from risk 299,340 / entry_confirm 1.0 / or_width_max_atr
 0.666 / breakeven_trigger_r 0.41 / gap_retention 0.5) matches the head like-for-like and counts as
 clean; a governed-param change flips the head and re-runs N. `--mount` sizes from that same head
 source (and refuses a zero-size default head), and both `--head` and `--rung-report` print the head
