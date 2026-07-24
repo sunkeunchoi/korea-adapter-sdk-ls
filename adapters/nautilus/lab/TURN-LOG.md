@@ -4,6 +4,47 @@ Committed record of each loop turn's verdict + the bar conditions it held. The
 full artifacts (`analysis.md`, manifests, performance) live in the gitignored data
 home; this file is the durable, reviewable outcome trail.
 
+## Head lineage (STANDING) — post-#118 real-data head = v34; pin `LS_TURN_EXPECT_VERSION=34` (2026-07-24)
+
+Canonical answer to "which of the two 2026-07-24 runs is THE head?", resolving the
+`v33` vs `v34` ambiguity in one place (deferred item #2 from plan `2026-07-24-001`;
+the "pin EXPECT_VERSION" operator TODO from #118). This is a documentation +
+version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
+*identity* unchanged**.
+
+- **THE documented real-data head = `v34`** (`20260724T014752Z-backtest-orb-v34`,
+  catalog fingerprint `363f199d`, 119 closed trades, size-invariant real-data
+  RoR **0.0398**). It is what the profit-target-075 turn already anchored its KEEP
+  baseline on (KTD5 of plan `2026-07-24-001`).
+- **`v33` is the #118 tier-power GATE reference, NOT the head**
+  (`20260724T014624Z-backtest-orb-v33`, 259 closed trades, VERDICT 🟢 GREEN — ≥30
+  trades in ≥2 tiers). It answers "does the universe engine yield enough trades per
+  tier?", not "what is the head strategy's real-data return."
+- **Why the trade counts differ (the confusion this closes): the two runs do NOT
+  share params.** They share only the *ingested catalog* (fp `363f199d`). The #118
+  gate adopted **v9** params (`LS_BT_PARAMS_FROM_RUN=…-backtest-orb-v9
+  LS_BT_VERSION=33` — the metadata-driven count identity) while the twin adopted the
+  **v32 head** params (`…-backtest-orb-v32 LS_BT_VERSION=34`). v9 is less selective
+  (259 trades); the v32 head is more selective (119 trades). So `v34` is the faithful
+  real-data measurement of the *actual head strategy* (v32 params on real bars) —
+  which is exactly why it, not `v33`, is the head anchor. (Note: `v32`
+  `20260717T094841Z-backtest-orb-v32`, RoR 0.1876, remains the head *identity* in
+  old-data terms; `v34` is that identity re-measured on real data.)
+- **Machine constraint that makes v34 both correct and cheap.**
+  `latest_finalized_run()` (`src/runner/research.rs:105`) returns the newest run by
+  `run_order_key` = **v34** and cannot return `v33` without a *new* finalized run
+  (out of this task's scope — that would be a data/breadth turn, not a doc decision).
+  Per the count-run warning at `src/runner/backtest.rs:944-964`, an adopted-params
+  count run finalizes under a distinct version and "finalizes as the LATEST run (vN)
+  — pin `LS_TURN_EXPECT_VERSION` on the next turn accordingly." Here the *twin* (v34)
+  is latest-finalized, so the pin must name it explicitly.
+- **PIN for the next governed turn: `LS_TURN_EXPECT_VERSION=34`.** The turn's seed
+  assertion (`src/runner/research.rs:1910`) will stop hard on a mismatch rather than
+  silently resolving its baseline from whichever run is newest by accident. KEEP/REVERT
+  comparisons are unaffected by v34's #118 "RED" *power*-label — a KEEP is a relative
+  comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
+  counts (KTD5).
+
 ## Turn — profit_target_r 1.00 → 0.75 (exit-geometry axis): direction Phase-A STOP, NO-BUILD, head stays v34 (2026-07-24) — plan 2026-07-24-001
 
 - **Verdict: STOP at the pre-flip Phase-A gate — no flip run, head stays v34**
