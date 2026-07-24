@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "slug": "profit-target-075",
+  "family": "exit-geometry",
+  "phase_a": "bespoke",
+  "flip_param": "profit_target_r",
+  "flip_value": 0.75,
+  "diagnostic": {
+    "argv": ["uv", "run", "--with", "pyarrow", "python3", "diagnostic.py"],
+    "file": "diagnostic.py",
+    "content_hash": "ff4036df84e7e7430686e378001c035f2bfca25067ab61a7b63c79b5944f0afe"
+  },
+  "twin": {
+    "argv": ["uv", "run", "--with", "pyarrow", "python3", "twin.py"],
+    "file": "twin.py",
+    "content_hash": "557d925750f70b3e05253e1b2e26efe6a794da6b365db1d4b132925dac2d697b"
+  },
+  "readings": {
+    "ror_base": { "tolerance": 0.0005, "precision": 6 },
+    "ror_prime": { "tolerance": 0.0005, "precision": 6 },
+    "ror_delta": { "tolerance": 0.0005, "precision": 6 },
+    "exit_change_frac": { "tolerance": 0.02, "precision": 4 }
+  },
+  "thresholds": [
+    { "reading": "ror_delta", "comparator": "ge", "value": 0.00065 },
+    { "reading": "exit_change_frac", "comparator": "ge", "value": 0.05 }
+  ],
+  "keep_anchor": "size-invariant return-on-risk strictly beats real-data v34 (0.0398) with risk-cap dominance <= 0.40"
+}
