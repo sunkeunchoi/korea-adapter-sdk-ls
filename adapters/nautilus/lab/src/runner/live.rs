@@ -192,6 +192,9 @@ pub fn clear_kill_switch(
     chain_rung: u8,
 ) -> anyhow::Result<()> {
     gate.authorize("kill-switch clear").map_err(|e| anyhow::anyhow!(e))?;
+    // Scrub the operator reason before it lands (KTD4 clear-reason capture) — clearing an
+    // auto-halt kill switch is the CLI's most safety-sensitive mutation and must leave an
+    // audited who/why record with no secret in it (mirrors `chain.reregister`'s reason scrub).
     chain.append(
         now,
         chain_rung,
@@ -201,7 +204,7 @@ pub fn clear_kill_switch(
             trip: SafetyTripKind::KillSwitch,
             action: TripAction::Clear,
             run_id: None,
-            detail: reason.to_string(),
+            detail: nautilus_ls::scrub::scrub_secrets(reason),
         }),
     )?;
     Ok(())
@@ -875,6 +878,12 @@ fn dispatch_main() -> anyhow::Result<ExitCode> {
             }
             Ok(ExitCode::SUCCESS)
         }
+        Some("--mount") => run_mount(),
+        Some("--head") => run_head_diagnostic(),
+        Some("--escalate") => run_escalate_cli(),
+        Some("--reregister") => run_reregister_cli(),
+        Some("--clear-killswitch") => run_clear_killswitch_cli(),
+        Some("--rung-report") => run_rung_report(),
         _ => {
             nautilus_ls::calendar::emit_startup_from_env("lab-live");
             if std::env::var("LS_TRADING_ENV").as_deref() != Ok("paper") {
@@ -882,8 +891,8 @@ fn dispatch_main() -> anyhow::Result<ExitCode> {
             }
             anyhow::bail!(
                 "lab-live: run `lab-live --dispatch` for the pre-flight gate (`--genesis` to \
-                 register the chain). The mounted LiveNode session lands in U6 — see \
-                 adapters/nautilus/lab/README.md"
+                 register the chain, `--mount` to prepare a rung-1 live session) — see \
+                 adapters/nautilus/lab/RUNG1-PREFLIGHT.md"
             )
         }
     }
@@ -1156,6 +1165,444 @@ pub fn resolve_lane_hash(lane_env_path: &Path) -> anyhow::Result<String> {
     Ok(SpendLedger::hash_appkey(&resolved.appkey))
 }
 
+// ---------------------------------------------------------------------------
+// U2 (rung-1 readiness) — the `lab-live --mount` operator command (R3; KTD4/KTD5/KTD7).
+//
+// Wires the shipped mount machinery (authorize_mount / build_live_session_node) into a
+// reachable CLI, sizing the live strategy at the pre-registered rung fraction from v34's REAL
+// governed params. The attended live-session DRIVER (node.run -> fail-closed teardown ->
+// finalize) is DEFERRED: no live `LiveSession` adapter (real resting-order cancel / t0425
+// flatness / kill-switch halt) is shipped, and authoring one is safety-critical runtime logic
+// beyond this plan's wiring scope (the plan's teardown-sequence stop condition). So `--mount`
+// resolves every input, BUILDS the node at the real v34 rung-fraction size (proving
+// mountability), does a READ-ONLY mountability check, and stops at the driver seam WITHOUT
+// consuming the green dispatch — never leaving a consumed-but-unrun dispatch in the chain.
+// ---------------------------------------------------------------------------
+
+use serde::Deserialize;
+
+use nautilus_ls::ingest::BarKind;
+use nautilus_model::identifiers::InstrumentId;
+
+use crate::strategy::orb::SessionGapPrices;
+
+/// Distinct `--mount` exit codes — never `0`, so a no-TTY shell never mistakes a prepared-but-
+/// unrun mount for a completed session (the "never look-like-ran" discipline).
+const MOUNT_NOT_PAPER: u8 = 66; // the paper interlock refused (env != paper)
+const MOUNT_REFUSED_ATTEND: u8 = 77; // no fresh nonce / no-TTY / no mountable dispatch
+const MOUNT_PREPARED_DEFERRED: u8 = 70; // node built + mountable; the live driver is deferred
+
+/// One symbol of the resolved live-mount universe. The operator materializes the dispatch
+/// lane's daily/t8407 read into `LS_MOUNT_UNIVERSE_FILE` (a JSON array of these); `SelectedSymbol`
+/// itself is not deserializable (it carries nautilus `InstrumentId`/`BarType`). Distinct from the
+/// offline test path, which builds `SelectedSymbol`s directly.
+#[derive(Debug, Clone, Deserialize)]
+struct MountUniverseSymbol {
+    /// The 6-digit KRX short code (e.g. `005930`); mapped to `{shcode}.XKRX`.
+    shcode: String,
+    /// Canonical integer prior-close and today-open defining this symbol-session's opening gap.
+    prior_close: i64,
+    today_open: i64,
+    #[serde(default)]
+    prior_atr: Option<f64>,
+    #[serde(default)]
+    prior_open_vol_mean: Option<f64>,
+    #[serde(default)]
+    prior_illiq: Option<f64>,
+}
+
+impl MountUniverseSymbol {
+    fn into_selected(self) -> anyhow::Result<SelectedSymbol> {
+        let id = InstrumentId::from(format!("{}.XKRX", self.shcode).as_str());
+        Ok(SelectedSymbol {
+            instrument_id: id,
+            bar_type: BarKind::Minute(1)
+                .bar_type(id)
+                .map_err(|e| anyhow::anyhow!("bar type for {}: {e}", self.shcode))?,
+            gap_prices: SessionGapPrices::new(self.prior_close, self.today_open),
+            prior_atr: self.prior_atr,
+            prior_open_vol_mean: self.prior_open_vol_mean,
+            prior_illiq: self.prior_illiq,
+        })
+    }
+}
+
+/// Resolve the live-mount universe from `LS_MOUNT_UNIVERSE_FILE` (fail-closed if absent/empty).
+///
+/// # Errors
+///
+/// If the env var is unset, the file is unreadable/malformed, or the universe is empty.
+pub fn resolve_mount_universe() -> anyhow::Result<Vec<SelectedSymbol>> {
+    let path = std::env::var("LS_MOUNT_UNIVERSE_FILE").map_err(|_| {
+        anyhow::anyhow!(
+            "mount refused: LS_MOUNT_UNIVERSE_FILE is required — the resolved daily/t8407 universe \
+             (a JSON array of {{shcode, prior_close, today_open, prior_atr?, …}}) the live session trades"
+        )
+    })?;
+    let bytes = std::fs::read(&path).map_err(|e| anyhow::anyhow!("reading mount universe {path}: {e}"))?;
+    parse_mount_universe(&bytes)
+}
+
+/// Parse a mount-universe JSON blob into the live session's `Vec<SelectedSymbol>` (fail-closed on
+/// malformed/empty). Split from the env/file read so it is testable without the process
+/// environment.
+///
+/// # Errors
+///
+/// If the JSON is malformed or the universe is empty.
+pub fn parse_mount_universe(bytes: &[u8]) -> anyhow::Result<Vec<SelectedSymbol>> {
+    let rows: Vec<MountUniverseSymbol> =
+        serde_json::from_slice(bytes).map_err(|e| anyhow::anyhow!("parsing mount universe: {e}"))?;
+    if rows.is_empty() {
+        anyhow::bail!("mount refused: the resolved universe (LS_MOUNT_UNIVERSE_FILE) is empty");
+    }
+    rows.into_iter().map(MountUniverseSymbol::into_selected).collect()
+}
+
+/// Resolve the v34 head governed `OrbParams` for the mount, fail-closed against a zero-size
+/// (all-levers-off `default()`) head (KTD7): a `default()` head has `risk_per_trade_krw == 0`,
+/// which sizes every order to zero shares — the exact bug that would silently trade nothing.
+///
+/// # Errors
+///
+/// If the resolved head params size to zero.
+pub fn resolve_mount_head_params(data_home: &Path) -> anyhow::Result<OrbParams> {
+    // Pin the head to the expected version (LS_TURN_EXPECT_VERSION) when set, so the mount sizes
+    // from the exact certified head even when older-version same-code runs share the data home;
+    // a missing pinned head collapses to default() and is caught by the zero-size guard below.
+    let params = crate::dispatch::ladder::head_governed_params_pinned(
+        data_home,
+        crate::dispatch::ladder::head_version_pin(),
+    );
+    if params.risk_per_trade_krw <= 0.0 {
+        anyhow::bail!(
+            "mount refused: the resolved head governed params size to ZERO (risk_per_trade_krw={:.0}) \
+             — the data home's latest finalized run must be the v34 head (risk 299,340), never the \
+             all-levers-off default; check LS_DATA_HOME points at the v34 epoch",
+            params.risk_per_trade_krw
+        );
+    }
+    Ok(params)
+}
+
+/// The `lab-live --mount` operator command (R3; KTD4/KTD5/KTD7). Resolves every live-session
+/// input and BUILDS the node at the pre-registered rung fraction from v34's real governed params,
+/// then stops at the deferred live-driver seam WITHOUT consuming the green dispatch. Paper-only,
+/// attended, no-TTY loud refusal; `node.run` stays live-only (and is not wired here).
+fn run_mount() -> anyhow::Result<ExitCode> {
+    nautilus_ls::calendar::emit_startup_from_env("lab-live");
+    // 1. Paper interlock FIRST — before any resolution, chain read, or gate (R3).
+    if std::env::var("LS_TRADING_ENV").as_deref() != Ok("paper") {
+        eprintln!(
+            "mount refused: LS_TRADING_ENV must be `paper` (this adapter is paper-only; the \
+             live-lane flip is a separate later step)"
+        );
+        return Ok(ExitCode::from(MOUNT_NOT_PAPER));
+    }
+    let data_home: PathBuf = std::env::var("LS_DATA_HOME")
+        .map_err(|_| anyhow::anyhow!("mount refused: LS_DATA_HOME is required (absolute path)"))?
+        .into();
+    let requested_rung: u8 =
+        std::env::var("LS_DISPATCH_RUNG").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+    let now_unix: i64 = std::env::var("LS_DISPATCH_NOW_UNIX")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or_else(|| Utc::now().timestamp());
+    let nonce = std::env::var("LS_DISPATCH_NONCE").ok().filter(|s| !s.trim().is_empty());
+    let lane_name = std::env::var("LS_LANE").unwrap_or_else(|_| "domestic".to_string());
+    let lane_env_path: PathBuf = std::env::var("LS_DISPATCH_LANE_ENV")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(format!(".env.{lane_name}")));
+
+    // 2. Operator attendance/nonce gate — a live mount attempt is attended, no-TTY loud (R3).
+    let gate = OperatorGate { unattended_marker: detect_unattended_marker(), nonce, now_unix };
+    if let Err(e) = gate.authorize("live mount") {
+        eprintln!("mount refused: {}", nautilus_ls::scrub::scrub_secrets(e.as_str()));
+        return Ok(ExitCode::from(MOUNT_REFUSED_ATTEND));
+    }
+
+    // 3. Read-only mountability + the effective rung to size (NO consumption — driver deferred).
+    let chain = DispatchChain::open(&data_home)?;
+    let now = Utc.timestamp_opt(now_unix, 0).single().unwrap_or_else(Utc::now);
+    let today = kst_trading_date(now);
+    let effective_rung = match chain.load().mount_authz(&today) {
+        MountAuthz::Ready { effective_rung, .. } => effective_rung,
+        MountAuthz::Consumed => {
+            eprintln!("mount refused: the latest green dispatch is already consumed — re-run --dispatch");
+            return Ok(ExitCode::from(MOUNT_REFUSED_ATTEND));
+        }
+        MountAuthz::Expired => {
+            eprintln!(
+                "mount refused: the latest green dispatch is expired (previous KST day) — re-run --dispatch today"
+            );
+            return Ok(ExitCode::from(MOUNT_REFUSED_ATTEND));
+        }
+        MountAuthz::None => {
+            eprintln!("mount refused: no green dispatch to mount (rung 0 / refused / none) — run --dispatch");
+            return Ok(ExitCode::from(MOUNT_REFUSED_ATTEND));
+        }
+    };
+    if requested_rung > effective_rung {
+        anyhow::bail!(
+            "mount refused: requested rung {requested_rung} exceeds the authorized effective rung \
+             {effective_rung} — rung selection is a guard rail, not an operator feature (R15)"
+        );
+    }
+
+    // 4. The pre-registered fraction for the effective rung (fail-closed, KTD5).
+    let prereg_path = std::env::var("LS_DISPATCH_PREREG")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("mount refused: LS_DISPATCH_PREREG is required (the frozen fraction + band)"))?;
+    let prereg = crate::dispatch::prereg::load(Path::new(&prereg_path))?;
+    let fraction = prereg.values.rung_fraction(effective_rung)?;
+
+    // 5. v34 real governed params (fail-closed vs zero-size, KTD7) + the session universe + sink.
+    let params = resolve_mount_head_params(&data_home)?;
+    let universe = resolve_mount_universe()?;
+    let sink = DecisionSink::new();
+    let adapter_cfg = LsAdapterConfig::from_lane_file(&lane_env_path);
+
+    // 6. Build the node at the real v34 rung-fraction size — proves mountability. `node.run` stays
+    //    live-only and is NOT driven here (the attended driver is deferred).
+    let _node = build_live_session_node(adapter_cfg, params.clone(), universe.clone(), sink, fraction)?;
+
+    println!(
+        "mount prepared: env=paper rung={effective_rung} rung_fraction={fraction} \
+         head_code_hash={} head_params_hash={} universe={} — node built at v34 size",
+        crate::artifacts::manifest::strategy_code_hash(),
+        crate::dispatch::ladder::governed_params_hash(&params),
+        universe.len()
+    );
+    eprintln!(
+        "mount NOT run: the attended live-session driver (node.run -> fail-closed teardown -> \
+         finalize) is deferred; the green dispatch is NOT consumed. See \
+         adapters/nautilus/lab/RUNG1-PREFLIGHT.md."
+    );
+    Ok(ExitCode::from(MOUNT_PREPARED_DEFERRED))
+}
+
+// ---------------------------------------------------------------------------
+// U3 (rung-1 readiness) — the ladder + diagnostic operator CLI (R2/R4; KTD4).
+// Thin argv arms over the already-tested library functions. `--head` is read-only (preflight);
+// `--escalate`/`--reregister`/`--clear-killswitch` are nonce-gated, each with a DISTINCT exit
+// code so a no-TTY shell never mistakes a refusal for a completed mutation.
+// ---------------------------------------------------------------------------
+
+const ESCALATE_REFUSED: u8 = 78;
+const REREGISTER_REFUSED: u8 = 79;
+const CLEAR_REFUSED: u8 = 80;
+
+/// The absolute data home (`LS_DATA_HOME`).
+fn env_data_home() -> anyhow::Result<PathBuf> {
+    Ok(std::env::var("LS_DATA_HOME")
+        .map_err(|_| anyhow::anyhow!("LS_DATA_HOME is required (absolute path)"))?
+        .into())
+}
+
+/// Wall-clock unix seconds (`LS_DISPATCH_NOW_UNIX`, else now).
+fn env_now_unix() -> i64 {
+    std::env::var("LS_DISPATCH_NOW_UNIX").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| Utc::now().timestamp())
+}
+
+/// The operator gate from the environment (nonce + no-TTY detection + clock). The bin can never
+/// suppress the no-TTY refusal — `detect_unattended_marker` is not env-overridable.
+fn operator_gate_from_env(now_unix: i64) -> OperatorGate {
+    OperatorGate {
+        unattended_marker: detect_unattended_marker(),
+        nonce: std::env::var("LS_DISPATCH_NONCE").ok().filter(|s| !s.trim().is_empty()),
+        now_unix,
+    }
+}
+
+/// `--head` (R2): print the running binary's head identity as verbatim fact lines. Read-only, no
+/// nonce, no chain append. `strategy_code_hash()` is the SOLE head discriminator — the operator
+/// confirms the binary embeds v34 by hash-equality against the documented `d7a9820b…`. The printed
+/// `governed_params_hash(&OrbParams::default())` is a version-invariant constant (identical across
+/// v9…v34, KTD7), so it does NOT confirm v34's governed values; it is labeled as such, never as a
+/// version readout (the binary carries no hash→version map).
+fn run_head_diagnostic() -> anyhow::Result<ExitCode> {
+    nautilus_ls::calendar::emit_startup_from_env("lab-live");
+    let code_hash = crate::artifacts::manifest::strategy_code_hash();
+    let params_hash = crate::dispatch::ladder::governed_params_hash(&OrbParams::default());
+    println!("head strategy_code_hash={code_hash}");
+    println!(
+        "head governed_params_hash(default)={params_hash} [version-invariant constant — NOT a v34 confirmation]"
+    );
+    println!(
+        "head-check: the binary embeds v34 IFF strategy_code_hash == the documented head d7a9820b… \
+         (the sole discriminator; the binary carries no hash→version map)"
+    );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `--escalate` (R4): nonce-gated escalation over `run_escalation` — prints the appended
+/// escalation evidence or the blocking reason (AE5 of the ladder plan); a refusal/block is a
+/// distinct non-zero exit.
+fn run_escalate_cli() -> anyhow::Result<ExitCode> {
+    nautilus_ls::calendar::emit_startup_from_env("lab-live");
+    let data_home = env_data_home()?;
+    let now_unix = env_now_unix();
+    let now = Utc.timestamp_opt(now_unix, 0).single().unwrap_or_else(Utc::now);
+    let gate = operator_gate_from_env(now_unix);
+    let prereg_path = std::env::var("LS_DISPATCH_PREREG")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("--escalate refused: LS_DISPATCH_PREREG is required (N + the expectation band)"))?;
+    let prereg = crate::dispatch::prereg::load(Path::new(&prereg_path))?;
+    let chain = DispatchChain::open(&data_home)?;
+    let expected_version = crate::dispatch::ladder::head_version_pin();
+    match crate::dispatch::ladder::run_escalation(&chain, &data_home, &gate, &prereg.values, expected_version, now) {
+        Ok(rec) => {
+            if let RecordKind::Escalation(e) = &rec.body.kind {
+                println!(
+                    "escalate: rung {} -> {} authorized; {} clean session(s) cited",
+                    e.from_rung,
+                    e.to_rung,
+                    e.evidence_run_ids.len()
+                );
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(e) => {
+            eprintln!("{}", nautilus_ls::scrub::scrub_secrets(&e.to_string()));
+            Ok(ExitCode::from(ESCALATE_REFUSED))
+        }
+    }
+}
+
+/// `--reregister` (R4): nonce-gated re-registration over `run_reregistration`, bounded to rung-0
+/// requalification or current-epoch repair — an out-of-bound `set_rung` ABOVE the chain-earned
+/// rung is refused (an upward jump would bypass the earned-escalation gate, R15). The reason
+/// (`LS_DISPATCH_REASON`) is scrubbed before it lands (also inside `chain.reregister`).
+fn run_reregister_cli() -> anyhow::Result<ExitCode> {
+    nautilus_ls::calendar::emit_startup_from_env("lab-live");
+    let data_home = env_data_home()?;
+    let now_unix = env_now_unix();
+    let now = Utc.timestamp_opt(now_unix, 0).single().unwrap_or_else(Utc::now);
+    let gate = operator_gate_from_env(now_unix);
+    let set_rung: u8 = std::env::var("LS_DISPATCH_RUNG")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .ok_or_else(|| anyhow::anyhow!(
+            "--reregister refused: LS_DISPATCH_RUNG is required (target: 0 to suspend/requalify, or \
+             ≤ the chain-earned rung to repair)"
+        ))?;
+    let raw_reason = std::env::var("LS_DISPATCH_REASON").unwrap_or_default();
+    if raw_reason.trim().is_empty() {
+        anyhow::bail!("--reregister refused: LS_DISPATCH_REASON is required (the audited who/why)");
+    }
+    let reason = nautilus_ls::scrub::scrub_secrets(&raw_reason);
+    let chain = DispatchChain::open(&data_home)?;
+    let state = chain.load();
+    // The re-registration ceiling is the CURRENT authorized rung, floored at 1 — NOT the all-time
+    // peak. A re-registration may requalify to rung 0, re-enter to rung 1 after a suspension, or
+    // repair to the current epoch's rung — never restore a rung the ladder was de-escalated or
+    // suspended OUT of. Using the historical peak would let an operator re-register straight back to
+    // a de-escalated rung with only a nonce, bypassing the N-clean re-earn gate (R15).
+    let ceiling = state.authorized_rung.max(1);
+    if set_rung > ceiling {
+        eprintln!(
+            "--reregister refused: target rung {set_rung} exceeds the re-registration ceiling \
+             {ceiling} (the current authorized rung, floored at 1) — a re-registration may only \
+             requalify to rung 0/1 or repair the current epoch; restoring a de-escalated rung must \
+             be re-earned through the escalation evidence gate (R15)"
+        );
+        return Ok(ExitCode::from(REREGISTER_REFUSED));
+    }
+    match crate::dispatch::ladder::run_reregistration(&chain, &gate, set_rung, &reason, state.last_prereg_hash.clone(), now) {
+        Ok(_rec) => {
+            println!("reregister: chain set to rung {set_rung} (reason recorded, scrubbed)");
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(e) => {
+            eprintln!("{}", nautilus_ls::scrub::scrub_secrets(&e.to_string()));
+            Ok(ExitCode::from(REREGISTER_REFUSED))
+        }
+    }
+}
+
+/// `--clear-killswitch` (R4): nonce + attendance gated clear of a persisted kill-switch trip over
+/// `clear_kill_switch`, capturing a scrubbed operator reason (`LS_DISPATCH_REASON`) — re-arming
+/// trading after an auto-halt must leave an audited who/why.
+fn run_clear_killswitch_cli() -> anyhow::Result<ExitCode> {
+    nautilus_ls::calendar::emit_startup_from_env("lab-live");
+    let data_home = env_data_home()?;
+    let now_unix = env_now_unix();
+    let now = Utc.timestamp_opt(now_unix, 0).single().unwrap_or_else(Utc::now);
+    let gate = operator_gate_from_env(now_unix);
+    let raw_reason = std::env::var("LS_DISPATCH_REASON").unwrap_or_default();
+    if raw_reason.trim().is_empty() {
+        anyhow::bail!("--clear-killswitch refused: LS_DISPATCH_REASON is required (the audited who/why for re-arming trading)");
+    }
+    let chain = DispatchChain::open(&data_home)?;
+    let chain_rung = chain.load().authorized_rung;
+    match clear_kill_switch(&chain, &gate, &raw_reason, now, chain_rung) {
+        Ok(()) => {
+            println!("clear-killswitch: persisted kill-switch trip cleared at rung {chain_rung} (reason recorded, scrubbed)");
+            Ok(ExitCode::SUCCESS)
+        }
+        Err(e) => {
+            eprintln!("{}", nautilus_ls::scrub::scrub_secrets(&e.to_string()));
+            Ok(ExitCode::from(CLEAR_REFUSED))
+        }
+    }
+}
+
+/// `--rung-report` (R5; KTD6): the agent's read-only post-session verification — clean/limit-event
+/// classification of the trailing live-lane sessions, cumulative rung P&L against the v34 band,
+/// N-progress toward escalation, and the readiness verdict. Appends nothing; no nonce. Prints the
+/// head hash it evaluated under so a stale-binary reading is self-evident.
+fn run_rung_report() -> anyhow::Result<ExitCode> {
+    nautilus_ls::calendar::emit_startup_from_env("lab-live");
+    let data_home = env_data_home()?;
+    let prereg_path = std::env::var("LS_DISPATCH_PREREG")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .ok_or_else(|| anyhow::anyhow!("--rung-report refused: LS_DISPATCH_PREREG is required (the band + N)"))?;
+    let prereg = crate::dispatch::prereg::load(Path::new(&prereg_path))?;
+    let chain = DispatchChain::open(&data_home)?;
+    let state = chain.load();
+    let from_rung = state.authorized_rung.max(1);
+    let expected_version = crate::dispatch::ladder::head_version_pin();
+    let report =
+        crate::dispatch::ladder::build_rung_report(&data_home, &state.records, from_rung, &prereg.values, expected_version);
+
+    // The head hash the report evaluated under (KTD6) — a stale-binary reading is self-evident.
+    println!(
+        "rung-report head_code_hash={} (v34 IFF == d7a9820b…) head_params_hash={}",
+        report.head_code_hash, report.head_params_hash
+    );
+    println!(
+        "rung-report rung={} clean={}/{} cum_pnl={:.0} band=[{:.0},{:.0}] in_band={}",
+        report.from_rung, report.clean.len(), report.n_required, report.cum_pnl, report.band.0, report.band.1, report.in_band
+    );
+    for rid in &report.clean {
+        println!("  clean {rid}");
+    }
+    for rid in &report.limit_event {
+        println!("  limit-event {rid} (excluded from the clean count)");
+    }
+    for rid in &report.head_mismatched {
+        println!("  head-mismatched {rid} (NOT counted — ran under a different head)");
+    }
+    match &report.escalation {
+        crate::dispatch::ladder::EscalationCheck::Ready { to_rung, evidence } => {
+            println!("rung-report escalation: READY -> rung {to_rung} ({} clean session(s) cited)", evidence.len());
+        }
+        crate::dispatch::ladder::EscalationCheck::Blocked(reason) => {
+            println!("rung-report escalation: BLOCKED — {reason}");
+        }
+    }
+    let verdict = match report.readiness {
+        crate::dispatch::readiness::ReadinessVerdict::Green => "GREEN",
+        crate::dispatch::readiness::ReadinessVerdict::Red => "RED (rung-1 probation)",
+        crate::dispatch::readiness::ReadinessVerdict::NotEvaluated => "NOT-EVALUATED",
+    };
+    println!("rung-report readiness: {verdict} — {}", report.readiness_summary);
+    Ok(ExitCode::SUCCESS)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1316,6 +1763,21 @@ mod tests {
         assert_eq!(state.records.len(), before + 1);
         assert!(state.records.iter().any(|r| matches!(&r.body.kind,
             RecordKind::SafetyTrip(t) if t.trip == SafetyTripKind::KillSwitch && t.action == TripAction::Clear)));
+    }
+
+    #[test]
+    fn kill_switch_clear_scrubs_the_reason(){
+        // KTD4 clear-reason capture: a planted secret in the reason never lands in the chain.
+        use crate::dispatch::chain::{DispatchChain, RecordKind};
+        use crate::dispatch::nonce::OperatorGate;
+        let tmp = tempfile::TempDir::new().unwrap();
+        let chain = DispatchChain::open(tmp.path()).unwrap();
+        let now = Utc.timestamp_opt(1_752_600_000, 0).unwrap();
+        chain.append(now, 1, 1, None, RecordKind::Genesis).unwrap();
+        let attended = OperatorGate { unattended_marker: None, nonce: Some("1752600000".into()), now_unix: 1_752_600_000 };
+        clear_kill_switch(&chain, &attended, "cleared after reconcile on acct 20187511401", now, 1).unwrap();
+        let bytes = std::fs::read_to_string(chain.chain_path()).unwrap();
+        assert!(!bytes.contains("20187511401"), "the kill-switch clear reason is scrubbed: {bytes}");
     }
 
     // -----------------------------------------------------------------------

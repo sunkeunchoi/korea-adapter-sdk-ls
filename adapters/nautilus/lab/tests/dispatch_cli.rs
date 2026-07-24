@@ -651,3 +651,184 @@ fn u188_cli_stale_freshness_surfaced_independent_of_day_status() {
     assert!(stderr.contains("freshness=stale"), "{stderr}");
     assert!(stderr.contains("day=2026-07-16:Unknown"), "{stderr}");
 }
+
+// ---------------------------------------------------------------------------
+// Bin-level `--mount` (U2, rung-1 readiness) — the paper interlock + attended gate fire
+// through the CLI with distinct exit codes (the "never look-like-ran" discipline). The full
+// prepared path (node build) needs a live head + universe + green chain and is exercised by the
+// library seams (live_wiring.rs) + the operator-attended session.
+// ---------------------------------------------------------------------------
+
+fn bin_mount(home: &std::path::Path, extra: &[(&str, &str)]) -> std::process::Output {
+    let lane_env = home.join("lane.env");
+    std::fs::write(&lane_env, "APPKEY=x\n").unwrap();
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_lab-live"));
+    cmd.arg("--mount")
+        .env("LS_DATA_HOME", home)
+        .env("LS_DISPATCH_LANE_ENV", &lane_env)
+        .env("LS_DISPATCH_NOW_UNIX", weekday_ts().to_string())
+        .env_remove("LS_TRADING_ENV")
+        .env_remove("LS_DISPATCH_NONCE")
+        .env_remove("LS_CALENDAR_SNAPSHOT")
+        .env_remove("LS_CALENDAR_ADOPTION");
+    for (k, v) in extra {
+        cmd.env(k, v);
+    }
+    cmd.output().unwrap()
+}
+
+#[test]
+fn bin_mount_refuses_unless_paper_with_a_distinct_exit() {
+    // Paper interlock FIRST (R3): LS_TRADING_ENV unset → distinct exit 66, before any chain read.
+    let tmp = TempDir::new().unwrap();
+    let out = bin_mount(tmp.path(), &[]);
+    assert_eq!(out.status.code(), Some(66), "distinct paper-interlock exit code");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("LS_TRADING_ENV must be `paper`"), "{stderr}");
+}
+
+#[test]
+fn bin_mount_refuses_in_a_no_tty_shell_with_a_distinct_exit() {
+    // Attended gate (R3): paper set, but a subprocess is a no-TTY/unattended shell → loud refusal
+    // with a distinct exit code (77), never a look-like-ran success.
+    let tmp = TempDir::new().unwrap();
+    let out = bin_mount(tmp.path(), &[("LS_TRADING_ENV", "paper")]);
+    assert_eq!(out.status.code(), Some(77), "distinct attended-refusal exit code");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("mount refused"), "{stderr}");
+}
+
+#[test]
+fn bin_bare_invocation_points_at_mount_not_u6() {
+    // The bare-invocation "lands in U6" bail is gone (DoD): paper set, no subcommand → guidance
+    // that names --mount and no longer references U6.
+    let tmp = TempDir::new().unwrap();
+    let lane_env = tmp.path().join("lane.env");
+    std::fs::write(&lane_env, "APPKEY=x\n").unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_lab-live"))
+        .env("LS_TRADING_ENV", "paper")
+        .env("LS_DATA_HOME", tmp.path())
+        .env_remove("LS_CALENDAR_SNAPSHOT")
+        .env_remove("LS_CALENDAR_ADOPTION")
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("--mount"), "bare guidance names --mount: {stderr}");
+    assert!(!stderr.contains("U6"), "the 'lands in U6' bail is gone: {stderr}");
+}
+
+// ---------------------------------------------------------------------------
+// Bin-level ladder + diagnostic CLI (U3, rung-1 readiness): --head / --escalate /
+// --reregister / --clear-killswitch. Nonce-gated arms refuse loudly with distinct exit
+// codes in a no-TTY shell; --head is read-only.
+// ---------------------------------------------------------------------------
+
+fn bin_lab_live(arg: &str, home: &std::path::Path, extra: &[(&str, &str)]) -> std::process::Output {
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_lab-live"));
+    cmd.arg(arg)
+        .env("LS_DATA_HOME", home)
+        .env("LS_DISPATCH_NOW_UNIX", weekday_ts().to_string())
+        .env_remove("LS_DISPATCH_NONCE")
+        .env_remove("LS_DISPATCH_REASON")
+        .env_remove("LS_DISPATCH_RUNG")
+        .env_remove("LS_CALENDAR_SNAPSHOT")
+        .env_remove("LS_CALENDAR_ADOPTION");
+    for (k, v) in extra {
+        cmd.env(k, v);
+    }
+    cmd.output().unwrap()
+}
+
+#[test]
+fn bin_head_prints_the_code_hash_and_is_read_only() {
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+    let before = std::fs::read_to_string(tmp.path().join("dispatch").join("chain.jsonl")).unwrap_or_default();
+    let out = bin_lab_live("--head", tmp.path(), &[]);
+    assert!(out.status.success(), "head is a read-only diagnostic (exit 0)");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("strategy_code_hash="), "{stdout}");
+    assert!(stdout.contains("d7a9820b"), "frames the check against the documented v34 head: {stdout}");
+    assert!(stdout.contains("NOT a v34 confirmation"), "the params-hash line is labeled version-invariant: {stdout}");
+    // Read-only: the chain is untouched.
+    let after = std::fs::read_to_string(tmp.path().join("dispatch").join("chain.jsonl")).unwrap_or_default();
+    assert_eq!(before, after, "--head appends nothing to the chain");
+}
+
+#[test]
+fn bin_escalate_refuses_in_no_tty_with_a_distinct_code() {
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+    let prereg = tmp.path().join("prereg.json");
+    std::fs::write(&prereg, br#"{"version":2,"rungs":[{"rung":1,"fraction":0.1,"n_clean_sessions":5,"expectation_band":{"min_cum_pnl":-148000.0,"max_cum_pnl":266000.0}}]}"#).unwrap();
+    // No-TTY + no nonce → the nonce gate refuses; distinct exit 78, nothing escalated.
+    let out = bin_lab_live("--escalate", tmp.path(), &[("LS_DISPATCH_PREREG", prereg.to_str().unwrap())]);
+    assert_eq!(out.status.code(), Some(78), "distinct escalate-refusal exit code");
+}
+
+#[test]
+fn bin_reregister_refuses_an_upward_jump_past_the_earned_rung() {
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path()); // genesis at rung 1 → earned rung = 1
+    // Target rung 3 > earned 1 → refused BEFORE the nonce gate, distinct exit 79.
+    let out = bin_lab_live(
+        "--reregister",
+        tmp.path(),
+        &[("LS_DISPATCH_RUNG", "3"), ("LS_DISPATCH_REASON", "attempted jump")],
+    );
+    assert_eq!(out.status.code(), Some(79), "distinct reregister-refusal exit code");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("exceeds the re-registration ceiling"), "{stderr}");
+}
+
+#[test]
+fn bin_reregister_cannot_restore_a_de_escalated_peak() {
+    // Regression: after escalate 1->2 then de-escalate 2->1, the ceiling is the CURRENT authorized
+    // rung (1), NOT the historical peak (2). Restoring rung 2 must be refused — it has to be
+    // re-earned through the escalation evidence gate (R15), never handed back by a bare re-register.
+    use chrono::{TimeZone, Utc};
+    use nautilus_ls_lab::dispatch::chain::{DeEscalation, DispatchChain, Escalation, RecordKind};
+    let tmp = TempDir::new().unwrap();
+    let chain = DispatchChain::open(tmp.path()).unwrap();
+    let t = Utc.timestamp_opt(weekday_ts(), 0).unwrap();
+    chain.append(t, 1, 1, None, RecordKind::Genesis).unwrap();
+    chain
+        .append(t, 2, 2, None, RecordKind::Escalation(Escalation { from_rung: 1, to_rung: 2, evidence_run_ids: vec![] }))
+        .unwrap();
+    chain
+        .append(t, 1, 1, None, RecordKind::DeEscalation(DeEscalation { from_rung: 2, to_rung: 1, events: vec!["x".into()], consumed_through: "z".into() }))
+        .unwrap();
+    assert_eq!(chain.load().authorized_rung, 1, "de-escalated back to rung 1");
+    // Target the de-escalated peak (rung 2) -> refused (ceiling is the current rung 1).
+    let out = bin_lab_live("--reregister", tmp.path(), &[("LS_DISPATCH_RUNG", "2"), ("LS_DISPATCH_REASON", "restore attempt")]);
+    assert_eq!(out.status.code(), Some(79), "restoring a de-escalated peak is refused");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("exceeds the re-registration ceiling"));
+}
+
+#[test]
+fn bin_clear_killswitch_refuses_in_no_tty_with_a_distinct_code() {
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+    // No-TTY + no nonce → refused; distinct exit 80.
+    let out = bin_lab_live("--clear-killswitch", tmp.path(), &[("LS_DISPATCH_REASON", "re-arm after reconcile")]);
+    assert_eq!(out.status.code(), Some(80), "distinct clear-killswitch-refusal exit code");
+}
+
+#[test]
+fn bin_rung_report_prints_the_head_hash_and_is_read_only() {
+    // U4: --rung-report is an agent-runnable, read-only diagnostic (exit 0) that prints the head
+    // hash it evaluated under (KTD6). With an empty rung-1 chain it reports 0 clean sessions.
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+    let prereg = tmp.path().join("prereg.json");
+    std::fs::write(&prereg, br#"{"version":2,"k_window":5,"rungs":[{"rung":1,"fraction":0.1,"n_clean_sessions":5,"expectation_band":{"min_cum_pnl":-148000.0,"max_cum_pnl":266000.0}}]}"#).unwrap();
+    let before = std::fs::read_to_string(tmp.path().join("dispatch").join("chain.jsonl")).unwrap_or_default();
+    let out = bin_lab_live("--rung-report", tmp.path(), &[("LS_DISPATCH_PREREG", prereg.to_str().unwrap())]);
+    assert!(out.status.success(), "rung-report is read-only (exit 0): {}", String::from_utf8_lossy(&out.stderr));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("rung-report head_code_hash="), "{stdout}");
+    assert!(stdout.contains("d7a9820b"), "frames against the documented v34 head: {stdout}");
+    assert!(stdout.contains("clean=0/5"), "empty rung-1 chain → 0/5 clean: {stdout}");
+    let after = std::fs::read_to_string(tmp.path().join("dispatch").join("chain.jsonl")).unwrap_or_default();
+    assert_eq!(before, after, "--rung-report appends nothing to the chain");
+}

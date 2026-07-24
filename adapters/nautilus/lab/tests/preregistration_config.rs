@@ -23,9 +23,10 @@ fn frozen_config_loads_and_rung_1_is_not_fail_closed() {
     // Rung 1 is fully runnable: fraction + N + expectation band all present (no bail).
     assert_eq!(v.rung_fraction(1).unwrap(), 0.10, "rung-1 dose (KTD6)");
     assert_eq!(v.n_for_rung(1).unwrap(), 5, "N clean sessions to escalate rung 1");
+    // Re-registered to v2 (head v34): economic bands are v34-derived (see prereg_derivation.rs).
     let band = v.expectation_band(1).unwrap();
-    assert_eq!(band.min_cum_pnl, -69_000.0);
-    assert_eq!(band.max_cum_pnl, 533_000.0);
+    assert_eq!(band.min_cum_pnl, -148_000.0);
+    assert_eq!(band.max_cum_pnl, 266_000.0);
 
     // Rung 1 carries NO tracking band by design (calibration, KD6) — Ok(None), not an error.
     assert!(v.tracking_band(1).unwrap().is_none(), "rung 1 has no tracking band (KD6)");
@@ -47,13 +48,14 @@ fn watchdog_arms_from_the_frozen_config() {
 
 #[test]
 fn expectation_bands_scale_by_the_rung_fraction() {
-    // The Protective method: floor = -689_900 * fraction, ceil = 5_333_700 * fraction
-    // (rounded to the nearest 1,000). Confirm rungs 2-4 track the same backtest basis.
+    // The Protective method (head v34): floor = -1_483_240 * fraction,
+    // ceil = 1_772_900 * 1.5 * fraction (rounded to the nearest 1,000). Confirm rungs 2-4 track
+    // the same backtest basis. The full per-band derivation lives in prereg_derivation.rs.
     let v = load(&frozen_prereg_path()).unwrap().values;
     for (rung, frac, min, max) in [
-        (2u8, 0.25, -172_000.0, 1_333_000.0),
-        (3u8, 0.50, -345_000.0, 2_667_000.0),
-        (4u8, 1.00, -690_000.0, 5_334_000.0),
+        (2u8, 0.25, -371_000.0, 665_000.0),
+        (3u8, 0.50, -742_000.0, 1_330_000.0),
+        (4u8, 1.00, -1_483_000.0, 2_659_000.0),
     ] {
         assert_eq!(v.rung_fraction(rung).unwrap(), frac, "rung {rung} dose");
         let band = v.expectation_band(rung).unwrap();

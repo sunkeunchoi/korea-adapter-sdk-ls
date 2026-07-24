@@ -1,6 +1,6 @@
 {
-  "_note": "FROZEN pre-registration mirror (KTD9) for the ORB Production Ladder. Values are frozen against the head v30 backtest closed-trade distribution — see config/PREREGISTRATION.md for the per-value derivation and its backtest source. Amendable ONLY by an explicit re-registration dispatch. Every dispatch record cites the SHA-256 of this file. Rung tracking_bands are SCHEDULED: each rung's band freezes from the PRECEDING rung's LIVE data before the first session at that rung (KD3/KD6) — they are intentionally absent here (the backtest has zero slippage, so they cannot be grounded now). Rung 1 carries no tracking_band by design; a rung-2+ dispatch is fail-closed until its band is re-registered.",
-  "version": 1,
+  "_note": "FROZEN pre-registration mirror (KTD9) for the ORB Production Ladder. RE-REGISTERED to v2 for head v34: the strategy code hash changed v30 (6ae7b9f1…) → v34 (d7a9820b…), a code_change_resets_to_rung_1 event, so the economic expectation bands are re-derived from the head v34 backtest closed-trade distribution (20260724T014752Z-backtest-orb-v34, 24 KST sessions) via the identical Protective formula — see config/PREREGISTRATION.md § Re-registration v2 (head v34) for the per-value derivation and its backtest source. This is a legitimate re-registration (backtest-derived, head genuinely changed), NOT fitting to live data. Amendable ONLY by an explicit re-registration dispatch. Every dispatch record cites the SHA-256 of this file. Rung tracking_bands are SCHEDULED: each rung's band freezes from the PRECEDING rung's LIVE data before the first session at that rung (KD3/KD6) — they are intentionally absent here (the backtest has zero slippage, so they cannot be grounded now). Rung 1 carries no tracking_band by design; a rung-2+ dispatch is fail-closed until its band is re-registered. session_max_loss_krw stands at 300,000 (KTD3): ~2.2× v34's worst rung-1 session (−1,360,330 × 0.10 = −136,033); re-register a larger breaker before rungs 3–4.",
+  "version": 2,
   "k_window": 5,
   "heartbeat_interval_secs": 90,
   "session_max_loss_krw": 300000.0,
@@ -16,12 +16,12 @@
   },
   "rungs": [
     { "rung": 1, "fraction": 0.10, "n_clean_sessions": 5,
-      "expectation_band": { "min_cum_pnl": -69000.0, "max_cum_pnl": 533000.0 } },
+      "expectation_band": { "min_cum_pnl": -148000.0, "max_cum_pnl": 266000.0 } },
     { "rung": 2, "fraction": 0.25, "n_clean_sessions": 5,
-      "expectation_band": { "min_cum_pnl": -172000.0, "max_cum_pnl": 1333000.0 } },
+      "expectation_band": { "min_cum_pnl": -371000.0, "max_cum_pnl": 665000.0 } },
     { "rung": 3, "fraction": 0.50, "n_clean_sessions": 5,
-      "expectation_band": { "min_cum_pnl": -345000.0, "max_cum_pnl": 2667000.0 } },
+      "expectation_band": { "min_cum_pnl": -742000.0, "max_cum_pnl": 1330000.0 } },
     { "rung": 4, "fraction": 1.00, "n_clean_sessions": 5,
-      "expectation_band": { "min_cum_pnl": -690000.0, "max_cum_pnl": 5334000.0 } }
+      "expectation_band": { "min_cum_pnl": -1483000.0, "max_cum_pnl": 2659000.0 } }
   ]
 }
