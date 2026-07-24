@@ -81,6 +81,31 @@ keys come from `nautilus-analysis`'s `PortfolioAnalyzer` and are Title-Case with
 are dropped (never emitted as NaN). All monetary values are KRW (single-currency,
 domestic KRX).
 
+## Rung-1 production ladder (live, attended)
+
+The certified backtest head runs live at a small dose through the **capital ladder**
+(`config/preregistration.json`, rationale `config/PREREGISTRATION.md`). Rung 1 = **0.10×**
+budget against head **v34**, re-registered to **v2** (`code_change_resets_to_rung_1`; band
+**[−148k, +266k]**). The `lab-live` subcommands drive it:
+
+| command | who | gate | what |
+|---|---|---|---|
+| `--head` | agent | read-only | prints `strategy_code_hash()` — confirm the binary embeds v34 (`d7a9820b…`) |
+| `--rung-report` | agent | read-only | clean/limit-event classification, cum P&L vs the band, N-progress, readiness — appends nothing |
+| `--genesis` | operator | nonce, attended | register the rung-1 chain |
+| `--dispatch` | operator | nonce, attended | the pre-flight gate (exit 0 green / 1 refused / 75 throttled) |
+| `--mount` | operator | nonce, attended, **paper-only** | resolve the rung fraction + v34 real params, build the live node at 0.10× size |
+| `--escalate` / `--reregister` / `--clear-killswitch` | operator | nonce, attended | ladder transitions (rung-1→2 / epoch repair / re-arm after an auto-halt) |
+
+Every nonce-gated command refuses loudly (a distinct exit code) in a no-TTY shell — it never
+looks-like-ran. Run the operator sequence from **[`RUNBOOK-rung1.md`](RUNBOOK-rung1.md)**; the
+agent preflight + post-session read is **[`RUNG1-PREFLIGHT.md`](RUNG1-PREFLIGHT.md)**.
+
+> `node.run` is never driven by the commit gate. `--mount` today prepares the session (resolves
+> inputs, builds the node at v34 0.10× size, reports readiness) and stops at the deferred
+> attended live-session driver (`node.run → fail-closed teardown → finalize`) — a follow-up; it
+> does **not** consume the green dispatch.
+
 ## Turning the loop (backtest)
 
 1. **Backfill data** (adapter README: probe → bounded minute backfill → accumulate).

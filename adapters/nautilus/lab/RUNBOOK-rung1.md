@@ -5,6 +5,13 @@ One page for the operator running the **first live rung**. Values are frozen in
 [`config/PREREGISTRATION.md`](config/PREREGISTRATION.md)). Rung 1 = **0.10×** budget,
 watchdog **90 s** heartbeat, **300,000 KRW** session breaker, **5** clean sessions to escalate.
 
+> **Head v34 — re-registered v2.** The certified real-universe head is **v34**
+> (`strategy_code_hash d7a9820b…`). The v30→v34 code hash change is a
+> `code_change_resets_to_rung_1` event, so the ladder starts at rung 1 and the economic band is
+> re-derived from v34: **[−148k, +266k]** (v1/v30 was [−69k, +533k]). Confirm the binary embeds
+> v34 with `lab-live --head` before genesis — the code hash is the sole discriminator (see
+> [`RUNG1-PREFLIGHT.md`](RUNG1-PREFLIGHT.md)).
+
 > Attended only. `node.run` is never driven by the commit gate. Every session runs with an
 > operator present **and** the watchdog envelope. A limit event at rung 1 → **rung-0 suspend**.
 
@@ -47,7 +54,7 @@ Read the exit code — **never** infer success from log text:
 
 | exit | meaning | action |
 |---|---|---|
-| **0** | Green (or all reds deferred) | proceed to the attended mount |
+| **0** | Green (or all reds deferred) | proceed to the attended mount (§4) |
 | **1** | Refused — a non-deferrable red, or an undeferred red | fix the named check, or defer a *deferrable* one (below); re-run |
 | **75** | Throttled (IGW00201 during a live-touching check) | wait, re-run — **not** a failure, never terminal |
 
@@ -62,7 +69,25 @@ Every attempt — green or refused — appends a chain record. A refusal is hist
 
 ## 4. Attended mount + watchdog
 
-The mounted LiveNode session is the operator-attended step (outside the commit gate). While it runs:
+Prepare the session with the wired command (nonce-gated, attended, **paper-only**):
+
+```sh
+export LS_DISPATCH_NONCE=$(date +%s)                       # fresh nonce; refused in a no-TTY shell
+export LS_MOUNT_UNIVERSE_FILE=/ABSOLUTE/path/to/universe.json   # resolved daily/t8407 universe
+cargo run --release -p nautilus-ls-lab --bin lab-live -- --mount
+```
+
+`--mount` resolves the pre-registered rung fraction (**0.10**), sources v34's **real** governed
+params (never the all-levers-off default — a wrong head that sizes to zero is refused), builds the
+live node at 0.10× size, and reports readiness (**exit 70** = prepared). It **hard-refuses unless
+`LS_TRADING_ENV=paper`** (exit 66) and refuses loudly in a no-TTY shell (exit 77) — it never
+consumes the green dispatch on a refusal.
+
+> **Deferred:** the attended live-session **driver** (`node.run → fail-closed teardown → finalize`)
+> is a follow-up — `--mount` prepares and stops at that seam without consuming the dispatch. The
+> watchdog / breaker / teardown guidance below is the design for when the driver lands.
+
+While the mounted LiveNode session runs (once the driver lands):
 
 - **Keep the watchdog fed.** Refresh the operator keepalive within **90 s** and keep the runtime
   ticking. A stale feeder (either one) trips the dead-man → teardown (stop → cancel → flat-check →
@@ -75,13 +100,34 @@ The mounted LiveNode session is the operator-attended step (outside the commit g
 
 ## 5. After the session
 
+After the close, run the post-session catalog ingest of today's KST date, then the read-only
+verification (agent-runnable, appends nothing):
+
+```sh
+cargo run --release -p nautilus-ls-lab --bin lab-live -- --rung-report
+```
+
+It prints the head hash it evaluated under, the clean/limit-event classification of the trailing
+sessions, cumulative rung-1 P&L against **[−148k, +266k]**, N-progress, and the readiness verdict.
+
 - A session is **clean** iff: finalized, zero limit events, required reports present, not a
-  probation session. 5 clean rung-1 sessions → request escalation (an operator-nonce'd step that
-  re-verifies the evidence and checks cumulative P&L sits in the rung-1 band **[−69k, +533k]**).
+  probation session. 5 clean rung-1 sessions → request escalation:
+
+  ```sh
+  export LS_DISPATCH_NONCE=$(date +%s)
+  cargo run --release -p nautilus-ls-lab --bin lab-live -- --escalate
+  ```
+
+  `--escalate` re-verifies the evidence and checks cumulative P&L sits in the v34 rung-1 band
+  **[−148k, +266k]** — note the **halved ceiling** (+533k → +266k), so a strongly-profitable
+  streak (cum > +266k) also blocks escalation as "outside band."
 - A **limit event** (non-flat close, reconcile-Unknown, any safety firing, `.tmp-` residue, or
   cum P&L outside the band) auto-de-escalates on the next dispatch. From rung 1 that is **rung-0
   suspension** — re-entry needs the `rung0_requalification` terms (root cause + ≥3 clean paper
-  sessions + attended re-registration).
+  sessions + attended re-registration via `--reregister`).
+- After an **auto-halt** (kill-switch trip), re-arm trading with `--clear-killswitch` (nonce +
+  attended; captures a scrubbed operator who/why). `--reregister` may only requalify to rung 0 or
+  repair to ≤ the chain-earned rung — an upward jump past the escalation gate is refused.
 
 ## Stop conditions — surface, don't guess
 
