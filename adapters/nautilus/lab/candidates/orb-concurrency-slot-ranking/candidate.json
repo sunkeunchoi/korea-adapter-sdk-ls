@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "slug": "orb-concurrency-slot-ranking",
+  "family": "reallocation",
+  "phase_a": "bespoke",
+  "flip_param": "slot_rank_mode",
+  "flip_value": 1.0,
+  "diagnostic": {
+    "argv": ["uv", "run", "--with", "pyarrow", "python3", "diagnostic.py"],
+    "file": "diagnostic.py",
+    "content_hash": "b392d48a6f142ee08962f2da4a49350896ac8ef3ad3881231f1b54a3d3f8dc93"
+  },
+  "twin": {
+    "argv": ["uv", "run", "--with", "pyarrow", "python3", "twin.py"],
+    "file": "twin.py",
+    "content_hash": "fe9bfc59d2411d6ff9eb28fd565ba453d38e14843bc294a26b4c20046e09b76a"
+  },
+  "readings": {
+    "population_count": { "tolerance": 0.0, "precision": 0 },
+    "ror_base": { "tolerance": 0.0005, "precision": 6 },
+    "ror_prime": { "tolerance": 0.0005, "precision": 6 },
+    "ror_shift": { "tolerance": 0.0005, "precision": 6 }
+  },
+  "thresholds": [
+    { "reading": "population_count", "comparator": "ge", "value": 12 },
+    { "reading": "ror_shift", "comparator": "ge", "value": 0.005 }
+  ],
+  "keep_anchor": "size-invariant return-on-risk (sum pnl / sum risk_capital) of the rank-aware admission run strictly beats real-data head v34 (0.0398) with risk-cap dominance <= 0.40; the slot_rank_mode sentinel arms 0.0 (OFF) -> flip_value 1.0 via seed-and-rerun (a 0.0->X arming flip exceeds PROPOSAL_BOUNDS_CAP 0.5, so it does not traverse the governed param path). CAVEAT: this Phase-A screen re-simulates v34's own slot allocation under one frozen rank key (OR-width tightness) and displacement policy; the eventual flip run's realized population and displacement cost are what the KEEP bar decides."
+}

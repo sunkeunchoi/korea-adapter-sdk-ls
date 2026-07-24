@@ -45,6 +45,65 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Turn — max_concurrent slot-ranking (reallocation axis): Phase-A STOP, NO-BUILD, head stays v34 (2026-07-24) — plan 2026-07-24-002
+
+- **Verdict: STOP at the pre-code Phase-A gate — no strategy code written, no run; head stays v34**
+  (`20260724T014752Z-backtest-orb-v34`, catalog fingerprint `363f199d`, real-data RoR **0.0398**,
+  119 closed trades). The diagnose CLI signalled it with typed **exit 11 (threshold-fail)** and wrote
+  the STOP `gate-verdict.json`; the NO-BUILD is a complete outcome of the turn, not a failure of it. The
+  lever is the queue's first genuine **reallocation** mechanism: today v34 fills its scarce
+  `max_concurrent = 7` slots first-come-first-served by breakout time (`sizing_allows(open) =
+  open_positions < max_concurrent`, `params.rs:875`); the candidate screens whether re-ranking *which*
+  breakouts win those slots — by opening-range tightness `range_R / prior_ATR` (narrower ranks higher),
+  with a full book **displacing** its widest-ranked open position for a strictly-tighter new breakout —
+  would raise the head's size-invariant return-on-risk, *before any admission code is written*.
+- **The frozen gate is additive/reallocation — population + additive RoR shift, no collinearity**
+  (`candidate.json`, freeze commit `3eb44db`; pre-register hash `e3142076`). A slot reallocation produces
+  no per-trade weight vector to correlate against, so the sizing dual-gate does not apply (the same
+  reasoning that dropped collinearity for the failed-break additive stream, KTD1); the screen keeps two
+  STOP gates — `population_count ≥ 12` and the additive **`ror_shift ≥ 0.005`** (`RoR(ranked book) −
+  RoR(FIFO book)`). Displaced positions book **mark-to-market at the displacement bar's close** (KTD8),
+  so the screen *pays* the displacement cost and `ror_shift` is conservative. The entry-local
+  `diagnostic.py` and the catalog-wide, parallel-array-book `twin.py` agreed **bit-for-bit** on every
+  reading. The exit engine was validated against the head first (KTD2): resolution-bar-close fills
+  reproduce **108/119** closed trades' realized exit exactly and an engine `ror_base` of 0.0386 vs the
+  performance.json 0.0398, and a FIFO occupancy replay reproduces **exactly the 20 logged
+  `max_concurrent` rejects** — so the base→blocked hand-off carries no material fill bias.
+- **The measurement** (v34 cohort; 148 breakout envelopes = 128 placed + 20 blocked; 99/148 rankable —
+  49 near the 2026-05-18 catalog start lack the 15 prior daily sessions for `prior_ATR` and keep exact
+  FIFO behaviour, KTD4):
+
+  | reading | value | gate | result |
+  |---|---|---|---|
+  | `population_count` | 20 | ≥ 12 | PASS |
+  | `ror_base` (FIFO book) | 0.039806 | — | — |
+  | `ror_prime` (Policy-D ranked book) | 0.038847 | — | — |
+  | **`ror_shift` (signed)** | **−0.000959** | ≥ 0.005 | **STOP** |
+
+  The budget genuinely binds (20 blocked breakouts ≥ 12), so the population gate passes — but the
+  **shift** gate STOPs: reranking *lowers* RoR by 0.00096, the wrong sign.
+- **Why NO-BUILD (the crux).** The ranked replay admits **9** previously-blocked breakouts and, to seat
+  them, **displaces 8** held positions (booked mark-to-market at the displacement bar), the book never
+  exceeding 7. The net effect on size-invariant RoR is marginally **negative**: on this cohort,
+  time-priority admission was already about as good as the frozen OR-width rank key — the tighter-range
+  breakouts it promotes do not, net of the displacement cost paid on the positions they evict, out-earn
+  the trades they replace. This corroborates the turn-4 entry-timing falsification (late breakouts were
+  net winners) from the opposite side: breakout *time* is not adverse to quality here, so reordering by a
+  one-step-removed geometry key reallocates the fixed budget without an edge. Because the screen pays the
+  displacement cost (conservative), the near-zero-but-negative reading is a robust NO-BUILD.
+- **No override, no tuning-to-escape.** The reading is **negative** — the opposite sign of the floor —
+  so there is no operator-override rationale, and softening the pre-registered `0.005` floor after seeing
+  −0.00096 would be the forbidden overfit (Definition of Done: no threshold softened after the reading).
+  A sweep over rank keys or policies is out of scope by the plan (a fit, not a governed single screen);
+  exactly one rank key + one displacement policy were frozen before the reading.
+- **Registry state.** Head unchanged: **v34**; `LS_TURN_EXPECT_VERSION=34` holds. No `params.rs` /
+  `orb.rs` edit → the head-identity gate is untouched, and the GO-only downstream (a default-off
+  `slot_rank_mode` sentinel armed `0.0 → 1.0` via seed-and-rerun — the arming flip exceeds
+  `PROPOSAL_BOUNDS_CAP = 0.5` so it never traverses the governed param path — then a KEEP read at RoR >
+  0.0398 with risk-cap dominance ≤ 0.40) does **not** execute. The frozen candidate package
+  (`candidate.json` + `diagnostic.py` + `twin.py`), the tool-written `gate-verdict.json`, and the
+  `reallocation`-family gate-reading ledger trial are committed together. Offline throughout; no gateway.
+
 ## Turn — profit_target_r 1.00 → 0.75 (exit-geometry axis): direction Phase-A STOP, NO-BUILD, head stays v34 (2026-07-24) — plan 2026-07-24-001
 
 - **Verdict: STOP at the pre-flip Phase-A gate — no flip run, head stays v34**

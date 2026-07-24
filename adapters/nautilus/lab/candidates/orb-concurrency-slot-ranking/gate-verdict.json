@@ -1,0 +1,33 @@
+{
+  "schema_version": 1,
+  "slug": "orb-concurrency-slot-ranking",
+  "family": "reallocation",
+  "decision": "STOP",
+  "stop_gate": "threshold-fail",
+  "stop_reason": "threshold on 'ror_shift' failed: -0.*** not Ge 0.005",
+  "diagnostic_readings": {
+    "population_count": 20.0,
+    "ror_base": 0.039806,
+    "ror_prime": 0.038847,
+    "ror_shift": -0.000959
+  },
+  "twin_readings": {
+    "population_count": 20.0,
+    "ror_base": 0.039806,
+    "ror_prime": 0.038847,
+    "ror_shift": -0.000959
+  },
+  "agreed_readings": {
+    "population_count": 20.0,
+    "ror_base": 0.039806,
+    "ror_prime": 0.038847,
+    "ror_shift": -0.000959
+  },
+  "pre_register_hash": "e3142076f6b375149f65e1ef9e8031780d7a6dede9279ea1d1a1f0950432f0b1",
+  "catalog_fingerprint": "363f199d4357bf665d3bed9c97c36e37551e24c89e89b0bad0b00de50d8908f4",
+  "freeze_commit": "3eb44db0e50ebbff21afdfa0f9c095464687de74",
+  "flip_param": "slot_rank_mode",
+  "flip_value": 1.0,
+  "prior_trials": [],
+  "recorded_utc": "2026-07-24T07:02:51.170839+00:00"
+}
