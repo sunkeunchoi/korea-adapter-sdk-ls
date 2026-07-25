@@ -69,36 +69,76 @@ export LS_DISPATCH_DEFER="stranded_orders"   # named item; recorded with your no
 
 Every attempt — green or refused — appends a chain record. A refusal is history, not a silent exit.
 
-## 4. Attended mount + watchdog
+## 4. Attended mount — `--mount` RUNS the session
 
-Prepare the session with the wired command (nonce-gated, attended, **paper-only**):
+`--mount` is the live driver: it consumes the green dispatch, drives `node.run`, runs the
+fail-closed teardown, and finalizes the run. Nonce-gated, attended, **paper-only**.
+
+**Create the operator keepalive file first** — its mtime is the operator dead-man feeder, and
+an absent file reads as stale, so the mount refuses without it:
 
 ```sh
-export LS_DISPATCH_NONCE=$(date +%s)                       # fresh nonce; refused in a no-TTY shell
+export LS_MOUNT_KEEPALIVE=/ABSOLUTE/path/to/rung1.keepalive
+touch "$LS_MOUNT_KEEPALIVE"
+
+export LS_DISPATCH_NONCE=$(date +%s)                            # fresh nonce; refused in a no-TTY shell
 export LS_MOUNT_UNIVERSE_FILE=/ABSOLUTE/path/to/universe.json   # resolved daily/t8407 universe
+export LS_MOUNT_SESSION_SECS=21600                              # optional; default 6 h
+export LS_MOUNT_STARTING_BALANCE=10000000                       # optional; recorded on the equity curve
 cargo run --release -p nautilus-ls-lab --bin lab-live -- --mount
 ```
 
-`--mount` resolves the pre-registered rung fraction (**0.10**), sources v34's **real** governed
-params (never the all-levers-off default — a wrong head that sizes to zero is refused), builds the
-live node at 0.10× size, and reports readiness (**exit 70** = prepared). It **hard-refuses unless
-`LS_TRADING_ENV=paper`** (exit 66) and refuses loudly in a no-TTY shell (exit 77) — it never
-consumes the green dispatch on a refusal.
+Order is the safety property, and it is why a bad input costs you nothing:
 
-> **Deferred:** the attended live-session **driver** (`node.run → fail-closed teardown → finalize`)
-> is a follow-up — `--mount` prepares and stops at that seam without consuming the dispatch. The
-> watchdog / breaker / teardown guidance below is the design for when the driver lands.
+1. the **paper interlock** (exit `66` if `LS_TRADING_ENV != paper`);
+2. the **attendance/nonce gate** (exit `77` in a no-TTY shell or without a fresh nonce), and the
+   read-only mountability peek (also `77` when there is no green/unconsumed/same-day dispatch);
+3. **every fail-closed precheck, all before the consume** — the pre-registered fraction, the
+   **watchdog envelope arming** (a prereg missing the heartbeat interval or the max-loss threshold
+   refuses: a half-envelope never runs a session), the keepalive file, v34's **real** governed
+   params (a zero-size head is refused), the universe, and the node build. Any failure here exits
+   `71` and **does not consume the green dispatch** — fix and re-run `--mount`, no fresh
+   `--dispatch` needed;
+4. only then `authorize_mount` **consumes** the dispatch and takes the Live lock;
+5. the session runs; at the end (timer or trip) exactly **one** fail-closed teardown fires, and the
+   run finalizes.
 
-While the mounted LiveNode session runs (once the driver lands):
+| exit | meaning | action |
+|---|---|---|
+| **0** | ran and finalized clean (teardown confirmed flat) | §5 post-session verification |
+| **66** | not paper | set `LS_TRADING_ENV=paper` |
+| **71** | pre-consume precheck failed — **dispatch not consumed** | fix the named input, re-run `--mount` |
+| **72** | ran, finalized **ABNORMAL** — the teardown could not confirm flat | reconcile the account, then `--clear-killswitch` |
+| **77** | attendance/nonce refusal, or no mountable dispatch — nothing consumed | run attended with a fresh nonce, or re-run `--dispatch` |
 
-- **Keep the watchdog fed.** Refresh the operator keepalive within **90 s** and keep the runtime
-  ticking. A stale feeder (either one) trips the dead-man → teardown (stop → cancel → flat-check →
-  halt) → a safety-trip record. **At rung 1 any trip suspends to rung 0** — do not step away past 90 s.
-- **Breaker:** realized + conservatively-marked open P&L worse than **−300,000 KRW** flattens and
-  cancels first, then engages the kill switch. Also a rung-1 limit event → rung-0 suspend.
+While the session runs:
+
+- **Keep the watchdog fed.** Refresh the operator keepalive (`touch "$LS_MOUNT_KEEPALIVE"`) within
+  **90 s**, and the strategy touches the runtime feeder on every processed bar. A stale feeder
+  (either one) trips the dead-man → teardown → a safety-trip record. **At rung 1 any trip suspends
+  to rung 0** — do not step away past 90 s.
+- **Breaker:** realized P&L (matched offsetting fills against cost basis) plus open positions marked
+  at the **adverse edge** — and, when the market-data feed is stale or absent, at the position's
+  **stop level** rather than a last-seen favorable price — worse than **−300,000 KRW** tears down
+  and engages the kill switch.
+- **The teardown sequence** (unchanged, and never re-ordered): stop the strategy's order emission →
+  **quiesce the in-flight order dispatches** → cancel every resting order (retried, fail-closed) →
+  positively confirm flat via t0424 `janqty` + t0425 `ordrem` → **halt LAST**. It never places a
+  flattening order: a non-flat close is an abnormal finalize plus an operator reconcile, never an
+  auto-flatten.
 - On any hard-fail, finalize still runs and marks the run abnormal — the session leaves scannable
   artifacts. After the close, run the post-session catalog ingest of today's KST date (prerequisite
   for the tracking-error twin).
+
+### Two operator-visible residuals (by design, fail-safe)
+
+- A market-data lull or a `node.run` drain that exceeds the heartbeat interval **can trip the
+  dead-man**. That fails safe (halt + kill switch), but it reds the next `--dispatch` until a
+  nonce-gated `--clear-killswitch`. Set the pre-registered interval with that in mind.
+- There is **no timed backstop if `node.run` hangs on stop** while the strategy keeps touching the
+  runtime heartbeat: the dead-man will not fire and the driver blocks. The attended operator is the
+  catch (interrupt the process; the `.tmp-<run_id>` residue marks the aborted run and the chain's
+  consumption marker links it). A timed hard-stop on `node.run` is a noted follow-up.
 
 ## 5. After the session
 

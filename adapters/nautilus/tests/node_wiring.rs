@@ -42,7 +42,7 @@ async fn node_builds_with_both_clients_registered() {
         .expect("data client registered + created")
         .add_exec_client(
             None,
-            Box::new(LsExecutionClientFactory),
+            Box::new(LsExecutionClientFactory::new()),
             Box::new(paper_config()),
         )
         .expect("exec client registered + created")

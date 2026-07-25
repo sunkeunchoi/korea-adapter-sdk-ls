@@ -653,10 +653,15 @@ fn u188_cli_stale_freshness_surfaced_independent_of_day_status() {
 }
 
 // ---------------------------------------------------------------------------
-// Bin-level `--mount` (U2, rung-1 readiness) — the paper interlock + attended gate fire
-// through the CLI with distinct exit codes (the "never look-like-ran" discipline). The full
-// prepared path (node build) needs a live head + universe + green chain and is exercised by the
-// library seams (live_wiring.rs) + the operator-attended session.
+// Bin-level `--mount` — the paper interlock + attended gate fire through the CLI with
+// distinct exit codes (the "never look-like-ran" discipline).
+//
+// `--mount` now DRIVES the session (live-session-driver U5), but the bin can never reach
+// the driven path from a test: the attendance gate refuses every no-TTY shell and cannot
+// be suppressed from the environment by design. So the bin covers the refusal codes, the
+// pre-consume prechecks are covered at the library seam (`live_wiring.rs::prepare_mount`,
+// which structurally cannot consume), and the real end-to-end run is the operator-attended
+// paper session — outside the gate, which never drives `node.run`.
 // ---------------------------------------------------------------------------
 
 fn bin_mount(home: &std::path::Path, extra: &[(&str, &str)]) -> std::process::Output {
@@ -696,6 +701,47 @@ fn bin_mount_refuses_in_a_no_tty_shell_with_a_distinct_exit() {
     assert_eq!(out.status.code(), Some(77), "distinct attended-refusal exit code");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("mount refused"), "{stderr}");
+}
+
+/// The `MOUNT_PREPARED_DEFERRED` bail is GONE (live-session-driver DoD): no reachable
+/// `--mount` path prints the deferred-driver notice or exits 70 any more.
+#[test]
+fn bin_mount_no_longer_reports_a_deferred_driver() {
+    let tmp = TempDir::new().unwrap();
+    for extra in [vec![], vec![("LS_TRADING_ENV", "paper")]] {
+        let out = bin_mount(tmp.path(), &extra);
+        assert_ne!(out.status.code(), Some(70), "the prepared-but-deferred exit code is retired");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(!text.contains("deferred"), "the deferred-driver notice is gone: {text}");
+        assert!(!text.contains("mount prepared"), "the prepared-not-run notice is gone: {text}");
+    }
+}
+
+/// The attendance refusal happens BEFORE any mount input is resolved, so a `--mount` with
+/// no pre-registration, no universe and no keepalive still exits 77 — never the
+/// pre-consume-precheck code. Ordering is the safety property: nothing is consumed and no
+/// gateway credential is touched until an operator has confirmed.
+#[test]
+fn bin_mount_refuses_attendance_before_resolving_any_mount_input() {
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+    let out = bin_mount(
+        tmp.path(),
+        &[("LS_TRADING_ENV", "paper"), ("LS_MOUNT_SESSION_SECS", "1")],
+    );
+    assert_eq!(out.status.code(), Some(77), "the attendance gate fires first");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !stderr.contains("pre-consume"),
+        "no precheck ran — the attendance gate refused first: {stderr}"
+    );
+    // Nothing was appended: the genesis record is still the whole chain.
+    let chain = nautilus_ls_lab::dispatch::chain::DispatchChain::open(tmp.path()).unwrap();
+    assert_eq!(chain.load().records.len(), 1, "a refused mount appends nothing");
 }
 
 #[test]

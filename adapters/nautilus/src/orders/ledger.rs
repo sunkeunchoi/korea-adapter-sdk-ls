@@ -145,6 +145,36 @@ pub struct FillDelta {
     pub terminal: bool,
 }
 
+/// One recorded execution, in arrival order — the input to a realized-P&L accounting
+/// seam (live-session-driver KTD8(a)).
+///
+/// The ledger's per-`OrdNo` watermarks are exactly-once *emission* accounting: they carry
+/// no cost basis and no realized P&L, so a live max-loss breaker cannot "sum the
+/// FillLedger". This journal is the additive record it can match offsetting fills over.
+/// Written on the one seam every fill flows through ([`FillLedger::apply`]), so the SC and
+/// poll lanes are both covered exactly once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LedgerFill {
+    /// The bare shcode the fill was on.
+    pub symbol: String,
+    /// The order side that produced the fill.
+    pub side: OrderSide,
+    /// The incremental filled quantity (always > 0).
+    pub qty: i64,
+    /// The fill price (integer KRW). May be an approximation — see
+    /// [`FillDelta::price_approximated`].
+    pub price: i64,
+    /// Whether `price` is approximated rather than an exact execution price.
+    pub price_approximated: bool,
+    /// The globally-unique trade id (mirrors the emitted [`FillDelta`]).
+    pub trade_id: TradeId,
+    /// When the ledger recorded the execution (realtime unix nanos, the same clock the
+    /// emitter stamps events with). The observation itself carries no timestamp, so this
+    /// is *observation* time, not exchange time — good enough to order a session's trades
+    /// and stamp the run's performance report, and never used for a safety decision.
+    pub observed_ns: u64,
+}
+
 /// The outcome of applying one observation.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ApplyOutcome {
@@ -228,6 +258,9 @@ pub struct FillLedger {
     /// order (an operator's manual HTS order on the same account) would make the
     /// drive self-sustaining forever.
     pending_reconcile: BTreeSet<String>,
+    /// Every emitted execution, in arrival order (live-session-driver KTD8(a)) — the
+    /// realized-P&L accounting seam's input. Append-only; never read by the emission path.
+    fills: Vec<LedgerFill>,
 }
 
 impl FillLedger {
@@ -463,6 +496,14 @@ impl FillLedger {
             .collect()
     }
 
+    /// Every execution recorded on this ledger, in arrival order (KTD8(a)) — the input to
+    /// the live session's realized-P&L accounting. Exactly the executions that were
+    /// emitted; the exactly-once discipline in [`Self::apply`] is what makes it safe to
+    /// match offsetting fills over.
+    pub fn fills(&self) -> &[LedgerFill] {
+        &self.fills
+    }
+
     /// Apply one fill observation, returning the executions to emit (KTD1). The
     /// heart of the exactly-once seam.
     pub fn apply(&mut self, obs: FillObservation) -> ApplyOutcome {
@@ -527,6 +568,8 @@ impl FillLedger {
             entry.terminal = true;
         }
 
+        let symbol = entry.symbol.clone();
+        let side = entry.side;
         let trade_id = match (obs.source, &obs.exec_no) {
             (FillSource::Sc, Some(execno)) => TradeId::from(format!("SC-{execno}").as_str()),
             _ => TradeId::from(format!("POLL-{}-{}", obs.ord_no, source_cumulative).as_str()),
@@ -540,6 +583,18 @@ impl FillLedger {
             trade_id,
             terminal,
         };
+
+        // Journal the execution for the realized-P&L accounting seam (KTD8(a)). Append
+        // only — nothing on the emission path reads it.
+        self.fills.push(LedgerFill {
+            symbol,
+            side,
+            qty: delta_qty,
+            price: obs.price,
+            price_approximated,
+            trade_id,
+            observed_ns: nautilus_core::time::get_atomic_clock_realtime().get_time_ns().as_u64(),
+        });
 
         // On terminal, forget the chain so the OrdNos free up (KTD1). The entry
         // stays (terminal=true) so `order()` still resolves the emission context.

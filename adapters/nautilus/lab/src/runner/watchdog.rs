@@ -243,11 +243,36 @@ pub async fn watchdog_tick<S: LiveSession>(
     run_id: Option<&str>,
     chain_rung: u8,
 ) -> anyhow::Result<Option<TripCause>> {
+    Ok(watchdog_tick_reporting(session, chain, latch, obs, limits, run_id, chain_rung)
+        .await?
+        .map(|(cause, _report)| cause))
+}
+
+/// [`watchdog_tick`] plus the teardown's [`TeardownReport`] (live-session-driver U3).
+///
+/// Identical evaluation, claim, and remediation — the tick is one function with two
+/// projections, so the live driver can finalize on the report the trip's own teardown
+/// produced instead of re-running a teardown (which would break exactly-once) or
+/// reconstructing one after the fact.
+///
+/// # Errors
+///
+/// Propagates an [`execute_trip`] chain-append failure.
+#[allow(clippy::too_many_arguments)]
+pub async fn watchdog_tick_reporting<S: LiveSession>(
+    session: &S,
+    chain: &DispatchChain,
+    latch: &TripLatch,
+    obs: &WatchdogObservation,
+    limits: &WatchdogLimits,
+    run_id: Option<&str>,
+    chain_rung: u8,
+) -> anyhow::Result<Option<(TripCause, TeardownReport)>> {
     match evaluate_trip(obs, limits) {
         Some(cause) if latch.try_claim() => {
             let now = Utc.timestamp_opt(obs.now_unix, 0).single().unwrap_or_else(Utc::now);
-            execute_trip(session, chain, cause, run_id, now, chain_rung).await?;
-            Ok(Some(cause))
+            let report = execute_trip(session, chain, cause, run_id, now, chain_rung).await?;
+            Ok(Some((cause, report)))
         }
         // A trip is present but was already claimed (a racing feeder / earlier tick) — the
         // teardown ran exactly once; do not run it again.
@@ -277,10 +302,37 @@ pub async fn session_liveness_tick<S: LiveSession>(
     run_id: Option<&str>,
     chain_rung: u8,
 ) -> anyhow::Result<Option<TripCause>> {
+    Ok(session_liveness_tick_reporting(
+        session, chain, latch, now_unix, supervisor_touch_unix, interval_secs, run_id, chain_rung,
+    )
+    .await?
+    .map(|(cause, _report)| cause))
+}
+
+/// [`session_liveness_tick`] plus the teardown's [`TeardownReport`] (live-session-driver
+/// U3) — the same projection pair as [`watchdog_tick`]/[`watchdog_tick_reporting`], so the
+/// driver can finalize on the report this trip's own teardown produced rather than
+/// re-running a teardown (which would break exactly-once).
+///
+/// # Errors
+///
+/// Propagates an [`execute_trip`] chain-append failure.
+#[allow(clippy::too_many_arguments)]
+pub async fn session_liveness_tick_reporting<S: LiveSession>(
+    session: &S,
+    chain: &DispatchChain,
+    latch: &TripLatch,
+    now_unix: i64,
+    supervisor_touch_unix: i64,
+    interval_secs: i64,
+    run_id: Option<&str>,
+    chain_rung: u8,
+) -> anyhow::Result<Option<(TripCause, TeardownReport)>> {
     if supervisor_silent(now_unix, supervisor_touch_unix, interval_secs) && latch.try_claim() {
         let now = Utc.timestamp_opt(now_unix, 0).single().unwrap_or_else(Utc::now);
-        execute_trip(session, chain, TripCause::SupervisorSilent, run_id, now, chain_rung).await?;
-        Ok(Some(TripCause::SupervisorSilent))
+        let report =
+            execute_trip(session, chain, TripCause::SupervisorSilent, run_id, now, chain_rung).await?;
+        Ok(Some((TripCause::SupervisorSilent, report)))
     } else {
         Ok(None)
     }

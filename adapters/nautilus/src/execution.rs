@@ -105,6 +105,305 @@ fn normalize_account_id(raw: &str) -> String {
     }
 }
 
+/// How long a teardown waits for the in-flight order-dispatch tasks to drain before it
+/// gives up on them and proceeds to the cancel scan (KTD2). Bounded so a wedged dispatch
+/// can never stall the halt: an aborted task's order (if it dispatched at all) is caught
+/// by the scan that follows, and an unconfirmed cancel fails the teardown closed.
+pub const QUIESCE_BUDGET: Duration = Duration::from_secs(5);
+
+/// Per-order cancel attempts [`cancel_all_resting_on`] makes before failing closed.
+/// Small: the caller ([`crate::execution::cancel_all_resting_on`]'s teardown) is itself
+/// retried by `run_teardown`, so a large inner budget only delays the halt.
+const CANCEL_ALL_ATTEMPTS: usize = 3;
+
+/// The shared t0425 pacer for the teardown flat/cancel scans. A **process-static** pacer
+/// (not a per-call one) so repeated teardown scans — `run_teardown` retries the cancel up
+/// to three times, and the watchdog may drive its own teardown — stay inside the t0425
+/// Account-bucket cap instead of bursting into `IGW00201`
+/// (`docs/solutions/integration-issues/ls-gateway-t0425-rate-limit-and-pagination-flat-scan.md`).
+fn teardown_pacer() -> &'static crate::ingest::pacer::Pacer {
+    static PACER: std::sync::OnceLock<crate::ingest::pacer::Pacer> = std::sync::OnceLock::new();
+    PACER.get_or_init(poll_pacer)
+}
+
+/// The retained handles of the exec client's **detached order-dispatch tasks** (KTD2).
+///
+/// `submit_order`/`modify_order`/`cancel_order` spawn their worker and used to drop the
+/// [`tokio::task::JoinHandle`], so a submission already in flight could reach
+/// `sdk.orders().submit()` *after* a teardown's cancel scan and *before* `halt` — passing
+/// the kill-switch check (checked first in `post_order`) and resting an order the scan
+/// never saw, while `is_flat` raced ahead of the fill and finalized the run NORMAL. That
+/// is a fail-open in a fail-closed system.
+///
+/// Retaining the handles here makes those tasks awaitable/abortable, so the teardown can
+/// **quiesce** them before it enumerates: after [`quiesce`](Self::quiesce) returns, no
+/// further submission can land at the gateway from a task that started before it.
+/// Cheaply cloneable (`Arc`-shared) and `Send + Sync`, so the teardown handle can hold it.
+#[derive(Debug, Clone, Default)]
+pub struct OrderDispatchTasks(Arc<Mutex<Vec<tokio::task::JoinHandle<()>>>>);
+
+/// What a [`OrderDispatchTasks::quiesce`] pass did — surfaced so a teardown can record
+/// that it had to abort (rather than drain) an in-flight dispatch.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct QuiesceReport {
+    /// Order-dispatch tasks that completed on their own within the budget.
+    pub drained: usize,
+    /// Order-dispatch tasks aborted after the budget elapsed (they may have already
+    /// dispatched — the cancel scan that follows is what catches those).
+    pub aborted: usize,
+}
+
+impl OrderDispatchTasks {
+    /// A fresh, empty task set.
+    pub fn new() -> Self {
+        OrderDispatchTasks::default()
+    }
+
+    /// Retain a spawned order-dispatch task, first pruning the handles that already
+    /// finished so a long session's set stays bounded.
+    pub fn track(&self, handle: tokio::task::JoinHandle<()>) {
+        let mut guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        guard.retain(|h| !h.is_finished());
+        guard.push(handle);
+    }
+
+    /// Outstanding (not yet finished) order-dispatch tasks.
+    pub fn pending(&self) -> usize {
+        let guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        guard.iter().filter(|h| !h.is_finished()).count()
+    }
+
+    /// Drain every outstanding order-dispatch task, aborting any that outlives `budget`
+    /// (KTD2). Takes the handles out of the set, so a second call is a no-op unless new
+    /// dispatches were tracked in between. Never errors: a task that panicked is counted
+    /// as drained — the point is only that it can no longer dispatch.
+    pub async fn quiesce(&self, budget: Duration) -> QuiesceReport {
+        let handles: Vec<tokio::task::JoinHandle<()>> = {
+            let mut guard = self.0.lock().unwrap_or_else(|e| e.into_inner());
+            std::mem::take(&mut *guard)
+        };
+        let mut report = QuiesceReport::default();
+        let deadline = tokio::time::Instant::now() + budget;
+        for handle in handles {
+            // Take an abort handle BEFORE the timeout consumes the JoinHandle. Dropping a
+            // JoinHandle only *detaches* the task — it would keep running and could still
+            // reach `sdk.orders().submit()` after the cancel scan and before `halt`, which
+            // is precisely the fail-open this quiesce exists to close. Aborting stops it at
+            // its next await point; anything it already dispatched is at the venue and is
+            // therefore enumerable by the scan that follows.
+            let abort = handle.abort_handle();
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            match tokio::time::timeout(remaining, handle).await {
+                // Completed (or panicked) — either way it can no longer dispatch.
+                Ok(_) => report.drained += 1,
+                Err(_elapsed) => {
+                    abort.abort();
+                    report.aborted += 1;
+                }
+            }
+        }
+        report
+    }
+}
+
+/// The stranded-resting-order leg of the flat check over a bare SDK handle — the body
+/// [`LsExecClient::check_stranded_orders`] delegates to, so the teardown handle (which
+/// holds the shared [`LsSdk`], never a non-`Clone` [`LsExecClient`]) runs the identical
+/// fail-closed check.
+///
+/// # Errors
+///
+/// [`AdapterError::Config`] if the inquiry is truncated or any resting order remains.
+pub async fn check_stranded_orders_on(sdk: &LsSdk) -> AdapterResult<()> {
+    // Open-order check: single-page t0425 (fail-closed on truncation).
+    let orders = sdk.orders().inquiry(&T0425Request::for_symbol("")).await?;
+    let next_cursor = orders.outblock.cts_ordno.trim();
+    if !next_cursor.is_empty() {
+        return Err(AdapterError::Config(
+            "flat-start gate: order inquiry was truncated (more pages) — cannot prove the \
+             account is flat; refusing to start"
+                .to_string(),
+        ));
+    }
+    // Fail CLOSED: a row is "open" if its unfilled remaining is > 0 OR its
+    // `ordrem` is unparseable — the gate must never treat a garbage/unexpected
+    // remaining-qty as "0 = filled" and slip a resting order through (R14).
+    let open = orders
+        .outblock1
+        .iter()
+        .filter(|r| r.ordrem.trim().parse::<i64>().map_or(true, |n| n > 0))
+        .count();
+    if open > 0 {
+        return Err(AdapterError::Config(format!(
+            "flat-start gate: {open} open (or unparseable-remaining) order(s) present — refusing \
+             to start (v1 is flat-start-only, R14)"
+        )));
+    }
+    Ok(())
+}
+
+/// The holdings/flat-start leg of the flat check over a bare SDK handle — the body
+/// [`LsExecClient::check_flat_start`] delegates to.
+///
+/// # Errors
+///
+/// [`AdapterError::Config`] if any holding row carries an open (or unparseable) balance.
+pub async fn check_flat_start_on(sdk: &LsSdk) -> AdapterResult<()> {
+    // Holdings check: no t0424 row may carry an OPEN balance. A same-day buy+sell
+    // round-trip leaves a lingering `janqty=0` row for the symbol (net-zero position,
+    // still listed for the session) — that is NOT an open holding, so gating on a
+    // bare `!is_empty()` false-fails "not flat". Mirror the order check above and
+    // fail CLOSED: a row is open if its `janqty` parses > 0 OR is unparseable (never
+    // treat a garbage balance as "0 = flat").
+    let holdings = sdk
+        .account()
+        .stock_balance(&T0424Request::new("1", "0", "0", "0"))
+        .await?;
+    let open_holdings = holdings
+        .outblock1
+        .iter()
+        .filter(|r| r.janqty.trim().parse::<i64>().map_or(true, |n| n > 0))
+        .count();
+    if open_holdings > 0 {
+        return Err(AdapterError::Config(format!(
+            "flat-start gate: {open_holdings} holding position(s) present — refusing to \
+             start (R14)"
+        )));
+    }
+    Ok(())
+}
+
+/// The composed flat check over a bare SDK handle (t0425 resting orders, then t0424
+/// holdings) — the body [`LsExecClient::verify_flat`] delegates to, and the exact
+/// positive-confirmation-only predicate the live teardown's `is_flat` reads through
+/// `.is_ok()` (KTD1): a truncated/failed/ambiguous read returns `Err`, never a false
+/// "flat".
+///
+/// # Errors
+///
+/// [`AdapterError::Config`] with a reason if not flat (AE5).
+pub async fn verify_flat_on(sdk: &LsSdk) -> AdapterResult<()> {
+    check_stranded_orders_on(sdk).await?;
+    check_flat_start_on(sdk).await?;
+    Ok(())
+}
+
+/// Cancel EVERY resting order on the account, returning the count actually canceled
+/// (R2, KTD2). The primitive the fail-closed teardown needs and which had no
+/// implementation anywhere — there is no cancel-all on the SDK.
+///
+/// Fail-closed by construction:
+///
+/// - a **single-page** t0425 `inquiry` (never `collect_all`, which can walk a
+///   non-terminating `cts_ordno` on a polluted account); a truncated read (non-empty
+///   `cts_ordno`) is an error, never a partial "flat";
+/// - a row is resting if `ordrem` parses `> 0` **or** is unparseable — garbage is never
+///   read as "0 = filled";
+/// - each cancel is retried a small number of times and classified by the [`LsError`]
+///   **variant** (`docs/solutions/conventions/order-error-classifier-placed-nothing-vs-may-rest.md`):
+///   a clean `ApiError` business rejection (already filled / gone — the gateway placed
+///   nothing and there is nothing resting) counts as not-resting and moves on; anything
+///   that **may have rested or may still rest** (`AmbiguousOrder`/`Http`/`Decode`, and the
+///   pre-network denials, which mean the cancel never reached the venue) exhausts the
+///   retries and then returns `Err` — "not safe", so the teardown records the account as
+///   not flat rather than concluding a false all-clear;
+/// - it **never places a flattening order** (v1 is flat-start-only): halt-last stays safe
+///   precisely because the teardown is read-or-cancel only
+///   (`docs/solutions/conventions/kill-switch-ordering-in-order-placing-teardown.md`).
+///
+/// The read is paced against the t0425 Account-bucket cap. Order numbers reach the error
+/// text through a structured, scrubbed value; broker free text (`LsError` Display carries
+/// `rsp_msg`) is always scrubbed before it lands.
+///
+/// **Callers must quiesce the in-flight order-dispatch tasks first**
+/// ([`OrderDispatchTasks::quiesce`]) — otherwise a submission already in flight can rest
+/// an order *after* this scan (KTD2).
+///
+/// # Errors
+///
+/// [`AdapterError::Config`] on a truncated read or any un-acked cancel; the SDK error on
+/// a failed inquiry.
+pub async fn cancel_all_resting_on(sdk: &LsSdk) -> AdapterResult<usize> {
+    let pacer = teardown_pacer();
+    pacer.acquire().await;
+    let orders = sdk.orders().inquiry(&T0425Request::for_symbol("")).await?;
+    if !orders.outblock.cts_ordno.trim().is_empty() {
+        return Err(AdapterError::Config(
+            "cancel-all: the t0425 order inquiry was truncated (more pages) — cannot enumerate \
+             every resting order; refusing to report the account cancel-clean"
+                .to_string(),
+        ));
+    }
+    // Fail CLOSED, exactly like the flat gate: a row rests if its unfilled remaining
+    // parses > 0 OR is unparseable. A cancel sends the REMAINING quantity (R8); an
+    // unparseable remaining falls back to the full order quantity, and to 1 when even
+    // that is garbage — refusing to send a cancel is the one unacceptable failure mode.
+    let resting: Vec<(String, String, i64)> = orders
+        .outblock1
+        .iter()
+        .filter(|r| r.ordrem.trim().parse::<i64>().map_or(true, |n| n > 0))
+        .map(|r| {
+            let qty = r
+                .ordrem
+                .trim()
+                .parse::<i64>()
+                .ok()
+                .filter(|n| *n > 0)
+                .or_else(|| r.qty.trim().parse::<i64>().ok().filter(|n| *n > 0))
+                .unwrap_or(1);
+            (
+                r.ordno.trim().to_string(),
+                format!("A{}", r.expcode.trim()),
+                qty,
+            )
+        })
+        .collect();
+
+    let mut canceled = 0usize;
+    for (ordno, isuno, qty) in resting {
+        let mut settled = false;
+        let mut last_reason: Option<String> = None;
+        for _ in 0..CANCEL_ALL_ATTEMPTS {
+            pacer.acquire().await;
+            let req = CSPAT00801Request::new(&ordno, &isuno, qty.to_string());
+            match sdk.orders().cancel(&req).await {
+                Ok(_) => {
+                    canceled += 1;
+                    settled = true;
+                    break;
+                }
+                Err(err) => match classify_submit_error(&err) {
+                    // A clean 2xx business rejection: the gateway placed nothing and the
+                    // order is not resting (already filled / already gone). Not an error.
+                    SubmitAction::Reject => {
+                        settled = true;
+                        break;
+                    }
+                    // A dedup reservation hit — an identical cancel is already in flight;
+                    // retry so the outcome is observed rather than assumed.
+                    SubmitAction::DropDuplicate => {
+                        last_reason = Some("a concurrent identical cancel held the dedup reservation".to_string());
+                    }
+                    // May have rested / never reached the venue — either way this order is
+                    // NOT proven canceled. Retry, then fail closed below.
+                    SubmitAction::Pending | SubmitAction::Deny | SubmitAction::Accept => {
+                        last_reason = Some(crate::scrub::scrub_secrets(&err.to_string()));
+                    }
+                },
+            }
+        }
+        if !settled {
+            let reason = last_reason.unwrap_or_else(|| "unknown cancel failure".to_string());
+            return Err(AdapterError::Config(format!(
+                "cancel-all: order {} could not be confirmed canceled after {CANCEL_ALL_ATTEMPTS} \
+                 attempt(s) — treating the account as NOT flat (fail-closed): {reason}",
+                crate::scrub::scrub_secrets(&ordno)
+            )));
+        }
+    }
+    Ok(canceled)
+}
+
 /// The LS domestic cash-equity execution client.
 pub struct LsExecClient {
     client_id: ClientId,
@@ -128,16 +427,44 @@ pub struct LsExecClient {
     /// SC-lane unknown-fill trigger (KTD-7): set by the SC consumer, consumed by
     /// the poll loop — arms the reconcile drive on the next pass.
     reconcile_armed: Arc<AtomicBool>,
+    /// Retained handles of the spawned submit/modify/cancel workers (KTD2) — the
+    /// teardown drains them before its cancel scan so no submission lands after it.
+    order_tasks: OrderDispatchTasks,
 }
 
 impl LsExecClient {
-    /// Build an execution client.
+    /// Build an execution client with its own fresh [`FillLedger`].
     pub fn new(
         client_id: impl Into<String>,
         trader_id: impl Into<String>,
         account_id: impl Into<String>,
         sdk: LsSdk,
         account_type: AccountType,
+    ) -> Self {
+        Self::new_with_ledger(
+            client_id,
+            trader_id,
+            account_id,
+            sdk,
+            account_type,
+            Arc::new(Mutex::new(FillLedger::new())),
+        )
+    }
+
+    /// Build an execution client over a **caller-supplied** [`FillLedger`] (KTD3).
+    ///
+    /// The ledger is a `sdk.clone()`-independent `Arc`: cloning the SDK shares the
+    /// kill-switch `Arc<Inner>` but *not* the ledger, which `new` creates fresh inside.
+    /// A live session's max-loss breaker must read the **node's** fills, so the runner
+    /// builds one ledger, hands it here, and retains the same `Arc` for the feeder —
+    /// otherwise the breaker reads an empty ledger and never trips (a silent no-op).
+    pub fn new_with_ledger(
+        client_id: impl Into<String>,
+        trader_id: impl Into<String>,
+        account_id: impl Into<String>,
+        sdk: LsSdk,
+        account_type: AccountType,
+        ledger: Arc<Mutex<FillLedger>>,
     ) -> Self {
         let clock = get_atomic_clock_realtime();
         let trader_id = TraderId::from(trader_id.into().as_str());
@@ -158,13 +485,32 @@ impl LsExecClient {
             clock,
             emitter,
             connected: Arc::new(AtomicBool::new(false)),
-            ledger: Arc::new(Mutex::new(FillLedger::new())),
+            ledger,
             poll_cadence: DEFAULT_POLL_CADENCE,
             sc_supervisor: None,
             tasks: Vec::new(),
             last_drop_count: Arc::new(AtomicU64::new(0)),
             reconcile_armed: Arc::new(AtomicBool::new(false)),
+            order_tasks: OrderDispatchTasks::new(),
         }
+    }
+
+    /// A clone of this client's SDK handle — the same `Arc<Inner>`, so the kill switch
+    /// engaged through it is the one gating **this** client's order dispatch (KTD3).
+    pub fn sdk(&self) -> LsSdk {
+        self.sdk.clone()
+    }
+
+    /// A clone of this client's shared fill-ledger `Arc` (KTD3) — what the live session's
+    /// max-loss breaker feeder reads so it sees the node's real fills.
+    pub fn ledger_handle(&self) -> Arc<Mutex<FillLedger>> {
+        Arc::clone(&self.ledger)
+    }
+
+    /// A clone of this client's retained order-dispatch task set (KTD2) — what a teardown
+    /// quiesces before its cancel scan.
+    pub fn order_tasks(&self) -> OrderDispatchTasks {
+        self.order_tasks.clone()
     }
 
     /// Override the t0425 poll cadence (KTD2 — the post-SC-certification primacy
@@ -190,9 +536,21 @@ impl LsExecClient {
     ///
     /// [`AdapterError::Config`] with a reason if not flat (AE5).
     pub async fn verify_flat(&self) -> AdapterResult<()> {
-        self.check_stranded_orders().await?;
-        self.check_flat_start().await?;
-        Ok(())
+        verify_flat_on(&self.sdk).await
+    }
+
+    /// Cancel every resting order on the account (R2, KTD2), returning the count canceled.
+    ///
+    /// Quiesces this client's retained order-dispatch tasks **first** so no submission
+    /// already in flight can rest an order after the enumeration, then runs the
+    /// [`cancel_all_resting_on`] primitive over the shared SDK.
+    ///
+    /// # Errors
+    ///
+    /// [`AdapterError::Config`] on a truncated read or any un-acked cancel.
+    pub async fn cancel_all_resting(&self) -> AdapterResult<usize> {
+        self.order_tasks.quiesce(QUIESCE_BUDGET).await;
+        cancel_all_resting_on(&self.sdk).await
     }
 
     /// The stranded-resting-order leg of the flat check (single-page t0425), split out
@@ -204,39 +562,7 @@ impl LsExecClient {
     ///
     /// [`AdapterError::Config`] if the inquiry is truncated or any resting order remains.
     pub async fn check_stranded_orders(&self) -> AdapterResult<()> {
-        // Open-order check: single-page t0425 (fail-closed on truncation).
-        let orders = self
-            .sdk
-            .orders()
-            .inquiry(&T0425Request::for_symbol(""))
-            .await?;
-        let next_cursor = orders.outblock.cts_ordno.trim();
-        if !next_cursor.is_empty() {
-            return Err(AdapterError::Config(
-                "flat-start gate: order inquiry was truncated (more pages) — cannot prove the \
-                 account is flat; refusing to start"
-                    .to_string(),
-            ));
-        }
-        // Fail CLOSED: a row is "open" if its unfilled remaining is > 0 OR its
-        // `ordrem` is unparseable — the gate must never treat a garbage/unexpected
-        // remaining-qty as "0 = filled" and slip a resting order through (R14).
-        let open: Vec<&str> = orders
-            .outblock1
-            .iter()
-            .filter(|r| {
-                r.ordrem.trim().parse::<i64>().map_or(true, |n| n > 0)
-            })
-            .map(|r| r.ordno.trim())
-            .collect();
-        if !open.is_empty() {
-            return Err(AdapterError::Config(format!(
-                "flat-start gate: {} open (or unparseable-remaining) order(s) present — refusing \
-                 to start (v1 is flat-start-only, R14)",
-                open.len()
-            )));
-        }
-        Ok(())
+        check_stranded_orders_on(&self.sdk).await
     }
 
     /// The holdings/flat-start leg of the flat check (t0424), split out so the dispatch
@@ -247,29 +573,7 @@ impl LsExecClient {
     ///
     /// [`AdapterError::Config`] if any holding row carries an open (or unparseable) balance.
     pub async fn check_flat_start(&self) -> AdapterResult<()> {
-        // Holdings check: no t0424 row may carry an OPEN balance. A same-day buy+sell
-        // round-trip leaves a lingering `janqty=0` row for the symbol (net-zero position,
-        // still listed for the session) — that is NOT an open holding, so gating on a
-        // bare `!is_empty()` false-fails "not flat". Mirror the order check above and
-        // fail CLOSED: a row is open if its `janqty` parses > 0 OR is unparseable (never
-        // treat a garbage balance as "0 = flat").
-        let holdings = self
-            .sdk
-            .account()
-            .stock_balance(&T0424Request::new("1", "0", "0", "0"))
-            .await?;
-        let open_holdings = holdings
-            .outblock1
-            .iter()
-            .filter(|r| r.janqty.trim().parse::<i64>().map_or(true, |n| n > 0))
-            .count();
-        if open_holdings > 0 {
-            return Err(AdapterError::Config(format!(
-                "flat-start gate: {open_holdings} holding position(s) present — refusing to \
-                 start (R14)"
-            )));
-        }
-        Ok(())
+        check_flat_start_on(&self.sdk).await
     }
 
     /// Run `Orders::reconcile` for an intent (used on ambiguous submit + on a
@@ -934,7 +1238,10 @@ impl ExecutionClient for LsExecClient {
         let emitter = self.emitter.clone();
         let ledger = Arc::clone(&self.ledger);
         let clock = self.clock;
-        tokio::spawn(run_submit(sdk, emitter, ledger, clock, cmd.order_init));
+        // Retain the handle (KTD2) so a teardown can quiesce this dispatch before its
+        // cancel scan — a dropped handle would let the submit land after the scan.
+        self.order_tasks
+            .track(tokio::spawn(run_submit(sdk, emitter, ledger, clock, cmd.order_init)));
         Ok(())
     }
 
@@ -943,7 +1250,8 @@ impl ExecutionClient for LsExecClient {
         let emitter = self.emitter.clone();
         let ledger = Arc::clone(&self.ledger);
         let clock = self.clock;
-        tokio::spawn(run_modify(sdk, emitter, ledger, clock, cmd));
+        self.order_tasks
+            .track(tokio::spawn(run_modify(sdk, emitter, ledger, clock, cmd)));
         Ok(())
     }
 
@@ -952,7 +1260,8 @@ impl ExecutionClient for LsExecClient {
         let emitter = self.emitter.clone();
         let ledger = Arc::clone(&self.ledger);
         let clock = self.clock;
-        tokio::spawn(run_cancel(sdk, emitter, ledger, clock, cmd));
+        self.order_tasks
+            .track(tokio::spawn(run_cancel(sdk, emitter, ledger, clock, cmd)));
         Ok(())
     }
 }
