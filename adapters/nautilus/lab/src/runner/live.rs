@@ -13,13 +13,16 @@
 
 use std::path::{Path, PathBuf};
 
+use ls_sdk::LsSdk;
+use nautilus_ls::execution::OrderDispatchTasks;
 use nautilus_ls::lock::{AdvisoryLock, LockKind};
-use nautilus_ls::orders::ledger::FillDelta;
+use nautilus_ls::orders::ledger::{FillDelta, FillLedger};
 use nautilus_ls::orders::poll::DrivenOutcome;
 
 use crate::artifacts::data_quality::{DataQualityReport, ReconcileCondition, ReconcileConditionKind};
 use crate::artifacts::RunWriter;
 use crate::params::OrbParams;
+use crate::strategy::orb::EmissionGate;
 
 /// Live run configuration.
 #[derive(Debug, Clone)]
@@ -52,6 +55,121 @@ pub trait LiveSession {
     /// Engage the kill switch (blocks any further order placement). Called only
     /// AFTER the closing cancels.
     fn halt(&self);
+}
+
+/// The **production** [`LiveSession`] — the concrete, `Send + Sync` teardown handle the
+/// live driver and the watchdog share (live-session-driver U1; R1, KTD1/KTD2/KTD4/KTD6).
+///
+/// Deliberately **not** an [`LsExecClient`](nautilus_ls::execution::LsExecClient): that
+/// type is not `Clone` (it owns `JoinHandle`s) and cannot be retrieved after
+/// `LiveNode::build()` type-erases it, and its `Send + Sync` would ride on the
+/// `ExecutionEventEmitter`/`WsSupervisor` bounds. Instead every field here is
+/// `Arc`-shared state captured **before** the builder:
+///
+/// - `gate` — a clone of the strategy's [`EmissionGate`] (`Arc<AtomicBool>`), taken before
+///   `add_strategy` moves the strategy into the trader;
+/// - `sdk` — a clone of the **node's** [`LsSdk`], so `halt()` flips the very
+///   `Arc<Inner>::orders_enabled` the node's order path checks (KTD3: a separately-built
+///   client would halt a *different* `AtomicBool` — a silent no-op on exactly the orders
+///   that matter);
+/// - `ledger` — the **node's** `Arc<Mutex<FillLedger>>` (a separate `Arc` from the SDK, so
+///   `sdk.clone()` does not carry it), which the max-loss breaker feeder reads;
+/// - `order_tasks` — the node client's retained order-dispatch tasks, quiesced before the
+///   cancel scan (KTD2).
+///
+/// Ordering is **not** this type's job: [`run_teardown`] owns `stop → cancel → flat →
+/// halt` and is reused unchanged.
+/// (No `Debug`: neither `LsSdk` nor `FillLedger` implements it, and a derived one would
+/// risk printing resolved credential state anyway — this handle is never logged.)
+#[derive(Clone)]
+pub struct LiveTeardownSession {
+    gate: EmissionGate,
+    sdk: LsSdk,
+    ledger: std::sync::Arc<std::sync::Mutex<FillLedger>>,
+    order_tasks: OrderDispatchTasks,
+    quiesce_budget: std::time::Duration,
+}
+
+impl LiveTeardownSession {
+    /// Build the teardown handle from the pieces captured before `LiveNode::build()`.
+    pub fn new(
+        gate: EmissionGate,
+        sdk: LsSdk,
+        ledger: std::sync::Arc<std::sync::Mutex<FillLedger>>,
+        order_tasks: OrderDispatchTasks,
+    ) -> Self {
+        LiveTeardownSession {
+            gate,
+            sdk,
+            ledger,
+            order_tasks,
+            quiesce_budget: nautilus_ls::execution::QUIESCE_BUDGET,
+        }
+    }
+
+    /// Override the in-flight order-dispatch drain budget (tests drive it to zero so the
+    /// quiesce path is exercised without waiting).
+    pub fn with_quiesce_budget(mut self, budget: std::time::Duration) -> Self {
+        self.quiesce_budget = budget;
+        self
+    }
+
+    /// The shared fill ledger — what the max-loss breaker feeder reads (KTD3).
+    pub fn ledger(&self) -> std::sync::Arc<std::sync::Mutex<FillLedger>> {
+        std::sync::Arc::clone(&self.ledger)
+    }
+
+    /// A clone of the mounted strategy's emission gate — the same `Arc<AtomicBool>` the
+    /// strategy reads before every order it would emit (KTD4).
+    pub fn emission_gate(&self) -> EmissionGate {
+        self.gate.clone()
+    }
+
+    /// The lifetime order-dedup hit count on the shared SDK — a within-TTL identical
+    /// re-send or a concurrent-duplicate rejection. A non-zero count on a real emission is
+    /// a limit event (ladder R14(d)); the run's data-quality report persists it.
+    pub fn dedup_hits(&self) -> u64 {
+        self.sdk.inner().order_dedup.hit_count()
+    }
+
+    /// Whether the shared kill switch still permits order dispatch. `false` once
+    /// [`LiveSession::halt`] has run — read by the wiring tests that prove the node's
+    /// in-trader client shares this switch.
+    pub fn orders_enabled(&self) -> bool {
+        self.sdk.inner().orders_enabled()
+    }
+}
+
+impl LiveSession for LiveTeardownSession {
+    fn stop_emission(&self) {
+        self.gate.stop();
+    }
+
+    async fn cancel_all_resting(&self) -> anyhow::Result<usize> {
+        // KTD2: drain the detached submit/modify/cancel workers FIRST. `stop_emission`
+        // only closes the strategy's gate — a submission already in flight would
+        // otherwise reach the gateway after the scan below, pass the kill-switch check,
+        // and rest an order the scan never saw.
+        self.order_tasks.quiesce(self.quiesce_budget).await;
+        nautilus_ls::execution::cancel_all_resting_on(&self.sdk)
+            .await
+            // `LsError` Display carries the broker's `rsp_msg`; scrub before it can reach
+            // any record or output line.
+            .map_err(|e| anyhow::anyhow!("{}", nautilus_ls::scrub::scrub_secrets(&e.to_string())))
+    }
+
+    async fn is_flat(&self) -> bool {
+        // KTD1: positive confirmation only. `verify_flat_on` composes t0425 (resting
+        // orders) + t0424 (`janqty` holdings), failing closed on truncation/garbage — so a
+        // truncated, failed, or ambiguous read is `Err` and reads here as NOT flat.
+        nautilus_ls::execution::verify_flat_on(&self.sdk).await.is_ok()
+    }
+
+    fn halt(&self) {
+        // The shared `Arc<Inner>` kill switch — the same `AtomicBool` `post_order` checks
+        // first for every order the node dispatches (KTD3).
+        self.sdk.inner().set_orders_enabled(false);
+    }
 }
 
 /// The outcome of a fail-closed teardown (KTD7, R5). Carries the cancel-attempt count so
@@ -891,7 +1009,8 @@ fn dispatch_main() -> anyhow::Result<ExitCode> {
             }
             anyhow::bail!(
                 "lab-live: run `lab-live --dispatch` for the pre-flight gate (`--genesis` to \
-                 register the chain, `--mount` to prepare a rung-1 live session) — see \
+                 register the chain, `--mount` to RUN an attended rung-1 live session — it \
+                 consumes the green dispatch, drives the session, and finalizes) — see \
                  adapters/nautilus/lab/RUNG1-PREFLIGHT.md"
             )
         }
@@ -921,13 +1040,15 @@ fn dispatch_main() -> anyhow::Result<ExitCode> {
 // ===========================================================================
 
 use nautilus_common::enums::Environment;
-use nautilus_live::node::LiveNode;
+use nautilus_common::factories::ExecutionClientFactory;
+use nautilus_live::node::{LiveNode, LiveNodeHandle};
 use nautilus_ls::config::LsAdapterConfig;
 use nautilus_ls::factories::{LsDataClientFactory, LsExecutionClientFactory};
 use nautilus_ls::ingest::budget::{spend_ledger_path, SpendLedger};
 use nautilus_model::identifiers::TraderId;
 
 use crate::agent::sink::DecisionSink;
+use crate::runner::watchdog::Heartbeats;
 use crate::artifacts::manifest::DispatchLink;
 use crate::artifacts::RunSource;
 use crate::dispatch::chain::{Consumption, MountAuthz};
@@ -1094,13 +1215,64 @@ pub fn authorize_mount(
     ))
 }
 
-/// Build a `LiveNode` with the ORB strategy mounted for a live session (U6). The mount
-/// point the operator command drives after a green dispatch — offline-buildable (the repo
-/// never drives `node.run` offline), so this is exactly the seam offline wiring tests
-/// exercise. The data + exec clients resolve from the same lane config, so the session's
-/// exec path and the gate's flat-start probe read one credential. The threaded
-/// [`DecisionSink`] is the caller's handle to drain the session's decisions into the run
-/// artifacts after `node.run`.
+/// Serializes `LiveNode::build()` across threads. Nautilus initializes the process-global
+/// logger with a non-atomic check-then-set, so two concurrent builds intermittently trip
+/// "a non-Nautilus logger is already registered"
+/// (`docs/solutions/test-failures/nautilus-livenode-tests-race-on-the-global-logger-init.md`).
+/// Poison-tolerant: a panicking build must not wedge every later one.
+static NODE_BUILD_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Hold the [`NODE_BUILD_LOCK`] across a `LiveNode::build()`. Public so the wiring tests
+/// that build their own nodes serialize against the runner's builds.
+pub fn node_build_lock() -> std::sync::MutexGuard<'static, ()> {
+    NODE_BUILD_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// A built live session: the node plus every handle the driver, the watchdog, and the
+/// finalize path need — all captured **before** the builder (live-session-driver KTD4).
+///
+/// After `LiveNode::build()` the exec client is type-erased in `Vec<LiveExecutionClient>`
+/// with no downcast, and `add_strategy` moves the strategy into the trader. Neither handle
+/// can be retrieved afterwards, so they are taken here or not at all.
+pub struct LiveMount {
+    /// The built node. `node.run()` is live-only and is never driven by the gate — it is
+    /// deliberately kept OUT of [`LiveSessionHandles`] so the driver can be exercised
+    /// offline without one.
+    pub node: LiveNode,
+    /// Everything the driver, the watchdog, and the finalize path need.
+    pub handles: LiveSessionHandles,
+}
+
+/// The handle set a live session is driven through — captured before the builder (KTD4)
+/// and deliberately node-free, so [`run_live_session`] is fully offline-testable.
+#[derive(Clone)]
+pub struct LiveSessionHandles {
+    /// The fail-closed teardown handle, sharing the node's kill switch + fill ledger.
+    pub session: LiveTeardownSession,
+    /// The dead-man feeders: the strategy touches `runtime`, the watchdog `supervisor`.
+    pub heartbeats: Heartbeats,
+    /// The node's stop handle, grabbed BEFORE `run` (the session timer and a watchdog
+    /// trip both use it to unblock the run loop).
+    pub handle: LiveNodeHandle,
+    /// The session's decision sink — drained into the run artifacts at finalize.
+    pub sink: DecisionSink,
+    /// The strategy's published per-symbol market view — the breaker's mark source
+    /// (KTD8(b)); the watchdog thread has no market-data access of its own.
+    pub marks: MarkFeed,
+}
+
+/// Build a `LiveNode` with the ORB strategy mounted for a live session, returning the
+/// [`LiveMount`] handle set (U6; live-session-driver U2, R3, KTD3/KTD4). The mount point
+/// the operator command drives after a green dispatch — offline-buildable (the repo never
+/// drives `node.run` offline), so this is exactly the seam offline wiring tests exercise.
+///
+/// **One SDK, one ledger (KTD3).** The exec client is built *here*, not inside the
+/// factory: one [`LsSdk`] (hence one kill-switch `Arc<Inner>`) and one
+/// `Arc<Mutex<FillLedger>>` are created, handed to the node through a stateful
+/// [`LsExecutionClientFactory`], and retained on the returned [`LiveTeardownSession`]. A
+/// teardown built from its own client would halt a *different* `AtomicBool` and read an
+/// *empty* ledger — two silent no-ops. The data client still resolves from the same lane
+/// config, so the session's exec path and the gate's flat-start probe read one credential.
 ///
 /// The `rung_fraction` is the authorized rung's pre-registered budget-numerator multiplier
 /// (KTD6): the runner supplies it here and it reaches sizing via
@@ -1110,28 +1282,502 @@ pub fn authorize_mount(
 ///
 /// # Errors
 ///
-/// Any node-builder / client-registration / strategy-mount failure.
+/// Any credential-resolution / node-builder / client-registration / strategy-mount failure.
 pub fn build_live_session_node(
     adapter_cfg: LsAdapterConfig,
     params: OrbParams,
     selected: Vec<SelectedSymbol>,
     sink: DecisionSink,
     rung_fraction: f64,
-) -> anyhow::Result<LiveNode> {
-    let mut node = LiveNode::builder(TraderId::from("LS-LAB-001"), Environment::Live)
-        .map_err(|e| anyhow::anyhow!("live node builder: {e}"))?
-        .with_name("ls-lab-live")
-        .add_data_client(None, Box::new(LsDataClientFactory), Box::new(adapter_cfg.clone()))
-        .map_err(|e| anyhow::anyhow!("data client: {e}"))?
-        .add_exec_client(None, Box::new(LsExecutionClientFactory), Box::new(adapter_cfg))
-        .map_err(|e| anyhow::anyhow!("exec client: {e}"))?
-        .build()
-        .map_err(|e| anyhow::anyhow!("node build: {e}"))?;
-    // Off-identity equity multiplier 1.0; the ladder rung fraction scales the risk budget
-    // numerator (KTD6).
-    let strategy = OrbStrategy::new(params, selected, sink, 1.0).with_rung_fraction(rung_fraction);
+    now_unix: i64,
+) -> anyhow::Result<LiveMount> {
+    // 1. ONE SDK + ONE ledger, built outside the factory so both can be retained (KTD3).
+    let resolved = adapter_cfg.build_config().map_err(|e| anyhow::anyhow!("lane credentials: {e}"))?;
+    let account_no = resolved.account_no.clone();
+    let sdk = LsSdk::new(resolved).map_err(|e| anyhow::anyhow!("sdk: {e}"))?;
+    let ledger: std::sync::Arc<std::sync::Mutex<FillLedger>> =
+        std::sync::Arc::new(std::sync::Mutex::new(FillLedger::new()));
+    let exec = nautilus_ls::execution::LsExecClient::new_with_ledger(
+        // The builder derives the client name from the factory when `None` is passed, so
+        // pre-building under the factory's own name keeps the node's client identity
+        // byte-identical to the stateless path.
+        LsExecutionClientFactory::new().name().to_string(),
+        adapter_cfg.trader_id.clone(),
+        account_no,
+        sdk.clone(),
+        nautilus_model::enums::AccountType::Cash,
+        std::sync::Arc::clone(&ledger),
+    );
+    let order_tasks = exec.order_tasks();
+    let exec_factory = LsExecutionClientFactory::with_client(exec);
+
+    // 2. The strategy, with the runtime dead-man feeder threaded in. Capture the emission
+    //    gate BEFORE `add_strategy` moves the strategy into the trader (KTD4).
+    let heartbeats = Heartbeats::new(now_unix);
+    let marks = MarkFeed::new();
+    let strategy = OrbStrategy::new(params, selected, sink.clone(), 1.0)
+        .with_rung_fraction(rung_fraction)
+        .with_heartbeats(heartbeats.clone())
+        .with_mark_feed(marks.clone());
+    let gate = strategy.emission_gate();
+
+    let mut node = {
+        // The logger-initializing build is serialized process-wide.
+        let _guard = node_build_lock();
+        LiveNode::builder(TraderId::from("LS-LAB-001"), Environment::Live)
+            .map_err(|e| anyhow::anyhow!("live node builder: {e}"))?
+            .with_name("ls-lab-live")
+            .add_data_client(None, Box::new(LsDataClientFactory), Box::new(adapter_cfg.clone()))
+            .map_err(|e| anyhow::anyhow!("data client: {e}"))?
+            .add_exec_client(None, Box::new(exec_factory), Box::new(adapter_cfg))
+            .map_err(|e| anyhow::anyhow!("exec client: {e}"))?
+            .build()
+            .map_err(|e| anyhow::anyhow!("node build: {e}"))?
+    };
     node.add_strategy(strategy).map_err(|e| anyhow::anyhow!("mount ORB strategy: {e}"))?;
-    Ok(node)
+    // Grabbable before `run` and cloneable — the driver's stop path depends on it (KTD5).
+    let handle = node.handle();
+
+    Ok(LiveMount {
+        node,
+        handles: LiveSessionHandles {
+            session: LiveTeardownSession::new(gate, sdk, ledger, order_tasks),
+            heartbeats,
+            handle,
+            sink,
+            marks,
+        },
+    })
+}
+
+// ---------------------------------------------------------------------------
+// live-session-driver U3/U4 — the driver that owns `node.run`'s lifecycle (R4, R5;
+// KTD5, KTD7, KTD8).
+//
+// `node.run(&mut self)` blocks the current thread and runs INDEFINITELY: it has no
+// session timer and no market-close stop. The caller owns the stop. So the driver:
+//
+//   1. grabs `node.handle()` BEFORE `run` (KTD4/KTD5 — after `run` there is no way in);
+//   2. spawns a session timer that calls `handle.stop()` at the session duration;
+//   3. spins the full watchdog envelope on a DEDICATED OS thread with its own
+//      current-thread runtime, so a stalled session runtime cannot stall its own
+//      remediation (ladder KTD10), and runs the session-side mutual-liveness check on
+//      the node runtime so a dead watchdog thread never degrades the envelope silently;
+//   4. drives `node.run()` — the single seam never exercised offline, injected as a
+//      substitutable closure so every surrounding seam IS;
+//   5. runs the fail-closed `run_teardown` afterwards **only if it wins the atomic
+//      `TripLatch::try_claim`** — the same compare-exchange the watchdog uses. A
+//      non-atomic `is_tripped()` read would race a concurrent watchdog claim and let
+//      BOTH paths tear down;
+//   6. stages the manifest (with the DispatchLink), the performance from the shared fill
+//      ledger, and the drained decisions, then finalizes — abnormally when the teardown
+//      hard-failed.
+//
+// The teardown runs AFTER `node.run`'s own graceful shutdown by design (KTD7): the node
+// cancels and drains on stop, but that is not the sticky-kill-switch + positive
+// t0424/t0425 confirmation the gate requires. Re-asserting the safety invariant at the
+// driver altitude is the point.
+// ---------------------------------------------------------------------------
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
+use crate::runner::pnl::{self, MarkPolicy};
+use crate::runner::watchdog::{
+    operator_keepalive_unix, session_liveness_tick_reporting, watchdog_tick_reporting,
+    TripCause, TripLatch, WatchdogLimits, WatchdogObservation,
+};
+use crate::strategy::orb::MarkFeed;
+
+/// An injectable wall clock (unix seconds) — tests drive it rather than sleeping.
+pub type SessionClock = Arc<dyn Fn() -> i64 + Send + Sync>;
+
+/// The real wall clock.
+pub fn system_clock() -> SessionClock {
+    Arc::new(|| Utc::now().timestamp())
+}
+
+/// The driver's tunables. Everything safety-bearing (`limits`) comes from the frozen
+/// pre-registration; the cadences are operational.
+#[derive(Debug, Clone)]
+pub struct LiveDriverConfig {
+    /// Session duration before the timer stops the node.
+    pub session_secs: u64,
+    /// Watchdog evaluation cadence. Well under the heartbeat interval so a stale feeder
+    /// is caught promptly.
+    pub watchdog_tick: Duration,
+    /// The pre-registered dead-man interval + max-loss threshold (fail-closed armed).
+    pub limits: WatchdogLimits,
+    /// How the breaker marks open positions when the feed is stale (KTD8(b)).
+    pub mark_policy: MarkPolicy,
+    /// The operator keepalive file the attended operator refreshes (absent = stale).
+    pub keepalive_path: PathBuf,
+    /// Cancel/flat retry budgets for the session-end teardown.
+    pub cancel_attempts: usize,
+    /// Flat-confirmation attempts for the session-end teardown.
+    pub flat_attempts: usize,
+    /// Starting account balance (KRW) recorded on the equity curve.
+    pub starting_balance: f64,
+}
+
+/// The identity + artifact context a driven session finalizes under.
+#[derive(Debug, Clone)]
+pub struct LiveSessionContext {
+    /// The data home (registry + chain live here).
+    pub data_home: PathBuf,
+    /// The run id the consumption marker already recorded (R14(f)).
+    pub run_id: String,
+    /// The chain-authorized rung safety-trip records are appended at.
+    pub chain_rung: u8,
+    /// The dispatch↔run linkage threaded into the manifest (KTD3).
+    pub dispatch: Option<DispatchLink>,
+    /// The governed params the session traded.
+    pub params: OrbParams,
+    /// The traded universe (instrument-id strings), for the manifest's universe hash.
+    pub symbols: Vec<String>,
+    /// The KST trading date the run covers (`YYYYMMDD`).
+    pub trading_date: String,
+    /// The manifest's `created_utc` stamp (RFC-3339). Supplied rather than read from the
+    /// clock so a driven session's artifacts are reproducible in tests.
+    pub created_utc: String,
+}
+
+/// What a driven session finalized as.
+#[derive(Debug, Clone)]
+pub struct LiveSessionOutcome {
+    /// The one fail-closed teardown's report (whichever path claimed it).
+    pub report: TeardownReport,
+    /// The watchdog/mutual-liveness cause, when a trip (not the session timer) ended it.
+    pub trip: Option<TripCause>,
+    /// The finalized run directory.
+    pub run_dir: PathBuf,
+    /// Whether the run finalized ABNORMAL — the teardown could not positively confirm a
+    /// flat account, so the kill switch is engaged and an operator must reconcile.
+    pub abnormal: bool,
+}
+
+/// Assemble one watchdog observation from the live feeders (R5; KTD8). Pure given its
+/// inputs, so the breaker's arithmetic is provable offline against scripted fixtures.
+pub fn assemble_observation(
+    now_unix: i64,
+    heartbeats: &Heartbeats,
+    keepalive_path: &Path,
+    ledger: &std::sync::Mutex<FillLedger>,
+    marks: &MarkFeed,
+    policy: &MarkPolicy,
+) -> WatchdogObservation {
+    // KTD8(a): realized P&L is ACCOUNTING over the shared ledger's fill journal, not a
+    // sum — the ledger carries no cost basis. KTD8(b): open positions are marked at the
+    // adverse edge with a stale-feed floor, never a last-seen favorable price.
+    let session = pnl::account_shared(ledger);
+    let open_marked =
+        pnl::mark_open_pnl(&session.open, &marks.snapshot(), now_unix, policy);
+    WatchdogObservation {
+        now_unix,
+        runtime_heartbeat_unix: heartbeats.runtime_unix(),
+        operator_keepalive_unix: operator_keepalive_unix(keepalive_path),
+        realized_pnl_krw: session.realized_krw,
+        open_marked_pnl_krw: open_marked,
+    }
+}
+
+/// Everything the watchdog OS thread owns. All `Arc`-shared or owned outright, so the
+/// thread needs nothing from the session runtime (ladder KTD10).
+struct WatchdogArming {
+    session: LiveTeardownSession,
+    heartbeats: Heartbeats,
+    marks: MarkFeed,
+    latch: Arc<TripLatch>,
+    node_handle: LiveNodeHandle,
+    stop: Arc<AtomicBool>,
+    clock: SessionClock,
+    data_home: PathBuf,
+    keepalive_path: PathBuf,
+    limits: WatchdogLimits,
+    mark_policy: MarkPolicy,
+    tick: Duration,
+    run_id: String,
+    chain_rung: u8,
+}
+
+/// Spin the watchdog on its own OS thread + current-thread runtime (ladder KTD10). On a
+/// claimed trip it drives the fail-closed teardown **there** — a stalled session runtime
+/// cannot stall its own remediation — and then calls `handle.stop()` to unblock
+/// `node.run`. Returns the joinable thread; its value is the trip (cause + report), or
+/// `None` if the session ended first.
+fn spawn_watchdog(
+    arming: WatchdogArming,
+) -> std::thread::JoinHandle<anyhow::Result<Option<(TripCause, TeardownReport)>>> {
+    std::thread::spawn(move || {
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+        // The chain is a directory handle; opening it on this thread keeps the watchdog
+        // independent of anything the session runtime owns.
+        let chain = DispatchChain::open(&arming.data_home)?;
+        rt.block_on(async move {
+            loop {
+                if arming.stop.load(Ordering::SeqCst) {
+                    return Ok(None);
+                }
+                let now = (arming.clock)();
+                // Mutual liveness: the session side reads this to detect a dead watchdog.
+                arming.heartbeats.touch_supervisor(now);
+                let obs = assemble_observation(
+                    now,
+                    &arming.heartbeats,
+                    &arming.keepalive_path,
+                    &arming.session.ledger(),
+                    &arming.marks,
+                    &arming.mark_policy,
+                );
+                let tripped = watchdog_tick_reporting(
+                    &arming.session,
+                    &chain,
+                    &arming.latch,
+                    &obs,
+                    &arming.limits,
+                    Some(arming.run_id.as_str()),
+                    arming.chain_rung,
+                )
+                .await;
+                match tripped {
+                    Ok(Some((cause, report))) => {
+                        // The teardown already ran HERE, on this runtime (halt last), and
+                        // the cause + kill-switch records are persisted. Unblock
+                        // `node.run` so the driver can finalize on this very report.
+                        arming.node_handle.stop();
+                        return Ok(Some((cause, report)));
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        // A chain-append failure must never silently disarm the envelope:
+                        // the teardown inside `execute_trip` always runs first, so the
+                        // remediation happened. Surface and stop watching.
+                        return Err(e);
+                    }
+                }
+                tokio::time::sleep(arming.tick).await;
+            }
+        })
+    })
+}
+
+/// Drive one attended live session end-to-end (R4, R5).
+///
+/// `run_node` is the **only** seam not exercised offline: the live call site passes
+/// `move |_| async move { node.run().await }`; tests pass a scripted future. Everything
+/// around it — the timer, the watchdog arming, the exactly-one teardown, the staging and
+/// the finalize — runs in both.
+///
+/// # Errors
+///
+/// A staging/finalize failure, or a watchdog chain-append failure. Note that a *failed
+/// teardown* is not an error: it finalizes the run ABNORMAL and is reported on the
+/// outcome, because a hard-failed teardown must still leave scannable artifacts (R5).
+pub async fn run_live_session<F, Fut>(
+    handles: LiveSessionHandles,
+    cfg: &LiveDriverConfig,
+    ctx: &LiveSessionContext,
+    clock: SessionClock,
+    run_node: F,
+) -> anyhow::Result<LiveSessionOutcome>
+where
+    F: FnOnce(LiveNodeHandle) -> Fut,
+    Fut: std::future::Future<Output = anyhow::Result<()>>,
+{
+    let LiveSessionHandles { session, heartbeats, handle, sink, marks } = handles;
+    let latch = Arc::new(TripLatch::new());
+    let watchdog_stop = Arc::new(AtomicBool::new(false));
+
+    // (3) The watchdog envelope, on its own thread + runtime.
+    let watchdog = spawn_watchdog(WatchdogArming {
+        session: session.clone(),
+        heartbeats: heartbeats.clone(),
+        marks: marks.clone(),
+        latch: Arc::clone(&latch),
+        node_handle: handle.clone(),
+        stop: Arc::clone(&watchdog_stop),
+        clock: Arc::clone(&clock),
+        data_home: ctx.data_home.clone(),
+        keepalive_path: cfg.keepalive_path.clone(),
+        limits: cfg.limits,
+        mark_policy: cfg.mark_policy,
+        tick: cfg.watchdog_tick,
+        run_id: ctx.run_id.clone(),
+        chain_rung: ctx.chain_rung,
+    });
+
+    // (3b) Mutual liveness on the SESSION side: a dead watchdog thread must never
+    // silently degrade the envelope to attended-operator-only. Shares the one latch.
+    let liveness = tokio::spawn(session_liveness_loop(
+        session.clone(),
+        heartbeats.clone(),
+        Arc::clone(&latch),
+        handle.clone(),
+        Arc::clone(&clock),
+        Arc::clone(&watchdog_stop),
+        ctx.data_home.clone(),
+        cfg.limits.heartbeat_interval_secs,
+        cfg.watchdog_tick,
+        ctx.run_id.clone(),
+        ctx.chain_rung,
+    ));
+
+    // (2) The session timer — `node.run` has none of its own.
+    let timer_handle = handle.clone();
+    let session_secs = cfg.session_secs;
+    let timer = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_secs(session_secs)).await;
+        timer_handle.stop();
+    });
+
+    // (4) The live-only seam.
+    let run_result = run_node(handle.clone()).await;
+    timer.abort();
+
+    // Signal both supervisors to stand down BEFORE the driver contends for the claim, then
+    // wait for the session-side loop to finish. It is deliberately NOT aborted: aborting a
+    // task that had just won the claim would strand a claimed latch with no teardown —
+    // the one state this whole design exists to prevent.
+    watchdog_stop.store(true, Ordering::SeqCst);
+    let liveness_trip = liveness.await.unwrap_or(None);
+
+    // (5) EXACTLY ONE teardown. The atomic claim is the arbiter — a non-atomic
+    // `is_tripped()` read here would race the watchdog and let both paths tear down.
+    let driver_report = if latch.try_claim() {
+        Some(run_teardown(&session, cfg.cancel_attempts, cfg.flat_attempts).await)
+    } else {
+        None
+    };
+
+    // Collect the watchdog's verdict (it returns immediately after a trip; otherwise it
+    // observes the stop flag within one tick).
+    let trip = tokio::task::spawn_blocking(move || watchdog.join())
+        .await
+        .map_err(|e| anyhow::anyhow!("watchdog join task: {e}"))?
+        .map_err(|_| anyhow::anyhow!("the watchdog thread panicked"))??;
+
+    let (report, cause) = match (driver_report, trip, liveness_trip) {
+        // The driver won the claim: the session ended on its own terms.
+        (Some(r), _, _) => (r, None),
+        // The watchdog won: its teardown is the one that ran.
+        (None, Some((cause, r)), _) => (r, Some(cause)),
+        // The session-side mutual-liveness check won (a dead watchdog thread).
+        (None, None, Some((cause, r))) => (r, Some(cause)),
+        // Nobody produced a report yet somebody holds the claim. Fail closed rather than
+        // finalize a session with no recorded teardown.
+        (None, None, None) => anyhow::bail!(
+            "internal: the teardown latch was claimed but no teardown report was produced — \
+             refusing to finalize a session with no recorded teardown"
+        ),
+    };
+
+    // (6) Stage + finalize. ALWAYS — a hard-failed teardown must still leave scannable
+    // artifacts (R5); `finalize_session` marks it abnormal.
+    let run_dir = stage_and_finalize(&session, &sink, cfg, ctx, &report, run_result)?;
+
+    Ok(LiveSessionOutcome { report, trip: cause, run_dir, abnormal: report.hard_failed() })
+}
+
+/// The session-side mutual-liveness loop (ladder KTD10). Runs on the NODE runtime and
+/// shares the one [`TripLatch`], so a watchdog trip and this trip together still tear down
+/// exactly once.
+#[allow(clippy::too_many_arguments)]
+async fn session_liveness_loop(
+    session: LiveTeardownSession,
+    heartbeats: Heartbeats,
+    latch: Arc<TripLatch>,
+    node_handle: LiveNodeHandle,
+    clock: SessionClock,
+    stop: Arc<AtomicBool>,
+    data_home: PathBuf,
+    interval_secs: i64,
+    tick: Duration,
+    run_id: String,
+    chain_rung: u8,
+) -> Option<(TripCause, TeardownReport)> {
+    let chain = DispatchChain::open(&data_home).ok()?;
+    loop {
+        if stop.load(Ordering::SeqCst) {
+            return None;
+        }
+        tokio::time::sleep(tick).await;
+        // Re-check after the sleep so a stand-down signal is never followed by one more
+        // claim attempt.
+        if stop.load(Ordering::SeqCst) {
+            return None;
+        }
+        let tripped = session_liveness_tick_reporting(
+            &session,
+            &chain,
+            &latch,
+            clock(),
+            heartbeats.supervisor_unix(),
+            interval_secs,
+            Some(run_id.as_str()),
+            chain_rung,
+        )
+        .await;
+        if let Ok(Some(trip)) = tripped {
+            node_handle.stop();
+            return Some(trip);
+        }
+    }
+}
+
+/// Stage the run's manifest (with the dispatch link), the performance assembled from the
+/// **shared** fill ledger, and the drained decisions, then finalize (abnormally when the
+/// teardown hard-failed).
+fn stage_and_finalize(
+    session: &LiveTeardownSession,
+    sink: &DecisionSink,
+    cfg: &LiveDriverConfig,
+    ctx: &LiveSessionContext,
+    report: &TeardownReport,
+    run_result: anyhow::Result<()>,
+) -> anyhow::Result<PathBuf> {
+    use crate::artifacts::manifest::{universe_hash, DataRange, Manifest};
+    use crate::artifacts::performance::PerformanceReport;
+
+    let writer = RunWriter::new(&ctx.data_home, &ctx.run_id)?;
+    let ledger = session.ledger();
+    let dedup_hits = session.dedup_hits();
+    let (trades, approximated) = {
+        let guard = ledger.lock().unwrap_or_else(|e| e.into_inner());
+        let fills = guard.fills();
+        let approximated = fills.iter().filter(|f| f.price_approximated).count() as u64;
+        (pnl::session_trades(fills), approximated)
+    };
+    writer.write_performance(&PerformanceReport::assemble(trades, cfg.starting_balance))?;
+
+    let manifest = Manifest {
+        run_id: ctx.run_id.clone(),
+        source: RunSource::Live,
+        strategy_id: ctx.params.strategy_id.clone(),
+        strategy_version: ctx.params.strategy_version,
+        params: ctx.params.clone(),
+        data_range: DataRange { start: ctx.trading_date.clone(), end: ctx.trading_date.clone() },
+        catalog_fingerprint: String::new(),
+        universe_hash: universe_hash(&ctx.symbols),
+        strategy_code_hash: crate::artifacts::manifest::strategy_code_hash(),
+        lab_src_fingerprint: None,
+        checkpoint_hash: None,
+        universe_metadata_hash: None,
+        dispatch: ctx.dispatch.clone(),
+        created_utc: ctx.created_utc.clone(),
+    };
+    writer.write_manifest(&manifest)?;
+    writer.write_decisions(&sink.snapshot())?;
+
+    let mut dq = DataQualityReport::backtest(ctx.symbols.clone(), Vec::new());
+    dq.price_approximated_fills = approximated;
+    if let Err(e) = run_result {
+        // The node's own run error is a data-quality observation, not a reason to skip
+        // finalize: the teardown already ran and the artifacts must stay scannable.
+        dq.observations
+            .push(format!("node.run returned an error: {}", nautilus_ls::scrub::scrub_secrets(&e.to_string())));
+    }
+    finalize_session(writer, dq, report, dedup_hits)
 }
 
 /// Record one of the mounted session's gateway dispatches (an order call, a t0425 poll)
@@ -1190,7 +1836,15 @@ use crate::strategy::orb::SessionGapPrices;
 /// unrun mount for a completed session (the "never look-like-ran" discipline).
 const MOUNT_NOT_PAPER: u8 = 66; // the paper interlock refused (env != paper)
 const MOUNT_REFUSED_ATTEND: u8 = 77; // no fresh nonce / no-TTY / no mountable dispatch
-const MOUNT_PREPARED_DEFERRED: u8 = 70; // node built + mountable; the live driver is deferred
+/// A fail-closed PRE-CONSUME precheck failed (prereg / fraction / watchdog arming /
+/// keepalive / head params / universe / node build). Distinct because it is the one
+/// refusal class that is recoverable **and** leaves the green dispatch unconsumed — the
+/// operator fixes the input and re-runs `--mount` without a fresh `--dispatch` cycle.
+const MOUNT_PRECHECK_FAILED: u8 = 71;
+/// The session RAN but finalized ABNORMAL: the fail-closed teardown could not positively
+/// confirm a flat account. Never `0` — the operator must reconcile the account and clear
+/// the persisted kill switch before the next dispatch.
+const MOUNT_ABNORMAL: u8 = 72;
 
 /// One symbol of the resolved live-mount universe. The operator materializes the dispatch
 /// lane's daily/t8407 read into `LS_MOUNT_UNIVERSE_FILE` (a JSON array of these); `SelectedSymbol`
@@ -1285,10 +1939,18 @@ pub fn resolve_mount_head_params(data_home: &Path) -> anyhow::Result<OrbParams> 
     Ok(params)
 }
 
-/// The `lab-live --mount` operator command (R3; KTD4/KTD5/KTD7). Resolves every live-session
-/// input and BUILDS the node at the pre-registered rung fraction from v34's real governed params,
-/// then stops at the deferred live-driver seam WITHOUT consuming the green dispatch. Paper-only,
-/// attended, no-TTY loud refusal; `node.run` stays live-only (and is not wired here).
+/// The `lab-live --mount` operator command — now the **live driver path**
+/// (live-session-driver U5, R6; KTD3/KTD5/KTD7).
+///
+/// Order is the safety property. The paper interlock is first; the attendance/nonce gate
+/// second; then **every fail-closed precheck runs BEFORE the dispatch is consumed** — a
+/// green dispatch is single-use, and burning it on a recoverable config error (an
+/// unarmable pre-registration, a missing fraction, a bad universe, a build failure) would
+/// cost the operator a whole `--dispatch` cycle. Only once the session is guaranteed to
+/// run does [`authorize_mount`] consume it and take the held Live lock, and only then does
+/// the driver run.
+///
+/// `node.run` is driven here and ONLY here — the commit gate never reaches this function.
 fn run_mount() -> anyhow::Result<ExitCode> {
     nautilus_ls::calendar::emit_startup_from_env("lab-live");
     // 1. Paper interlock FIRST — before any resolution, chain read, or gate (R3).
@@ -1321,7 +1983,8 @@ fn run_mount() -> anyhow::Result<ExitCode> {
         return Ok(ExitCode::from(MOUNT_REFUSED_ATTEND));
     }
 
-    // 3. Read-only mountability + the effective rung to size (NO consumption — driver deferred).
+    // 3. Read-only mountability peek + the effective rung to size. NOTHING is consumed
+    //    here: consumption is step 7, after every recoverable failure has been ruled out.
     let chain = DispatchChain::open(&data_home)?;
     let now = Utc.timestamp_opt(now_unix, 0).single().unwrap_or_else(Utc::now);
     let today = kst_trading_date(now);
@@ -1343,44 +2006,284 @@ fn run_mount() -> anyhow::Result<ExitCode> {
         }
     };
     if requested_rung > effective_rung {
-        anyhow::bail!(
+        eprintln!(
             "mount refused: requested rung {requested_rung} exceeds the authorized effective rung \
              {effective_rung} — rung selection is a guard rail, not an operator feature (R15)"
         );
+        return Ok(ExitCode::from(MOUNT_REFUSED_ATTEND));
     }
 
-    // 4. The pre-registered fraction for the effective rung (fail-closed, KTD5).
-    let prereg_path = std::env::var("LS_DISPATCH_PREREG")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .ok_or_else(|| anyhow::anyhow!("mount refused: LS_DISPATCH_PREREG is required (the frozen fraction + band)"))?;
-    let prereg = crate::dispatch::prereg::load(Path::new(&prereg_path))?;
-    let fraction = prereg.values.rung_fraction(effective_rung)?;
+    // 4-6. Every remaining fail-closed precheck, ALL of them pre-consume. A failure here
+    //      leaves the green dispatch intact for a corrected re-run.
+    let prepared = match mount_inputs_from_env(lane_env_path.clone())
+        .and_then(|inputs| prepare_mount(&data_home, &inputs, effective_rung, now_unix))
+    {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!(
+                "mount refused (pre-consume): {} — the green dispatch is NOT consumed; fix and re-run --mount",
+                nautilus_ls::scrub::scrub_secrets(&e.to_string())
+            );
+            return Ok(ExitCode::from(MOUNT_PRECHECK_FAILED));
+        }
+    };
 
-    // 5. v34 real governed params (fail-closed vs zero-size, KTD7) + the session universe + sink.
-    let params = resolve_mount_head_params(&data_home)?;
-    let universe = resolve_mount_universe()?;
-    let sink = DecisionSink::new();
-    let adapter_cfg = LsAdapterConfig::from_lane_file(&lane_env_path);
-
-    // 6. Build the node at the real v34 rung-fraction size — proves mountability. `node.run` stays
-    //    live-only and is NOT driven here (the attended driver is deferred).
-    let _node = build_live_session_node(adapter_cfg, params.clone(), universe.clone(), sink, fraction)?;
+    // 7. CONSUME — the last step before the session is driven (the Live lock is held
+    //    through the session, closing the check-then-mount TOCTOU gap).
+    let mount_cfg = MountConfig {
+        data_home: data_home.clone(),
+        requested_rung,
+        lane_hash: prepared.lane_hash.clone(),
+        trading_env: "paper".to_string(),
+        rung_fraction: prepared.fraction,
+        nonce: std::env::var("LS_DISPATCH_NONCE").ok().filter(|s| !s.trim().is_empty()),
+        now_unix,
+        attended_override: None,
+    };
+    let (auth, _live_lock) = match authorize_mount(
+        &chain,
+        &mount_cfg,
+        &prepared.params.strategy_id,
+        prepared.params.strategy_version,
+    ) {
+        Ok(pair) => pair,
+        Err(e) => {
+            eprintln!("mount refused: {}", nautilus_ls::scrub::scrub_secrets(&e.to_string()));
+            return Ok(ExitCode::from(MOUNT_REFUSED_ATTEND));
+        }
+    };
 
     println!(
-        "mount prepared: env=paper rung={effective_rung} rung_fraction={fraction} \
-         head_code_hash={} head_params_hash={} universe={} — node built at v34 size",
+        "mount running: env=paper rung={} rung_fraction={} head_code_hash={} head_params_hash={} \
+         universe={} session_secs={} run_id={}",
+        auth.effective_rung,
+        prepared.fraction,
         crate::artifacts::manifest::strategy_code_hash(),
-        crate::dispatch::ladder::governed_params_hash(&params),
-        universe.len()
+        crate::dispatch::ladder::governed_params_hash(&prepared.params),
+        prepared.symbols.len(),
+        prepared.driver.session_secs,
+        auth.run_id
     );
-    eprintln!(
-        "mount NOT run: the attended live-session driver (node.run -> fail-closed teardown -> \
-         finalize) is deferred; the green dispatch is NOT consumed. See \
-         adapters/nautilus/lab/RUNG1-PREFLIGHT.md."
+
+    // 8. Drive the session. `node.run` is live-only and reached ONLY from here.
+    let PreparedMount { mount, driver, params, symbols, lane_hash, .. } = prepared;
+    let LiveMount { mut node, handles } = mount;
+    let session_probe = handles.session.clone();
+    let ctx = LiveSessionContext {
+        data_home: data_home.clone(),
+        run_id: auth.run_id.clone(),
+        chain_rung: auth.chain_rung,
+        dispatch: Some(auth.dispatch_link()),
+        params,
+        symbols,
+        trading_date: today.clone(),
+        created_utc: now.to_rfc3339(),
+    };
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+    let outcome = runtime.block_on(run_live_session(
+        handles,
+        &driver,
+        &ctx,
+        system_clock(),
+        // THE live-only seam. Everything around it is offline-proven.
+        move |_handle| async move { node.run().await },
+    ))?;
+
+    // 9. Record the session's own gateway dispatches into the per-credential bucket
+    //    (ladder KTD5). A LOWER BOUND by construction — only the calls the session can
+    //    account for after the fact (the teardown's flat legs + its cancel scans, plus one
+    //    per observed fill) — which is exactly how the budget-headroom check treats it
+    //    (advisory, deferrable), never an over-count that would refuse a valid dispatch.
+    let observed = 2
+        + outcome.report.cancel_attempts as usize
+        + session_probe.ledger().lock().unwrap_or_else(|e| e.into_inner()).fills().len();
+    for i in 0..observed {
+        record_session_spend(&data_home, &lane_hash, now_unix + i as i64)?;
+    }
+
+    let verdict = if outcome.abnormal { "ABNORMAL" } else { "clean" };
+    println!(
+        "mount finalized ({verdict}): run_dir={} teardown_retries={} canceled={} flat_confirmed={} trip={:?} \
+         gateway_dispatches_recorded={observed}",
+        outcome.run_dir.display(),
+        outcome.report.retries(),
+        outcome.report.canceled,
+        outcome.report.flat_confirmed,
+        outcome.trip
     );
-    Ok(ExitCode::from(MOUNT_PREPARED_DEFERRED))
+    if outcome.abnormal {
+        eprintln!(
+            "mount ABNORMAL: the teardown could not positively confirm a flat account — the kill \
+             switch is engaged and its record reds the next --dispatch. Reconcile the account, then \
+             clear it with `lab-live --clear-killswitch` (nonce-gated). See lab/RUNBOOK-rung1.md."
+        );
+        return Ok(ExitCode::from(MOUNT_ABNORMAL));
+    }
+    Ok(ExitCode::SUCCESS)
 }
+
+/// Everything resolved and built before the green dispatch is consumed (U5). Producing
+/// this successfully is the guarantee that the session will run.
+pub struct PreparedMount {
+    /// The built node + its handle set.
+    pub mount: LiveMount,
+    /// The driver tunables, with the fail-closed-armed watchdog limits.
+    pub driver: LiveDriverConfig,
+    /// The head governed params the session trades.
+    pub params: OrbParams,
+    /// The traded universe, as instrument-id strings.
+    pub symbols: Vec<String>,
+    /// The pre-registered rung fraction the strategy was sized at.
+    pub fraction: f64,
+    /// The credential lane hash the session's spend is bucketed under.
+    pub lane_hash: String,
+}
+
+/// The `--mount` file/tunable inputs, gathered from the environment by the bin but
+/// **constructible directly**, so the pre-consume prechecks are testable without mutating
+/// the process environment.
+#[derive(Debug, Clone)]
+pub struct MountInputs {
+    /// The frozen pre-registration (`LS_DISPATCH_PREREG`).
+    pub prereg_path: PathBuf,
+    /// The operator keepalive file (`LS_MOUNT_KEEPALIVE`) whose mtime is the operator
+    /// dead-man feeder.
+    pub keepalive_path: PathBuf,
+    /// The credential lane env file.
+    pub lane_env_path: PathBuf,
+    /// The resolved daily/t8407 universe (`LS_MOUNT_UNIVERSE_FILE`).
+    pub universe_path: PathBuf,
+    /// Attended session length before the driver's timer stops the node.
+    pub session_secs: u64,
+    /// Watchdog evaluation cadence (seconds, floored at 1).
+    pub watchdog_tick_secs: u64,
+    /// Starting account balance recorded on the equity curve.
+    pub starting_balance: f64,
+}
+
+/// Gather the `--mount` inputs from the process environment (the bin path).
+///
+/// # Errors
+///
+/// If a required path variable is unset or empty.
+pub fn mount_inputs_from_env(lane_env_path: PathBuf) -> anyhow::Result<MountInputs> {
+    let required = |key: &str, what: &str| -> anyhow::Result<PathBuf> {
+        std::env::var(key)
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .map(PathBuf::from)
+            .ok_or_else(|| anyhow::anyhow!("{key} is required ({what}; ABSOLUTE path)"))
+    };
+    Ok(MountInputs {
+        prereg_path: required("LS_DISPATCH_PREREG", "the frozen fraction + band + envelope")?,
+        keepalive_path: required(
+            "LS_MOUNT_KEEPALIVE",
+            "the operator keepalive file the attended operator refreshes; its mtime is the \
+             operator dead-man feeder",
+        )?,
+        universe_path: required("LS_MOUNT_UNIVERSE_FILE", "the resolved daily/t8407 universe")?,
+        lane_env_path,
+        session_secs: env_u64("LS_MOUNT_SESSION_SECS", DEFAULT_SESSION_SECS),
+        watchdog_tick_secs: env_u64("LS_MOUNT_WATCHDOG_TICK_SECS", DEFAULT_WATCHDOG_TICK_SECS),
+        starting_balance: std::env::var("LS_MOUNT_STARTING_BALANCE")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(DEFAULT_STARTING_BALANCE),
+    })
+}
+
+/// Run every fail-closed precheck and build the node — **all before any consumption**
+/// (U5, R6). Each arm is a recoverable operator error, so failing here must leave the
+/// green dispatch intact for a corrected re-run.
+///
+/// That property is structural, not just sequential: this function takes **no
+/// [`DispatchChain`]**, so it has no way to consume a dispatch however it fails.
+/// [`run_mount`] calls it before [`authorize_mount`], which is the only consumer.
+///
+/// # Errors
+///
+/// A missing/unloadable pre-registration, a missing rung fraction, an **unarmable
+/// watchdog envelope**, a missing operator keepalive file, a zero-size head, an
+/// empty/unreadable universe, or a credential/node-build failure.
+pub fn prepare_mount(
+    data_home: &Path,
+    inputs: &MountInputs,
+    effective_rung: u8,
+    now_unix: i64,
+) -> anyhow::Result<PreparedMount> {
+    // (a) The pre-registered fraction for the effective rung (fail-closed, ladder KTD5).
+    let prereg = crate::dispatch::prereg::load(&inputs.prereg_path)?;
+    let fraction = prereg.values.rung_fraction(effective_rung)?;
+
+    // (b) ARM the full watchdog envelope from the pre-registration — fail-closed (KTD8 /
+    //     ladder KTD9). A missing heartbeat interval or max-loss threshold refuses the
+    //     mount HERE, before consume: a half-armed envelope must never run a session.
+    let limits = WatchdogLimits::from_prereg(&prereg.values).map_err(|e| {
+        anyhow::anyhow!(
+            "the watchdog envelope cannot be armed from the pre-registration ({e}) — refusing to \
+             run a session on a half-envelope"
+        )
+    })?;
+
+    // (c) The operator keepalive file. Its mtime is the operator dead-man feeder, and an
+    //     absent file reads as stale — so a missing one would trip the envelope on the
+    //     first tick. Require it up front rather than discovering it after the consume.
+    if !inputs.keepalive_path.exists() {
+        anyhow::bail!(
+            "the operator keepalive file does not exist — create it before mounting, or the \
+             operator dead-man trips on the first watchdog tick"
+        );
+    }
+
+    // (d) v34's real governed params (fail-closed vs a zero-size default head) + the
+    //     resolved universe.
+    let params = resolve_mount_head_params(data_home)?;
+    let universe = parse_mount_universe(&std::fs::read(&inputs.universe_path).map_err(|e| {
+        anyhow::anyhow!("reading the mount universe {}: {e}", inputs.universe_path.display())
+    })?)?;
+    let symbols: Vec<String> = universe.iter().map(|s| s.instrument_id.to_string()).collect();
+
+    // (e) The credential lane hash + the node build itself. A build failure is the last
+    //     thing that can go wrong recoverably.
+    let lane_hash = resolve_lane_hash(&inputs.lane_env_path)?;
+    let adapter_cfg = LsAdapterConfig::from_lane_file(&inputs.lane_env_path);
+    let mount = build_live_session_node(
+        adapter_cfg,
+        params.clone(),
+        universe,
+        DecisionSink::new(),
+        fraction,
+        now_unix,
+    )?;
+
+    let driver = LiveDriverConfig {
+        session_secs: inputs.session_secs,
+        watchdog_tick: Duration::from_secs(inputs.watchdog_tick_secs.max(1)),
+        limits,
+        mark_policy: MarkPolicy::default(),
+        keepalive_path: inputs.keepalive_path.clone(),
+        cancel_attempts: TEARDOWN_CANCEL_ATTEMPTS,
+        flat_attempts: TEARDOWN_FLAT_ATTEMPTS,
+        starting_balance: inputs.starting_balance,
+    };
+    Ok(PreparedMount { mount, driver, params, symbols, fraction, lane_hash })
+}
+
+fn env_u64(key: &str, default: u64) -> u64 {
+    std::env::var(key).ok().and_then(|v| v.parse().ok()).unwrap_or(default)
+}
+
+/// Default attended session length — one KRX continuous session with headroom. Overridden
+/// by `LS_MOUNT_SESSION_SECS`.
+const DEFAULT_SESSION_SECS: u64 = 6 * 60 * 60;
+/// Default watchdog cadence — well under any sane pre-registered heartbeat interval, so a
+/// stale feeder is caught promptly rather than one interval late.
+const DEFAULT_WATCHDOG_TICK_SECS: u64 = 5;
+/// Retry budgets for the session-end teardown (the watchdog path has its own).
+const TEARDOWN_CANCEL_ATTEMPTS: usize = 3;
+const TEARDOWN_FLAT_ATTEMPTS: usize = 3;
+/// Recorded on the equity curve when the operator does not supply the account balance.
+const DEFAULT_STARTING_BALANCE: f64 = 10_000_000.0;
 
 // ---------------------------------------------------------------------------
 // U3 (rung-1 readiness) — the ladder + diagnostic operator CLI (R2/R4; KTD4).

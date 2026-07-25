@@ -994,6 +994,54 @@ impl Default for EmissionGate {
     }
 }
 
+/// One symbol's live market view, published by the strategy as it processes bars and read
+/// by the live max-loss breaker's open-position mark (live-session-driver KTD8(b)).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SymbolMark {
+    /// The last streamed bar close (integer KRW).
+    pub last_close: i64,
+    /// When that bar was observed (unix seconds) — the staleness clock. A mark older
+    /// than the feed's tolerance must NOT be used: a market-data gap or symbol halt
+    /// accompanies exactly the fast adverse moves the breaker must catch, so a
+    /// stale-favorable price would under-report the loss precisely when it matters.
+    pub last_bar_unix: i64,
+    /// The open leg's current stop level, when the symbol is long. This is the
+    /// conservative floor the mark falls back to when the feed is stale or absent.
+    pub stop_price: Option<i64>,
+}
+
+/// A shared, cloneable per-symbol market view (KTD8(b)). The nautilus engine consumes the
+/// strategy, so — exactly like [`DecisionSink`] and [`EmissionGate`] — the runner holds a
+/// clone and reads it from the watchdog thread, which has no market-data access of its
+/// own. Keyed by bare shcode, matching the fill ledger's symbol key.
+#[derive(Debug, Clone, Default)]
+pub struct MarkFeed(Arc<Mutex<HashMap<String, SymbolMark>>>);
+
+impl MarkFeed {
+    /// A fresh, empty feed.
+    pub fn new() -> Self {
+        MarkFeed::default()
+    }
+
+    /// Publish this symbol's latest observation (last write wins).
+    pub fn observe(&self, symbol: &str, mark: SymbolMark) {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(symbol.to_string(), mark);
+    }
+
+    /// This symbol's latest observation, if the strategy has seen a bar for it.
+    pub fn get(&self, symbol: &str) -> Option<SymbolMark> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).get(symbol).copied()
+    }
+
+    /// A snapshot of every observed symbol.
+    pub fn snapshot(&self) -> HashMap<String, SymbolMark> {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+}
+
 /// A shared, cloneable ledger of the entry-fixed risk captured at each order
 /// placement (R4/U1). The nautilus engine owns the strategy (and consumes it), so —
 /// exactly like [`DecisionSink`] — the runner holds a clone and reads it after the
@@ -1069,6 +1117,13 @@ pub struct OrbStrategy {
     /// It is NEVER an `OrbParams`/manifest field, so a rung move produces zero head-
     /// identity diff — the exactly-one-param compare discipline stays intact.
     rung_fraction: f64,
+    /// The live dead-man feeders (live-session-driver R5/KTD5). `None` in a backtest —
+    /// the runtime heartbeat only means something when a watchdog is watching it. Touched
+    /// on every processed bar, so the dead-man reflects real strategy progress, not just
+    /// a live tokio task that has not yet died.
+    heartbeats: Option<crate::runner::watchdog::Heartbeats>,
+    /// The live per-symbol mark feed (KTD8(b)). `None` in a backtest.
+    mark_feed: Option<MarkFeed>,
 }
 
 impl OrbStrategy {
@@ -1114,7 +1169,23 @@ impl OrbStrategy {
             entry_risk: EntryRiskLedger::new(),
             session_equity_multiplier,
             rung_fraction: 1.0,
+            heartbeats: None,
+            mark_feed: None,
         }
+    }
+
+    /// Thread the live dead-man feeders + mark feed in (live-session-driver U3/U4). The
+    /// runner calls this only on the live path; a backtest leaves both `None`, so bar
+    /// processing is byte-identical to today.
+    pub fn with_heartbeats(mut self, heartbeats: crate::runner::watchdog::Heartbeats) -> Self {
+        self.heartbeats = Some(heartbeats);
+        self
+    }
+
+    /// Thread the live per-symbol mark feed in (KTD8(b)) — the breaker's price source.
+    pub fn with_mark_feed(mut self, feed: MarkFeed) -> Self {
+        self.mark_feed = Some(feed);
+        self
     }
 
     /// Set the capital-ladder rung fraction (production-ladder KTD6) — the runner supplies
@@ -1439,6 +1510,28 @@ impl DataActor for OrbStrategy {
         let params = self.params.clone();
         let actions =
             self.states.get_mut(&id).expect("state present").on_bar(t, high, low, close, volume, &params);
+
+        // Live feeders (live-session-driver U3/U4) — updated on EVERY processed bar,
+        // including the (common) no-action one, and AFTER the state transition so the
+        // published stop reflects any breakeven move this bar made. Both are `None` in a
+        // backtest, so the backtest path is unchanged.
+        let bar_unix = (bar.ts_event.as_u64() / 1_000_000_000) as i64;
+        if let Some(hb) = &self.heartbeats {
+            // The runtime dead-man measures real strategy progress, not task liveness.
+            hb.touch_runtime(bar_unix);
+        }
+        if let Some(feed) = &self.mark_feed {
+            let st = self.states.get(&id).expect("state present");
+            feed.observe(
+                id.symbol.as_str(),
+                SymbolMark {
+                    last_close: close,
+                    last_bar_unix: bar_unix,
+                    stop_price: st.is_long().then(|| st.stop_price()),
+                },
+            );
+        }
+
         if actions.is_empty() {
             return Ok(());
         }
