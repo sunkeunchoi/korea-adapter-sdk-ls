@@ -1838,13 +1838,11 @@ pub fn resolve_lane_hash(lane_env_path: &Path) -> anyhow::Result<String> {
 //
 // Wires the shipped mount machinery (authorize_mount / build_live_session_node) into a
 // reachable CLI, sizing the live strategy at the pre-registered rung fraction from v34's REAL
-// governed params. The attended live-session DRIVER (node.run -> fail-closed teardown ->
-// finalize) is DEFERRED: no live `LiveSession` adapter (real resting-order cancel / t0425
-// flatness / kill-switch halt) is shipped, and authoring one is safety-critical runtime logic
-// beyond this plan's wiring scope (the plan's teardown-sequence stop condition). So `--mount`
-// resolves every input, BUILDS the node at the real v34 rung-fraction size (proving
-// mountability), does a READ-ONLY mountability check, and stops at the driver seam WITHOUT
-// consuming the green dispatch — never leaving a consumed-but-unrun dispatch in the chain.
+// governed params. The attended live-session DRIVER (consume -> node.run -> fail-closed
+// teardown -> finalize) shipped in the live-session-driver turn: `--mount` now RUNS an
+// attended rung-1 session. Every fail-closed precheck still runs BEFORE the dispatch is
+// consumed, so a recoverable config error costs an attempt (exit 71) rather than the whole
+// `--dispatch` cycle — see [`run_mount`] for the ordering contract.
 // ---------------------------------------------------------------------------
 
 use serde::Deserialize;
@@ -2342,7 +2340,7 @@ fn operator_gate_from_env(now_unix: i64) -> OperatorGate {
 
 /// `--head` (R2): print the running binary's head identity as verbatim fact lines. Read-only, no
 /// nonce, no chain append. `strategy_code_hash()` is the SOLE head discriminator — the operator
-/// confirms the binary embeds v34 by hash-equality against the documented `d7a9820b…`. The printed
+/// confirms the binary embeds v34 by hash-equality against the documented `e5bc2ae8…`. The printed
 /// `governed_params_hash(&OrbParams::default())` is a version-invariant constant (identical across
 /// v9…v34, KTD7), so it does NOT confirm v34's governed values; it is labeled as such, never as a
 /// version readout (the binary carries no hash→version map).
@@ -2355,7 +2353,7 @@ fn run_head_diagnostic() -> anyhow::Result<ExitCode> {
         "head governed_params_hash(default)={params_hash} [version-invariant constant — NOT a v34 confirmation]"
     );
     println!(
-        "head-check: the binary embeds v34 IFF strategy_code_hash == the documented head d7a9820b… \
+        "head-check: the binary embeds v34 IFF strategy_code_hash == the documented head e5bc2ae8… \
          (the sole discriminator; the binary carries no hash→version map)"
     );
     Ok(ExitCode::SUCCESS)
@@ -2495,7 +2493,7 @@ fn run_rung_report() -> anyhow::Result<ExitCode> {
 
     // The head hash the report evaluated under (KTD6) — a stale-binary reading is self-evident.
     println!(
-        "rung-report head_code_hash={} (v34 IFF == d7a9820b…) head_params_hash={}",
+        "rung-report head_code_hash={} (v34 IFF == e5bc2ae8…) head_params_hash={}",
         report.head_code_hash, report.head_params_hash
     );
     println!(

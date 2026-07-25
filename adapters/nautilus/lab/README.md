@@ -90,7 +90,7 @@ budget against head **v34**, re-registered to **v2** (`code_change_resets_to_run
 
 | command | who | gate | what |
 |---|---|---|---|
-| `--head` | agent | read-only | prints `strategy_code_hash()` — confirm the binary embeds v34 (`d7a9820b…`) |
+| `--head` | agent | read-only | prints `strategy_code_hash()` — confirm the binary embeds v34 (`e5bc2ae8…`) |
 | `--rung-report` | agent | read-only | clean/limit-event classification, cum P&L vs the band, N-progress, readiness — appends nothing |
 | `--genesis` | operator | nonce, attended | register the rung-1 chain |
 | `--dispatch` | operator | nonce, attended | the pre-flight gate (exit 0 green / 1 refused / 75 throttled) |

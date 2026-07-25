@@ -25,7 +25,7 @@ run (nonce-gated, attended, refused in a no-TTY shell). Run the operator sequenc
    cargo run --release -p nautilus-ls-lab --bin lab-live -- --head
    ```
    The binary embeds v34 **iff** the printed `strategy_code_hash` equals the documented head
-   `d7a9820b…`. That hash is the **sole** discriminator — the binary carries no hash→version map,
+   `e5bc2ae8…`. That hash is the **sole** discriminator — the binary carries no hash→version map,
    so `--head` prints no version, and the `governed_params_hash(default)` line is a
    **version-invariant constant** (identical across v9…v34), explicitly **not** a v34 confirmation.
 3. **Confirm the pre-registration is v2.** `config/preregistration.json` has `"version": 2` and the
