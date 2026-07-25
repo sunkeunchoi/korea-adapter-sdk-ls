@@ -36,9 +36,14 @@ run (nonce-gated, attended, refused in a no-TTY shell). Run the operator sequenc
    | command | exit | meaning |
    |---|---|---|
    | `--dispatch` | 0 / 1 / 75 | green (proceed) / refused / throttled (re-run, never terminal) |
-   | `--mount` | 66 / 77 / 70 | not-paper refusal / no-TTY (or no mountable dispatch) refusal / **prepared** (node built; live driver deferred) |
+   | `--mount` | 0 / 66 / 71 / 72 / 77 | **ran + finalized clean** / not-paper refusal / **pre-consume precheck failed (dispatch NOT consumed)** / ran but finalized **ABNORMAL** (teardown could not confirm flat) / no-TTY (or no mountable dispatch) refusal |
    | `--escalate` / `--reregister` / `--clear-killswitch` | 78 / 79 / 80 | that arm's loud refusal in a no-TTY shell |
    | `--head` / `--rung-report` | 0 | read-only diagnostics (no nonce, no chain append) |
+
+   `--mount` **drives the session** now (it is no longer prepare-and-stop; exit `70` is retired).
+   Only `71` and `77` leave the green dispatch unconsumed; `0` and `72` mean a session ran. `72` is
+   never to be treated as success — the kill switch is engaged and its persisted record reds the
+   next `--dispatch` until a nonce-gated `--clear-killswitch`.
 
 5. **Inspect the chain head before the operator starts** (read-only): run `--rung-report` and read
    the printed head hash. A pre-existing chain under a **non-v34** head is a **stop-and-reconcile**
@@ -62,8 +67,10 @@ After the operator's session closes:
 
 ## Operator-only (nonce-gated, attended, no-TTY refused)
 
-`--genesis` (register the rung-1 chain) → `--dispatch` (pre-flight gate) → `--mount` (prepare the
-session at 0.10× v34 size) → after 5 clean sessions, `--escalate`. `--reregister` (rung-0
+`--genesis` (register the rung-1 chain) → `--dispatch` (pre-flight gate) → `--mount` (**run** the
+attended session at 0.10× v34 size: consume → drive → fail-closed teardown → finalize; requires
+`LS_MOUNT_KEEPALIVE` to name an existing operator keepalive file, whose mtime the operator refreshes
+within the pre-registered heartbeat interval) → after 5 clean sessions, `--escalate`. `--reregister` (rung-0
 requalification / epoch repair, bounded to ≤ the chain-earned rung) and `--clear-killswitch`
 (re-arm after an auto-halt, with a scrubbed who/why) are the recovery paths. Full sequence +
 watchdog/breaker discipline: [`RUNBOOK-rung1.md`](RUNBOOK-rung1.md).

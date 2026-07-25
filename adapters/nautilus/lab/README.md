@@ -94,17 +94,20 @@ budget against head **v34**, re-registered to **v2** (`code_change_resets_to_run
 | `--rung-report` | agent | read-only | clean/limit-event classification, cum P&L vs the band, N-progress, readiness — appends nothing |
 | `--genesis` | operator | nonce, attended | register the rung-1 chain |
 | `--dispatch` | operator | nonce, attended | the pre-flight gate (exit 0 green / 1 refused / 75 throttled) |
-| `--mount` | operator | nonce, attended, **paper-only** | resolve the rung fraction + v34 real params, build the live node at 0.10× size |
+| `--mount` | operator | nonce, attended, **paper-only** | **run** the attended session: consume the green dispatch → `node.run` → fail-closed teardown → finalize (exit 0 clean / 71 pre-consume refusal / 72 abnormal) |
 | `--escalate` / `--reregister` / `--clear-killswitch` | operator | nonce, attended | ladder transitions (rung-1→2 / epoch repair / re-arm after an auto-halt) |
 
 Every nonce-gated command refuses loudly (a distinct exit code) in a no-TTY shell — it never
 looks-like-ran. Run the operator sequence from **[`RUNBOOK-rung1.md`](RUNBOOK-rung1.md)**; the
 agent preflight + post-session read is **[`RUNG1-PREFLIGHT.md`](RUNG1-PREFLIGHT.md)**.
 
-> `node.run` is never driven by the commit gate. `--mount` today prepares the session (resolves
-> inputs, builds the node at v34 0.10× size, reports readiness) and stops at the deferred
-> attended live-session driver (`node.run → fail-closed teardown → finalize`) — a follow-up; it
-> does **not** consume the green dispatch.
+> `node.run` is never driven by the commit gate — the live end-to-end path is proven only by an
+> operator-attended paper session through `--mount`. Everything around that one seam (the session
+> timer, the watchdog envelope, the exactly-one fail-closed teardown, the staging and the finalize)
+> is offline-proven against the real `LiveSession` over a mock gateway. `--mount` runs every
+> fail-closed precheck **before** it consumes the green dispatch, so a recoverable config error
+> (unarmable pre-registration, missing keepalive, zero-size head, empty universe, build failure)
+> exits 71 with the dispatch intact.
 
 ## Turning the loop (backtest)
 
