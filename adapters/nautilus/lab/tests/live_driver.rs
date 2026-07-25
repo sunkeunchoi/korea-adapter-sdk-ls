@@ -162,6 +162,9 @@ fn driver_cfg(keepalive: &Path) -> LiveDriverConfig {
         // Long enough that the timer never fires in a test that ends another way; the
         // timer's own test sets it to 0.
         session_secs: 3_600,
+        // Milliseconds, not the operator's minute-scale default: long enough that a
+        // cooperative node returns first, short enough that the suite never sleeps.
+        stop_grace: Duration::from_millis(50),
         watchdog_tick: Duration::from_millis(10),
         limits: limits(),
         mark_policy: MarkPolicy::default(),
@@ -211,6 +214,29 @@ async fn blocks_until_stopped(h: LiveNodeHandle) -> anyhow::Result<()> {
     }
     Ok(())
 }
+
+/// The adversarial twin of [`blocks_until_stopped`]: a scripted `node.run` that **ignores**
+/// the stop request and never returns — a wedged broker socket, a drain that never
+/// completes, a bug upstream. Without a timed hard-stop the driver blocks on this forever
+/// and neither the teardown nor the finalize is ever reached.
+async fn never_stops(_h: LiveNodeHandle) -> anyhow::Result<()> {
+    loop {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+}
+
+/// A scripted `node.run` that observes the stop and then returns its OWN error — the error
+/// must still reach the run's data quality, never masked by the hard-stop plumbing.
+async fn errors_after_stop(h: LiveNodeHandle) -> anyhow::Result<()> {
+    while !h.should_stop() {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    anyhow::bail!("the node's own shutdown error")
+}
+
+/// Every hard-stop test must be bounded: a regression that reinstates the block would
+/// otherwise wedge the whole gate instead of failing it.
+const HARD_STOP_TEST_CEILING: Duration = Duration::from_secs(10);
 
 // ---------------------------------------------------------------------------
 // U3 — one teardown, whoever wins the atomic claim.
@@ -282,6 +308,150 @@ async fn the_session_timer_stops_a_node_that_would_run_forever() {
     .expect("the timed-out session finalizes");
     assert!(outcome.trip.is_none(), "the timer is not a safety trip");
     assert!(r.handles.handle.should_stop(), "the timer asked the node to stop");
+}
+
+/// The hard-stop: a node that IGNORES `should_stop()` no longer blocks the driver. The
+/// stop is requested (here by the session timer), the node is given its grace, and when it
+/// does not return the driver abandons it and reaches the SAME downstream path — one
+/// teardown, then finalize — marking the run ABNORMAL.
+#[tokio::test]
+async fn a_node_that_ignores_stop_is_hard_stopped_and_still_finalizes() {
+    let server = MockServer::start().await;
+    let base = now_secs();
+    let r = rig(&server, base).await;
+    mount_t0425(&server, serde_json::json!([])).await;
+    mount_t0424_flat(&server).await;
+    let ka = keepalive(r.home.path());
+    let mut cfg = driver_cfg(&ka);
+    cfg.session_secs = 0;
+
+    let outcome = tokio::time::timeout(
+        HARD_STOP_TEST_CEILING,
+        run_live_session(r.handles.clone(), &cfg, &ctx(r.home.path()), frozen(base), never_stops),
+    )
+    .await
+    .expect("the driver must NOT block on a node that ignores stop")
+    .expect("the hard-stopped session finalizes");
+
+    assert!(outcome.hard_stopped, "the node was abandoned at the deadline");
+    assert!(outcome.abnormal, "a node that ignored its stop never reads as a clean session");
+    assert!(outcome.trip.is_none(), "the hard-stop is the DRIVER's, not a safety trip");
+    assert!(
+        !r.handles.session.orders_enabled(),
+        "the teardown still ran (halt runs on every path)"
+    );
+    assert!(
+        aborted_runs(r.home.path()).is_empty(),
+        "the run finalized — no `.tmp-` residue for the operator to reconcile by hand"
+    );
+    let dq = std::fs::read_to_string(outcome.run_dir.join(DATA_QUALITY_FILE)).unwrap();
+    assert!(dq.contains("HARD STOP"), "the cause is greppable in the run: {dq}");
+}
+
+/// The grace is STOP-RELATIVE, not session-relative. Here the session timer never fires
+/// (an hour-long session) — the WATCHDOG asks the node to stop on its first tick. A
+/// `session_secs + grace` deadline would leave the driver blocked for the rest of the hour;
+/// the flag-armed backstop bounds it by the grace instead.
+#[tokio::test]
+async fn the_hard_stop_grace_is_relative_to_the_stop_request_not_the_session() {
+    let server = MockServer::start().await;
+    let base = now_secs();
+    // A far-stale runtime heartbeat → the first watchdog tick trips the dead-man, which
+    // tears down on its own thread and asks the node to stop mid-session.
+    let r = rig(&server, base - 10_000).await;
+    mount_t0425(&server, serde_json::json!([])).await;
+    mount_t0424_flat(&server).await;
+    let ka = keepalive(r.home.path());
+    let cfg = driver_cfg(&ka); // session_secs stays 3_600 — the timer NEVER fires here.
+
+    let outcome = tokio::time::timeout(
+        HARD_STOP_TEST_CEILING,
+        run_live_session(r.handles.clone(), &cfg, &ctx(r.home.path()), frozen(base), never_stops),
+    )
+    .await
+    .expect("a mid-session stop must be bounded by the grace, not by the session length")
+    .expect("the hard-stopped session finalizes");
+
+    assert!(outcome.hard_stopped, "the node ignored the watchdog's stop too");
+    assert_eq!(
+        outcome.trip,
+        Some(TripCause::DeadManRuntime),
+        "the watchdog won the latch; the driver's hard-stop is what unblocked the finalize"
+    );
+    assert!(outcome.abnormal);
+    assert!(aborted_runs(r.home.path()).is_empty(), "the run still finalized");
+}
+
+/// The backstop must not fire on the cooperative path: a node that observes the stop and
+/// returns within the grace finalizes exactly as it did before the hard-stop existed. The
+/// grace here is 100x the node's own poll interval, so a wrongly-armed backstop is visible.
+#[tokio::test]
+async fn a_cooperative_node_is_never_hard_stopped() {
+    let server = MockServer::start().await;
+    let base = now_secs();
+    let r = rig(&server, base).await;
+    mount_t0425(&server, serde_json::json!([])).await;
+    mount_t0424_flat(&server).await;
+    let ka = keepalive(r.home.path());
+    let mut cfg = driver_cfg(&ka);
+    cfg.session_secs = 0;
+    cfg.stop_grace = Duration::from_secs(5);
+
+    let outcome = tokio::time::timeout(
+        HARD_STOP_TEST_CEILING,
+        run_live_session(
+            r.handles.clone(),
+            &cfg,
+            &ctx(r.home.path()),
+            frozen(base),
+            blocks_until_stopped,
+        ),
+    )
+    .await
+    .expect("a cooperative node returns long before its grace")
+    .expect("the session finalizes");
+
+    assert!(!outcome.hard_stopped, "the node stopped on request — nothing to hard-stop");
+    assert!(!outcome.abnormal, "a confirmed-flat cooperative teardown still finalizes NORMAL");
+    let dq = std::fs::read_to_string(outcome.run_dir.join(DATA_QUALITY_FILE)).unwrap();
+    assert!(!dq.contains("HARD STOP"), "no spurious hard-stop observation: {dq}");
+}
+
+/// The node's OWN error still reaches the run's data quality — the hard-stop plumbing adds
+/// a branch to `run_result`, and it must not swallow the branch that already existed.
+#[tokio::test]
+async fn a_node_error_after_stop_is_not_masked_by_the_hard_stop_plumbing() {
+    let server = MockServer::start().await;
+    let base = now_secs();
+    let r = rig(&server, base).await;
+    mount_t0425(&server, serde_json::json!([])).await;
+    mount_t0424_flat(&server).await;
+    let ka = keepalive(r.home.path());
+    let mut cfg = driver_cfg(&ka);
+    cfg.session_secs = 0;
+    cfg.stop_grace = Duration::from_secs(5);
+
+    let outcome = tokio::time::timeout(
+        HARD_STOP_TEST_CEILING,
+        run_live_session(
+            r.handles.clone(),
+            &cfg,
+            &ctx(r.home.path()),
+            frozen(base),
+            errors_after_stop,
+        ),
+    )
+    .await
+    .expect("the node returned its error well inside the grace")
+    .expect("a node error still finalizes");
+
+    assert!(!outcome.hard_stopped, "the node DID return — it just returned an error");
+    let dq = std::fs::read_to_string(outcome.run_dir.join(DATA_QUALITY_FILE)).unwrap();
+    assert!(
+        dq.contains("node.run returned an error"),
+        "the node's own error is still observed: {dq}"
+    );
+    assert!(!dq.contains("HARD STOP"), "and it is not relabelled as a hard-stop: {dq}");
 }
 
 /// Trip-during-run: the watchdog claims the latch mid-run, tears down on ITS runtime

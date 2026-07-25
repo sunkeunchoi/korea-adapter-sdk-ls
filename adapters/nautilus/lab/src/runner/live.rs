@@ -1364,7 +1364,10 @@ pub fn build_live_session_node(
 //      remediation (ladder KTD10), and runs the session-side mutual-liveness check on
 //      the node runtime so a dead watchdog thread never degrades the envelope silently;
 //   4. drives `node.run()` — the single seam never exercised offline, injected as a
-//      substitutable closure so every surrounding seam IS;
+//      substitutable closure so every surrounding seam IS — under a STOP-RELATIVE hard-stop
+//      deadline, because `handle.stop()` is a request the node may ignore. Without the
+//      deadline a node wedged on stop blocks this await forever and steps (5) and (6) are
+//      unreachable: the session leaves only `.tmp-` residue and a consumed dispatch;
 //   5. runs the fail-closed `run_teardown` afterwards **only if it wins the atomic
 //      `TripLatch::try_claim`** — the same compare-exchange the watchdog uses. A
 //      non-atomic `is_tripped()` read would race a concurrent watchdog claim and let
@@ -1404,6 +1407,14 @@ pub fn system_clock() -> SessionClock {
 pub struct LiveDriverConfig {
     /// Session duration before the timer stops the node.
     pub session_secs: u64,
+    /// How long the node may take to return from `run` **after a stop has been requested**
+    /// — by the timer, the watchdog, or the mutual-liveness loop. STOP-RELATIVE by
+    /// construction (see [`stop_requested_then_grace`]): a session-relative deadline would
+    /// leave a mid-session trip blocked for the rest of the session. Keep it under
+    /// `limits.heartbeat_interval_secs` so a node hung on stop is hard-stopped before the
+    /// dead-man trips on the stalled drain — otherwise the two failure modes race and an
+    /// operationally-recoverable stall costs a nonce-gated `--clear-killswitch`.
+    pub stop_grace: Duration,
     /// Watchdog evaluation cadence. Well under the heartbeat interval so a stale feeder
     /// is caught promptly.
     pub watchdog_tick: Duration,
@@ -1452,9 +1463,14 @@ pub struct LiveSessionOutcome {
     pub trip: Option<TripCause>,
     /// The finalized run directory.
     pub run_dir: PathBuf,
-    /// Whether the run finalized ABNORMAL — the teardown could not positively confirm a
-    /// flat account, so the kill switch is engaged and an operator must reconcile.
+    /// Whether the run finalized ABNORMAL — either the teardown could not positively
+    /// confirm a flat account, or the node had to be hard-stopped. Either way the kill
+    /// switch is engaged and an operator must reconcile.
     pub abnormal: bool,
+    /// Whether the node ignored its stop request and was abandoned at the hard-stop
+    /// deadline. Distinguishes the two ABNORMAL causes, so the operator is told the right
+    /// one — a hard-stop can leave a CONFIRMED-flat account.
+    pub hard_stopped: bool,
 }
 
 /// Assemble one watchdog observation from the live feeders (R5; KTD8). Pure given its
@@ -1566,14 +1582,20 @@ fn spawn_watchdog(
 ///
 /// `run_node` is the **only** seam not exercised offline: the live call site passes
 /// `move |_| async move { node.run().await }`; tests pass a scripted future. Everything
-/// around it — the timer, the watchdog arming, the exactly-one teardown, the staging and
-/// the finalize — runs in both.
+/// around it — the timer, the watchdog arming, the **hard-stop deadline**, the exactly-one
+/// teardown, the staging and the finalize — runs in both.
+///
+/// The seam is bounded: a node that ignores `handle.stop()` is abandoned `cfg.stop_grace`
+/// after the stop was requested, and the session finalizes ABNORMAL down the same path
+/// (see [`stop_requested_then_grace`]). Without that, the one un-exercised seam could block
+/// every tested seam behind it.
 ///
 /// # Errors
 ///
-/// A staging/finalize failure, or a watchdog chain-append failure. Note that a *failed
-/// teardown* is not an error: it finalizes the run ABNORMAL and is reported on the
-/// outcome, because a hard-failed teardown must still leave scannable artifacts (R5).
+/// A staging/finalize failure, or a watchdog chain-append failure. Note that neither a
+/// *failed teardown* nor a *hard-stopped node* is an error: both finalize the run ABNORMAL
+/// and are reported on the outcome, because either must still leave scannable
+/// artifacts (R5).
 pub async fn run_live_session<F, Fut>(
     handles: LiveSessionHandles,
     cfg: &LiveDriverConfig,
@@ -1631,8 +1653,23 @@ where
         timer_handle.stop();
     });
 
-    // (4) The live-only seam.
-    let run_result = run_node(handle.clone()).await;
+    // (4) The live-only seam, under the hard-stop deadline. `run_node(..)` is a future this
+    // driver OWNS (never a spawned task), so losing the race DROPS it, which cancels it —
+    // the detach trap applies to `JoinHandle`s, not to an owned future, and spawning to get
+    // an abort handle would force `Send + 'static` onto the one seam that cannot be proven
+    // offline. Dropping it does NOT stop whatever the node spawned internally; that is
+    // exactly why the teardown below re-asserts the safety invariant at the driver altitude.
+    let (run_result, hard_stop) = tokio::select! {
+        // BIASED so the node's own return always wins a tie: if it completes in the same
+        // poll as the grace elapsing, the session ended on the node's terms and must not be
+        // recorded as an abandonment.
+        biased;
+        r = run_node(handle.clone()) => (r, None),
+        () = stop_requested_then_grace(handle.clone(), cfg.watchdog_tick, cfg.stop_grace) => (
+            Ok(()),
+            Some(cfg.stop_grace),
+        ),
+    };
     timer.abort();
 
     // Signal both supervisors to stand down BEFORE the driver contends for the claim, then
@@ -1684,10 +1721,47 @@ where
 
     // (6) Stage + finalize. ALWAYS — a hard-failed teardown must still leave scannable
     // artifacts (R5); `finalize_session` marks it abnormal.
-    let run_dir =
-        stage_and_finalize(&session, &sink, cfg, ctx, &report, run_result, supervisor_error)?;
+    let run_dir = stage_and_finalize(
+        &session,
+        &sink,
+        cfg,
+        ctx,
+        &report,
+        run_result,
+        supervisor_error,
+        hard_stop,
+    )?;
 
-    Ok(LiveSessionOutcome { report, trip: cause, run_dir, abnormal: report.hard_failed() })
+    // A node that ignored its stop request NEVER reads as a clean session, even when the
+    // teardown behind it confirmed flat: the session was ended by abandonment, not by the
+    // node's own shutdown, so `--mount` must exit 72 and an operator must look at it.
+    Ok(LiveSessionOutcome {
+        report,
+        trip: cause,
+        run_dir,
+        abnormal: report.hard_failed() || hard_stop.is_some(),
+        hard_stopped: hard_stop.is_some(),
+    })
+}
+
+/// The hard-stop deadline (R1, R4): wait until SOMEONE has asked the node to stop, then
+/// give it `grace` to return. Resolving means the grace elapsed with the node still inside
+/// `run` — the caller drops the node future.
+///
+/// It arms on the flag rather than on the timer because three parties can request the stop
+/// — the session timer, the watchdog thread, and the mutual-liveness loop — and all three
+/// set the same [`LiveNodeHandle`] flag. Arming on the flag is therefore what makes the
+/// grace **stop-relative**: a watchdog trip 100 s into a 6-hour session is bounded by
+/// `grace`, not by the rest of the session.
+///
+/// It polls because `LiveNodeHandle` exposes no notify — `should_stop()` is a bare atomic
+/// load, which is exactly how the node itself observes it. Arming latency is therefore at
+/// most one `poll`, immaterial against a minute-scale grace.
+async fn stop_requested_then_grace(handle: LiveNodeHandle, poll: Duration, grace: Duration) {
+    while !handle.should_stop() {
+        tokio::time::sleep(poll).await;
+    }
+    tokio::time::sleep(grace).await;
 }
 
 /// The session-side mutual-liveness loop (ladder KTD10). Runs on the NODE runtime and
@@ -1748,6 +1822,7 @@ fn stage_and_finalize(
     report: &TeardownReport,
     run_result: anyhow::Result<()>,
     supervisor_error: Option<String>,
+    hard_stop: Option<Duration>,
 ) -> anyhow::Result<PathBuf> {
     use crate::artifacts::manifest::{universe_hash, DataRange, Manifest};
     use crate::artifacts::performance::PerformanceReport;
@@ -1789,6 +1864,18 @@ fn stage_and_finalize(
         // finalize: the teardown already ran and the artifacts must stay scannable.
         dq.observations
             .push(format!("node.run returned an error: {}", nautilus_ls::scrub::scrub_secrets(&e.to_string())));
+    }
+    if let Some(grace) = hard_stop {
+        // The node never returned from `run` after being asked to stop. The teardown below
+        // it still ran — this line is what tells the operator the session ended by
+        // ABANDONMENT rather than by the node's own shutdown, and it is what makes the run
+        // greppable as a hard-stop.
+        dq.observations.push(format!(
+            "ABNORMAL: HARD STOP — `node.run` did not return within {}s of the stop request; \
+             the node was abandoned and the driver-side teardown ran without it. The teardown's \
+             own verdict is recorded above; reconcile the account before the next dispatch",
+            grace.as_secs_f64()
+        ));
     }
     if let Some(e) = supervisor_error {
         // The watchdog could not record its trip (or died). The teardown still ran — but
@@ -2131,6 +2218,20 @@ fn run_mount() -> anyhow::Result<ExitCode> {
         outcome.report.flat_confirmed,
         outcome.trip
     );
+    if outcome.hard_stopped {
+        // A DIFFERENT abnormality from a failed flat-confirmation: the teardown may well
+        // have confirmed flat. What failed is the node — it did not return from `run`
+        // within the grace after being asked to stop, so the driver abandoned it.
+        eprintln!(
+            "mount ABNORMAL (HARD STOP): `node.run` did not return within \
+             LS_MOUNT_STOP_GRACE_SECS of the stop request, so the driver abandoned the node and \
+             tore down without it. The run IS finalized and scannable — read its data_quality for \
+             the teardown's own flat verdict, and reconcile the account before the next dispatch. \
+             The kill switch was engaged in-process only; a --clear-killswitch is needed only if a \
+             watchdog trip is also recorded. See lab/RUNBOOK-rung1.md."
+        );
+        return Ok(ExitCode::from(MOUNT_ABNORMAL));
+    }
     if outcome.abnormal {
         eprintln!(
             "mount ABNORMAL: the teardown could not positively confirm a flat account — the kill \
@@ -2175,6 +2276,9 @@ pub struct MountInputs {
     pub universe_path: PathBuf,
     /// Attended session length before the driver's timer stops the node.
     pub session_secs: u64,
+    /// Drain budget after a stop is requested, before the driver hard-stops the node
+    /// (seconds, floored at 1 — the backstop cannot be disabled).
+    pub stop_grace_secs: u64,
     /// Watchdog evaluation cadence (seconds, floored at 1).
     pub watchdog_tick_secs: u64,
     /// Starting account balance recorded on the equity curve.
@@ -2204,6 +2308,7 @@ pub fn mount_inputs_from_env(lane_env_path: PathBuf) -> anyhow::Result<MountInpu
         universe_path: required("LS_MOUNT_UNIVERSE_FILE", "the resolved daily/t8407 universe")?,
         lane_env_path,
         session_secs: env_u64("LS_MOUNT_SESSION_SECS", DEFAULT_SESSION_SECS),
+        stop_grace_secs: env_u64("LS_MOUNT_STOP_GRACE_SECS", DEFAULT_STOP_GRACE_SECS),
         watchdog_tick_secs: env_u64("LS_MOUNT_WATCHDOG_TICK_SECS", DEFAULT_WATCHDOG_TICK_SECS),
         starting_balance: std::env::var("LS_MOUNT_STARTING_BALANCE")
             .ok()
@@ -2278,6 +2383,7 @@ pub fn prepare_mount(
 
     let driver = LiveDriverConfig {
         session_secs: inputs.session_secs,
+        stop_grace: stop_grace(inputs.stop_grace_secs),
         watchdog_tick: Duration::from_secs(inputs.watchdog_tick_secs.max(1)),
         limits,
         mark_policy: MarkPolicy::default(),
@@ -2299,11 +2405,26 @@ const DEFAULT_SESSION_SECS: u64 = 6 * 60 * 60;
 /// Default watchdog cadence — well under any sane pre-registered heartbeat interval, so a
 /// stale feeder is caught promptly rather than one interval late.
 const DEFAULT_WATCHDOG_TICK_SECS: u64 = 5;
+/// Default drain budget after a stop is requested, before the driver abandons the node.
+/// Deliberately UNDER the pre-registered `heartbeat_interval_secs` (90 s as frozen), so a
+/// node hung on stop is hard-stopped by the driver *before* the dead-man trips on the
+/// stalled drain: the dead-man's trip would engage the kill switch AND append a chain
+/// record, reding the next `--dispatch` until a nonce-gated `--clear-killswitch`. Raising
+/// this above the pre-registered interval reverses that order. Overridden by
+/// `LS_MOUNT_STOP_GRACE_SECS`.
+const DEFAULT_STOP_GRACE_SECS: u64 = 60;
 /// Retry budgets for the session-end teardown (the watchdog path has its own).
 const TEARDOWN_CANCEL_ATTEMPTS: usize = 3;
 const TEARDOWN_FLAT_ATTEMPTS: usize = 3;
 /// Recorded on the equity curve when the operator does not supply the account balance.
 const DEFAULT_STARTING_BALANCE: f64 = 10_000_000.0;
+
+/// The stop-relative drain budget, floored at one second: the backstop is not disableable
+/// (a zero grace would abandon the node the instant a stop was requested, and there is no
+/// "off" — a session with no hard-stop is the defect this exists to close).
+fn stop_grace(secs: u64) -> Duration {
+    Duration::from_secs(secs.max(1))
+}
 
 // ---------------------------------------------------------------------------
 // U3 (rung-1 readiness) — the ladder + diagnostic operator CLI (R2/R4; KTD4).
@@ -2531,6 +2652,23 @@ mod tests {
     use super::*;
     use nautilus_ls::calendar::ResultingAction;
     use std::cell::RefCell;
+
+    /// The hard-stop backstop has no "off": a `0` grace — the one value that would abandon
+    /// the node the instant a stop was requested — floors to one second, and the default is
+    /// deliberately under the pre-registered 90 s heartbeat interval so the driver's
+    /// hard-stop wins the race against the dead-man.
+    #[test]
+    fn the_stop_grace_floors_at_one_second_and_defaults_under_the_heartbeat() {
+        assert_eq!(stop_grace(0), Duration::from_secs(1), "a zero grace is floored, not honored");
+        assert_eq!(stop_grace(1), Duration::from_secs(1));
+        assert_eq!(stop_grace(120), Duration::from_secs(120), "an explicit grace is honored");
+        assert_eq!(DEFAULT_STOP_GRACE_SECS, 60);
+        assert!(
+            DEFAULT_STOP_GRACE_SECS < 90,
+            "the default must stay under the pre-registered heartbeat interval, or a node hung \
+             on stop trips the dead-man before the driver hard-stops it"
+        );
+    }
 
     /// A fake session recording the teardown call order + simulating still-resting /
     /// not-flat conditions. `cancel_fail_first` fails that many attempts before the
