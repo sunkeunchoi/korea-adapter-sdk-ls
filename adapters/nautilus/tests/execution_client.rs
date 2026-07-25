@@ -1022,3 +1022,146 @@ async fn modify_unknown_order_emits_nothing() {
     let got = timeout(Duration::from_millis(500), rx.recv()).await;
     assert!(got.is_err(), "a modify of an unknown order emits nothing (denied)");
 }
+
+// ---------------------------------------------------------------------------
+// live-session-driver U1 (R2, KTD2) — the `cancel_all_resting` primitive.
+//
+// The cancel-every-resting-order seam the fail-closed live teardown needs; it had no
+// implementation anywhere before this unit. Fail-closed on truncation, on a garbage
+// remaining quantity, and on any un-acked cancel.
+// ---------------------------------------------------------------------------
+
+use nautilus_ls::execution::{cancel_all_resting_on, OrderDispatchTasks};
+
+/// R2 happy path: every resting row is canceled and the count is returned.
+#[tokio::test]
+async fn cancel_all_resting_cancels_every_resting_row_and_counts_them() {
+    let server = MockServer::start().await;
+    let (_client, sdk) = client_and_sdk(&server).await;
+    mount_t0425(
+        &server,
+        "",
+        serde_json::json!([
+            t0425_row("1001", "", "0", "10", "접수"),
+            t0425_row("1002", "", "4", "6", "접수"),
+            // Fully filled → not resting → never sent a cancel.
+            t0425_row("1003", "", "10", "0", "체결"),
+        ]),
+    )
+    .await;
+    mount_order_ok(&server, "CSPAT00801", "9001", "").await;
+
+    let canceled = cancel_all_resting_on(&sdk).await.expect("every resting order cancels");
+    assert_eq!(canceled, 2, "the two resting rows are canceled; the filled row is not");
+    assert_eq!(
+        count_requests(&server, "CSPAT00801").await,
+        2,
+        "exactly one cancel per resting order — the filled row is never sent one"
+    );
+}
+
+/// R2 fail-closed: a TRUNCATED t0425 read (non-empty `cts_ordno`) can never prove the
+/// account was fully enumerated — error out rather than report a partial all-clear.
+#[tokio::test]
+async fn cancel_all_resting_fails_closed_on_a_truncated_read() {
+    let server = MockServer::start().await;
+    let (_client, sdk) = client_and_sdk(&server).await;
+    mount_t0425(&server, "MORE", serde_json::json!([t0425_row("1001", "", "0", "10", "접수")])).await;
+    mount_order_ok(&server, "CSPAT00801", "9001", "").await;
+
+    let err = cancel_all_resting_on(&sdk).await.expect_err("a truncated read fails closed");
+    assert!(err.to_string().contains("truncated"), "names truncation: {err}");
+    assert_eq!(
+        count_requests(&server, "CSPAT00801").await,
+        0,
+        "no partial cancel sweep runs off an unprovable enumeration"
+    );
+}
+
+/// R2 fail-closed: a row with an UNPARSEABLE `ordrem` is treated as RESTING (never
+/// skipped as "0 = filled"), and its cancel falls back to the order quantity.
+#[tokio::test]
+async fn cancel_all_resting_treats_an_unparseable_remaining_as_resting() {
+    let server = MockServer::start().await;
+    let (_client, sdk) = client_and_sdk(&server).await;
+    mount_t0425(&server, "", serde_json::json!([t0425_row("1001", "", "0", "??", "접수")])).await;
+    mount_order_ok(&server, "CSPAT00801", "9001", "").await;
+
+    let canceled = cancel_all_resting_on(&sdk).await.expect("the garbage row is canceled");
+    assert_eq!(canceled, 1, "an unparseable remaining is resting, not filled");
+    let body = last_request_body(&server, "CSPAT00801").await;
+    assert_eq!(
+        body["CSPAT00801InBlock1"]["OrdQty"].as_i64(),
+        Some(10),
+        "an unparseable remaining falls back to the order quantity — never a 0-qty cancel"
+    );
+}
+
+/// R2 classifier: a clean `ApiError` business rejection (already filled / already gone —
+/// the gateway placed nothing) is NOT an error; the order is simply not resting.
+#[tokio::test]
+async fn cancel_all_resting_treats_a_clean_business_rejection_as_not_resting() {
+    let server = MockServer::start().await;
+    let (_client, sdk) = client_and_sdk(&server).await;
+    mount_t0425(&server, "", serde_json::json!([t0425_row("1001", "", "0", "10", "접수")])).await;
+    mount_order_business_reject(&server, "CSPAT00801", "40510").await;
+
+    let canceled = cancel_all_resting_on(&sdk)
+        .await
+        .expect("a clean 'already gone' rejection is not a teardown failure");
+    assert_eq!(canceled, 0, "nothing was actually canceled — the order was already gone");
+    assert_eq!(
+        count_requests(&server, "CSPAT00801").await,
+        1,
+        "a clean rejection settles the order — it is not retried"
+    );
+}
+
+/// R2 fail-closed: a MAY-REST error (`AmbiguousOrder` from a 5xx) exhausts the retries and
+/// then returns `Err` — "not safe", so the teardown records the account as NOT flat.
+#[tokio::test]
+async fn cancel_all_resting_fails_closed_on_a_may_rest_cancel() {
+    let server = MockServer::start().await;
+    let (_client, sdk) = client_and_sdk(&server).await;
+    mount_t0425(&server, "", serde_json::json!([t0425_row("1001", "", "0", "10", "접수")])).await;
+    mount_order_ambiguous(&server, "CSPAT00801").await;
+
+    let err = cancel_all_resting_on(&sdk)
+        .await
+        .expect_err("an un-acked cancel must fail the teardown closed");
+    assert!(
+        err.to_string().contains("could not be confirmed canceled"),
+        "names the unconfirmed cancel: {err}"
+    );
+    assert!(
+        count_requests(&server, "CSPAT00801").await >= 2,
+        "a may-rest outcome is retried before failing closed"
+    );
+}
+
+/// KTD2: the retained order-dispatch handles drain on quiesce. A tracked task that is
+/// still running when quiesce begins is awaited within the budget (drained), and one that
+/// outlives the budget is abandoned (aborted) rather than stalling the halt — never
+/// silently left free to dispatch after the cancel scan with the teardown unaware.
+#[tokio::test]
+async fn quiesce_drains_in_flight_order_dispatch_tasks_and_bounds_the_wait() {
+    let tasks = OrderDispatchTasks::new();
+    let done = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = std::sync::Arc::clone(&done);
+    tasks.track(tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+    }));
+    assert_eq!(tasks.pending(), 1, "the dispatch is retained, not detached");
+
+    let report = tasks.quiesce(Duration::from_secs(5)).await;
+    assert_eq!(report.drained, 1, "the in-flight dispatch is awaited to completion");
+    assert_eq!(report.aborted, 0);
+    assert!(done.load(std::sync::atomic::Ordering::SeqCst), "the worker finished before the scan");
+    assert_eq!(tasks.pending(), 0, "the set is emptied");
+
+    // A wedged dispatch is bounded, never allowed to stall the halt.
+    tasks.track(tokio::spawn(async { tokio::time::sleep(Duration::from_secs(3600)).await }));
+    let report = tasks.quiesce(Duration::from_millis(50)).await;
+    assert_eq!(report.aborted, 1, "a dispatch past its budget is abandoned, not waited on");
+}
