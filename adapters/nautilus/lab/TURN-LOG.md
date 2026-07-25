@@ -12,10 +12,17 @@ the "pin EXPECT_VERSION" operator TODO from #118). This is a documentation +
 version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
 *identity* unchanged**.
 
-- **THE documented real-data head = `v34`** (`20260724T014752Z-backtest-orb-v34`,
-  catalog fingerprint `363f199d`, 119 closed trades, size-invariant real-data
-  RoR **0.0398**). It is what the profit-target-075 turn already anchored its KEEP
-  baseline on (KTD5 of plan `2026-07-24-001`).
+- **THE documented real-data head = `v34`** — as of the #213 re-baseline, the head *run* is
+  `20260725T112423Z-backtest-orb-v34` (`strategy_code_hash e5bc2ae8…`); it superseded
+  `20260724T014752Z-backtest-orb-v34` (`d7a9820b…`) when the live-session driver's per-bar
+  wiring landed in `orb.rs` and moved the file-scoped head identity. The two runs are
+  **byte-identical** in `performance.json` and `data_quality.json`, and their manifests differ
+  only in `run_id` / `strategy_code_hash` / `lab_src_fingerprint` / `created_utc` — so the
+  strategy is unchanged and every v34 number below still holds: catalog fingerprint
+  `363f199d`, 119 closed trades, size-invariant real-data RoR **0.0398**. It is what the
+  profit-target-075 turn already anchored its KEEP baseline on (KTD5 of plan
+  `2026-07-24-001`). The re-baseline is why the frozen pre-registration's v34 band citation
+  (which names the superseded run) remains valid.
 - **`v33` is the #118 tier-power GATE reference, NOT the head**
   (`20260724T014624Z-backtest-orb-v33`, 259 closed trades, VERDICT 🟢 GREEN — ≥30
   trades in ≥2 tiers). It answers "does the universe engine yield enough trades per

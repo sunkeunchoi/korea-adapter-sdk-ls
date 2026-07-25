@@ -794,7 +794,7 @@ fn bin_head_prints_the_code_hash_and_is_read_only() {
     assert!(out.status.success(), "head is a read-only diagnostic (exit 0)");
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("strategy_code_hash="), "{stdout}");
-    assert!(stdout.contains("d7a9820b"), "frames the check against the documented v34 head: {stdout}");
+    assert!(stdout.contains("e5bc2ae8"), "frames the check against the documented v34 head: {stdout}");
     assert!(stdout.contains("NOT a v34 confirmation"), "the params-hash line is labeled version-invariant: {stdout}");
     // Read-only: the chain is untouched.
     let after = std::fs::read_to_string(tmp.path().join("dispatch").join("chain.jsonl")).unwrap_or_default();
@@ -873,7 +873,7 @@ fn bin_rung_report_prints_the_head_hash_and_is_read_only() {
     assert!(out.status.success(), "rung-report is read-only (exit 0): {}", String::from_utf8_lossy(&out.stderr));
     let stdout = String::from_utf8_lossy(&out.stdout);
     assert!(stdout.contains("rung-report head_code_hash="), "{stdout}");
-    assert!(stdout.contains("d7a9820b"), "frames against the documented v34 head: {stdout}");
+    assert!(stdout.contains("e5bc2ae8"), "frames against the documented v34 head: {stdout}");
     assert!(stdout.contains("clean=0/5"), "empty rung-1 chain → 0/5 clean: {stdout}");
     let after = std::fs::read_to_string(tmp.path().join("dispatch").join("chain.jsonl")).unwrap_or_default();
     assert_eq!(before, after, "--rung-report appends nothing to the chain");

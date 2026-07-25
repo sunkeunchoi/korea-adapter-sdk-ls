@@ -6,7 +6,9 @@ One page for the operator running the **first live rung**. Values are frozen in
 watchdog **90 s** heartbeat, **300,000 KRW** session breaker, **5** clean sessions to escalate.
 
 > **Head v34 — re-registered v2.** The certified real-universe head is **v34**
-> (`strategy_code_hash d7a9820b…`). The v30→v34 code hash change is a
+> (`strategy_code_hash e5bc2ae8…`, run `20260725T112423Z-backtest-orb-v34` — the #213
+> re-baseline, byte-identical to the prior v34 run apart from the code hash; the head hash
+> was `d7a9820b…` before that live-only wiring landed in `orb.rs`). The v30→v34 code hash change is a
 > `code_change_resets_to_rung_1` event, so the ladder starts at rung 1 and the economic band is
 > re-derived from v34: **[−148k, +266k]** (v1/v30 was [−69k, +533k]). Confirm the binary embeds
 > v34 with `lab-live --head` before genesis — the code hash is the sole discriminator (see
