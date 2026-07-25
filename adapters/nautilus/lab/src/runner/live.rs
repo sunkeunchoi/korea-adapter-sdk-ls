@@ -1651,11 +1651,18 @@ where
     };
 
     // Collect the watchdog's verdict (it returns immediately after a trip; otherwise it
-    // observes the stop flag within one tick).
-    let trip = tokio::task::spawn_blocking(move || watchdog.join())
+    // observes the stop flag within one tick). A watchdog failure is captured, NEVER
+    // propagated: `execute_trip` runs the teardown *before* it surfaces a chain-append
+    // error, so bailing here would abandon a session that has already been torn down —
+    // with no run directory at all, not even `.tmp-` residue.
+    let (trip, supervisor_error) = match tokio::task::spawn_blocking(move || watchdog.join())
         .await
         .map_err(|e| anyhow::anyhow!("watchdog join task: {e}"))?
-        .map_err(|_| anyhow::anyhow!("the watchdog thread panicked"))??;
+    {
+        Ok(Ok(t)) => (t, None),
+        Ok(Err(e)) => (None, Some(nautilus_ls::scrub::scrub_secrets(&e.to_string()))),
+        Err(_) => (None, Some("the watchdog thread panicked".to_string())),
+    };
 
     let (report, cause) = match (driver_report, trip, liveness_trip) {
         // The driver won the claim: the session ended on its own terms.
@@ -1664,17 +1671,21 @@ where
         (None, Some((cause, r)), _) => (r, Some(cause)),
         // The session-side mutual-liveness check won (a dead watchdog thread).
         (None, None, Some((cause, r))) => (r, Some(cause)),
-        // Nobody produced a report yet somebody holds the claim. Fail closed rather than
-        // finalize a session with no recorded teardown.
-        (None, None, None) => anyhow::bail!(
-            "internal: the teardown latch was claimed but no teardown report was produced — \
-             refusing to finalize a session with no recorded teardown"
+        // A supervisor claimed the latch but handed back no report. The only routes here
+        // are a chain-append failure inside `execute_trip` (which tears down first) or a
+        // panic mid-teardown — so a teardown ran and its outcome is simply unrecorded.
+        // Assume the WORST rather than finalize a possibly-not-flat session as NORMAL,
+        // and never bail before the artifacts are written.
+        (None, None, None) => (
+            TeardownReport { cancel_attempts: 1, canceled: false, flat_confirmed: false },
+            None,
         ),
     };
 
     // (6) Stage + finalize. ALWAYS — a hard-failed teardown must still leave scannable
     // artifacts (R5); `finalize_session` marks it abnormal.
-    let run_dir = stage_and_finalize(&session, &sink, cfg, ctx, &report, run_result)?;
+    let run_dir =
+        stage_and_finalize(&session, &sink, cfg, ctx, &report, run_result, supervisor_error)?;
 
     Ok(LiveSessionOutcome { report, trip: cause, run_dir, abnormal: report.hard_failed() })
 }
@@ -1728,6 +1739,7 @@ async fn session_liveness_loop(
 /// Stage the run's manifest (with the dispatch link), the performance assembled from the
 /// **shared** fill ledger, and the drained decisions, then finalize (abnormally when the
 /// teardown hard-failed).
+#[allow(clippy::too_many_arguments)]
 fn stage_and_finalize(
     session: &LiveTeardownSession,
     sink: &DecisionSink,
@@ -1735,6 +1747,7 @@ fn stage_and_finalize(
     ctx: &LiveSessionContext,
     report: &TeardownReport,
     run_result: anyhow::Result<()>,
+    supervisor_error: Option<String>,
 ) -> anyhow::Result<PathBuf> {
     use crate::artifacts::manifest::{universe_hash, DataRange, Manifest};
     use crate::artifacts::performance::PerformanceReport;
@@ -1776,6 +1789,15 @@ fn stage_and_finalize(
         // finalize: the teardown already ran and the artifacts must stay scannable.
         dq.observations
             .push(format!("node.run returned an error: {}", nautilus_ls::scrub::scrub_secrets(&e.to_string())));
+    }
+    if let Some(e) = supervisor_error {
+        // The watchdog could not record its trip (or died). The teardown still ran — but
+        // its outcome is unrecorded, so the report above is the conservative worst case and
+        // this line is what tells the operator why the run reads abnormal.
+        dq.observations.push(format!(
+            "the watchdog supervisor failed after claiming a trip ({e}) — the teardown ran but \
+             its outcome could not be recorded; treat the account as NOT flat and reconcile"
+        ));
     }
     finalize_session(writer, dq, report, dedup_hits)
 }

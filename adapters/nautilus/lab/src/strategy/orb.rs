@@ -1514,19 +1514,25 @@ impl DataActor for OrbStrategy {
         // Live feeders (live-session-driver U3/U4) — updated on EVERY processed bar,
         // including the (common) no-action one, and AFTER the state transition so the
         // published stop reflects any breakeven move this bar made. Both are `None` in a
-        // backtest, so the backtest path is unchanged.
-        let bar_unix = (bar.ts_event.as_u64() / 1_000_000_000) as i64;
+        // backtest, so the backtest path (and its determinism) is unchanged.
         if let Some(hb) = &self.heartbeats {
-            // The runtime dead-man measures real strategy progress, not task liveness.
-            hb.touch_runtime(bar_unix);
+            // WALL CLOCK, deliberately — not `bar.ts_event`. The runtime dead-man asks "is
+            // the session loop still processing?", and a bar's event time trails wall time
+            // by up to a full bar plus arrival delay, so feeding it would leave the
+            // heartbeat permanently ~a bar stale and trip a tight pre-registered interval
+            // every session. Coverage is unchanged: no bars processed means no touches,
+            // which is exactly the stall the dead-man must catch.
+            hb.touch_runtime(chrono::Utc::now().timestamp());
         }
         if let Some(feed) = &self.mark_feed {
+            // The mark, by contrast, carries the bar's OWN event time: its staleness
+            // question is "how old is this price?", not "is the loop alive?".
             let st = self.states.get(&id).expect("state present");
             feed.observe(
                 id.symbol.as_str(),
                 SymbolMark {
                     last_close: close,
-                    last_bar_unix: bar_unix,
+                    last_bar_unix: (bar.ts_event.as_u64() / 1_000_000_000) as i64,
                     stop_price: st.is_long().then(|| st.stop_price()),
                 },
             );

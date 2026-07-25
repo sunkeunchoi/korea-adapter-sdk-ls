@@ -300,6 +300,11 @@ impl OpenLeg {
     /// the entry and an opposing one reduces it.
     fn push(&mut self, f: &LedgerFill, was: i64, signed: i64) {
         let opening = was == 0 || (was > 0) == (signed > 0);
+        if was == 0 {
+            // A new lifecycle on a recycled leg: its direction is this fill's, not the
+            // previous round-trip's (the reset in `close` cannot know it yet).
+            self.long = signed > 0;
+        }
         let qty = signed.unsigned_abs() as f64;
         if opening {
             self.open_qty += qty;
@@ -320,7 +325,10 @@ impl OpenLeg {
 
     fn record(&self, realized: f64, ts_closed: Option<u64>) -> TradeRecord {
         TradeRecord {
-            symbol: self.symbol.clone(),
+            // The ledger keys fills by bare shcode, but every other `TradeRecord` producer
+            // (`trade_from_position`) writes `instrument_id.to_string()`. Emit the same
+            // form so a live run's performance report joins with a backtest's.
+            symbol: format!("{}.{}", self.symbol, nautilus_ls::KRX_VENUE),
             entry_side: if self.long { "BUY".into() } else { "SELL".into() },
             quantity: self.open_qty,
             avg_px_open: if self.open_qty > 0.0 { self.open_notional / self.open_qty } else { 0.0 },
@@ -467,6 +475,35 @@ mod tests {
             60_000.0 * 0.70,
             "nothing known → the configured worst-case adverse bound, never a zero mark"
         );
+    }
+
+    #[test]
+    fn session_trades_emit_closed_round_trips_and_leave_an_open_leg_open() {
+        let trades = session_trades(&[
+            fill("005930", OrderSide::Buy, 10, 60_000),
+            fill("005930", OrderSide::Sell, 10, 61_000),
+            // A second symbol still open at session end.
+            fill("000660", OrderSide::Buy, 5, 100_000),
+        ]);
+        assert_eq!(trades.len(), 2);
+
+        let closed = &trades[0];
+        assert_eq!(
+            closed.symbol, "005930.XKRX",
+            "the symbol matches the form every other TradeRecord producer writes"
+        );
+        assert_eq!(closed.entry_side, "BUY");
+        assert_eq!(closed.quantity, 10.0);
+        assert_eq!(closed.avg_px_open, 60_000.0);
+        assert_eq!(closed.avg_px_close, Some(61_000.0));
+        assert_eq!(closed.realized_pnl, 10_000.0);
+        assert!(closed.ts_closed.is_some());
+        assert_eq!(closed.fills.len(), 2);
+
+        let open = &trades[1];
+        assert_eq!(open.symbol, "000660.XKRX");
+        assert_eq!(open.ts_closed, None, "a position still open is never booked as closed");
+        assert_eq!(open.realized_pnl, 0.0, "and it realizes nothing");
     }
 
     #[test]

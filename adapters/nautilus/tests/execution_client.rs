@@ -1160,8 +1160,21 @@ async fn quiesce_drains_in_flight_order_dispatch_tasks_and_bounds_the_wait() {
     assert!(done.load(std::sync::atomic::Ordering::SeqCst), "the worker finished before the scan");
     assert_eq!(tasks.pending(), 0, "the set is emptied");
 
-    // A wedged dispatch is bounded, never allowed to stall the halt.
-    tasks.track(tokio::spawn(async { tokio::time::sleep(Duration::from_secs(3600)).await }));
-    let report = tasks.quiesce(Duration::from_millis(50)).await;
+    // A wedged dispatch is bounded, never allowed to stall the halt — and it is genuinely
+    // ABORTED, not merely detached. A detached task keeps running and could still reach
+    // the gateway after the cancel scan and before halt, which is the fail-open this
+    // quiesce exists to close.
+    let ran_after = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let flag = std::sync::Arc::clone(&ran_after);
+    tasks.track(tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(80)).await;
+        flag.store(true, std::sync::atomic::Ordering::SeqCst);
+    }));
+    let report = tasks.quiesce(Duration::from_millis(10)).await;
     assert_eq!(report.aborted, 1, "a dispatch past its budget is abandoned, not waited on");
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        !ran_after.load(std::sync::atomic::Ordering::SeqCst),
+        "the over-budget dispatch was cancelled — it can no longer reach the gateway after the scan"
+    );
 }

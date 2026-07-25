@@ -657,3 +657,55 @@ fn the_envelope_refuses_to_arm_on_an_incomplete_pre_registration() {
     assert_eq!(armed.heartbeat_interval_secs, 30);
     assert_eq!(armed.max_loss_krw, 500_000.0);
 }
+
+/// A supervisor failure must never abandon a torn-down session. `execute_trip` runs the
+/// teardown BEFORE it surfaces a chain-append error, so propagating that error would leave
+/// a session that has already halted with **no run directory at all** — not even `.tmp-`
+/// residue for the de-escalation scan to classify. Here the watchdog cannot even open the
+/// chain (its dispatch dir is a regular file), and the session still runs and finalizes.
+#[tokio::test]
+async fn a_failed_watchdog_supervisor_still_finalizes_the_run() {
+    let server = MockServer::start().await;
+    let base = now_secs();
+    mount_token(&server).await;
+    let sdk = LsSdk::new(mock_config(&server.uri())).unwrap();
+    let ledger: Arc<Mutex<FillLedger>> = Arc::new(Mutex::new(FillLedger::new()));
+    let handles = LiveSessionHandles {
+        session: LiveTeardownSession::new(
+            EmissionGate::open(),
+            sdk,
+            Arc::clone(&ledger),
+            OrderDispatchTasks::new(),
+        ),
+        heartbeats: Heartbeats::new(base),
+        handle: LiveNodeHandle::new(),
+        sink: DecisionSink::new(),
+        marks: MarkFeed::new(),
+    };
+    mount_t0425(&server, serde_json::json!([])).await;
+    mount_t0424_flat(&server).await;
+
+    // Wedge the chain: `DispatchChain::open` create_dir_all's `<home>/dispatch`, which
+    // fails when a regular file already occupies that path.
+    let home = tempdir().unwrap();
+    std::fs::write(home.path().join("dispatch"), b"not a directory").unwrap();
+    let ka = keepalive(home.path());
+
+    let outcome = run_live_session(
+        handles.clone(),
+        &driver_cfg(&ka),
+        &ctx(home.path()),
+        frozen(base),
+        returns_immediately,
+    )
+    .await
+    .expect("a dead supervisor is not a reason to abandon the session");
+
+    assert!(outcome.run_dir.join(MANIFEST_FILE).exists(), "the run still finalized");
+    assert!(!handles.session.orders_enabled(), "the teardown still halted");
+    let dq = std::fs::read_to_string(outcome.run_dir.join(DATA_QUALITY_FILE)).unwrap();
+    assert!(
+        dq.contains("watchdog supervisor failed"),
+        "the operator is told the envelope was down: {dq}"
+    );
+}

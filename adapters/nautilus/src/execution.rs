@@ -185,14 +185,19 @@ impl OrderDispatchTasks {
         let mut report = QuiesceReport::default();
         let deadline = tokio::time::Instant::now() + budget;
         for handle in handles {
+            // Take an abort handle BEFORE the timeout consumes the JoinHandle. Dropping a
+            // JoinHandle only *detaches* the task — it would keep running and could still
+            // reach `sdk.orders().submit()` after the cancel scan and before `halt`, which
+            // is precisely the fail-open this quiesce exists to close. Aborting stops it at
+            // its next await point; anything it already dispatched is at the venue and is
+            // therefore enumerable by the scan that follows.
+            let abort = handle.abort_handle();
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
             match tokio::time::timeout(remaining, handle).await {
                 // Completed (or panicked) — either way it can no longer dispatch.
                 Ok(_) => report.drained += 1,
                 Err(_elapsed) => {
-                    // `timeout` dropped the JoinHandle, which detaches rather than
-                    // cancels; the task is already past its budget, so the following
-                    // cancel scan is what catches anything it rested.
+                    abort.abort();
                     report.aborted += 1;
                 }
             }
