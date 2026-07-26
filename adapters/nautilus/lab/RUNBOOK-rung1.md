@@ -86,8 +86,8 @@ touch "$LS_MOUNT_KEEPALIVE"
 export LS_DISPATCH_NONCE=$(date +%s)                            # fresh nonce; refused in a no-TTY shell
 export LS_MOUNT_UNIVERSE_FILE=/ABSOLUTE/path/to/universe.json   # resolved daily/t8407 universe
 export LS_MOUNT_SESSION_SECS=21600                              # optional; default 6 h
-export LS_MOUNT_STOP_GRACE_SECS=60                              # optional; default 60 s — keep it UNDER the
-                                                                #   pre-registered heartbeat interval (90 s)
+export LS_MOUNT_STOP_GRACE_SECS=60                              # optional; default 60 s, clamped to
+                                                                #   [1, heartbeat_interval_secs]
 export LS_MOUNT_STARTING_BALANCE=10000000                       # optional; recorded on the equity curve
 cargo run --release -p nautilus-ls-lab --bin lab-live -- --mount
 ```
@@ -112,7 +112,7 @@ Order is the safety property, and it is why a bad input costs you nothing:
 | **0** | ran and finalized clean (teardown confirmed flat) | §5 post-session verification |
 | **66** | not paper | set `LS_TRADING_ENV=paper` |
 | **71** | pre-consume precheck failed — **dispatch not consumed** | fix the named input, re-run `--mount` |
-| **72** | ran, finalized **ABNORMAL** — the teardown could not confirm flat, **or** the node was hard-stopped (read the stderr line and the run's `data_quality` to tell which) | reconcile the account; `--clear-killswitch` when a trip is recorded |
+| **72** | ran, finalized **ABNORMAL** — the teardown could not confirm flat, **or** the node was hard-stopped, **or both** (each cause prints its own stderr line; neither hides the other) | reconcile the account; `--clear-killswitch` when a trip is recorded |
 | **77** | attendance/nonce refusal, or no mountable dispatch — nothing consumed | run attended with a fresh nonce, or re-run `--dispatch` |
 
 While the session runs:
@@ -147,13 +147,18 @@ While the session runs:
   and runs the same fail-closed teardown and finalize, so the session leaves a **finalized,
   scannable run** — not `.tmp-<run_id>` residue — with a `HARD STOP` line in its `data_quality` and
   exit code `72`.
-  - Default 60 s; floored at 1 s; **it cannot be disabled**.
-  - Keep it **under** the pre-registered `heartbeat_interval_secs` (90 s). Above it, the dead-man
-    trips first on the stalled drain — safe, but it reds the next `--dispatch` for what the driver
-    would otherwise have handled on its own.
+  - Default 60 s, **clamped to `[1 s, heartbeat_interval_secs]`** — it cannot be disabled at either
+    end. The ceiling is the pre-registered interval (90 s) because a longer grace hands the race
+    back to the dead-man, which trips first on the stalled drain and reds the next `--dispatch`
+    for what the driver would otherwise have handled on its own. Setting it higher does nothing.
   - A hard-stop engages the kill switch **in-process only** and appends no chain record, so
     `--clear-killswitch` is needed only when a watchdog trip is also recorded. Reconcile the account
     against the run's `data_quality` before the next dispatch either way.
+  - **It is still a limit event.** The run's `data_quality` carries a typed `hard_stopped: true`,
+    which `scan_limit_events` reads as a `hard_stop` event (so the ladder de-escalates — at rung 1,
+    to rung 0) and which reds the readiness window. This is deliberate: it is the typed successor
+    to the `.tmp-` residue an un-backstopped hang used to leave. A session whose node had to be
+    abandoned never counts as one of your K clean sessions.
 
 ## 5. After the session
 

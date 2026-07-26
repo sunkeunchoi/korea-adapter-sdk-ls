@@ -1498,6 +1498,43 @@ pub fn assemble_observation(
     }
 }
 
+/// The stop request, latched on the DRIVER side.
+///
+/// `LiveNodeHandle::stop()` alone is not a durable record of "someone asked the node to
+/// stop": nautilus **clears** `stop_flag` on every transition to `Running`
+/// (`LiveNodeHandle::set_state`), and `LiveNode::run` makes that transition *after* client
+/// connection and reconciliation. So a stop requested during node startup — exactly when a
+/// wedged gateway makes the dead-man fire — is erased. A backstop that armed by polling
+/// that flag could miss the transient entirely and never arm, restoring the very block it
+/// exists to close.
+///
+/// This latch is set once and never cleared, so the hard-stop deadline arms on the
+/// **request**, not on a flag the node owns.
+#[derive(Clone)]
+struct StopRequest {
+    latch: Arc<AtomicBool>,
+}
+
+impl StopRequest {
+    fn new() -> Self {
+        StopRequest { latch: Arc::new(AtomicBool::new(false)) }
+    }
+
+    /// Ask the node to stop AND record that we asked. Every stop requester — the session
+    /// timer, the watchdog thread, the mutual-liveness loop — goes through here rather than
+    /// calling `handle.stop()` directly; keeping the pair in one place is what stops a
+    /// future requester from silently un-arming the backstop. The latch is stored FIRST so
+    /// an observer that sees the node's flag has already seen the latch.
+    fn request(&self, handle: &LiveNodeHandle) {
+        self.latch.store(true, Ordering::SeqCst);
+        handle.stop();
+    }
+
+    fn requested(&self) -> bool {
+        self.latch.load(Ordering::SeqCst)
+    }
+}
+
 /// Everything the watchdog OS thread owns. All `Arc`-shared or owned outright, so the
 /// thread needs nothing from the session runtime (ladder KTD10).
 struct WatchdogArming {
@@ -1506,6 +1543,7 @@ struct WatchdogArming {
     marks: MarkFeed,
     latch: Arc<TripLatch>,
     node_handle: LiveNodeHandle,
+    stop_request: StopRequest,
     stop: Arc<AtomicBool>,
     clock: SessionClock,
     data_home: PathBuf,
@@ -1561,7 +1599,7 @@ fn spawn_watchdog(
                         // The teardown already ran HERE, on this runtime (halt last), and
                         // the cause + kill-switch records are persisted. Unblock
                         // `node.run` so the driver can finalize on this very report.
-                        arming.node_handle.stop();
+                        arming.stop_request.request(&arming.node_handle);
                         return Ok(Some((cause, report)));
                     }
                     Ok(None) => {}
@@ -1610,6 +1648,9 @@ where
     let LiveSessionHandles { session, heartbeats, handle, sink, marks } = handles;
     let latch = Arc::new(TripLatch::new());
     let watchdog_stop = Arc::new(AtomicBool::new(false));
+    // The durable record that SOMEONE asked the node to stop — see [`StopRequest`]. The
+    // node's own flag is not durable, so this is what the hard-stop deadline arms on.
+    let stop_request = StopRequest::new();
 
     // (3) The watchdog envelope, on its own thread + runtime.
     let watchdog = spawn_watchdog(WatchdogArming {
@@ -1618,6 +1659,7 @@ where
         marks: marks.clone(),
         latch: Arc::clone(&latch),
         node_handle: handle.clone(),
+        stop_request: stop_request.clone(),
         stop: Arc::clone(&watchdog_stop),
         clock: Arc::clone(&clock),
         data_home: ctx.data_home.clone(),
@@ -1636,6 +1678,7 @@ where
         heartbeats.clone(),
         Arc::clone(&latch),
         handle.clone(),
+        stop_request.clone(),
         Arc::clone(&clock),
         Arc::clone(&watchdog_stop),
         ctx.data_home.clone(),
@@ -1647,10 +1690,11 @@ where
 
     // (2) The session timer — `node.run` has none of its own.
     let timer_handle = handle.clone();
+    let timer_stop_request = stop_request.clone();
     let session_secs = cfg.session_secs;
     let timer = tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(session_secs)).await;
-        timer_handle.stop();
+        timer_stop_request.request(&timer_handle);
     });
 
     // (4) The live-only seam, under the hard-stop deadline. `run_node(..)` is a future this
@@ -1664,11 +1708,13 @@ where
         // poll as the grace elapsing, the session ended on the node's terms and must not be
         // recorded as an abandonment.
         biased;
-        r = run_node(handle.clone()) => (r, None),
-        () = stop_requested_then_grace(handle.clone(), cfg.watchdog_tick, cfg.stop_grace) => (
-            Ok(()),
-            Some(cfg.stop_grace),
-        ),
+        r = run_node(handle.clone()) => (r, false),
+        () = stop_requested_then_grace(
+            stop_request.clone(),
+            handle.clone(),
+            cfg.watchdog_tick,
+            cfg.stop_grace,
+        ) => (Ok(()), true),
     };
     timer.abort();
 
@@ -1739,8 +1785,8 @@ where
         report,
         trip: cause,
         run_dir,
-        abnormal: report.hard_failed() || hard_stop.is_some(),
-        hard_stopped: hard_stop.is_some(),
+        abnormal: report.hard_failed() || hard_stop,
+        hard_stopped: hard_stop,
     })
 }
 
@@ -1754,11 +1800,20 @@ where
 /// grace **stop-relative**: a watchdog trip 100 s into a 6-hour session is bounded by
 /// `grace`, not by the rest of the session.
 ///
-/// It polls because `LiveNodeHandle` exposes no notify — `should_stop()` is a bare atomic
-/// load, which is exactly how the node itself observes it. Arming latency is therefore at
-/// most one `poll`, immaterial against a minute-scale grace.
-async fn stop_requested_then_grace(handle: LiveNodeHandle, poll: Duration, grace: Duration) {
-    while !handle.should_stop() {
+/// It polls because neither carrier exposes a notify — both are bare atomic loads, which is
+/// exactly how the node itself observes the stop. Arming latency is therefore at most one
+/// `poll`, immaterial against a minute-scale grace.
+///
+/// It reads the driver's own [`StopRequest`] latch FIRST and the node's flag only as a
+/// belt-and-braces second: the node's flag is not durable (nautilus clears it on every
+/// `Running` transition), so a level-triggered read of it alone can miss the arming edge.
+async fn stop_requested_then_grace(
+    stop_request: StopRequest,
+    handle: LiveNodeHandle,
+    poll: Duration,
+    grace: Duration,
+) {
+    while !stop_request.requested() && !handle.should_stop() {
         tokio::time::sleep(poll).await;
     }
     tokio::time::sleep(grace).await;
@@ -1773,6 +1828,7 @@ async fn session_liveness_loop(
     heartbeats: Heartbeats,
     latch: Arc<TripLatch>,
     node_handle: LiveNodeHandle,
+    stop_request: StopRequest,
     clock: SessionClock,
     stop: Arc<AtomicBool>,
     data_home: PathBuf,
@@ -1804,7 +1860,7 @@ async fn session_liveness_loop(
         )
         .await;
         if let Ok(Some(trip)) = tripped {
-            node_handle.stop();
+            stop_request.request(&node_handle);
             return Some(trip);
         }
     }
@@ -1822,7 +1878,7 @@ fn stage_and_finalize(
     report: &TeardownReport,
     run_result: anyhow::Result<()>,
     supervisor_error: Option<String>,
-    hard_stop: Option<Duration>,
+    hard_stopped: bool,
 ) -> anyhow::Result<PathBuf> {
     use crate::artifacts::manifest::{universe_hash, DataRange, Manifest};
     use crate::artifacts::performance::PerformanceReport;
@@ -1865,16 +1921,22 @@ fn stage_and_finalize(
         dq.observations
             .push(format!("node.run returned an error: {}", nautilus_ls::scrub::scrub_secrets(&e.to_string())));
     }
-    if let Some(grace) = hard_stop {
+    if hard_stopped {
         // The node never returned from `run` after being asked to stop. The teardown below
-        // it still ran — this line is what tells the operator the session ended by
-        // ABANDONMENT rather than by the node's own shutdown, and it is what makes the run
-        // greppable as a hard-stop.
+        // it still ran — this tells the operator the session ended by ABANDONMENT rather
+        // than by the node's own shutdown.
+        //
+        // The TYPED flag is the load-bearing half: finalizing this run (rather than leaving
+        // `.tmp-` residue, as the un-backstopped hang did) removes the residue signal that
+        // `scan_limit_events` and `readiness_verdict` already scan for, so without a typed
+        // carrier an abandoned-node session would silently score as CLEAN in the ladder's
+        // trailing-K window. The observation below is for the human; the flag is for the gate.
+        dq.hard_stopped = Some(true);
         dq.observations.push(format!(
             "ABNORMAL: HARD STOP — `node.run` did not return within {}s of the stop request; \
              the node was abandoned and the driver-side teardown ran without it. The teardown's \
              own verdict is recorded above; reconcile the account before the next dispatch",
-            grace.as_secs_f64()
+            cfg.stop_grace.as_secs_f64()
         ));
     }
     if let Some(e) = supervisor_error {
@@ -1948,9 +2010,12 @@ const MOUNT_REFUSED_ATTEND: u8 = 77; // no fresh nonce / no-TTY / no mountable d
 /// refusal class that is recoverable **and** leaves the green dispatch unconsumed — the
 /// operator fixes the input and re-runs `--mount` without a fresh `--dispatch` cycle.
 const MOUNT_PRECHECK_FAILED: u8 = 71;
-/// The session RAN but finalized ABNORMAL: the fail-closed teardown could not positively
-/// confirm a flat account. Never `0` — the operator must reconcile the account and clear
-/// the persisted kill switch before the next dispatch.
+/// The session RAN but finalized ABNORMAL, from EITHER independent cause (or both — see
+/// [`mount_verdict`]): the fail-closed teardown could not positively confirm a flat account,
+/// or the node was hard-stopped after ignoring its stop request. Never `0` — the operator
+/// must reconcile the account before the next dispatch. A persisted kill switch needs
+/// clearing only when a watchdog/breaker trip is also recorded; the driver's own teardown
+/// engages the switch in-process and appends no chain record.
 const MOUNT_ABNORMAL: u8 = 72;
 
 /// One symbol of the resolved live-mount universe. The operator materializes the dispatch
@@ -2218,29 +2283,51 @@ fn run_mount() -> anyhow::Result<ExitCode> {
         outcome.report.flat_confirmed,
         outcome.trip
     );
+    let (code, messages) = mount_verdict(&outcome);
+    for m in messages {
+        eprintln!("{m}");
+    }
+    Ok(ExitCode::from(code))
+}
+
+/// The `--mount` exit code and the operator messages for a finalized session — extracted as
+/// a PURE function so the matrix is testable offline. Reaching it end-to-end would require
+/// driving a real `node.run`, which the gate forbids.
+///
+/// The two abnormalities are INDEPENDENT and both are reported: a hard-stopped node whose
+/// teardown also failed to confirm flat is the worst combination there is, and an early
+/// return on either one would hide the other. Ordering puts the not-flat message last so it
+/// is the line left on the operator's screen.
+fn mount_verdict(outcome: &LiveSessionOutcome) -> (u8, Vec<&'static str>) {
+    let mut messages = Vec::new();
     if outcome.hard_stopped {
         // A DIFFERENT abnormality from a failed flat-confirmation: the teardown may well
         // have confirmed flat. What failed is the node — it did not return from `run`
         // within the grace after being asked to stop, so the driver abandoned it.
-        eprintln!(
+        messages.push(
             "mount ABNORMAL (HARD STOP): `node.run` did not return within \
              LS_MOUNT_STOP_GRACE_SECS of the stop request, so the driver abandoned the node and \
-             tore down without it. The run IS finalized and scannable — read its data_quality for \
-             the teardown's own flat verdict, and reconcile the account before the next dispatch. \
-             The kill switch was engaged in-process only; a --clear-killswitch is needed only if a \
-             watchdog trip is also recorded. See lab/RUNBOOK-rung1.md."
+             tore down without it. The run IS finalized and scannable — its data_quality carries \
+             `hard_stopped` (a typed limit event: the ladder de-escalates and the readiness \
+             window reds on it) plus the teardown's own flat verdict. Reconcile the account \
+             before the next dispatch. The kill switch was engaged in-process only; a \
+             --clear-killswitch is needed only if a watchdog trip is also recorded. \
+             See lab/RUNBOOK-rung1.md.",
         );
-        return Ok(ExitCode::from(MOUNT_ABNORMAL));
+    }
+    if outcome.report.hard_failed() {
+        messages.push(
+            "mount ABNORMAL: the teardown could not positively confirm a flat account — the kill \
+             switch is engaged. Reconcile the account. If a watchdog/breaker trip is recorded \
+             above, its chain record reds the next --dispatch until you clear it with \
+             `lab-live --clear-killswitch` (nonce-gated). See lab/RUNBOOK-rung1.md.",
+        );
     }
     if outcome.abnormal {
-        eprintln!(
-            "mount ABNORMAL: the teardown could not positively confirm a flat account — the kill \
-             switch is engaged and its record reds the next --dispatch. Reconcile the account, then \
-             clear it with `lab-live --clear-killswitch` (nonce-gated). See lab/RUNBOOK-rung1.md."
-        );
-        return Ok(ExitCode::from(MOUNT_ABNORMAL));
+        (MOUNT_ABNORMAL, messages)
+    } else {
+        (0, messages)
     }
-    Ok(ExitCode::SUCCESS)
 }
 
 /// Everything resolved and built before the green dispatch is consumed (U5). Producing
@@ -2383,7 +2470,7 @@ pub fn prepare_mount(
 
     let driver = LiveDriverConfig {
         session_secs: inputs.session_secs,
-        stop_grace: stop_grace(inputs.stop_grace_secs),
+        stop_grace: stop_grace(inputs.stop_grace_secs, limits.heartbeat_interval_secs),
         watchdog_tick: Duration::from_secs(inputs.watchdog_tick_secs.max(1)),
         limits,
         mark_policy: MarkPolicy::default(),
@@ -2419,11 +2506,27 @@ const TEARDOWN_FLAT_ATTEMPTS: usize = 3;
 /// Recorded on the equity curve when the operator does not supply the account balance.
 const DEFAULT_STARTING_BALANCE: f64 = 10_000_000.0;
 
-/// The stop-relative drain budget, floored at one second: the backstop is not disableable
-/// (a zero grace would abandon the node the instant a stop was requested, and there is no
-/// "off" — a session with no hard-stop is the defect this exists to close).
-fn stop_grace(secs: u64) -> Duration {
-    Duration::from_secs(secs.max(1))
+/// The stop-relative drain budget, CLAMPED to `[1, heartbeat_interval_secs]`.
+///
+/// The floor is why the backstop cannot be disabled: a zero grace would abandon the node
+/// the instant a stop was requested, and there is no "off" — a session with no hard-stop is
+/// the defect this exists to close.
+///
+/// The ceiling is why it cannot be *effectively* disabled either. A grace above the frozen
+/// heartbeat interval re-inverts the ordering the default exists to guarantee: the dead-man
+/// would trip first on the stalled drain, engaging the kill switch AND appending a chain
+/// record that reds the next `--dispatch` until a nonce-gated `--clear-killswitch`. An
+/// operator raising `LS_MOUNT_STOP_GRACE_SECS` to "be generous" would be silently buying
+/// that outcome, so the pre-registered interval is the hard ceiling.
+fn stop_grace(secs: u64, heartbeat_interval_secs: i64) -> Duration {
+    // A non-positive interval is nonsense — the envelope refuses to arm on one upstream —
+    // so fall back to the default ceiling rather than clamping to a near-zero grace that
+    // would abandon every node on sight. Defensive only; unreachable through `prepare_mount`.
+    let ceiling = u64::try_from(heartbeat_interval_secs)
+        .ok()
+        .filter(|c| *c > 0)
+        .unwrap_or(DEFAULT_STOP_GRACE_SECS);
+    Duration::from_secs(secs.clamp(1, ceiling))
 }
 
 // ---------------------------------------------------------------------------
@@ -2653,20 +2756,131 @@ mod tests {
     use nautilus_ls::calendar::ResultingAction;
     use std::cell::RefCell;
 
-    /// The hard-stop backstop has no "off": a `0` grace — the one value that would abandon
-    /// the node the instant a stop was requested — floors to one second, and the default is
-    /// deliberately under the pre-registered 90 s heartbeat interval so the driver's
-    /// hard-stop wins the race against the dead-man.
+    /// The hard-stop backstop has no "off" at EITHER end. A `0` grace — the one value that
+    /// would abandon the node the instant a stop was requested — floors to one second. A
+    /// grace above the frozen heartbeat interval would let the dead-man trip first on the
+    /// stalled drain (kill switch + chain record + a nonce-gated clear), effectively
+    /// disabling the driver's own hard-stop, so it is clamped to that interval.
     #[test]
-    fn the_stop_grace_floors_at_one_second_and_defaults_under_the_heartbeat() {
-        assert_eq!(stop_grace(0), Duration::from_secs(1), "a zero grace is floored, not honored");
-        assert_eq!(stop_grace(1), Duration::from_secs(1));
-        assert_eq!(stop_grace(120), Duration::from_secs(120), "an explicit grace is honored");
+    fn the_stop_grace_is_clamped_between_one_second_and_the_heartbeat_interval() {
+        assert_eq!(stop_grace(0, 90), Duration::from_secs(1), "a zero grace is floored");
+        assert_eq!(stop_grace(1, 90), Duration::from_secs(1));
+        assert_eq!(stop_grace(45, 90), Duration::from_secs(45), "an in-range grace is honored");
+        assert_eq!(stop_grace(90, 90), Duration::from_secs(90), "exactly the interval is allowed");
+        assert_eq!(
+            stop_grace(600, 90),
+            Duration::from_secs(90),
+            "a supra-heartbeat grace is clamped — it would hand the race back to the dead-man"
+        );
+        // A nonsensical interval falls back to the default ceiling — never a near-zero
+        // grace that would abandon every node on sight, and never an unbounded one.
+        assert_eq!(stop_grace(60, 0), Duration::from_secs(DEFAULT_STOP_GRACE_SECS));
+        assert_eq!(stop_grace(600, -5), Duration::from_secs(DEFAULT_STOP_GRACE_SECS));
+
         assert_eq!(DEFAULT_STOP_GRACE_SECS, 60);
         assert!(
             DEFAULT_STOP_GRACE_SECS < 90,
             "the default must stay under the pre-registered heartbeat interval, or a node hung \
              on stop trips the dead-man before the driver hard-stops it"
+        );
+    }
+
+    /// The hard-stop must arm on the DRIVER's latch, never on the node's flag alone.
+    ///
+    /// `LiveNodeHandle::set_state` clears `stop_flag` on every transition to `Running`, and
+    /// `LiveNode::run` makes that transition *after* client connection and reconciliation —
+    /// so a stop requested during startup, exactly when a wedged gateway makes the dead-man
+    /// fire, is erased. A backstop polling that flag would miss the edge and never arm,
+    /// restoring the block the hard-stop exists to close.
+    ///
+    /// `stop_flag` is `pub(crate)` in nautilus, so no test here can clear a live handle;
+    /// the cleared state is modeled by a fresh handle carrying the same latch. What is
+    /// proven is the property that matters: the deadline fires while the node's flag reads
+    /// FALSE for the whole wait.
+    #[tokio::test]
+    async fn the_hard_stop_arms_on_the_driver_latch_even_when_the_node_clears_its_flag() {
+        let handle = LiveNodeHandle::new();
+        let stop_request = StopRequest::new();
+        stop_request.request(&handle);
+        assert!(handle.should_stop() && stop_request.requested(), "both carriers see the request");
+
+        // The node transitions to Running and drops the request on the floor.
+        let cleared = LiveNodeHandle::new();
+        assert!(!cleared.should_stop(), "the node's flag no longer reflects the stop request");
+        assert!(stop_request.requested(), "the driver's latch still does — it is never cleared");
+
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            stop_requested_then_grace(
+                stop_request,
+                cleared.clone(),
+                Duration::from_millis(5),
+                Duration::from_millis(20),
+            ),
+        )
+        .await
+        .expect("the deadline must still fire — arming on the node's flag alone would hang here");
+        assert!(!cleared.should_stop(), "and it fired with the node's flag false throughout");
+    }
+
+    /// The converse: with no stop requested by anyone, the backstop never fires. A
+    /// spuriously-armed deadline would abandon a healthy node mid-session.
+    #[tokio::test]
+    async fn the_hard_stop_never_arms_before_a_stop_is_requested() {
+        let handle = LiveNodeHandle::new();
+        let stop_request = StopRequest::new();
+        let fired = tokio::time::timeout(
+            Duration::from_millis(120),
+            stop_requested_then_grace(
+                stop_request,
+                handle,
+                Duration::from_millis(5),
+                Duration::from_millis(1),
+            ),
+        )
+        .await;
+        assert!(fired.is_err(), "the backstop must stay disarmed until someone asks for a stop");
+    }
+
+    fn outcome_fixture(hard_stopped: bool, flat_confirmed: bool) -> LiveSessionOutcome {
+        let report =
+            TeardownReport { cancel_attempts: 1, canceled: true, flat_confirmed };
+        LiveSessionOutcome {
+            report,
+            trip: None,
+            run_dir: PathBuf::from("/runs/x"),
+            abnormal: report.hard_failed() || hard_stopped,
+            hard_stopped,
+        }
+    }
+
+    /// The two ABNORMAL causes are INDEPENDENT, and the worst case is both at once. An
+    /// early return on either would hide the other from the operator — this pins that both
+    /// are reported, and that the exit contract stays `0`/`72` with no third code.
+    #[test]
+    fn the_mount_verdict_reports_both_abnormal_causes_and_never_mints_an_exit_code() {
+        let (code, msgs) = mount_verdict(&outcome_fixture(false, true));
+        assert_eq!(code, 0, "a clean session exits 0");
+        assert!(msgs.is_empty(), "and says nothing alarming");
+
+        let (code, msgs) = mount_verdict(&outcome_fixture(true, true));
+        assert_eq!(code, MOUNT_ABNORMAL, "a hard-stop with a CONFIRMED-flat teardown is still 72");
+        assert_eq!(msgs.len(), 1);
+        assert!(msgs[0].contains("HARD STOP"));
+
+        let (code, msgs) = mount_verdict(&outcome_fixture(false, false));
+        assert_eq!(code, MOUNT_ABNORMAL);
+        assert_eq!(msgs.len(), 1);
+        assert!(msgs[0].contains("could not positively confirm a flat account"));
+
+        // The combination that matters: neither cause may shadow the other.
+        let (code, msgs) = mount_verdict(&outcome_fixture(true, false));
+        assert_eq!(code, MOUNT_ABNORMAL);
+        assert_eq!(msgs.len(), 2, "both causes are reported: {msgs:?}");
+        assert!(msgs[0].contains("HARD STOP"));
+        assert!(
+            msgs[1].contains("could not positively confirm a flat account"),
+            "the not-flat line is LAST — it is the one left on the operator's screen"
         );
     }
 

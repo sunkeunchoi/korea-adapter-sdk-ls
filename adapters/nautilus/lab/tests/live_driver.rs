@@ -344,8 +344,18 @@ async fn a_node_that_ignores_stop_is_hard_stopped_and_still_finalizes() {
         aborted_runs(r.home.path()).is_empty(),
         "the run finalized — no `.tmp-` residue for the operator to reconcile by hand"
     );
-    let dq = std::fs::read_to_string(outcome.run_dir.join(DATA_QUALITY_FILE)).unwrap();
-    assert!(dq.contains("HARD STOP"), "the cause is greppable in the run: {dq}");
+    let dq: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(outcome.run_dir.join(DATA_QUALITY_FILE)).unwrap())
+            .unwrap();
+    assert_eq!(
+        dq["hard_stopped"], serde_json::json!(true),
+        "the TYPED flag is what the ladder and readiness scans read — finalizing this run \
+         removed the `.tmp-` residue that used to be the only signal: {dq}"
+    );
+    assert!(
+        dq["observations"].to_string().contains("HARD STOP"),
+        "and the human-readable cause is greppable too: {dq}"
+    );
 }
 
 /// The grace is STOP-RELATIVE, not session-relative. Here the session timer never fires

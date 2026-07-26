@@ -102,6 +102,16 @@ pub struct DataQualityReport {
     /// emission is a limit event (R14(d)). `None` for a backtest or a pre-U5 artifact.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dedup_hits: Option<u64>,
+    /// Whether the driver had to HARD-STOP the node — it did not return from `run` within
+    /// the stop grace and was abandoned. A TYPED carrier, not just an observation line,
+    /// because the scans that used to catch this failure read structure, never free text:
+    /// before the hard-stop existed, a wedged node ended in `.tmp-` residue, which
+    /// `scan_limit_events` and `readiness_verdict` both treat as a safety signal. Finalizing
+    /// the run removes that residue, so without this field an abandoned-node session would
+    /// score as one of the trailing-K CLEAN sessions and could help promote the rung.
+    /// `None` for a backtest or a pre-hard-stop artifact — absent, not `false`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hard_stopped: Option<bool>,
     /// The resolved universe symbol list used (its hash rides on the manifest; the
     /// composition lives here so the agent can compare runs, R7/KTD8).
     pub universe_snapshot: Vec<String>,
@@ -129,6 +139,7 @@ impl DataQualityReport {
             reconcile_advised: Vec::new(),
             teardown_retries: None,
             dedup_hits: None,
+            hard_stopped: None,
             universe_snapshot,
             tier_composition: None,
             observations: Vec::new(),

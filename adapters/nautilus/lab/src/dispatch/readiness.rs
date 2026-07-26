@@ -67,6 +67,12 @@ pub struct SessionExceedance {
     pub dedup_hits: u64,
     /// Whether the session's tracking-error twin failed (from the sidecar).
     pub twin_failed: bool,
+    /// Whether the driver had to hard-stop the node (it ignored its stop request and was
+    /// abandoned at the deadline). A safety signal, not a threshold: the finalized run
+    /// replaced the `.tmp-` residue this scan already treats as one, so without it an
+    /// abandoned-node session would count as CLEAN in the trailing-K window.
+    #[serde(default)]
+    pub hard_stopped: bool,
     /// Per-check deferral count recorded on the session's dispatch record (R3).
     pub deferrals: u64,
 }
@@ -158,6 +164,7 @@ pub fn build_catalog(data_home: &Path, chain_records: &[ChainRecord], k: usize) 
             teardown_retries: dq.as_ref().and_then(|d| d.teardown_retries).unwrap_or(0),
             dedup_hits: dq.as_ref().and_then(|d| d.dedup_hits).unwrap_or(0),
             twin_failed,
+            hard_stopped: dq.as_ref().and_then(|d| d.hard_stopped).unwrap_or(false),
             deferrals: deferral_count,
         });
     }
@@ -166,8 +173,8 @@ pub fn build_catalog(data_home: &Path, chain_records: &[ChainRecord], k: usize) 
 
 /// The reducer's verdict over an exceedance catalog (R11). Red when any pre-registered
 /// numeric threshold is exceeded OR any safety signal is present (a dedup hit on a real
-/// emission, a teardown needing more than one retry, a twin-failed session, or `.tmp-`
-/// residue) — every safe verdict fails toward not-safe. Otherwise green.
+/// emission, a teardown needing more than one retry, a twin-failed session, a hard-stopped
+/// node, or `.tmp-` residue) — every safe verdict fails toward not-safe. Otherwise green.
 pub fn readiness_verdict(catalog: &ExceedanceCatalog, thresholds: &ExceedanceThresholds) -> ReadinessVerdict {
     let over = |total: u64, limit: Option<u32>| limit.is_some_and(|l| total > l as u64);
     let threshold_tripped = over(catalog.sum(|s| s.reconcile_advised), thresholds.max_reconcile_advised)
@@ -175,7 +182,7 @@ pub fn readiness_verdict(catalog: &ExceedanceCatalog, thresholds: &ExceedanceThr
         || over(catalog.sum(|s| s.coverage_gaps), thresholds.max_coverage_gaps);
     let safety_tripped = catalog.aborted_runs > 0
         || catalog.sessions.iter().any(|s| {
-            s.dedup_hits > 0 || s.teardown_retries > 1 || s.twin_failed
+            s.dedup_hits > 0 || s.teardown_retries > 1 || s.twin_failed || s.hard_stopped
         });
     if threshold_tripped || safety_tripped {
         ReadinessVerdict::Red
@@ -385,6 +392,30 @@ mod tests {
         stage_run(tmp2.path(), "20260716T020000Z-live-orb-v30", Some("live"), dq2);
         let (v2, _) = compute_readiness(tmp2.path(), &[], Some(&prereg(2, None)));
         assert_eq!(v2, ReadinessVerdict::Red, "more than one teardown retry reds the window");
+    }
+
+    /// A hard-stopped session reds the window exactly like the `.tmp-` residue it replaced.
+    ///
+    /// This is the whole reason `hard_stopped` is a TYPED field. Before the driver had a
+    /// hard-stop, a node that ignored its stop request left the run unfinalized, and
+    /// `an_aborted_tmp_run_pushes_the_verdict_red` above is what caught it. The hard-stop
+    /// finalizes the run instead — so if this scan did not read the flag, the same failure
+    /// would arrive as a *clean* trailing session and could help promote the rung.
+    #[test]
+    fn a_hard_stopped_session_reds_the_window_like_the_residue_it_replaced() {
+        let tmp = TempDir::new().unwrap();
+        stage_run(tmp.path(), "20260716T010000Z-live-orb-v30", Some("live"), clean_dq());
+        let mut dq = clean_dq();
+        dq.hard_stopped = Some(true);
+        stage_run(tmp.path(), "20260716T020000Z-live-orb-v30", Some("live"), dq);
+
+        let (v, catalog) = compute_readiness(tmp.path(), &[], Some(&prereg(2, None)));
+        assert_eq!(
+            catalog.aborted_runs, 0,
+            "the hard-stopped run FINALIZED — there is no `.tmp-` residue to catch it"
+        );
+        assert!(catalog.sessions.iter().any(|s| s.hard_stopped), "the flag survives into the catalog");
+        assert_eq!(v, ReadinessVerdict::Red, "and it still reds the window on its own");
     }
 
     #[test]
