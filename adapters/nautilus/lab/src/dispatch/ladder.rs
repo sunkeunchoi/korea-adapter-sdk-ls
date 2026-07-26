@@ -109,7 +109,8 @@ pub struct LimitEvent {
     /// The session (run id) the event belongs to.
     pub run_id: String,
     /// The event kind (`watchdog_trip`, `breaker_trip`, `kill_switch`, `dedup_hit`,
-    /// `teardown_retries`, `reconcile_advised`, `tracking_band_breach`, `tmp_residue`).
+    /// `teardown_retries`, `reconcile_advised`, `tracking_band_breach`, `tmp_residue`,
+    /// `hard_stop`).
     pub kind: String,
 }
 
@@ -179,6 +180,14 @@ fn run_limit_events(
         }
         if dq.teardown_retries.unwrap_or(0) > 1 {
             out.push(ev("teardown_retries")); // (d) more than one retry
+        }
+        if dq.hard_stopped.unwrap_or(false) {
+            // The node ignored its stop request and was abandoned at the driver's hard-stop
+            // deadline. This is the typed successor to the `tmp_residue` signal below: an
+            // un-backstopped wedged node used to end in `.tmp-` residue, which this scan
+            // already treats as a limit event. The hard-stop finalizes the run instead, so
+            // WITHOUT this arm the same failure would produce no event at all.
+            out.push(ev("hard_stop"));
         }
     }
     // (c) tracking-error band breach (rung 2+, load-bearing only with a frozen band).
@@ -1046,6 +1055,53 @@ mod tests {
         let rec = apply_deescalation(&chain, tmp.path(), None, now()).unwrap();
         assert!(rec.is_some(), "consumed-dispatch residue de-escalates (R14(f))");
         assert_eq!(chain.load().authorized_rung, 1);
+    }
+
+    /// A hard-stopped session is a limit event, and at rung 1 it suspends to rung 0 — the
+    /// same treatment the `.tmp-` residue above gets.
+    ///
+    /// The two are the same failure wearing different clothes: before the driver had a
+    /// timed hard-stop, a node that ignored its stop request left the run unfinalized and
+    /// the residue arm caught it. The hard-stop finalizes the run, so this typed arm is now
+    /// the only thing standing between an abandoned-node session and a clean scan.
+    #[test]
+    fn a_hard_stopped_run_is_a_limit_event() {
+        let tmp = TempDir::new().unwrap();
+        let chain = DispatchChain::open(tmp.path()).unwrap();
+        chain.append(now(), 1, 1, None, RecordKind::Genesis).unwrap();
+        let d = dispatch_record(&chain, 1, 1);
+        let run_id = "20260726T090000Z-live-orb-v34";
+        chain
+            .append(
+                now(),
+                1,
+                1,
+                None,
+                RecordKind::Consumption(crate::dispatch::chain::Consumption {
+                    dispatch_record_id: d.clone(),
+                    run_id: Some(run_id.into()),
+                }),
+            )
+            .unwrap();
+        stage_clean_run(tmp.path(), run_id, 1, &d, 0.0);
+        // The run FINALIZED (no `.tmp-` residue) — only the typed flag distinguishes it.
+        let mut dq = DataQualityReport::backtest(vec![], vec![]);
+        dq.teardown_retries = Some(0);
+        dq.dedup_hits = Some(0);
+        dq.hard_stopped = Some(true);
+        std::fs::write(
+            tmp.path().join("runs").join(run_id).join(crate::artifacts::DATA_QUALITY_FILE),
+            serde_json::to_string(&dq).unwrap(),
+        )
+        .unwrap();
+
+        let events = scan_limit_events(tmp.path(), &chain.load().records, None);
+        assert!(
+            events.iter().any(|e| e.kind == "hard_stop"),
+            "an abandoned node must surface as a limit event, not a clean session: {events:?}"
+        );
+        apply_deescalation(&chain, tmp.path(), None, now()).unwrap().unwrap();
+        assert_eq!(chain.load().authorized_rung, 0, "at rung 1 it suspends, like any limit event");
     }
 
     #[test]

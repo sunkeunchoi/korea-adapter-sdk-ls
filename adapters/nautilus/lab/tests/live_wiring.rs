@@ -731,6 +731,7 @@ fn mount_inputs(dir: &std::path::Path, prereg: serde_json::Value, universe: &str
         lane_env_path,
         universe_path,
         session_secs: 60,
+        stop_grace_secs: 10,
         watchdog_tick_secs: 5,
         starting_balance: 10_000_000.0,
     }
