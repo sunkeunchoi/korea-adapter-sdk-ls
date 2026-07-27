@@ -48,27 +48,25 @@ a multi-session return. That is a fidelity call to make deliberately, not to dis
 page-burst trips it even under the per-second cap. Put `t8430` **last**. Write the pin only
 after a refusal-free ingest.
 
-## 2. Reconcile eight unmerged branches / four worktrees
+## 2. *(residual)* Two archived branches awaiting a keep-or-drop call
 
-- **Cost:** small · **Autonomy:** offline decision, then agent-runnable cleanup
+Reconciled 2026-07-27. Eight unmerged branches → **two**; all four worktrees removed
+(**23 GB** reclaimed, almost all of it one `target/`). Disposition was decided per branch by
+comparing every touched file's content against `main`, not by branch name or date.
 
-Re-measured 2026-07-27 after #221/#222 — the previous table listed **five**; there are **eight**,
-and three were missing entirely. `local-only` means never pushed, so the worktree is the only copy.
+Six branches were pruned after their work was verified already on `main`. Three orphaned
+documents that had landed *nowhere* were rescued into `main` first (PR #225) — two of them on
+never-pushed branches, so reclaiming those worktrees would have destroyed the only copies.
 
-| branch | ahead | where | disposition |
-|---|---|---|---|
-| `fix/ingest-krx-calendar-proof` | 8 | remote + worktree | shipped via #192 — confirm, then prune |
-| `feat/strategy-loop-turn-4-widen-param-flip` | 5 | remote | **was missing from this table**; turn 4 was FALSIFIED — confirm nothing unlanded, then prune |
-| `feat/nautilus-reingest-overlap-write-hardening` | 3 | remote | **was missing**; overlaps the shipped #101/#105 write-hardening — confirm, then prune |
-| `docs/paper-live-smoke-evidence-cleanup` | 2 | **local-only** | never had a PR; land or discard |
-| `feat/paper-reset-utility` | 1 | remote | **was missing**; relates to `TODO.ATTENDED.md` §2 (`make paper-reset`) — check before discarding |
-| `prototype/gap-retention-cohort` | 1 | remote + worktree | prototype; superseded by the #169 KEEP (v32)? |
-| `research/krx-calendar-forward-closures-api` | 1 | **local-only** + worktree | research note; fold into `docs/research/` or drop |
-| `research/krx-calendar-historical-api` | 1 | **local-only** + worktree | same |
+Both survivors are pushed to `origin`, so neither is a single local copy:
 
-Four live worktrees under `.worktrees/` each carry a full `target/`, so this is disk as well as
-clarity. Decide per branch; **do not bulk-delete** — three branches were never pushed, so for
-those the local worktree is the only copy of the work.
+| branch | holds | call to make |
+|---|---|---|
+| `docs/paper-live-smoke-evidence-cleanup` | a Paper Live Smoke evidence record + a Simulation→Paper terminology retire; would create `docs/evidence/`, a directory `main` does not have | land it, or drop it if `docs/evidence/` is deliberately not a thing |
+| `prototype/gap-retention-cohort` | a 289-line exploratory cohort script; the lever it explored **shipped** as v32 (#169) and now lives in `orb.rs` / `params.rs` | almost certainly drop — kept only as a free archive |
+
+Neither blocks anything. Deleting both is defensible; they are retained only because nothing
+forced the decision.
 
 ## 3. ORB strategy loop — converged; do not queue another micro-lever
 
