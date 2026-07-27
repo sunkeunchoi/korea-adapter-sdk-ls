@@ -67,8 +67,7 @@ line for `action=enforced-active`.
 
 - **#118 universe engine, first tier-stratified real run** — executed 2026-07-24, verdict
   **GREEN** (refusal-free ingest 40/40 symbols, pin `90005f88`, gate run `…-orb-v33`, 259 trades
-  across 3 tiers). The GitHub issue is still open; closing it is
-  [`TODO.OFFLINE.md`](TODO.OFFLINE.md) §2.
+  across 3 tiers). Issue closed 2026-07-27.
 - Re-cert wave 3 attended live — 4 promotions (#131–#133/#135); t8412 → recommended (#138);
   IGW00000/CSPAT00701 modify promoted (#139/#146–#151); CSPAT00601 → recommended (#205/#206).
 - KRX calendar genesis snapshot — executed 2026-07-23 against real KRX/KASI.
