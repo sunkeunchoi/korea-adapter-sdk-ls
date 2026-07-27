@@ -3,7 +3,7 @@ title: "A live-session teardown must SHARE the node's Arcs, and every handle mus
 date: 2026-07-25
 category: architecture-patterns
 module: adapters/nautilus (nautilus-ls, nautilus-ls-lab)
-problem_type: architecture
+problem_type: architecture_pattern
 component: live-session-driver
 severity: critical
 applies_when:
@@ -134,7 +134,7 @@ Test it against a **stale-favorable** fixture, not just a known-loss one.
 - `adapters/nautilus/lab/src/runner/live.rs` — `LiveTeardownSession`, `LiveMount`,
   `build_live_session_node`, `run_live_session`, `prepare_mount`.
 - `adapters/nautilus/lab/src/runner/pnl.rs` — the realized-P&L accounting seam + the adverse mark.
-- Tests: `lab/tests/live_session.rs`, `lab/tests/live_wiring.rs`, `lab/tests/live_driver.rs`.
+- Tests: `adapters/nautilus/lab/tests/live_session.rs`, `adapters/nautilus/lab/tests/live_wiring.rs`, `adapters/nautilus/lab/tests/live_driver.rs`.
 
 ## Related
 
