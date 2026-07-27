@@ -48,32 +48,33 @@ a multi-session return. That is a fidelity call to make deliberately, not to dis
 page-burst trips it even under the per-second cap. Put `t8430` **last**. Write the pin only
 after a refusal-free ingest.
 
-## 2. Close the two issues whose work already landed
+## 2. ~~Close the two issues whose work already landed~~ — DONE 2026-07-27
 
-- **Cost:** ~2 min · **Autonomy:** agent-runnable
-- **#118** — universe engine first real run. Executed 2026-07-24, verdict GREEN. Close with the
-  outcome (pin `90005f88`, gate run `…-orb-v33`, 259 trades, 3 tiers).
-- **#119** — Turn 11 stop-width-geometry lever. Merged as a documented **NO-BUILD** (PR #204);
-  4 signals passed collinearity, the kill was materiality — stop location is CLASS-B-absorbed.
-  Close with that verdict, not silently.
+Both closed with their outcomes: **#118** GREEN (pin `90005f88`, gate run `…-orb-v33`, 259
+trades, 3 tiers); **#119** documented **NO-BUILD** (PR #204) — 4 signals passed collinearity, the
+kill was materiality, stop location is CLASS-B-absorbed.
 
-Leaving them open is what let `todo.2.txt` keep recommending Lever 8 days after it had run.
-
-## 3. Reconcile five unmerged branches / four worktrees
+## 3. Reconcile eight unmerged branches / four worktrees
 
 - **Cost:** small · **Autonomy:** offline decision, then agent-runnable cleanup
 
-| branch | ahead of `main` | disposition |
-|---|---|---|
-| `docs/paper-live-smoke-evidence-cleanup` | 2 | never had a PR; land or discard |
-| `fix/ingest-krx-calendar-proof` | 8 | shipped via #192 — confirm, then prune |
-| `prototype/gap-retention-cohort` | 1 | prototype; superseded by the #169 KEEP (v32)? |
-| `research/krx-calendar-forward-closures-api` | 1 | research note; fold into `docs/research/` or drop |
-| `research/krx-calendar-historical-api` | 1 | same |
+Re-measured 2026-07-27 after #221/#222 — the previous table listed **five**; there are **eight**,
+and three were missing entirely. `local-only` means never pushed, so the worktree is the only copy.
 
-Four live worktrees under `.worktrees/` hold the last four. Each carries a full `target/`, so
-this is disk as well as clarity. Decide per branch; do not bulk-delete — one of them is the only
-copy of unlanded work.
+| branch | ahead | where | disposition |
+|---|---|---|---|
+| `fix/ingest-krx-calendar-proof` | 8 | remote + worktree | shipped via #192 — confirm, then prune |
+| `feat/strategy-loop-turn-4-widen-param-flip` | 5 | remote | **was missing from this table**; turn 4 was FALSIFIED — confirm nothing unlanded, then prune |
+| `feat/nautilus-reingest-overlap-write-hardening` | 3 | remote | **was missing**; overlaps the shipped #101/#105 write-hardening — confirm, then prune |
+| `docs/paper-live-smoke-evidence-cleanup` | 2 | **local-only** | never had a PR; land or discard |
+| `feat/paper-reset-utility` | 1 | remote | **was missing**; relates to `TODO.ATTENDED.md` §2 (`make paper-reset`) — check before discarding |
+| `prototype/gap-retention-cohort` | 1 | remote + worktree | prototype; superseded by the #169 KEEP (v32)? |
+| `research/krx-calendar-forward-closures-api` | 1 | **local-only** + worktree | research note; fold into `docs/research/` or drop |
+| `research/krx-calendar-historical-api` | 1 | **local-only** + worktree | same |
+
+Four live worktrees under `.worktrees/` each carry a full `target/`, so this is disk as well as
+clarity. Decide per branch; **do not bulk-delete** — three branches were never pushed, so for
+those the local worktree is the only copy of the work.
 
 ## 4. ORB strategy loop — converged; do not queue another micro-lever
 
