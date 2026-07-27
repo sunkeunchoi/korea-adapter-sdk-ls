@@ -236,6 +236,7 @@ pub(crate) struct OpenDrops {
 }
 
 /// The result of one live-open fetch.
+#[derive(Debug)]
 pub(crate) struct TodayOpens {
     pub opens: HashMap<InstrumentId, i64>,
     pub drops: OpenDrops,
@@ -725,5 +726,384 @@ mod tests {
             crate::runner::live::parse_mount_universe(json.as_bytes()).is_err(),
             "mount refuses an empty universe, so resolve() must never emit one"
         );
+    }
+
+    /// The live `today_open` fetch, against a wiremock gateway.
+    ///
+    /// This is the one gateway call the producer makes, and it decides what an attended live
+    /// session buys: `--mount` runs no selection of its own. `fetch_today_opens` takes an
+    /// already-built `&LsSdk` precisely so its batching, fixed-width packing, echo-keying and
+    /// open-parsing are reachable offline — `LsConfig::base_url` is the only injection point in
+    /// the stack and is not settable from a lane env file, so `mock_config(&server.uri())` is
+    /// the supported way in.
+    ///
+    /// These live inside the crate rather than under `tests/`: `fetch_today_opens`, `TodayOpens`
+    /// and `OpenDrops` are `pub(crate)` on purpose (an external caller has no business fetching
+    /// opens outside `resolve`), and an integration test is a separate crate that cannot reach
+    /// them. Widening the surface to `pub` to relocate the tests would trade the invariant for
+    /// the test file's location.
+    mod live_open_fetch {
+        use super::*;
+        use ls_sdk::LsSdk;
+        use ls_sdk_test_support::{mock_config, mount_token};
+        use serde_json::json;
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
+
+        fn json_response(body: serde_json::Value) -> ResponseTemplate {
+            ResponseTemplate::new(200)
+                .set_body_string(body.to_string())
+                .insert_header("content-type", "application/json")
+        }
+
+        /// Mount the OAuth stub plus a fixed `t8407` response.
+        async fn mount_t8407(server: &MockServer, body: serde_json::Value) {
+            mount_token(server).await;
+            Mock::given(method("POST"))
+                .and(path("/stock/market-data"))
+                .and(header("tr_cd", "t8407"))
+                .respond_with(json_response(body))
+                .mount(server)
+                .await;
+        }
+
+        /// A `t8407` responder that echoes back exactly the codes the request packed, each with
+        /// a usable open. It reads the packing the same fixed six-character way the gateway
+        /// does, so a mis-framed batch surfaces as a missing-echo refusal rather than passing.
+        struct EchoPackedCodes;
+
+        impl Respond for EchoPackedCodes {
+            fn respond(&self, req: &Request) -> ResponseTemplate {
+                let body: serde_json::Value = serde_json::from_slice(&req.body).unwrap();
+                let packed = body["t8407InBlock"]["shcode"].as_str().unwrap();
+                let rows: Vec<serde_json::Value> = packed
+                    .as_bytes()
+                    .chunks(6)
+                    .map(|c| json!({ "shcode": std::str::from_utf8(c).unwrap(), "open": "10000" }))
+                    .collect();
+                json_response(json!({ "rsp_cd": "00000", "t8407OutBlock1": rows }))
+            }
+        }
+
+        async fn mount_echo(server: &MockServer) {
+            mount_token(server).await;
+            Mock::given(method("POST"))
+                .and(path("/stock/market-data"))
+                .and(header("tr_cd", "t8407"))
+                .respond_with(EchoPackedCodes)
+                .mount(server)
+                .await;
+        }
+
+        fn sdk(server: &MockServer) -> LsSdk {
+            LsSdk::new(mock_config(&server.uri())).unwrap()
+        }
+
+        fn inst(code: &str) -> InstrumentId {
+            InstrumentId::from(format!("{code}.XKRX").as_str())
+        }
+
+        fn wanted(codes: &[&str]) -> Vec<(InstrumentId, String)> {
+            codes.iter().map(|c| (inst(c), (*c).to_string())).collect()
+        }
+
+        /// `n` distinct valid six-digit codes, in a stable order.
+        fn wanted_n(n: usize) -> Vec<(InstrumentId, String)> {
+            (1..=n)
+                .map(|i| {
+                    let code = format!("{i:06}");
+                    (inst(&code), code)
+                })
+                .collect()
+        }
+
+        /// The `t8407` request bodies the server actually received, in order. Filtered by path
+        /// so the OAuth token call never counts as a quote request.
+        async fn t8407_bodies(server: &MockServer) -> Vec<serde_json::Value> {
+            server
+                .received_requests()
+                .await
+                .expect("the mock server records requests")
+                .iter()
+                .filter(|r| r.url.path() == "/stock/market-data")
+                .map(|r| serde_json::from_slice(&r.body).unwrap())
+                .collect()
+        }
+
+        /// Every path the server was hit on, in order — including the OAuth token endpoint.
+        /// A pre-packing refusal must not even authenticate.
+        async fn all_request_paths(server: &MockServer) -> Vec<String> {
+            server
+                .received_requests()
+                .await
+                .expect("the mock server records requests")
+                .iter()
+                .map(|r| r.url.path().to_string())
+                .collect()
+        }
+
+        // --- batching / framing -------------------------------------------------------
+
+        /// A full batch is one call, and `nrec` must reach the wire as a JSON NUMBER — a
+        /// quoted `"25"` is exactly the shape that earns `IGW40011`.
+        #[tokio::test]
+        async fn a_full_batch_of_25_is_one_request_whose_nrec_is_a_json_number() {
+            let server = MockServer::start().await;
+            mount_echo(&server).await;
+            let w = wanted_n(T8407_BATCH);
+
+            let got = fetch_today_opens(&sdk(&server), &w).await.unwrap();
+            assert_eq!(got.opens.len(), T8407_BATCH);
+
+            let bodies = t8407_bodies(&server).await;
+            assert_eq!(bodies.len(), 1, "25 codes fit one batch");
+            assert_eq!(
+                bodies[0]["t8407InBlock"]["nrec"],
+                json!(25),
+                "nrec must serialize as a JSON number, not a string"
+            );
+            assert_eq!(
+                bodies[0]["t8407InBlock"]["shcode"].as_str().unwrap().len(),
+                150,
+                "25 codes packed at a fixed six-character width"
+            );
+        }
+
+        /// The chunk boundary is where a packing bug would silently drop or duplicate a symbol,
+        /// and a smaller pool does not shrink the universe — selection is top-N, so it refills
+        /// from lower-ranked names. Concatenating the two packings must reproduce the input.
+        #[tokio::test]
+        async fn twenty_six_codes_split_into_25_then_1_losing_nothing_at_the_boundary() {
+            let server = MockServer::start().await;
+            mount_echo(&server).await;
+            let w = wanted_n(T8407_BATCH + 1);
+
+            let got = fetch_today_opens(&sdk(&server), &w).await.unwrap();
+            assert_eq!(got.opens.len(), T8407_BATCH + 1);
+
+            let bodies = t8407_bodies(&server).await;
+            assert_eq!(bodies.len(), 2, "26 codes need a second batch");
+            assert_eq!(bodies[0]["t8407InBlock"]["nrec"], json!(25));
+            assert_eq!(bodies[1]["t8407InBlock"]["nrec"], json!(1));
+
+            let packed: String = bodies
+                .iter()
+                .map(|b| b["t8407InBlock"]["shcode"].as_str().unwrap())
+                .collect();
+            let expected: String = w.iter().map(|(_, c)| c.as_str()).collect();
+            assert_eq!(packed, expected, "every requested code is packed exactly once, in order");
+        }
+
+        // --- response handling --------------------------------------------------------
+
+        /// The regression guard for the removed `rsp_cd != "00000"` re-check. `T8407Response`
+        /// is `#[serde(default)]`, so an envelope that omits `rsp_cd` entirely deserializes to
+        /// `""` — which `Inner::post` already classifies as success. Re-testing for `"00000"`
+        /// here could only reject a response the SDK accepted.
+        #[tokio::test]
+        async fn an_absent_rsp_cd_still_resolves_opens() {
+            let server = MockServer::start().await;
+            mount_t8407(
+                &server,
+                json!({ "t8407OutBlock1": [{ "shcode": "005930", "open": "71800" }] }),
+            )
+            .await;
+
+            let got = fetch_today_opens(&sdk(&server), &wanted(&["005930"])).await.unwrap();
+            assert_eq!(got.opens.get(&inst("005930")), Some(&71_800));
+        }
+
+        /// `00136` is success-WITH-data, not a failure. The SDK's read-success set already
+        /// admits it; the producer must not narrow that.
+        #[tokio::test]
+        async fn an_informational_00136_still_resolves_opens() {
+            let server = MockServer::start().await;
+            mount_t8407(
+                &server,
+                json!({
+                    "rsp_cd": "00136",
+                    "t8407OutBlock1": [{ "shcode": "005930", "open": "71800" }]
+                }),
+            )
+            .await;
+
+            let got = fetch_today_opens(&sdk(&server), &wanted(&["005930"])).await.unwrap();
+            assert_eq!(got.opens.get(&inst("005930")), Some(&71_800));
+        }
+
+        /// Zero and blank are market state: pre-open, or halted before it ever traded. Both
+        /// drop the symbol — never defaulted — and both belong in `not_yet_open`.
+        #[tokio::test]
+        async fn a_zero_or_blank_open_drops_the_symbol_as_not_yet_open() {
+            let server = MockServer::start().await;
+            mount_t8407(
+                &server,
+                json!({
+                    "rsp_cd": "00000",
+                    "t8407OutBlock1": [
+                        { "shcode": "005930", "open": "0" },
+                        { "shcode": "000660", "open": "" }
+                    ]
+                }),
+            )
+            .await;
+
+            let got = fetch_today_opens(&sdk(&server), &wanted(&["005930", "000660"])).await.unwrap();
+            assert!(got.opens.is_empty(), "neither symbol has a usable open");
+            assert_eq!(got.drops.not_yet_open, vec!["005930".to_string(), "000660".to_string()]);
+            assert!(got.drops.unparseable.is_empty(), "market state is not a wire-shape fault");
+        }
+
+        /// A non-integer open is a WIRE-SHAPE change, not market state, and must never land in
+        /// the `not_yet_open` bucket: that conflation sends the operator off to wait for a
+        /// market state that has already arrived.
+        ///
+        /// The shape that reaches this arm is a decimal-bearing *string* — `string_or_number`
+        /// passes a JSON string through verbatim (`visit_str`), so a gateway that started
+        /// quoting `"57900.0"` lands here.
+        #[tokio::test]
+        async fn a_decimal_open_string_is_reported_as_unparseable_not_as_pre_open() {
+            let server = MockServer::start().await;
+            mount_t8407(
+                &server,
+                json!({
+                    "rsp_cd": "00000",
+                    "t8407OutBlock1": [{ "shcode": "005930", "open": "57900.0" }]
+                }),
+            )
+            .await;
+
+            let got = fetch_today_opens(&sdk(&server), &wanted(&["005930"])).await.unwrap();
+            assert!(got.opens.is_empty());
+            assert!(got.drops.not_yet_open.is_empty(), "a wire-shape fault is not pre-open");
+            assert_eq!(got.drops.unparseable.len(), 1);
+            assert!(
+                got.drops.unparseable[0].starts_with("005930(open="),
+                "the report names the code AND the raw value that failed to parse: {:?}",
+                got.drops.unparseable[0]
+            );
+            assert!(got.drops.unparseable[0].contains("57900.0"));
+        }
+
+        /// An UNQUOTED JSON float is a different shape and does NOT reach the unparseable arm:
+        /// `string_or_number`'s `visit_f64` renders it with `f64::to_string()`, which drops a
+        /// zero fraction (`57900.0` → `"57900"`). Pinned because it is the difference between
+        /// a symbol trading and a symbol being reported as a wire-shape fault, and it is
+        /// invisible from this file — a change to that helper would silently move the boundary.
+        #[tokio::test]
+        async fn an_unquoted_json_float_open_normalizes_to_an_integer_and_still_resolves() {
+            let server = MockServer::start().await;
+            mount_t8407(
+                &server,
+                json!({
+                    "rsp_cd": "00000",
+                    "t8407OutBlock1": [{ "shcode": "005930", "open": 57900.0 }]
+                }),
+            )
+            .await;
+
+            let got = fetch_today_opens(&sdk(&server), &wanted(&["005930"])).await.unwrap();
+            assert_eq!(got.opens.get(&inst("005930")), Some(&57_900));
+            assert!(got.drops.unparseable.is_empty());
+        }
+
+        /// A zero-padded open is still an integer.
+        #[tokio::test]
+        async fn a_zero_padded_open_parses() {
+            let server = MockServer::start().await;
+            mount_t8407(
+                &server,
+                json!({
+                    "rsp_cd": "00000",
+                    "t8407OutBlock1": [{ "shcode": "005930", "open": "00057900" }]
+                }),
+            )
+            .await;
+
+            let got = fetch_today_opens(&sdk(&server), &wanted(&["005930"])).await.unwrap();
+            assert_eq!(got.opens.get(&inst("005930")), Some(&57_900));
+        }
+
+        /// A number-typed echo loses the leading zeros (`string_or_number` renders 5930 as
+        /// `"5930"`), so without the `{:0>6}` re-pad every 0-prefixed KRX code would fail to
+        /// key — and then fail the missing-echo check, refusing a perfectly good batch.
+        #[tokio::test]
+        async fn a_number_typed_shcode_echo_is_re_padded_to_six_digits() {
+            let server = MockServer::start().await;
+            mount_t8407(
+                &server,
+                json!({
+                    "rsp_cd": "00000",
+                    "t8407OutBlock1": [{ "shcode": 5930, "open": "71800" }]
+                }),
+            )
+            .await;
+
+            let got = fetch_today_opens(&sdk(&server), &wanted(&["005930"])).await.unwrap();
+            assert_eq!(got.opens.get(&inst("005930")), Some(&71_800));
+        }
+
+        // --- fail-closed ---------------------------------------------------------------
+
+        /// The request named the code, so silence is a request/framing fault, not market
+        /// state. Dropping it would silently re-compose the traded universe.
+        #[tokio::test]
+        async fn a_requested_code_the_gateway_never_echoes_is_a_hard_error() {
+            let server = MockServer::start().await;
+            mount_t8407(
+                &server,
+                json!({
+                    "rsp_cd": "00000",
+                    "t8407OutBlock1": [{ "shcode": "005930", "open": "71800" }]
+                }),
+            )
+            .await;
+
+            let err = fetch_today_opens(&sdk(&server), &wanted(&["005930", "000660"]))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(err.contains("did not echo"), "{err}");
+            assert!(err.contains("000660"), "the refusal names the missing code: {err}");
+            assert!(!err.contains("005930"), "and not the one that answered: {err}");
+        }
+
+        /// `shcode` is a fixed-width packing, so one off-length code shifts every code after
+        /// it and the gateway quotes symbols nobody asked for. Refuse before packing.
+        #[tokio::test]
+        async fn a_non_six_digit_code_is_refused_before_any_request_is_sent() {
+            let server = MockServer::start().await;
+            mount_echo(&server).await;
+            let w = wanted(&["005930", "5930"]);
+
+            let err = fetch_today_opens(&sdk(&server), &w).await.unwrap_err().to_string();
+            assert!(err.contains("not six ASCII digits"), "{err}");
+            assert!(err.contains("5930"), "{err}");
+            assert_eq!(
+                all_request_paths(&server).await,
+                Vec::<String>::new(),
+                "the refusal precedes the gateway entirely — not even a token is fetched"
+            );
+        }
+
+        /// Two instruments behind one code means one of them can never receive an open, since
+        /// the echo is keyed by code. Refuse rather than silently starve one.
+        #[tokio::test]
+        async fn two_instruments_sharing_one_shcode_are_refused_before_any_request() {
+            let server = MockServer::start().await;
+            mount_echo(&server).await;
+            let w = vec![
+                (InstrumentId::from("005930.XKRX"), "005930".to_string()),
+                (InstrumentId::from("005930.XNXT"), "005930".to_string()),
+            ];
+
+            let err = fetch_today_opens(&sdk(&server), &w).await.unwrap_err().to_string();
+            assert!(err.contains("maps to two instruments"), "{err}");
+            assert_eq!(
+                all_request_paths(&server).await,
+                Vec::<String>::new(),
+                "the refusal precedes the gateway entirely — not even a token is fetched"
+            );
+        }
     }
 }
