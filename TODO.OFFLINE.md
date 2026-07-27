@@ -48,13 +48,7 @@ a multi-session return. That is a fidelity call to make deliberately, not to dis
 page-burst trips it even under the per-second cap. Put `t8430` **last**. Write the pin only
 after a refusal-free ingest.
 
-## 2. ~~Close the two issues whose work already landed~~ — DONE 2026-07-27
-
-Both closed with their outcomes: **#118** GREEN (pin `90005f88`, gate run `…-orb-v33`, 259
-trades, 3 tiers); **#119** documented **NO-BUILD** (PR #204) — 4 signals passed collinearity, the
-kill was materiality, stop location is CLASS-B-absorbed.
-
-## 3. Reconcile eight unmerged branches / four worktrees
+## 2. Reconcile eight unmerged branches / four worktrees
 
 - **Cost:** small · **Autonomy:** offline decision, then agent-runnable cleanup
 
@@ -76,7 +70,7 @@ Four live worktrees under `.worktrees/` each carry a full `target/`, so this is 
 clarity. Decide per branch; **do not bulk-delete** — three branches were never pushed, so for
 those the local worktree is the only copy of the work.
 
-## 4. ORB strategy loop — converged; do not queue another micro-lever
+## 3. ORB strategy loop — converged; do not queue another micro-lever
 
 - **Autonomy:** n/a — this is a standing note, not a task
 
@@ -94,7 +88,7 @@ or a new instrument domain) or stepping to another track. Anything else is fitti
 the head is v34 (`e5bc2ae8…`), which the ladder is now pinned to, so a KEEP would force a rung-1
 re-baseline mid-climb.
 
-## 5. *(defer)* #34 / #36 roadmap design waves
+## 4. *(defer)* #34 / #36 roadmap design waves
 
 - **Cost:** large / vague · **Autonomy:** `/ce-brainstorm` (design-heavy)
 - #36 realtime lifecycle / AFR for t1860; #34 sFileData sourcing for t1852/t1856. Both were
