@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ideation: A Self-Improving Strategy Finder</title>
+<style>
+  :root{
+    --bg:#faf9f7; --ink:#1f2430; --muted:#5b6270; --line:#e3e0da;
+    --accent:#4451c8; --accent-soft:#eef0fb; --accent-text:#3641a0;
+    --warn:#b45309; --warn-soft:#fdf3e4; --warn-text:#92400e;
+    --ok:#15803d; --ok-soft:#e9f6ec; --ok-text:#166534;
+    --card:#ffffff;
+  }
+  html{font-size:16px}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    line-height:1.55}
+  .page{max-width:920px;margin-inline:auto;padding:2.5rem 1.5rem 4rem}
+  p,li,dd{max-width:70ch}
+  h1{font-size:1.9rem;line-height:1.2;margin:.2rem 0 .4rem}
+  h2{font-size:1.35rem;margin:2.6rem 0 .8rem;padding-top:1.2rem;border-top:1px solid var(--line)}
+  h3{font-size:1.08rem;margin:0 0 .35rem}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.88em;
+    background:#f0eee9;border-radius:4px;padding:.08em .35em}
+  a{color:var(--accent-text)}
+  .eyebrow{font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:600}
+  .meta{display:flex;flex-wrap:wrap;gap:.4rem .6rem;margin:.7rem 0 0;padding:0;list-style:none}
+  .meta li{font-size:.8rem;color:var(--muted);background:#f1efea;border:1px solid var(--line);
+    border-radius:999px;padding:.18rem .7rem}
+  .meta li b{color:var(--ink);font-weight:600}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:.6rem;margin:1.4rem 0 0}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:.7rem .9rem}
+  .stat .n{font-size:1.35rem;font-weight:700;color:var(--accent-text)}
+  .stat .l{font-size:.75rem;color:var(--muted)}
+  .idea{background:var(--card);border:1px solid var(--line);border-radius:12px;
+    padding:1.2rem 1.4rem;margin:1.1rem 0}
+  .idea-head{display:flex;align-items:baseline;gap:.7rem;flex-wrap:wrap}
+  .chip{display:inline-block;font-size:.75rem;font-weight:700;border-radius:999px;
+    padding:.15rem .65rem;background:var(--accent-soft);color:var(--accent-text)}
+  .chips{display:flex;gap:.4rem;flex-wrap:wrap;margin:.45rem 0 .8rem}
+  .chips .chip{background:#f1efea;color:var(--muted);font-weight:600}
+  .chips .chip.axis{background:var(--accent-soft);color:var(--accent-text)}
+  .chips .chip.hi{background:var(--ok-soft);color:var(--ok-text)}
+  .chips .chip.med{background:var(--warn-soft);color:var(--warn-text)}
+  dl.fields{margin:.9rem 0 0}
+  dl.fields dt{font-size:.72rem;letter-spacing:.12em;text-transform:uppercase;
+    color:var(--muted);font-weight:700;margin-top:.8rem}
+  dl.fields dd{margin:.25rem 0 0}
+  .basis{background:#f7f6f2;border:1px solid var(--line);border-radius:8px;padding:.6rem .8rem;font-size:.93rem}
+  .jump{background:var(--accent-soft);border:1px solid #d9dcf5;border-radius:10px;padding:.8rem 1.1rem;margin:1rem 0}
+  .jump ol{margin:.3rem 0 0 1.2rem;padding:0}
+  .jump li{margin:.15rem 0}
+  table{border-collapse:collapse;width:100%;margin:.8rem 0;font-size:.92rem}
+  th,td{border:1px solid var(--line);padding:.5rem .7rem;text-align:left;vertical-align:top}
+  th{background:#f1efea;font-size:.78rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted)}
+  figure{margin:1.1rem 0 .4rem;padding:0}
+  figcaption{font-size:.8rem;color:var(--muted);margin-top:.35rem}
+  .callout{border-radius:10px;padding:.8rem 1rem;margin:.9rem 0;font-size:.94rem}
+  .callout.warn{background:var(--warn-soft)}
+  .callout.warn .eyebrow{color:var(--warn-text)}
+  footer.composition-signal{margin-top:3.5rem;padding-top:1rem;border-top:1px solid var(--line);
+    font-size:.78rem;color:var(--muted)}
+  svg text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+</style>
+</head>
+<body>
+<div class="page">
+
+<header>
+  <div class="eyebrow">Ideation &middot; repo-grounded</div>
+  <h1>A Self-Improving Strategy Finder</h1>
+  <p>Applying the memory &rarr; reflection &rarr; skill-extraction &rarr; skill-evolution &rarr; meta-learning ladder to the ORB strategy-research loop: turning 13+ turns of hand-run, prose-recorded research into a system that converts its own experience into validated, versioned procedures.</p>
+  <ul class="meta">
+    <li><b>date</b> 2026-07-16</li>
+    <li><b>topic</b> strategy-finder-self-improving</li>
+    <li><b>focus</b> self improving for strategy finder (levels-of-learning framework supplied)</li>
+    <li><b>mode</b> repo-grounded</li>
+  </ul>
+  <div class="stats">
+    <div class="stat"><div class="n">44</div><div class="l">raw ideas, 5 frames</div></div>
+    <div class="stat"><div class="n">14+3</div><div class="l">deduped clusters + syntheses</div></div>
+    <div class="stat"><div class="n">7</div><div class="l">survivors after verification</div></div>
+    <div class="stat"><div class="n">5/5</div><div class="l">topic axes covered</div></div>
+    <div class="stat"><div class="n">~15&ndash;20</div><div class="l">levers tried on one 167-trade sample</div></div>
+  </div>
+</header>
+
+<section id="grounding-context">
+<h2>Grounding Context</h2>
+<p><strong>Codebase Context.</strong> The strategy finder is the iterative research loop in <code>adapters/nautilus/lab</code>: agent-run turns propose a lever (parameter or mechanism change to the opening-range-breakout strategy), backtest it offline via the <code>lab-research</code> binary, apply statistical gates, and record KEEP / REVERT / FALSIFIED verdicts. Head is v30 (ratio-ATR budget tilt, RoR 0.1262), reached over 13+ turns from v3.</p>
+<ul>
+  <li><strong>Experience capture today:</strong> an 827-line prose <code>TURN-LOG.md</code>, frozen PRE-REGISTER docs in <code>data/turn4-fresh/</code>, plan docs, docs/solutions entries, and agent memory topic files. Every merit-bearing turn already follows the same 8-part template (verdict, Phase&nbsp;A, Phase&nbsp;B, bind check, edge gate, mechanism read, registry state, R6 queue re-rank) &mdash; but no structured gate-outcome matrix, no coded failure reasons, no cumulative trial count, no lineage graph.</li>
+  <li><strong>Gates today:</strong> Phase-A (collinearity |r|&lt;0.70, materiality) is entirely manual &mdash; frozen python scripts run via <code>uv run --with pyarrow</code>, twin-verified by eye, thresholds hand-copied between script and PRE-REGISTER. Phase-B strict-KEEP (RoR, dominance &le;0.40) is automated in the runner. The forbidden-overfit rule ("never soften a threshold after seeing the value") is enforced by convention only.</li>
+  <li><strong>Skill layer today:</strong> ten frozen <code>.agents/skills/</code> recipes with machine-readable verdict lines and a proven orchestrator/fresh-context-worker pattern &mdash; all for the TR lifecycle, zero for the strategy loop.</li>
+  <li><strong>Verified live defect:</strong> the agent memory index simultaneously carries "head v26" and "HEAD IS NOW v30, not v26" today; <code>TODO.OFFLINE.md</code> shows the same staleness pattern ("family closed" written the day the family reopened).</li>
+  <li><strong>Institutional learnings applied:</strong> approximate reads get falsified by reconciled runs (turn 10); a teacher/preview layer must call the decider's bound functions, never re-derive gate logic (anchor-mismatch bug); the runner has no version-only-bump path (open seam, 2026-07-15); green runs do not validate default-off lever paths; the 0.5 proposal-bounds cap and seed assertion must never be bypassed by automation.</li>
+  <li><strong>External context:</strong> Voyager skill libraries, Reflexion, ACE (Generator/Reflector/Curator, grow-and-refine deltas, arXiv 2510.04618), GEPA Pareto frontiers, AlphaEvolve program databases, SkillOps skill-rot, Agent&nbsp;KB teacher/student separation; from quant practice, the Deflated Sharpe Ratio and CSCV/PBO (Bailey &amp; L&oacute;pez de Prado) &mdash; the missing datum in iterated backtests is the <em>number of trials</em>, and the repo's gates are per-lever, not queue-cumulative.</li>
+</ul>
+</section>
+
+<section id="topic-axes">
+<h2>Topic Axes</h2>
+<ul>
+  <li><strong>turn-capture-reflection</strong> &mdash; what per-turn experience is recorded, and how reflection is structured and curated</li>
+  <li><strong>gate-mechanization</strong> &mdash; the statistical and governance gates (Phase-A, KEEP/REVERT, overfit control) and their automation</li>
+  <li><strong>skill-recipe-layer</strong> &mdash; extracting validated reusable procedures from repeated turns (the <code>.agents/skills/</code> precedent)</li>
+  <li><strong>lever-queue-meta</strong> &mdash; meta-learning over the lever queue: productive hypothesis families, trial accounting, prioritization</li>
+  <li><strong>runner-teacher-seam</strong> &mdash; the lab runner interface, teacher/runtime separation, versioning and benchmarking of extracted procedures</li>
+</ul>
+</section>
+
+<section id="ranked-ideas">
+<h2>Ranked Ideas</h2>
+<div class="jump">
+  <div class="eyebrow">Jump to</div>
+  <ol>
+    <li><a href="#i1">Machine turn substrate: <code>turns.jsonl</code> + <code>HEAD-STATE.yaml</code>, prose becomes a projection</a></li>
+    <li><a href="#i2">Cumulative TRIALS ledger + a deflating KEEP bar</a></li>
+    <li><a href="#i3"><code>run-strategy-turn</code>: the eleventh frozen skill, aviation-checklist style</a></li>
+    <li><a href="#i4">Mechanized Phase-A: <code>turn diagnose</code> + GO-artifact guardrail + freeze-by-git</a></li>
+    <li><a href="#i5">Head-relative re-audit sweep: knockout the KEEPs, resurrect the REVERTs</a></li>
+    <li><a href="#i6">Runner seam hardening: stale-binary refusal + native version bump</a></li>
+    <li><a href="#i7">Prediction-calibration ledger + <code>triage-lever</code> skill</a></li>
+  </ol>
+</div>
+
+<article class="idea" id="i1">
+  <div class="idea-head"><span class="chip">1</span><h3>Machine turn substrate: <code>turns.jsonl</code> + <code>HEAD-STATE.yaml</code>, prose becomes a projection</h3></div>
+  <div class="chips">
+    <span class="chip axis">axis: turn-capture-reflection</span>
+    <span class="chip hi">Confidence 85%</span>
+    <span class="chip">Complexity Medium</span>
+  </div>
+  <p><strong>Description:</strong> Invert the record. The runner's verdict step emits one structured record per turn &mdash; verdict, each gate reading against its frozen threshold, bind counts (predicted vs observed), lineage edge (which head it flipped off), lever family/class status, and a <em>coded</em> failure mechanism for non-KEEPs (<code>INVERTED-SIGNAL</code>, <code>COLLINEAR</code>, <code>COVERAGE-CULL</code>, <code>WINNER-CUTTING</code>, <code>RoR-NEGATIVE-RESHAPE</code>) &mdash; into a committed <code>turns.jsonl</code>. A single atomic <code>HEAD-STATE.yaml</code> (head version, hash, RoR, armed params, kept levers, spent classes, trial count) is updated in the same step. TURN-LOG prose and memory lines become <em>projections</em> of the record, with a <code>docs-check</code>-style assertion that they agree &mdash; exactly how <code>ls-docgen</code> + <code>make docs-check</code> already keep <code>docs/reference/</code> honest. A curated priors section ("dimensionless ratios escape price-scale collinearity") lives in the same substrate, edited by grow-and-refine deltas.</p>
+  <figure>
+    <svg viewBox="0 0 860 240" role="img" aria-label="Before and after: prose as record versus machine record projected to prose">
+      <text x="115" y="24" font-size="12" font-weight="700" fill="#92400e">TODAY — PROSE IS THE RECORD</text>
+      <rect x="20" y="40" width="180" height="44" rx="8" fill="#fdf3e4" stroke="#e3c69a"/>
+      <text x="110" y="58" font-size="12" text-anchor="middle" fill="#1f2430">TURN-LOG.md</text>
+      <text x="110" y="74" font-size="10" text-anchor="middle" fill="#5b6270">827 lines of narrative</text>
+      <rect x="20" y="96" width="180" height="44" rx="8" fill="#fdf3e4" stroke="#e3c69a"/>
+      <text x="110" y="114" font-size="12" text-anchor="middle" fill="#1f2430">MEMORY.md</text>
+      <text x="110" y="130" font-size="10" text-anchor="middle" fill="#b45309">"head v26" and "head v30" at once</text>
+      <rect x="20" y="152" width="180" height="44" rx="8" fill="#fdf3e4" stroke="#e3c69a"/>
+      <text x="110" y="170" font-size="12" text-anchor="middle" fill="#1f2430">PRE-REGISTER docs</text>
+      <text x="110" y="186" font-size="10" text-anchor="middle" fill="#5b6270">thresholds hand-copied</text>
+      <text x="110" y="222" font-size="10.5" text-anchor="middle" fill="#5b6270">each agent re-reads and re-derives</text>
+
+      <text x="600" y="24" font-size="12" font-weight="700" fill="#166534">AFTER — RECORD IS MACHINE, PROSE IS PROJECTED</text>
+      <rect x="420" y="70" width="190" height="56" rx="8" fill="#e9f6ec" stroke="#a7d3b3"/>
+      <text x="515" y="92" font-size="12" text-anchor="middle" font-weight="700" fill="#1f2430">turns.jsonl</text>
+      <text x="515" y="108" font-size="10" text-anchor="middle" fill="#166534">gates · binds · lineage · cause codes</text>
+      <rect x="420" y="140" width="190" height="44" rx="8" fill="#e9f6ec" stroke="#a7d3b3"/>
+      <text x="515" y="158" font-size="12" text-anchor="middle" font-weight="700" fill="#1f2430">HEAD-STATE.yaml</text>
+      <text x="515" y="174" font-size="10" text-anchor="middle" fill="#166534">one atomic head pointer</text>
+      <rect x="690" y="70" width="150" height="40" rx="8" fill="#ffffff" stroke="#c9c5bd"/>
+      <text x="765" y="94" font-size="11" text-anchor="middle" fill="#1f2430">TURN-LOG prose</text>
+      <rect x="690" y="120" width="150" height="40" rx="8" fill="#ffffff" stroke="#c9c5bd"/>
+      <text x="765" y="144" font-size="11" text-anchor="middle" fill="#1f2430">memory lines</text>
+      <line x1="610" y1="98" x2="686" y2="90" stroke="#4451c8" stroke-width="1.6" marker-end="url(#arr1)"/>
+      <line x1="610" y1="150" x2="686" y2="140" stroke="#4451c8" stroke-width="1.6" marker-end="url(#arr1)"/>
+      <text x="648" y="72" font-size="10" fill="#3641a0">projected</text>
+      <text x="648" y="196" font-size="10" fill="#3641a0">asserted in gate (docs-check style)</text>
+      <defs><marker id="arr1" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#4451c8"/></marker></defs>
+    </svg>
+    <figcaption>The repo already solved "human doc drifts from machine truth" once (docgen + docs-check); this applies the same inversion to the loop's own record.</figcaption>
+  </figure>
+  <dl class="fields">
+    <dt>Basis</dt>
+    <dd class="basis"><code>direct:</code> dossier gaps verified against the repo &mdash; "no structured gate-outcome matrix&hellip; falsification reasons narrative, not tabular"; the verifier independently confirmed the live head-pointer contradiction in MEMORY.md (a stale "head v26" line coexisting with "HEAD IS NOW v30") <em>and</em> found the same staleness pattern in <code>TODO.OFFLINE.md:8</code>. Repo precedent: <code>ls-docgen</code> projection + <code>make docs-check</code>. <code>external:</code> ACE's Curator role and its named failure modes (brevity bias, context collapse); the curated-memory-beats-append-only finding.</dd>
+    <dt>Rationale</dt>
+    <dd>This is the Level-1/2 foundation everything else consumes: trial accounting (idea 2), calibration scoring (idea 7), a replay benchmark, and any future teacher agent all need a queryable record instead of 827 lines of prose. And the head-pointer contradiction is not hypothetical &mdash; a fresh agent session seeding a turn from the wrong baseline is exactly the bug class the RVOL turn already had to dodge by hand ("Seed from v16, NOT the registry head").</dd>
+    <dt>Downsides</dt>
+    <dd>Schema design deserves care (cause-code taxonomy especially) or it fragments into competing ledgers; back-filling 13 historical turns is real but bounded work; the projection gate adds one more assertion to the commit gate. Quick first step that stands alone: ship <code>HEAD-STATE.yaml</code> and fix the contradiction today.</dd>
+    <dt>Confidence</dt><dd>85%</dd>
+    <dt>Complexity</dt><dd>Medium</dd>
+  </dl>
+</article>
+
+<article class="idea" id="i2">
+  <div class="idea-head"><span class="chip">2</span><h3>Cumulative TRIALS ledger + a deflating KEEP bar</h3></div>
+  <div class="chips">
+    <span class="chip axis">axis: lever-queue-meta</span>
+    <span class="chip med">Confidence 70%</span>
+    <span class="chip">Complexity Medium</span>
+  </div>
+  <p><strong>Description:</strong> Track what quant practice says is the one datum an iterated backtest must never lose: <em>how many shots have been taken</em>. An append-only <code>TRIALS.jsonl</code> records every gate reading, flip, and sweep leg (family, sample fingerprint, verdict). A frozen script &mdash; same idiom as the Phase-A gates &mdash; derives a deflated KEEP margin: the strict-improvement floor rises as cumulative trials on the same sample grow (Deflated-Sharpe / alpha-spending style), with a periodic CSCV/PBO audit over the archived legs.</p>
+  <figure>
+    <svg viewBox="0 0 860 210" role="img" aria-label="Fixed KEEP bar versus a bar that deflates with trial count">
+      <line x1="60" y1="170" x2="820" y2="170" stroke="#c9c5bd" stroke-width="1.5"/>
+      <line x1="60" y1="170" x2="60" y2="30" stroke="#c9c5bd" stroke-width="1.5"/>
+      <text x="440" y="196" font-size="11" text-anchor="middle" fill="#5b6270">cumulative levers tried on the same 167-trade sample →</text>
+      <text x="36" y="100" font-size="11" fill="#5b6270" transform="rotate(-90 36 100)">KEEP bar</text>
+      <line x1="60" y1="128" x2="820" y2="128" stroke="#b45309" stroke-width="2" stroke-dasharray="7 5"/>
+      <text x="675" y="118" font-size="11" fill="#92400e">today: fixed bar (RoR &gt; prior, strictly)</text>
+      <path d="M60,128 C260,124 500,102 820,62" fill="none" stroke="#15803d" stroke-width="2.5"/>
+      <text x="560" y="52" font-size="11" fill="#166534">deflated bar: rises with trial count N</text>
+      <g fill="#4451c8">
+        <circle cx="120" cy="170" r="3"/><circle cx="180" cy="170" r="3"/><circle cx="240" cy="170" r="3"/>
+        <circle cx="300" cy="170" r="3"/><circle cx="360" cy="170" r="3"/><circle cx="420" cy="170" r="3"/>
+        <circle cx="480" cy="170" r="3"/><circle cx="540" cy="170" r="3"/><circle cx="600" cy="170" r="3"/>
+      </g>
+      <text x="120" y="156" font-size="10" fill="#3641a0">v3 … v30: ~15–20 trials, uncounted</text>
+    </svg>
+    <figcaption>v30's KEEP cleared the bar by +0.0091 &mdash; judged at the same threshold as the very first KEEP, after ~15&ndash;20 prior looks at the same data.</figcaption>
+  </figure>
+  <dl class="fields">
+    <dt>Basis</dt>
+    <dd class="basis"><code>direct:</code> "The TURN-LOG and plans do NOT record a cumulative 'N trials / N families / N spent' ledger across all turns" (lever-queue evidence, verified); v30 margin "+0.0091, strict PASS" verified at TURN-LOG.md:49. <code>external:</code> Bailey &amp; L&oacute;pez de Prado, Deflated Sharpe Ratio and CSCV/PBO &mdash; overfit strategies from iterated backtests don't merely fail to outperform live, they systematically lose.</dd>
+    <dt>Rationale</dt>
+    <dd>Every per-lever gate is locally sound; the multiple-comparison problem lives <em>between</em> them, and it compounds silently with each turn. This is the one idea that could change a past verdict &mdash; and every other idea here raises turn throughput, which makes the correction more urgent, not less. It should land before the loop gets faster.</dd>
+    <dt>Downsides</dt>
+    <dd>Naive DSR assumes roughly independent trials; this loop's trials are sequential and conditioned on prior outcomes, so the correction needs honest adaptation (the verifier flagged this) &mdash; treat the first version as a conservative audit, not a precise p-value. May deliver unwelcome news about v30's margin.</dd>
+    <dt>Confidence</dt><dd>70%</dd>
+    <dt>Complexity</dt><dd>Medium</dd>
+  </dl>
+</article>
+
+<article class="idea" id="i3">
+  <div class="idea-head"><span class="chip">3</span><h3><code>run-strategy-turn</code>: the eleventh frozen skill, aviation-checklist style</h3></div>
+  <div class="chips">
+    <span class="chip axis">axis: skill-recipe-layer</span>
+    <span class="chip hi">Confidence 80%</span>
+    <span class="chip">Complexity Medium</span>
+  </div>
+  <p><strong>Description:</strong> Mint <code>.agents/skills/run-strategy-turn/SKILL.md</code> on the contract the TR lifecycle already proved ten times: input via <code>$ARGUMENTS</code> (one pre-register path), non-interactive, state-driven, single machine-readable last line (<code>KEEP v&lt;N&gt; &lt;hash&gt;</code> / <code>REVERT &lt;cause-code&gt;</code> / <code>PREDICTED-INERT</code> / <code>HELD &lt;reason&gt;</code>). Its preflight is an aviation-style checklist where every line cites the incident that created it: stale-binary <code>strings</code> check, EXPECT_VERSION seed assertion, build-from-<code>adapters/nautilus</code> rule, companion-field seeding (the v30 gotcha), archive-before-analyze. Standing rule: every new strategy-loop <code>docs/solutions/workflow-issues/</code> entry must land a checklist line in the same PR &mdash; the incident-report-to-checklist pipeline, institutionalized. The machine-readable verdict makes turns orchestratable later with the existing <code>promote-trs</code> &rarr; <code>tr-promoter</code> dispatch machinery, unchanged.</p>
+  <dl class="fields">
+    <dt>Basis</dt>
+    <dd class="basis"><code>direct:</code> verified &mdash; ten skills exist in <code>.agents/skills/</code>, none touch the strategy loop; the 8-part turn template (verdict, Phase&nbsp;A, Phase&nbsp;B, bind, edge gate, mechanism read, registry state, R6 re-rank) repeats across 13+ TURN-LOG entries; the stale-binary gotcha appears verbatim in two memory entries three days apart. <code>external:</code> aviation checklists / ASRS incident databases; Voyager's validate-before-library-add.</dd>
+    <dt>Rationale</dt>
+    <dd>This is the repo's own theory of learning &mdash; repeated procedure &rarr; frozen recipe &rarr; orchestratable skill &mdash; never applied to its most-repeated procedure. Thirteen turns is more repetitions than <code>track-tr</code> had when it was frozen. It is the Level-2&rarr;3 move the supplied framework names, executed as a precedent transplant rather than an invention.</dd>
+    <dt>Downsides</dt>
+    <dd>A frozen recipe can ossify while the loop is still evolving (this is what ideas 1 and the replay corpus mitigate &mdash; version the skill, benchmark changes against archived verdicts); authoring the checklist well requires mining the gotcha history once, honestly.</dd>
+    <dt>Confidence</dt><dd>80%</dd>
+    <dt>Complexity</dt><dd>Medium</dd>
+  </dl>
+</article>
+
+<article class="idea" id="i4">
+  <div class="idea-head"><span class="chip">4</span><h3>Mechanized Phase-A: <code>turn diagnose</code> + GO-artifact guardrail + freeze-by-git</h3></div>
+  <div class="chips">
+    <span class="chip axis">axis: gate-mechanization</span>
+    <span class="chip med">Confidence 65%</span>
+    <span class="chip">Complexity High</span>
+  </div>
+  <p><strong>Description:</strong> Make the loop's constitutional rule &mdash; "never soften a threshold after seeing the value" &mdash; structurally unbreakable instead of honor-enforced. One machine-readable PRE-REGISTER (thresholds live in exactly one place); a <code>lab-research turn diagnose</code> subcommand runs the gate script and its independent twin, bit-compares them, checks readings against the frozen thresholds, and writes a <code>gate-verdict.json</code> (GO/STOP + readings + the pre-register's git blob hash). A second guardrail &mdash; the existing <code>IntentGuardrail</code> trait, same idiom as the proven 0.5 proposal-bounds cap &mdash; makes Phase-B <code>turn()</code> refuse any flip that lacks a matching GO artifact. Git commit ordering proves the freeze predates the reading.</p>
+  <figure>
+    <svg viewBox="0 0 860 150" role="img" aria-label="Phase-A pipeline from frozen pre-register through diagnose to a guardrail-checked flip">
+      <rect x="20" y="45" width="170" height="60" rx="8" fill="#eef0fb" stroke="#c3c9ee"/>
+      <text x="105" y="70" font-size="11.5" text-anchor="middle" font-weight="700" fill="#1f2430">PRE-REGISTER (machine)</text>
+      <text x="105" y="88" font-size="10" text-anchor="middle" fill="#3641a0">thresholds frozen · commit-ordered</text>
+      <rect x="250" y="45" width="180" height="60" rx="8" fill="#ffffff" stroke="#c9c5bd"/>
+      <text x="340" y="70" font-size="11.5" text-anchor="middle" font-weight="700" fill="#1f2430">turn diagnose</text>
+      <text x="340" y="88" font-size="10" text-anchor="middle" fill="#5b6270">gate + twin · bit-compare</text>
+      <rect x="490" y="45" width="160" height="60" rx="8" fill="#e9f6ec" stroke="#a7d3b3"/>
+      <text x="570" y="70" font-size="11.5" text-anchor="middle" font-weight="700" fill="#1f2430">gate-verdict.json</text>
+      <text x="570" y="88" font-size="10" text-anchor="middle" fill="#166534">GO / STOP + hashes</text>
+      <rect x="710" y="45" width="130" height="60" rx="8" fill="#fdf3e4" stroke="#e3c69a"/>
+      <text x="775" y="70" font-size="11.5" text-anchor="middle" font-weight="700" fill="#1f2430">Phase-B turn()</text>
+      <text x="775" y="88" font-size="10" text-anchor="middle" fill="#92400e">guardrail: no GO → refuse</text>
+      <line x1="190" y1="75" x2="246" y2="75" stroke="#4451c8" stroke-width="1.8" marker-end="url(#arr2)"/>
+      <line x1="430" y1="75" x2="486" y2="75" stroke="#4451c8" stroke-width="1.8" marker-end="url(#arr2)"/>
+      <line x1="650" y1="75" x2="706" y2="75" stroke="#4451c8" stroke-width="1.8" marker-end="url(#arr2)"/>
+      <text x="430" y="132" font-size="10.5" text-anchor="middle" fill="#5b6270">replaces: run script by hand → run twin by hand → eyeball-compare → decide GO/STOP from memory</text>
+      <defs><marker id="arr2" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#4451c8"/></marker></defs>
+    </svg>
+    <figcaption>The guardrail mechanism already exists and is trusted &mdash; this reuses it to close the one seam where discipline alone stands between a reading and a flip.</figcaption>
+  </figure>
+  <dl class="fields">
+    <dt>Basis</dt>
+    <dd class="basis"><code>direct:</code> "Operator must: 1. manually run <code>uv run --with pyarrow&hellip;</code> 2. manually run the twin 3. hand-compare bit-for-bit 4. decide manually" and "no runner validation prevents re-reading a gate with a softened threshold" (gate evidence, verified); thresholds duplicated between <code>ratio_atr_tilt.py</code> constants and the PRE-REGISTER prose (verified); <code>IntentGuardrail</code> + <code>PROPOSAL_BOUNDS_CAP=0.5</code> wiring verified at <code>research.rs</code>. <code>external:</code> GLP witnessed lab notebooks / 21 CFR Part 11 audit trails.</dd>
+    <dt>Rationale</dt>
+    <dd>Every idea that delegates more of the loop to agents is unsafe while the forbidden-overfit rule is convention-only. This converts the loop's strongest convention into its strongest invariant &mdash; the precondition for unattended or orchestrated turns, and it deletes the highest-frequency manual ritual (four hand-steps, every merit-bearing turn).</dd>
+    <dt>Downsides</dt>
+    <dd>Priciest item here (the verifier's cost flag): orchestrating python diagnostics from the Rust runner, a pre-register schema migration, and hash plumbing &mdash; for gates that have run ~15&ndash;20 times total. A leaner v1 (diagnose wrapper + verdict file, guardrail later) captures most of the value; per-lever diagnostic scripts still need authoring each time.</dd>
+    <dt>Confidence</dt><dd>65%</dd>
+    <dt>Complexity</dt><dd>High</dd>
+  </dl>
+</article>
+
+<article class="idea" id="i5">
+  <div class="idea-head"><span class="chip">5</span><h3>Head-relative re-audit sweep: knockout the KEEPs, resurrect the REVERTs</h3></div>
+  <div class="chips">
+    <span class="chip axis">axis: lever-queue-meta</span>
+    <span class="chip med">Confidence 70%</span>
+    <span class="chip">Complexity Medium</span>
+  </div>
+  <p><strong>Description:</strong> Every verdict in the ledger is conditional on the baseline it was judged at &mdash; and the baseline has moved a long way. Run one pre-registered offline sweep in two directions. <em>Knockout:</em> ablate each kept lever one-at-a-time against v30 (genetics-style), flagging any lever whose removal doesn't degrade RoR as absorbed/stale. <em>Resurrection:</em> re-flip the REVERTed levers (RVOL, entry-cutoff, OR-width sanity) on v30 under the current size-invariant RoR crux &mdash; they were judged at v16 under the old expectancy metric, before four kept levers reshaped which trades carry risk. Requires a sanctioned read-only <code>turn ablate</code> mode: a 1.0&rarr;0.0 ablation is a 100% relative change, which the 0.5 proposal-bounds cap correctly refuses on the governed path (verified mathematically). One sweep, three artifacts: possible new KEEP or stale-KEEP retirement, the replay corpus for benchmarking future procedure changes, and metric vectors for a frontier of near-miss variants.</p>
+  <figure>
+    <svg viewBox="0 0 860 190" role="img" aria-label="Two-direction re-audit: kept levers get knockouts, reverted levers get resurrection runs, both against head v30">
+      <rect x="20" y="30" width="200" height="52" rx="8" fill="#e9f6ec" stroke="#a7d3b3"/>
+      <text x="120" y="52" font-size="11.5" text-anchor="middle" font-weight="700" fill="#1f2430">5 KEPT levers</text>
+      <text x="120" y="68" font-size="10" text-anchor="middle" fill="#166534">validated on the head of their era</text>
+      <rect x="20" y="108" width="200" height="52" rx="8" fill="#fdf3e4" stroke="#e3c69a"/>
+      <text x="120" y="130" font-size="11.5" text-anchor="middle" font-weight="700" fill="#1f2430">6+ REVERTED levers</text>
+      <text x="120" y="146" font-size="10" text-anchor="middle" fill="#92400e">judged at v16, pre-RoR metric</text>
+      <rect x="360" y="66" width="180" height="60" rx="8" fill="#eef0fb" stroke="#c3c9ee"/>
+      <text x="450" y="90" font-size="12" text-anchor="middle" font-weight="700" fill="#1f2430">head v30</text>
+      <text x="450" y="107" font-size="10" text-anchor="middle" fill="#3641a0">turn ablate (read-only mode)</text>
+      <line x1="220" y1="56" x2="356" y2="84" stroke="#15803d" stroke-width="1.8" marker-end="url(#arr3)"/>
+      <text x="266" y="48" font-size="10.5" fill="#166534">knockout: remove one, measure ΔRoR</text>
+      <line x1="220" y1="134" x2="356" y2="108" stroke="#b45309" stroke-width="1.8" marker-end="url(#arr3)"/>
+      <text x="252" y="152" font-size="10.5" fill="#92400e">resurrect: re-flip under current crux</text>
+      <rect x="620" y="30" width="220" height="38" rx="8" fill="#ffffff" stroke="#c9c5bd"/>
+      <text x="730" y="53" font-size="10.5" text-anchor="middle" fill="#1f2430">retire stale KEEPs / new KEEP candidate</text>
+      <rect x="620" y="78" width="220" height="38" rx="8" fill="#ffffff" stroke="#c9c5bd"/>
+      <text x="730" y="101" font-size="10.5" text-anchor="middle" fill="#1f2430">replay corpus for procedure benchmarks</text>
+      <rect x="620" y="126" width="220" height="38" rx="8" fill="#ffffff" stroke="#c9c5bd"/>
+      <text x="730" y="149" font-size="10.5" text-anchor="middle" fill="#1f2430">frontier data on near-miss variants</text>
+      <line x1="540" y1="96" x2="616" y2="96" stroke="#4451c8" stroke-width="1.8" marker-end="url(#arr3)"/>
+      <defs><marker id="arr3" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 z" fill="#4451c8"/></marker></defs>
+    </svg>
+    <figcaption>The only idea that can produce a new KEEP with zero new lever code &mdash; pure re-mining of decisions the loop already paid for.</figcaption>
+  </figure>
+  <dl class="fields">
+    <dt>Basis</dt>
+    <dd class="basis"><code>direct:</code> "Baseline <strong>stays v16</strong>" verified verbatim at TURN-LOG.md:610 (RVOL's death certificate, signed four kept levers and one metric redesign ago); sentinel architecture verified ("the lever's code default stays the 0.0 sentinel; the head arms it"); no <code>ablate</code> mode exists in <code>research.rs</code> (verified by grep), and the bounds-cap math blocking 1.0&rarr;0.0 was verified in <code>proposal_bounds.rs</code>. <code>external:</code> gene-knockout panels / epistasis; AutoAlpha warm-starting from prior candidates.</dd>
+    <dt>Rationale</dt>
+    <dd>The KEEP set is the loop's accumulated capital and nothing ever re-audits it; the REVERT pile contains levers judged under a metric that no longer exists. Both directions test the same methodological gap &mdash; verdicts don't age gracefully &mdash; and the sweep's by-products (replay corpus, frontier) are exactly what ideas 1 and 3 need to version procedures safely.</dd>
+    <dt>Downsides</dt>
+    <dd>Every leg is a trial &mdash; run it <em>after</em> idea 2's accounting exists or it worsens the multiple-testing exposure it could otherwise help diagnose. Needs the <code>turn ablate</code> mode built with the read-only/never-head-moving constraint enforced, not assumed.</dd>
+    <dt>Confidence</dt><dd>70%</dd>
+    <dt>Complexity</dt><dd>Medium</dd>
+  </dl>
+</article>
+
+<article class="idea" id="i6">
+  <div class="idea-head"><span class="chip">6</span><h3>Runner seam hardening: stale-binary refusal + native version bump</h3></div>
+  <div class="chips">
+    <span class="chip axis">axis: runner-teacher-seam</span>
+    <span class="chip hi">Confidence 90%</span>
+    <span class="chip">Complexity Low</span>
+  </div>
+  <p><strong>Description:</strong> Delete the two most-scarred manual seams. (a) <em>Stale-binary refusal:</em> <code>strategy_code_hash()</code> already hashes <code>orb.rs</code> at compile time via <code>include_str!</code> &mdash; embed it as a build-id and have <code>turn()</code> refuse to run when the binary's hash doesn't match the source tree, replacing the human ritual of <code>strings &lt;bin&gt; | grep -c &lt;param&gt;</code>. (b) <em>Native <code>turn --code-bump</code>:</em> a first-class version-only-bump path for code turns, retiring the seed-manifest-and-rerun workaround and handling the multi-param companion-field gotcha automatically.</p>
+  <dl class="fields">
+    <dt>Basis</dt>
+    <dd class="basis"><code>direct:</code> the stale-binary gotcha bit twice on record (2026-07-12 close-confirm, 2026-07-15 ratio-ATR &mdash; both memory entries verified verbatim); <code>strategy_code_hash()</code> / <code>ORB_SOURCE</code> verified at <code>manifest.rs:105-107</code>; the no-version-only-bump gap is a documented open seam (<code>docs/solutions/workflow-issues/code-turn-rebaseline-run-via-manifest-seed-and-rerun.md</code>, confirmed on disk), and the runner already carries a refusal guard (KTD-5 <code>expect_version</code>) bolted onto the workaround it doesn't natively support.</dd>
+    <dt>Rationale</dt>
+    <dd>A stale binary doesn't error &mdash; it silently backtests the old strategy and produces a real-looking, wrong verdict: the worst failure mode a research loop can have, and it has already happened twice despite being documented. These are the cheapest, highest-confidence wins on the list, and both are hard prerequisites for any unattended operation.</dd>
+    <dt>Downsides</dt>
+    <dd>Individually small enough to feel unglamorous; the risk is doing them "later" a third time. No architectural payoff by themselves &mdash; they remove traps rather than add capability.</dd>
+    <dt>Confidence</dt><dd>90%</dd>
+    <dt>Complexity</dt><dd>Low</dd>
+  </dl>
+</article>
+
+<article class="idea" id="i7">
+  <div class="idea-head"><span class="chip">7</span><h3>Prediction-calibration ledger + <code>triage-lever</code> skill</h3></div>
+  <div class="chips">
+    <span class="chip axis">axis: gate-mechanization</span>
+    <span class="chip med">Confidence 70%</span>
+    <span class="chip">Complexity Low</span>
+  </div>
+  <p><strong>Description:</strong> The loop already makes falsifiable pre-registered predictions every turn &mdash; it just never grades itself. Score each one against its outcome (weather-forecasting's Brier-score discipline): Phase-A predicted a 57/167 bind and the flip delivered exactly 57/167 (hit); the RVOL diagnostic predicted its revert up front (hit); equity-compounding was expected INERT and read DUAL&nbsp;GO (miss). Freeze the diagnostic-first probe pattern as a <code>triage-lever</code> skill (input: candidate spec; output: <code>PREDICT-KEEP</code>/<code>PREDICT-INERT</code>/<code>PREDICT-REVERT</code> + frozen evidence) and log every prediction. Once the curve shows Phase-A revert-predictions are calibrated, a predicted revert can skip the build &mdash; meta-policy set by measured skill, not vibes.</p>
+  <dl class="fields">
+    <dt>Basis</dt>
+    <dd class="basis"><code>direct:</code> the 57/167 exact-hit verified at TURN-LOG.md:15 and :56; "Diagnostic-first &mdash; predicted the revert up front" verified in the RVOL entry; the equity INERT miss recorded in memory. <code>external:</code> forecast-verification culture (Brier/Murphy skill scores); NAS learning-curve extrapolation (predict outcomes from candidate features before full evaluation).</dd>
+    <dt>Rationale</dt>
+    <dd>This is the purest Level-6 move available: it doesn't add a gate, it measures the gates' predictive skill and uses that to decide when the expensive phase is worth running. The raw material is already frozen in PRE-REGISTER files &mdash; only the scoring loop is missing. It also generates exactly the data any future earned-autonomy scheme would need.</dd>
+    <dt>Downsides</dt>
+    <dd>Only a handful of scored predictions exist today, so the calibration curve is decoration for a while &mdash; the near-term value is the discipline (every probe states a prediction) and the skill extraction, not the curve. Skipping builds on predicted reverts must wait for real sample size.</dd>
+    <dt>Confidence</dt><dd>70%</dd>
+    <dt>Complexity</dt><dd>Low</dd>
+  </dl>
+</article>
+
+<div class="callout warn">
+  <div class="eyebrow">Sequencing note</div>
+  Ideas 1 and 6 are safe to start immediately (and idea 1's <code>HEAD-STATE.yaml</code> slice fixes a live defect today). Idea 2 should land before anything that raises turn throughput. Idea 5 waits for idea 2's accounting. A standing Teacher agent &mdash; the most-requested pattern in the supplied framework &mdash; was deliberately deferred, not rejected on merit: see the rejection table.
+</div>
+</section>
+
+<section id="rejection-summary">
+<h2>Rejection Summary</h2>
+<table>
+  <thead><tr><th>#</th><th>Idea</th><th>Reason rejected</th></tr></thead>
+  <tbody>
+    <tr><td>1</td><td>Standing Strategy-Teacher agent (R6 queue proposer + living record review)</td><td>Deferred, not refuted: the verifier found the proposal half vague (no mechanism for generating genuinely new candidates) and it consumes substrate that doesn't exist yet. The strong half &mdash; constitutionally bound to the runner's own verdict functions, PR-only output &mdash; is the natural composition <em>after</em> idea 1 ships. Revisit then.</td></tr>
+    <tr><td>2</td><td>Gate backtesting ("gates are levers too")</td><td>Statistically circular at current N: ~2&ndash;3 recorded collinearity readings can't meta-optimize a threshold without reproducing the exact overfitting problem idea 2 guards against. Premature until the substrate accumulates readings.</td></tr>
+    <tr><td>3</td><td>Standalone Lever Book (opening-theory registry with refutations and escape edges)</td><td>Folded, not dropped: the registry function merges into idea 1's substrate and the near-miss frontier into idea 5's outputs. A third standalone knowledge file would fragment the same information.</td></tr>
+    <tr><td>4</td><td>Standalone SCREENING-PRIORS.md (ACE delta-edited priors file)</td><td>Folded into idea 1 as the substrate's curated priors section &mdash; same fragmentation risk as above.</td></tr>
+    <tr><td>5</td><td>Calibrated-autonomy ladder (autonomy earned per-gate by Brier skill)</td><td>Too few scored predictions exist to compute meaningful skill scores; kept as the stated future direction idea 7's ledger feeds.</td></tr>
+    <tr><td>6</td><td>Unattended nightly loop (cron orchestrator)</td><td>A composition of ideas 3, 4, and 6 rather than an independent idea; its "what breaks in week one" seam list is the roadmap ordering, retained in the sequencing note.</td></tr>
+    <tr><td>7</td><td>Retrieval-embedding lever library (Voyager-style similarity pre-screen)</td><td>Duplicates the substrate + priors combination at higher machinery cost; at ~20 levers, a coded registry query outperforms embedding retrieval.</td></tr>
+    <tr><td>8</td><td>Pareto shadow-frontier as its own ledger</td><td>Merged into idea 5's outputs (metric vectors per re-audited leg) &mdash; a standalone frontier file duplicates the substrate.</td></tr>
+  </tbody>
+</table>
+<p>All five topic axes retained at least one survivor; no coverage gaps. Fresh-context verification spot-checked every load-bearing quote (~15 targeted reads) and confirmed all of them, including the live MEMORY.md head-pointer contradiction; one cosmetic imprecision was corrected (the guardrail trait is <code>IntentGuardrail</code>, not <code>Guardrail</code>).</p>
+</section>
+
+<footer class="composition-signal">Composed 2026-07-16T00:45Z by ce-ideate (run a3f81c2e) from the user prompt "self improving for strategy finder" + supplied levels-of-learning framework; grounded in 5 evidence dossiers, docs/solutions learnings, and external research.</footer>
+
+</div>
+</body>
+</html>
