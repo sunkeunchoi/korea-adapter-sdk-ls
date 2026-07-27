@@ -1,0 +1,467 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ideation: ORB Strategy, SDK &amp; the Road to Production</title>
+<style>
+  :root {
+    --bg: #faf9f7;
+    --ink: #23211d;
+    --muted: #6b675f;
+    --card: #ffffff;
+    --line: #e4e1da;
+    --accent: #0f6b5c;
+    --accent-soft: #e7f2ef;
+    --accent-text: #0b5348;
+    --warn-soft: #fbf1e2;
+    --warn-text: #8a5a13;
+    --info-soft: #e9eef7;
+    --info-text: #2f4d80;
+    --chip-bg: #f0eee9;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  }
+  .page { max-width: 920px; margin-inline: auto; padding: 48px 28px 64px; }
+  p, li, dd { max-width: 72ch; }
+  h1 { font-size: 1.9rem; line-height: 1.25; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h2 { font-size: 1.3rem; margin: 44px 0 14px; letter-spacing: -0.005em; }
+  h3 { font-size: 1.05rem; margin: 0 0 8px; }
+  .eyebrow {
+    font-size: 0.72rem; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--accent-text); font-weight: 600; margin-bottom: 8px;
+  }
+  .meta { color: var(--muted); font-size: 0.88rem; margin-bottom: 4px; }
+  .meta code { font-family: var(--mono); font-size: 0.84rem; background: var(--chip-bg); padding: 1px 5px; border-radius: 4px; }
+  .stats { display: flex; gap: 12px; flex-wrap: wrap; margin: 22px 0 6px; }
+  .stat {
+    background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+    padding: 10px 16px; min-width: 118px;
+  }
+  .stat .n { font-size: 1.35rem; font-weight: 650; }
+  .stat .l { font-size: 0.75rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  section { margin-top: 8px; }
+  .card {
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    padding: 22px 24px; margin: 18px 0;
+  }
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 10px; }
+  .chip {
+    display: inline-block; font-size: 0.73rem; font-weight: 600; letter-spacing: 0.04em;
+    padding: 3px 10px; border-radius: 999px; border: 1px solid transparent;
+  }
+  .chip-rank { background: var(--ink); color: #fff; }
+  .chip-axis { background: var(--chip-bg); color: var(--muted); }
+  .chip-conf-high { background: var(--accent-soft); color: var(--accent-text); }
+  .chip-conf-med { background: var(--warn-soft); color: var(--warn-text); }
+  .chip-cx { background: var(--info-soft); color: var(--info-text); }
+  dl.fields { margin: 12px 0 0; }
+  dl.fields dt {
+    font-size: 0.72rem; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--muted); font-weight: 650; margin-top: 12px;
+  }
+  dl.fields dd { margin: 3px 0 0; }
+  dd code, p code, li code, td code { font-family: var(--mono); font-size: 0.84em; background: var(--chip-bg); padding: 1px 4px; border-radius: 4px; }
+  .jump { background: var(--card); border: 1px solid var(--line); border-radius: 10px; padding: 14px 20px; }
+  .jump ol { margin: 6px 0 2px; padding-left: 22px; }
+  .jump a { color: var(--accent-text); text-decoration: none; }
+  .jump a:hover { text-decoration: underline; }
+  table { border-collapse: collapse; width: 100%; margin: 14px 0; font-size: 0.9rem; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); }
+  .grounding ul { padding-left: 20px; }
+  .axes li { margin: 4px 0; }
+  figure { margin: 18px 0 6px; }
+  figcaption { font-size: 0.8rem; color: var(--muted); margin-top: 6px; }
+  svg text { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+  .contrast { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 14px 0 4px; }
+  .contrast .col { border: 1px solid var(--line); border-radius: 10px; padding: 12px 16px; background: #fdfcfb; }
+  .contrast .col.win { background: var(--accent-soft); border-color: #cde4de; }
+  .contrast .col .hd { font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 650; margin-bottom: 6px; }
+  .contrast .col.win .hd { color: var(--accent-text); }
+  .contrast .col.lose .hd { color: var(--warn-text); }
+  .contrast ul { margin: 0; padding-left: 18px; font-size: 0.88rem; }
+  footer.composition-signal {
+    margin-top: 56px; padding-top: 16px; border-top: 1px solid var(--line);
+    font-size: 0.8rem; color: var(--muted);
+  }
+  @media (max-width: 640px) { .contrast { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="page">
+
+<header>
+  <div class="eyebrow">Ideation</div>
+  <h1>ORB Strategy, SDK &amp; the Road to Production</h1>
+  <div class="meta">Date: <time datetime="2026-07-15">2026-07-15</time> &nbsp;·&nbsp; Topic: <code>orb-sdk-production-readiness</code> &nbsp;·&nbsp; Mode: repo-grounded</div>
+  <div class="meta">Focus: <em>“how to improve current orb strategy? sdk? show me the roadmap to be production ready — what are the blockers?”</em></div>
+  <div class="stats">
+    <div class="stat"><div class="n">47</div><div class="l">raw ideas</div></div>
+    <div class="stat"><div class="n">5</div><div class="l">frames</div></div>
+    <div class="stat"><div class="n">7</div><div class="l">survivors</div></div>
+    <div class="stat"><div class="n">5 / 5</div><div class="l">axes covered</div></div>
+  </div>
+</header>
+
+<section id="grounding-context" class="grounding">
+  <h2>Grounding Context</h2>
+  <p><strong>Codebase Context.</strong> Rust monorepo: a six-crate SDK workspace (<code>ls-core</code> dispatch/auth/dedup/rate-limits/preflight, <code>ls-sdk</code> per-TR structs, <code>ls-metadata</code>, <code>ls-trackers</code> drift baselines, <code>ls-docgen</code>, <code>ls-sdk-test-support</code>) plus a standalone <code>adapters/nautilus</code> workspace (adapter + strategy lab). The ORB strategy sits at head v30 (ratio-ATR budget tilt, RoR 0.1262 vs v26’s 0.1171) in a ~1,406-line <code>orb.rs</code> with ~28 parameters, governed by pre-registration, twin verification, and a size-invariant RoR crux gate. TR lifecycle Raw → Tracked → Implemented → Recommended (320 TRs; 9 Recommended; 36 provisional facets). Paper trading is certified; production is the open question.</p>
+  <ul>
+    <li><strong>Pain points found:</strong> no KRX holiday calendar (TODO #120); <code>lab-live</code> is a stub that exits with an operator-recipe pointer; the lab→live sizing bridge is absent; SC push-fill lane exists but the selector flip is undriven; order dedup is in-memory only; the run registry is write-only across runs; there are traces but no metrics or alerting; evidence freshness is advisory-only with a known watcher-liveness gap.</li>
+    <li><strong>Past learnings applied:</strong> pre-code collinearity gate; two latent <code>orb.rs</code> bugs must ride the next code turn; fail-closed autonomous-order contract; kill-switch-after-close ordering; the adapter workspace sits outside the root gate; destructive-heal and truncated-reconcile hazards; IGW00201 is a cumulative warm-sensitive budget.</li>
+    <li><strong>External research (high value):</strong> Zarattini/Aziz ORB papers (Stocks-in-Play pre-filter, ATR-fraction stops); &gt;90% of in-sample backtests fail out-of-sample; Walk-Forward Efficiency ≥ 0.70 as the robustness bar; NautilusTrader live-only failure modes (reconnect replay, partial-fill aggregation); Korean-broker throttle ceilings and paper-vs-live limit differences; KRX session mechanics (opening call auction, Volatility Interruptions, irregular one-off open delays); the industry validation ladder backtest → paper → small-live → full size.</li>
+    <li><strong>Evidence layer:</strong> five per-axis dossiers with verbatim <code>file:line</code> quotes, verified by an independent adversarial pass (12 repo spot-checks; all load-bearing citations for the survivors confirmed verbatim).</li>
+  </ul>
+</section>
+
+<section id="topic-axes" class="axes">
+  <h2>Topic Axes</h2>
+  <ul>
+    <li><strong>orb-strategy</strong> — edge &amp; robustness: levers, sizing, validation discipline, universe</li>
+    <li><strong>live-execution</strong> — the paper→live order path, safety, autonomy</li>
+    <li><strong>data-pipeline</strong> — ingest, catalog, KRX calendar/session correctness</li>
+    <li><strong>sdk-hardening</strong> — constraint schemas, error catalog, throttle budgets, TR coverage</li>
+    <li><strong>operations</strong> — monitoring, run registry, evidence freshness, deployment</li>
+  </ul>
+</section>
+
+<section id="ranked-ideas">
+  <h2>Ranked Ideas</h2>
+  <nav class="jump">
+    <strong>Jump to:</strong>
+    <ol>
+      <li><a href="#idea1">The Production Ladder — roadmap-as-code</a></li>
+      <li><a href="#idea2">Build the LiveNode mounter inside a watchdog envelope</a></li>
+      <li><a href="#idea3">A statistical trust layer for the verdict machinery</a></li>
+      <li><a href="#idea4">KRX session-truth module</a></li>
+      <li><a href="#idea5">Durable order idempotency</a></li>
+      <li><a href="#idea6">Tilt, don’t filter — revive the falsified levers</a></li>
+      <li><a href="#idea7">Measure the folklore — per-lane rate-limit calibration</a></li>
+    </ol>
+  </nav>
+
+  <article class="card" id="idea1">
+    <div class="chips">
+      <span class="chip chip-rank">1</span>
+      <span class="chip chip-axis">operations · cross-cutting</span>
+      <span class="chip chip-conf-high">Confidence 85%</span>
+      <span class="chip chip-cx">Complexity High</span>
+    </div>
+    <h3>The Production Ladder — roadmap-as-code</h3>
+    <dl class="fields">
+      <dt>Description</dt>
+      <dd>Replace “are we production ready?” with a rung number. Four components, built as one governed framework: <strong>(a) an executable dispatch release</strong> — a <code>lab-live --dispatch</code> pre-flight that machine-checks every session precondition (advisory lock, lane env file, KRX window, watermark freshness, flat-start, kill-switch state, stranded-order scan, budget headroom) and writes a signed <code>dispatch.json</code> into the run registry, aborting on any red item without an explicit deferral (aviation MEL doctrine); <strong>(b) a readiness score</strong> computed over the trailing K runs of the registry (teardown outcomes, approximated-fill fraction, data-quality gaps, aborted runs) that <code>lab-live</code> must see green before mounting; <strong>(c) a dose-escalation capital ladder</strong> — pre-registered rungs (1 share → 10% → 50% → full 299,340 KRW risk budget) where escalation requires N clean sessions at the current rung within a frozen paper-vs-live tracking-error band, and any limit event auto-de-escalates; <strong>(d) FOQA-style exceedance mining</strong> over <code>decisions.jsonl</code> and the artifact set (reconcile-Unknown count, teardown retries, dedup hits, pacer outliers) as the trend signal feeding (b) and (c). Known open blockers become named rung prerequisites: the SC-primary fill-lane certification (the 2s-per-symbol poll scales linearly against the shared IGW00201 budget), the stranded-position auto-clear, and idea 2 below.</dd>
+      <dt>Axis</dt><dd>operations (spans live-execution and orb-strategy)</dd>
+      <dt>Basis</dt>
+      <dd><code>direct:</code> <code>adapters/nautilus/lab/src/runner/live.rs:131-148</code> is a paper-interlock stub — “the full LiveNode session (lock, mount, node.run, teardown, artifact finalize) is not yet wired”; the run registry is append-only but nothing reads it across runs; there are no metrics and no alerting. <code>external:</code> FAA dispatch release + Minimum Equipment List (14 CFR 121.628); FAA/ICAO FOQA exceedance mining; FDA Phase-I 3+3 dose escalation; the practitioner validation ladder backtest → paper → small-live → full size.</dd>
+      <dt>Rationale</dt>
+      <dd>This is the literal answer to the roadmap question. Every past operational miss in the repo’s history (stranded 3-share position blocking probes, weekend false NO-GO, macOS env-var trap) is a precondition failure a dispatch check would have caught before the session. The registry already produces every input the readiness score needs; the ladder reuses the repo’s strongest muscle — pre-register-before-read — on the one decision it has never governed: how much real money v30 touches. The zero-operator drill (walk the live recipe assuming no human) is the procedure that generates the complete blocker table for rung prerequisites.</dd>
+      <dt>Downsides</dt>
+      <dd>The largest survivor by scope — it is a program, not a PR, and needs sequencing (dispatch gate first, then exceedance catalog, then ladder). Rung definitions and tracking-error bands require judgment calls that only live small-lot data can calibrate. Depends on idea 2 for the session it gates.</dd>
+      <dt>Confidence</dt><dd>85% — every component is grounded in verified evidence and named prior art; uncertainty is in sequencing cost, not direction.</dd>
+      <dt>Complexity</dt><dd>High (decomposable into four medium pieces)</dd>
+    </dl>
+    <figure>
+      <svg viewBox="0 0 860 300" role="img" aria-label="Production ladder: dispatch gate, session, exceedance mining, readiness score, escalation rungs">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#6b675f"/>
+          </marker>
+        </defs>
+        <!-- loop boxes -->
+        <rect x="20" y="110" width="150" height="64" rx="10" fill="#e7f2ef" stroke="#9cc3ba"/>
+        <text x="95" y="137" text-anchor="middle" font-size="13" font-weight="600" fill="#0b5348">Dispatch gate</text>
+        <text x="95" y="156" text-anchor="middle" font-size="11" fill="#0b5348">MEL pre-flight → dispatch.json</text>
+        <rect x="230" y="110" width="140" height="64" rx="10" fill="#ffffff" stroke="#c9c5bc"/>
+        <text x="300" y="137" text-anchor="middle" font-size="13" font-weight="600" fill="#23211d">Live session</text>
+        <text x="300" y="156" text-anchor="middle" font-size="11" fill="#6b675f">at current rung size</text>
+        <rect x="430" y="110" width="160" height="64" rx="10" fill="#ffffff" stroke="#c9c5bc"/>
+        <text x="510" y="137" text-anchor="middle" font-size="13" font-weight="600" fill="#23211d">Exceedance mining</text>
+        <text x="510" y="156" text-anchor="middle" font-size="11" fill="#6b675f">FOQA pass over registry</text>
+        <rect x="650" y="110" width="150" height="64" rx="10" fill="#e9eef7" stroke="#aebdd8"/>
+        <text x="725" y="137" text-anchor="middle" font-size="13" font-weight="600" fill="#2f4d80">Readiness score</text>
+        <text x="725" y="156" text-anchor="middle" font-size="11" fill="#2f4d80">trailing K runs</text>
+        <line x1="170" y1="142" x2="228" y2="142" stroke="#6b675f" stroke-width="1.5" marker-end="url(#arr)"/>
+        <line x1="370" y1="142" x2="428" y2="142" stroke="#6b675f" stroke-width="1.5" marker-end="url(#arr)"/>
+        <line x1="590" y1="142" x2="648" y2="142" stroke="#6b675f" stroke-width="1.5" marker-end="url(#arr)"/>
+        <!-- feedback arrow -->
+        <path d="M 725 174 L 725 226 L 95 226 L 95 176" fill="none" stroke="#6b675f" stroke-width="1.5" marker-end="url(#arr)"/>
+        <text x="410" y="244" text-anchor="middle" font-size="11" fill="#6b675f">green score unlocks the next rung · limit event de-escalates</text>
+        <!-- rungs -->
+        <g font-size="11.5">
+          <rect x="20" y="24" width="130" height="30" rx="6" fill="#f0eee9" stroke="#d8d4cb"/>
+          <text x="85" y="43" text-anchor="middle" fill="#23211d">Rung 1 · 1 share</text>
+          <rect x="170" y="24" width="150" height="30" rx="6" fill="#f0eee9" stroke="#d8d4cb"/>
+          <text x="245" y="43" text-anchor="middle" fill="#23211d">Rung 2 · 10% budget</text>
+          <rect x="340" y="24" width="150" height="30" rx="6" fill="#f0eee9" stroke="#d8d4cb"/>
+          <text x="415" y="43" text-anchor="middle" fill="#23211d">Rung 3 · 50% budget</text>
+          <rect x="510" y="24" width="180" height="30" rx="6" fill="#e7f2ef" stroke="#9cc3ba"/>
+          <text x="600" y="43" text-anchor="middle" fill="#0b5348">Rung 4 · full 299,340 KRW</text>
+          <line x1="150" y1="39" x2="168" y2="39" stroke="#6b675f" stroke-width="1.5" marker-end="url(#arr)"/>
+          <line x1="320" y1="39" x2="338" y2="39" stroke="#6b675f" stroke-width="1.5" marker-end="url(#arr)"/>
+          <line x1="490" y1="39" x2="508" y2="39" stroke="#6b675f" stroke-width="1.5" marker-end="url(#arr)"/>
+        </g>
+        <text x="20" y="84" font-size="11" fill="#6b675f">Each rung escalation is pre-registered and gated on the loop below — never on “it feels ready.”</text>
+      </svg>
+      <figcaption>Illustrative overview — the ladder converts production readiness into a queryable rung number with machine-checked gates.</figcaption>
+    </figure>
+  </article>
+
+  <article class="card" id="idea2">
+    <div class="chips">
+      <span class="chip chip-rank">2</span>
+      <span class="chip chip-axis">live-execution</span>
+      <span class="chip chip-conf-high">Confidence 90%</span>
+      <span class="chip chip-cx">Complexity Medium</span>
+    </div>
+    <h3>Build the LiveNode mounter inside a watchdog envelope</h3>
+    <dl class="fields">
+      <dt>Description</dt>
+      <dd>Wire the missing live-session runner — but build it inside-out. First codify the operator’s actual duties as software: a dead-man/heartbeat timer that invokes the already-unit-tested <code>run_teardown</code> sequence on miss, and a session max-loss circuit breaker feeding <code>set_orders_enabled(false)</code> (respecting the kill-switch-after-close ordering rule). Then the mounter itself — lock acquisition, LiveNode mount, <code>node.run</code>, fail-closed teardown, artifact finalize — becomes a small, safe piece of wiring behind the same nonce+TTY gate proven by the order-chain smokes, replacing a multi-step README recipe an operator retypes under live-market time pressure.</dd>
+      <dt>Axis</dt><dd>live-execution</dd>
+      <dt>Basis</dt>
+      <dd><code>direct:</code> verified verbatim — <code>live.rs:131-148</code> “installs the scrubber, enforces the paper interlock, and reports the staged status rather than touching the gateway… The live session… is documented as an operator recipe”; the teardown trait (<code>live.rs:56-96</code>) already encodes “engage the kill switch AFTER the closing cancels — always” and is unit-tested; the wiring proof exists (<code>live_wiring.rs:61-85</code> mounts the ORB strategy in a built LiveNode).</dd>
+      <dt>Rationale</dt>
+      <dd>Every other live-execution safety primitive — kill switch, 300s dedup, dual-source fill ledger, six-state reconciliation, flat-start gate — is built and tested. They are stranded capital behind one missing wire. This is the single critical-path production blocker: no strategy or SDK polish matters until a session is a runnable command rather than a recipe. Framing “attended” as a software property (what exactly does the human add that a dead-man timer doesn’t?) converts the scariest unknown into an incremental extension of tested code.</dd>
+      <dt>Downsides</dt>
+      <dd>End-to-end verification needs live credentials and a KRX window — it cannot be fully proven by the offline gate, so the first wired sessions remain attended by design. Watchdog thresholds (heartbeat period, max-loss) need pre-registered values to avoid ad-hoc tuning mid-session.</dd>
+      <dt>Confidence</dt><dd>90% — the gap and every building block were verified in the repo; the risk is calibration, not existence.</dd>
+      <dt>Complexity</dt><dd>Medium</dd>
+    </dl>
+    <figure>
+      <svg viewBox="0 0 860 210" role="img" aria-label="Watchdog envelope wrapping the live session with tested teardown paths">
+        <defs>
+          <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#6b675f"/>
+          </marker>
+        </defs>
+        <rect x="20" y="30" width="820" height="150" rx="12" fill="#e7f2ef" stroke="#9cc3ba" stroke-dasharray="6 4"/>
+        <text x="40" y="56" font-size="12" font-weight="650" fill="#0b5348">WATCHDOG ENVELOPE (new, small)</text>
+        <rect x="60" y="76" width="180" height="72" rx="10" fill="#ffffff" stroke="#c9c5bc"/>
+        <text x="150" y="106" text-anchor="middle" font-size="13" font-weight="600">LiveNode mounter</text>
+        <text x="150" y="124" text-anchor="middle" font-size="11" fill="#6b675f">lock · mount · node.run</text>
+        <rect x="330" y="76" width="180" height="72" rx="10" fill="#ffffff" stroke="#c9c5bc"/>
+        <text x="420" y="100" text-anchor="middle" font-size="13" font-weight="600">Dead-man timer</text>
+        <text x="420" y="118" text-anchor="middle" font-size="11" fill="#6b675f">heartbeat miss →</text>
+        <text x="420" y="134" text-anchor="middle" font-size="11" fill="#6b675f">run_teardown()</text>
+        <rect x="600" y="76" width="200" height="72" rx="10" fill="#ffffff" stroke="#c9c5bc"/>
+        <text x="700" y="100" text-anchor="middle" font-size="13" font-weight="600">Max-loss breaker</text>
+        <text x="700" y="118" text-anchor="middle" font-size="11" fill="#6b675f">close first, then</text>
+        <text x="700" y="134" text-anchor="middle" font-size="11" fill="#6b675f">set_orders_enabled(false)</text>
+        <line x1="240" y1="112" x2="328" y2="112" stroke="#6b675f" stroke-width="1.5" marker-end="url(#arr2)"/>
+        <line x1="510" y1="112" x2="598" y2="112" stroke="#6b675f" stroke-width="1.5" marker-end="url(#arr2)"/>
+        <text x="430" y="200" text-anchor="middle" font-size="11" fill="#6b675f">Everything inside the envelope calls teardown and kill-switch code that already exists and passes unit tests.</text>
+      </svg>
+      <figcaption>Illustrative — the mounter is safe to write because the fail-closed envelope no longer depends on human reaction time.</figcaption>
+    </figure>
+  </article>
+
+  <article class="card" id="idea3">
+    <div class="chips">
+      <span class="chip chip-rank">3</span>
+      <span class="chip chip-axis">orb-strategy</span>
+      <span class="chip chip-conf-high">Confidence 85%</span>
+      <span class="chip chip-cx">Complexity Medium</span>
+    </div>
+    <h3>A statistical trust layer for the verdict machinery</h3>
+    <dl class="fields">
+      <dt>Description</dt>
+      <dd>Four additions to the KEEP/REVERT gate, all bolted onto the existing pre-register/twin-verify harness: <strong>(a) a frozen out-of-sample fold</strong> — a KEEP must survive on held-out sessions, or report Walk-Forward Efficiency (OOS/IS RoR) against a ≥0.70 bar; <strong>(b) bootstrap confidence intervals</strong> — resample the closed trades and require the ΔRoR distribution (not the point estimate) to clear the gate; <strong>(c) a sample-reuse ledger</strong> — clinical-trial-style “alpha spending” that debits a pre-registered look budget each time a sample gates a verdict, retiring the sample when spent; <strong>(d) a parameter-plateau lattice</strong> — perturb the kept constants ±10–20% across ~50 vectors and require the head to sit on a plateau, not a spike.</dd>
+      <dt>Axis</dt><dd>orb-strategy</dd>
+      <dt>Basis</dt>
+      <dd><code>direct:</code> verified in <code>TURN-LOG.md</code> — every CLASS B verdict v25→v30 was gated on the same 167 closed trades; the equity-compounding REVERT was decided on ΔRoR = −0.0008 with no dispersion estimate anywhere in the protocol; v30 carries six-significant-figure frozen constants (<code>ratio_atr_ref 0.073158</code>, <code>w_lo</code>/<code>w_hi</code>) whose neighborhood has never been tested. <code>external:</code> &gt;90% of strong in-sample backtests fail out-of-sample; WFE ≥ 0.70 (walk-forward literature); Lan-DeMets alpha-spending functions; Pardo plateau analysis.</dd>
+      <dt>Rationale</dt>
+      <dd>The biggest strategy risk is not a bug — it is that v30’s edge may be a sample-mined artifact of six sequential looks at one dataset. The existing governance rigorously prevents within-turn p-hacking but is structurally blind to across-turn p-hacking. Several past verdicts (both KEEPs and REVERTs) were plausibly coin flips at n=167. This layer also converts “grow the sample via the #118 universe run” from a backlog item into a measured governance obligation.</dd>
+      <dt>Downsides</dt>
+      <dd>An OOS fold shrinks the already-small training sample; some past verdicts may un-decide (uncomfortable but honest). Bootstrap on a ratio-of-sums needs care with heavy-tailed trades. The plateau lattice is compute-heavy (though offline and gateway-free).</dd>
+      <dt>Confidence</dt><dd>85%</dd>
+      <dt>Complexity</dt><dd>Medium</dd>
+    </dl>
+    <figure>
+      <svg viewBox="0 0 860 190" role="img" aria-label="One 167-trade sample feeding six sequential verdicts, and the four proposed guards">
+        <defs>
+          <marker id="arr3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#8a5a13"/>
+          </marker>
+        </defs>
+        <rect x="20" y="60" width="170" height="60" rx="10" fill="#fbf1e2" stroke="#dcbf8c"/>
+        <text x="105" y="86" text-anchor="middle" font-size="13" font-weight="600" fill="#8a5a13">Same 167 trades</text>
+        <text x="105" y="104" text-anchor="middle" font-size="11" fill="#8a5a13">data/turn4-fresh</text>
+        <g font-size="11">
+          <rect x="260" y="20" width="92" height="28" rx="6" fill="#ffffff" stroke="#c9c5bc"/><text x="306" y="38" text-anchor="middle">v25 KEEP</text>
+          <rect x="260" y="56" width="92" height="28" rx="6" fill="#ffffff" stroke="#c9c5bc"/><text x="306" y="74" text-anchor="middle">v26 re-KEEP</text>
+          <rect x="260" y="92" width="92" height="28" rx="6" fill="#ffffff" stroke="#c9c5bc"/><text x="306" y="110" text-anchor="middle">trail REVERT</text>
+          <rect x="260" y="128" width="92" height="28" rx="6" fill="#ffffff" stroke="#c9c5bc"/><text x="306" y="146" text-anchor="middle">…v30 KEEP</text>
+        </g>
+        <line x1="190" y1="78" x2="258" y2="34" stroke="#8a5a13" stroke-width="1.2" marker-end="url(#arr3)"/>
+        <line x1="190" y1="86" x2="258" y2="70" stroke="#8a5a13" stroke-width="1.2" marker-end="url(#arr3)"/>
+        <line x1="190" y1="96" x2="258" y2="106" stroke="#8a5a13" stroke-width="1.2" marker-end="url(#arr3)"/>
+        <line x1="190" y1="104" x2="258" y2="142" stroke="#8a5a13" stroke-width="1.2" marker-end="url(#arr3)"/>
+        <text x="306" y="176" text-anchor="middle" font-size="11" fill="#8a5a13">six sequential looks, one sample</text>
+        <g font-size="11.5">
+          <rect x="470" y="20" width="370" height="30" rx="6" fill="#e7f2ef" stroke="#9cc3ba"/>
+          <text x="482" y="39" fill="#0b5348">a · OOS fold / WFE ≥ 0.70 on every KEEP</text>
+          <rect x="470" y="58" width="370" height="30" rx="6" fill="#e7f2ef" stroke="#9cc3ba"/>
+          <text x="482" y="77" fill="#0b5348">b · bootstrap CI replaces the point estimate</text>
+          <rect x="470" y="96" width="370" height="30" rx="6" fill="#e7f2ef" stroke="#9cc3ba"/>
+          <text x="482" y="115" fill="#0b5348">c · sample-reuse (alpha-spending) ledger</text>
+          <rect x="470" y="134" width="370" height="30" rx="6" fill="#e7f2ef" stroke="#9cc3ba"/>
+          <text x="482" y="153" fill="#0b5348">d · plateau lattice on frozen constants</text>
+        </g>
+      </svg>
+      <figcaption>Illustrative — the reuse pattern on the left is verified in the turn log; the guards on the right reuse the existing twin-verify harness.</figcaption>
+    </figure>
+  </article>
+
+  <article class="card" id="idea4">
+    <div class="chips">
+      <span class="chip chip-rank">4</span>
+      <span class="chip chip-axis">data-pipeline</span>
+      <span class="chip chip-conf-high">Confidence 88%</span>
+      <span class="chip chip-cx">Complexity Medium</span>
+    </div>
+    <h3>KRX session-truth module: calendar + opening-range integrity in one seam</h3>
+    <dl class="fields">
+      <dt>Description</dt>
+      <dd>One shared <code>KrxCalendar</code> answering “is today a session?” plus a per-symbol session-integrity guard answering “is this opening range trustworthy right now?”. The calendar layers a pinned KRX holiday file with a cross-sectional absence classifier (if <em>every</em> symbol has zero bars on a weekday, it is a market closure; if only some, a coverage gap) that both backfills history and flags drift between the file and observed reality. The integrity guard checks first-bar timestamp vs expected open, intra-OR bar-count sanity, and mid-session gap detection (Volatility Interruptions), invalidating a symbol’s opening range with the established skip-not-reject pattern.</dd>
+      <dt>Axis</dt><dd>data-pipeline</dd>
+      <dt>Basis</dt>
+      <dd><code>direct:</code> verified — <code>last_weekday_on_or_before</code> (<code>research.rs:130</code>) skips only Sat/Sun with no holiday table; <code>KRX_REGULAR_OPEN: 09:00</code> is a hardcoded constant (<code>rules.rs:31</code>); the watermark advances decoupled from bar presence, a documented source of false GO signals. <code>external:</code> KRX Volatility Interruption mechanics and irregular one-off open delays (e.g., a 10:00 delayed open) that no static holiday file contains.</dd>
+      <dt>Rationale</dt>
+      <dd>The same missing-calendar bug appears independently in the lab audit path and the live ingest watermark (TODO #120), and the strategy’s entire signal is the opening range — under a delayed open, the OR computes over auction silence and produces plausible-looking garbage breakout levels on exactly the volatile days when losses are largest. Neither backtests nor paper smokes will ever surface that; it is a live-only landmine. Fixing calendar and range-integrity as one seam removes a whole class of false GO/NO-GO and bad-trade risk before any live rung.</dd>
+      <dt>Downsides</dt>
+      <dd>The cross-sectional classifier needs a wide-enough catalog to be decisive (thin universes weaken “all symbols silent”). VI detection from bar gaps is heuristic and needs tuning against false positives on illiquid symbols.</dd>
+      <dt>Confidence</dt><dd>88%</dd>
+      <dt>Complexity</dt><dd>Medium</dd>
+    </dl>
+  </article>
+
+  <article class="card" id="idea5">
+    <div class="chips">
+      <span class="chip chip-rank">5</span>
+      <span class="chip chip-axis">live-execution</span>
+      <span class="chip chip-conf-high">Confidence 92%</span>
+      <span class="chip chip-cx">Complexity Low</span>
+    </div>
+    <h3>Durable order idempotency — persist the dedup reservation</h3>
+    <dl class="fields">
+      <dt>Description</dt>
+      <dd>The order deduplicator is a pure in-memory <code>DashMap</code> with a 300-second window. Kill the process 50ms after an order POST and restart it: the cache is empty, the strategy re-emits, and the only remaining defense against a double fill is the asynchronous t0425-paced reconciler. Fix with the payments-industry pattern: write the reservation (an explicit client idempotency key + timestamp) to <code>state/</code> <em>before</em> dispatch, load surviving reservations on startup, and refuse-or-reconcile-first on any key younger than the TTL. Making the key explicit (caller-supplied, not content-derived) also gives every future consumer — canary subsets, a second strategy, operator retries — safe-by-construction retry semantics.</dd>
+      <dt>Axis</dt><dd>live-execution</dd>
+      <dt>Basis</dt>
+      <dd><code>direct:</code> verified by repo read — <code>crates/ls-core/src/order_dedup.rs:58-72</code>: <code>cache: DashMap&lt;String, CacheEntry&gt;</code>, no persistence, TTL-based opportunistic eviction only. <code>external:</code> payments/webhook idempotency keys — durable precisely because a client crash is the canonical duplicate generator.</dd>
+      <dt>Rationale</dt>
+      <dd>Every other order-safety layer here (kill switch, reservation ordering, six-state reconciliation) is fail-closed; this is the single fail-open gap, and it manifests only in production restart scenarios that paper smokes structurally never exercise. It is also a hard prerequisite for the watchdog/unattended designs in ideas 1–2, where restart-after-crash is the <em>normal</em> recovery path. Smallest survivor, disproportionate payoff.</dd>
+      <dt>Downsides</dt>
+      <dd>Adds a synchronous disk write to the order hot path (negligible at this strategy’s order rate); startup reconciliation logic needs care around clock skew and half-written reservations.</dd>
+      <dt>Confidence</dt><dd>92%</dd>
+      <dt>Complexity</dt><dd>Low</dd>
+    </dl>
+  </article>
+
+  <article class="card" id="idea6">
+    <div class="chips">
+      <span class="chip chip-rank">6</span>
+      <span class="chip chip-axis">orb-strategy</span>
+      <span class="chip chip-conf-med">Confidence 65%</span>
+      <span class="chip chip-cx">Complexity Medium</span>
+    </div>
+    <h3>Tilt, don’t filter — revive the falsified levers through the proven weight slot</h3>
+    <dl class="fields">
+      <dt>Description</dt>
+      <dd>Re-open the FALSIFIED lever axes not as threshold filters but as bounded multiplicative tilts in the anti-collapse budget-numerator slot that ratio-ATR just validated — the <code>w = clamp((ref/x)^alpha, w_lo, w_hi)</code> template with its Phase-A collinearity gate, frozen clamps, and bind-signature telemetry. The sharpest candidate is RVOL: its falsification as a floor found a real <em>inverted</em> signal (winners have <em>lower</em> opening RVOL) that a filter cannot exploit but a downweight-high-RVOL tilt can. Per repo convention, the two latent <code>orb.rs</code> bugs (the <code>Some(0.0)</code> prior-ATR stop collapse and the close-confirm same-bar stop ordering) ride this code turn’s re-baseline.</dd>
+      <dt>Axis</dt><dd>orb-strategy</dd>
+      <dt>Basis</dt>
+      <dd><code>direct:</code> turn history — every threshold-filter lever (RVOL floor, entry cutoff, breakout-strength band, OR-width reject) was FALSIFIED or reverted, while both KEPT levers are continuous, clamped, cross-sectional reweights; the RVOL turn’s own finding: “INVERTED signal (winners have LOWER opening RVOL).” <code>external:</code> Harrell’s dichotomization critique — thresholding a continuous predictor destroys information and can invert its apparent sign.</dd>
+      <dt>Rationale</dt>
+      <dd>The falsified turns are booked as dead axes, but the pattern says the <em>lever class</em> was wrong, not the signal. Each revival is a cheap governed turn on a pre-warmed signal using machinery that just passed every gate — the highest expected-return-per-effort direction left in the queue. Idea 3’s trust layer should gate these verdicts, which is why it ranks above.</dd>
+      <dt>Downsides</dt>
+      <dd>Medium confidence by nature — the inverted RVOL signal may not survive a collinearity pre-gate against the kept ratio-ATR tilt, and per idea 3, verdicts on the current n=167 sample carry wide error bars. A Phase-A STOP (predicted-inert, no build) is a legitimate outcome.</dd>
+      <dt>Confidence</dt><dd>65%</dd>
+      <dt>Complexity</dt><dd>Medium</dd>
+    </dl>
+    <div class="contrast">
+      <div class="col lose">
+        <div class="hd">Threshold filters — falsified</div>
+        <ul>
+          <li>RVOL floor → REVERT (signal inverted)</li>
+          <li>Entry cutoff → REVERT (late entries win)</li>
+          <li>Breakout-strength band → FALSIFIED</li>
+          <li>OR-width reject → REVERT (confounded)</li>
+        </ul>
+      </div>
+      <div class="col win">
+        <div class="hd">Continuous tilts — kept</div>
+        <ul>
+          <li>Ratio-ATR budget tilt → KEEP (v30, RoR ↑)</li>
+          <li>OR-width skip-not-reject → KEEP (v24)</li>
+          <li>Template: <code>w = clamp((ref/x)^α)</code>, budget-numerator only</li>
+        </ul>
+      </div>
+    </div>
+  </article>
+
+  <article class="card" id="idea7">
+    <div class="chips">
+      <span class="chip chip-rank">7</span>
+      <span class="chip chip-axis">sdk-hardening</span>
+      <span class="chip chip-conf-med">Confidence 70%</span>
+      <span class="chip chip-cx">Complexity Medium</span>
+    </div>
+    <h3>Measure the folklore — per-lane rate-limit calibration + adaptive backoff</h3>
+    <dl class="fields">
+      <dt>Description</dt>
+      <dd>The four per-category GCRA limiter rates (MarketData 5/s, Orders 3/s, Account 1/s, Auth 1/s) are configured constants inherited from paper experience — no measurement code touches them, unlike the cumulative IGW00201 budget which <code>budget-probe</code> already characterizes. Build a one-shot, credential-safe calibration probe per lane (ramp each category against a cheap read TR to first throttle; slow soak for the cumulative window), persist results to a per-lane limits file the <code>RateLimiterManager</code> loads, and upgrade the existing <em>static</em> measured backoff in <code>budget.rs</code> into an adaptive one that adjusts from observed IGW00201 responses rather than a committed constant.</dd>
+      <dt>Axis</dt><dd>sdk-hardening</dd>
+      <dt>Basis</dt>
+      <dd><code>direct:</code> verifier-confirmed — the GCRA constants have no calibration code and are a separate layer from the <code>budget-probe</code>-measured cumulative budget; <code>CONCEPTS.md</code>: the budget’s “size, window, and exact bucket scope are not published anywhere and must be measured empirically.” <code>external:</code> KIS and Kiwoom publish hard ceilings that differ between paper and live accounts — LS’s paper-derived numbers may not predict live.</dd>
+      <dt>Rationale</dt>
+      <dd>Going live on paper-calibrated limits risks either throttle storms mid-session (live limits lower) or leaving multiples of ingest throughput on the table (live limits higher). Both directly hit the live path. A half-day probe converts folklore into per-lane measured facts; the adaptive backoff moves hard-won pacing knowledge out of TODO notes (“t8430 LAST, self-pace”) into the dispatch layer every caller inherits. Note: the adversarial verifier corrected the fleet’s original framing here — <code>budget.rs</code> already has a real Defer/Proceed scheduler; the genuine gap is calibration of the GCRA layer and adaptivity of the backoff, which is how this idea is scoped.</dd>
+      <dt>Downsides</dt>
+      <dd>The probe itself spends gateway budget and needs an attended window; live-lane calibration can only happen once live credentials exist, so this partially queues behind idea 2. Adaptive backoff needs guardrails to avoid oscillation.</dd>
+      <dt>Confidence</dt><dd>70%</dd>
+      <dt>Complexity</dt><dd>Medium</dd>
+    </dl>
+  </article>
+</section>
+
+<section id="rejection-summary">
+  <h2>Rejection Summary</h2>
+  <p>47 raw ideas merged to 31 candidates + 5 syntheses; an independent adversarial verifier spot-checked 12 load-bearing citations in the repo (verdicts: 26 sound, 5 weak, 0 refuted). Cuts and merges:</p>
+  <table>
+    <thead><tr><th>#</th><th>Idea</th><th>Reason rejected / disposition</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Fix the two latent orb.rs bugs as a dedicated turn</td><td>Folded into idea 6 as a riding prerequisite — already documented repo policy, not a new direction.</td></tr>
+      <tr><td>2</td><td>Stocks-in-Play composite universe gate</td><td>Strong runner-up — fold as an objective into the already-queued #118 universe run rather than a separate build.</td></tr>
+      <tr><td>3</td><td>Participation-rate cap lever</td><td>Runner-up; verifier flagged “passes collinearity by construction” as an overclaim. Revisit after #118 grows the sample.</td></tr>
+      <tr><td>4</td><td>Automate the Phase-A diagnostic (<code>propose-lever</code>)</td><td>Real toil, but lower expected value than the survivors; DX rather than production-critical.</td></tr>
+      <tr><td>5</td><td>Paper-vs-live differential ledger</td><td>Absorbed into idea 1 — it <em>is</em> the rung-escalation tracking-error measurement.</td></tr>
+      <tr><td>6</td><td>Three-source end-of-session trial balance</td><td>Strong runner-up; natural close-gate component of idea 1’s ladder.</td></tr>
+      <tr><td>7</td><td>SC-primary fill-lane certification</td><td>Kept as a <strong>named blocker</strong> inside idea 1’s rung prerequisites (the poll lane scales linearly against the shared IGW00201 budget).</td></tr>
+      <tr><td>8</td><td>Budget-aware ingest scheduler</td><td>Weak — <code>budget.rs</code> already implements BudgetModel/SpendLedger/plan_dispatch Defer-Proceed; the premise “no scheduler exists” is false.</td></tr>
+      <tr><td>9</td><td>IGW40011 numeric-field build-time check</td><td>Sound and cheap, but hardens promotion smokes rather than the live trading path — do opportunistically.</td></tr>
+      <tr><td>10</td><td>AIMD budget governor as a fifth limiter</td><td>Weak — a static measured backoff already exists; the narrower real gap is folded into idea 7.</td></tr>
+      <tr><td>11</td><td>Auto-harvest promotion evidence from live traffic</td><td>Sound runner-up; attacks the TR-promotion bottleneck, not the production-critical path.</td></tr>
+      <tr><td>12</td><td>Auto-derive constraint-schema skeletons from baselines</td><td>Sound runner-up; TR-scaling leverage rather than production-critical.</td></tr>
+      <tr><td>13</td><td>Cassette-recording gateway twin</td><td>Weak — its cited Route B precedent was mischaracterized (schema-driven variant generation, not traffic replay). May return on its own merits.</td></tr>
+      <tr><td>14</td><td>Freshness-cron dead-man’s-switch</td><td>Already-tracked deferred backlog item (runbook R9), not new ideation.</td></tr>
+      <tr><td>15</td><td>Zero-operator drill</td><td>Subsumed — it is the procedure that generates idea 1’s blocker table.</td></tr>
+      <tr><td>16</td><td>Auto-clear stranded paper positions pre-probe</td><td>Tactical; already TODO.KRX.md item #1 (“do first”).</td></tr>
+      <tr><td>17</td><td>WFE fold · bootstrap CI · sample ledger · plateau lattice</td><td>Merged — these four became idea 3.</td></tr>
+      <tr><td>18</td><td>Dispatch release · readiness score · capital ladder · FOQA</td><td>Merged — these four became idea 1.</td></tr>
+      <tr><td>19</td><td>Holiday calendar · session-integrity guard</td><td>Merged — became idea 4.</td></tr>
+    </tbody>
+  </table>
+  <p>Axis coverage of the survivor set: orb-strategy 2 · live-execution 2 · data-pipeline 1 · sdk-hardening 1 · operations 1 (idea 1 spans). No axis ended without a survivor.</p>
+</section>
+
+<footer class="composition-signal">Composed 2026-07-15 by ce-ideate (repo-grounded run, focus: ORB strategy / SDK / production-readiness roadmap and blockers) · evidence dossiers and checkpoints at <code>/tmp/compound-engineering/ce-ideate/c8bd7e96/</code></footer>
+
+</div>
+</body>
+</html>

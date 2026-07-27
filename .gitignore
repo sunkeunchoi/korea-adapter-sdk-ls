@@ -8,5 +8,18 @@
 # Local, operator-run data homes + probe reports (repo-root CWD): ingest catalogs,
 # runs, and budget-probe/lookback JSON. Never committed — see adapters/nautilus/.gitignore.
 /data/
-/probes/
+probes/
+
+# Credential-derived spend ledger (KTD-3, keyed by hashed appkey) and the operator-local
+# KRX calendar snapshot (KTD9, license-restricted — no KRX-derived rows are ever committed).
+# adapters/nautilus/.gitignore already declares both "never tracked", but its rules are
+# anchored to that package, so an artifact written from the repo root — or from a mistaken
+# CWD, which has happened (adapters/nautilus/adapters/nautilus/state/) — landed outside
+# them and showed up as untracked. Unanchored here so the policy holds wherever it is written.
+state/
+*.calendar.json
+*.calendar.json.candidate
+*.calendar.json.candidate.diff.json
+*.calendar-inputs.json
+*.calendar-fetch.ckpt
 
