@@ -13,7 +13,7 @@ use std::path::Path;
 use nautilus_ls_lab::artifacts::manifest::{DataRange, Manifest};
 use nautilus_ls_lab::artifacts::{RunSource, MANIFEST_FILE};
 use nautilus_ls_lab::params::OrbParams;
-use nautilus_ls_lab::runner::mount_universe::{resolve, MountUniverseConfig};
+use nautilus_ls_lab::runner::mount_universe::{resolve, MountUniverseConfig, TodayOpenSource};
 use tempfile::TempDir;
 
 /// Write a finalized run whose manifest is the head the producer will resolve: the running
@@ -48,6 +48,10 @@ fn cfg(home: &Path, metadata: Option<&Path>) -> MountUniverseConfig {
         data_home: home.to_path_buf(),
         session_date: chrono::NaiveDate::from_ymd_opt(2026, 7, 27).unwrap(),
         metadata_path: metadata.map(Path::to_path_buf),
+        // Pinned, never derived from the clock: the source lives on the config precisely so
+        // these stay offline and deterministic no matter what date the suite runs on. Only
+        // `config_from_env` consults the wall clock.
+        today_open_source: TodayOpenSource::Catalog,
     }
 }
 

@@ -1,7 +1,8 @@
 # Rung-1 Preflight — agent-runnable vs operator-only
 
 The contract for a rung-1 attended session against head **v34**. It splits what an **agent** may
-run autonomously (offline, no-TTY, read-only or non-mutating) from what only an **operator** may
+run autonomously (no-TTY, read-only or non-mutating — offline except the one market-data read in
+§0.7) from what only an **operator** may
 run (nonce-gated, attended, refused in a no-TTY shell). Run the operator sequence from
 [`RUNBOOK-rung1.md`](RUNBOOK-rung1.md); the frozen numbers live in
 [`config/preregistration.json`](config/preregistration.json) (rationale
@@ -12,7 +13,7 @@ run (nonce-gated, attended, refused in a no-TTY shell). Run the operator sequenc
 > (distinct exit codes — never look-like-ran). Build from `adapters/nautilus`; `make` breaks in
 > spawned shells, so call `cargo` directly.
 
-## §0 — Agent preflight (offline, no gateway)
+## §0 — Agent preflight (no nonce, no TTY; one market-data read when the date is today)
 
 1. **Build `lab-live` from v34.** From `adapters/nautilus` (the CWD trap: from the repo root the
    lab crate is skipped):
@@ -57,14 +58,25 @@ run (nonce-gated, attended, refused in a no-TTY shell). Run the operator sequenc
      directly with no upward search, while `.env.domestic` lives at the repo root. From
      `adapters/nautilus/lab` the default misses it and the gate reads `lane_env_present=false`.
 
-7. **Resolve the mount universe** (offline, agent-runnable, no nonce):
+7. **Resolve the mount universe** (agent-runnable, no nonce):
    ```sh
    LS_MOUNT_UNIVERSE_DATE=<session KST date> \
+   LS_DISPATCH_LANE_ENV=/ABSOLUTE/path/to/.env.domestic \
      cargo run --release -p nautilus-ls-lab --bin lab-mount-universe -- --out <path>
    ```
-   Requires the session date's daily bar to be ingested (`today_open` comes from it). The
-   producer reuses the backtest's selection + ATR helpers so the file cannot drift from the head;
-   never hand-author it (a row missing `prior_atr` silently disables the armed OR-width gate).
+   Every prior-session value comes from the catalog. `today_open` depends on the date:
+
+   - **A past date** — from that date's catalog daily bar. Fully offline, no gateway call.
+   - **Today (KST)** — from a live `t8407` quote, because the catalog *cannot* hold an
+     in-session daily bar (the accumulate path is calendar-gated on the same-day `Unknown`
+     status and independently refuses to advance a watermark into an in-session day). This is
+     the binary's only gateway call and it requires `LS_DISPATCH_LANE_ENV`; it still takes no
+     nonce. A symbol with no usable live open (pre-open, halted) is dropped, never defaulted.
+
+   The producer reuses the backtest's selection + ATR helpers so the file cannot drift from the
+   head; never hand-author it (a row missing `prior_atr` silently disables the armed OR-width
+   gate). It still requires prior-session history in the catalog, so ingest must be current
+   through the **previous** session.
 
 ## The Unknown calendar date is the normal morning state
 

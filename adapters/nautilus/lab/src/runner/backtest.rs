@@ -555,8 +555,20 @@ pub(crate) fn select_prior_today<'a>(
     session_date: NaiveDate,
 ) -> Option<(&'a Bar, &'a Bar)> {
     let today = *daily_sorted.iter().rev().find(|b| kst_date_of(b) == session_date)?;
-    let prior = *daily_sorted.iter().rev().find(|b| kst_date_of(b) < session_date)?;
+    let prior = select_prior(daily_sorted, session_date)?;
     Some((prior, today))
+}
+
+/// The latest daily bar dated strictly before `session_date` — the `prior` half of
+/// [`select_prior_today`], split out for the live-mount path where the session date's own
+/// daily bar CANNOT be in the catalog (the ingest path refuses an in-session write, so
+/// `today_open` arrives from a live quote instead). Same reverse scan and same strict `<`
+/// comparison, so `prior` selection is identical on both paths by construction.
+pub(crate) fn select_prior<'a>(
+    daily_sorted: &[&'a Bar],
+    session_date: NaiveDate,
+) -> Option<&'a Bar> {
+    daily_sorted.iter().rev().find(|b| kst_date_of(b) < session_date).copied()
 }
 
 /// Build the universe candidates for one `session_date` (KTD-3): per instrument with
@@ -574,6 +586,43 @@ pub(crate) fn build_candidates(
     session_date: NaiveDate,
     metadata: Option<&HashMap<String, InstrumentMetadata>>,
 ) -> Vec<UniverseCandidate> {
+    build_candidates_with_today_open(
+        instruments,
+        daily_by_inst,
+        open_vol_by_inst,
+        params,
+        session_date,
+        metadata,
+        None,
+    )
+}
+
+/// [`build_candidates`] with an optional externally-sourced `today_open` per instrument, in
+/// canonical integer KRW ticks.
+///
+/// `None` (the backtest's call) is exactly [`build_candidates`]: every open comes from the
+/// session date's catalog daily bar. `Some(map)` is the **live-mount** call, and exists because
+/// the session date's daily bar is *unobtainable* from the catalog on a session morning — the
+/// accumulate ingest path is calendar-gated on an `Unknown` same-day status AND refuses to
+/// advance a watermark into an in-session day, so an in-progress session never has a stored
+/// daily bar. The open is therefore read from a live quote and injected here.
+///
+/// Only the open is substituted. `prior_close`, `prior_turnover`, `prior_atr`, `prior_illiq`
+/// and `prior_open_vol_mean` all derive from bars strictly BEFORE the session date and are
+/// untouched by this path — which is the whole reason the substitution is safe: the session
+/// date's bar contributes exactly one value to a candidate, and this supplies that one value.
+/// `Some(map)` is AUTHORITATIVE: an instrument absent from it is not a candidate, never a
+/// catalog fallback. A partially-resolved map therefore degrades to a smaller universe, never
+/// to a file that mixes live and catalog opens.
+pub(crate) fn build_candidates_with_today_open(
+    instruments: &[InstrumentAny],
+    daily_by_inst: &HashMap<InstrumentId, Vec<&Bar>>,
+    open_vol_by_inst: &HashMap<InstrumentId, BTreeMap<NaiveDate, f64>>,
+    params: &OrbParams,
+    session_date: NaiveDate,
+    metadata: Option<&HashMap<String, InstrumentMetadata>>,
+    today_open_override: Option<&HashMap<InstrumentId, i64>>,
+) -> Vec<UniverseCandidate> {
     let atr_window = params.atr_window as usize;
     let rvol_window = params.rvol_window_sessions as usize;
     let rvol_min_history = params.rvol_min_history as usize;
@@ -583,8 +632,29 @@ pub(crate) fn build_candidates(
         let Some(daily) = daily_by_inst.get(&id) else {
             continue; // never-ingested → not a candidate, not a gap
         };
-        let Some((prior, today)) = select_prior_today(daily, session_date) else {
-            continue; // no daily today, or no prior before it — not a candidate today
+        // The session date's bar contributes exactly ONE value to a candidate — the open.
+        // When a map is supplied it is AUTHORITATIVE for every instrument: an id missing from
+        // it is not a candidate, full stop. Falling back to the catalog here would mix sourcing
+        // inside one file — an instrument whose live quote failed would silently receive a
+        // catalog open (from a stale or force-ingested session-date bar) while simultaneously
+        // being reported as "no usable live open", so both the traded universe and the operator
+        // report would be wrong.
+        let (prior, today_open_ticks) = match today_open_override {
+            Some(map) => {
+                let Some(open) = map.get(&id) else {
+                    continue; // no externally-supplied open — not a candidate today
+                };
+                let Some(prior) = select_prior(daily, session_date) else {
+                    continue; // no prior session before it — not a candidate today
+                };
+                (prior, *open)
+            }
+            None => {
+                let Some((prior, today)) = select_prior_today(daily, session_date) else {
+                    continue; // no daily today, or no prior before it — not a candidate today
+                };
+                (prior, canonical_krw_ticks(&today.open))
+            }
         };
         let symbol = id.to_string();
         let prior_turnover = prior.close.as_f64() * prior.volume.as_f64();
@@ -605,7 +675,7 @@ pub(crate) fn build_candidates(
             symbol,
             gap_prices: SessionGapPrices::new(
                 canonical_krw_ticks(&prior.close),
-                canonical_krw_ticks(&today.open),
+                today_open_ticks,
             ),
             prior_turnover,
             meta,
@@ -1014,6 +1084,35 @@ mod tests {
     use nautilus_model::identifiers::InstrumentId;
     use nautilus_model::types::{Price, Quantity};
 
+    /// A minimal KRX-shaped equity for the candidate-builder tests. `build_candidates` reads
+    /// only the id off an instrument, so the remaining fields just have to be valid.
+    fn sample_instrument(id: InstrumentId) -> nautilus_model::instruments::InstrumentAny {
+        use nautilus_model::instruments::Equity;
+        use nautilus_model::types::Currency;
+        let equity = Equity::new(
+            id,
+            nautilus_model::identifiers::Symbol::from(shcode_of(&id.to_string())),
+            None,
+            Currency::KRW(),
+            0,
+            Price::from("1"),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            nautilus_core::UnixNanos::default(),
+            nautilus_core::UnixNanos::default(),
+        );
+        nautilus_model::instruments::InstrumentAny::Equity(equity)
+    }
+
     fn day(bt: BarType, ymd: (i32, u32, u32), open: i64, close: i64) -> Bar {
         let ts = kst_to_unix_nanos(
             NaiveDate::from_ymd_opt(ymd.0, ymd.1, ymd.2).unwrap(),
@@ -1030,6 +1129,168 @@ mod tests {
             ts,
             ts,
         )
+    }
+
+    /// The live-mount seam: with an injected open, a candidate resolves for a session date
+    /// that has NO daily bar in the catalog — the situation on every session morning, since
+    /// the ingest path refuses to store an in-session day.
+    #[test]
+    fn injected_today_open_builds_a_candidate_without_a_session_date_bar() {
+        let id = InstrumentId::from("005930.XKRX");
+        let bt = BarKind::Daily.bar_type(id).unwrap();
+        let jan4 = day(bt, (2024, 1, 4), 100, 110);
+        let jan5 = day(bt, (2024, 1, 5), 110, 120);
+        let jan8 = NaiveDate::from_ymd_opt(2024, 1, 8).unwrap();
+        let mut daily_by_inst = HashMap::new();
+        daily_by_inst.insert(id, vec![&jan4, &jan5]);
+        let open_vol = HashMap::new();
+        let params = OrbParams::default();
+        let instruments = vec![sample_instrument(id)];
+
+        // Catalog path: Jan 8 has no bar, so there is no candidate at all.
+        let none = build_candidates(&instruments, &daily_by_inst, &open_vol, &params, jan8, None);
+        assert!(none.is_empty(), "no session-date bar => not a candidate on the catalog path");
+
+        // Live path: the open is supplied, so the candidate resolves against Jan 5 as prior.
+        let mut opens = HashMap::new();
+        opens.insert(id, 137i64);
+        let built = build_candidates_with_today_open(
+            &instruments, &daily_by_inst, &open_vol, &params, jan8, None, Some(&opens),
+        );
+        assert_eq!(built.len(), 1, "injected open resolves the candidate");
+        assert_eq!(built[0].gap_prices.today_open, 137, "today_open is the injected value");
+        assert_eq!(
+            built[0].gap_prices.prior_close, 120,
+            "prior_close still comes from the catalog's latest strictly-earlier bar"
+        );
+    }
+
+    /// The substitution is scoped to the open alone. Every prior-derived value must be
+    /// bit-identical to the catalog path — that equivalence is what makes the live path safe.
+    #[test]
+    fn injected_today_open_changes_only_the_open() {
+        let id = InstrumentId::from("005930.XKRX");
+        let bt = BarKind::Daily.bar_type(id).unwrap();
+        // The fixture must be long enough that the derived values are actually Some — with the
+        // default atr_window of 14 a short series makes prior_atr/prior_illiq None on BOTH
+        // sides, and the equivalence asserts below would pass vacuously (None == None) while
+        // proving nothing about leakage into the ATR/Amihud windows.
+        let session_day = 20u32;
+        let bars: Vec<Bar> = (1..=session_day)
+            .map(|d| day(bt, (2024, 1, d), 100 + d as i64, 110 + d as i64))
+            .collect();
+        let refs: Vec<&Bar> = bars.iter().collect();
+        let mut daily_by_inst = HashMap::new();
+        daily_by_inst.insert(id, refs);
+        let session = NaiveDate::from_ymd_opt(2024, 1, session_day as u32).unwrap();
+        // Populate the opening-window volume history so prior_open_vol_mean is Some too.
+        let mut per_date = BTreeMap::new();
+        for d in 1..session_day {
+            per_date.insert(NaiveDate::from_ymd_opt(2024, 1, d).unwrap(), 1000.0 + d as f64);
+        }
+        let mut open_vol = HashMap::new();
+        open_vol.insert(id, per_date);
+        let params = OrbParams::default();
+        let instruments = vec![sample_instrument(id)];
+
+        let from_catalog =
+            build_candidates(&instruments, &daily_by_inst, &open_vol, &params, session, None);
+        let mut opens = HashMap::new();
+        // Deliberately NOT the catalog's open for that date, so a leak would be visible.
+        opens.insert(id, 999_999i64);
+        let from_live = build_candidates_with_today_open(
+            &instruments, &daily_by_inst, &open_vol, &params, session, None, Some(&opens),
+        );
+
+        assert_eq!(from_catalog.len(), 1);
+        assert_eq!(from_live.len(), 1);
+        let (c, l) = (&from_catalog[0], &from_live[0]);
+        // Preconditions: without these the equivalence asserts below are None == None.
+        assert!(c.prior_atr.is_some(), "fixture must produce an ATR or this test proves nothing");
+        assert!(c.prior_illiq.is_some(), "fixture must produce an Amihud value");
+        assert!(c.prior_open_vol_mean.is_some(), "fixture must produce an RVOL baseline");
+        // The catalog path reads the session-date bar's OPEN — pinned absolutely, so a future
+        // edit that reached for `today.close` cannot hide behind a relative comparison.
+        assert_eq!(
+            c.gap_prices.today_open,
+            100 + session_day as i64,
+            "catalog path takes the session-date bar's open"
+        );
+        assert_eq!(
+            c.gap_prices.prior_close,
+            110 + session_day as i64 - 1,
+            "prior_close is the previous session's close"
+        );
+        assert_ne!(c.gap_prices.today_open, l.gap_prices.today_open, "the open IS substituted");
+        assert_eq!(l.gap_prices.today_open, 999_999);
+        assert_eq!(c.gap_prices.prior_close, l.gap_prices.prior_close, "prior_close identical");
+        assert_eq!(c.prior_turnover, l.prior_turnover, "prior_turnover identical");
+        assert_eq!(c.prior_atr, l.prior_atr, "prior_atr identical");
+        assert_eq!(c.prior_illiq, l.prior_illiq, "prior_illiq identical");
+        assert_eq!(c.prior_open_vol_mean, l.prior_open_vol_mean, "rvol baseline identical");
+    }
+
+    /// The authoritative-override contract: when a map is supplied, an instrument absent from it
+    /// is NOT a candidate even if the catalog happens to hold a session-date bar. Without this,
+    /// a symbol whose live quote failed would silently receive a catalog open while being
+    /// reported as un-quoted — the one path that could put a WRONG number into the file.
+    #[test]
+    fn a_missing_override_entry_never_falls_back_to_the_catalog_open() {
+        let quoted = InstrumentId::from("005930.XKRX");
+        let unquoted = InstrumentId::from("000660.XKRX");
+        let session = NaiveDate::from_ymd_opt(2024, 1, 8).unwrap();
+        let mut keep: Vec<Bar> = Vec::new();
+        for id in [quoted, unquoted] {
+            let bt = BarKind::Daily.bar_type(id).unwrap();
+            keep.push(day(bt, (2024, 1, 4), 100, 110));
+            keep.push(day(bt, (2024, 1, 5), 110, 120));
+            // A bar dated ON the session date DOES exist (a force-ingested in-session row).
+            keep.push(day(bt, (2024, 1, 8), 130, 140));
+        }
+        let mut daily_by_inst = HashMap::new();
+        daily_by_inst.insert(quoted, vec![&keep[0], &keep[1], &keep[2]]);
+        daily_by_inst.insert(unquoted, vec![&keep[3], &keep[4], &keep[5]]);
+        let open_vol = HashMap::new();
+        let params = OrbParams::default();
+        let instruments = vec![sample_instrument(quoted), sample_instrument(unquoted)];
+
+        let mut opens = HashMap::new();
+        opens.insert(quoted, 137i64); // only ONE of the two resolved a live open
+        let built = build_candidates_with_today_open(
+            &instruments, &daily_by_inst, &open_vol, &params, session, None, Some(&opens),
+        );
+        assert_eq!(built.len(), 1, "the unquoted instrument must NOT fall back to its catalog bar");
+        assert_eq!(built[0].symbol, quoted.to_string());
+        assert_eq!(built[0].gap_prices.today_open, 137, "and the quoted one uses the LIVE open");
+    }
+
+    /// An instrument the live fetch could not quote falls back to the catalog path, which on a
+    /// session morning means "not a candidate" — never a fabricated or stale open.
+    #[test]
+    fn an_instrument_missing_from_the_override_is_not_a_candidate() {
+        let quoted = InstrumentId::from("005930.XKRX");
+        let unquoted = InstrumentId::from("000660.XKRX");
+        let mut daily_by_inst = HashMap::new();
+        let mut keep: Vec<Bar> = Vec::new();
+        for id in [quoted, unquoted] {
+            let bt = BarKind::Daily.bar_type(id).unwrap();
+            keep.push(day(bt, (2024, 1, 4), 100, 110));
+            keep.push(day(bt, (2024, 1, 5), 110, 120));
+        }
+        daily_by_inst.insert(quoted, vec![&keep[0], &keep[1]]);
+        daily_by_inst.insert(unquoted, vec![&keep[2], &keep[3]]);
+        let open_vol = HashMap::new();
+        let params = OrbParams::default();
+        let instruments = vec![sample_instrument(quoted), sample_instrument(unquoted)];
+        let session = NaiveDate::from_ymd_opt(2024, 1, 8).unwrap();
+
+        let mut opens = HashMap::new();
+        opens.insert(quoted, 137i64); // only ONE of the two resolved a live open
+        let built = build_candidates_with_today_open(
+            &instruments, &daily_by_inst, &open_vol, &params, session, None, Some(&opens),
+        );
+        assert_eq!(built.len(), 1, "only the quoted instrument is a candidate");
+        assert_eq!(built[0].symbol, quoted.to_string());
     }
 
     #[test]

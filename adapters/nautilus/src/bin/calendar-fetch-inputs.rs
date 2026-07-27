@@ -8,6 +8,12 @@
 //! writes the owner-local normalized-inputs artifact. Resumable: an interrupted or quota-bounded
 //! run continues from the 0o600 checkpoint instead of restarting.
 //!
+//! `LS_CALENDAR_HTTP_TIMEOUT_SECS` (default 120, max 600) bounds each request. The KRX daily
+//! endpoint has been observed at 14-59 s per day under load; a timeout below that aborts
+//! client-side and records the source as failed, which is indistinguishable from "no data" in
+//! the resulting partial candidate. Raise it when the source is degraded — the checkpoint
+//! resumes, so a re-run costs only the un-fetched days.
+//!
 //! Credentials come SOLELY from the gitignored maintainer env (`LS_KRX_APPKEY` /
 //! `LS_KASI_SERVICE_KEY`) — never arguments — and are stripped from every persisted reason. All
 //! output paths are confined beneath the owner-local state root (the publication boundary is
@@ -31,6 +37,16 @@ const STATE_ROOT_ENV: &str = "LS_CALENDAR_STATE_ROOT";
 const DEFAULT_STATE_ROOT: &str = "state";
 /// The default inter-call pacing (ms) — a conservative bulk-fetch cadence.
 const DEFAULT_PACE_MS: u64 = 250;
+
+/// Per-request read timeout, in seconds. Set ABOVE the 14-59 s per-day latency observed on the
+/// KRX daily endpoint under load (2026-07-27) — a bulk maintainer fetch is not latency-sensitive,
+/// and a timeout below the source's real ceiling manufactures a partial candidate with no
+/// witnesses rather than hardening anything.
+const DEFAULT_HTTP_TIMEOUT_SECS: u64 = 120;
+
+/// Ceiling on the override. Without it a fat-fingered value silently disables the KTD9 bounded
+/// read timeout and one wedged request hangs the fetch indefinitely.
+const MAX_HTTP_TIMEOUT_SECS: u64 = 600;
 /// A hard response-size ceiling: KRX/KASI responses are small; anything larger is rejected.
 const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 
@@ -75,9 +91,34 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
     // The ONLY real HTTP client in the process, hardened by construction (KTD9): connect/read
     // timeouts, redirects disabled (both credentials ride as query params and must not forward),
     // HTTPS-only. Injected behind the fetch seam so every test runs offline.
+    //
+    // The read timeout is overridable because the KRX daily endpoint's latency is not a constant
+    // of the design: it is normally quick, but under load a single `stk_bydd_trd` day has been
+    // observed taking 14-59 s (2026-07-27). At the old 30 s the client hung up first and the run
+    // reported `ok=false ... failed=error sending request`, marking the candidate partial with NO
+    // witnesses — which reads as "KRX has no data" rather than "we hung up first", and cost a
+    // full operator cycle. The default is therefore set ABOVE the observed ceiling (a bulk
+    // maintainer fetch is not latency-sensitive, and `connect_timeout` still guards a dead host),
+    // and the fetch closure below labels a timeout explicitly so the two can never be confused
+    // again.
+    let http_timeout_secs: u64 = match std::env::var("LS_CALENDAR_HTTP_TIMEOUT_SECS") {
+        Ok(raw) => raw.trim().parse().map_err(|_| {
+            format!("LS_CALENDAR_HTTP_TIMEOUT_SECS must be a positive integer, got {raw:?}")
+        })?,
+        Err(_) => DEFAULT_HTTP_TIMEOUT_SECS,
+    };
+    if !(1..=MAX_HTTP_TIMEOUT_SECS).contains(&http_timeout_secs) {
+        return Err(format!(
+            "LS_CALENDAR_HTTP_TIMEOUT_SECS must be between 1 and {MAX_HTTP_TIMEOUT_SECS} \
+             (got {http_timeout_secs}) — an unbounded value would disable the KTD9 read-timeout \
+             hardening entirely and let one wedged request hang the fetch indefinitely"
+        )
+        .into());
+    }
+    eprintln!("calendar-fetch-inputs: http timeout {http_timeout_secs}s");
     let client = reqwest::blocking::Client::builder()
         .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(30))
+        .timeout(Duration::from_secs(http_timeout_secs))
         .redirect(reqwest::redirect::Policy::none())
         .https_only(true)
         .build()?;
@@ -97,7 +138,22 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
                 req = req.query(&[("serviceKey", k)]);
             }
         }
-        let resp = req.send().map_err(|e| e.to_string())?;
+        // Label a client-side timeout explicitly. This is the whole point of the change: a bare
+        // `error sending request` is indistinguishable from a source with no data, so it gets
+        // recorded as a partial candidate with zero witnesses and reads as "KRX has nothing".
+        // The remedy (raise the timeout) is the one thing the old message never suggested.
+        let resp = req.send().map_err(|e| {
+            if e.is_timeout() {
+                format!(
+                    "client-side timeout after {http_timeout_secs}s — the source did NOT refuse; \
+                     raise LS_CALENDAR_HTTP_TIMEOUT_SECS and re-run (the checkpoint resumes): {e}"
+                )
+            } else if e.is_connect() {
+                format!("connect failed (source unreachable): {e}")
+            } else {
+                e.to_string()
+            }
+        })?;
         if !resp.status().is_success() {
             // Include a bounded snippet of the error body so a probe surfaces the API's actual
             // reason (e.g. KRX `respMsg`). Credential-safe: KRX/KASI error bodies carry no secret,
