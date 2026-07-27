@@ -9,18 +9,40 @@ Rewritten 2026-07-27, replacing `TODO.KRX.md` / the old `TODO.OFFLINE.md` / `TOD
 
 ---
 
-## 1. Ingest the catalog forward through the previous session — *critical path*
+## 1. Ingest the catalog forward through the previous session — *critical path, morning-of*
 
-- **Cost:** small · **Autonomy:** agent-runnable, but self-paced gateway traffic
+- **Cost:** small · **Autonomy:** agent-runnable *after* an operator calendar refresh
 - **Blocks:** [`TODO.ATTENDED.md`](TODO.ATTENDED.md) §1. Nothing else matters until this is done.
 
-As of 2026-07-27 the newest daily bar in `data/turn4-fresh/catalog` ends **2026-07-24 (Friday)**.
-The Monday 2026-07-27 session is **not ingested**.
+As of 2026-07-27 23:07 KST the newest daily bar in `data/turn4-fresh/catalog` ends **2026-07-24
+(Friday)** — all 75 daily series uniform at `2026-05-18..2026-07-24`, zero warnings. That is
+**already as current as the calendar permits**; the Monday 2026-07-27 session is not ingestible.
 
-`RUNG1-PREFLIGHT.md` §0.7 requires the catalog current through the **previous** session: the
-mount-universe producer needs a prior daily bar per symbol for `prior_close` / `prior_atr`, and
-refuses a prior older than `MAX_PRIOR_STALENESS_DAYS = 10`. A Tuesday session therefore needs
-Monday on disk. Discovering this at 09:05 costs the attended window.
+**This is not a night-before task.** Being past the 16:30 KST close buffer sets the ingest's
+*target* date but grants no permission to fetch it. `CalendarGate::range_action` independently
+requires the target to be a **proven** `trading_session`, and a session is proven only by a
+retrospective KRX witness — so today's row reads `unknown` for its entire duration and the
+accumulate run skips every triple (exit `0`, `0 bars`, zero gateway calls, checkpoint
+byte-identical). Verified 2026-07-27; see
+[`docs/solutions/workflow-issues/todays-session-cannot-be-ingested-tonight-the-krx-witness-is-retrospective.md`](docs/solutions/workflow-issues/todays-session-cannot-be-ingested-tonight-the-krx-witness-is-retrospective.md).
+
+The morning-of chain:
+
+1. **Operator** — `calendar-refresh` (needs `LS_KRX_APPKEY` + `LS_KASI_SERVICE_KEY`, owner-local
+   and absent from the lane env files). Once KRX publishes the previous day's record its row
+   flips `unknown` → `trading_session`.
+2. **Agent** — re-run the bounded accumulate ingest (recipe in the solution doc above): mode
+   `accumulate`, `LS_INGEST_SYMBOLS` = the catalog's existing shcodes, `LS_INGEST_SKIP_UNIVERSE_LOAD=1`.
+   Never unbounded — that re-composes the head's tradable universe.
+3. **Agent, after 09:00 KST** — `lab-mount-universe` for the session date. It needs
+   `LS_MOUNT_UNIVERSE_METADATA` (the head is metadata-driven, pin `90005f88…`) and, when the date
+   is today, `LS_DISPATCH_LANE_ENV`. `RUNG1-PREFLIGHT.md` §0.7 omits the metadata var; the
+   producer fails closed without it.
+
+**If step 1 cannot happen before the window, the session is still runnable** — eligibility is
+staleness (`<= MAX_PRIOR_STALENESS_DAYS = 10`), and a Tuesday session with Friday on disk is 4
+days. But `prior_close` / `prior_atr` would then be Friday's, making the head's overnight-gap term
+a multi-session return. That is a fidelity call to make deliberately, not to discover at 09:05.
 
 **Self-pace it.** `IGW00201` is a *cumulative*, warm-sensitive budget, not a pure rate limit — a
 page-burst trips it even under the per-second cap. Put `t8430` **last**. Write the pin only
