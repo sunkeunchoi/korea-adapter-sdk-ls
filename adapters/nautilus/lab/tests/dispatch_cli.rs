@@ -335,7 +335,8 @@ fn bin_dispatch(home: &std::path::Path, extra: &[(&str, &str)]) -> std::process:
         .env_remove("LS_DISPATCH_NONCE")
         // Hermetic calendar env: each case sets adoption/snapshot explicitly via `extra`.
         .env_remove("LS_CALENDAR_SNAPSHOT")
-        .env_remove("LS_CALENDAR_ADOPTION");
+        .env_remove("LS_CALENDAR_ADOPTION")
+        .env_remove("LS_DISPATCH_UNKNOWN_OVERRIDE");
     for (k, v) in extra {
         cmd.env(k, v);
     }
@@ -877,4 +878,219 @@ fn bin_rung_report_prints_the_head_hash_and_is_read_only() {
     assert!(stdout.contains("clean=0/5"), "empty rung-1 chain → 0/5 clean: {stdout}");
     let after = std::fs::read_to_string(tmp.path().join("dispatch").join("chain.jsonl")).unwrap_or_default();
     assert_eq!(before, after, "--rung-report appends nothing to the chain");
+}
+
+// ---------------------------------------------------------------------------
+// The operator tool path for the attended Unknown override: the authored-file loader and
+// the snapshot-identity binding. Before this existed, `unknown_override` was hardcoded
+// `None` at the composition root, so the override — fully implemented, gated and tested at
+// the pure-check layer — was unreachable in the shipped binary, and an Unknown date (every
+// unwitnessed weekday, including the current one) refused with no operator escape.
+// ---------------------------------------------------------------------------
+
+/// A well-formed authored override, as the operator would write it to disk.
+fn authored_override_json(kst_date: &str, run_id: &str, artifact: &str, calendar: &str) -> String {
+    serde_json::json!({
+        "kst_date": kst_date,
+        "run_id": run_id,
+        "operator": "operator-alice",
+        "authorized_at_unix": weekday_ts(),
+        "snapshot_artifact_id": artifact,
+        "snapshot_calendar_id": calendar,
+        "alerts": [],
+        "reason": "reviewed the cited KRX trading-day notice for this date",
+        "citation": { "reference": "KRX-NOTICE-2026-07-16", "issuer": "KRX", "note": null }
+    })
+    .to_string()
+}
+
+/// The authored file round-trips into the exact `UnknownOverride` the gate consumes.
+#[test]
+fn operator_authored_override_file_parses_into_a_binding_override() {
+    let raw = authored_override_json("2026-07-16", "run-cli-1", "artifact-abc", "calendar-abc");
+    let ov = nautilus_ls_lab::runner::live::parse_unknown_override(raw.as_bytes()).unwrap();
+    assert!(ov.is_well_formed());
+    assert!(ov.covers("2026-07-16", "run-cli-1"), "binds to the authored date + run");
+    assert!(!ov.covers("2026-07-17", "run-cli-1"), "a different date is not covered");
+    assert!(!ov.covers("2026-07-16", "run-cli-2"), "a different run is not covered");
+}
+
+/// Fail-closed parsing: malformed JSON, and an audit-incomplete override (the citation is
+/// the load-bearing field — it is what stops an operator authorizing dispatch over a real
+/// closure with an unverifiable justification), are both hard errors, never a quiet `None`.
+#[test]
+fn a_malformed_or_citation_less_override_file_is_refused_not_ignored() {
+    use nautilus_ls_lab::runner::live::parse_unknown_override;
+    assert!(parse_unknown_override(b"{ not json").is_err(), "malformed JSON refuses");
+
+    for (field, blanked) in [
+        ("citation.reference", serde_json::json!({ "reference": "", "issuer": "KRX", "note": null })),
+        ("citation.issuer", serde_json::json!({ "reference": "KRX-1", "issuer": "", "note": null })),
+    ] {
+        let mut v: serde_json::Value =
+            serde_json::from_str(&authored_override_json("2026-07-16", "run-cli-1", "a", "c")).unwrap();
+        v["citation"] = blanked;
+        let err = parse_unknown_override(v.to_string().as_bytes()).unwrap_err().to_string();
+        assert!(err.contains("not well-formed"), "a blank {field} refuses: {err}");
+    }
+
+    for field in ["operator", "reason", "kst_date", "run_id"] {
+        let mut v: serde_json::Value =
+            serde_json::from_str(&authored_override_json("2026-07-16", "run-cli-1", "a", "c")).unwrap();
+        v[field] = serde_json::json!("   ");
+        let err = parse_unknown_override(v.to_string().as_bytes()).unwrap_err().to_string();
+        assert!(err.contains("not well-formed"), "a blank {field} refuses: {err}");
+    }
+}
+
+/// The snapshot-identity binding: an override may only speak for the snapshot whose alerts
+/// the operator actually reviewed. A no-snapshot record (`not-configured`/`unavailable`)
+/// never matches — fail-closed, so a missing identity cannot be read as agreement.
+#[test]
+fn the_override_binds_to_the_snapshot_identity_in_force() {
+    use nautilus_ls::calendar::{ResultingAction, StartupRecord};
+    use nautilus_ls_lab::runner::live::override_matches_snapshot;
+
+    let ov: UnknownOverride = serde_json::from_str(&authored_override_json(
+        "2026-07-16",
+        "run-cli-1",
+        "artifact-abc",
+        "calendar-abc",
+    ))
+    .unwrap();
+
+    let no_snapshot = StartupRecord {
+        consumer: "lab-live-dispatch".into(),
+        adoption: CalendarAdoption::Enforced,
+        diagnostic: None,
+        action: ResultingAction::EnforcedFailClosed,
+    };
+    assert!(
+        !override_matches_snapshot(&ov, &no_snapshot),
+        "no in-force snapshot identity must never match — an absent identity is not agreement"
+    );
+
+    // The MATCHING branch — the one every real operator override must pass. Built from a
+    // REAL loaded snapshot rather than a synthetic record, so the ids compared are the ids
+    // production actually derives. Without this the predicate could be inverted (or compare
+    // the wrong pair) and every other test here would still be green, while in production no
+    // override could ever authorize anything.
+    let tmp = TempDir::new().unwrap();
+    let snap = write_now_relative_snapshot(tmp.path(), nautilus_ls_calendar::schema::DayStatus::Unknown);
+    let now = Utc.timestamp_opt(weekday_ts(), 0).unwrap();
+    let loaded = nautilus_ls::calendar::resolve_and_load(Some(&snap), now, CalendarAdoption::Enforced);
+    let rec = nautilus_ls::calendar::build_startup_record_targeted(
+        "lab-live-dispatch",
+        CalendarAdoption::Enforced,
+        &loaded,
+        now,
+        Some(chrono::NaiveDate::from_ymd_opt(2026, 7, 16).unwrap()),
+    );
+    let diag = rec.diagnostic.as_ref().expect("a configured snapshot yields a diagnostic");
+    let (aid, cid) = (
+        diag.artifact_id.clone().expect("artifact_id"),
+        diag.calendar_id.clone().expect("calendar_id"),
+    );
+
+    let mut real: UnknownOverride = serde_json::from_str(&authored_override_json(
+        "2026-07-16", "run-cli-1", &aid, &cid,
+    ))
+    .unwrap();
+    assert!(
+        override_matches_snapshot(&real, &rec),
+        "an override citing the in-force artifact_id + calendar_id matches"
+    );
+
+    // Each id is load-bearing on its own: flipping either alone must refuse.
+    real.snapshot_artifact_id = format!("{aid}-tampered");
+    assert!(
+        !override_matches_snapshot(&real, &rec),
+        "a different artifact_id refuses even when the calendar_id agrees"
+    );
+    real.snapshot_artifact_id = aid;
+    real.snapshot_calendar_id = format!("{cid}-tampered");
+    assert!(
+        !override_matches_snapshot(&real, &rec),
+        "a different calendar_id refuses even when the artifact_id agrees"
+    );
+}
+
+/// The stale-universe binding (#5): `--mount` re-runs no selection, so a file resolved for
+/// another day parses exactly as cleanly as today's. Only the session-date binding turns that
+/// into a refusal rather than a session trading yesterday's symbols at yesterday's prices.
+#[test]
+fn a_universe_resolved_for_another_day_is_refused() {
+    use nautilus_ls_lab::runner::live::{parse_mount_universe, parse_mount_universe_for};
+    let blob = serde_json::json!([{
+        "session_date": "2026-07-27", "shcode": "005930",
+        "prior_close": 71000, "today_open": 71800, "prior_atr": 1234.5
+    }])
+    .to_string();
+
+    assert_eq!(
+        parse_mount_universe_for(blob.as_bytes(), Some("2026-07-27")).unwrap().len(),
+        1,
+        "the session's own date parses"
+    );
+    let err = parse_mount_universe_for(blob.as_bytes(), Some("2026-07-28"))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("built for 2026-07-27"), "the refusal names both dates: {err}");
+    assert!(err.contains("2026-07-28"), "the refusal names both dates: {err}");
+
+    // A row with no session_date at all predates the binding and cannot be trusted.
+    let legacy = serde_json::json!([{
+        "shcode": "005930", "prior_close": 71000, "today_open": 71800
+    }])
+    .to_string();
+    assert!(
+        parse_mount_universe(legacy.as_bytes()).is_err(),
+        "a row without session_date is refused, not silently accepted"
+    );
+}
+
+/// The detector for the defect the operator tool path exists to fix: drive the override
+/// through the **real** entry point — the env var and file an operator actually uses —
+/// rather than a library-constructed config. Every pure-check and `run_dispatch` test above
+/// passes just as happily with `unknown_override` hardcoded to `None` at the composition
+/// root, which is exactly how a fully-tested override shipped unreachable. This test is the
+/// one that goes red if the hatch is ever unwired again.
+#[test]
+fn bin_the_override_is_reachable_from_the_operator_env_and_fails_closed_on_a_bad_file() {
+    let tmp = TempDir::new().unwrap();
+    seed_genesis(tmp.path());
+
+    // Named-but-missing: a hard error that names the override, proving the env var is read at
+    // the composition root and reaches the loader (a typo'd path must never read as "no
+    // override was offered").
+    let missing = tmp.path().join("nope.json");
+    let out =
+        bin_dispatch(tmp.path(), &[("LS_DISPATCH_UNKNOWN_OVERRIDE", missing.to_str().unwrap())]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "a named-but-unreadable override file refuses: {stderr}");
+    assert!(stderr.contains("Unknown-override file"), "the error names the override: {stderr}");
+
+    // Present but audit-incomplete (blank operator) — likewise a hard error, never a quiet
+    // `None` that leaves Unknown refusing for a reason the operator never sees.
+    let bad = tmp.path().join("bad.json");
+    std::fs::write(
+        &bad,
+        serde_json::json!({
+            "kst_date": "2026-07-16",
+            "run_id": "run-cli-1",
+            "operator": "   ",
+            "authorized_at_unix": weekday_ts(),
+            "snapshot_artifact_id": "artifact-abc",
+            "snapshot_calendar_id": "calendar-abc",
+            "alerts": [],
+            "reason": "reviewed the cited basis",
+            "citation": { "reference": "KRX-1", "issuer": "KRX", "note": null }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let out = bin_dispatch(tmp.path(), &[("LS_DISPATCH_UNKNOWN_OVERRIDE", bad.to_str().unwrap())]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(!out.status.success(), "a blank operator refuses: {stderr}");
+    assert!(stderr.contains("not well-formed"), "{stderr}");
 }

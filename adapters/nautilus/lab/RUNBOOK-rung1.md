@@ -35,6 +35,26 @@ export LS_DATA_HOME=/ABSOLUTE/path/to/data-home           # chain, registry, cat
 export LS_DISPATCH_PREREG="$PWD/config/preregistration.json"
 export LS_TURN_EXPECT_VERSION=34                          # head-version pin: keys the head params
                                                           #   robustly to v34 (mount/escalate/report)
+export LS_CALENDAR_SNAPSHOT=/ABSOLUTE/path/to/state/krx.calendar.json
+                                                          # REQUIRED: the calendar is Enforced, so an
+                                                          #   unset snapshot is not "no calendar" — it is
+                                                          #   `enforced-fail-closed`, and every dispatch
+                                                          #   refuses on an Unavailable date
+export LS_DISPATCH_LANE_ENV=/ABSOLUTE/path/to/.env.domestic
+                                                          # REQUIRED from this CWD: the lane path defaults
+                                                          #   to the RELATIVE `.env.<lane>`, resolved against
+                                                          #   the process CWD, and it is read directly with
+                                                          #   no upward search. `.env.domestic` lives at the
+                                                          #   REPO ROOT, so from `lab/` the default misses it
+                                                          #   and the gate reads `lane_env_present=false`
+```
+
+Confirm both landed before going further — these two are silent when wrong, not loud:
+
+```sh
+cargo run --release -p nautilus-ls-lab --bin lab-live -- --head 2>&1 | head -1
+# want: `... auth=authorized ... action=enforced-active`
+# NOT:  `... snapshot=not-configured action=enforced-fail-closed`
 ```
 
 ## 2. One-time: register the chain (genesis → rung 1)
@@ -71,6 +91,53 @@ export LS_DISPATCH_DEFER="stranded_orders"   # named item; recorded with your no
 
 Every attempt — green or refused — appends a chain record. A refusal is history, not a silent exit.
 
+### 3a. The Unknown calendar date — expect this on the session morning
+
+The calendar proves a **Trading Session** only from an observed KRX witness, so a date is
+`trading_session` only *after* KRX has published it. Weekends and holidays are proven `closed`
+forward, but **the current day reads `Unknown` while you are standing in it** — that is the
+normal morning state, not a defect. `Unknown` is a non-deferrable red: `--dispatch` refuses,
+and no deferral clears it.
+
+The only thing that proceeds an Unknown date is a **bound, audited attended override**. Author
+it as a file — never a bare env var, because it must carry a structured first-party citation
+you cannot write by reflex:
+
+```sh
+cat > /ABSOLUTE/path/to/unknown-override.json <<'JSON'
+{
+  "kst_date": "2026-07-27",
+  "run_id": "rung1-2026-07-27",
+  "operator": "your-operator-id",
+  "authorized_at_unix": 1785000000,
+  "snapshot_artifact_id": "<artifact_id from the calendar-startup line>",
+  "snapshot_calendar_id": "<calendar_id from the calendar-startup line>",
+  "alerts": [],
+  "reason": "KRX published the regular trading-day schedule for this date; verified open",
+  "citation": { "reference": "<KRX notice number or URL>", "issuer": "KRX", "note": null }
+}
+JSON
+
+export LS_DISPATCH_RUN_ID=rung1-2026-07-27          # the override binds to THIS run id
+export LS_DISPATCH_UNKNOWN_OVERRIDE=/ABSOLUTE/path/to/unknown-override.json
+```
+
+It is refused unless **all** of these hold — each one fails closed:
+
+- `kst_date` equals today's KST date **and** `run_id` equals `LS_DISPATCH_RUN_ID` exactly;
+- `operator`, `reason`, `citation.reference` and `citation.issuer` are all non-blank;
+- `snapshot_artifact_id` / `snapshot_calendar_id` match the snapshot **actually in force**
+  (copy them from the `calendar-startup` line — an override authored against a different
+  snapshot reviewed different alerts and cannot speak for this run);
+- the run is attended with a fresh `LS_DISPATCH_NONCE`.
+
+A named file that is missing, unparseable, or audit-incomplete is a **hard error**, never a
+quiet "no override" — a typo'd path can't masquerade as a decision not to override.
+
+It flips **only** an Unknown-date refusal. It can never green a proven `Closed`, an
+`Unavailable` calendar, or any other check, and it never changes the calendar status. The full
+override lands in the chain record for review.
+
 ## 4. Attended mount — `--mount` RUNS the session
 
 `--mount` is the live driver: it consumes the green dispatch, drives `node.run`, runs the
@@ -82,9 +149,41 @@ an absent file reads as stale, so the mount refuses without it:
 ```sh
 export LS_MOUNT_KEEPALIVE=/ABSOLUTE/path/to/rung1.keepalive
 touch "$LS_MOUNT_KEEPALIVE"
+```
 
+**Resolve the universe file first.** `--mount` does NOT run `select_universe` — it trades
+exactly what this file contains, so the file is part of the head's behavioral surface. Produce
+it with `lab-mount-universe` (offline, no nonce, no gateway call) rather than by hand; it reuses
+the backtest's own ATR/turnover/selection helpers, so it cannot drift from the head:
+
+```sh
+# today's daily bar must already be ingested — `today_open` comes from it
+export LS_MOUNT_UNIVERSE_DATE=2026-07-27                        # the KST session date
+export LS_MOUNT_UNIVERSE_METADATA=/ABSOLUTE/path/to/universe-metadata-YYYYMMDD.json
+                                                                # only if the head run was
+                                                                #   metadata-driven; omitting it
+                                                                #   against a metadata-driven head
+                                                                #   changes the tradability gate
+cargo run --release -p nautilus-ls-lab --bin lab-mount-universe -- \
+  --out /ABSOLUTE/path/to/universe.json
+```
+
+Never hand-author it. A row missing `prior_atr` does not fail — the OR-width gate
+(`or_width_max_atr = 0.666`, armed in v34) is *skip-not-reject*, so it silently switches OFF
+for that symbol and emits no reject envelope. The producer drops such symbols loudly instead.
+
+Two refusals to expect, both **pre-consume** (they cost you nothing but a re-run):
+
+- **Every row carries `session_date`, and `--mount` refuses a file built for another day.**
+  Resolve the universe fresh each morning; a leftover file would otherwise trade yesterday's
+  symbols at yesterday's opening prices, and nothing downstream would notice.
+- **If the head run is metadata-driven, the producer refuses without
+  `LS_MOUNT_UNIVERSE_METADATA`**, and refuses an artifact whose hash is not the one that head
+  was built from. Omitting it would silently drop the tradability gate.
+
+```sh
 export LS_DISPATCH_NONCE=$(date +%s)                            # fresh nonce; refused in a no-TTY shell
-export LS_MOUNT_UNIVERSE_FILE=/ABSOLUTE/path/to/universe.json   # resolved daily/t8407 universe
+export LS_MOUNT_UNIVERSE_FILE=/ABSOLUTE/path/to/universe.json   # produced by lab-mount-universe
 export LS_MOUNT_SESSION_SECS=21600                              # optional; default 6 h
 export LS_MOUNT_STOP_GRACE_SECS=60                              # optional; default 60 s, clamped to
                                                                 #   [1, heartbeat_interval_secs]

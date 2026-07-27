@@ -469,13 +469,23 @@ fn resolve_mount_head_params_returns_the_v34_head_when_present() {
 
 #[test]
 fn parse_mount_universe_builds_selected_symbols_and_fails_closed_on_empty() {
-    let json = br#"[{"shcode":"005930","prior_close":60000,"today_open":63000,"prior_atr":1500.0}]"#;
+    let json = br#"[{"session_date":"2026-07-27","shcode":"005930","prior_close":60000,"today_open":63000,"prior_atr":1500.0}]"#;
     let uni = parse_mount_universe(json).unwrap();
     assert_eq!(uni.len(), 1);
     assert_eq!(uni[0].instrument_id.to_string(), "005930.XKRX");
     assert_eq!(uni[0].prior_atr, Some(1500.0));
     // Empty universe → fail-closed (never mount an empty session).
     assert!(parse_mount_universe(b"[]").is_err());
+    // `session_date` is REQUIRED: a row without it predates the stale-file binding, and the
+    // mount re-runs no selection, so accepting one would silently trade an unknown day's
+    // symbols at that day's opening prices.
+    assert!(
+        parse_mount_universe(
+            br#"[{"shcode":"005930","prior_close":60000,"today_open":63000}]"#
+        )
+        .is_err(),
+        "a row without session_date is refused"
+    );
 }
 
 fn one_symbol() -> Vec<SelectedSymbol> {
@@ -748,8 +758,14 @@ fn armable_prereg() -> serde_json::Value {
     })
 }
 
+// `session_date` is the mount's stale-file binding and must match `mount_ts()`'s KST date
+// (2026-07-16), or every prepare_mount below refuses pre-consume.
 const ONE_SYMBOL_UNIVERSE: &str =
-    r#"[{"shcode":"005930","prior_close":60000,"today_open":63000,"prior_atr":1500.0}]"#;
+    r#"[{"session_date":"2026-07-16","shcode":"005930","prior_close":60000,"today_open":63000,"prior_atr":1500.0}]"#;
+
+/// A universe resolved for a DIFFERENT day than the session being mounted.
+const STALE_UNIVERSE: &str =
+    r#"[{"session_date":"2026-07-15","shcode":"005930","prior_close":60000,"today_open":63000,"prior_atr":1500.0}]"#;
 
 /// Every precheck failure leaves the chain UNTOUCHED — no consumption marker, so the green
 /// dispatch survives for a corrected re-run.
@@ -822,6 +838,27 @@ fn an_absent_operator_keepalive_refuses_the_mount_and_consumes_nothing() {
         Err(e) => e,
     };
     assert!(err.to_string().contains("keepalive"), "names the cause: {err}");
+    assert_nothing_consumed(dir.path(), before);
+}
+
+/// A universe resolved for ANOTHER day refuses pre-consume. `--mount` re-runs no selection,
+/// so a leftover file parses exactly as cleanly as a fresh one — without the session-date
+/// binding the session would trade yesterday's symbols at yesterday's opening prices, and
+/// nothing downstream would notice. Pre-consume, so the green dispatch survives the mistake.
+#[test]
+fn a_universe_resolved_for_another_day_refuses_the_mount_and_consumes_nothing() {
+    let dir = tempdir().unwrap();
+    seed_green_dispatch(dir.path(), mount_ts());
+    stage_finalized_head(dir.path(), "20260724T014752Z-backtest-orb-v34", &v34_head_params());
+    let before = DispatchChain::open(dir.path()).unwrap().load().records.len();
+
+    let inputs = mount_inputs(dir.path(), armable_prereg(), STALE_UNIVERSE);
+    let err = match prepare_mount(dir.path(), &inputs, 1, mount_ts()) {
+        Ok(_) => panic!("a universe built for another day must refuse the mount"),
+        Err(e) => e,
+    };
+    assert!(err.to_string().contains("2026-07-15"), "names the file's date: {err}");
+    assert!(err.to_string().contains("2026-07-16"), "names this session's date: {err}");
     assert_nothing_consumed(dir.path(), before);
 }
 

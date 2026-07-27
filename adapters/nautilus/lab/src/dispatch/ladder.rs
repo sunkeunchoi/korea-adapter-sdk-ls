@@ -94,6 +94,23 @@ pub fn head_governed_params_pinned(data_home: &Path, expected_version: Option<u3
         .unwrap_or_default()
 }
 
+/// The head run's full manifest under the same code-hash + version pin
+/// [`head_governed_params_pinned`] uses. Shares that function's selection chain verbatim so a
+/// caller reading head *identity* (metadata artifact, universe pin) can never key off a
+/// different run than the one the mount sizes from.
+pub fn head_manifest_pinned(
+    data_home: &Path,
+    expected_version: Option<u32>,
+) -> Option<(String, crate::artifacts::manifest::Manifest)> {
+    let code_hash = crate::artifacts::manifest::strategy_code_hash();
+    list_runs(data_home)
+        .into_iter()
+        .filter_map(|rid| read_manifest(data_home, &rid).ok().map(|m| (rid, m)))
+        .filter(|(_rid, m)| m.strategy_code_hash == code_hash)
+        .filter(|(_rid, m)| expected_version.map_or(true, |v| m.strategy_version == v))
+        .max_by(|(a, _), (b, _)| a.cmp(b))
+}
+
 /// The ladder head-version pin (`LS_TURN_EXPECT_VERSION`) — the expected head `strategy_version`
 /// the mount / escalation / report key the head params on, robustly identifying the head run even
 /// when older-version same-code runs share the data home. `None` when unset (falls back to the

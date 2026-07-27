@@ -566,7 +566,7 @@ pub(crate) fn select_prior_today<'a>(
 /// (it may still be a candidate on another day). Reads each instrument's pre-sorted
 /// daily slice from `daily_by_inst`; an instrument absent from the map has NO daily
 /// bars anywhere (the never-ingested noise filter — not a candidate, not a gap).
-fn build_candidates(
+pub(crate) fn build_candidates(
     instruments: &[InstrumentAny],
     daily_by_inst: &HashMap<InstrumentId, Vec<&Bar>>,
     open_vol_by_inst: &HashMap<InstrumentId, BTreeMap<NaiveDate, f64>>,
@@ -755,7 +755,7 @@ fn candidate_meta(
 }
 
 /// The shcode of a `{shcode}.XKRX` instrument-id string.
-fn shcode_of(symbol: &str) -> &str {
+pub(crate) fn shcode_of(symbol: &str) -> &str {
     symbol.split('.').next().unwrap_or(symbol)
 }
 
@@ -892,7 +892,7 @@ fn checkpoint_hash(catalog_path: &Path) -> Option<String> {
 pub(crate) fn is_daily(b: &Bar) -> bool {
     b.bar_type.spec().aggregation == BarAggregation::Day
 }
-fn is_minute(b: &Bar) -> bool {
+pub(crate) fn is_minute(b: &Bar) -> bool {
     b.bar_type.spec().aggregation == BarAggregation::Minute
 }
 fn in_range(b: &Bar, start_ns: u64, end_ns: u64) -> bool {
