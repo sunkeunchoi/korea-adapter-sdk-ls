@@ -60,10 +60,26 @@ run (nonce-gated, attended, refused in a no-TTY shell). Run the operator sequenc
 
 7. **Resolve the mount universe** (agent-runnable, no nonce):
    ```sh
+   LS_DATA_HOME=/ABSOLUTE/path/to/data-home \
    LS_MOUNT_UNIVERSE_DATE=<session KST date> \
+   LS_MOUNT_UNIVERSE_METADATA=/ABSOLUTE/path/to/universe-metadata-YYYYMMDD.json \
    LS_DISPATCH_LANE_ENV=/ABSOLUTE/path/to/.env.domestic \
      cargo run --release -p nautilus-ls-lab --bin lab-mount-universe -- --out <path>
    ```
+   **All four are load-bearing, and three of them fail closed rather than degrading** (verified
+   2026-07-27):
+
+   - `LS_DATA_HOME` — unconditionally required; without it the binary exits immediately with
+     `LS_DATA_HOME is required`.
+   - `LS_MOUNT_UNIVERSE_METADATA` — required **because the head is metadata-driven**. The
+     producer refuses with `the head is METADATA-DRIVEN (its run carries universe_metadata_hash
+     90005f88…) but LS_MOUNT_UNIVERSE_METADATA is unset — producing the universe without it
+     silently drops the tradability gate and trades symbols the head excluded`. Point it at the
+     artifact the head's run was built from (currently
+     `lab/config/universe-metadata-20260723.json`); the binary validates the hash itself.
+   - `LS_DISPATCH_LANE_ENV` — required only when the session date is **today** (see below), but
+     harmless otherwise.
+
    Every prior-session value comes from the catalog. `today_open` depends on the date:
 
    - **A past date** — from that date's catalog daily bar. Fully offline, no gateway call.
@@ -75,8 +91,17 @@ run (nonce-gated, attended, refused in a no-TTY shell). Run the operator sequenc
 
    The producer reuses the backtest's selection + ATR helpers so the file cannot drift from the
    head; never hand-author it (a row missing `prior_atr` silently disables the armed OR-width
-   gate). It still requires prior-session history in the catalog, so ingest must be current
-   through the **previous** session.
+   gate).
+
+   It still requires prior-session history in the catalog — but "current through the previous
+   session" is **not** achievable the night before: the ingest cannot advance into a date the
+   calendar has not yet witnessed, so the previous session lands only after an operator
+   `calendar-refresh` on the morning of. Eligibility is staleness, not same-day currency
+   (`<= MAX_PRIOR_STALENESS_DAYS = 10`; `select_prior` takes the latest daily bar strictly before
+   the session date), so a Tuesday session with only Friday on disk resolves — at a fidelity cost,
+   since `prior_close` / `prior_atr` are then Friday's and the overnight-gap term becomes a
+   multi-session return. See
+   [`docs/solutions/workflow-issues/todays-session-cannot-be-ingested-tonight-the-krx-witness-is-retrospective.md`](../../../docs/solutions/workflow-issues/todays-session-cannot-be-ingested-tonight-the-krx-witness-is-retrospective.md).
 
 ## The Unknown calendar date is the normal morning state
 
