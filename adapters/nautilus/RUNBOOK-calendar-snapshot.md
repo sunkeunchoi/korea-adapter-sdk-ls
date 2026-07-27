@@ -68,6 +68,13 @@ cargo run --release --bin calendar-fetch-inputs -- \
   --pace-ms <cadence>
 ```
 
+If a source reports `ok=false ... failed=client-side timeout after Ns`, the source did **not**
+refuse — we hung up first. The KRX daily endpoint has been observed at 14-59 s per day under
+load; raise `LS_CALENDAR_HTTP_TIMEOUT_SECS` (default 120, max 600) and re-run. This matters
+because a timed-out source yields a **partial candidate with zero witnesses**, which reads
+exactly like "KRX has no data for this window" — the two were indistinguishable before the
+timeout was labelled, and telling them apart is what the label is for.
+
 Resumable: if the run is interrupted or hits a daily quota, re-run the SAME command — it
 continues from the 0o600 checkpoint, never restarting. A source that fails mid-run is recorded
 partial (its covered range ends at the last completed date) and resumes on the next run. No

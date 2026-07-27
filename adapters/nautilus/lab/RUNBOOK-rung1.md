@@ -153,12 +153,16 @@ touch "$LS_MOUNT_KEEPALIVE"
 
 **Resolve the universe file first.** `--mount` does NOT run `select_universe` — it trades
 exactly what this file contains, so the file is part of the head's behavioral surface. Produce
-it with `lab-mount-universe` (offline, no nonce, no gateway call) rather than by hand; it reuses
-the backtest's own ATR/turnover/selection helpers, so it cannot drift from the head:
+it with `lab-mount-universe` (no nonce) rather than by hand; it reuses the backtest's own
+ATR/turnover/selection helpers, so it cannot drift from the head:
 
 ```sh
-# today's daily bar must already be ingested — `today_open` comes from it
+# Prior-session values come from the catalog, so ingest must be current through the PREVIOUS
+# session. `today_open` for a same-day run comes from a live t8407 quote instead — the catalog
+# cannot hold an in-session daily bar — which is this binary's one gateway call and is why
+# LS_DISPATCH_LANE_ENV is required here.
 export LS_MOUNT_UNIVERSE_DATE=2026-07-27                        # the KST session date
+export LS_DISPATCH_LANE_ENV=/ABSOLUTE/path/to/.env.domestic     # REQUIRED when the date is today
 export LS_MOUNT_UNIVERSE_METADATA=/ABSOLUTE/path/to/universe-metadata-YYYYMMDD.json
                                                                 # only if the head run was
                                                                 #   metadata-driven; omitting it
@@ -172,7 +176,20 @@ Never hand-author it. A row missing `prior_atr` does not fail — the OR-width g
 (`or_width_max_atr = 0.666`, armed in v34) is *skip-not-reject*, so it silently switches OFF
 for that symbol and emits no reject envelope. The producer drops such symbols loudly instead.
 
-Two refusals to expect, both **pre-consume** (they cost you nothing but a re-run):
+Three refusals the PRODUCER can raise on a session morning, all before any nonce is spent:
+
+- **Before 09:00 KST it refuses outright.** t8407 answers outside the session with the previous
+  session's snapshot, whose `open` is a positive number, so producing early would resolve the
+  whole file against yesterday's opens. Wait for the opening auction and re-run.
+- **A prior session older than 10 calendar days is refused.** That means ingest is behind; catch
+  the catalog up through the previous session first.
+- **A symbol the gateway does not echo at all aborts the run** (a request/framing fault). A
+  symbol that IS echoed but has no open yet is dropped and named, with pre-open and
+  wire-shape causes reported on separate lines — if you see the WIRE-SHAPE warning, waiting
+  will not help.
+
+Two refusals to expect from `--mount` itself, both **pre-consume** (they cost you nothing but a
+re-run):
 
 - **Every row carries `session_date`, and `--mount` refuses a file built for another day.**
   Resolve the universe fresh each morning; a leftover file would otherwise trade yesterday's

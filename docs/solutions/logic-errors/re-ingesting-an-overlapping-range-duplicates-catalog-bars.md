@@ -3,7 +3,7 @@ title: "Re-ingesting an overlapping date range duplicates catalog bars — the p
 date: 2026-07-05
 category: logic-errors
 module: "nautilus adapter ingest/catalog (adapters/nautilus/src/ingest/mod.rs: read_all_bars, write_bars, accumulate append), lab backtest runner (adapters/nautilus/lab/src/runner/backtest.rs: build_candidates)"
-problem_type: data-integrity
+problem_type: logic_error
 component: adapter
 severity: high
 applies_when:
