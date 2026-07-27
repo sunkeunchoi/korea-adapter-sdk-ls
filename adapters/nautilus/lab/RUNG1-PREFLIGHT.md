@@ -49,6 +49,33 @@ run (nonce-gated, attended, refused in a no-TTY shell). Run the operator sequenc
    the printed head hash. A pre-existing chain under a **non-v34** head is a **stop-and-reconcile**
    (archive / epoch-repair or a fresh data home) — never a silent proceed.
 
+6. **Confirm the two silent-when-wrong env vars are set.** Both fail quietly rather than loudly:
+   - `LS_CALENDAR_SNAPSHOT` — unset reads as `snapshot=not-configured action=enforced-fail-closed`,
+     which makes the date `Unavailable` and refuses **every** dispatch. Check the first line of
+     `--head`: want `auth=authorized … action=enforced-active`.
+   - `LS_DISPATCH_LANE_ENV` — the lane path defaults to the CWD-relative `.env.<lane>`, read
+     directly with no upward search, while `.env.domestic` lives at the repo root. From
+     `adapters/nautilus/lab` the default misses it and the gate reads `lane_env_present=false`.
+
+7. **Resolve the mount universe** (offline, agent-runnable, no nonce):
+   ```sh
+   LS_MOUNT_UNIVERSE_DATE=<session KST date> \
+     cargo run --release -p nautilus-ls-lab --bin lab-mount-universe -- --out <path>
+   ```
+   Requires the session date's daily bar to be ingested (`today_open` comes from it). The
+   producer reuses the backtest's selection + ATR helpers so the file cannot drift from the head;
+   never hand-author it (a row missing `prior_atr` silently disables the armed OR-width gate).
+
+## The Unknown calendar date is the normal morning state
+
+A date is `trading_session` only from an observed KRX witness, so the **current day reads
+`Unknown` while you are standing in it**. `Unknown` is a non-deferrable red: `--dispatch`
+refuses, and no deferral clears it. The only thing that proceeds it is the bound, audited
+attended override — an operator-authored file at `LS_DISPATCH_UNKNOWN_OVERRIDE`, bound to the
+exact KST date + `LS_DISPATCH_RUN_ID` + the in-force snapshot identity, carrying a structured
+first-party citation, and gated on a fresh nonce in an attended shell. **The agent never
+authors or supplies it** — see `RUNBOOK-rung1.md` § 3a.
+
 ## §Post-close — Agent verification (read-only)
 
 After the operator's session closes:

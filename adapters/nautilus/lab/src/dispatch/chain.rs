@@ -626,6 +626,13 @@ fn scrub_kind(kind: RecordKind) -> RecordKind {
             if let Some(ov) = &mut s.unknown_override {
                 ov.reason = scrub(&ov.reason);
                 ov.operator = scrub(&ov.operator);
+                // EVERY operator-authored string on the override, not just the obvious two:
+                // the citation and alerts are free text an operator types under time
+                // pressure, so they are exactly as likely to carry an account number as the
+                // reason is. Scrubbing a subset is the same as not scrubbing.
+                ov.citation.reference = scrub(&ov.citation.reference);
+                ov.citation.issuer = scrub(&ov.citation.issuer);
+                ov.alerts = ov.alerts.iter().map(|a| scrub(a)).collect();
                 if let Some(note) = &ov.citation.note {
                     ov.citation.note = Some(scrub(note));
                 }

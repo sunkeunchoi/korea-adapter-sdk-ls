@@ -457,10 +457,12 @@ pub struct DispatchCliConfig {
     /// from `adoption` + the env-configured snapshot. The bin's env gather leaves this
     /// `None` (the real fact is always resolved).
     pub date_fact_stub: Option<CalendarDateFact>,
-    /// A library-injected attended Unknown-date override (U12). Nonce/attendance-gated in
-    /// [`run_dispatch`] before it can proceed an Unknown date. The bin's env gather leaves
-    /// this `None` — the narrow override enters via an operator tool path, never a blunt
-    /// env toggle (mirrors [`attended_override`](Self::attended_override)).
+    /// The attended Unknown-date override (U12). Nonce/attendance-gated in [`run_dispatch`]
+    /// before it can proceed an Unknown date, and additionally bound to the snapshot
+    /// identity actually in force. The bin's env gather loads it from the operator-authored
+    /// file named by `LS_DISPATCH_UNKNOWN_OVERRIDE` — an authored artifact carrying a
+    /// structured first-party citation, never a blunt env toggle (a bare env var could be
+    /// set by reflex; a citation cannot be written by accident).
     pub unknown_override: Option<UnknownOverride>,
 }
 
@@ -547,9 +549,66 @@ pub fn dispatch_gate_config_from_env() -> anyhow::Result<DispatchCliConfig> {
         run_id: std::env::var("LS_DISPATCH_RUN_ID").ok().filter(|s| !s.trim().is_empty()),
         // Never stubbed from the environment: the real date fact is always resolved.
         date_fact_stub: None,
-        // Never sourced from the environment: the narrow attended Unknown override enters
-        // via an operator tool path, not a blunt env toggle.
-        unknown_override: None,
+        unknown_override: unknown_override_from_env()?,
+    })
+}
+
+/// Load the narrow attended Unknown override from the operator-authored JSON file named by
+/// `LS_DISPATCH_UNKNOWN_OVERRIDE` (U12). This is the operator *tool path*, not a blunt env
+/// toggle: the file must carry a structured first-party citation, which cannot be written
+/// by reflex the way an env var can be exported.
+///
+/// Fail-closed at every step — an unset variable is the only quiet outcome. A named file
+/// that cannot be read, cannot be parsed, or is not well-formed is a hard error rather than
+/// a silent `None`, so a typo'd path can never look like "the operator chose not to
+/// override" while an Unknown date refuses for a reason the operator never sees.
+///
+/// # Errors
+///
+/// If the named file is unreadable, malformed, or missing a required audit field.
+fn unknown_override_from_env() -> anyhow::Result<Option<UnknownOverride>> {
+    let Some(path) =
+        std::env::var("LS_DISPATCH_UNKNOWN_OVERRIDE").ok().filter(|s| !s.trim().is_empty())
+    else {
+        return Ok(None);
+    };
+    let bytes = std::fs::read(&path)
+        .map_err(|e| anyhow::anyhow!("reading the Unknown-override file {path}: {e}"))?;
+    parse_unknown_override(&bytes)
+        .map(Some)
+        .map_err(|e| anyhow::anyhow!("the Unknown-override file {path}: {e}"))
+}
+
+/// Parse an operator-authored Unknown-override blob (fail-closed on malformed or
+/// audit-incomplete input). Split from the env/file read so it is testable without the
+/// process environment, mirroring [`parse_mount_universe`].
+///
+/// # Errors
+///
+/// If the JSON is malformed, or any required audit field is blank.
+pub fn parse_unknown_override(bytes: &[u8]) -> anyhow::Result<UnknownOverride> {
+    let ov: UnknownOverride =
+        serde_json::from_slice(bytes).map_err(|e| anyhow::anyhow!("parsing: {e}"))?;
+    if !ov.is_well_formed() {
+        anyhow::bail!(
+            "not well-formed — kst_date, run_id, operator, reason, citation.reference and \
+             citation.issuer are all required (a citation-less basis cannot authorize dispatch \
+             on a date the calendar could not prove)"
+        );
+    }
+    Ok(ov)
+}
+
+/// Whether an operator-authored override cites the snapshot identity **actually in force**.
+///
+/// The override's audit fields record which snapshot the operator reviewed. If that is not
+/// the snapshot this run loaded, the operator reviewed a different calendar's alerts, so the
+/// override cannot speak for this run. Fail-closed: an absent or partial in-force identity
+/// (`snapshot=not-configured` / `snapshot=unavailable`) never matches.
+pub fn override_matches_snapshot(ov: &UnknownOverride, record: &StartupRecord) -> bool {
+    record.diagnostic.as_ref().is_some_and(|d| {
+        d.artifact_id.as_deref() == Some(ov.snapshot_artifact_id.as_str())
+            && d.calendar_id.as_deref() == Some(ov.snapshot_calendar_id.as_str())
     })
 }
 
@@ -783,6 +842,24 @@ pub fn run_dispatch(cfg: &DispatchCliConfig) -> anyhow::Result<DispatchGateOutco
     let mut override_note: Option<String> = None;
     let effective_override: Option<UnknownOverride> = match cfg.unknown_override.clone() {
         None => None,
+        // An override that cites a different snapshot reviewed different alerts — it cannot
+        // authorize THIS run. Checked before the nonce gate: a stale-snapshot override is
+        // rejected on its own terms, and a fresh nonce must never launder it.
+        //
+        // Skipped on the offline `date_fact_stub` seam, which loads no snapshot at all (its
+        // startup record carries no diagnostic, so there is no in-force identity to bind
+        // to). Real runs always resolve a snapshot, so the binding always applies to them.
+        Some(ov)
+            if cfg.date_fact_stub.is_none() && !override_matches_snapshot(&ov, &startup_record) =>
+        {
+            // The renderer already prefixes "attended Unknown override rejected:".
+            override_note = Some(format!(
+                "it cites snapshot artifact_id={} but that is not the snapshot in force — \
+                 re-author the override against the snapshot whose alerts you reviewed",
+                ov.snapshot_artifact_id
+            ));
+            None
+        }
         Some(ov) => {
             let unattended_marker = match cfg.attended_override {
                 Some(true) => None,
@@ -820,6 +897,22 @@ pub fn run_dispatch(cfg: &DispatchCliConfig) -> anyhow::Result<DispatchGateOutco
     } else {
         None
     };
+    // An override that survived the snapshot and nonce gates but does not BIND to this date
+    // and run would otherwise refuse indistinguishably from having supplied no override at
+    // all — the operator sees only the generic Unknown red and cannot tell that their file
+    // was read, let alone that a date or run-id typo is the reason.
+    if ctx.date_fact == CalendarDateFact::Unknown
+        && applied_override.is_none()
+        && override_note.is_none()
+    {
+        if let Some(ov) = &ctx.unknown_override {
+            override_note = Some(format!(
+                "it authorizes {}/run {} but this dispatch is {}/run {} — an override binds to \
+                 the exact KST date and LS_DISPATCH_RUN_ID",
+                ov.kst_date, ov.run_id, ctx.today_kst, ctx.run_id
+            ));
+        }
+    }
 
     // The nonce authorizes the ACT of deferring. Without deferrals it is irrelevant.
     let mut nonce_note: Option<String> = None;
@@ -869,9 +962,14 @@ pub fn run_dispatch(cfg: &DispatchCliConfig) -> anyhow::Result<DispatchGateOutco
         lines.push(format!("  attended Unknown override rejected: {note}"));
     }
     if let Some(ov) = &applied_override {
+        // The citation is operator free text — scrub it on the way to stdout for the same
+        // reason the chain record scrubs it on the way to disk.
         lines.push(format!(
             "  attended Unknown override applied for {} (run {}, citation {}/{}) — calendar status unchanged",
-            ov.kst_date, ov.run_id, ov.citation.issuer, ov.citation.reference
+            ov.kst_date,
+            ov.run_id,
+            crate::artifacts::scrub(&ov.citation.issuer),
+            crate::artifacts::scrub(&ov.citation.reference)
         ));
     }
     if !decision.refused_items.is_empty() {
@@ -972,7 +1070,16 @@ fn dispatch_main() -> anyhow::Result<ExitCode> {
             // startup record from a single load inside `run_dispatch` (KTD3), so the generic
             // `Utc::now()` `emit_startup_from_env` is suppressed here — exactly one
             // `calendar-startup` line fires per --dispatch run.
-            let cfg = dispatch_gate_config_from_env()?;
+            //
+            // The mandatory diagnostic must fire on EVERY exit path, and the config gather is
+            // fallible (it reads and parses the operator's Unknown-override file), so a
+            // gather failure would otherwise exit with ZERO calendar-startup lines — the
+            // anti-pattern `docs/solutions/conventions/composition-root-always-emit-before-\
+            // fallible-parse.md` documents. Emit the generic record only on that error path,
+            // so the success path still fires exactly once from inside `run_dispatch`.
+            let cfg = dispatch_gate_config_from_env().inspect_err(|_| {
+                nautilus_ls::calendar::emit_startup_from_env("lab-live-dispatch");
+            })?;
             let out = run_dispatch(&cfg)?;
             for l in &out.lines {
                 println!("{l}");
@@ -2024,6 +2131,11 @@ const MOUNT_ABNORMAL: u8 = 72;
 /// offline test path, which builds `SelectedSymbol`s directly.
 #[derive(Debug, Clone, Deserialize)]
 struct MountUniverseSymbol {
+    /// The KST session date (`YYYY-MM-DD`) this row was resolved FOR. Required: `--mount`
+    /// re-runs no selection, so without it a file resolved for another day is
+    /// indistinguishable from a fresh one and its stale symbols and `today_open` prices
+    /// would simply be traded.
+    session_date: String,
     /// The 6-digit KRX short code (e.g. `005930`); mapped to `{shcode}.XKRX`.
     shcode: String,
     /// Canonical integer prior-close and today-open defining this symbol-session's opening gap.
@@ -2077,10 +2189,39 @@ pub fn resolve_mount_universe() -> anyhow::Result<Vec<SelectedSymbol>> {
 ///
 /// If the JSON is malformed or the universe is empty.
 pub fn parse_mount_universe(bytes: &[u8]) -> anyhow::Result<Vec<SelectedSymbol>> {
+    parse_mount_universe_for(bytes, None)
+}
+
+/// Parse a mount-universe blob, additionally binding every row to `expected_kst` when supplied.
+///
+/// The mount consumes an already-resolved universe and re-runs no selection, so a file left
+/// over from a previous session is not detectable from its contents — yesterday's symbols and
+/// yesterday's `today_open` parse exactly as cleanly as today's. Binding the session date is
+/// what makes a stale file a refusal instead of a silently wrong session. Checked pre-consume,
+/// so a mismatch costs the operator nothing but a re-run.
+///
+/// # Errors
+///
+/// If the JSON is malformed, the universe is empty, or any row was resolved for another date.
+pub fn parse_mount_universe_for(
+    bytes: &[u8],
+    expected_kst: Option<&str>,
+) -> anyhow::Result<Vec<SelectedSymbol>> {
     let rows: Vec<MountUniverseSymbol> =
         serde_json::from_slice(bytes).map_err(|e| anyhow::anyhow!("parsing mount universe: {e}"))?;
     if rows.is_empty() {
         anyhow::bail!("mount refused: the resolved universe (LS_MOUNT_UNIVERSE_FILE) is empty");
+    }
+    if let Some(want) = expected_kst {
+        if let Some(bad) = rows.iter().find(|r| r.session_date.trim() != want) {
+            anyhow::bail!(
+                "mount refused: the resolved universe was built for {} but this session is {} \
+                 — re-run `lab-mount-universe` for today (a stale universe would trade \
+                 yesterday's symbols at yesterday's opening prices)",
+                bad.session_date,
+                want
+            );
+        }
     }
     rows.into_iter().map(MountUniverseSymbol::into_selected).collect()
 }
@@ -2450,9 +2591,15 @@ pub fn prepare_mount(
     // (d) v34's real governed params (fail-closed vs a zero-size default head) + the
     //     resolved universe.
     let params = resolve_mount_head_params(data_home)?;
-    let universe = parse_mount_universe(&std::fs::read(&inputs.universe_path).map_err(|e| {
-        anyhow::anyhow!("reading the mount universe {}: {e}", inputs.universe_path.display())
-    })?)?;
+    let today_kst = crate::dispatch::chain::kst_trading_date(
+        Utc.timestamp_opt(now_unix, 0).single().unwrap_or_else(Utc::now),
+    );
+    let universe = parse_mount_universe_for(
+        &std::fs::read(&inputs.universe_path).map_err(|e| {
+            anyhow::anyhow!("reading the mount universe {}: {e}", inputs.universe_path.display())
+        })?,
+        Some(&today_kst),
+    )?;
     let symbols: Vec<String> = universe.iter().map(|s| s.instrument_id.to_string()).collect();
 
     // (e) The credential lane hash + the node build itself. A build failure is the last
