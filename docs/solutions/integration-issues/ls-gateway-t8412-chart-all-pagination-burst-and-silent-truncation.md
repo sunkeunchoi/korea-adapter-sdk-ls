@@ -144,9 +144,9 @@ which narrows the range and — if it still can't complete a single day —
 records a `PaperThin` coverage gap rather than silently marking the range
 done. The echoed duplicate page's rows are never pushed into the result.
 
-Live verification (commit `529a177`): 1024 → 9168 bars over the same 2-symbol,
-12-day range, 0 gaps. Re-verified after the fail-closed rework (commit
-`5fe66fd`) to confirm the new fail-closed arms don't fire on normal
+Live verification (during PR #95, pre-squash): 1024 → 9168 bars over the same
+2-symbol, 12-day range, 0 gaps. Re-verified after the fail-closed rework in
+the same PR to confirm the new fail-closed arms don't fire on normal
 termination — same 9168 bars / 0 gaps.
 
 The regression test itself needed hardening in the same PR: the original
