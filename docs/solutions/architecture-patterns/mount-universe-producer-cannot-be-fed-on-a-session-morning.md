@@ -1,6 +1,7 @@
 ---
 title: "The mount-universe producer cannot be fed on a session morning — t8410 serves an in-progress daily bar, but every catalog ingest path refuses to store one"
 date: 2026-07-27
+last_updated: 2026-07-28
 category: architecture-patterns
 module: "adapters/nautilus lab mount-universe producer (lab/src/runner/mount_universe.rs), lab backtest candidate builder (lab/src/runner/backtest.rs: build_candidates, select_prior_today), adapter ingest (src/ingest/mod.rs: last_closed_session, calendar_decision)"
 problem_type: architecture_pattern
@@ -62,6 +63,11 @@ so a Sunday, a Friday, and today all returned an identical 626 bytes. The decisi
 
 A known-real trading-day row measures ~177 bytes; today's row measures the same. The Sunday
 control adding zero bytes proves the window filter is actually live rather than ignored.
+(Narrowed 2026-07-28: that proof holds for **wide** windows only. The degeneracy observed
+here at `qrycnt=1` generalizes — the gateway ignores `sdate` whenever `sdate == edate`, at
+any `qrycnt`, serving qrycnt rows ending at `edate`. See
+[`ls-gateway-t8410-single-day-window-ignores-sdate-append-refused`](../integration-issues/ls-gateway-t8410-single-day-window-ignores-sdate-append-refused.md);
+the ingest side is fixed by PR #228's parsed-timestamp trim.)
 
 **But the producer reads the catalog, not the gateway.** `today_open` comes from the session
 date's daily bar via `build_candidates` → `select_prior_today`
