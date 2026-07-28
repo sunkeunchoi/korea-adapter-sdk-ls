@@ -162,6 +162,9 @@ A page-walk termination that is not proof of completion: a zero-row page whose e
 ### Universe metadata pin
 The catalog-level attestation binding ingested bars to the reference-data artifact that selected them: a pin file (`universe-metadata-pin.json` in the catalog root) recording the artifact's content hash and per-stratum selection, written **only after a refusal-free tier-stratified ingest** (exit 0 — any range/heal/append refusal withholds it, because a pin written despite failure would attest a selection whose bars never landed). Consumed as a three-way hash handshake — pin == run-manifest `universe_metadata_hash` == artifact-on-disk — asserted fatally by the metadata-driven backtest runner on mismatch and by the per-tier report on mismatch *or absence* (the runner alone only warns when no pin exists yet). Never hand-written or copied; a scratch/rehearsal artifact's hash must never be pinned.
 
+### Mount universe
+The per-session candidate file an attended session consumes: for one session date, each catalog symbol's prior-session facts (close, ATR, opening-volume mean, illiquidity) plus that day's open — sourced from the catalog for a past date and from a live opening quote for the current date. It is the candidate *set*, not the selection: the head's gap floor, turnover ranking, and top-N run at selection time against these rows, so the file legitimately carries rows the head will not trade, and an empty *selection* on a market-wide flat open is normal head behavior. The producer refuses to write an empty file, and the file is never hand-authored — a row missing its prior ATR silently disables a protective per-symbol gate rather than failing loudly.
+
 ## Order safety
 
 The order class is the one place where a bug is a real, irreversible market action rather than a stale read, so it carries its own machinery and vocabulary.
