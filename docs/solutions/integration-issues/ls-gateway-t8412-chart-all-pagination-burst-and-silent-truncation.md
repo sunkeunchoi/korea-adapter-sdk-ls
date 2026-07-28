@@ -1,6 +1,7 @@
 ---
 title: "t8412 chart_all pagination is doubly broken — per-TR rate cap burst plus tr_cont header continuation silently truncates multi-page windows"
 date: 2026-07-04
+last_updated: 2026-07-28
 category: integration-issues
 module: "adapters/nautilus ingest (SdkFetcher::fetch_minute_chunk, src/ingest/mod.rs) + crates/ls-sdk/src/paginated/chart.rs (t8412 chart_all)"
 problem_type: integration_issue
@@ -35,8 +36,8 @@ tags:
 multi-page pulls through the SDK's generic `chart_all` delegation, which itself
 sits on `ls-core`'s `Inner::collect_all` (`crates/ls-core/src/inner.rs`, the
 `for _ in 0..max { ... }` loop starting at line 641). Against the real paper
-gateway this was doubly broken, and both defects were confirmed live (PR #95,
-commits `529a177` and `5fe66fd`):
+gateway this was doubly broken, and both defects were confirmed live (PR #95;
+the confirming commits were squashed into it):
 
 - **Defect A (burst → throttle).** `collect_all` fires each continuation page
   back-to-back with no pacing of its own — it only calls `f(req.clone())` in a
@@ -95,7 +96,12 @@ commits `529a177` and `5fe66fd`):
 
 Drive the continuation with **both** the body `cts_date`/`cts_time` cursor
 *and* the `tr_cont: Y` request header together, one paced dispatch per page —
-mirroring the (already-correct) daily `t8410` walk in `collect_daily`. The
+mirroring the daily `t8410` walk in `collect_daily`, whose **cursor mechanics**
+are the correct exemplar. (Scope note, 2026-07-28: that walk's *window* trust
+was later found broken — the gateway ignores `sdate` on degenerate single-day
+windows, fixed by a parsed-timestamp trim in PR #228; see
+[`ls-gateway-t8410-single-day-window-ignores-sdate-append-refused`](ls-gateway-t8410-single-day-window-ignores-sdate-append-refused.md).
+"Already-correct" here means the pagination shape, not window handling.) The
 final shape is `SdkFetcher::fetch_minute_chunk` in
 `adapters/nautilus/src/ingest/mod.rs` (lines ~320-386):
 

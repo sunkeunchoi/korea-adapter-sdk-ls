@@ -1,7 +1,7 @@
 ---
 title: "LS gateway IGW00201 is a rolling call-count cap that aborts a bulk multi-symbol minute ingest — drip-feed one symbol at a time"
 date: 2026-07-07
-last_updated: 2026-07-09
+last_updated: 2026-07-28
 category: integration-issues
 module: "adapters/nautilus ls-ingest (src/bin/ls-ingest.rs, LS_INGEST_KIND=minute:*) + lab-research catalog status"
 problem_type: integration_issue
@@ -62,7 +62,14 @@ completes fine; only the much larger minute pass trips the cap.
 
 Drip-feed the minute ingest **one symbol at a time**, retrying on IGW00201 with a fixed
 backoff. `range` mode is idempotent per symbol (an already-covered symbol `APPEND REFUSED`s
-as a harmless no-op), so the loop is safe to re-run and resumes cleanly after each trip:
+as a harmless no-op), so the loop is safe to re-run and resumes cleanly after each trip.
+(Caution, 2026-07-28: treating `APPEND REFUSED` as "done" is sound only when a refusal
+genuinely means already-covered. On the **daily** arm, a degenerate single-day window made
+the gateway over-serve and the refusal fire spuriously — the loop would have marked a symbol
+done that never caught up. Fixed for daily by the PR #228 window trim; see
+[`ls-gateway-t8410-single-day-window-ignores-sdate-append-refused`](ls-gateway-t8410-single-day-window-ignores-sdate-append-refused.md).
+For wide-window minute `range` pulls like this loop's, no spurious-refusal case has been
+observed.):
 
 ```bash
 for s in $SYMBOLS; do
@@ -149,7 +156,7 @@ The adapter encodes this model as data (landed 2026-07-08, promoted 2026-07-09):
 - **Pre-dispatch budget planner** — under a measured budget the ingest stops before a symbol
   whose estimated page cost exceeds the remaining window (`SCHEDULED REMAINDER`), never
   provoking IGW00201. Inert while `budget_calls` is null.
-- **`budget-probe` binary** (`src/bin/budget-probe.rs`, attended, paper-only) — measures the
+- **`budget-probe` binary** (`adapters/nautilus/src/bin/budget-probe.rs`, attended, paper-only) — measures the
   real bucket scope (stage 0), cold-budget size (stage 1), refill window (stage 2), and
   cross-class span (stage 3) on a spare paper lane, under a hard per-session call ceiling. It
   probes **t8412** (the minute-ingest TR), paced at its 1/s cap (`LS_PROBE_PACE_MS >= 1000`).

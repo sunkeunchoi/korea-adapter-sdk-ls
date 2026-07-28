@@ -1,6 +1,7 @@
 ---
 title: "t8410 daily-chart window degenerates when sdate == edate — the gateway ignores sdate and returns qrycnt bars, and collect_daily's untrimmed rows hit APPEND REFUSED"
 date: 2026-07-28
+last_updated: 2026-07-28
 category: integration-issues
 module: "adapters/nautilus ingest (collect_daily, src/ingest/mod.rs) + ingest-checkpoint.json 1-DAY watermarks"
 problem_type: integration_issue
@@ -161,11 +162,15 @@ print("gaps", d["gaps"], "shifted", d["shifted"])
 # want: every 1-DAY watermark at the just-closed session date; gaps/shifted empty
 ```
 
-**Durable fix (recommended; NOT implemented as of this writing):** trim fetched
-daily bars to the requested `[sdate, edate]` in `collect_daily`
-(`adapters/nautilus/src/ingest/mod.rs:956`, row loop at `mod.rs:1006-1010`).
-Until it lands, every single-session catch-up — the *normal* morning-after
-shape — requires the watermark-rollback workaround.
+**Durable fix (LANDED same day — PR #228):** `collect_daily` now filters
+fetched rows on the **parsed bar timestamp** against the requested
+`[sdate, edate]` (padded boundary dates kept, chrono-leniently-parsed dates
+windowed by their actual value, unparseable dates keep the loud `FieldParse`
+error), and a page reaching below `sdate` completes the walk instead of paging
+ancient history into the cap. A string-shape gate was rejected in review:
+chrono parses `"2026072"` leniently as 2026-07-02, so only the parsed value is
+trustworthy. The watermark-rollback above remains the operational workaround
+for a checkout predating #228.
 
 ## Why This Works
 
@@ -188,9 +193,13 @@ shape — requires the watermark-rollback workaround.
 
 ## Prevention
 
-1. **Land the durable trim** (pending): filter `collect_daily`'s kept rows to
-   `[sdate, edate]` before they reach `append_bars_checked`. This closes the
-   whole class regardless of gateway windowing quirks.
+1. **The durable trim is landed** (PR #228): `collect_daily` windows kept rows
+   by parsed bar timestamp before they reach `append_bars_checked`, closing
+   the whole class regardless of gateway windowing quirks. Consequence for
+   tests: a mocked t8410 body must serve rows **inside** the requested window
+   — four `calendar_gate_migration` tests that served 2024-dated fixture rows
+   against 2010 windows only ever passed via untrimmed appends and were
+   corrected in the same PR.
 2. **Recognize the degenerate-window shape**: after a weekend/holiday
    skip-advance, `start == last_closed` (watermark + 1 == last closed session)
    means every daily accumulate issues a single-day t8410 request — assume the
