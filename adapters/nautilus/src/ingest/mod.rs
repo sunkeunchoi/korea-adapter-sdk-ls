@@ -967,6 +967,12 @@ async fn collect_daily<F: DailyFetcher>(
     // Consecutive IGW00201 throttles since the last successful page (reset on any
     // `Ok`), bounding a dead/too-slow budget exactly like `collect_minute` (KTD-4).
     let mut throttle_retries = 0usize;
+    // The requested window as bar timestamps (same convention `build_daily_bar`
+    // stamps: KST regular close of the candle's date), so the window filter below
+    // compares PARSED dates — immune to padding and to chrono's lenient parses
+    // that a string compare would misclassify.
+    let ts_start = kst_to_unix_nanos(parse_yyyymmdd("sdate", sdate)?, KRX_REGULAR_CLOSE)?.as_u64();
+    let ts_end = kst_to_unix_nanos(parse_yyyymmdd("edate", edate)?, KRX_REGULAR_CLOSE)?.as_u64();
 
     for page in 0..MAX_DAILY_PAGES {
         // Retry the SAME page on an IGW00201 throttle (KTD-4): daily is ~1 page per
@@ -1003,10 +1009,38 @@ async fn collect_daily<F: DailyFetcher>(
                 }
             }
         };
+        // The gateway's window filter degenerates on a single-day request
+        // (sdate == edate): it ignores `sdate` and serves qrycnt rows ending at
+        // `edate`, so out-of-window rows must be dropped here or the append
+        // collides with stored coverage. The filter runs on the PARSED bar
+        // timestamp (never the raw string): a padded boundary date is kept, a
+        // leniently-parsed date is windowed by its actual value, and an
+        // unparseable date keeps `build_daily_bar`'s loud parse error. See
+        // docs/solutions/integration-issues/
+        // ls-gateway-t8410-single-day-window-ignores-sdate-append-refused.md.
+        let mut page_reached_below_window = false;
         for row in &resp.outblock1 {
             if let Some(b) = build_daily_bar(bar_type, row)? {
+                let ts = b.ts_init.as_u64();
+                if ts < ts_start {
+                    // Below-window bars are completion evidence for the walk
+                    // (the cursor pages recent→older), never appended.
+                    page_reached_below_window = true;
+                    continue;
+                }
+                if ts > ts_end {
+                    continue;
+                }
                 bars.push(b);
             }
+        }
+        // A page that reaches below `sdate` makes every later page entirely
+        // out-of-window: the window is complete. Without this, a degenerate
+        // response with a live cursor would walk ancient history into the page
+        // cap and degrade to a spurious PaperThin.
+        if page_reached_below_window {
+            hit_cap = false;
+            break;
         }
         let next = resp.outblock.cts_date.trim().to_string();
         if next.is_empty() || resp.outblock1.is_empty() || !seen.insert(next.clone()) {
@@ -3517,6 +3551,137 @@ mod tests {
                 "daily bars must be ascending for the catalog"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn daily_rows_outside_the_requested_window_are_trimmed() {
+        // A degenerate single-day window (sdate == edate) makes the gateway
+        // ignore `sdate` and serve qrycnt rows ending at `edate` — the collector
+        // must keep only the requested window or the append collides with
+        // stored coverage (see docs/solutions/integration-issues/
+        // ls-gateway-t8410-single-day-window-ignores-sdate-append-refused.md).
+        let bar_type = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        let mut resp = T8410Response {
+            rsp_cd: "00000".to_string(),
+            outblock1: vec![
+                daily_row("20260728"), // above edate — must be trimmed too
+                daily_row("20260727"),
+                daily_row("20260724"),
+                daily_row("20240703"),
+            ],
+            ..Default::default()
+        };
+        // Live cursor: an untrimmed walk would keep paging into ancient history.
+        resp.outblock.cts_date = "20240702".to_string();
+        let fetcher = FixedDaily { resp, calls: AtomicUsize::new(0) };
+        let outcome = collect_daily(&fetcher, "005930", bar_type, "20260727", "20260727").await.unwrap();
+        let bars = match outcome {
+            TripleOutcome::Bars(b) => b,
+            _ => panic!("expected bars"),
+        };
+        assert_eq!(bars.len(), 1, "only the in-window row survives the trim");
+        assert_eq!(
+            fetcher.calls.load(Ordering::SeqCst),
+            1,
+            "a page reaching below sdate completes the window — no deeper paging"
+        );
+    }
+
+    struct SeqDaily {
+        pages: Mutex<Vec<T8410Response>>,
+        calls: AtomicUsize,
+    }
+    #[async_trait]
+    impl DailyFetcher for SeqDaily {
+        async fn fetch_daily_page(&self, _shcode: &str, _sd: &str, _ed: &str, _cts: &str) -> AdapterResult<T8410Response> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self.pages.lock().unwrap().remove(0))
+        }
+    }
+
+    #[tokio::test]
+    async fn daily_in_window_multi_page_walk_is_not_truncated_by_the_early_break() {
+        // A page whose oldest row is exactly sdate carries nothing below the
+        // window, so the early break must NOT fire and the walk must fetch the
+        // next page — the no-truncation guarantee for legitimate backfills.
+        let bar_type = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        let mut page1 = T8410Response {
+            rsp_cd: "00000".to_string(),
+            outblock1: vec![daily_row("20260727"), daily_row("20260726")],
+            ..Default::default()
+        };
+        page1.outblock.cts_date = "20260725".to_string(); // live cursor
+        let mut page2 = T8410Response {
+            rsp_cd: "00000".to_string(),
+            outblock1: vec![daily_row("20260725")],
+            ..Default::default()
+        };
+        page2.outblock.cts_date = String::new(); // terminates
+        let fetcher = SeqDaily {
+            pages: Mutex::new(vec![page1, page2]),
+            calls: AtomicUsize::new(0),
+        };
+        let outcome = collect_daily(&fetcher, "005930", bar_type, "20260725", "20260727").await.unwrap();
+        let bars = match outcome {
+            TripleOutcome::Bars(b) => b,
+            _ => panic!("expected bars"),
+        };
+        assert_eq!(bars.len(), 3, "all in-window rows across both pages are kept");
+        assert_eq!(fetcher.calls.load(Ordering::SeqCst), 2, "in-window pages never early-break the walk");
+    }
+
+    #[tokio::test]
+    async fn daily_padded_dates_are_kept_and_malformed_dates_error_loudly() {
+        // A whitespace-padded boundary date parses fine downstream, so the
+        // window compare must trim before comparing (the row is kept); a
+        // malformed non-empty date must reach build_daily_bar's loud
+        // FieldParse error rather than being silently classified out-of-window
+        // or counted as early-break completion evidence.
+        let bar_type = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        let mut padded = T8410Response {
+            rsp_cd: "00000".to_string(),
+            outblock1: vec![daily_row(" 20260727 ")],
+            ..Default::default()
+        };
+        padded.outblock.cts_date = String::new();
+        let fetcher = FixedDaily { resp: padded, calls: AtomicUsize::new(0) };
+        let outcome = collect_daily(&fetcher, "005930", bar_type, "20260727", "20260727").await.unwrap();
+        let bars = match outcome {
+            TripleOutcome::Bars(b) => b,
+            _ => panic!("expected bars"),
+        };
+        assert_eq!(bars.len(), 1, "padded boundary date survives the trim");
+
+        let mut malformed = T8410Response {
+            rsp_cd: "00000".to_string(),
+            outblock1: vec![daily_row("20260732")], // day 32: unparseable
+            ..Default::default()
+        };
+        malformed.outblock.cts_date = String::new();
+        let fetcher = FixedDaily { resp: malformed, calls: AtomicUsize::new(0) };
+        let err = collect_daily(&fetcher, "005930", bar_type, "20260727", "20260727").await;
+        assert!(err.is_err(), "unparseable non-empty date keeps the loud FieldParse contract");
+    }
+
+    #[tokio::test]
+    async fn daily_all_rows_below_window_is_an_empty_history_gap() {
+        // A degenerate response whose rows all predate the window (e.g. a
+        // weekend-only window) trims to nothing: that is EmptyHistory, never
+        // fabricated coverage and never a PaperThin from deeper paging.
+        let bar_type = BarKind::Daily.bar_type(InstrumentId::from("005930.XKRX")).unwrap();
+        let mut resp = T8410Response {
+            rsp_cd: "00000".to_string(),
+            outblock1: vec![daily_row("20260724"), daily_row("20260723")],
+            ..Default::default()
+        };
+        resp.outblock.cts_date = "20260722".to_string(); // live cursor
+        let fetcher = FixedDaily { resp, calls: AtomicUsize::new(0) };
+        let outcome = collect_daily(&fetcher, "005930", bar_type, "20260725", "20260726").await.unwrap();
+        assert!(
+            matches!(outcome, TripleOutcome::Gap(GapReason::EmptyHistory)),
+            "want EmptyHistory"
+        );
+        assert_eq!(fetcher.calls.load(Ordering::SeqCst), 1, "below-window page stops the walk");
     }
 
     #[tokio::test]

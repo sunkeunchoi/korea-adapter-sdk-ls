@@ -41,6 +41,19 @@ fn daily_body_three_rows() -> serde_json::Value {
     })
 }
 
+/// A single-page daily response (terminating cursor) with one candle on `date`
+/// — for tests whose requested window must actually contain the served row now
+/// that `collect_daily` trims fetched rows to the requested `[sdate, edate]`.
+fn daily_body_one_row(date: &str) -> serde_json::Value {
+    serde_json::json!({
+        "rsp_cd": "00000", "rsp_msg": "정상",
+        "t8410OutBlock": { "shcode": "005930", "cts_date": "", "rec_count": "1" },
+        "t8410OutBlock1": [
+            { "date": date, "open": "60000", "high": "61000", "low": "59500", "close": "60500", "jdiff_vol": "1000000" }
+        ]
+    })
+}
+
 /// A single-page daily response with no candles (short/empty history).
 fn daily_body_empty() -> serde_json::Value {
     serde_json::json!({
@@ -2796,7 +2809,7 @@ mod calendar_gate_migration {
         let dir = tempdir().unwrap();
         let catalog = dir.path().join("catalog");
         let server = MockServer::start().await;
-        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        let sdk = sdk_over(&server, daily_body_one_row("20100615")).await;
 
         let cal = fixture_calendar();
         let view = cal.as_of(as_of()).unwrap();
@@ -2948,7 +2961,7 @@ mod calendar_gate_migration {
         let dir = tempdir().unwrap();
         let catalog = dir.path().join("catalog");
         let server = MockServer::start().await;
-        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        let sdk = sdk_over(&server, daily_body_one_row("20100615")).await;
         let cal = fixture_calendar();
         let gate = CalendarGate::new(Some(cal.as_of(as_of()).unwrap()));
 
@@ -3051,7 +3064,7 @@ mod calendar_gate_migration {
         let dir = tempdir().unwrap();
         let catalog = dir.path().join("catalog");
         let server = MockServer::start().await;
-        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        let sdk = sdk_over(&server, daily_body_one_row("20100615")).await;
         let cal = fixture_calendar();
         let view = cal.as_of(as_of()).unwrap();
         let gate = CalendarGate::new(Some(view));
@@ -3132,7 +3145,7 @@ mod calendar_gate_migration {
         let dir = tempdir().unwrap();
         let catalog = dir.path().join("catalog");
         let server = MockServer::start().await;
-        let sdk = sdk_over(&server, daily_body_three_rows()).await;
+        let sdk = sdk_over(&server, daily_body_one_row("20100615")).await;
         let cal = calendar_with_statuses(&[
             (ymd(2010, 6, 15), DayStatus::TradingSession),
             (ymd(2010, 6, 16), DayStatus::Closed),
