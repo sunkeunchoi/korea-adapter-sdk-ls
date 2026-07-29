@@ -1125,6 +1125,19 @@ lane-check:
 adapter-check:
 	cd adapters/nautilus && cargo test --workspace
 
+.PHONY: todo-check
+
+## Legacy TODO-file guard (plan 2026-07-29-002 U8; R16, KTD5). INERT until the
+## queue cutover verdict lands: with queue/cutover-verdict.json absent or not
+## PASS (Shadow phase) it exits 0 regardless of TODO files; once the verdict is
+## PASS, any legacy TODO staging file (TODO.ATTENDED.md, TODO.OFFLINE.md, or
+## **/TODO-*.md outside docs/ and target/) fails loud with the offending paths —
+## queue/items.jsonl is then the sole staging location. Offline, no gateway.
+## Fixture-repo scenarios: scripts/todo-file-check.sh --self-test (also run by
+## the adapter-check coupling test, lab/tests/todo_merge_block.rs).
+todo-check:
+	@scripts/todo-file-check.sh
+
 .PHONY: gate-run
 
 ## Resumable driver for the AGENTS.md offline gate (plan 2026-07-29-002 U4,
