@@ -343,27 +343,62 @@ pub fn is_clean_session(
     params_hash: &str,
     prereg: Option<&PreRegistration>,
 ) -> bool {
-    let Ok(manifest) = read_manifest(data_home, run_id) else { return false };
-    let Some(link) = &manifest.dispatch else { return false };
+    clean_session_verdict(data_home, chain_records, run_id, from_rung, code_hash, params_hash, prereg)
+        == CleanVerdict::Clean
+}
+
+/// Why a finalized run did or did not qualify as clean rung evidence (R4). `is_clean_session`
+/// collapses this to a bool; `verify_escalation` keeps the distinction so its blocked reason
+/// can name a trade shortfall instead of reporting an unexplained short count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CleanVerdict {
+    /// Qualifies as clean evidence at the requested rung.
+    Clean,
+    /// Every structural gate passed, but the session closed no trades — or its performance
+    /// artifact is missing/unparseable, which is unclassifiable and fails closed the same way.
+    ZeroTrades,
+    /// Failed a structural gate: lane, rung/probation, head identity, limit events, safety
+    /// trip, or the required rung-2+ tracking twin.
+    NotEligible,
+}
+
+/// The closed trades a finalized run's performance artifact records. `None` when that artifact
+/// is missing or unparseable. "Closed" is `ts_closed.is_some()` — the same predicate
+/// `PerformanceReport::dominance_fold` folds on, so the floor can never drift from the metric.
+fn closed_trade_count(data_home: &Path, run_id: &str) -> Option<usize> {
+    read_perf(data_home, run_id).map(|p| p.trades.iter().filter(|t| t.ts_closed.is_some()).count())
+}
+
+fn clean_session_verdict(
+    data_home: &Path,
+    chain_records: &[ChainRecord],
+    run_id: &str,
+    from_rung: u8,
+    code_hash: &str,
+    params_hash: &str,
+    prereg: Option<&PreRegistration>,
+) -> CleanVerdict {
+    let Ok(manifest) = read_manifest(data_home, run_id) else { return CleanVerdict::NotEligible };
+    let Some(link) = &manifest.dispatch else { return CleanVerdict::NotEligible };
     if !link.trading_env.eq_ignore_ascii_case("live") {
-        return false;
+        return CleanVerdict::NotEligible;
     }
     // Ran at from_rung, and NOT a probation session (chain_rung == effective_rung).
     let dispatch = chain_records.iter().find_map(|r| match &r.body.kind {
         RecordKind::SessionDispatch(_) if r.body.record_id == link.dispatch_id => Some(&r.body),
         _ => None,
     });
-    let Some(body) = dispatch else { return false };
+    let Some(body) = dispatch else { return CleanVerdict::NotEligible };
     if body.chain_rung != from_rung || body.effective_rung != from_rung {
-        return false; // wrong rung, or a probation session (effective forced to 1)
+        return CleanVerdict::NotEligible; // wrong rung, or a probation session (effective forced to 1)
     }
     // Head identity: matching strategy-code + governed-params hashes.
     if manifest.strategy_code_hash != code_hash || governed_params_hash(&manifest.params) != params_hash {
-        return false;
+        return CleanVerdict::NotEligible;
     }
     // Zero limit events for this run (artifact-sourced).
     if !run_limit_events(data_home, run_id, from_rung, prereg).is_empty() {
-        return false;
+        return CleanVerdict::NotEligible;
     }
     // A safety-tripped session is NEVER clean evidence — at ANY rung, not just rung 2+.
     // `run_limit_events` reads only artifacts, so the chain safety-trip records are checked
@@ -372,16 +407,27 @@ pub fn is_clean_session(
     if chain_records.iter().any(|r| matches!(&r.body.kind,
         RecordKind::SafetyTrip(t) if t.action == TripAction::Engage && t.run_id.as_deref() == Some(run_id)))
     {
-        return false;
+        return CleanVerdict::NotEligible;
     }
     // Required reports (rung 2+): a produced (non-failed) tracking-error twin.
     if from_rung >= 2 {
         match read_report(data_home, run_id) {
             Ok(Some(r)) if r.status.produced() => {}
-            _ => return false,
+            _ => return CleanVerdict::NotEligible,
         }
     }
-    true
+    // Trade floor (R4, KTD4). A session that closed ZERO trades is not evidence, however
+    // cleanly it finalized. Head v34 builds its opening range only from live bars observed
+    // inside a 15-minute window, so a mount that starts after it rolls every symbol straight
+    // to `Phase::Done`: no positions, no limit events, no safety trip, matching hashes — every
+    // gate above green. Counting that as a clean session lets the ladder escalate real capital
+    // on a session that never took a position. A missing or unparseable performance artifact
+    // is unclassifiable and fails closed here for the same reason: "probably traded" is exactly
+    // the assumption this floor exists to refuse.
+    if closed_trade_count(data_home, run_id).unwrap_or(0) == 0 {
+        return CleanVerdict::ZeroTrades;
+    }
+    CleanVerdict::Clean
 }
 
 /// The result of verifying an escalation request (R13, AE5).
@@ -430,17 +476,33 @@ pub fn verify_escalation(
         Ok(n) => n as usize,
         Err(e) => return EscalationCheck::Blocked(e.to_string()),
     };
-    let clean: Vec<String> = list_runs(data_home)
-        .into_iter()
-        .filter(|rid| is_clean_session(data_home, chain_records, rid, from_rung, code_hash, params_hash, Some(prereg)))
-        .collect();
+    // Partition rather than filter: a session rejected ONLY for taking no trades is a very
+    // different operator story from one that never qualified, and reporting a bare short count
+    // for both sends the operator hunting for a gate failure that did not happen (R4).
+    let mut clean: Vec<String> = Vec::new();
+    let mut zero_trade = 0usize;
+    for rid in list_runs(data_home) {
+        match clean_session_verdict(data_home, chain_records, &rid, from_rung, code_hash, params_hash, Some(prereg)) {
+            CleanVerdict::Clean => clean.push(rid),
+            CleanVerdict::ZeroTrades => zero_trade += 1,
+            CleanVerdict::NotEligible => {}
+        }
+    }
     if clean.len() < n {
-        return EscalationCheck::Blocked(format!(
+        let mut reason = format!(
             "escalation from rung {from_rung} needs {n} clean session(s) at the current head; found {} \
              (missing {})",
             clean.len(),
             n - clean.len()
-        ));
+        );
+        if zero_trade > 0 {
+            reason.push_str(&format!(
+                "; {zero_trade} otherwise-clean session(s) had zero closed trades and do not count \
+                 (a session that took no position is not evidence — check the mount landed before \
+                 the 09:00–09:15 opening range)"
+            ));
+        }
+        return EscalationCheck::Blocked(reason);
     }
     // Expectation band (R14(e)): cumulative realized P&L across the qualifying sessions.
     match prereg.expectation_band(from_rung) {
@@ -706,6 +768,40 @@ mod tests {
         realized_pnl: f64,
         params: OrbParams,
     ) {
+        let trade = TradeRecord {
+            symbol: "005930.XKRX".into(),
+            entry_side: "BUY".into(),
+            quantity: 10.0,
+            avg_px_open: 60_000.0,
+            avg_px_close: Some(60_000.0 + realized_pnl / 10.0),
+            realized_pnl,
+            ts_opened: 1,
+            ts_closed: Some(2),
+            fills: Vec::new(),
+            risk_capital: None,
+            realized_r: None,
+        };
+        stage_run_with_perf(
+            data_home,
+            run_id,
+            rung,
+            dispatch_id,
+            params,
+            Some(PerformanceReport::assemble(vec![trade], 1_000_000.0)),
+        );
+    }
+
+    /// The staging primitive behind [`stage_clean_run_params`]: everything a clean run needs,
+    /// with the performance artifact under the caller's control. `None` writes no
+    /// `performance.json` at all — the missing-artifact case the trade floor fails closed on.
+    fn stage_run_with_perf(
+        data_home: &Path,
+        run_id: &str,
+        rung: u8,
+        dispatch_id: &str,
+        params: OrbParams,
+        perf: Option<PerformanceReport>,
+    ) {
         let writer = RunWriter::new(data_home, run_id).unwrap();
         let manifest = Manifest {
             run_id: run_id.into(),
@@ -730,20 +826,9 @@ mod tests {
             created_utc: "2026-07-16T01:00:00Z".into(),
         };
         writer.write_manifest(&manifest).unwrap();
-        let trade = TradeRecord {
-            symbol: "005930.XKRX".into(),
-            entry_side: "BUY".into(),
-            quantity: 10.0,
-            avg_px_open: 60_000.0,
-            avg_px_close: Some(60_000.0 + realized_pnl / 10.0),
-            realized_pnl,
-            ts_opened: 1,
-            ts_closed: Some(2),
-            fills: Vec::new(),
-            risk_capital: None,
-            realized_r: None,
-        };
-        writer.write_performance(&PerformanceReport::assemble(vec![trade], 1_000_000.0)).unwrap();
+        if let Some(p) = perf {
+            writer.write_performance(&p).unwrap();
+        }
         let mut dq = DataQualityReport::backtest(vec![], vec![]);
         dq.teardown_retries = Some(0);
         dq.dedup_hits = Some(0);
@@ -778,6 +863,106 @@ mod tests {
                   "expectation_band": { "min_cum_pnl": 0.0, "max_cum_pnl": 1000000.0 } }
             ]
         }))
+    }
+
+    /// Stage a run at rung 1 on a fresh chain and return `(tmp, chain, run_id)`.
+    fn zero_trade_fixture(perf: Option<PerformanceReport>) -> (TempDir, DispatchChain, String) {
+        let tmp = TempDir::new().unwrap();
+        let chain = DispatchChain::open(tmp.path()).unwrap();
+        chain.append(now(), 1, 1, None, RecordKind::Genesis).unwrap();
+        let d = dispatch_record(&chain, 1, 1);
+        let run = "20260716T010000Z-live-orb-v0".to_string();
+        stage_run_with_perf(tmp.path(), &run, 1, &d, OrbParams::default(), perf);
+        (tmp, chain, run)
+    }
+
+    fn default_head_keys() -> (String, String) {
+        (crate::artifacts::manifest::strategy_code_hash(), governed_params_hash(&OrbParams::default()))
+    }
+
+    /// AE1/R4. Head v34 builds its opening range ONLY from live bars observed between 09:00 and
+    /// 09:15 KST. A mount that starts after 09:15 rolls every symbol straight to `Phase::Done`,
+    /// takes zero trades — and then finalizes *perfectly*: green dispatch, right rung, matching
+    /// head hashes, no limit events, no safety trip. Six gates pass and nothing was traded, so
+    /// without a floor the ladder counts it as evidence for escalating real capital.
+    #[test]
+    fn a_zero_trade_session_is_not_clean_evidence() {
+        let (tmp, chain, run) = zero_trade_fixture(Some(PerformanceReport::assemble(vec![], 1_000_000.0)));
+        let (code, params) = default_head_keys();
+        let recs = chain.load().records;
+        assert!(
+            !is_clean_session(tmp.path(), &recs, &run, 1, &code, &params, Some(&rung1_prereg())),
+            "a finalized session that closed ZERO trades must not qualify as clean rung evidence"
+        );
+    }
+
+    /// The floor must not regress the happy path: one closed trade is enough.
+    #[test]
+    fn a_single_closed_trade_session_remains_clean() {
+        let tmp = TempDir::new().unwrap();
+        let chain = DispatchChain::open(tmp.path()).unwrap();
+        chain.append(now(), 1, 1, None, RecordKind::Genesis).unwrap();
+        let d = dispatch_record(&chain, 1, 1);
+        let run = "20260716T010000Z-live-orb-one";
+        stage_clean_run_params(tmp.path(), run, 1, &d, 500.0, OrbParams::default());
+        let (code, params) = default_head_keys();
+        let recs = chain.load().records;
+        assert!(
+            is_clean_session(tmp.path(), &recs, run, 1, &code, &params, Some(&rung1_prereg())),
+            "one closed trade and no limit events is still clean — the floor is a floor, not a raise"
+        );
+    }
+
+    /// A run whose performance artifact is absent is unclassifiable, so it fails CLOSED. The
+    /// alternative — treating an unreadable ledger as "probably traded" — would let exactly the
+    /// evidence gap this floor exists to close back in through a missing file.
+    #[test]
+    fn a_session_without_a_performance_artifact_is_not_clean() {
+        let (tmp, chain, run) = zero_trade_fixture(None);
+        let (code, params) = default_head_keys();
+        let recs = chain.load().records;
+        assert!(
+            !is_clean_session(tmp.path(), &recs, &run, 1, &code, &params, Some(&rung1_prereg())),
+            "a missing performance artifact must fail closed, not pass by omission"
+        );
+    }
+
+    /// R4 end to end: `verify_escalation` counts only the qualifying runs, and its blocked
+    /// reason names the trade shortfall the way it already names the clean-session shortfall —
+    /// so an operator reading `--rung-report` can see WHY a session did not count.
+    #[test]
+    fn verify_escalation_counts_only_trading_sessions_and_names_the_shortfall() {
+        let tmp = TempDir::new().unwrap();
+        let chain = DispatchChain::open(tmp.path()).unwrap();
+        chain.append(now(), 1, 1, None, RecordKind::Genesis).unwrap();
+        // Two runs, both otherwise clean: one traded, one took zero trades. rung1_prereg
+        // needs 2 clean sessions, so a floor-less ladder would escalate on one real session.
+        let d1 = dispatch_record(&chain, 1, 1);
+        stage_clean_run_params(tmp.path(), "20260716T010000Z-live-orb-traded", 1, &d1, 500.0, OrbParams::default());
+        let d2 = dispatch_record(&chain, 1, 1);
+        stage_run_with_perf(
+            tmp.path(),
+            "20260716T020000Z-live-orb-zero",
+            1,
+            &d2,
+            OrbParams::default(),
+            Some(PerformanceReport::assemble(vec![], 1_000_000.0)),
+        );
+        let (code, params) = default_head_keys();
+        let recs = chain.load().records;
+        match verify_escalation(tmp.path(), &recs, 1, &code, &params, &rung1_prereg()) {
+            EscalationCheck::Blocked(reason) => {
+                assert!(
+                    reason.contains("found 1"),
+                    "only the traded session counts; got: {reason}"
+                );
+                assert!(
+                    reason.contains("zero closed trades"),
+                    "the blocked reason must name the trade shortfall, not just the count; got: {reason}"
+                );
+            }
+            other => panic!("expected Blocked on one qualifying session, got {other:?}"),
+        }
     }
 
     #[test]
