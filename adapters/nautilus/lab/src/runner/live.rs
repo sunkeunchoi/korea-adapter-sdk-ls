@@ -651,29 +651,45 @@ const DAILY_BAR_TYPE: &str = "1-DAY";
 /// checkpoint, no daily watermarks, an unparseable watermark value — fails closed to the
 /// deferrable red this check has always produced when unevaluated.
 fn evaluate_catalog(catalog: &Path, last_closed_session: Option<chrono::NaiveDate>) -> (bool, bool) {
-    let bars_present = catalog_has_bars(catalog);
-    let Some(expected) = last_closed_session else { return (false, bars_present) };
     let Ok(checkpoint) = Checkpoint::load(&catalog.join("ingest-checkpoint.json")) else {
-        return (false, bars_present);
+        // Without a checkpoint there is no instrument set to sample against, so the presence
+        // question is unanswerable too — both halves fail closed together.
+        return (false, false);
     };
     let dailies = checkpoint.watermarks_for(DAILY_BAR_TYPE);
+    // Presence is asked PER WATERMARKED INSTRUMENT, not of the tree as a whole. A bare
+    // "is there any parquet anywhere" sample is satisfied by the 1-MINUTE series that sit
+    // beside the daily ones, so a heal that wiped every daily bar would still read as
+    // present — and a heal that wiped just one symbol's would go entirely unnoticed.
+    let bars_present = !dailies.is_empty()
+        && dailies.iter().all(|(instrument, _)| daily_bars_present(catalog, instrument));
+    let Some(expected) = last_closed_session else { return (false, bars_present) };
     if dailies.is_empty() {
         return (false, bars_present);
     }
     // `>=` not `==`: a catalog ingested past the last proven session (the calendar lags the
     // ingest) is ahead, not stale. An unparseable value is `None` and fails the test.
     let all_current = dailies.iter().all(|(_, d)| d.is_some_and(|d| d >= expected));
-    (all_current && checkpoint.gaps().is_empty(), bars_present)
+    // KTD5 scoped to the daily bar type, exactly like the watermark test above. The minute
+    // series share this gap list and lag the daily set by design, so reading it unfiltered
+    // lets a minute-series gap red a current daily catalog — permanently, since recorded
+    // gaps are never cleared.
+    let daily_gap = checkpoint.gaps().iter().any(|g| g.bar_type == DAILY_BAR_TYPE);
+    (all_current && !daily_gap, bars_present)
 }
 
-/// Whether the catalog holds any bar data at all — one parquet under `data/bars/` is enough.
-fn catalog_has_bars(catalog: &Path) -> bool {
+/// Whether `instrument` has at least one daily parquet on disk. Series directories are named
+/// `{instrument}-{bar_type}-...`, so the prefix pins both the instrument and the bar type and
+/// cannot be satisfied by another symbol's or another resolution's files.
+fn daily_bars_present(catalog: &Path, instrument: &str) -> bool {
     let bars = catalog.join("data").join("bars");
+    let prefix = format!("{instrument}-{DAILY_BAR_TYPE}-");
     let Ok(series) = std::fs::read_dir(&bars) else { return false };
     series.flatten().any(|entry| {
-        std::fs::read_dir(entry.path()).is_ok_and(|mut files| {
-            files.any(|f| f.is_ok_and(|f| f.path().extension().is_some_and(|e| e == "parquet")))
-        })
+        entry.file_name().to_string_lossy().starts_with(&prefix)
+            && std::fs::read_dir(entry.path()).is_ok_and(|mut files| {
+                files.any(|f| f.is_ok_and(|f| f.path().extension().is_some_and(|e| e == "parquet")))
+            })
     })
 }
 
@@ -2987,15 +3003,30 @@ mod catalog_watermark_tests {
         NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
     }
 
-    /// A catalog with `n` daily symbols watermarked at `watermark`, and one real parquet so
-    /// the bar-presence sample is non-empty.
-    fn catalog_with(tmp: &TempDir, watermarks: &[(&str, &str)], with_bars: bool) -> std::path::PathBuf {
+    /// Write one parquet under the `{instrument}-{bar_type}-LAST-EXTERNAL` series directory,
+    /// mirroring the on-disk layout the real catalog uses.
+    fn write_series(catalog: &Path, instrument: &str, bar_type: &str) {
+        let series = catalog
+            .join("data")
+            .join("bars")
+            .join(format!("{instrument}-{bar_type}-LAST-EXTERNAL"));
+        std::fs::create_dir_all(&series).unwrap();
+        std::fs::write(series.join("2026-07-28T06-30-00-000000000Z.parquet"), b"pq").unwrap();
+    }
+
+    /// A catalog whose daily watermarks are `watermarks`. `bars_for` names the instruments
+    /// that actually have daily bars on disk — passing a strict subset of `watermarks` is how
+    /// a PARTIAL destructive heal is expressed, which is the realistic shape: a heal wipes one
+    /// instrument's series, not the whole tree.
+    fn catalog_with_bars(
+        tmp: &TempDir,
+        watermarks: &[(&str, &str)],
+        bars_for: &[&str],
+    ) -> std::path::PathBuf {
         let catalog = tmp.path().join("catalog");
         std::fs::create_dir_all(&catalog).unwrap();
-        if with_bars {
-            let series = catalog.join("data").join("bars").join("005930.XKRX-1-DAY-LAST-EXTERNAL");
-            std::fs::create_dir_all(&series).unwrap();
-            std::fs::write(series.join("2026-07-28T06-30-00-000000000Z.parquet"), b"pq").unwrap();
+        for instrument in bars_for {
+            write_series(&catalog, instrument, DAILY_BAR_TYPE);
         }
         let mut ckpt = Checkpoint::default();
         for (instrument, wm) in watermarks {
@@ -3003,6 +3034,12 @@ mod catalog_watermark_tests {
         }
         ckpt.save(&catalog.join("ingest-checkpoint.json")).unwrap();
         catalog
+    }
+
+    /// The common case: every watermarked instrument also has bars.
+    fn catalog_with(tmp: &TempDir, watermarks: &[(&str, &str)], with_bars: bool) -> std::path::PathBuf {
+        let bars: Vec<&str> = if with_bars { watermarks.iter().map(|(i, _)| *i).collect() } else { vec![] };
+        catalog_with_bars(tmp, watermarks, &bars)
     }
 
     /// AE2/R5. The whole point: with no stub and a clean ingest, the check stands on its own.
@@ -3085,12 +3122,57 @@ mod catalog_watermark_tests {
         assert_eq!(evaluate_catalog(&catalog, Some(d("2026-07-28"))), (true, true));
     }
 
-    /// A checkpoint with no daily watermarks at all cannot testify to freshness.
+    /// A checkpoint with no daily watermarks testifies to nothing, even with bars on disk.
+    /// Presence is now asked per watermarked instrument, so an empty watermark set leaves no
+    /// instrument to ask about and BOTH halves fail closed — deliberately stricter than
+    /// answering "yes, some parquet exists somewhere", which is not a claim about this
+    /// catalog's daily coverage.
     #[test]
-    fn no_daily_watermarks_is_not_fresh() {
+    fn no_daily_watermarks_is_not_fresh_and_claims_no_bars() {
         let tmp = TempDir::new().unwrap();
-        let catalog = catalog_with(&tmp, &[], true);
-        assert_eq!(evaluate_catalog(&catalog, Some(d("2026-07-28"))), (false, true));
+        let catalog = catalog_with_bars(&tmp, &[], &["005930.XKRX"]);
+        assert_eq!(evaluate_catalog(&catalog, Some(d("2026-07-28"))), (false, false));
+    }
+
+    /// A PARTIAL destructive heal is the realistic shape: one instrument's daily series is
+    /// wiped while the rest survive. An unscoped `.any()` over the whole bars tree happily
+    /// finds the survivors' parquet and reports bars present, so the check reads fully green
+    /// on a catalog that is missing a symbol's data entirely.
+    #[test]
+    fn a_partial_heal_that_wipes_one_symbols_bars_is_not_bars_present() {
+        let tmp = TempDir::new().unwrap();
+        let catalog = catalog_with_bars(
+            &tmp,
+            &[("005930.XKRX", "2026-07-28"), ("000660.XKRX", "2026-07-28")],
+            &["005930.XKRX"], // 000660's daily series was wiped
+        );
+        assert_eq!(evaluate_catalog(&catalog, Some(d("2026-07-28"))), (true, false));
+    }
+
+    /// The catalog holds 1-MINUTE series beside the daily ones. A heal that wipes every DAILY
+    /// bar leaves the minute files untouched, and an unfiltered sample reads those as proof
+    /// that daily bars exist -- defeating the destructive-heal trap entirely.
+    #[test]
+    fn minute_bars_alone_do_not_satisfy_the_daily_bar_presence_sample() {
+        let tmp = TempDir::new().unwrap();
+        let catalog = catalog_with_bars(&tmp, &[("005930.XKRX", "2026-07-28")], &[]);
+        write_series(&catalog, "005930.XKRX", "1-MINUTE");
+        assert_eq!(evaluate_catalog(&catalog, Some(d("2026-07-28"))), (true, false));
+    }
+
+    /// KTD5 scopes the gap test the same way the watermark test is scoped. The 1-MINUTE
+    /// series share the gap list and lag the daily set by design, so an unfiltered read lets
+    /// a minute-series gap red a perfectly current daily catalog -- and permanently, since
+    /// recorded gaps are never cleared.
+    #[test]
+    fn a_minute_series_gap_does_not_red_the_daily_watermark() {
+        let tmp = TempDir::new().unwrap();
+        let catalog = catalog_with(&tmp, &[("005930.XKRX", "2026-07-28")], true);
+        let path = catalog.join("ingest-checkpoint.json");
+        let mut ckpt = Checkpoint::load(&path).unwrap();
+        ckpt.record_gap("005930.XKRX", "1-MINUTE", "20260720-20260721", GapReason::EmptyHistory);
+        ckpt.save(&path).unwrap();
+        assert_eq!(evaluate_catalog(&catalog, Some(d("2026-07-28"))), (true, true));
     }
 }
 
