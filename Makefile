@@ -1148,6 +1148,19 @@ gate-run:
 gate-run-check:
 	@scripts/gate-run-check.sh
 
+.PHONY: next
+
+## Window-aware work-queue entry point (plan 2026-07-29-002 U5, KTD3): prints
+## the derived KRX window, in-flight sequences (turn/ladder/ingest/gate-run),
+## and the executable next step from queue/items.jsonl. LS_CALENDAR_SNAPSHOT
+## is passed INLINE to the subprocess only — nothing is exported into the
+## operator shell (an exported LS_* poisons `cargo test` on pristine main).
+## Reads only local state; no gateway, no network. With the gitignored
+## snapshot absent, the genuinely-unknown fail-closed report is the CORRECT
+## output (only any-window items plus the calendar repair action).
+next:
+	cd adapters/nautilus && LS_CALENDAR_SNAPSHOT=state/krx.calendar.json cargo run -q -p nautilus-ls-lab --bin lab-next -- report
+
 .PHONY: foundation-gate
 
 ## The named Calendar Foundation Gate (issue #189 U4, R1–R5): the ENTIRE offline calendar

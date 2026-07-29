@@ -400,7 +400,9 @@ impl Queue {
 /// Whether an artifact path witnesses completion: it exists and is non-empty
 /// (a non-empty file, or a directory with at least one entry). An unreadable
 /// path is treated as absent — fail toward keeping the item actionable.
-fn artifact_witnesses(path: &Path) -> bool {
+/// Crate-visible so the entry report's R12 reconciliation pre-checks with the
+/// SAME predicate `done` enforces.
+pub(crate) fn artifact_witnesses(path: &Path) -> bool {
     match std::fs::metadata(path) {
         Ok(md) if md.is_dir() => {
             std::fs::read_dir(path).map(|mut d| d.next().is_some()).unwrap_or(false)
@@ -410,26 +412,32 @@ fn artifact_witnesses(path: &Path) -> bool {
     }
 }
 
-/// The default tracked queue path: ascend from this crate's manifest dir to the
-/// repo root (the first ancestor holding a `.git` entry — a dir in a normal
-/// clone, a file in a worktree) and join [`QUEUE_RELPATH`]. Baked from
-/// `CARGO_MANIFEST_DIR` (mirroring the trials-ledger idiom) so the path is
-/// stable regardless of the invoking cwd.
+/// The repo root: the first ancestor of this crate's manifest dir holding a
+/// `.git` entry (a dir in a normal clone, a file in a worktree). Baked from
+/// `CARGO_MANIFEST_DIR` (mirroring the trials-ledger idiom) so the answer is
+/// stable regardless of the invoking cwd. Shared by every repo-root artifact
+/// the `lab-next` surfaces touch (the queue file, the gate-run state).
 ///
 /// # Errors
 ///
 /// When no ancestor of the manifest dir holds a `.git` entry.
-pub fn default_queue_path() -> anyhow::Result<PathBuf> {
+pub fn repo_root() -> anyhow::Result<PathBuf> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
-    let root = manifest
+    manifest
         .ancestors()
         .find(|a| a.join(".git").exists())
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "no repo root (.git) above {} — set {QUEUE_PATH_ENV} explicitly",
-                manifest.display()
-            )
-        })?;
+        .map(Path::to_path_buf)
+        .ok_or_else(|| anyhow::anyhow!("no repo root (.git) above {}", manifest.display()))
+}
+
+/// The default tracked queue path: [`repo_root`] + [`QUEUE_RELPATH`].
+///
+/// # Errors
+///
+/// When no repo root is findable (see [`repo_root`]).
+pub fn default_queue_path() -> anyhow::Result<PathBuf> {
+    let root = repo_root()
+        .map_err(|e| anyhow::anyhow!("{e} — set {QUEUE_PATH_ENV} explicitly"))?;
     Ok(root.join(QUEUE_RELPATH))
 }
 
