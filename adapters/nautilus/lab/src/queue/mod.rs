@@ -22,6 +22,8 @@
 //! mid-write can never corrupt the live queue. A malformed line is a typed
 //! per-line read error and the queue is never rewritten past it.
 
+pub mod window;
+
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Utc};
