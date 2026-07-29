@@ -1125,6 +1125,29 @@ lane-check:
 adapter-check:
 	cd adapters/nautilus && cargo test --workspace
 
+.PHONY: gate-run
+
+## Resumable driver for the AGENTS.md offline gate (plan 2026-07-29-002 U4,
+## KTD4): runs the six gate steps in order (docs, root cargo test, ls-core,
+## docs-check, lane-check, adapter-check), recording per-step completion plus a
+## whole-tree fingerprint to the gitignored .gate-run/state.json. A re-run
+## resumes from the first incomplete or invalidated step — any tree change
+## invalidates recorded steps (spurious re-run possible, false green never).
+## `scripts/gate-run.sh --status` prints machine-readable state for lab-next.
+gate-run:
+	@scripts/gate-run.sh
+
+.PHONY: gate-run-check
+
+## Offline self-test for the gate driver: runs the REAL scripts/gate-run.sh
+## end-to-end in a throwaway git fixture repo with fake make/cargo shims first
+## on PATH (invocation log + scripted exit codes) — asserting resume,
+## fingerprint-invalidation (incl. the untracked content-digest arm), failure
+## propagation, locking, and --status. No real gate step, no network, never
+## touches this repo's state.
+gate-run-check:
+	@scripts/gate-run-check.sh
+
 .PHONY: foundation-gate
 
 ## The named Calendar Foundation Gate (issue #189 U4, R1–R5): the ENTIRE offline calendar

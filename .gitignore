@@ -23,3 +23,9 @@ state/
 *.calendar-inputs.json
 *.calendar-fetch.ckpt
 
+# Gate-driver resume state (scripts/gate-run.sh — plan 2026-07-29-002 U4, KTD4).
+# Must stay ignored: the driver's tree fingerprint enumerates untracked files via
+# `git ls-files --others --exclude-standard`, which skips ignored paths — that is
+# what keeps the driver's own state file out of its fingerprint by construction.
+.gate-run/
+
