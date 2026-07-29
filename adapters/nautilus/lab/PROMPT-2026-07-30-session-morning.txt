@@ -1,0 +1,205 @@
+/compound-engineering:ce-work Execute tomorrow morning's (2026-07-30) session-morning catch-up for the
+nautilus adapter: calendar chain, catalog ingest through yesterday's close, then resolve today's mount
+universe, and report GO/NO-GO for the attended mount. Operational run — no code edits, no commits, no PRs.
+
+================================================================================
+THE DEADLINE — read this first, it governs every decision below
+================================================================================
+
+Head v34's opening range is 09:00–09:15 KST (`range_open` + `range_minutes: 15`). The strategy builds
+it ONLY from live bars it observes inside that window — there is no historical backfill. If the mount
+starts after 09:15, `orb.rs:622-628` rolls every symbol straight to `Phase::Done` and the session takes
+ZERO trades.
+
+WHAT A LATE MOUNT ACTUALLY COSTS (corrected 2026-07-29 — an earlier draft of this prompt overstated it)
+Tomorrow runs LS_TRADING_ENV=paper. `is_clean_session` returns false unless the run's dispatch link
+carries `trading_env == "live"` (`ladder.rs:348`), and `LS_TRADING_ENV=paper` with no LS_DISPATCH_LANE
+override resolves to `LanePosture::Paper` — live.rs:497 calls it "a paper pre-check (rung
+informational)" in its own comment. The env string threads straight through
+(live.rs:493 -> :530 -> MountAuthorization :1318 -> DispatchLink :1223 -> the :348 gate), so a paper
+run records `paper` and CANNOT score clean. The ladder stays at 0 of 5 either way. A late mount does
+NOT burn 1 of the 5 rung-1 clean sessions.
+So the cost of missing 09:15 is the rehearsal itself — a zero-trade session that teaches nothing about
+the chain under real clock pressure — not spent rung-1 evidence. Cheaper than advertised, still not
+free.
+(Note the separate defect this exposes: `is_clean_session` has no trade-count floor, so on a LIVE lane
+a zero-trade session WOULD score clean. That is fixed on an unmerged worktree branch and is not in
+tomorrow's binaries. It does not bite a paper rehearsal.)
+
+So: the universe must be resolved and handed off by ~09:10 KST. If the chain is not on track to make
+that, STOP and report "stand down" rather than delivering a universe the operator can't use. That is a
+success, not a failure — and on a paper lane it is a cheap one. This deadline was discovered on
+2026-07-29 after the window had already closed; do not rediscover it.
+
+Target timeline:
+
+  time (KST)    step                                        who
+  ----------    ----------------------------------------    --------
+  08:45         KRX witness probe for 2026-07-29             agent
+  08:50–08:55   fetch-inputs -> refresh -> activate          agent
+  08:55–09:05   ingest 2026-07-29 (75 daily syms)            agent
+  09:00–09:10   resolve universe for 2026-07-30              agent
+  by 09:15      operator mounts                              OPERATOR
+
+================================================================================
+Context a fresh session can't know
+================================================================================
+
+REPO / BINARIES
+/Users/mini/dev/korea-adapter-sdk-ls. Work from adapters/nautilus/ — a STANDALONE cargo workspace.
+All 16 debug binaries under adapters/nautilus/target/debug/ were built from 5f38144 and the suite
+passed at that commit.
+
+*** main has MOVED PAST 5f38144 since those binaries were built. *** The ladder trade-count floor
+and the real catalog_watermark evaluation landed on 2026-07-29 and are NOT in these binaries. That
+is deliberate: they change a capital-authorization gate and have never been exercised against a live
+session, so tomorrow runs the binaries that were validated, not the newest source. DO NOT REBUILD —
+a rebuild silently swaps both changes into the dispatch gate mid-chain. Verify before starting:
+
+  ls -lT adapters/nautilus/target/debug/ls-ingest   # expect a Jul 28 timestamp, not today's
+
+Invoke the prebuilt binaries directly (./target/debug/ls-ingest, ../target/debug/lab-live, etc.).
+`cargo run --release` reintroduces stale-binary risk and burns the clock. If a rebuild ever IS
+needed, the lab bins require an explicit `-p nautilus-ls-lab --bins`.
+
+CALENDAR — NOT PRE-DONE TOMORROW
+Unlike 07-29, you must run the full chain: probe -> calendar-fetch-inputs -> calendar-refresh ->
+calendar-activate, per adapters/nautilus/lab/RUNBOOK-session-morning.md Steps 1–3. KRX publishes a
+session's daily witness only at ~08:50 KST the NEXT morning (hourly probes on 07-28 were empty from
+17:45 through 07:51; the witness landed 07:51–08:51). Do not start before ~08:45.
+Do NOT activate a partial=true candidate — `partial:source-failure` is acknowledgeable, which is the
+trap: it consumes the chain transition and leaves consumers as blocked as before. Approval files are
+named refresh-<RUN-date>.approval.json (the run date, not the through-date).
+Activation CHANGES artifact_id — the operator's override binds to it, so activate before they author.
+
+CREDENTIALS (moved 2026-07-29 — the runbook no longer carries them)
+The KRX and KASI keys now live ONLY in <repo>/.env.calendar, gitignored by the root `.env.*` rule and
+installed 0600. Load them once at the top of your shell:
+  set -a; . /Users/mini/dev/korea-adapter-sdk-ls/.env.calendar; set +a
+RUNBOOK-session-morning.md Step 0 documents this and is now credential-free and committable. Never
+echo, print, log, or copy either value; credentials ride in the process env only.
+
+INGEST
+Watermarks sit at 20260728 for all 75 daily symbols
+(data/turn4-fresh/catalog/ingest-checkpoint.json). LS_INGEST_LOOKBACK=20260518 (the catalog coverage
+start). LS_INGEST_LANE_FILE and every path must be ABSOLUTE. Run from adapters/nautilus, never the
+repo root. LS_INGEST_SKIP_UNIVERSE_LOAD=1 plus an explicit symbol list — an unbounded accumulate
+re-composes the head's tradable universe.
+PR #228 is proven in production: on 07-29 the single-day window 20260728..20260728 returned exactly
+1 bar per symbol ("75 bars across 75 triples (0 skipped), 0 coverage gaps, 0 refused pending heal")
+in 15.5 min. If you see APPEND REFUSED, STOP and report — the watermark-rollback workaround is retired
+and a refusal now means a new problem.
+ls-ingest prints nothing useful and RUST_LOG does nothing: poll the checkpoint and watch watermarks
+flip to 20260729. The checkpoint does not advance while a symbol is mid-throttle. IGW00201 is a warm
+cumulative budget that refills in bursts — 07-28 took ~70 min, 07-29 took 15.5 min. If the run is not
+clearly on pace to finish by ~09:05, SAY SO EARLY so the operator can decide before the OR window.
+
+MOUNT UNIVERSE (after 09:00 KST only)
+Before the auction, t8407 returns the PREVIOUS session's snapshot, whose `open` is a valid positive
+integer, so the producer would silently resolve yesterday's opens.
+Run lab-mount-universe with:
+  LS_DATA_HOME=<repo>/data/turn4-fresh
+  LS_MOUNT_UNIVERSE_DATE=2026-07-30
+  LS_MOUNT_UNIVERSE_METADATA=<repo>/adapters/nautilus/lab/config/universe-metadata-20260723.json
+      (hash-bound to head v34)
+  LS_DISPATCH_LANE_ENV=<repo>/.env.domestic   (required because date==today -> live t8407 quote)
+  LS_CALENDAR_SNAPSHOT=<repo>/adapters/nautilus/state/krx.calendar.json
+  --out <absolute path outside state/>
+If the producer refuses because every gap < 0.6%, that is a VALID flat-open outcome — report "no mount
+today", not an error. For calibration: 07-27 gave 40 syms (0.61–10.12%), 07-28 was empty (flat open),
+07-29 gave 37 syms (+0.64–3.93%, all gap-up).
+Yesterday's data/turn4-fresh/mount-universe-20260729.json is USELESS tomorrow — rows are
+session_date-bound and --mount refuses another day's file. Resolve fresh.
+
+CHAIN STATE
+Genesis was registered 2026-07-29 (data/turn4-fresh/dispatch/chain.jsonl, record 2026-07-29-0000,
+chain_rung 1 / effective_rung 1). Do NOT re-genesis — it's refused on a valid chain. No dispatch has
+ever been consumed; no session has run. The ladder is at rung 1, 0 of 5 clean sessions.
+
+TWO DISPATCH-GATE FACTS, so they don't surprise the operator at 09:10
+- `catalog_watermark` is computed ONLY from the LS_DISPATCH_STUB_CATALOG env stub (live.rs:646-651);
+  nothing reads the real catalog, so with no stub it is (false, false) and reds as "catalog watermark
+  is stale" no matter how clean the ingest was. It is Tier::Deferrable ->
+  LS_DISPATCH_DEFER="catalog_watermark".
+  NEVER set LS_DISPATCH_STUB_CATALOG=ok — that asserts a check that was never evaluated, on a live rung.
+- Deferrals accumulate: prereg has k_window: 5, max_deferrals: 3. Deferring this every session would
+  trip readiness_verdict Red as the window fills and block escalation to rung 2. Read from code, not
+  yet observed — flag it to the operator, don't act on it.
+
+THE UNKNOWN OVERRIDE IS THE OPERATOR'S, NEVER YOURS
+Tomorrow reads Unknown in the calendar (witnesses are retroactive) — normal, and non-deferrable for
+--dispatch. Only a bound, audited attended override proceeds it, and both runbooks state the agent
+never authors or supplies it. You may write a SCAFFOLD with mechanical fields filled and
+operator / reason / citation left blank (it fails closed that way); you may not fill those three.
+A scaffold from today is at data/turn4-fresh/unknown-override-20260729.json — tomorrow's needs a new
+kst_date, run_id, and the NEW snapshot_artifact_id from after activation.
+--dispatch and --mount are nonce-gated and attended; nonce.rs:88-99 treats a non-TTY stdin as
+unattended, so agent shells are refused by design.
+
+PRE-VERIFIED, DO NOT RE-LITIGATE
+Head v34 pin (strategy_code_hash e5bc2ae8…, confirm with `lab-live --head`), rung-1 prereg band
+[-148000, 266000], kill switch clear, lane-check green, LS_MOUNT_KEEPALIVE file exists at
+data/turn4-fresh/rung1-20260729.keepalive (reusable).
+
+================================================================================
+PRE-STAGED — start here, do not reassemble the chain by hand
+================================================================================
+
+adapters/nautilus/scripts/session-morning.sh runs steps 1-5 below as ONE entry point with
+every path already resolved absolute and the 75-symbol list read from the checkpoint:
+    cd /Users/mini/dev/korea-adapter-sdk-ls/adapters/nautilus/scripts
+    LS_TRADING_ENV=paper ./session-morning.sh --dry-run   # inspect first, zero traffic
+    LS_TRADING_ENV=paper ./session-morning.sh
+It refuses on any LS_TRADING_ENV but paper, stops on APPEND REFUSED, stands down (exit 40)
+with minutes-remaining when the ingest is not on pace for 09:05, refuses to resolve a
+universe before 09:00, and stops at a GO/NO-GO report. It never runs --mount/--dispatch/
+--genesis and never authors the override's operator/reason/citation.
+Exit codes: 0 GO | 1 NO-GO | 40 stand-down | 64 misconfigured.
+
+adapters/nautilus/scripts/krx-witness-watch.sh has been polling hourly since 2026-07-29
+10:47 KST; read scripts/krx-witness-watch.log FIRST — the publication answer for 2026-07-29
+is likely already on disk, and session-morning.sh reads it automatically instead of
+spending clock on its own probe.
+
+The step-by-step task list below remains the authority on WHAT each step must achieve and
+what its success signal is. Use it to verify the script's output, and to take over by hand
+if the script stops.
+
+================================================================================
+Task
+================================================================================
+
+1. Probe the KRX witness for 2026-07-29. If 0 rows, the catalog cannot advance — go to the Step 5
+   fidelity decision and report it; do not refresh.
+2. Archive (copy, never move) the active calendar, then fetch-inputs -> refresh -> activate. Report the
+   new artifact_id — the operator needs it verbatim for the override.
+3. Run the bounded catch-up ingest for the 75-symbol daily set; poll until all watermarks read 20260729.
+   Report progress milestones and total wall time. Flag early if pace threatens 09:05.
+4. Run `lab-research catalog status` (needs LS_CALENDAR_SNAPSHOT); expect GO, no gaps, no shifted
+   coverage.
+5. After 09:00, resolve the mount universe for 2026-07-30. Report symbol count + gap range, or the
+   flat-open refusal with its gap / missing_metadata counts.
+6. STOP before any mount. Report GO (universe path, new artifact_id + calendar_id for the override, env
+   checklist including LS_DISPATCH_PREREG and the catalog_watermark defer, and minutes remaining before
+   09:15) or NO-GO (flat open / late / any blocker).
+
+================================================================================
+Constraints
+================================================================================
+
+- Paper lane only (LS_TRADING_ENV=paper). The ONLY gateway traffic allowed: the KRX/KASI calendar fetch,
+  the ingest, and the single t8407 quote inside universe resolution. No order-surface TRs, no smokes,
+  no account probes.
+- Never print credentials from any env file or the runbook. Do not modify anything under state/ except
+  via calendar-activate itself. Do not touch the watermark file except through ls-ingest.
+- Never run --dispatch, --mount, or --genesis. Never author the override's operator, reason, or citation.
+- If ingest stalls, or any step fails in a way the runbook doesn't anticipate, stop and report state
+  rather than improvising.
+
+================================================================================
+Done when
+================================================================================
+
+All 75 daily watermarks read 20260729, catalog status is GO, tomorrow's universe is resolved (file
+written or valid flat-open refusal), and the GO/NO-GO report is delivered WITH TIME TO SPARE before
+09:15 — or a clean, early stand-down recommendation if it isn't.
