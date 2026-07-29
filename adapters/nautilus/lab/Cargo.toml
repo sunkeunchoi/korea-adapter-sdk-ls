@@ -24,6 +24,10 @@ name = "lab-mount-universe"
 path = "src/bin/lab-mount-universe.rs"
 
 [[bin]]
+name = "lab-next"
+path = "src/bin/lab-next.rs"
+
+[[bin]]
 name = "lab-research"
 path = "src/bin/lab-research.rs"
 

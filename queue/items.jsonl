@@ -1,0 +1,2 @@
+{"schema_version":1,"id":"skills-dir-adjudication","title":"Adjudicate keep/remove for the 21 untracked .agents/skills/ directories","window":"any","completion":{"kind":"explicit"},"added_utc":"2026-07-29T00:00:00+00:00","refs":[".agents/skills/"]}
+{"schema_version":1,"id":"lab-live-doc-fix","title":"Fix the stale pre-#213 module doc in adapters/nautilus/lab/src/bin/lab-live.rs","window":"any","completion":{"kind":"explicit"},"added_utc":"2026-07-29T00:00:00+00:00","refs":["adapters/nautilus/lab/src/bin/lab-live.rs"]}
