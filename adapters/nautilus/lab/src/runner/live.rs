@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 
 use ls_sdk::LsSdk;
 use nautilus_ls::execution::OrderDispatchTasks;
+use nautilus_ls::ingest::checkpoint::Checkpoint;
 use nautilus_ls::lock::{AdvisoryLock, LockKind};
 use nautilus_ls::orders::ledger::{FillDelta, FillLedger};
 use nautilus_ls::orders::poll::DrivenOutcome;
@@ -630,6 +631,52 @@ async fn resolve_real_probes(cfg: &DispatchCliConfig) -> anyhow::Result<(Gateway
     Ok((flat, stranded))
 }
 
+/// The daily bar-type component of a checkpoint watermark key. Confirmed against
+/// [`Checkpoint::watermark_key`], whose format is `{instrument}|{bar_type}` — the runbook's
+/// `endswith('1-DAY')` snippet is documentation, not the source of truth.
+const DAILY_BAR_TYPE: &str = "1-DAY";
+
+/// Derive `(watermark_fresh, bars_present)` from the real catalog (R5).
+///
+/// `watermark_fresh` requires BOTH that every daily watermark has reached the last closed
+/// trading session AND that the recorded gap set is empty (KTD5). A gap means the watermark
+/// is current while the coverage behind it is not trustworthy — a staleness fact, which is
+/// why it lands here rather than on `bars_present`.
+///
+/// `bars_present` samples the catalog for actual bar files rather than trusting the
+/// checkpoint, which is what makes the destructive-heal trap detectable at all: a heal that
+/// wipes parquet while leaving the checkpoint intact would otherwise read as perfectly fresh.
+///
+/// Every failure to establish the baseline — no provable last session, an unreadable
+/// checkpoint, no daily watermarks, an unparseable watermark value — fails closed to the
+/// deferrable red this check has always produced when unevaluated.
+fn evaluate_catalog(catalog: &Path, last_closed_session: Option<chrono::NaiveDate>) -> (bool, bool) {
+    let bars_present = catalog_has_bars(catalog);
+    let Some(expected) = last_closed_session else { return (false, bars_present) };
+    let Ok(checkpoint) = Checkpoint::load(&catalog.join("ingest-checkpoint.json")) else {
+        return (false, bars_present);
+    };
+    let dailies = checkpoint.watermarks_for(DAILY_BAR_TYPE);
+    if dailies.is_empty() {
+        return (false, bars_present);
+    }
+    // `>=` not `==`: a catalog ingested past the last proven session (the calendar lags the
+    // ingest) is ahead, not stale. An unparseable value is `None` and fails the test.
+    let all_current = dailies.iter().all(|(_, d)| d.is_some_and(|d| d >= expected));
+    (all_current && checkpoint.gaps().is_empty(), bars_present)
+}
+
+/// Whether the catalog holds any bar data at all — one parquet under `data/bars/` is enough.
+fn catalog_has_bars(catalog: &Path) -> bool {
+    let bars = catalog.join("data").join("bars");
+    let Ok(series) = std::fs::read_dir(&bars) else { return false };
+    series.flatten().any(|entry| {
+        std::fs::read_dir(entry.path()).is_ok_and(|mut files| {
+            files.any(|f| f.is_ok_and(|f| f.path().extension().is_some_and(|e| e == "parquet")))
+        })
+    })
+}
+
 #[allow(clippy::too_many_arguments)]
 fn build_context(
     cfg: &DispatchCliConfig,
@@ -640,14 +687,20 @@ fn build_context(
     readiness: ReadinessVerdict,
     date_fact: CalendarDateFact,
     unknown_override: Option<UnknownOverride>,
+    last_closed_session: Option<chrono::NaiveDate>,
 ) -> DispatchContext {
     let now_utc = Utc.timestamp_opt(cfg.now_unix, 0).single().unwrap_or_else(Utc::now);
     let catalog = cfg.data_home.join("catalog");
+    // The stub stays FIRST and test-only (KTD6): it is the only way the suite drives the
+    // three outcomes deterministically. What changes is the fallthrough — an unset stub used
+    // to mean "not evaluated → always red", so a clean ingest still burned one of the three
+    // deferrals the pre-registration permits per 5-session window. Now it reads the catalog.
     let (watermark_fresh, bars_present) = match cfg.catalog_stub.as_deref() {
         Some("ok") => (true, true),
         Some("empty") => (true, false),
         Some("stale") => (false, false),
-        _ => (false, false), // not evaluated → deferrable red
+        Some(_) => (false, false), // an unrecognized stub value stays a deferrable red
+        None => evaluate_catalog(&catalog, last_closed_session),
     };
     let budget = match cfg.budget_stub.as_deref() {
         Some("unmeasured") => BudgetHeadroom::Unmeasured,
@@ -689,18 +742,25 @@ fn build_context(
 fn resolve_calendar_for_dispatch(
     cfg: &DispatchCliConfig,
     now_utc: chrono::DateTime<Utc>,
-) -> (CalendarDateFact, StartupRecord) {
+) -> (CalendarDateFact, StartupRecord, Option<chrono::NaiveDate>) {
     // Enforced-only after the Ladder Consumer Retirement Gate (#189 U9, KTD3): the date gate no
     // longer consults LS_CALENDAR_ADOPTION, and the startup record names the enforced posture.
     // The deterministic offline seam: a stubbed fact is authoritative; still emit a record so the
     // composition-root diagnostic path is exercised (no snapshot loaded → `snapshot=not-configured`).
     if let Some(fact) = cfg.date_fact_stub {
-        return (fact, stub_startup_record(CalendarAdoption::Enforced, fact));
+        // No snapshot is loaded on this seam, so no session date can be PROVEN. `None`
+        // propagates as "unprovable", which the catalog check fails closed on.
+        return (fact, stub_startup_record(CalendarAdoption::Enforced, fact), None);
     }
     let path = nautilus_ls::calendar::snapshot_path_from_env();
     let loaded = nautilus_ls::calendar::resolve_and_load(path.as_deref(), now_utc, cfg.adoption);
     resolve_date_fact_and_record(CalendarAdoption::Enforced, &loaded, now_utc)
 }
+
+/// How far back to scan for the last proven Trading Session. KRX has never closed for
+/// anything near this long, so a window this wide either finds a session or proves the
+/// calendar cannot answer — it never runs off the end of a normal holiday cluster.
+const LAST_SESSION_LOOKBACK_DAYS: i64 = 30;
 
 /// Derive the authoritative [`CalendarDateFact`] and the dispatch-date-targeted
 /// [`StartupRecord`] from ONE already-loaded calendar (KTD2, load-once-derive-twice). Pure
@@ -714,7 +774,7 @@ fn resolve_date_fact_and_record(
     adoption: CalendarAdoption,
     loaded: &nautilus_ls::calendar::LoadedCalendar,
     now_utc: chrono::DateTime<Utc>,
-) -> (CalendarDateFact, StartupRecord) {
+) -> (CalendarDateFact, StartupRecord, Option<chrono::NaiveDate>) {
     // KST = UTC+9, no DST — the same civil-date shift `kst_trading_date` uses.
     let kst_date = (now_utc + chrono::Duration::hours(9)).date_naive();
     let record = nautilus_ls::calendar::build_startup_record_targeted(
@@ -727,7 +787,25 @@ fn resolve_date_fact_and_record(
     // The snapshot fact is authoritative; any load/use/query failure → Unavailable.
     let view = loaded.calendar().and_then(|cal| cal.as_of(now_utc).ok());
     let date_fact = date_fact_from_view(view.as_ref(), kst_date);
-    (date_fact, record)
+    // The last PROVEN Trading Session strictly before today, from this SAME load (KTD2's
+    // load-once-derive-twice discipline extended to a third derivation). This is what the
+    // catalog watermark is measured against — never the clock, which reads a weekend or a
+    // KRX holiday as a stale watermark and reds a perfectly current catalog.
+    //
+    // `last_session` is proof-preserving: scanning backward it stops at an `Unknown` reached
+    // before any proven session and yields `Indeterminate`. That is the correct morning
+    // behaviour, not a defect — before the day's calendar refresh certifies yesterday, the
+    // last session genuinely cannot be proven, and an unprovable baseline must not be used
+    // to declare a catalog fresh.
+    let last_closed_session = view.as_ref().and_then(|v| {
+        let start = kst_date.checked_sub_signed(chrono::Duration::days(LAST_SESSION_LOOKBACK_DAYS))?;
+        let range = nautilus_ls_calendar::DateRange::half_open(start, kst_date).ok()?;
+        match v.last_session(&range).ok()? {
+            nautilus_ls_calendar::SessionSearch::Found(d) => Some(d),
+            _ => None,
+        }
+    });
+    (date_fact, record, last_closed_session)
 }
 
 /// Build the startup record for the stubbed-fact offline seam (no snapshot is loaded, so the
@@ -758,7 +836,7 @@ pub fn run_dispatch(cfg: &DispatchCliConfig) -> anyhow::Result<DispatchGateOutco
     // mandatory diagnostic must fire on EVERY --dispatch exit path (an absent/defective chain
     // still authorizes nothing, but the operator still gets the calendar posture). Shadow's
     // dispatch outcome/chain stay byte-identical to Legacy because this is stderr-only.
-    let (date_fact, startup_record) = resolve_calendar_for_dispatch(cfg, now_dt);
+    let (date_fact, startup_record, last_closed_session) = resolve_calendar_for_dispatch(cfg, now_dt);
     nautilus_ls::calendar::emit_startup_record(&startup_record);
 
     // A record can only be appended onto a valid epoch. On no/defective chain, report
@@ -887,6 +965,7 @@ pub fn run_dispatch(cfg: &DispatchCliConfig) -> anyhow::Result<DispatchGateOutco
         readiness,
         date_fact,
         effective_override,
+        last_closed_session,
     );
 
     // Whether the attended override actually proceeded an Unknown date (audit): recorded on
@@ -2898,6 +2977,124 @@ fn run_rung_report() -> anyhow::Result<ExitCode> {
 }
 
 #[cfg(test)]
+mod catalog_watermark_tests {
+    use super::*;
+    use chrono::NaiveDate;
+    use nautilus_ls::ingest::checkpoint::GapReason;
+    use tempfile::TempDir;
+
+    fn d(s: &str) -> NaiveDate {
+        NaiveDate::parse_from_str(s, "%Y-%m-%d").unwrap()
+    }
+
+    /// A catalog with `n` daily symbols watermarked at `watermark`, and one real parquet so
+    /// the bar-presence sample is non-empty.
+    fn catalog_with(tmp: &TempDir, watermarks: &[(&str, &str)], with_bars: bool) -> std::path::PathBuf {
+        let catalog = tmp.path().join("catalog");
+        std::fs::create_dir_all(&catalog).unwrap();
+        if with_bars {
+            let series = catalog.join("data").join("bars").join("005930.XKRX-1-DAY-LAST-EXTERNAL");
+            std::fs::create_dir_all(&series).unwrap();
+            std::fs::write(series.join("2026-07-28T06-30-00-000000000Z.parquet"), b"pq").unwrap();
+        }
+        let mut ckpt = Checkpoint::default();
+        for (instrument, wm) in watermarks {
+            ckpt.set_watermark(instrument, DAILY_BAR_TYPE, d(wm));
+        }
+        ckpt.save(&catalog.join("ingest-checkpoint.json")).unwrap();
+        catalog
+    }
+
+    /// AE2/R5. The whole point: with no stub and a clean ingest, the check stands on its own.
+    /// Before this, an unset stub read `(false, false)` unconditionally, so a flawless ingest
+    /// still reddened and spent one of the three deferrals the pre-registration allows per
+    /// 5-session window — every single session.
+    #[test]
+    fn a_clean_catalog_is_fresh_without_a_stub() {
+        let tmp = TempDir::new().unwrap();
+        let catalog = catalog_with(
+            &tmp,
+            &[("005930.XKRX", "2026-07-28"), ("000660.XKRX", "2026-07-28")],
+            true,
+        );
+        assert_eq!(evaluate_catalog(&catalog, Some(d("2026-07-28"))), (true, true));
+    }
+
+    /// One lagging symbol is enough to make the whole catalog stale — a partial ingest is not
+    /// a fresh one, and the mixed watermark distribution is exactly its signature.
+    #[test]
+    fn one_stale_symbol_yields_the_stale_red_not_the_bars_missing_red() {
+        let tmp = TempDir::new().unwrap();
+        let catalog = catalog_with(
+            &tmp,
+            &[("005930.XKRX", "2026-07-28"), ("000660.XKRX", "2026-07-27")],
+            true,
+        );
+        // bars_present stays TRUE so `check_watermark` selects "watermark is stale" rather
+        // than the destructive-heal message — two different operator stories.
+        assert_eq!(evaluate_catalog(&catalog, Some(d("2026-07-28"))), (false, true));
+    }
+
+    /// KTD5. Current watermarks over a recorded coverage gap are NOT fresh. The watermark
+    /// says the frontier arrived; the gap says the coverage behind it has a hole. Freshness
+    /// that a recorded gap contradicts is not freshness.
+    #[test]
+    fn a_recorded_gap_defeats_current_watermarks() {
+        let tmp = TempDir::new().unwrap();
+        let catalog = catalog_with(&tmp, &[("005930.XKRX", "2026-07-28")], true);
+        let path = catalog.join("ingest-checkpoint.json");
+        let mut ckpt = Checkpoint::load(&path).unwrap();
+        ckpt.record_gap("005930.XKRX", DAILY_BAR_TYPE, "20260720-20260721", GapReason::EmptyHistory);
+        ckpt.save(&path).unwrap();
+        assert_eq!(evaluate_catalog(&catalog, Some(d("2026-07-28"))), (false, true));
+    }
+
+    /// An empty catalog reports bars-missing. `bars_present` samples the FILES, not the
+    /// checkpoint, so a destructive heal that wiped parquet while leaving the checkpoint
+    /// current is visible instead of reading as perfectly fresh.
+    #[test]
+    fn an_empty_catalog_yields_the_bars_missing_red() {
+        let tmp = TempDir::new().unwrap();
+        let catalog = catalog_with(&tmp, &[("005930.XKRX", "2026-07-28")], false);
+        assert_eq!(evaluate_catalog(&catalog, Some(d("2026-07-28"))), (true, false));
+    }
+
+    /// An absent catalog directory entirely.
+    #[test]
+    fn an_absent_catalog_is_not_fresh_and_has_no_bars() {
+        let tmp = TempDir::new().unwrap();
+        assert_eq!(evaluate_catalog(&tmp.path().join("nope"), Some(d("2026-07-28"))), (false, false));
+    }
+
+    /// The baseline must be PROVEN. An unprovable last session — the normal state before the
+    /// morning calendar refresh certifies yesterday — fails closed to the deferrable red
+    /// rather than guessing a date the calendar declined to prove.
+    #[test]
+    fn an_unprovable_last_session_fails_closed() {
+        let tmp = TempDir::new().unwrap();
+        let catalog = catalog_with(&tmp, &[("005930.XKRX", "2026-07-28")], true);
+        assert_eq!(evaluate_catalog(&catalog, None), (false, true));
+    }
+
+    /// A catalog ingested PAST the last proven session is ahead, not stale: the calendar lags
+    /// the ingest on a day whose witness has not published yet.
+    #[test]
+    fn a_catalog_ahead_of_the_last_proven_session_is_fresh() {
+        let tmp = TempDir::new().unwrap();
+        let catalog = catalog_with(&tmp, &[("005930.XKRX", "2026-07-29")], true);
+        assert_eq!(evaluate_catalog(&catalog, Some(d("2026-07-28"))), (true, true));
+    }
+
+    /// A checkpoint with no daily watermarks at all cannot testify to freshness.
+    #[test]
+    fn no_daily_watermarks_is_not_fresh() {
+        let tmp = TempDir::new().unwrap();
+        let catalog = catalog_with(&tmp, &[], true);
+        assert_eq!(evaluate_catalog(&catalog, Some(d("2026-07-28"))), (false, true));
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use nautilus_ls::calendar::ResultingAction;
@@ -3299,7 +3496,7 @@ mod tests {
         use nautilus_ls_calendar::schema::DayStatus;
         let dir = tempfile::TempDir::new().unwrap();
         let loaded = loaded_fixture(dir.path(), DayStatus::TradingSession, chrono::NaiveDate::from_ymd_opt(2026, 12, 31).unwrap(), CalendarAdoption::Enforced);
-        let (fact, rec) = resolve_date_fact_and_record(CalendarAdoption::Enforced, &loaded, dispatch_now());
+        let (fact, rec, _) = resolve_date_fact_and_record(CalendarAdoption::Enforced, &loaded, dispatch_now());
         assert_eq!(fact, CalendarDateFact::TradingSession);
         assert_eq!(rec.action, ResultingAction::EnforcedActive);
         assert!(rec.render_line().contains("action=enforced-active"));
@@ -3312,7 +3509,7 @@ mod tests {
         // 2026-07-16 is a weekday, but the calendar proves it Closed — Enforced returns Closed
         // (the calendar is authoritative), and the record shows the calendar is active.
         let loaded = loaded_fixture(dir.path(), DayStatus::Closed, chrono::NaiveDate::from_ymd_opt(2026, 12, 31).unwrap(), CalendarAdoption::Enforced);
-        let (fact, rec) = resolve_date_fact_and_record(CalendarAdoption::Enforced, &loaded, dispatch_now());
+        let (fact, rec, _) = resolve_date_fact_and_record(CalendarAdoption::Enforced, &loaded, dispatch_now());
         assert_eq!(fact, CalendarDateFact::Closed, "Enforced reads the calendar, not the weekday");
         assert_eq!(rec.action, ResultingAction::EnforcedActive);
         let line = rec.render_line();
@@ -3325,7 +3522,7 @@ mod tests {
         let dir = tempfile::TempDir::new().unwrap();
         let missing = dir.path().join("does-not-exist.json");
         let loaded = nautilus_ls::calendar::resolve_and_load(Some(&missing), dispatch_now(), CalendarAdoption::Enforced);
-        let (fact, rec) = resolve_date_fact_and_record(CalendarAdoption::Enforced, &loaded, dispatch_now());
+        let (fact, rec, _) = resolve_date_fact_and_record(CalendarAdoption::Enforced, &loaded, dispatch_now());
         assert_eq!(fact, CalendarDateFact::Unavailable, "no weekday fallback under Enforced");
         assert_eq!(rec.action, ResultingAction::EnforcedFailClosed);
         assert!(rec.render_line().contains("action=enforced-fail-closed"));
@@ -3338,7 +3535,7 @@ mod tests {
         use nautilus_ls_calendar::schema::DayStatus;
         let dir = tempfile::TempDir::new().unwrap();
         let loaded = loaded_fixture(dir.path(), DayStatus::TradingSession, chrono::NaiveDate::from_ymd_opt(2026, 12, 31).unwrap(), CalendarAdoption::Enforced);
-        let (_, rec) = resolve_date_fact_and_record(CalendarAdoption::Enforced, &loaded, dispatch_now());
+        let (_, rec, _) = resolve_date_fact_and_record(CalendarAdoption::Enforced, &loaded, dispatch_now());
         let line = rec.render_line();
         assert!(!line.contains(SECRET_AUTHORITY), "authority leaked into the startup line: {line}");
         assert!(!line.contains("Jane Doe"), "{line}");

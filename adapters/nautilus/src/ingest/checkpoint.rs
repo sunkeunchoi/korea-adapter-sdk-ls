@@ -822,6 +822,29 @@ impl Checkpoint {
         &self.gaps
     }
 
+    /// Every instrument carrying a coverage watermark for `bar_type`, with that watermark
+    /// parsed. Suffix-keyed on [`Self::watermark_key`] (`{instrument}|{bar_type}`) exactly
+    /// like [`Self::shifted_instruments`], so callers never hand-parse the key format —
+    /// notably, the separator is `|` and NOT `.`, which an instrument id already contains
+    /// (`005930.XKRX`).
+    ///
+    /// A value that will not parse yields `None` rather than being dropped: a caller judging
+    /// whether every watermark is current must be able to fail closed on a corrupt entry,
+    /// which a silently shortened list would hide.
+    pub fn watermarks_for(&self, bar_type: &str) -> Vec<(String, Option<NaiveDate>)> {
+        let suffix = format!("|{bar_type}");
+        self.watermarks
+            .iter()
+            .filter_map(|(k, v)| {
+                let instrument = k.strip_suffix(&suffix)?;
+                Some((
+                    instrument.to_string(),
+                    NaiveDate::parse_from_str(v.trim(), "%Y%m%d").ok(),
+                ))
+            })
+            .collect()
+    }
+
     /// The number of completed triples.
     pub fn completed_count(&self) -> usize {
         self.completed.len()
@@ -840,6 +863,32 @@ mod tests {
     /// Enforced integration tests in `../../tests/ingest.rs`.
     fn no_calendar_gate() -> CalendarGate<'static> {
         CalendarGate::new(None)
+    }
+
+    /// `watermarks_for` keys on `|`, and an instrument id ALREADY contains a `.`
+    /// (`005930.XKRX`) — so a caller that split on `.` would still appear to work while
+    /// silently truncating the instrument. This pins the real separator and the bar-type
+    /// filter against the other bar types sharing the map.
+    #[test]
+    fn watermarks_for_filters_by_bar_type_and_keys_on_the_pipe_separator() {
+        let mut c = Checkpoint::default();
+        let day = NaiveDate::from_ymd_opt(2026, 7, 28).unwrap();
+        c.set_watermark("005930.XKRX", "1-DAY", day);
+        c.set_watermark("000660.XKRX", "1-DAY", NaiveDate::from_ymd_opt(2026, 7, 27).unwrap());
+        c.set_watermark("005930.XKRX", "1-MINUTE", day);
+
+        let mut daily = c.watermarks_for("1-DAY");
+        daily.sort();
+        assert_eq!(
+            daily,
+            vec![
+                ("000660.XKRX".to_string(), Some(NaiveDate::from_ymd_opt(2026, 7, 27).unwrap())),
+                ("005930.XKRX".to_string(), Some(day)),
+            ],
+            "the full instrument id survives, and 1-MINUTE is excluded"
+        );
+        assert_eq!(c.watermarks_for("1-MINUTE").len(), 1);
+        assert!(c.watermarks_for("1-HOUR").is_empty(), "an absent bar type is empty, not an error");
     }
 
     #[test]
