@@ -2,14 +2,16 @@
 title: "Shell scripts with a pure core + external I/O need stubbed-binary live-path tests"
 date: 2026-06-20
 category: workflow-issues
-module: .github/scripts (freshness-cadence CI tooling)
+module: .github/scripts (freshness-cadence CI tooling), adapters/nautilus/scripts (operator session scripts)
 problem_type: workflow_issue
 component: testing_framework
 severity: high
+last_updated: 2026-07-29
 applies_when:
-  - "Writing a bash script that separates a pure decision core from external I/O (gh, curl, aws, kubectl)"
+  - "Writing a bash script that separates a pure decision core from external I/O (gh, curl, aws, kubectl, or a prebuilt binary under target/debug)"
   - "The script runs under `set -euo pipefail` in CI and a non-zero exit triggers an alert path"
   - "Tests only exercise a `--dry-run` / mocked-input mode and never the real I/O path"
+  - "Writing an attended operator script whose exit code IS its contract (a GO/NO-GO or stand-down report)"
 tags:
   - bash
   - shell-testing
@@ -19,6 +21,8 @@ tags:
   - ci
   - github-actions
   - gh-cli
+  - operator-scripts
+  - exit-code-contract
 ---
 
 # Shell scripts with a pure core + external I/O need stubbed-binary live-path tests
@@ -136,10 +140,40 @@ esac
 Either assertion alone catches one bug; together they pin both. Neither was
 expressible in the dry-run suite, which never reaches the `gh` branches.
 
+## Recurrence: operator scripts, 2026-07-29
+
+This learning was re-derived the expensive way outside `.github/scripts`, which is why the
+`module:` and `applies_when` above now name operator scripts too.
+
+The script in question is `adapters/nautilus/scripts/session-morning.sh` — an operator
+session-morning chain driver, uncommitted as of this writing (it was authored for a specific
+attended run and deliberately left untracked), so the path above may not resolve in your
+checkout. It was written with exactly the shape this doc warns about: a pure decision core
+(`pace_verdict`) covered by a `--self-test`, a live I/O path covered only by `--dry-run`, and
+no stubbed-binary layer between them. Code review then
+found a P0 and six P1s, **all of them in the untested live path** — including a branch that
+exited `0` (the script's documented GO code) on any `lab-mount-universe` failure, and a
+stand-down path that killed the ingest and told the operator a re-run was safe while leaving
+the lock that makes a re-run refuse.
+
+Two things generalize beyond that script:
+
+- **An exit code that encodes a verdict is a contract, and the dry-run cannot test it.** When
+  `0` means GO and `40` means stand down, every non-zero branch of the real path needs a case.
+  A dry run exercises none of them, because it never runs the thing that can fail.
+- **The plan can point the wrong way.** The unit's execution note explicitly said to prefer a
+  dry-run pass over unit coverage. That was reasonable-sounding and wrong, and nobody checked
+  whether the repo had already learned otherwise. Worth searching `docs/solutions/` for the
+  shape of the work, not only its domain — this doc was filed under CI tooling and the work
+  was an operator script, so a domain-only search misses it.
+
 ## Related
 
 - `.github/scripts/update-freshness-issue.sh` and its tests in
   `.github/scripts/tests/` (the script this learning came from).
+- [`operator-shell-ls-env-makes-the-adapter-suite-look-red-on-pristine-main.md`](../test-failures/operator-shell-ls-env-makes-the-adapter-suite-look-red-on-pristine-main.md)
+  — surfaced during the same 2026-07-29 session; the environment half of "state outside the
+  script decides its outcome."
 - [`makefile-include-env-quotes-gateway-403.md`](../integration-issues/makefile-include-env-quotes-gateway-403.md)
   — a sibling shell/make quoting gotcha where a non-obvious quoting rule produced
   a silent wrong value; same family of "the shell did something subtle and the
