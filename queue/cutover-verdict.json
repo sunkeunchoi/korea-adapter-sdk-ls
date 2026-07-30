@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "verdict": "PASS",
+  "decided_utc": "2026-07-30T02:38:00Z",
+  "plan": "docs/plans/2026-07-29-002-feat-window-aware-workqueue-plan.md",
+  "gate_run": {
+    "completed": "all 6 AGENTS.md steps green via scripts/gate-run.sh",
+    "fingerprint": "184262acebcc5b3daa2078d61feb91a16eda627f3df96d5306b1a6f93c4b6a05"
+  },
+  "inventory": {
+    "migrated": [
+      {"source": "TODO.ATTENDED.md §1 rung-1 attended paper session", "queue_id": "rung1-attended-session"},
+      {"source": "TODO.OFFLINE.md §2 two archived branches keep-or-drop", "queue_id": "branch-keep-or-drop"},
+      {"source": "adapters/nautilus/lab/PROMPT-2026-07-30-session-morning.txt (file kept until after the session)", "queue_id": "session-morning-20260730"}
+    ],
+    "non_actionable": [
+      {"source": "TODO.ATTENDED.md §2 flatten stranded 005930 paper buy", "reason": "dropped by operator at cutover adjudication (last confirmed resting 2026-07-14, unverified since)"},
+      {"source": "TODO.ATTENDED.md §3 #35 t1481/t1482 after-hours ranking", "reason": "dropped by operator at cutover adjudication (optional/low roadmap item)"},
+      {"source": "TODO.OFFLINE.md §1 morning catalog ingest chain", "reason": "covered by machinery: lab-next attended-chain pointer + ingest sequence reader + session-morning.sh"},
+      {"source": "TODO.OFFLINE.md §3 ORB loop converged standing note", "reason": "standing note, not a task; verdicts recorded in TURN-LOG.md and memory"},
+      {"source": "TODO.OFFLINE.md §4 #34/#36 roadmap design waves", "reason": "dropped by operator at cutover adjudication (deferred in the retired queue; nothing raised their priority)"},
+      {"source": "adapters/nautilus/lab/TODO-2026-07-28-A/B/C", "reason": "all three carried STATUS COMPLETE/PASS in-file; nothing live to migrate"},
+      {"source": "adapters/nautilus/lab/TURN-LOG.md", "reason": "historical log, retained; its 'next' notes superseded by the converged-loop verdict"},
+      {"source": "adapters/nautilus/lab/PAPER-CUTS.md open items 14-15", "reason": "constraint documentation owner-tagged to hypothetical future turns, retained as log"}
+    ],
+    "retired_files": [
+      "TODO.ATTENDED.md",
+      "TODO.OFFLINE.md",
+      "adapters/nautilus/lab/TODO-2026-07-28-A-calendar-refresh-activate.md",
+      "adapters/nautilus/lab/TODO-2026-07-28-B-mount-prechecks.md",
+      "adapters/nautilus/lab/TODO-2026-07-28-C-adapter-check.md"
+    ]
+  },
+  "probe_report": {
+    "all_pass": true,
+    "probed_utc": "2026-07-30T02:36:27Z",
+    "sequences": [
+      {
+        "resume": "LS_TURN_CANDIDATE=orb-concurrency-slot-ranking lab-research turn governed  # one-shot: re-runs from the top (KTD7)",
+        "sequence": "turn",
+        "stage": "no in-flight turn — trials ledger readable, last look candidate 'orb-concurrency-slot-ranking' verdict 'STOP threshold-fail'",
+        "verdict": "ok"
+      },
+      {
+        "resume": "start a new prep: lab-live --dispatch (RUNBOOK-rung1.md)",
+        "sequence": "ladder",
+        "stage": "chain readable — authorizes rung 1; no session prep in flight",
+        "verdict": "ok"
+      },
+      {
+        "resume": "resume accumulate: ls-ingest (reads this checkpoint; watermarks are the skip authority — verify by watermark, never exit code; RUNBOOK-session-morning.md Step 4)",
+        "sequence": "ingest",
+        "stage": "150 series watermarked; coverage frontier 20260710..20260728 (last closed session covered)",
+        "verdict": "ok"
+      },
+      {
+        "resume": "make gate-run (a fresh run re-verifies against the current tree)",
+        "sequence": "gate-run",
+        "stage": "gate state readable — all steps done (gate green)",
+        "verdict": "ok"
+      }
+    ],
+    "version": 1
+  }
+}

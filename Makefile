@@ -1125,6 +1125,55 @@ lane-check:
 adapter-check:
 	cd adapters/nautilus && cargo test --workspace
 
+.PHONY: todo-check
+
+## Legacy TODO-file guard (plan 2026-07-29-002 U8; R16, KTD5). INERT until the
+## queue cutover verdict lands: with queue/cutover-verdict.json absent or not
+## PASS (Shadow phase) it exits 0 regardless of TODO files; once the verdict is
+## PASS, any legacy TODO staging file (TODO.ATTENDED.md, TODO.OFFLINE.md, or
+## **/TODO-*.md outside docs/ and target/) fails loud with the offending paths —
+## queue/items.jsonl is then the sole staging location. Offline, no gateway.
+## Fixture-repo scenarios: scripts/todo-file-check.sh --self-test (also run by
+## the adapter-check coupling test, lab/tests/todo_merge_block.rs).
+todo-check:
+	@scripts/todo-file-check.sh
+
+.PHONY: gate-run
+
+## Resumable driver for the AGENTS.md offline gate (plan 2026-07-29-002 U4,
+## KTD4): runs the seven gate steps in order (docs, root cargo test, ls-core,
+## docs-check, lane-check, adapter-check, todo-check), recording per-step completion plus a
+## whole-tree fingerprint to the gitignored .gate-run/state.json. A re-run
+## resumes from the first incomplete or invalidated step — any tree change
+## invalidates recorded steps (spurious re-run possible, false green never).
+## `scripts/gate-run.sh --status` prints machine-readable state for lab-next.
+gate-run:
+	@scripts/gate-run.sh
+
+.PHONY: gate-run-check
+
+## Offline self-test for the gate driver: runs the REAL scripts/gate-run.sh
+## end-to-end in a throwaway git fixture repo with fake make/cargo shims first
+## on PATH (invocation log + scripted exit codes) — asserting resume,
+## fingerprint-invalidation (incl. the untracked content-digest arm), failure
+## propagation, locking, and --status. No real gate step, no network, never
+## touches this repo's state.
+gate-run-check:
+	@scripts/gate-run-check.sh
+
+.PHONY: next
+
+## Window-aware work-queue entry point (plan 2026-07-29-002 U5, KTD3): prints
+## the derived KRX window, in-flight sequences (turn/ladder/ingest/gate-run),
+## and the executable next step from queue/items.jsonl. LS_CALENDAR_SNAPSHOT
+## is passed INLINE to the subprocess only — nothing is exported into the
+## operator shell (an exported LS_* poisons `cargo test` on pristine main).
+## Reads only local state; no gateway, no network. With the gitignored
+## snapshot absent, the genuinely-unknown fail-closed report is the CORRECT
+## output (only any-window items plus the calendar repair action).
+next:
+	cd adapters/nautilus && LS_CALENDAR_SNAPSHOT=state/krx.calendar.json cargo run -q -p nautilus-ls-lab --bin lab-next -- report
+
 .PHONY: foundation-gate
 
 ## The named Calendar Foundation Gate (issue #189 U4, R1–R5): the ENTIRE offline calendar

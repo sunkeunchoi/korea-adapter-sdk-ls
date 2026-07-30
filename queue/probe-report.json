@@ -1,0 +1,31 @@
+{
+  "all_pass": true,
+  "probed_utc": "2026-07-30T02:36:27Z",
+  "sequences": [
+    {
+      "resume": "LS_TURN_CANDIDATE=orb-concurrency-slot-ranking lab-research turn governed  # one-shot: re-runs from the top (KTD7)",
+      "sequence": "turn",
+      "stage": "no in-flight turn — trials ledger readable, last look candidate 'orb-concurrency-slot-ranking' verdict 'STOP threshold-fail'",
+      "verdict": "ok"
+    },
+    {
+      "resume": "start a new prep: lab-live --dispatch (RUNBOOK-rung1.md)",
+      "sequence": "ladder",
+      "stage": "chain readable — authorizes rung 1; no session prep in flight",
+      "verdict": "ok"
+    },
+    {
+      "resume": "resume accumulate: ls-ingest (reads this checkpoint; watermarks are the skip authority — verify by watermark, never exit code; RUNBOOK-session-morning.md Step 4)",
+      "sequence": "ingest",
+      "stage": "150 series watermarked; coverage frontier 20260710..20260728 (last closed session covered)",
+      "verdict": "ok"
+    },
+    {
+      "resume": "make gate-run (a fresh run re-verifies against the current tree)",
+      "sequence": "gate-run",
+      "stage": "gate state readable — all steps done (gate green)",
+      "verdict": "ok"
+    }
+  ],
+  "version": 1
+}
