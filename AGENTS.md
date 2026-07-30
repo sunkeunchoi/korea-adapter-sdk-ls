@@ -20,7 +20,20 @@ docs/solutions/            # documented solutions to past problems (bugs, best p
 CONCEPTS.md                # shared domain vocabulary (TR, owner_class, support tiers, Paper Live Smoke, ...) — relevant when orienting or discussing domain concepts
 metadata/PROVISIONALITY-LEDGER.md  # per-TR provisional-facet ledger, retired as TRs implement
 .agents/skills/            # frozen workflow recipes: track-tr, implement-tr, promote-tr, ... (read the SKILL.md before running one)
+queue/items.jsonl          # THE work queue — sole staging location for new and pre-staged operational work (see "What now")
 ```
+
+## What now (the work queue)
+
+`make next` (or `lab-next` from `adapters/nautilus`) answers "what should happen
+right now": it derives the KRX window state, reads the single work queue at
+`queue/items.jsonl`, and reports any in-flight resumable sequence (turn, ladder
+prep, ingest, gate run) with its stage and exact resume command. The queue is
+the **sole staging location** for new and pre-staged operational work; dated
+`TODO-*.md` files are retired and the `make todo-check` gate line rejects them.
+Queue state changes flow through `lab-next add / done / supersede` — never
+hand-edit the JSONL. Resumable gate runs go through `make gate-run` (state in
+gitignored `.gate-run/`).
 
 ## Gate (run before committing TR/SDK/metadata changes)
 
