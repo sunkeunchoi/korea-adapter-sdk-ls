@@ -33,7 +33,7 @@ use chrono::{DateTime, Utc};
 
 use crate::artifacts::aborted_runs;
 use crate::dispatch::chain::{kst_trading_date, ChainStatus, DispatchChain, MountAuthz};
-use crate::trials::{TrialsLedger, LEDGER_RELPATH};
+use crate::trials::TrialsLedger;
 
 /// Which R10 sequence a report row describes. `Gate` is reserved for U4's
 /// gate-run driver state so the report type stays open to the fourth leg.
@@ -104,9 +104,9 @@ impl SequenceStores {
         };
         SequenceStores {
             data_home: non_empty("LS_DATA_HOME"),
-            trials_ledger: Some(non_empty("LS_TRIALS_LEDGER").unwrap_or_else(|| {
-                Path::new(env!("CARGO_MANIFEST_DIR")).join(LEDGER_RELPATH)
-            })),
+            trials_ledger: Some(
+                crate::runner::research::trials_ledger_from_env().path().to_path_buf(),
+            ),
             stage_log: non_empty("LS_GOVERNED_STAGELOG"),
         }
     }

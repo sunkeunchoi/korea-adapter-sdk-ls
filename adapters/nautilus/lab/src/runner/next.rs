@@ -130,19 +130,37 @@ fn dispatch() -> anyhow::Result<ExitCode> {
     }
 }
 
-/// Render one item line for the report views.
-fn render(item: &QueueItem) -> String {
-    let mut line = format!("  {} [{}] {}", item.id, item.window.tag(), item.title);
+/// The shared item head line: `  <id> [<window>] <title>` plus the deadline
+/// and paused-sequence suffixes.
+fn item_head(item: &QueueItem) -> String {
+    let mut head = format!("  {} [{}] {}", item.id, item.window.tag(), item.title);
     if let Some(d) = &item.deadline {
-        line.push_str(&format!(" (deadline {d})"));
+        head.push_str(&format!(" (deadline {d})"));
     }
     if let Some(seq) = &item.sequence {
-        line.push_str(&format!(" (paused sequence {seq})"));
+        head.push_str(&format!(" (paused sequence {seq})"));
     }
+    head
+}
+
+/// Render one item line for the `list` views: the head plus the reconcile
+/// suffix (`list` never runs the sit-down reconcile pass, so the flag rides
+/// the line itself).
+fn render(item: &QueueItem) -> String {
+    let mut line = item_head(item);
     if let Some(flag) = &item.reconcile {
         line.push_str(&format!(" [reconcile: {flag}]"));
     }
     line
+}
+
+/// The item's recorded deadline as a UTC instant (`None` when absent or — in
+/// the report's tolerant paths — unparseable).
+fn parse_deadline(item: &QueueItem) -> Option<DateTime<Utc>> {
+    item.deadline
+        .as_deref()
+        .and_then(|d| DateTime::parse_from_rfc3339(d).ok())
+        .map(|d| d.with_timezone(&Utc))
 }
 
 // ===========================================================================
@@ -214,13 +232,7 @@ fn run_report(rest: &[String]) -> anyhow::Result<ExitCode> {
             eligible.push(item);
         }
     }
-    let deadline_of = |item: &QueueItem| -> Option<DateTime<Utc>> {
-        item.deadline
-            .as_deref()
-            .and_then(|d| DateTime::parse_from_rfc3339(d).ok())
-            .map(|d| d.with_timezone(&Utc))
-    };
-    eligible.sort_by(|a, b| match (deadline_of(a), deadline_of(b)) {
+    eligible.sort_by(|a, b| match (parse_deadline(a), parse_deadline(b)) {
         (Some(x), Some(y)) => x.cmp(&y),
         (Some(_), None) => std::cmp::Ordering::Less,
         (None, Some(_)) => std::cmp::Ordering::Greater,
@@ -358,14 +370,7 @@ fn push_sequence(out: &mut Vec<String>, seq: &SequenceReport, paused_needs: Opti
 /// items the handoff is `lab-next done <id>` after doing the titled work),
 /// then refs (R13) and notes.
 fn push_item(out: &mut Vec<String>, item: &QueueItem) {
-    let mut head = format!("  {} [{}] {}", item.id, item.window.tag(), item.title);
-    if let Some(d) = &item.deadline {
-        head.push_str(&format!(" (deadline {d})"));
-    }
-    if let Some(seq) = &item.sequence {
-        head.push_str(&format!(" (paused sequence {seq})"));
-    }
-    out.push(head);
+    out.push(item_head(item));
     let run = match &item.completion {
         CompletionSignal::Explicit => {
             format!("do the titled work, then close it: lab-next done {}", item.id)
@@ -392,10 +397,7 @@ fn push_item(out: &mut Vec<String>, item: &QueueItem) {
 /// [`QueueItem::is_stale`], WITHOUT the sequence exemption — reconciliation
 /// asks about exactly the entries the exemption keeps actionable).
 fn deadline_passed(item: &QueueItem, now: DateTime<Utc>) -> bool {
-    item.deadline
-        .as_deref()
-        .and_then(|d| DateTime::parse_from_rfc3339(d).ok())
-        .is_some_and(|d| now > d.with_timezone(&Utc))
+    parse_deadline(item).is_some_and(|d| now > d)
 }
 
 /// R12 sit-down reconciliation (see the module doc for the confirmation rule).
@@ -404,9 +406,14 @@ fn deadline_passed(item: &QueueItem, now: DateTime<Utc>) -> bool {
 fn reconcile(queue: &Queue, now: DateTime<Utc>) -> anyhow::Result<Vec<String>> {
     let mut lines = Vec::new();
 
+    // One read serves both passes: auto-close only mutates tool-event items,
+    // and nothing ever rewrites an item's completion kind, so the explicit
+    // items the second pass filters are invariant across the first.
+    let items = queue.read_all()?;
+
     // Auto-close: a declared tool-completion artifact that now witnesses the
     // event completes the item through the ordinary hygiene-checked `done`.
-    for item in queue.read_all()? {
+    for item in &items {
         if !item.is_actionable(now)? {
             continue;
         }
@@ -432,13 +439,13 @@ fn reconcile(queue: &Queue, now: DateTime<Utc>) -> anyhow::Result<Vec<String>> {
     // Done-or-not confirmation for explicit-signal items (reconcile-flagged
     // or past a recorded deadline — the documented rule).
     let tty = std::io::stdin().is_terminal();
-    for item in queue.read_all()? {
+    for item in &items {
         if !item.is_actionable(now)? || item.completion != CompletionSignal::Explicit {
             continue;
         }
         let why = if let Some(flag) = &item.reconcile {
             format!("reconcile flag: {flag}")
-        } else if deadline_passed(&item, now) {
+        } else if deadline_passed(item, now) {
             format!("past its recorded deadline {}", item.deadline.as_deref().unwrap_or("?"))
         } else {
             continue;
@@ -480,26 +487,45 @@ pub fn gate_sequence() -> Option<SequenceReport> {
 
 /// The raw `--status` text (see [`gate_sequence`] for the source rules).
 fn gate_status_text() -> Option<String> {
+    resolve_gate_status().ok()
+}
+
+/// Resolve the raw `--status` text from the [`GATE_STATUS_FILE_ENV`] override
+/// or the real script. `Err` carries the what's-missing text: the report
+/// discards it into "no gate sequence", the probe surfaces it as the FAIL
+/// reason.
+fn resolve_gate_status() -> Result<String, String> {
     if let Some(path) =
         std::env::var(GATE_STATUS_FILE_ENV).ok().filter(|s| !s.trim().is_empty())
     {
         // Override: pre-captured output; missing/unreadable = no gate state.
-        return std::fs::read_to_string(&path).ok();
+        return std::fs::read_to_string(&path).map_err(|e| {
+            format!("gate status file {path} ({GATE_STATUS_FILE_ENV}) absent or unreadable: {e}")
+        });
     }
-    let root = crate::queue::repo_root().ok()?;
-    if !root.join(".gate-run").join("state.json").exists() {
-        return None;
+    let root = crate::queue::repo_root()
+        .map_err(|e| format!("no repo root to locate .gate-run: {e}"))?;
+    let state = root.join(".gate-run").join("state.json");
+    if !state.exists() {
+        return Err(format!(
+            "gate state {} absent — no gate run recorded (start one: make gate-run)",
+            state.display()
+        ));
     }
     let out = std::process::Command::new("bash")
         .arg(root.join("scripts").join("gate-run.sh"))
         .arg("--status")
         .current_dir(&root)
         .output()
-        .ok()?;
+        .map_err(|e| format!("running gate-run.sh --status: {e}"))?;
     if !out.status.success() {
-        return None;
+        return Err(format!(
+            "gate state {} present but gate-run.sh --status failed (exit {:?})",
+            state.display(),
+            out.status.code()
+        ));
     }
-    Some(String::from_utf8_lossy(&out.stdout).into_owned())
+    Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// Parse the STABLE `--status` contract (`step=<n> name=<name>
@@ -769,45 +795,9 @@ fn probe_ingest(stores: &SequenceStores) -> ProbeOutcome {
 /// or unreadable state → FAIL naming it; readable `--status` output → ok,
 /// whether in flight, green (`next=none`), or recorded-but-nothing-done.
 fn probe_gate() -> ProbeOutcome {
-    let text = if let Some(path) =
-        std::env::var(GATE_STATUS_FILE_ENV).ok().filter(|s| !s.trim().is_empty())
-    {
-        match std::fs::read_to_string(&path) {
-            Ok(t) => t,
-            Err(e) => {
-                return probe_fail(format!(
-                    "gate status file {path} ({GATE_STATUS_FILE_ENV}) absent or unreadable: {e}"
-                ));
-            }
-        }
-    } else {
-        let root = match crate::queue::repo_root() {
-            Ok(r) => r,
-            Err(e) => return probe_fail(format!("no repo root to locate .gate-run: {e}")),
-        };
-        let state = root.join(".gate-run").join("state.json");
-        if !state.exists() {
-            return probe_fail(format!(
-                "gate state {} absent — no gate run recorded (start one: make gate-run)",
-                state.display()
-            ));
-        }
-        let out = std::process::Command::new("bash")
-            .arg(root.join("scripts").join("gate-run.sh"))
-            .arg("--status")
-            .current_dir(&root)
-            .output();
-        match out {
-            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).into_owned(),
-            Ok(o) => {
-                return probe_fail(format!(
-                    "gate state {} present but gate-run.sh --status failed (exit {:?})",
-                    state.display(),
-                    o.status.code()
-                ));
-            }
-            Err(e) => return probe_fail(format!("running gate-run.sh --status: {e}")),
-        }
+    let text = match resolve_gate_status() {
+        Ok(t) => t,
+        Err(missing) => return probe_fail(missing),
     };
     if let Some(report) = parse_gate_status(&text) {
         return ProbeOutcome::Ok { stage: report.stage, resume: report.resume };

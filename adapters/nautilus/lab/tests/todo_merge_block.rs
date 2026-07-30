@@ -19,15 +19,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-/// Ascend from this crate's manifest dir to the repo root (the dir holding `.git`).
-/// (The lab crate's `queue::repo_root` idiom, re-derived — that helper is private.)
+/// The repo root, via the lab crate's shared ascent helper.
 fn repo_root() -> PathBuf {
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest
-        .ancestors()
-        .find(|p| p.join(".git").exists())
-        .expect("repo root (.git) reachable from CARGO_MANIFEST_DIR")
-        .to_path_buf()
+    nautilus_ls_lab::queue::repo_root().expect("repo root (.git) reachable from CARGO_MANIFEST_DIR")
 }
 
 /// Tolerant verdict scan (KTD5): strip ALL whitespace, then look for
