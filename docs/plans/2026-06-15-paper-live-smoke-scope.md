@@ -1,15 +1,23 @@
-# Simulation Live Smoke Scope
+# Paper Live Smoke Scope
 
 Date: 2026-06-15
 
+> **Status: Superseded / implemented.** This scope decision was carried out. The
+> implementation plan is `docs/plans/2026-06-15-002-feat-paper-live-smoke-plan.md`;
+> the per-TR Focused Evidence the smoke targets produced lives in
+> `metadata/evidence/` (`t1102`, `t8412`, `CSPAQ12200`, `S3_`), governed by
+> `metadata/EVIDENCE-FRESHNESS.md`. This document is retained as the historical
+> scope record. Terminology has been updated to the canonical **Paper Live Smoke**
+> (see `CONCEPTS.md`); the original draft used "Simulation Live Smoke".
+
 ## Summary
 
-The next migration step is a documentation-only scope decision for a future **Simulation Live Smoke** over the existing maintained SDK vertical slice. This is not new TR expansion and not production evidence. The goal is to prove that the already-implemented SDK path can reach the LS simulation gateway with real credentials, while keeping `.env` small and avoiding date-sensitive ambiguity.
+The next migration step is a documentation-only scope decision for a future **Paper Live Smoke** over the existing maintained SDK vertical slice. This is not new TR expansion and not production evidence. The goal is to prove that the already-implemented SDK path can reach the LS paper gateway with real credentials, while keeping `.env` small and avoiding date-sensitive ambiguity.
 
 ## Decisions
 
 - The next technical scope is a gated live-smoke harness for the existing slice, not implementation of more TRs.
-- The live smoke targets LS simulation credentials only.
+- The live smoke targets LS paper credentials only.
 - The SDK must continue to read ordinary environment variables through `LsConfig::from_env()`; dotenv loading belongs only in a future repo-level convenience wrapper.
 - The default smoke should be small: OAuth token acquisition plus one harmless market-data REST call (`t1102`).
 - The default smoke should not include `t8412`, because `t8412` requires an explicit real Korean trading day and `.env` should stay credential-only.
@@ -61,7 +69,7 @@ The harness should not silently skip `t8412` under a green default result. Inste
 
 Default `live-smoke`:
 
-- Environment resolves as simulation/paper, not production.
+- Environment resolves as paper, not production.
 - OAuth token acquisition succeeds.
 - `t1102` quote request succeeds for the selected symbol.
 
@@ -75,11 +83,11 @@ Explicit `live-smoke-chart`:
 Explicit `live-smoke-account`:
 
 - `CSPAQ12200` runs as a read-only account-state inquiry.
-- Account-state failures should be reported separately from market-data smoke failures because they may reflect simulation account setup rather than SDK transport correctness.
+- Account-state failures should be reported separately from market-data smoke failures because they may reflect paper account setup rather than SDK transport correctness.
 
 Explicit `live-smoke-ws`:
 
-- The SDK connects to the simulation WebSocket URL.
+- The SDK connects to the paper WebSocket URL.
 - The SDK subscribes to `S3_` for the selected symbol and unsubscribes cleanly.
 - Receiving a row is recorded if it happens, but absence of a row during the timeout is not a failure.
 

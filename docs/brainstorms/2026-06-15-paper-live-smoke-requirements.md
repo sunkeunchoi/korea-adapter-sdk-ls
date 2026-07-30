@@ -141,7 +141,7 @@ Two hazards shape it. First, LS serves paper and real REST traffic from one host
 
 ## Sources
 
-- `docs/plans/2026-06-15-simulation-live-smoke-scope.md` — the scope decisions this doc formalizes.
+- `docs/plans/2026-06-15-paper-live-smoke-scope.md` — the scope decisions this doc formalizes.
 - `CONTEXT.md` — Paper Live Smoke / Credentialed Live Smoke / Focused Evidence vocabulary.
 - `crates/ls-core/src/config.rs` — current `Environment` model, `from_env`, alias list, and `Display` (the rename targets).
 - `korea-broker-sdk-ls/docs/ENVIRONMENT_VERIFICATION_RESEARCH.md` — Phase 46 finding that no server-side paper/real signal exists.

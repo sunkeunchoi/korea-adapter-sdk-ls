@@ -3,12 +3,16 @@ date: 2026-06-15
 type: feat
 title: "feat: Paper Live Smoke harness + two-environment rename"
 origin: docs/brainstorms/2026-06-15-paper-live-smoke-requirements.md
-status: planned
+status: completed
 ---
 
 # feat: Paper Live Smoke harness + two-environment rename
 
 ## Summary
+
+Status note: implemented and operator-confirmed against the LS Paper gateway on
+2026-06-15. The `make live-smoke-*` targets are the maintained harness; per-TR
+Focused Evidence is recorded in `metadata/evidence/`.
 
 Build a credential-gated **Paper Live Smoke** over the existing SDK slice: a default `make live-smoke` (paper-only guard → OAuth token → one `t1102` quote) plus opt-in `live-smoke-chart`, `live-smoke-account`, and `live-smoke-ws` targets, implemented as `#[ignore]` integration tests wrapped by a new Makefile that loads `.env`. First, collapse the SDK to two environments — `Paper` (default) and `Real` — removing every alias, since the harness's prod guard depends on the renamed `Environment::Paper`.
 
