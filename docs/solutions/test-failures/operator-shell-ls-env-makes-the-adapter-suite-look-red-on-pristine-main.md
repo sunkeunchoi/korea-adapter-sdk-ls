@@ -26,6 +26,7 @@ tags:
   - head-version-pin
   - adapter-check
   - false-regression
+last_updated: 2026-07-30
 ---
 
 # An operator shell's exported LS_* env makes the adapter suite look red on pristine main
@@ -135,6 +136,48 @@ inherits.
 - **Read a fail-closed refusal as "which guard fired", not "what is wrong".** Both messages
   here are accurate about the state they observed and misleading about the cause. When a
   refusal names a variable the test never reads, the state was reached some other way.
+
+## Do not pipe the gate into `tail` — it replaces the verdict
+
+The companion hazard, and the reason a run can be red while the harness reports success.
+`make adapter-check` takes roughly 45 minutes and exceeds the 10-minute command timeout, which
+pushes every agent toward backgrounding it and tailing the output. But a pipeline's exit status
+is its **last** stage's, so
+
+```sh
+make adapter-check 2>&1 | tail -30     # ← reports tail's status, always 0
+```
+
+reports success for a run that ended in `make: *** [adapter-check] Error 101`. The `tail` also
+discards the failure evidence, so the two symptoms compound: the verdict is wrong *and* the
+proof is gone. On 2026-07-30 this masked the very false-red this document describes — the run
+was reported as exit 0 twice before the pipeline was noticed.
+
+This is the repo's own *"Verify with the watermark, never the exit code"* discipline
+(`adapters/nautilus/lab/RUNBOOK-session-morning.md`) re-entering through the gate's reporting
+channel rather than the tool's. Redirect and record the status explicitly:
+
+```sh
+LOG=/tmp/adapter-check.log
+env $(env | grep '^LS_' | cut -d= -f1 | sed 's/^/-u /' | tr '\n' ' ') \
+  make adapter-check > "$LOG" 2>&1; echo "MAKE_EXIT=$?" >> "$LOG"
+```
+
+Then tally from the log rather than trusting a single number — the two counts must be equal:
+
+```sh
+grep -c 'test result:'              "$LOG"   # every result line
+grep -c 'test result: ok.*0 failed' "$LOG"   # every CLEAN result line
+grep -o '[0-9]* passed' "$LOG" | awk '{s+=$1} END {print "passed", s}'
+```
+
+A clean run of this workspace on 2026-07-30 was **70 result lines, all `0 failed`, 1352 passed,
+`MAKE_EXIT=0`**. A mismatch between the two counts, or a `MAKE_EXIT` other than 0, is a real red
+regardless of what any tailed output suggested.
+
+The same trap applies to any long gate command, and to `lab-research catalog status`, whose
+verdict *is* mapped to its exit code (`ok_fail(out.go)`) — pipe it and you lose that too. See
+[`bounding-catalog-status-with-an-expected-range-forces-no-go-on-a-mixed-bar-kind-catalog`](../workflow-issues/bounding-catalog-status-with-an-expected-range-forces-no-go-on-a-mixed-bar-kind-catalog.md).
 
 ## Related
 

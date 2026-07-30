@@ -138,9 +138,14 @@ fully-blocked run and of a fully-up-to-date one. Only the checkpoint distinguish
 **Always pass `LS_CALENDAR_SNAPSHOT` to `lab-research catalog status`.** Without it every symbol
 reports `calendar unavailable`, which masks the real verdict.
 
-**Bound the status query to the last proven session.** Querying through today guarantees
-`calendar indeterminate` on a boundary that cannot be proven yet — a NO-GO that says nothing
-about the catalog. Query through the last witnessed session to read actual coverage.
+**Do not let the status query evaluate through today.** Today's boundary cannot be proven yet, so
+it yields `calendar indeterminate` — a NO-GO that says nothing about the catalog. Note this does
+*not* mean "set `LS_STATUS_SDATE`/`LS_STATUS_EDATE`": on a mixed-bar-kind catalog an expected range is
+a whole-catalog span assertion that the frozen minute series fail by design, which is its own
+guaranteed false NO-GO. Run the watermark-gated form (`LS_DATA_HOME` + `LS_CALENDAR_SNAPSHOT`,
+no `LS_STATUS_*`) — it keys each series to its own watermark and never reaches today's unprovable
+boundary. See
+[`bounding-catalog-status-with-an-expected-range-forces-no-go-on-a-mixed-bar-kind-catalog`](./bounding-catalog-status-with-an-expected-range-forces-no-go-on-a-mixed-bar-kind-catalog.md).
 
 **Write the plan against the witness horizon, not the wall clock.** Any runbook step of the form
 "ingest forward through the previous session, the night before" is unsatisfiable as written when

@@ -268,9 +268,9 @@ if (( dry_run )); then
 [8] pace gate  (ingest by $ingest_by, universe by $universe_by, opening range 09:15)
     stand down with minutes-remaining rather than resolve a universe that lands too late
 
-[9] catalog status
+[9] catalog status  (watermark-gated; NO LS_STATUS_* — an expected range asserts one span
+    across every bar kind, and the frozen 1-MINUTE series would force NO-GO)
     env: LS_DATA_HOME=$DATA_HOME  LS_CALENDAR_SNAPSHOT=$SNAPSHOT
-         LS_STATUS_SDATE=$lookback  LS_STATUS_EDATE=$session_compact
     $BIN/lab-research catalog status
 
 [10] resolve the mount universe  (only after 09:00 — before the auction t8407 serves the
@@ -559,8 +559,10 @@ fi
 say "$(( (uni_dl - now) / 60 )) min to $universe_by — proceeding"
 
 step "[9] catalog status"
+# Watermark-gated, NOT bounded. LS_STATUS_SDATE/EDATE would assert one span across every
+# (instrument, bar-kind) series; the 1-MINUTE series are frozen weeks behind the daily ones, so a
+# daily-derived range forces NO-GO whatever the daily frontier looks like.
 LS_DATA_HOME="$DATA_HOME" LS_CALENDAR_SNAPSHOT="$SNAPSHOT" \
-LS_STATUS_SDATE="$lookback" LS_STATUS_EDATE="$session_compact" \
   "$BIN/lab-research" catalog status || say "WARNING: catalog status returned non-zero — read its verdict below"
 
 step "[10] resolve the mount universe for $mount_date"
