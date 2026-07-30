@@ -168,10 +168,25 @@ Traps: `LS_INGEST_LANE_FILE` must be **absolute** (read CWD-relative, no upward 
 
 ### Optional sanity check
 
-`lab-research catalog status` must be given `LS_CALENDAR_SNAPSHOT` — without it every symbol
-reports `calendar unavailable`, a different NO-GO with the same headline. Bound the query to the
-**last proven session**; querying through today guarantees `calendar indeterminate` on a boundary
-that cannot be proven yet, which says nothing about the catalog.
+```sh
+LS_DATA_HOME=$R/data/turn4-fresh \
+LS_CALENDAR_SNAPSHOT=$R/adapters/nautilus/state/krx.calendar.json \
+  ./target/debug/lab-research catalog status
+```
+
+Two invocation traps, both producing a NO-GO that says nothing about the catalog:
+
+`LS_CALENDAR_SNAPSHOT` is mandatory — without it every symbol reports `calendar unavailable`, a
+different NO-GO with the same headline.
+
+**Do not set `LS_STATUS_SDATE`/`LS_STATUS_EDATE` here.** They are not a query filter: an expected
+range is a *whole-catalog* span assertion applied to every `(instrument, bar-kind)` series
+regardless of bar kind. This catalog's 75 `1-MINUTE` series are deliberately frozen weeks behind
+the daily ones, so any daily-derived range flags all of them and forces NO-GO no matter how
+healthy the daily frontier is. The form above is watermark-gated — each series is judged against
+its own watermark — which is what makes its verdict about catalog health. It also never reaches
+today's unprovable boundary, so the `calendar indeterminate` family cannot fire either. See
+[`bounding-catalog-status-with-an-expected-range-forces-no-go-on-a-mixed-bar-kind-catalog`](../../../docs/solutions/workflow-issues/bounding-catalog-status-with-an-expected-range-forces-no-go-on-a-mixed-bar-kind-catalog.md).
 
 ---
 
