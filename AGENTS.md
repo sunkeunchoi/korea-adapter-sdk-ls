@@ -44,7 +44,7 @@ cargo test -p ls-core  # metadata validation + policy index cross-check
 make docs-check      # assert generated docs match committed
 make lane-check      # smoke-harness fail-fast lane guard (offline; no gateway)
 make adapter-check   # standalone nautilus adapter workspace (offline; only if a touched file reaches it)
-make todo-check      # legacy TODO-file guard (inert until the queue cutover verdict lands)
+make todo-check      # legacy TODO-file guard (enforced — cutover verdict is PASS; queue/items.jsonl is the sole staging location)
 ```
 
 Keep the tree green; never commit with a red gate.

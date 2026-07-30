@@ -1141,8 +1141,8 @@ todo-check:
 .PHONY: gate-run
 
 ## Resumable driver for the AGENTS.md offline gate (plan 2026-07-29-002 U4,
-## KTD4): runs the six gate steps in order (docs, root cargo test, ls-core,
-## docs-check, lane-check, adapter-check), recording per-step completion plus a
+## KTD4): runs the seven gate steps in order (docs, root cargo test, ls-core,
+## docs-check, lane-check, adapter-check, todo-check), recording per-step completion plus a
 ## whole-tree fingerprint to the gitignored .gate-run/state.json. A re-run
 ## resumes from the first incomplete or invalidated step — any tree change
 ## invalidates recorded steps (spurious re-run possible, false green never).

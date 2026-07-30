@@ -47,7 +47,7 @@ verdict_is_pass() {
 find_offenders() {
   git -C "$1" ls-files --cached --others --exclude-standard 2>/dev/null \
     | grep -E '(^|/)(TODO\.ATTENDED\.md|TODO\.OFFLINE\.md|TODO-[^/]*\.md)$' \
-    | grep -Ev '^docs/' \
+    | grep -Ev '(^|/)docs/' \
     | grep -Ev '(^|/)target/' \
     | LC_ALL=C sort
   return 0
@@ -149,6 +149,18 @@ self_test() {
     echo "FAIL[E]: docs/, target/, and gitignored TODO files must not trip the guard"; echo "$out"; fails=1
   else
     echo "ok[E]: docs/, target/, and gitignored TODO files are excluded"
+  fi
+
+  # --- Case F: verdict PASS; TODO file in a NESTED docs/ dir -> OK (excluded) --
+  d="$(new_fixture f-nested-docs)"
+  mkdir -p "$d/queue" "$d/sub/docs"
+  printf '{"verdict":"PASS"}\n' > "$d/queue/cutover-verdict.json"
+  printf 'nested doc\n' > "$d/sub/docs/TODO-2026-01-01-X.md"
+  out="$(bash "$script_path" --root "$d")"; rc=$?
+  if [ "$rc" -ne 0 ] || ! printf '%s' "$out" | grep -q 'ok\[enforced\]'; then
+    echo "FAIL[F]: a TODO file under a nested docs/ dir must not trip the guard"; echo "$out"; fails=1
+  else
+    echo "ok[F]: a TODO file under a nested docs/ dir is excluded"
   fi
 
   if [ "$fails" -ne 0 ]; then

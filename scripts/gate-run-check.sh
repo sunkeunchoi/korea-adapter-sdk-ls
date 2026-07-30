@@ -29,6 +29,8 @@ mkdir -p "$RC_DIR" "$work/bin"
 cat > "$work/bin/make" <<'SHIM'
 #!/bin/sh
 echo "make $*" >> "$GRC_LOG"
+# Env-scrub canary (case H): the driver must strip LS_* from step envs.
+if [ -n "${LS_PROBE_CANARY:-}" ]; then echo "make $* saw LS_PROBE_CANARY" >> "$GRC_RC_DIR/canary-leak"; fi
 key="make_$(printf '%s' "$*" | tr ' ' '_')"
 if [ -f "$GRC_RC_DIR/$key" ]; then
   v="$(cat "$GRC_RC_DIR/$key")"
@@ -44,6 +46,8 @@ SHIM
 cat > "$work/bin/cargo" <<'SHIM'
 #!/bin/sh
 echo "cargo $*" >> "$GRC_LOG"
+# Env-scrub canary (case H): the driver must strip LS_* from step envs.
+if [ -n "${LS_PROBE_CANARY:-}" ]; then echo "cargo $* saw LS_PROBE_CANARY" >> "$GRC_RC_DIR/canary-leak"; fi
 key="cargo_$(printf '%s' "$*" | tr ' ' '_')"
 if [ -f "$GRC_RC_DIR/$key" ]; then
   v="$(cat "$GRC_RC_DIR/$key")"
@@ -89,28 +93,29 @@ log_lines()  { wc -l < "$LOG" | tr -d ' '; }
 state_file() { echo "$fix/.gate-run/state.json"; }
 
 # =============================================================================
-# Case A: happy path — all steps stubbed green -> exit 0, six steps done.
+# Case A: happy path — all steps stubbed green -> exit 0, seven steps done.
 # =============================================================================
 new_fixture A
 reset_log
 run_gate >/dev/null 2>&1; rc=$?
 if [ "$rc" -ne 0 ]; then
   fail A "all-green run exited $rc (expected 0)"
-elif [ "$(log_lines)" != "6" ]; then
-  fail A "expected 6 step invocations, got $(log_lines): $(cat "$LOG")"
+elif [ "$(log_lines)" != "7" ]; then
+  fail A "expected 7 step invocations, got $(log_lines): $(cat "$LOG")"
 elif [ "$(sed -n '1p' "$LOG")" != "make docs" ] \
   || [ "$(sed -n '2p' "$LOG")" != "cargo test" ] \
   || [ "$(sed -n '3p' "$LOG")" != "cargo test -p ls-core" ] \
   || [ "$(sed -n '4p' "$LOG")" != "make docs-check" ] \
   || [ "$(sed -n '5p' "$LOG")" != "make lane-check" ] \
-  || [ "$(sed -n '6p' "$LOG")" != "make adapter-check" ]; then
+  || [ "$(sed -n '6p' "$LOG")" != "make adapter-check" ] \
+  || [ "$(sed -n '7p' "$LOG")" != "make todo-check" ]; then
   fail A "step order wrong: $(cat "$LOG")"
-elif [ "$(grep -c '"status":"done"' "$(state_file)")" != "6" ]; then
-  fail A "state.json does not record six done steps"
+elif [ "$(grep -c '"status":"done"' "$(state_file)")" != "7" ]; then
+  fail A "state.json does not record seven done steps"
 elif git -C "$fix" status --porcelain | grep -q '\.gate-run'; then
   fail A ".gate-run/ leaked into git status in the fixture"
 else
-  ok A "happy path: exit 0, six steps in AGENTS.md order, six done in state, .gate-run ignored"
+  ok A "happy path: exit 0, seven steps in AGENTS.md order, seven done in state, .gate-run ignored"
 fi
 
 # --- Case A2: re-run with unchanged tree -> nothing re-runs, exit 0 -----------
@@ -149,8 +154,8 @@ reset_log
 run_gate >/dev/null 2>&1; rc=$?
 if [ "$rc" -ne 0 ]; then
   fail B2 "resume after fix exited $rc (expected 0)"
-elif [ "$(log_lines)" != "4" ]; then
-  fail B2 "resume ran $(log_lines) steps (expected 4): $(cat "$LOG")"
+elif [ "$(log_lines)" != "5" ]; then
+  fail B2 "resume ran $(log_lines) steps (expected 5): $(cat "$LOG")"
 elif [ "$(sed -n '1p' "$LOG")" != "cargo test -p ls-core" ]; then
   fail B2 "resume did not start at step 3: $(cat "$LOG")"
 elif grep -q '^make docs$' "$LOG"; then
@@ -163,8 +168,8 @@ fi
 echo change >> "$fix/file.txt"
 reset_log
 run_gate >/dev/null 2>&1; rc=$?
-if [ "$rc" -ne 0 ] || [ "$(log_lines)" != "6" ]; then
-  fail C "tracked-file edit: expected full 6-step re-run rc=0, got rc=$rc steps=$(log_lines)"
+if [ "$rc" -ne 0 ] || [ "$(log_lines)" != "7" ]; then
+  fail C "tracked-file edit: expected full 7-step re-run rc=0, got rc=$rc steps=$(log_lines)"
 elif [ "$(sed -n '1p' "$LOG")" != "make docs" ]; then
   fail C "invalidated run did not restart at step 1: $(cat "$LOG")"
 else
@@ -178,7 +183,7 @@ fi
 echo note > "$fix/note.txt"
 reset_log
 run_gate >/dev/null 2>&1; rc=$?
-if [ "$rc" -ne 0 ] || [ "$(log_lines)" != "6" ]; then
+if [ "$rc" -ne 0 ] || [ "$(log_lines)" != "7" ]; then
   fail D1 "new untracked file: expected full re-run rc=0, got rc=$rc steps=$(log_lines)"
 else
   ok D1 "new untracked file invalidates and re-runs the recorded steps"
@@ -189,7 +194,7 @@ fi
 echo more >> "$fix/note.txt"
 reset_log
 run_gate >/dev/null 2>&1; rc=$?
-if [ "$rc" -ne 0 ] || [ "$(log_lines)" != "6" ]; then
+if [ "$rc" -ne 0 ] || [ "$(log_lines)" != "7" ]; then
   fail D2 "edited untracked file: expected full re-run rc=0, got rc=$rc steps=$(log_lines)"
 else
   ok D2 "content edit of an already-untracked file invalidates (content-digest arm)"
@@ -232,6 +237,40 @@ fi
 rm -f "$RC_DIR/make_docs" "$RC_DIR/unblock"
 
 # =============================================================================
+# Case F3: signal safety — SIGTERM a live run: the driver must TERMINATE (no
+# further steps) AND release the lock. (A combined EXIT/INT/TERM cleanup trap
+# would free the lock while the driver kept running remaining steps.)
+# =============================================================================
+new_fixture F3
+echo block > "$RC_DIR/make_docs"
+reset_log
+run_gate >/dev/null 2>&1 &
+bg=$!
+i=0
+while ! grep -q '^make docs$' "$LOG" 2>/dev/null && [ "$i" -lt 100 ]; do sleep 0.1; i=$((i+1)); done
+gpid="$(cat "$fix/.gate-run/lock/pid" 2>/dev/null || echo '')"
+if ! grep -q '^make docs$' "$LOG" 2>/dev/null || [ -z "$gpid" ]; then
+  fail F3 "live run never started step 1 / never wrote the lock pid"
+  touch "$RC_DIR/unblock"
+  wait "$bg" 2>/dev/null
+else
+  kill -TERM "$gpid" 2>/dev/null
+  sleep 0.3                    # let the signal land while step 1 is still blocked
+  touch "$RC_DIR/unblock"      # step 1 returns; the pending TERM trap must now fire
+  wait "$bg"; rc=$?
+  if [ "$rc" -ne 143 ]; then
+    fail F3 "SIGTERM'd run exited $rc (expected 143)"
+  elif [ "$(log_lines)" != "1" ]; then
+    fail F3 "SIGTERM'd driver ran further steps after the signal: $(cat "$LOG")"
+  elif [ -d "$fix/.gate-run/lock" ]; then
+    fail F3 "SIGTERM'd run did not release the lock"
+  else
+    ok F3 "SIGTERM: driver exits 143 promptly, runs no further steps, lock released"
+  fi
+fi
+rm -f "$RC_DIR/make_docs" "$RC_DIR/unblock"
+
+# =============================================================================
 # Case G: --status — parseable, names the next step, never runs steps.
 # =============================================================================
 new_fixture G
@@ -245,10 +284,10 @@ elif ! printf '%s\n' "$out" | grep -q '^step=1 name=docs status=pending fingerpr
   fail G1 "fresh --status step line malformed: $out"
 elif ! printf '%s\n' "$out" | grep -q '^next=docs$'; then
   fail G1 "fresh --status next line malformed: $out"
-elif [ "$(printf '%s\n' "$out" | grep -c '^step=')" != "6" ]; then
-  fail G1 "--status did not print six step lines: $out"
+elif [ "$(printf '%s\n' "$out" | grep -c '^step=')" != "7" ]; then
+  fail G1 "--status did not print seven step lines: $out"
 else
-  ok G1 "--status on fresh repo: six pending step lines, next=docs, no steps run"
+  ok G1 "--status on fresh repo: seven pending step lines, next=docs, no steps run"
 fi
 
 echo 5 > "$RC_DIR/cargo_test_-p_ls-core"
@@ -269,11 +308,52 @@ fi
 
 run_gate >/dev/null 2>&1
 out="$(run_gate --status)"
-if [ "$(printf '%s\n' "$out" | grep -c ' status=done ')" != "6" ] \
+if [ "$(printf '%s\n' "$out" | grep -c ' status=done ')" != "7" ] \
   || ! printf '%s\n' "$out" | grep -q '^next=none$'; then
-  fail G3 "--status after green run should show six done + next=none: $out"
+  fail G3 "--status after green run should show seven done + next=none: $out"
 else
-  ok G3 "--status after green run: six done, next=none"
+  ok G3 "--status after green run: seven done, next=none"
+fi
+
+# =============================================================================
+# Case H: env scrub — steps must NOT inherit the operator shell's LS_* env
+# (documented false-red: a stray LS_TURN_EXPECT_VERSION reddens lab tests).
+# The shims append to $GRC_RC_DIR/canary-leak if they see LS_PROBE_CANARY.
+# =============================================================================
+new_fixture H
+reset_log
+rm -f "$RC_DIR/canary-leak"
+( export LS_PROBE_CANARY=leak-me; run_gate >/dev/null 2>&1 ); rc=$?
+if [ "$rc" -ne 0 ]; then
+  fail H "run with LS_PROBE_CANARY exported exited $rc (expected 0)"
+elif [ -f "$RC_DIR/canary-leak" ]; then
+  fail H "steps inherited the operator LS_* env: $(cat "$RC_DIR/canary-leak")"
+elif [ "$(log_lines)" != "7" ]; then
+  fail H "expected 7 step invocations, got $(log_lines): $(cat "$LOG")"
+else
+  ok H "operator LS_* env scrubbed from every step's environment"
+fi
+
+# =============================================================================
+# Case I: fingerprint digest failure must ALWAYS invalidate. A dangling
+# symlink among the untracked files kills `git hash-object --stdin-paths`
+# partway; a STABLE error constant would leave the fingerprint blind to edits
+# of later-sorting untracked files (false green — recorded steps stay done).
+# =============================================================================
+new_fixture I
+run_gate >/dev/null 2>&1                     # green baseline
+ln -s does-not-exist "$fix/a-dangling-link"  # sorts BEFORE z-later.txt
+echo v1 > "$fix/z-later.txt"
+run_gate >/dev/null 2>&1                     # records fingerprints under digest failure
+echo v2 >> "$fix/z-later.txt"                # edit a LATER-sorting untracked file
+reset_log
+run_gate >/dev/null 2>&1; rc=$?
+if [ "$rc" -ne 0 ]; then
+  fail I "run after edit behind a dangling symlink exited $rc (expected 0)"
+elif [ "$(log_lines)" != "7" ]; then
+  fail I "digest failure did not invalidate: expected full 7-step re-run, got $(log_lines) (false green)"
+else
+  ok I "unreadable untracked path: digest failure invalidates recorded steps (re-run, never false green)"
 fi
 
 # =============================================================================

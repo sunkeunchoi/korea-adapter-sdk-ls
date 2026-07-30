@@ -71,7 +71,7 @@ use crate::queue::window::{
     WindowState,
 };
 use crate::queue::{
-    artifact_witnesses, CompletionSignal, Queue, QueueItem, TransitionOutcome, Window,
+    anchored, artifact_witnesses, CompletionSignal, Queue, QueueItem, TransitionOutcome, Window,
 };
 
 /// Test-time clock override (seconds since the epoch) for the report's single
@@ -420,7 +420,10 @@ fn reconcile(queue: &Queue, now: DateTime<Utc>) -> anyhow::Result<Vec<String>> {
         let CompletionSignal::ToolEvent { event, artifact: Some(path) } = &item.completion else {
             continue;
         };
-        if !artifact_witnesses(Path::new(path)) {
+        // Same predicate + repo-root anchoring as `done` itself (a relative
+        // artifact path is repo-root-relative), so the pre-check and the
+        // transition can never disagree.
+        if !artifact_witnesses(&anchored(path)) {
             continue;
         }
         match queue.done(&item.id, &now.to_rfc3339())? {
@@ -666,7 +669,9 @@ fn write_probe_report(path: &Path, report: &serde_json::Value) -> anyhow::Result
         std::fs::create_dir_all(parent)
             .map_err(|e| anyhow::anyhow!("mkdir {}: {e}", parent.display()))?;
     }
-    let tmp = path.with_extension("json.tmp");
+    // PID-suffixed tmp (the gate-run.sh `tmp-$$` idiom): two concurrent
+    // writers must never clobber each other's staging file.
+    let tmp = path.with_extension(format!("json.tmp-{}", std::process::id()));
     std::fs::write(&tmp, format!("{}\n", serde_json::to_string_pretty(report)?))
         .map_err(|e| anyhow::anyhow!("write probe report tmp {}: {e}", tmp.display()))?;
     std::fs::rename(&tmp, path)

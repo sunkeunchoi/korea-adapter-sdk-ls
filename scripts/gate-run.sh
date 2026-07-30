@@ -11,6 +11,7 @@
 #   4. docs-check          make docs-check
 #   5. lane-check          make lane-check
 #   6. adapter-check       make adapter-check
+#   7. todo-check          make todo-check
 #
 # Resume: invoked with no args it recomputes the tree fingerprint, compares it
 # against each completed step's recorded-at-completion fingerprint, and re-runs
@@ -43,7 +44,7 @@
 # state.json schema (version 1; one step object per line, machine-generated —
 # this script is the only writer and reader):
 #   {"version":1,"steps":[
-#   {"n":<1..6>,"name":"<name>","cmd":"<command>","status":"done|failed|running|pending",
+#   {"n":<1..7>,"name":"<name>","cmd":"<command>","status":"done|failed|running|pending",
 #    "started_at":"<utc|->","ended_at":"<utc|->","exit_code":"<int|->","fingerprint":"<hex64|->"},
 #   ... ]}
 #
@@ -69,8 +70,8 @@ STATE_DIR="$ROOT/.gate-run"
 STATE_FILE="$STATE_DIR/state.json"
 LOCK_DIR="$STATE_DIR/lock"
 
-STEP_NAMES=(docs cargo-test cargo-test-ls-core docs-check lane-check adapter-check)
-STEP_CMDS=("make docs" "cargo test" "cargo test -p ls-core" "make docs-check" "make lane-check" "make adapter-check")
+STEP_NAMES=(docs cargo-test cargo-test-ls-core docs-check lane-check adapter-check todo-check)
+STEP_CMDS=("make docs" "cargo test" "cargo test -p ls-core" "make docs-check" "make lane-check" "make adapter-check" "make todo-check")
 NSTEPS=${#STEP_NAMES[@]}
 
 declare -a S_STATUS S_START S_END S_EXIT S_FP EFF
@@ -102,7 +103,13 @@ tree_fingerprint() {
     printf 'unstaged:%s\n' "$(git -C "$ROOT" diff 2>/dev/null | sha256)"
     printf 'untracked:\n%s\n' "$untracked"
     if [ -n "$untracked" ]; then
-      printf '%s\n' "$untracked" | git -C "$ROOT" hash-object --stdin-paths 2>/dev/null || echo HASH-ERR
+      # If hash-object dies partway (e.g. a dangling symlink among the
+      # untracked paths), later-sorting files were never digested — a STABLE
+      # error constant would then make the fingerprint blind to their edits
+      # (false green). Emit a per-invocation unique token instead: digest
+      # failure always invalidates (spurious re-run, never a false green).
+      printf '%s\n' "$untracked" | git -C "$ROOT" hash-object --stdin-paths 2>/dev/null \
+        || echo "HASH-ERR-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')-$$"
     fi
   } | sha256
 }
@@ -177,7 +184,8 @@ do_status() {
 }
 
 do_run() {
-  local i name cmd rc holder
+  local i name cmd rc holder envname
+  local -a ls_scrub
   mkdir -p "$STATE_DIR"
   if ! mkdir "$LOCK_DIR" 2>/dev/null; then
     holder="unknown"
@@ -187,7 +195,14 @@ do_run() {
     exit 75
   fi
   echo "$$" > "$LOCK_DIR/pid"
-  trap 'rm -rf "$LOCK_DIR"' EXIT INT TERM
+  # Separate signal handlers: clean up AND terminate. A single combined
+  # EXIT/INT/TERM trap would free the lock on a pid-targeted signal while the
+  # driver kept running remaining steps — lock gone with a run still live (a
+  # second gate run could then start; two concurrent root cargo tests is a
+  # documented never-do).
+  trap 'rm -rf "$LOCK_DIR"' EXIT
+  trap 'rm -rf "$LOCK_DIR"; trap - EXIT; exit 130' INT
+  trap 'rm -rf "$LOCK_DIR"; trap - EXIT; exit 143' TERM
 
   if ! git -C "$ROOT" check-ignore -q .gate-run 2>/dev/null; then
     echo "gate-run: WARNING: .gate-run is not gitignored here — its state file will churn the fingerprint (spurious re-runs, never a false green)." >&2
@@ -208,6 +223,21 @@ do_run() {
   done
   write_state
 
+  # Steps must NOT inherit the operator shell's LS_* env: a stray exported
+  # LS_TURN_EXPECT_VERSION reddens lab tests on a pristine tree (documented
+  # false-red; see docs/solutions/test-failures/
+  # operator-shell-ls-env-makes-the-adapter-suite-look-red-on-pristine-main.md).
+  # Build an `env -u NAME ...` scrub list once (bash-3.2-safe: `+=` array
+  # append; the `${arr[@]+...}` expansion below tolerates an empty array under
+  # `set -u`). Only well-formed variable names are scrubbed (multi-line values
+  # can masquerade as names in `env` output).
+  ls_scrub=()
+  while IFS='=' read -r envname _; do
+    case "$envname" in
+      LS_*) case "$envname" in *[!A-Za-z0-9_]*) ;; *) ls_scrub+=(-u "$envname") ;; esac ;;
+    esac
+  done < <(env)
+
   for ((i = RESUME; i <= NSTEPS; i++)); do
     name="${STEP_NAMES[$((i - 1))]}"
     cmd="${STEP_CMDS[$((i - 1))]}"
@@ -215,7 +245,7 @@ do_run() {
     S_STATUS[$i]=running
     S_START[$i]="$(now_utc)"
     write_state
-    ( cd "$ROOT" && $cmd )
+    ( cd "$ROOT" && env ${ls_scrub[@]+"${ls_scrub[@]}"} $cmd )
     rc=$?
     S_END[$i]="$(now_utc)"
     S_EXIT[$i]="$rc"

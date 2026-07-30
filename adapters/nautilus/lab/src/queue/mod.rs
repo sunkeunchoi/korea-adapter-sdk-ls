@@ -92,6 +92,9 @@ pub enum CompletionSignal {
         /// The event name (e.g. `ingest-complete`, `gate-green`).
         event: String,
         /// The artifact path that witnesses the event, when one exists on disk.
+        /// A relative path is REPO-ROOT-relative (anchored via [`repo_root`]
+        /// before checking), so the same item witnesses identically whatever
+        /// the invoking cwd; an absolute path passes through untouched.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         artifact: Option<String>,
     },
@@ -296,7 +299,9 @@ impl Queue {
             std::fs::create_dir_all(parent)
                 .map_err(|e| anyhow::anyhow!("mkdir {}: {e}", parent.display()))?;
         }
-        let tmp = self.path.with_extension("jsonl.tmp");
+        // PID-suffixed tmp (the gate-run.sh `tmp-$$` idiom): two concurrent
+        // writers must never clobber each other's staging file.
+        let tmp = self.path.with_extension(format!("jsonl.tmp-{}", std::process::id()));
         std::fs::write(&tmp, text)
             .map_err(|e| anyhow::anyhow!("write queue tmp {}: {e}", tmp.display()))?;
         std::fs::rename(&tmp, &self.path)
@@ -349,7 +354,7 @@ impl Queue {
             _ => None,
         };
         if let Some((path, event)) = declared {
-            if !artifact_witnesses(Path::new(&path)) {
+            if !artifact_witnesses(&anchored(&path)) {
                 let flag = format!(
                     "done refused: completion artifact {path} for event {event:?} is absent or empty"
                 );
@@ -409,6 +414,23 @@ pub(crate) fn artifact_witnesses(path: &Path) -> bool {
         }
         Ok(md) => md.len() > 0,
         Err(_) => false,
+    }
+}
+
+/// Anchor a declared artifact path for witnessing: a relative path resolves
+/// against [`repo_root`] (never the invoking cwd — `make next` runs from
+/// `adapters/nautilus` while direct invocations run from anywhere, and the
+/// same item must witness identically at both); an absolute path passes
+/// through. With no findable repo root the raw path is kept — witnessing then
+/// fails toward keeping the item actionable, same as any unreadable path.
+/// Crate-visible so `done` and the entry report's R12 auto-close pre-check
+/// share ONE predicate + anchoring and can never disagree.
+pub(crate) fn anchored(path: &str) -> PathBuf {
+    let p = Path::new(path);
+    if p.is_absolute() {
+        p.to_path_buf()
+    } else {
+        repo_root().map(|r| r.join(p)).unwrap_or_else(|_| p.to_path_buf())
     }
 }
 
@@ -503,6 +525,34 @@ mod tests {
         let mut flagged = item("flagged", Window::Closed);
         flagged.reconcile = Some("done refused: …".into());
         assert!(flagged.is_actionable(now).unwrap(), "a reconcile flag keeps the item actionable");
+    }
+
+    #[test]
+    fn relative_artifact_paths_anchor_to_the_repo_root_not_the_invoking_cwd() {
+        // The anchoring rule itself: relative → repo-root-joined, absolute →
+        // pass-through. Baked from CARGO_MANIFEST_DIR, so it is cwd-invariant.
+        let root = repo_root().unwrap();
+        assert_eq!(anchored("AGENTS.md"), root.join("AGENTS.md"));
+        let abs = root.join("AGENTS.md");
+        assert_eq!(anchored(abs.to_str().unwrap()), abs, "absolute paths pass through");
+
+        // `done` witnesses a RELATIVE artifact via the same anchoring: a
+        // repo-root-relative path to a tracked non-empty file completes
+        // whatever the test process cwd happens to be (the harness resets it
+        // per invocation — exactly the drift the anchoring exists to absorb).
+        let tmp = tempfile::TempDir::new().unwrap();
+        let q = Queue::new(tmp.path().join("items.jsonl"));
+        let mut it = item("rel", Window::Any);
+        it.completion = CompletionSignal::ToolEvent {
+            event: "gate-green".into(),
+            artifact: Some("AGENTS.md".into()), // repo-root-relative (documented contract)
+        };
+        q.add(it).unwrap();
+        assert_eq!(
+            q.done("rel", "2026-07-30T00:00:00Z").unwrap(),
+            TransitionOutcome::Completed,
+            "a repo-root-relative artifact witnesses regardless of the invoking cwd"
+        );
     }
 
     #[test]

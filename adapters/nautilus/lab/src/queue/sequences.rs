@@ -202,8 +202,11 @@ fn last_stage_line(path: &Path) -> Option<String> {
 /// The ladder / session-prep leg, surfaced exactly as [`DispatchChain::load`]
 /// reports it. `None` when no chain file exists (pre-genesis — nothing in
 /// flight) or the prep sequence completed (green dispatch consumed by a
-/// finalized run). A defective chain is the fail-closed rung-0 verdict as a
-/// REPORT, never an error and never re-derived here.
+/// finalized run) — EXCEPT with the kill switch engaged, which is always a
+/// report (an ABNORMAL-finalized session leaves the switch engaged and every
+/// dispatch refused until it is deliberately cleared). A defective chain is
+/// the fail-closed rung-0 verdict as a REPORT, never an error and never
+/// re-derived here.
 pub fn ladder_sequence(data_home: &Path, now: DateTime<Utc>) -> Option<SequenceReport> {
     // Existence probe BEFORE `open`: `DispatchChain::open` mkdirs the dispatch
     // dir, and this reader must not create anything.
@@ -233,6 +236,26 @@ pub fn ladder_sequence(data_home: &Path, now: DateTime<Utc>) -> Option<SequenceR
         }),
         ChainStatus::Valid => {
             detail.push(format!("chain authorizes rung {}", state.authorized_rung));
+            // An ENGAGED kill switch must never vanish behind "nothing in
+            // flight": an ABNORMAL-finalized session (exit 72) leaves a
+            // finalized runs/<id> dir WITH the switch engaged, and the
+            // non-deferrable kill-switch check reds every dispatch until it is
+            // deliberately cleared. Every arm below that would otherwise
+            // report no sequence falls back to this report instead.
+            let engaged_fallback = |detail: Vec<String>| {
+                if state.kill_switch_engaged {
+                    Some(SequenceReport {
+                        kind: SequenceKind::Ladder,
+                        stage: "kill switch ENGAGED — session dispatches refused until cleared"
+                            .to_string(),
+                        resume: "clear deliberately after understanding the trip: lab-live --clear-killswitch (nonce-gated, attended; LS_DISPATCH_REASON required)"
+                            .to_string(),
+                        detail,
+                    })
+                } else {
+                    None
+                }
+            };
             match state.mount_authz(&kst_trading_date(now)) {
                 MountAuthz::Ready { record_id, chain_rung, effective_rung } => {
                     Some(SequenceReport {
@@ -246,13 +269,16 @@ pub fn ladder_sequence(data_home: &Path, now: DateTime<Utc>) -> Option<SequenceR
                     })
                 }
                 MountAuthz::Consumed => {
-                    let last = state.last_session_dispatch.as_ref()?;
+                    let Some(last) = state.last_session_dispatch.as_ref() else {
+                        return engaged_fallback(detail);
+                    };
                     let run = last.consumed_run_id.as_deref();
                     // A finalized run under the registry means the mounted
-                    // session finished — the prep sequence is complete.
+                    // session finished — the prep sequence is complete (but an
+                    // engaged switch is still a reportable state).
                     if let Some(run_id) = run {
                         if data_home.join("runs").join(run_id).is_dir() {
-                            return None;
+                            return engaged_fallback(detail);
                         }
                         if data_home.join("runs").join(format!(".tmp-{run_id}")).exists() {
                             detail.push(format!(
@@ -273,7 +299,9 @@ pub fn ladder_sequence(data_home: &Path, now: DateTime<Utc>) -> Option<SequenceR
                     })
                 }
                 MountAuthz::Expired => {
-                    let last = state.last_session_dispatch.as_ref()?;
+                    let Some(last) = state.last_session_dispatch.as_ref() else {
+                        return engaged_fallback(detail);
+                    };
                     Some(SequenceReport {
                         kind: SequenceKind::Ladder,
                         stage: format!(
@@ -285,8 +313,9 @@ pub fn ladder_sequence(data_home: &Path, now: DateTime<Utc>) -> Option<SequenceR
                     })
                 }
                 // No green dispatch in flight; a valid chain at rest is not a
-                // resumable sequence (the queue owns "start a session" items).
-                MountAuthz::None => None,
+                // resumable sequence (the queue owns "start a session" items)
+                // — unless the kill switch is engaged, which IS one.
+                MountAuthz::None => engaged_fallback(detail),
             }
         }
     }

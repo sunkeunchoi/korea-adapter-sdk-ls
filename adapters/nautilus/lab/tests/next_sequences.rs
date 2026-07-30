@@ -11,7 +11,8 @@
 
 use chrono::{DateTime, TimeZone, Utc};
 use nautilus_ls_lab::dispatch::chain::{
-    Consumption, DispatchChain, DispatchOutcome, RecordKind, SessionDispatch,
+    Consumption, DispatchChain, DispatchOutcome, RecordKind, SafetyTrip, SafetyTripKind,
+    SessionDispatch, TripAction,
 };
 use nautilus_ls_lab::queue::sequences::{
     ingest_sequence, ladder_sequence, read_sequences, turn_sequence, SequenceKind, SequenceStores,
@@ -193,6 +194,66 @@ fn finished_session_prep_is_not_in_flight() {
     std::fs::create_dir_all(tmp.path().join("runs/20260716T001000Z-live-orb-v34")).unwrap();
 
     assert_eq!(ladder_sequence(tmp.path(), day), None, "finalized session -> prep not in flight");
+}
+
+#[test]
+fn engaged_kill_switch_after_an_abnormal_finalized_session_is_reported_not_silent() {
+    // ABNORMAL exit-72 shape: consumed dispatch, the run FINALIZED under the
+    // registry, and the kill switch tripped ENGAGED on the way down. Without
+    // the switch this reads "prep complete" (None) — with it engaged the
+    // report must name the switch and the deliberate clear step, never
+    // "no in-flight sequences".
+    let tmp = TempDir::new().unwrap();
+    let day = a_day();
+    let chain = DispatchChain::open(tmp.path()).unwrap();
+    chain.append(day, 1, 1, None, RecordKind::Genesis).unwrap();
+    let d = chain.append(day, 1, 1, None, RecordKind::SessionDispatch(green_dispatch())).unwrap();
+    chain
+        .append(
+            day,
+            1,
+            1,
+            None,
+            RecordKind::Consumption(Consumption {
+                dispatch_record_id: d.body.record_id.clone(),
+                run_id: Some("20260716T001000Z-live-orb-v34".into()),
+            }),
+        )
+        .unwrap();
+    chain
+        .append(
+            day,
+            1,
+            1,
+            None,
+            RecordKind::SafetyTrip(SafetyTrip {
+                trip: SafetyTripKind::KillSwitch,
+                action: TripAction::Engage,
+                run_id: Some("20260716T001000Z-live-orb-v34".into()),
+                detail: "session max-loss breaker escalated to kill switch".into(),
+            }),
+        )
+        .unwrap();
+    std::fs::create_dir_all(tmp.path().join("runs/20260716T001000Z-live-orb-v34")).unwrap();
+
+    let ladder = ladder_sequence(tmp.path(), day)
+        .expect("an engaged kill switch is a reportable state, not 'no in-flight sequences'");
+    assert_eq!(ladder.kind, SequenceKind::Ladder);
+    assert!(
+        ladder.stage.contains("kill switch ENGAGED"),
+        "stage names the engaged switch: {}",
+        ladder.stage
+    );
+    assert!(
+        ladder.resume.contains("--clear-killswitch"),
+        "resume is the deliberate clear step, never a fresh --dispatch: {}",
+        ladder.resume
+    );
+    assert!(
+        ladder.detail.iter().any(|d| d.contains("kill switch ENGAGED")),
+        "the existing kill-switch detail line rides along: {:?}",
+        ladder.detail
+    );
 }
 
 // ---------------------------------------------------------------------------
