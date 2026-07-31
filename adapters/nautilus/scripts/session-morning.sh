@@ -223,9 +223,11 @@ if (( dry_run )); then
 
 [3] fetch witness inputs
     $BIN/calendar-fetch-inputs \\
+      --window $session_date..$session_date \\
       --krx-through $session_date \\
       --inputs-out $INPUTS \\
       --state $FETCH_CKPT \\
+      --state-root $STATE \\
       --pace-ms 500
     env: LS_CALENDAR_HTTP_TIMEOUT_SECS=180  LS_KRX_APPKEY=<env>  LS_KASI_SERVICE_KEY=<env>
 
@@ -360,14 +362,33 @@ else
 fi
 
 step "[3] fetch witness inputs"
+# --window is REQUIRED and is NOT a synonym for --krx-through: it supplies the START of the
+# witness fetch (fetch_state seeds krx_cursor from window.from and runs it to krx_through), and
+# the KASI year span. --krx-through alone leaves the range with no start and the binary refuses
+# before any network call. Single session per morning is this chain's cadence, so the window is
+# the session date itself; a MISSED morning leaves a multi-session gap this does not cover.
+# --state-root is REQUIRED here even though every path below is absolute. The binary confines
+# all output beneath an owner-local state root that DEFAULTS TO "state" RELATIVE TO CWD, and
+# confine() runs before any network call — so without it the absolute --inputs-out resolves
+# outside the root and the run is refused from every directory except adapters/nautilus. This
+# script is otherwise CWD-independent by construction; passing $STATE keeps step [3] that way.
 LS_CALENDAR_HTTP_TIMEOUT_SECS="${LS_CALENDAR_HTTP_TIMEOUT_SECS:-180}" \
   "$BIN/calendar-fetch-inputs" \
+    --window "$session_date..$session_date" \
     --krx-through "$session_date" \
     --inputs-out "$INPUTS" \
     --state "$FETCH_CKPT" \
-    --pace-ms 500 || die "calendar-fetch-inputs failed. 'failed=error sending request' is the
-  CLIENT-side timeout trap, not a dead source — raise LS_CALENDAR_HTTP_TIMEOUT_SECS and re-run;
-  the checkpoint resumes so only un-fetched days cost anything."
+    --state-root "$STATE" \
+    --pace-ms 500 || die "calendar-fetch-inputs failed — READ ITS ERROR ABOVE, printed by the
+  binary itself, rather than assuming a cause. Three failure modes look nothing alike:
+    * 'error: missing required/unknown argument ...' is an ARGUMENT defect in this script,
+      reached in seconds and before any network call. Raising a timeout cannot help.
+    * 'refused: <path> resolves outside the owner-local state root <root>' is a CONFINEMENT
+      defect — --state-root disagrees with the output paths (or is missing, and the root
+      defaulted to \$PWD/state). Also pre-network; a timeout is equally irrelevant.
+    * 'failed=error sending request' / 'client-side timeout' IS the client-side timeout trap,
+      not a dead source — raise LS_CALENDAR_HTTP_TIMEOUT_SECS and re-run; the checkpoint
+      resumes so only un-fetched days cost anything."
 say "inputs: $INPUTS"
 
 step "[4] refresh -> candidate"

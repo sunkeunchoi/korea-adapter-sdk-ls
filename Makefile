@@ -1125,6 +1125,24 @@ lane-check:
 adapter-check:
 	cd adapters/nautilus && cargo test --workspace
 
+.PHONY: script-check
+
+## Live-path regression tests for session-morning.sh steps [1]-[5], run against
+## STUBBED binaries in a throwaway fixture repo (offline, no gateway, clock-
+## independent). Covers what neither `--dry-run` nor `--self-test` can reach: the
+## argv the script marshals into calendar-fetch-inputs and calendar-refresh. The
+## calendar-fetch-inputs argv is replayed against the REAL compiled binary with
+## credentials stripped, so the check cannot drift from the parser it guards.
+## SCOPE LIMIT: steps [6]-[11] are stubbed but never reached (the run stops at
+## --stop-before-activate), and the other five stubs accept any argv.
+## Requires target/debug/calendar-fetch-inputs; reports loudly if it is absent.
+## step [3] shipped without the REQUIRED --window, and then without --state-root,
+## and died on its first real run (2026-07-31) with both modes green — see
+## docs/solutions/workflow-issues/shell-script-live-path-needs-stubbed-binary-tests.md.
+## Not yet a `make gate-run` step; run it when touching adapters/nautilus/scripts/.
+script-check:
+	@bash adapters/nautilus/scripts/tests/session-morning.test.sh
+
 .PHONY: todo-check
 
 ## Legacy TODO-file guard (plan 2026-07-29-002 U8; R16, KTD5). INERT until the
