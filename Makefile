@@ -1141,6 +1141,9 @@ adapter-check:
 ## step [3] shipped without the REQUIRED --window, and then without --state-root,
 ## and died on its first real run (2026-07-31) with both modes green — see
 ## docs/solutions/workflow-issues/shell-script-live-path-needs-stubbed-binary-tests.md.
+## Third defect class now also covered: the step [3] window seeded from the session
+## date under-fetched a multi-session gap (window.from must reach the daily
+## watermark frontier + 1, or intermediate days stay Unknown and the ingest stalls).
 ## Not yet a `make gate-run` step; run it when touching adapters/nautilus/scripts/.
 script-check:
 	@bash adapters/nautilus/scripts/tests/session-morning.test.sh

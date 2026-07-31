@@ -102,8 +102,16 @@ make_fixture() { # [sed_expr] -> repo root on stdout
   # are literals in a throwaway tree — never a real key, and never committed.
   printf '%s\n' 'LS_KRX_APPKEY=fixture-krx-key' 'LS_KASI_SERVICE_KEY=fixture-kasi-key' \
     >"$root/.env.calendar"
-  printf '%s\n' '{"watermarks":{"005930.XKRX|1-DAY":"20260729","000660.XKRX|1-DAY":"20260729"},"gaps":[],"shifted":{}}' \
-    >"$root/data/turn4-fresh/catalog/ingest-checkpoint.json"
+  # The checkpoint's daily watermarks are per-test knobs: the window-derivation tests
+  # below set FIXTURE_WM_A behind FIXTURE_WM_B to prove the MIN governs, and FIXTURE_CKPT
+  # replaces the whole document to exercise the empty-watermark refusal. The defaults
+  # reproduce the designed one-session-per-morning cadence (frontier = the prior session).
+  if [ -n "${FIXTURE_CKPT:-}" ]; then
+    printf '%s\n' "$FIXTURE_CKPT" >"$root/data/turn4-fresh/catalog/ingest-checkpoint.json"
+  else
+    printf '%s\n' "{\"watermarks\":{\"005930.XKRX|1-DAY\":\"${FIXTURE_WM_A:-20260729}\",\"000660.XKRX|1-DAY\":\"${FIXTURE_WM_B:-20260729}\"},\"gaps\":[],\"shifted\":{}}" \
+      >"$root/data/turn4-fresh/catalog/ingest-checkpoint.json"
+  fi
 
   # ---- stubs: every one logs its full argv, so assertions can read the real call ----
   local b
@@ -222,7 +230,11 @@ _run_in() {
   CHAIN_LOG="$(cat "$log" 2>/dev/null || true)"
 }
 
-drop_fixture() { [ -n "${CHAIN_ROOT:-}" ] && rm -rf "$CHAIN_ROOT"; CHAIN_ENV=(); return 0; }
+drop_fixture() {
+  [ -n "${CHAIN_ROOT:-}" ] && rm -rf "$CHAIN_ROOT"
+  CHAIN_ENV=(); FIXTURE_WM_A=""; FIXTURE_WM_B=""; FIXTURE_CKPT=""
+  return 0
+}
 
 # Replay the argv the script actually marshalled against the REAL binary, with
 # credentials stripped and from a foreign CWD (/), and echo a verdict word:
@@ -340,6 +352,111 @@ else
                   "the real binary to REFUSE the mutated argv" "it accepted it" ;;
   esac
 fi
+drop_fixture
+
+# ===================================================================== the gap window
+# THE THIRD DEFECT CLASS: step [3]'s window seeded from the SESSION DATE under-fetches after
+# a MISSED morning. window.from is the START of the KRX witness fetch, and the ingest's
+# accumulate plan acts only on the established prefix — it stops before the first
+# calendar-Unknown day and never crosses it (established_prefix in src/ingest/mod.rs) — so a
+# 2+ session gap got a witness only for the LATEST day and the bounded ingest stalled at the
+# frontier with nothing advanced. The fix derives window.from = min(daily watermark) + 1,
+# clamped to the session date. Invisible on 2026-07-31 only because that gap was one day.
+#
+# The fixture watermarks are deliberately MIXED (20260725 behind the 20260729 default): the
+# MIN must govern, because each symbol's plan starts at ITS OWN watermark+1 and the slowest
+# symbol decides how far back the witness fetch has to reach.
+FIXTURE_WM_A=20260725
+run_chain --stop-before-activate
+case "$CHAIN_LOG" in
+  *"--window 2026-07-26..$SESSION_DATE"*)
+    ok "step [3] window reaches back to the daily frontier + 1 on a multi-session gap" ;;
+  *)
+    no "step [3] window reaches back to the daily frontier + 1 on a multi-session gap" \
+       "--window 2026-07-26..$SESSION_DATE (min watermark 20260725 + 1)" "$CHAIN_LOG" ;;
+esac
+# The fetch checkpoint must be KEYED ON BOTH WINDOW ENDS: calendar-fetch-inputs refuses to
+# resume a checkpoint whose (from, through, krx_through) triple differs (CheckpointMismatch),
+# and both ends move within a day — a completed ingest advances the frontier (later
+# window.from on the documented recovery re-run), and a run that dies mid-fetch followed by
+# a same-day catch-up targeting the NEXT session changes the end while the start stays put.
+# A key missing either end hands one of those re-runs the stale checkpoint and dies at [3].
+case "$CHAIN_LOG" in
+  *"--state "*"-from20260726-to$SESSION_COMPACT"*)
+    ok "step [3] fetch checkpoint is keyed on both ends of the derived window" ;;
+  *)
+    no "step [3] fetch checkpoint is keyed on both ends of the derived window" \
+       "a --state path containing -from20260726-to$SESSION_COMPACT" "$CHAIN_LOG" ;;
+esac
+# And the real parser + confine() must accept the gap-window argv exactly as they accept the
+# single-day one — a multi-day window that only a stub ever parsed would be the same silent
+# drift this file exists to kill.
+FETCH_ARGV="$(fetch_argv_from_log "$CHAIN_LOG")"
+if [ -z "$FETCH_ARGV" ]; then
+  no "gap-window argv is replayable against the real binary" "a logged argv" "$CHAIN_LOG"
+else
+  VERDICT="$(replay_real_binary "$FETCH_ARGV")"
+  case "$VERDICT" in
+    accepted) ok "real calendar-fetch-inputs accepts the gap-window argv from a foreign CWD" ;;
+    nobinary) no "real calendar-fetch-inputs accepts the gap-window argv from a foreign CWD" \
+                 "a compiled $REAL_BIN (run: cargo build --bin calendar-fetch-inputs)" "binary not built" ;;
+    *)        no "real calendar-fetch-inputs accepts the gap-window argv from a foreign CWD" \
+                 "argument parsing + state-root confinement to pass" "$VERDICT" ;;
+  esac
+fi
+drop_fixture
+
+# NEGATIVE META-TEST: prove the gap assertion can SEE the pre-fix window. Reverting the
+# invocation to the session-date window (the exact pre-fix argv) on the SAME gap fixture
+# must produce the under-fetching single-day window — if the two runs were not
+# distinguishable here, the positive assertion above would be unfalsifiable theatre.
+FIXTURE_WM_A=20260725
+run_chain_mutated 's/--window "\$window_from/--window "\$session_date/' --stop-before-activate
+case "$CHAIN_LOG" in
+  *"--window $SESSION_DATE..$SESSION_DATE"*)
+    ok "harness detects a step [3] reverted to the session-date window" ;;
+  *)
+    no "harness detects a step [3] reverted to the session-date window" \
+       "the mutated argv to show --window $SESSION_DATE..$SESSION_DATE" "$CHAIN_LOG" ;;
+esac
+drop_fixture
+
+# THE CLAMP'S ACTIVE BRANCH. Every fixture above keeps the frontier AT OR BEHIND the prior
+# session, so frontier+1 never exceeds the session date and min() is inert — a derivation
+# stripped of the clamp would pass every test so far, and the clamp is the only thing
+# standing between an already-caught-up catalog and an INVERTED window (from > through).
+# Watermarks at and past the session date (a catalog that already ingested it, e.g. after
+# a completed catch-up earlier the same day) must clamp back to the session date exactly.
+FIXTURE_WM_A=20260730
+FIXTURE_WM_B=20260731
+run_chain --stop-before-activate
+case "$CHAIN_LOG" in
+  *"--window $SESSION_DATE..$SESSION_DATE"*)
+    ok "step [3] window clamps to the session date when the frontier is at or past it" ;;
+  *)
+    no "step [3] window clamps to the session date when the frontier is at or past it" \
+       "--window $SESSION_DATE..$SESSION_DATE (min watermark 20260730 + 1, clamped)" "$CHAIN_LOG" ;;
+esac
+drop_fixture
+
+# An unreadable or 1-DAY-empty checkpoint leaves no honest window.from. The run must die
+# loudly at the derivation, BEFORE any fetch — a guessed or defaulted window would present
+# a partial acquisition as the designed single-day cadence.
+FIXTURE_CKPT='{"watermarks":{},"gaps":[],"shifted":{}}'
+run_chain --stop-before-activate
+assert_eq "an empty daily-watermark set refuses the window derivation (NO-GO 1)" "1" "$CHAIN_RC"
+case "$CHAIN_OUT" in
+  *"could not derive the fetch window start"*)
+    ok "the derivation refusal names itself" ;;
+  *)
+    no "the derivation refusal names itself" \
+       "a 'could not derive the fetch window start' message" "$CHAIN_OUT" ;;
+esac
+case "$CHAIN_LOG" in
+  *"calendar-fetch-inputs"*)
+    no "no fetch is issued after a refused derivation" "no calendar-fetch-inputs call" "$CHAIN_LOG" ;;
+  *) ok "no fetch is issued after a refused derivation" ;;
+esac
 drop_fixture
 
 # --dry-run must issue NO traffic at all: no stub may be invoked.
