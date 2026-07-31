@@ -14,6 +14,14 @@
 #   09:10  the resolved universe must be IN HAND  (LS_SM_UNIVERSE_BY)
 #   09:15  the opening range opens                — what the other two exist to protect
 #
+# TWO CALLERS, and until --catch-up they were indistinguishable. The ATTENDED caller is racing
+# those clocks and a universe that lands late is worthless, so killing a doomed ingest is right.
+# The CATCH-UP caller has already conceded the mount — it runs on a weekend or after the close
+# purely to advance the calendar and the catalog. For it the pace kill is the failure: it leaves
+# the partial watermark distribution the catch-up exists to prevent. `--catch-up` disables the
+# step [7] kill and ONLY that; the step [8] universe refusal stays, because standing down before
+# resolving a universe is the SUCCESS path on a catch-up rather than a concession.
+#
 # WHAT THIS SCRIPT WILL NEVER DO. It never runs `--mount`, `--dispatch`, or `--genesis`,
 # and it never authors the attended Unknown override's `operator`, `reason`, or `citation`
 # fields. Those are operator-only, nonce-gated, and TTY-gated by design. This script stops
@@ -22,7 +30,8 @@
 # Usage:
 #   ./session-morning.sh --dry-run              # print the resolved sequence, zero traffic
 #   ./session-morning.sh --self-test            # exercise the pace check, zero traffic
-#   ./session-morning.sh                        # run it
+#   ./session-morning.sh                        # run it (attended: racing the 09:15 clock)
+#   ./session-morning.sh --catch-up             # run it with the mount conceded (see below)
 #   ./session-morning.sh --stop-before-activate # stop after the diff for a manual review
 #
 # Env (all optional — every default is resolved below and printed by --dry-run):
@@ -31,14 +40,25 @@
 #   LS_SM_INGEST_BY     ingest-completion target HH:MM local         (default 09:05)
 #   LS_SM_UNIVERSE_BY   universe-in-hand target HH:MM local          (default 09:10)
 #   LS_SM_NOW           override "now" as HH:MM — pace testing ONLY  (default: real clock)
+#   LS_SM_POLL_SECS     ingest progress poll interval, 1..30 seconds (default 30)
 #   LS_SM_OPERATOR      operator id written into the calendar approval (default sunkeunchoi)
 #   LS_SM_LOOKBACK      ingest coverage floor YYYYMMDD               (default 20260518)
 #
 # Exit codes (the contract — never read success from log text):
 #   0   GO      — universe resolved (or a valid flat-open refusal), report delivered
 #   1   NO-GO   — a step failed in a way the runbook anticipates; state reported
-#   40  STAND-DOWN — not on pace; reported early and deliberately, before the universe step
+#   40  STAND-DOWN — not on pace; abandoned deliberately, before the universe step
+#   41  CATCH-UP COMPLETE — --catch-up only. The calendar and the catalog advanced IN FULL and
+#       the universe step was refused BY DESIGN. A success, and NOT a stand-down.
 #   64  misconfiguration — refused before issuing any traffic
+#
+# WHY 41 AND NOT 0 OR 40. Exit 0 is load-bearing: it asserts "a resolved universe is in hand",
+# which is what a wrapper acts on, and a catch-up resolves none — returning 0 would make the one
+# thing a caller is allowed to read into a lie. Exit 40 means "ran out of clock, work abandoned
+# mid-flight, retry"; a completed catch-up means "everything it set out to do is done, nothing
+# left to retry". Collapsing those two would force a caller to tell them apart by reading log
+# text, which this contract exists to forbid. 41 sits in the same decade as 40, so the coarse
+# rule `rc != 0 => no universe in hand` still holds, while `rc == 41` stays separately readable.
 set -uo pipefail
 
 # ---------------------------------------------------------------- paths (all absolute)
@@ -72,13 +92,28 @@ CANDIDATE="$SNAPSHOT.candidate"
 CANDIDATE_DIFF="$SNAPSHOT.candidate.diff.json"
 ARCHIVE="$SNAPSHOT.archive-$(date +%Y%m%d)"
 
-dry_run=0; self_test=0; stop_before_activate=0
+dry_run=0; self_test=0; stop_before_activate=0; catch_up=0
 for a in "$@"; do case "$a" in
   --dry-run) dry_run=1 ;;
   --self-test) self_test=1 ;;
   --stop-before-activate) stop_before_activate=1 ;;
+  --catch-up) catch_up=1 ;;
   *) echo "error: unknown argument '$a'" >&2; exit 64 ;;
 esac; done
+
+# Poll interval for the step [7] progress loop. Unlike LS_SM_NOW this is NOT refused on a real
+# run, and it does not need to be: it is a LATENCY knob, not an input to any decision. Every
+# argument pace_verdict receives — advanced, total, elapsed, now, deadline — is derived from the
+# real clock and the real checkpoint, so a shorter interval changes only how soon the same
+# verdict is noticed, never which verdict it is. The 1..30 bound is what keeps that true at both
+# ends: it cannot be set low enough to hammer the checkpoint into permanent mid-write reads, nor
+# high enough to stall a stand-down past its own deadline. A malformed value is refused loudly
+# rather than silently falling back, so a typo cannot quietly restore the 30s default.
+poll_secs="${LS_SM_POLL_SECS:-30}"
+if ! [[ "$poll_secs" =~ ^[0-9]+$ ]] || (( poll_secs < 1 || poll_secs > 30 )); then
+  echo "error: LS_SM_POLL_SECS must be an integer in 1..30 (got '$poll_secs')." >&2
+  exit 64
+fi
 
 say()  { printf '%s  %s\n' "$(date '+%H:%M:%S')" "$*"; }
 step() { printf '\n=== %s ===\n' "$*"; }
@@ -211,6 +246,36 @@ print(dict(collections.Counter(v for k,v in w.items() if k.endswith('|1-DAY'))))
 # ------------------------------------------------------------------------- --dry-run
 if (( dry_run )); then
   step "resolved command sequence (dry run — no traffic issued)"
+  # The [7]/[8] text below is mode-dependent, and this heredoc is a hand-maintained SECOND COPY
+  # of the live path — the duplication that shipped step [3] without --window. Resolving both
+  # variants here rather than describing "one or the other" keeps the printed sequence a
+  # transcript of what THIS invocation would actually do.
+  if (( catch_up )); then
+    pace_line="--catch-up: the kill is DISABLED. Progress is still reported every ${poll_secs}s;
+           the ingest runs to completion however long it takes."
+    gate_line="[8] universe step REFUSED by --catch-up — unconditionally, NOT on the clock.
+    The mount is already conceded; the catalog is the deliverable. Falls through to [9]."
+    tail_line="[10] NOT RUN — resolving a mount universe is what --catch-up declined to do.
+
+[11] CATCH-UP COMPLETE report, then STOP with exit 41 (a success: catalog advanced,
+     no universe in hand, nothing left to retry)."
+  else
+    pace_line="stand down (kill the ingest, clear the lock, exit 40) as soon as the projected
+           finish passes $ingest_by — a universe that lands late takes ZERO trades."
+    gate_line="[8] pace gate  (ingest by $ingest_by, universe by $universe_by, opening range 09:15)
+    stand down with minutes-remaining rather than resolve a universe that lands too late"
+    tail_line="[10] resolve the mount universe  (only after 09:00 — before the auction t8407 serves the
+     PREVIOUS session, whose open is a valid positive integer, so the producer would
+     silently resolve yesterday's opens)
+    env: LS_DATA_HOME=$DATA_HOME
+         LS_MOUNT_UNIVERSE_DATE=$mount_date
+         LS_MOUNT_UNIVERSE_METADATA=$UNIVERSE_METADATA
+         LS_DISPATCH_LANE_ENV=$LANE_ENV
+         LS_CALENDAR_SNAPSHOT=$SNAPSHOT
+    $BIN/lab-mount-universe --out $OUT_UNIVERSE
+
+[11] GO/NO-GO report, then STOP. --mount is the operator's."
+  fi
   cat <<DRY
 [1] witness state
     read   $WITNESS_LOG
@@ -264,28 +329,18 @@ if (( dry_run )); then
          LS_INGEST_SKIP_UNIVERSE_LOAD=1  LS_INGEST_LOOKBACK=$lookback
          LS_INGEST_SYMBOLS=<$N_SYMS symbols read from the checkpoint>
     $BIN/ls-ingest
-    watch: poll $CKPT until all daily watermarks read $session_compact
+    watch: poll $CKPT every ${poll_secs}s until all daily watermarks read $session_compact
            APPEND REFUSED  => STOP and report (the rollback workaround is retired)
+    pace:  $pace_line
 
-[8] pace gate  (ingest by $ingest_by, universe by $universe_by, opening range 09:15)
-    stand down with minutes-remaining rather than resolve a universe that lands too late
+$gate_line
 
 [9] catalog status  (watermark-gated; NO LS_STATUS_* — an expected range asserts one span
     across every bar kind, and the frozen 1-MINUTE series would force NO-GO)
     env: LS_DATA_HOME=$DATA_HOME  LS_CALENDAR_SNAPSHOT=$SNAPSHOT
     $BIN/lab-research catalog status
 
-[10] resolve the mount universe  (only after 09:00 — before the auction t8407 serves the
-     PREVIOUS session, whose open is a valid positive integer, so the producer would
-     silently resolve yesterday's opens)
-    env: LS_DATA_HOME=$DATA_HOME
-         LS_MOUNT_UNIVERSE_DATE=$mount_date
-         LS_MOUNT_UNIVERSE_METADATA=$UNIVERSE_METADATA
-         LS_DISPATCH_LANE_ENV=$LANE_ENV
-         LS_CALENDAR_SNAPSHOT=$SNAPSHOT
-    $BIN/lab-mount-universe --out $OUT_UNIVERSE
-
-[11] GO/NO-GO report, then STOP. --mount is the operator's.
+$tail_line
 DRY
 
   step "self-check: no mount-class command in the resolved sequence"
@@ -513,11 +568,24 @@ ing_dl="$(hhmm_epoch "$ingest_by")"
 # that kills the ingest early re-scans the log so a refusal already written is still
 # reported rather than discarded along with the process.
 while kill -0 "$ingest_pid" 2>/dev/null; do
-  sleep 30
+  sleep "$poll_secs"
   adv="$(count_advanced)"
   [[ "$adv" == "-1" || -z "$adv" ]] && continue    # checkpoint mid-write; skip this poll
   gained=$((adv - advanced_at_start))
   elapsed=$(( $(date +%s) - start_epoch ))
+  # MODE LOGIC LIVES HERE, NOT IN pace_verdict. The evaluator stays a pure function of
+  # (advanced, total, elapsed, now, deadline) so --self-test can keep driving it with a
+  # simulated clock; deciding whether its verdict is ACTIONABLE is the caller's job.
+  #
+  # On a catch-up the deadline is meaningless by construction: LS_SM_INGEST_BY resolves as
+  # TODAY at 09:05, so on a weekend run at any normal hour it is already elapsed and the first
+  # poll returns LATE — with gained=0 through the `now >= dl` branch, and with gained>0 because
+  # any projected finish is past an elapsed deadline. Reporting that verdict would be noise at
+  # best and an invitation to kill a healthy ingest at worst, so it is not computed at all.
+  if (( catch_up )); then
+    say "ingest $adv/$N_SYMS at $session_compact | elapsed ${elapsed}s | pace gate OFF (--catch-up)"
+    continue
+  fi
   read -r verdict finish remain eta <<<"$(pace_verdict "$gained" "$((N_SYMS - advanced_at_start))" "$elapsed" "$(now_epoch)" "$ing_dl")"
   say "ingest $adv/$N_SYMS at $session_compact | elapsed ${elapsed}s | projected $finish | $verdict"
   if [[ "$verdict" == "LATE" ]]; then
@@ -569,15 +637,24 @@ if (( final_adv < N_SYMS )); then
 fi
 
 step "[8] pace gate before the universe step"
-uni_dl="$(hhmm_epoch "$universe_by")"
-now="$(now_epoch)"
-if (( now >= uni_dl )); then
-  step "STAND DOWN — past the $universe_by universe deadline"
-  echo "The ingest completed, but the universe would land after $universe_by and the opening"
-  echo "range opens at 09:15. Not resolving. Paper lane, so no clean session is consumed."
-  exit 40
+# The universe refusal is the half of the pace machinery --catch-up KEEPS. It is refused
+# UNCONDITIONALLY here, never on the clock: a catch-up run started at 08:00 on a Saturday would
+# pass the $universe_by test and go resolve a universe for a day KRX is closed. The mount was
+# conceded when the caller passed --catch-up; the clock has no say in it.
+if (( catch_up )); then
+  say "--catch-up: the universe step is refused BY DESIGN, not on the clock."
+  say "the catalog is the deliverable — running [9] to certify it, then stopping."
+else
+  uni_dl="$(hhmm_epoch "$universe_by")"
+  now="$(now_epoch)"
+  if (( now >= uni_dl )); then
+    step "STAND DOWN — past the $universe_by universe deadline"
+    echo "The ingest completed, but the universe would land after $universe_by and the opening"
+    echo "range opens at 09:15. Not resolving. Paper lane, so no clean session is consumed."
+    exit 40
+  fi
+  say "$(( (uni_dl - now) / 60 )) min to $universe_by — proceeding"
 fi
-say "$(( (uni_dl - now) / 60 )) min to $universe_by — proceeding"
 
 step "[9] catalog status"
 # Watermark-gated, NOT bounded. LS_STATUS_SDATE/EDATE would assert one span across every
@@ -585,6 +662,21 @@ step "[9] catalog status"
 # daily-derived range forces NO-GO whatever the daily frontier looks like.
 LS_DATA_HOME="$DATA_HOME" LS_CALENDAR_SNAPSHOT="$SNAPSHOT" \
   "$BIN/lab-research" catalog status || say "WARNING: catalog status returned non-zero — read its verdict below"
+
+# The catch-up run ENDS here, one step short of the universe. Everything below this point exists
+# to hand an operator a mountable universe, which a catch-up has already declined to produce.
+if (( catch_up )); then
+  step "CATCH-UP COMPLETE"
+  cat <<CATCHUP
+The calendar advanced through $session_date and the catalog is at $final_adv/$N_SYMS daily
+watermarks for $session_compact. Read the catalog status verdict above — it is the deliverable.
+  in-force artifact_id  $NEW_ID
+  no universe resolved  BY DESIGN (--catch-up); the mount was conceded before the run started
+Exit 41 says exactly that: a complete catch-up, NOT a stand-down (40) and NOT a GO (0) — there
+is no universe file to mount, and there is nothing left to retry.
+CATCHUP
+  exit 41
+fi
 
 step "[10] resolve the mount universe for $mount_date"
 # The REAL clock, never LS_SM_NOW. That override exists for pace-check testing and must not
