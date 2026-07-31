@@ -6,6 +6,14 @@ home; this file is the durable, reviewable outcome trail.
 
 ## Head lineage (STANDING) — post-#118 real-data head = v34; pin `LS_TURN_EXPECT_VERSION=34` (2026-07-24)
 
+> **AMENDED 2026-07-31 (orb-transaction-cost-model): the documented head is now `v35`
+> (`20260731T023138Z-backtest-orb-v35`, `strategy_code_hash 7571abef…`) — pin
+> `LS_TURN_EXPECT_VERSION=35`.** v35 is the SAME head identity (the v32-lineage governed
+> params) re-measured honestly with the transaction-cost model armed — the same
+> identity-preserving relationship v34 had to v32 at the #213 re-baseline, not a new
+> strategy. Everything below this note remains true of the v34 era; see the 2026-07-31
+> turn entry for the cost-aware numbers and the catalog-drift finding.
+
 Canonical answer to "which of the two 2026-07-24 runs is THE head?", resolving the
 `v33` vs `v34` ambiguity in one place (deferred item #2 from plan `2026-07-24-001`;
 the "pin EXPECT_VERSION" operator TODO from #118). This is a documentation +
@@ -51,6 +59,97 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparisons are unaffected by v34's #118 "RED" *power*-label — a KEEP is a relative
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
+
+## Turn — transaction-cost model (measurement axis): head re-measured NET-NEGATIVE, head → v35, all six kept levers survive the cost-aware re-read (2026-07-31) — queue orb-transaction-cost-model
+
+- **Verdict: the measurement executed and ships as read — the cost-aware head is NET-NEGATIVE.**
+  `20260731T023138Z-backtest-orb-v35` (v34 governed params, real catalog, sourced 2026 costs):
+  gross P&L **+1,669,120 KRW**, modeled cost **1,686,034 KRW**, net P&L **−16,914 KRW**,
+  size-invariant net RoR **−0.0006** (gross RoR +0.0599), **111 closed trades** over
+  20260518..20260722. The measured gross edge (22.8 bps of mean round-trip notional) is
+  smaller than the statutory + commission term (23 bps), so the sign flips. This is a
+  MEASUREMENT, not an optimization: no threshold was softened, no rate shaded, no lever
+  retuned after the reading — the no-override clause holds.
+- **The rates are sourced and cited, never assumed** — committed as
+  `config/transaction-costs.json` (schema-gated loader, plausibility-gated by
+  `OrbParams::validate()`, pinned by `tests/strategy.rs::committed_config_artifact_parses_and_validates`):
+  - **Sell-side statutory tax 0.0020 (20 bps of sell notional)** — 2026-01-01 rates
+    (2025 세법개정, 금투세 폐지 패키지의 2023-수준 환원): KOSPI 증권거래세 0.05% + 농어촌특별세
+    0.15%; KOSDAQ 증권거래세 0.20% (농특세 없음). Both boards total 20 bps, so one uniform
+    rate is exact for the equities-only universe over this data range. **Sell-side only —
+    the model is asymmetric by construction.**
+  - **Commission 0.00015/side (1.5 bps)** — LS증권 xing API / OPEN API channel (this
+    repo's actual access channel), KRX orders 0.015%/side. 유관기관수수료 (0.0036396%)
+    is under a temporary exemption (2025-10-27..2026-10-26) spanning the whole data
+    range and is not modeled. Full citations (URLs, retrieval date) in the artifact.
+- **Placement & provenance (the gotcha, resolved deliberately):** the cost model
+  (`TransactionCostModel` + config loader) lives in **`src/strategy/orb.rs`**, applied at
+  backtest trade-booking (`performance.rs::trade_from_position` via
+  `from_positions_with_risk`, backtest assembly path ONLY — live-session reports stay
+  zero-cost because the frozen rung-1 band is zero-cost-derived, see the flag below). Both
+  fingerprints moved, as code-turn semantics require:
+  - `strategy_code_hash`: `e5bc2ae8…` (v34) → **`7571abef…`** (v35) — cost-aware and
+    zero-cost runs can never be treated as one code lineage by `head_governed_params_pinned`.
+  - `lab_src_fingerprint`: `ebfd72e2…` (pre-model HEAD; v34's own was `f476ac7e…`) → **`42aad1c7…`**.
+  - The armed rates ride in the run manifest's params (`cost_commission_rate_per_side`,
+    `cost_sell_tax_rate`); zero rates serialize as ABSENT (`skip_serializing_if`), so
+    zero-cost manifests and `governed_params_hash` stay byte-identical to the pre-model schema.
+- **Reconciliation proof (rate=0 reproduces the zero-cost number exactly):** in a scratch
+  data home (`data/turn4-cost-scratch`, symlinked catalog), v34-params runs with the
+  pre-model binary (v90 `20260731T022007Z`) and the cost-model binary at rate=0 (v91
+  `20260731T022847Z`) produced **byte-identical `performance.json` and `data_quality.json`**
+  (`cmp` clean). The cost model changed nothing it should not have.
+- **Catalog-drift finding (independent of this turn, discovered by the baseline):** the
+  v34 artifact is no longer bit-reproducible on the current data home — in-range catalog
+  content grew as post-07-25 morning-chain ingests backfilled history for newly mounted
+  symbols. Catalog fingerprint `363f199d…` (v34) → `ac026541…` (today); same code, same
+  params, same metadata artifact now yields **111** closed trades vs v34's 119 (universe
+  selection shifted on the 2026-07-14 and 2026-07-21 sessions; every common trade is
+  byte-identical, `universe_hash` moved, `universe_metadata_hash` identical). All
+  comparisons in this turn are therefore same-catalog: v35 vs the v90/v91 zero-cost
+  baseline. v35's trade set is **identical** to that baseline's (111 closed) — costs are
+  booked at fill time and touch no admission decision, so the count delta vs v34's 119 is
+  catalog drift, not the cost model.
+- **Cost-aware re-read of the six kept levers — single-param off-flips from the v35
+  baseline (scratch home, seeded param-source manifests; same catalog, rates armed).
+  NO lever's sign contribution flips: every off-flip makes net RoR WORSE, so all six
+  KEEPs survive the cost-aware re-read and no new governed turn spawns from this table.**
+  The head's negative net edge is not attributable to any kept lever — the levers are
+  each net-positive; the residual gross edge is simply smaller than the statutory term.
+
+  | off-flip (from v35 baseline) | closed | net P&L (KRW) | net RoR | Δ net RoR vs v35 |
+  |---|---|---|---|---|
+  | v35 baseline (all six ON) | 111 | −16,914 | −0.0006 | — |
+  | `entry_confirm` 1.0→0.0 | 126 | −1,025,654 | −0.0325 | −0.0319 |
+  | `or_width_max_atr` 0.666→0.0 | 128 | −807,135 | −0.0243 | −0.0237 |
+  | `breakeven_trigger_r` 0.41→0.0 | 104 | −2,147,179 | −0.0817 | −0.0810 |
+  | `risk_per_trade_krw` 299,340→0.0 (†) | 111 | −2,236,005 | −0.0479 | −0.0473 |
+  | `ratio_atr_alpha` 1.0→0.0 | 111 | −838,043 | −0.0275 | −0.0269 |
+  | `gap_retention_min` 0.5→1.0 (OFF) | 254 | −3,824,479 | −0.0591 | −0.0585 |
+
+  († not a pure single-param flip: `validate()` forbids an armed `ratio_atr_alpha` with a
+  zero risk budget, so the tilt goes off with the budget — the flip removes the whole
+  risk-sizing family, which is the correct marginal question for that lever.)
+- **FLAGGED, NOT FIXED — the rung-1 pre-registration inherits the zero-cost distribution.**
+  `config/preregistration.json` (v2, frozen) derives its rung-1 expectation band
+  **[−148k, +266k]** from the v34 ZERO-COST closed-trade distribution. Expectation bands
+  are legitimately backtest-derivable — but this one derives from a distribution missing a
+  cost term large enough to flip its sign. Amending a frozen prereg is its own governed
+  act (`config/PREREGISTRATION.md`); queued as `rung1-prereg-band-zero-cost-inheritance`.
+  Until that amendment lands, any attended rung-1 session gates live P&L against a band
+  whose center is ~1.69M KRW too optimistic over a full backtest-length window.
+- **Doc amendment:** `docs/solutions/conventions/backtest-derivable-vs-live-calibrated-bands.md`
+  now carves statutory/brokerage costs (published rate × known notional — model up-front
+  from cited rates) out of the live-calibrated family (slippage etc. — unchanged, still
+  fail-closed at rung 2). Head-hash literals moved v34→v35 in `live.rs` (`--head`,
+  `--rung-report`), `dispatch_cli.rs`, `README.md`, `RUNBOOK-rung1.md`, `RUNG1-PREFLIGHT.md`.
+- **Queue re-rank:** `orb-transaction-cost-model` closes with this entry.
+  `rung1-prereg-band-zero-cost-inheritance` is added and now outranks any new lever turn:
+  the ladder's economic gate cites a band the head can no longer clear in expectation, so
+  re-deriving it (or standing down the ladder) precedes further strategy exploration. Any
+  future candidate lever must clear the ~23 bps round-trip hurdle **net**, and the four
+  recent NO-BUILD readings (−0.063 … −0.00096) were all measured gross — their verdicts
+  stand a fortiori under costs.
 
 ## Turn — max_concurrent slot-ranking (reallocation axis): Phase-A STOP, NO-BUILD, head stays v34 (2026-07-24) — plan 2026-07-24-002
 

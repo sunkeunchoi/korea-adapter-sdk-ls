@@ -274,6 +274,94 @@ pub fn breakout_strength(breakout_price: i64, range_high: i64, range_low: i64) -
     (r > 0).then(|| (breakout_price - range_high) as f64 / r as f64)
 }
 
+// ---------------------------------------------------------------------------
+// Transaction-cost model (orb-transaction-cost-model)
+// ---------------------------------------------------------------------------
+
+/// The statutory + brokerage transaction-cost model applied to backtest fills.
+///
+/// Two rates, deliberately **asymmetric**:
+/// - `commission_rate_per_side` — brokerage commission as a fraction of fill
+///   notional, charged on **every** fill (buy and sell).
+/// - `sell_tax_rate` — the Korean securities transaction tax (증권거래세) plus, for
+///   KOSPI, the agricultural special tax (농어촌특별세), charged on **sell** notional
+///   only. The tax is sell-side by statute; a symmetric per-side model is wrong by
+///   construction.
+///
+/// Both KRX boards carry the same 20 bps total sell-side tax in 2026 (KOSPI
+/// 0.05% 거래세 + 0.15% 농특세; KOSDAQ 0.20% 거래세), so one uniform `sell_tax_rate`
+/// is exact for an equities-only universe over a 2026 data range. ETFs are
+/// STT-exempt but the ORB universe admits only listed equities, so no per-instrument
+/// exemption is modeled. Costs are exact fractions of notional — no per-fill KRW
+/// rounding is modeled (sub-KRW per fill, immaterial against a ~300k KRW risk unit).
+///
+/// This model lives in `orb.rs` **on purpose**: the strategy's measured edge is
+/// defined net of these costs, so arming or changing them is a code turn —
+/// `strategy_code_hash` (the sha256 of this file, [`super::ORB_SOURCE`]) and
+/// `lab_src_fingerprint` both move, and `head_governed_params_pinned` can never
+/// treat cost-aware and zero-cost runs as one code lineage. A placement in the
+/// runner or the parent adapter crate would move only one fingerprint, or neither.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TransactionCostModel {
+    /// Brokerage commission per fill side, as a fraction of fill notional.
+    pub commission_rate_per_side: f64,
+    /// Statutory sell-side tax, as a fraction of sell-fill notional.
+    pub sell_tax_rate: f64,
+}
+
+impl TransactionCostModel {
+    /// Build the model from the run's governed params. `None` when both rates are
+    /// `0.0` — the zero-cost sentinel takes the pre-model code path untouched, so a
+    /// zero-rate run's artifacts are byte-identical to a pre-model run's.
+    pub fn from_params(params: &OrbParams) -> Option<Self> {
+        let model = TransactionCostModel {
+            commission_rate_per_side: params.cost_commission_rate_per_side,
+            sell_tax_rate: params.cost_sell_tax_rate,
+        };
+        (model.commission_rate_per_side != 0.0 || model.sell_tax_rate != 0.0).then_some(model)
+    }
+
+    /// The modeled cost of one fill in KRW: commission on every side, tax on the
+    /// sell side only. `notional_krw` is `qty × price`.
+    pub fn fill_cost(&self, is_sell: bool, notional_krw: f64) -> f64 {
+        let tax = if is_sell { self.sell_tax_rate } else { 0.0 };
+        (self.commission_rate_per_side + tax) * notional_krw
+    }
+}
+
+/// The committed transaction-cost rate artifact (`lab/config/transaction-costs.json`):
+/// sourced, cited rates — never literals in strategy code, never assumed. The JSON
+/// carries `sources`/`notes` fields for the citations; only the rates and the schema
+/// version are read here.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct TransactionCostConfig {
+    /// Artifact schema version — must be `1`.
+    pub schema_version: u32,
+    /// See [`TransactionCostModel::commission_rate_per_side`].
+    pub commission_rate_per_side: f64,
+    /// See [`TransactionCostModel::sell_tax_rate`].
+    pub sell_tax_rate: f64,
+}
+
+impl TransactionCostConfig {
+    /// Load and schema-check the rate artifact. Rate plausibility is enforced by
+    /// `OrbParams::validate()` after the rates are applied to the run's params.
+    pub fn load(path: &std::path::Path) -> Result<Self, String> {
+        let text = std::fs::read_to_string(path)
+            .map_err(|e| format!("transaction-cost config {}: {e}", path.display()))?;
+        let cfg: TransactionCostConfig = serde_json::from_str(&text)
+            .map_err(|e| format!("transaction-cost config {}: {e}", path.display()))?;
+        if cfg.schema_version != 1 {
+            return Err(format!(
+                "transaction-cost config {}: unsupported schema_version {} (expected 1)",
+                path.display(),
+                cfg.schema_version
+            ));
+        }
+        Ok(cfg)
+    }
+}
+
 /// The classified opening-range gap-retention observation (#165/#168, KTD3). One
 /// variant per frozen #165 rejection class plus the measured ratio. Classification
 /// is total and ordered — applicability before availability before the division —

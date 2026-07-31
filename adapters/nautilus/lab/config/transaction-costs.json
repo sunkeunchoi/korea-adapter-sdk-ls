@@ -1,0 +1,35 @@
+{
+  "schema_version": 1,
+  "commission_rate_per_side": 0.00015,
+  "sell_tax_rate": 0.0020,
+  "effective": "2026-01-01",
+  "retrieved": "2026-07-31",
+  "sources": [
+    {
+      "quantity": "sell_tax_rate",
+      "value": "KOSPI: 증권거래세 0.05% + 농어촌특별세 0.15% = 0.20%; KOSDAQ/K-OTC: 증권거래세 0.20% (농특세 없음) = 0.20%",
+      "basis": "2025 세법개정(금융투자소득세 폐지 패키지)으로 2026-01-01부터 2023년 수준으로 환원 — 두 시장 모두 매도대금의 0.20%(20bps), 매도측에만 부과",
+      "urls": [
+        "http://www.00news.co.kr/news/articleView.html?idxno=100604",
+        "https://www.kiwoomam.com/lounge/KI0502010102M?kijaNo=554",
+        "https://glasswallet.com/blog/stock-transaction-tax-guide/",
+        "https://namu.wiki/w/증권거래세"
+      ]
+    },
+    {
+      "quantity": "commission_rate_per_side",
+      "value": "LS증권 xing API / OPEN API 매체, KRX 주문 0.015%/side (NXT 0.014% — 미사용)",
+      "basis": "이 저장소의 실제 접속 채널(xing OPEN API)의 공시 수수료율; 신규고객 우대 이벤트 대상에서 제외되는 채널이므로 기본율을 사용",
+      "urls": [
+        "https://www.ls-sec.co.kr/guide/commission/GUCommissionOnline.jsp?left_menu_no=333&front_menu_no=334"
+      ]
+    }
+  ],
+  "notes": [
+    "매도측 비대칭: 거래세(+농특세)는 법령상 매도대금에만 부과된다 — 대칭 per-side 모델은 구성적으로 틀렸다.",
+    "2026년 두 시장(코스피/코스닥) 합계 세율이 동일(0.20%)하므로 시장 구분 없는 단일 sell_tax_rate가 데이터 구간(20260518..20260722)에 대해 정확하다.",
+    "ETF는 증권거래세 면제이나 ORB 유니버스는 상장 주식만 편입하므로 종목별 면제는 모델링하지 않는다.",
+    "유관기관수수료(KRX 0.0036396%/side)는 2025-10-27~2026-10-26 한시 면제 구간이 데이터 구간을 전부 덮으므로 모델링하지 않는다.",
+    "원 단위 절사/반올림은 모델링하지 않는다(체결당 1원 미만, 리스크 단위 ~30만원 대비 무시 가능)."
+  ]
+}

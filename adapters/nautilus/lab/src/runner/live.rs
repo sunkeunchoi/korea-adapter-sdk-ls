@@ -2188,7 +2188,7 @@ pub fn resolve_lane_hash(lane_env_path: &Path) -> anyhow::Result<String> {
 // U2 (rung-1 readiness) — the `lab-live --mount` operator command (R3; KTD4/KTD5/KTD7).
 //
 // Wires the shipped mount machinery (authorize_mount / build_live_session_node) into a
-// reachable CLI, sizing the live strategy at the pre-registered rung fraction from v34's REAL
+// reachable CLI, sizing the live strategy at the pre-registered rung fraction from the head's REAL
 // governed params. The attended live-session DRIVER (consume -> node.run -> fail-closed
 // teardown -> finalize) shipped in the live-session-driver turn: `--mount` now RUNS an
 // attended rung-1 session. Every fail-closed precheck still runs BEFORE the dispatch is
@@ -2806,9 +2806,9 @@ fn operator_gate_from_env(now_unix: i64) -> OperatorGate {
 
 /// `--head` (R2): print the running binary's head identity as verbatim fact lines. Read-only, no
 /// nonce, no chain append. `strategy_code_hash()` is the SOLE head discriminator — the operator
-/// confirms the binary embeds v34 by hash-equality against the documented `e5bc2ae8…`. The printed
+/// confirms the binary embeds v35 by hash-equality against the documented `7571abef…`. The printed
 /// `governed_params_hash(&OrbParams::default())` is a version-invariant constant (identical across
-/// v9…v34, KTD7), so it does NOT confirm v34's governed values; it is labeled as such, never as a
+/// v9…v35, KTD7), so it does NOT confirm v35's governed values; it is labeled as such, never as a
 /// version readout (the binary carries no hash→version map).
 fn run_head_diagnostic() -> anyhow::Result<ExitCode> {
     nautilus_ls::calendar::emit_startup_from_env("lab-live");
@@ -2816,10 +2816,10 @@ fn run_head_diagnostic() -> anyhow::Result<ExitCode> {
     let params_hash = crate::dispatch::ladder::governed_params_hash(&OrbParams::default());
     println!("head strategy_code_hash={code_hash}");
     println!(
-        "head governed_params_hash(default)={params_hash} [version-invariant constant — NOT a v34 confirmation]"
+        "head governed_params_hash(default)={params_hash} [version-invariant constant — NOT a v35 confirmation]"
     );
     println!(
-        "head-check: the binary embeds v34 IFF strategy_code_hash == the documented head e5bc2ae8… \
+        "head-check: the binary embeds v35 IFF strategy_code_hash == the documented head 7571abef… \
          (the sole discriminator; the binary carries no hash→version map)"
     );
     Ok(ExitCode::SUCCESS)
@@ -2959,7 +2959,7 @@ fn run_rung_report() -> anyhow::Result<ExitCode> {
 
     // The head hash the report evaluated under (KTD6) — a stale-binary reading is self-evident.
     println!(
-        "rung-report head_code_hash={} (v34 IFF == e5bc2ae8…) head_params_hash={}",
+        "rung-report head_code_hash={} (v35 IFF == 7571abef…) head_params_hash={}",
         report.head_code_hash, report.head_params_hash
     );
     println!(

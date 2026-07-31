@@ -229,10 +229,15 @@ pub async fn run_inner<F: std::future::Future<Output = ()>>(
 
     // Assemble artifacts over the union ledger.
     let checkpoint = load_checkpoint(&catalog_path);
+    // The transaction-cost model (orb-transaction-cost-model): built from the run's
+    // governed params, `None` when both rates are 0.0 — a zero-cost run assembles
+    // byte-identical artifacts through the pre-model path.
+    let cost_model = crate::strategy::orb::TransactionCostModel::from_params(&cfg.params);
     let performance = PerformanceReport::from_positions_with_risk(
         &loop_out.positions,
         &loop_out.position_risks,
         cfg.starting_balance,
+        cost_model.as_ref(),
     );
     let selected_union = loop_out.selected_union.clone();
     // R7: report DETECTED per-symbol shifts — the checkpoint's unhealed shifted
@@ -994,7 +999,10 @@ fn end_of_day() -> NaiveTime {
 /// finalized run's manifest, so a count run reproduces the loop's current
 /// identity instead of the v0 defaults; the pre-check counts are
 /// threshold-conditioned on `gap_min_pct`, AE2), `LS_BT_VERSION` (optional
-/// version override for the adopted set).
+/// version override for the adopted set), `LS_BT_COST_CONFIG` (optional — arm the
+/// transaction-cost model from the committed rate artifact
+/// `lab/config/transaction-costs.json`; unset = the adopted params' rates, i.e.
+/// zero-cost for every pre-model manifest).
 pub fn main_cli() -> anyhow::Result<()> {
     nautilus_ls::scrub::install();
     let data_home = std::env::var("LS_DATA_HOME").map_err(|_| anyhow::anyhow!("LS_DATA_HOME is required"))?;
@@ -1042,6 +1050,26 @@ pub fn main_cli() -> anyhow::Result<()> {
     }
     if let Ok(bal) = std::env::var("LS_BT_BALANCE") {
         cfg.starting_balance = bal.parse().unwrap_or(cfg.starting_balance);
+    }
+    // LS_BT_COST_CONFIG (orb-transaction-cost-model): arm the transaction-cost model
+    // from the committed, cited rate artifact. Applied AFTER params adoption so an
+    // adopted zero-cost identity can be re-measured cost-aware; unset leaves the
+    // adopted/default rates (0.0 for every pre-model manifest) — the zero-cost
+    // reproduction path. The rates land in the run's params, so the manifest records
+    // them as provenance.
+    if let Some(path) =
+        std::env::var("LS_BT_COST_CONFIG").ok().filter(|s| !s.trim().is_empty())
+    {
+        let cost_cfg = crate::strategy::orb::TransactionCostConfig::load(Path::new(path.trim()))
+            .map_err(|e| anyhow::anyhow!(e))?;
+        cfg.params.cost_commission_rate_per_side = cost_cfg.commission_rate_per_side;
+        cfg.params.cost_sell_tax_rate = cost_cfg.sell_tax_rate;
+        println!(
+            "transaction costs armed: commission {}/side, sell tax {} (from {})",
+            cost_cfg.commission_rate_per_side,
+            cost_cfg.sell_tax_rate,
+            path.trim()
+        );
     }
     cfg.metadata_path =
         std::env::var("LS_BT_METADATA").ok().filter(|s| !s.trim().is_empty()).map(PathBuf::from);

@@ -1,6 +1,6 @@
 # Rung-1 Preflight — agent-runnable vs operator-only
 
-The contract for a rung-1 attended session against head **v34**. It splits what an **agent** may
+The contract for a rung-1 attended session against head **v35**. It splits what an **agent** may
 run autonomously (no-TTY, read-only or non-mutating — offline except the one market-data read in
 §0.7) from what only an **operator** may
 run (nonce-gated, attended, refused in a no-TTY shell). Run the operator sequence from
@@ -15,20 +15,20 @@ run (nonce-gated, attended, refused in a no-TTY shell). Run the operator sequenc
 
 ## §0 — Agent preflight (no nonce, no TTY; one market-data read when the date is today)
 
-1. **Build `lab-live` from v34.** From `adapters/nautilus` (the CWD trap: from the repo root the
+1. **Build `lab-live` from v35.** From `adapters/nautilus` (the CWD trap: from the repo root the
    lab crate is skipped):
    ```sh
    cd adapters/nautilus
    cargo build --release -p nautilus-ls-lab --bin lab-live
    ```
-2. **Confirm the binary embeds v34** (`--head`, read-only, no nonce):
+2. **Confirm the binary embeds v35** (`--head`, read-only, no nonce):
    ```sh
    cargo run --release -p nautilus-ls-lab --bin lab-live -- --head
    ```
-   The binary embeds v34 **iff** the printed `strategy_code_hash` equals the documented head
-   `e5bc2ae8…`. That hash is the **sole** discriminator — the binary carries no hash→version map,
+   The binary embeds v35 **iff** the printed `strategy_code_hash` equals the documented head
+   `7571abef…`. That hash is the **sole** discriminator — the binary carries no hash→version map,
    so `--head` prints no version, and the `governed_params_hash(default)` line is a
-   **version-invariant constant** (identical across v9…v34), explicitly **not** a v34 confirmation.
+   **version-invariant constant** (identical across v9…v35), explicitly **not** a v35 confirmation.
 3. **Confirm the pre-registration is v2.** `config/preregistration.json` has `"version": 2` and the
    rung-1 band `[-148000, +266000]`; its SHA-256 is the citation each dispatch records. The
    derivation is reproduced by `cargo test -p nautilus-ls-lab --test prereg_derivation`.
@@ -47,7 +47,7 @@ run (nonce-gated, attended, refused in a no-TTY shell). Run the operator sequenc
    next `--dispatch` until a nonce-gated `--clear-killswitch`.
 
 5. **Inspect the chain head before the operator starts** (read-only): run `--rung-report` and read
-   the printed head hash. A pre-existing chain under a **non-v34** head is a **stop-and-reconcile**
+   the printed head hash. A pre-existing chain under a **non-v35** head is a **stop-and-reconcile**
    (archive / epoch-repair or a fresh data home) — never a silent proceed.
 
 6. **Confirm the two silent-when-wrong env vars are set.** Both fail quietly rather than loudly:
@@ -132,7 +132,7 @@ After the operator's session closes:
 ## Operator-only (nonce-gated, attended, no-TTY refused)
 
 `--genesis` (register the rung-1 chain) → `--dispatch` (pre-flight gate) → `--mount` (**run** the
-attended session at 0.10× v34 size: consume → drive → fail-closed teardown → finalize; requires
+attended session at 0.10× v35 size: consume → drive → fail-closed teardown → finalize; requires
 `LS_MOUNT_KEEPALIVE` to name an existing operator keepalive file, whose mtime the operator refreshes
 within the pre-registered heartbeat interval) → after 5 clean sessions, `--escalate`. `--reregister` (rung-0
 requalification / epoch repair, bounded to ≤ the chain-earned rung) and `--clear-killswitch`
@@ -143,8 +143,8 @@ watchdog/breaker discipline: [`RUNBOOK-rung1.md`](RUNBOOK-rung1.md).
 
 Clean-session matching and escalation key the head params-hash on the **actual head governed
 params** — the newest finalized run whose `strategy_code_hash` matches the running binary, pinned
-to `strategy_version == LS_TURN_EXPECT_VERSION` (set `LS_TURN_EXPECT_VERSION=34`) so an older-version
-same-code run in the data home can never revert the key — not the all-levers-off `default()`. So a real v34 session (sized from risk 299,340 / entry_confirm 1.0 / or_width_max_atr
+to `strategy_version == LS_TURN_EXPECT_VERSION` (set `LS_TURN_EXPECT_VERSION=35`) so an older-version
+same-code run in the data home can never revert the key — not the all-levers-off `default()`. So a real v35 session (sized from risk 299,340 / entry_confirm 1.0 / or_width_max_atr
 0.666 / breakeven_trigger_r 0.41 / gap_retention 0.5) matches the head like-for-like and counts as
 clean; a governed-param change flips the head and re-runs N. `--mount` sizes from that same head
 source (and refuses a zero-size default head), and both `--head` and `--rung-report` print the head

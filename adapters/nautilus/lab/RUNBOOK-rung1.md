@@ -5,13 +5,17 @@ One page for the operator running the **first live rung**. Values are frozen in
 [`config/PREREGISTRATION.md`](config/PREREGISTRATION.md)). Rung 1 = **0.10×** budget,
 watchdog **90 s** heartbeat, **300,000 KRW** session breaker, **5** clean sessions to escalate.
 
-> **Head v34 — re-registered v2.** The certified real-universe head is **v34**
-> (`strategy_code_hash e5bc2ae8…`, run `20260725T112423Z-backtest-orb-v34` — the #213
-> re-baseline, byte-identical to the prior v34 run apart from the code hash; the head hash
-> was `d7a9820b…` before that live-only wiring landed in `orb.rs`). The v30→v34 code hash change is a
-> `code_change_resets_to_rung_1` event, so the ladder starts at rung 1 and the economic band is
-> re-derived from v34: **[−148k, +266k]** (v1/v30 was [−69k, +533k]). Confirm the binary embeds
-> v34 with `lab-live --head` before genesis — the code hash is the sole discriminator (see
+> **Head v35 — cost-aware re-measurement of the v34 identity.** The documented head is **v35**
+> (`strategy_code_hash 7571abef…`, run `20260731T023138Z-backtest-orb-v35` — the
+> orb-transaction-cost-model turn: v34's governed params re-measured with the sourced
+> statutory + commission cost model armed; the head hash was `e5bc2ae8…` (v34, run
+> `20260725T112423Z-backtest-orb-v34`) before the cost model landed in `orb.rs`). **v35 read
+> net-NEGATIVE** (net RoR −0.0006 on the 2026-07-31 catalog) — see TURN-LOG before authorizing
+> any attended session. The v34→v35 code hash change is a `code_change_resets_to_rung_1`
+> event. The frozen v2 economic band **[−148k, +266k]** is still v34-derived and **zero-cost**
+> — a known inheritance awaiting its own governed prereg amendment
+> (queue: `rung1-prereg-band-zero-cost-inheritance`). Confirm the binary embeds
+> v35 with `lab-live --head` before genesis — the code hash is the sole discriminator (see
 > [`RUNG1-PREFLIGHT.md`](RUNG1-PREFLIGHT.md)).
 
 > Attended only. `node.run` is never driven by the commit gate. Every session runs with an
@@ -33,8 +37,8 @@ export LS_TRADING_ENV=paper
 export LS_LANE=domestic                                   # → .env.domestic
 export LS_DATA_HOME=/ABSOLUTE/path/to/data-home           # chain, registry, catalog live here
 export LS_DISPATCH_PREREG="$PWD/config/preregistration.json"
-export LS_TURN_EXPECT_VERSION=34                          # head-version pin: keys the head params
-                                                          #   robustly to v34 (mount/escalate/report)
+export LS_TURN_EXPECT_VERSION=35                          # head-version pin: keys the head params
+                                                          #   robustly to v35 (mount/escalate/report)
 export LS_CALENDAR_SNAPSHOT=/ABSOLUTE/path/to/state/krx.calendar.json
                                                           # REQUIRED: the calendar is Enforced, so an
                                                           #   unset snapshot is not "no calendar" — it is
