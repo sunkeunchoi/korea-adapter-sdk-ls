@@ -1127,14 +1127,16 @@ adapter-check:
 
 .PHONY: script-check
 
-## Live-path regression tests for session-morning.sh steps [1]-[5], run against
-## STUBBED binaries in a throwaway fixture repo (offline, no gateway, clock-
+## Live-path regression tests for session-morning.sh steps [1]-[5] and [7]-[9], run
+## against STUBBED binaries in a throwaway fixture repo (offline, no gateway, clock-
 ## independent). Covers what neither `--dry-run` nor `--self-test` can reach: the
-## argv the script marshals into calendar-fetch-inputs and calendar-refresh. The
+## argv the script marshals into calendar-fetch-inputs and calendar-refresh, and
+## what the step [7] pace gate does to a RUNNING ingest in each mode. The
 ## calendar-fetch-inputs argv is replayed against the REAL compiled binary with
 ## credentials stripped, so the check cannot drift from the parser it guards.
-## SCOPE LIMIT: steps [6]-[11] are stubbed but never reached (the run stops at
-## --stop-before-activate), and the other five stubs accept any argv.
+## SCOPE LIMIT: step [10] (lab-mount-universe) and the step [11] GO/NO-GO report are
+## still never reached, and the stubs other than calendar-fetch-inputs/-refresh and
+## ls-ingest accept any argv.
 ## Requires target/debug/calendar-fetch-inputs; reports loudly if it is absent.
 ## step [3] shipped without the REQUIRED --window, and then without --state-root,
 ## and died on its first real run (2026-07-31) with both modes green — see

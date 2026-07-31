@@ -16,6 +16,62 @@ Companion docs: [`RUNG1-PREFLIGHT.md`](RUNG1-PREFLIGHT.md) (the preflight this f
 
 ---
 
+## The scripted chain — `scripts/session-morning.sh`
+
+Steps 1–6 below are also pre-staged as one entry point,
+[`../scripts/session-morning.sh`](../scripts/session-morning.sh), which resolves every path,
+credential, and symbol list ahead of the clock. The steps that follow remain the reference for
+what it does and why; read them when something disagrees with the script.
+
+```sh
+./session-morning.sh --dry-run      # print the resolved sequence, zero traffic
+./session-morning.sh --self-test    # exercise the pace check, zero traffic
+./session-morning.sh                # ATTENDED: racing the 09:15 opening range
+./session-morning.sh --catch-up     # CATCH-UP: the mount is already conceded
+```
+
+**Exit codes are the contract — never read success from log text.**
+
+| exit | meaning | is a universe in hand? |
+|---|---|---|
+| `0` | **GO** — universe resolved, or a certified flat-open refusal | yes (or certified none) |
+| `1` | **NO-GO** — a step failed in a way this runbook anticipates | no |
+| `40` | **STAND-DOWN** — not on pace; work abandoned before the universe step | no |
+| `41` | **CATCH-UP COMPLETE** — `--catch-up` only; calendar and catalog advanced in full, universe refused by design | no, and none was wanted |
+| `64` | misconfiguration — refused before issuing any traffic | no |
+
+`rc != 0` always means *no universe file to mount*. `41` additionally means *and that was the
+intent* — a success with nothing left to retry, which is why it is not `40`, and not `0` either
+(`0` is what a wrapper reads as "there is a universe at `--out`").
+
+### `--catch-up` — the two clocks stop applying
+
+The attended run polices three clocks (ingest by 09:05, universe by 09:10, opening range 09:15)
+because head v34 builds its opening range only from bars observed 09:00–09:15: a universe that
+lands late takes **zero** trades, so killing a doomed ingest is the right call. A catch-up run —
+a weekend, a post-close evening, a morning already missed — has conceded the mount before it
+starts, and the catalog *is* the deliverable. There the same kill is the failure mode: it leaves
+the partial watermark distribution the catch-up exists to prevent.
+
+`--catch-up` changes exactly two things:
+
+- **Step [7] does not kill the ingest.** Progress is still printed every poll; no pace verdict is
+  computed, because `LS_SM_INGEST_BY` resolves as *today* at 09:05 and is already elapsed on any
+  weekend run, so the verdict would be `LATE` on the first poll and meaningless. The ingest runs
+  to completion however long it takes; `APPEND REFUSED` and the partial-ingest check still stop it.
+- **Step [8] refuses the universe unconditionally** — on the flag, never on the clock. A catch-up
+  started at 08:00 on a Saturday would otherwise pass the `LS_SM_UNIVERSE_BY` test and go resolve
+  a universe for a day KRX is closed.
+
+Step [9] (`catalog status`) still runs: it is the verdict on the thing the catch-up was for. Then
+the run reports **CATCH-UP COMPLETE** and exits `41`. Do not use `--catch-up` on an attended
+morning — it will never hand you a universe.
+
+Before 2026-07-31 there was no such mode, and a catch-up had to be smuggled past the gate with
+`LS_SM_INGEST_BY=09:40`. That workaround is retired; use the flag.
+
+---
+
 ## Step 0 — Source the credentials (once, at the top of the session shell)
 
 The KRX and KASI keys live in `.env.calendar` at the repo root — gitignored by the same `.env.*`

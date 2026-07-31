@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 #
 # Live-path regression tests for session-morning.sh — the calendar half of the
-# morning chain (steps [1]-[5]), run against STUBBED binaries in a FIXTURE REPO.
+# morning chain (steps [1]-[5]) and the ingest pace gate (steps [7]-[9]), run
+# against STUBBED binaries in a FIXTURE REPO.
 # Run with: bash adapters/nautilus/scripts/tests/session-morning.test.sh  (or `make script-check`)
 #
 # WHY A FIXTURE REPO AND NOT A `PATH` STUB. The script resolves every binary as
@@ -30,9 +31,17 @@
 # the real `Args::parse` AND the real `confine()` state-root check, and stops at
 # the credential refusal — before any HTTP client is constructed. Zero traffic.
 #
-# The run is CLOCK-INDEPENDENT: `--stop-before-activate` exits after the step [5]
-# diff gate, so it never reaches the 09:00 universe guard or the pace gate.
-# Steps [6]-[11] are deliberately OUT OF SCOPE here.
+# EVERY RUN IS CLOCK-INDEPENDENT, by two different means. The calendar tests pass
+# `--stop-before-activate`, which exits after the step [5] diff gate and never
+# reaches a clock at all. The pace-gate tests below DO take the live path through
+# step [9], and get determinism from the DEADLINE side instead: `LS_SM_INGEST_BY`
+# resolves as today at HH:MM, so `00:00` is elapsed at every hour a test can run.
+# That matters because LS_SM_NOW — the obvious clock override — is refused on a
+# real run by design, and these are real runs.
+#
+# SCOPE LIMIT: step [10] (lab-mount-universe) and the step [11] GO/NO-GO report are
+# still never reached — the catch-up runs stop one step short of them by design, and
+# nothing here drives the attended path past the 09:00 guard.
 
 set -uo pipefail
 
@@ -98,7 +107,7 @@ make_fixture() { # [sed_expr] -> repo root on stdout
 
   # ---- stubs: every one logs its full argv, so assertions can read the real call ----
   local b
-  for b in calendar-activate calendar-status ls-ingest lab-research lab-mount-universe; do
+  for b in calendar-activate calendar-status lab-research lab-mount-universe; do
     cat >"$bin/$b" <<STUB
 #!/usr/bin/env bash
 echo "$b \$*" >>"\$STUB_LOG"
@@ -146,6 +155,39 @@ exit 0
 STUB
   chmod +x "$bin/calendar-refresh"
 
+  # ls-ingest: a controllable long-running process. It does NOT mirror the real binary's
+  # contract — the step [7] tests are about what the SCRIPT does to a running ingest, so all
+  # the stub owes them is a process that can be observed, killed, or allowed to finish.
+  # Two knobs, both inherited from the environment the chain passes down:
+  #   STUB_INGEST_SECS        seconds it runs before finishing (0 = exit immediately)
+  #   STUB_INGEST_ADVANCE_TO  the daily watermark it writes on a CLEAN finish
+  # It logs "COMPLETED" only when it reaches the end, so the stub log tells "the pace gate
+  # killed it" from "it ran to completion" without reading the script's own prose.
+  cat >"$bin/ls-ingest" <<'STUB'
+#!/usr/bin/env bash
+echo "ls-ingest $*" >>"$STUB_LOG"
+secs="${STUB_INGEST_SECS:-0}"
+if [ "$secs" != "0" ]; then
+  # `sleep` in the BACKGROUND plus `wait`, never a foreground `sleep`: bash defers a trapped
+  # signal until the current foreground command returns, so a foreground sleep would swallow
+  # the SIGTERM for its whole duration and the kill under test would look like a clean finish.
+  trap 'kill "$sp" 2>/dev/null; exit 143' TERM
+  sleep "$secs" & sp=$!
+  wait "$sp"
+fi
+if [ -n "${STUB_INGEST_ADVANCE_TO:-}" ]; then
+  python3 -c "
+import json,sys
+p,d=sys.argv[1],sys.argv[2]
+c=json.load(open(p))
+c['watermarks']={k:(d if k.endswith('|1-DAY') else v) for k,v in c['watermarks'].items()}
+json.dump(c,open(p,'w'))" "$LS_INGEST_CATALOG/ingest-checkpoint.json" "$STUB_INGEST_ADVANCE_TO"
+fi
+echo "ls-ingest COMPLETED" >>"$STUB_LOG"
+exit 0
+STUB
+  chmod +x "$bin/ls-ingest"
+
   printf '%s' "$root"
 }
 
@@ -164,18 +206,23 @@ run_chain_mutated() {
   _run_in "$CHAIN_ROOT" "$@"
 }
 
+# CHAIN_ENV is a per-test list of `NAME=value` overrides layered on top of the two the
+# harness always sets. Reset it before every run so one test cannot configure the next.
+CHAIN_ENV=()
+
 _run_in() {
   local root="$1"; shift
   local log="$root/stub.log"
   : >"$log"
   CHAIN_OUT="$(STUB_LOG="$log" LS_TRADING_ENV=paper \
          LS_SM_SESSION_DATE="$SESSION_DATE" LS_SM_MOUNT_DATE=2026-07-31 \
+         env ${CHAIN_ENV[@]+"${CHAIN_ENV[@]}"} \
          bash "$root/adapters/nautilus/scripts/session-morning.sh" "$@" 2>&1)"
   CHAIN_RC=$?
   CHAIN_LOG="$(cat "$log" 2>/dev/null || true)"
 }
 
-drop_fixture() { [ -n "${CHAIN_ROOT:-}" ] && rm -rf "$CHAIN_ROOT"; }
+drop_fixture() { [ -n "${CHAIN_ROOT:-}" ] && rm -rf "$CHAIN_ROOT"; CHAIN_ENV=(); return 0; }
 
 # Replay the argv the script actually marshalled against the REAL binary, with
 # credentials stripped and from a foreign CWD (/), and echo a verdict word:
@@ -308,6 +355,155 @@ for flag in --window --state-root; do
     *) no "--dry-run text shows the $flag argument" "$flag in the printed sequence" "$CHAIN_OUT" ;;
   esac
 done
+drop_fixture
+
+# ===================================================================== steps [7]-[9]
+# THE SECOND DEFECT CLASS THIS FILE GUARDS: the step [7] in-ingest pace check killed
+# ls-ingest on ANY run whose LS_SM_INGEST_BY had already elapsed, leaving a partial
+# watermark distribution. Correct for the attended path (a universe landing after 09:10
+# takes zero trades); wrong for a catch-up, whose entire purpose is finishing the ingest.
+#
+# HOW THESE RUNS BECOME DETERMINISTIC WITHOUT A CLOCK SEAM. LS_SM_NOW is refused on a real
+# run by design, and these ARE real runs — they take the live path all the way to step [9].
+# So the elapsed deadline is manufactured from the deadline side instead: LS_SM_INGEST_BY
+# resolves as TODAY at HH:MM, and `00:00` is the first instant of the day, so `now >= dl`
+# holds at every hour a test can run. That is the weekend condition reproduced exactly,
+# not simulated.
+#
+# The 30s poll would otherwise make these tests take minutes, so LS_SM_POLL_SECS drops it
+# to 1s. It is a latency knob only — every input to pace_verdict still comes from the real
+# clock and the real checkpoint — which is why it is bounded (1..30) rather than refused.
+
+ingest_env() { # secs advance_to → CHAIN_ENV for a step [7] run
+  CHAIN_ENV=(
+    "LS_SM_POLL_SECS=1"
+    "LS_SM_INGEST_BY=00:00"          # already elapsed at any hour: forces the LATE verdict
+    "STUB_INGEST_SECS=$1"
+    "STUB_INGEST_ADVANCE_TO=$2"
+  )
+}
+
+# --- normal mode: an elapsed deadline plus a non-advancing ingest still stands down ---
+# The stub is told to run for 10s and to advance nothing, so the only way it can stop is
+# the script killing it. It must never reach its COMPLETED marker.
+ingest_env 10 ""
+CHAIN_ENV+=("LS_SM_UNIVERSE_BY=23:59")   # irrelevant: step [8] is unreachable from a kill
+run_chain
+assert_eq "normal mode: elapsed deadline + stalled ingest exits 40 (STAND-DOWN)" "40" "$CHAIN_RC"
+case "$CHAIN_LOG" in
+  *"ls-ingest COMPLETED"*)
+    no "normal mode: the stalled ingest is killed" "no COMPLETED marker" "$CHAIN_LOG" ;;
+  *"ls-ingest "*) ok "normal mode: the stalled ingest is killed" ;;
+  *) no "normal mode: the stalled ingest is killed" "ls-ingest to have been started" "$CHAIN_LOG" ;;
+esac
+case "$CHAIN_OUT" in
+  *"STAND DOWN — not on pace"*) ok "normal mode: reports the pace stand-down" ;;
+  *) no "normal mode: reports the pace stand-down" "a 'STAND DOWN — not on pace' report" "$CHAIN_OUT" ;;
+esac
+drop_fixture
+
+# --- catch-up mode, IDENTICAL conditions: no kill, the ingest finishes -----------------
+# Same elapsed deadline. The stub runs long enough to be polled at least once, then
+# advances both fixture watermarks to the session date so step [7]'s completeness check
+# passes. LS_SM_UNIVERSE_BY is left in the FUTURE on purpose: the step [8] refusal below
+# must be unconditional, not the clock standing the run down by coincidence.
+ingest_env 3 "$SESSION_COMPACT"
+CHAIN_ENV+=("LS_SM_UNIVERSE_BY=23:59")
+run_chain --catch-up
+case "$CHAIN_LOG" in
+  *"ls-ingest COMPLETED"*) ok "catch-up: the ingest is NOT killed and runs to completion" ;;
+  *) no "catch-up: the ingest is NOT killed and runs to completion" \
+        "an 'ls-ingest COMPLETED' marker" "$CHAIN_LOG" ;;
+esac
+case "$CHAIN_OUT" in
+  *"pace gate OFF (--catch-up)"*) ok "catch-up: progress is still reported, without a verdict" ;;
+  *) no "catch-up: progress is still reported, without a verdict" \
+        "a 'pace gate OFF (--catch-up)' progress line" "$CHAIN_OUT" ;;
+esac
+case "$CHAIN_OUT" in
+  *"partial ingest"*) no "catch-up: the catalog is left complete, not partial" \
+                         "no partial-ingest refusal" "$CHAIN_OUT" ;;
+  *) ok "catch-up: the catalog is left complete, not partial" ;;
+esac
+
+# --- catch-up mode still refuses to resolve a universe at step [8] ---------------------
+# The universe deadline is 23:59 and the ingest completed, so the ATTENDED path would have
+# gone on to resolve one. Catch-up must not, and must say so with its own exit code.
+assert_eq "catch-up: a complete run exits 41 (CATCH-UP COMPLETE), not 0 and not 40" "41" "$CHAIN_RC"
+case "$CHAIN_LOG" in
+  *lab-mount-universe*) no "catch-up: lab-mount-universe is never invoked" \
+                           "no lab-mount-universe call" "$CHAIN_LOG" ;;
+  *) ok "catch-up: lab-mount-universe is never invoked" ;;
+esac
+case "$CHAIN_LOG" in
+  *"lab-research catalog status"*) ok "catch-up: step [9] still certifies the catalog" ;;
+  *) no "catch-up: step [9] still certifies the catalog" \
+        "a lab-research catalog status call" "$CHAIN_LOG" ;;
+esac
+drop_fixture
+
+# --- NEGATIVE META-TESTS: prove the two guards above can be seen to fail ---------------
+# Without these the assertions are unfalsifiable: a catch-up run that exits 41 for some
+# unrelated reason would green both.
+
+# Delete the `continue` that skips the pace verdict on a catch-up. The run then falls into
+# the same LATE branch normal mode takes, and the kill it is supposed to prevent happens.
+ingest_env 10 ""
+CHAIN_ENV+=("LS_SM_UNIVERSE_BY=23:59")
+run_chain_mutated '/^    continue$/d' --catch-up
+if [ "$CHAIN_RC" = "40" ]; then
+  case "$CHAIN_LOG" in
+    *"ls-ingest COMPLETED"*)
+      no "harness detects a catch-up stripped of the step [7] pace-gate skip" \
+         "the ingest to have been killed" "$CHAIN_LOG" ;;
+    *) ok "harness detects a catch-up stripped of the step [7] pace-gate skip" ;;
+  esac
+else
+  no "harness detects a catch-up stripped of the step [7] pace-gate skip" \
+     "exit 40 (the kill re-armed)" "exit $CHAIN_RC"
+fi
+drop_fixture
+
+# Disable both column-0 `if (( catch_up ))` branches below the ingest — the step [8] refusal
+# and the exit-41 report. The step [7] skip is indented, so it survives and the ingest still
+# completes; only the universe half is stripped. With LS_SM_UNIVERSE_BY already elapsed the
+# un-guarded path must fall through to the ordinary 40, NOT to 41. Asserting the exact code
+# rather than `!= 41` is what stops a broken fixture from greening this by failing early.
+ingest_env 3 "$SESSION_COMPACT"
+CHAIN_ENV+=("LS_SM_UNIVERSE_BY=00:00")
+run_chain_mutated 's/^if (( catch_up )); then$/if (( 0 )); then/' --catch-up
+assert_eq "harness detects a catch-up stripped of the step [8] universe refusal" \
+          "40" "$CHAIN_RC"
+case "$CHAIN_LOG" in
+  *"ls-ingest COMPLETED"*) ok "the step [8] mutation leaves the step [7] skip intact" ;;
+  *) no "the step [8] mutation leaves the step [7] skip intact" \
+        "the ingest to still run to completion" "$CHAIN_LOG" ;;
+esac
+drop_fixture
+
+# --- LS_SM_POLL_SECS is bounded, so the test seam cannot misconfigure a real run -------
+CHAIN_ENV=("LS_SM_POLL_SECS=0")
+run_chain --dry-run
+assert_eq "LS_SM_POLL_SECS=0 is refused as misconfiguration (64)" "64" "$CHAIN_RC"
+drop_fixture
+CHAIN_ENV=("LS_SM_POLL_SECS=abc")
+run_chain --dry-run
+assert_eq "a non-numeric LS_SM_POLL_SECS is refused (64)" "64" "$CHAIN_RC"
+drop_fixture
+
+# --- the hand-maintained --dry-run heredoc must describe catch-up mode too -------------
+run_chain --catch-up --dry-run
+assert_eq "--catch-up --dry-run exits 0" "0" "$CHAIN_RC"
+assert_eq "--catch-up --dry-run invokes no binary" "" "$CHAIN_LOG"
+case "$CHAIN_OUT" in
+  *"exit 41"*) ok "--dry-run text states the catch-up exit code" ;;
+  *) no "--dry-run text states the catch-up exit code" "exit 41 in the printed sequence" "$CHAIN_OUT" ;;
+esac
+case "$CHAIN_OUT" in
+  *"[10] NOT RUN"*) ok "--dry-run text shows the universe step is not run under --catch-up" ;;
+  *) no "--dry-run text shows the universe step is not run under --catch-up" \
+        "a '[10] NOT RUN' line" "$CHAIN_OUT" ;;
+esac
 drop_fixture
 
 printf '\n%d passed, %d failed\n' "$pass" "$fail"
