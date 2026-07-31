@@ -84,9 +84,12 @@ domestic KRX).
 ## Rung-1 production ladder (live, attended)
 
 The certified backtest head runs live at a small dose through the **capital ladder**
-(`config/preregistration.json`, rationale `config/PREREGISTRATION.md`). Rung 1 = **0.10×**
-budget against head **v35**, re-registered to **v2** (`code_change_resets_to_rung_1`; band
-**[−148k, +266k]** — still v34-derived and zero-cost, see `RUNBOOK-rung1.md`). The `lab-live` subcommands drive it:
+(`config/preregistration.json`, rationale `config/PREREGISTRATION.md`). **STOOD DOWN
+2026-07-31:** head **v35** is net-negative under costs (net RoR −0.0006), so no attended
+session is authorized; the frozen **v2** band **[−148k, +266k]** (v34-derived, zero-cost)
+stands untouched as the historical record until a net-positive cost-aware head triggers the
+re-entry re-registration (see `RUNBOOK-rung1.md` and `config/PREREGISTRATION.md`
+§ Stand-down). The `lab-live` subcommands drive it:
 
 | command | who | gate | what |
 |---|---|---|---|

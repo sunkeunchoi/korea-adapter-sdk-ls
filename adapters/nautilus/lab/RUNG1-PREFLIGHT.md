@@ -8,6 +8,14 @@ run (nonce-gated, attended, refused in a no-TTY shell). Run the operator sequenc
 [`config/preregistration.json`](config/preregistration.json) (rationale
 [`config/PREREGISTRATION.md`](config/PREREGISTRATION.md)).
 
+> **LADDER STOOD DOWN — 2026-07-31: this preflight is PARKED.** No attended session may be
+> authorized while the documented head is net-negative under costs (TURN-LOG 2026-07-31
+> governance entry; `config/PREREGISTRATION.md` § Stand-down). The frozen prereg stays **v2**
+> — step 3's SHA-256 citation remains valid because the stand-down deliberately left
+> `config/preregistration.json` untouched. Unblock: queue
+> `rung1-ladder-reentry-net-positive-head` (a net-positive cost-aware head + fresh
+> re-registration, which re-derives the bands and moves this file's step-3 literals).
+
 > **The agent NEVER drives `--genesis`, `--dispatch`, `--mount`, `--escalate`, `--reregister`, or
 > `--clear-killswitch`.** Those are nonce-gated, attended, and refuse loudly in a no-TTY shell
 > (distinct exit codes — never look-like-ran). Build from `adapters/nautilus`; `make` breaks in
@@ -32,6 +40,8 @@ run (nonce-gated, attended, refused in a no-TTY shell). Run the operator sequenc
 3. **Confirm the pre-registration is v2.** `config/preregistration.json` has `"version": 2` and the
    rung-1 band `[-148000, +266000]`; its SHA-256 is the citation each dispatch records. The
    derivation is reproduced by `cargo test -p nautilus-ls-lab --test prereg_derivation`.
+   (Unchanged by the 2026-07-31 stand-down — deliberately; see the banner above. These
+   literals move only with the re-entry re-registration.)
 4. **Dry-read the exit-code contract** (do not infer success from log text):
 
    | command | exit | meaning |
