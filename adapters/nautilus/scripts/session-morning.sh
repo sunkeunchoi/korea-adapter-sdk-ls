@@ -87,7 +87,9 @@ operator="${LS_SM_OPERATOR:-sunkeunchoi}"
 OUT_UNIVERSE="$DATA_HOME/mount-universe-$mount_compact.json"
 APPROVAL="$STATE/refresh-$(date +%Y%m%d).approval.json"   # keyed on RUN date, not through-date
 INPUTS="$STATE/refresh-$(date +%Y%m%d).calendar-inputs.json"
-FETCH_CKPT="$STATE/refresh-$(date +%Y%m%d).calendar-fetch.ckpt"
+# FETCH_CKPT is defined AFTER the window derivation below — its name is keyed on the
+# full derived window, because calendar-fetch-inputs refuses to resume a checkpoint
+# whose window differs from the run's (CheckpointMismatch). See the derivation comment.
 CANDIDATE="$SNAPSHOT.candidate"
 CANDIDATE_DIFF="$SNAPSHOT.candidate.diff.json"
 ARCHIVE="$SNAPSHOT.archive-$(date +%Y%m%d)"
@@ -243,6 +245,50 @@ import json,collections
 w=json.load(open('$CKPT'))['watermarks']
 print(dict(collections.Counter(v for k,v in w.items() if k.endswith('|1-DAY'))))")"
 
+# The step [3] fetch window START, derived from the DAILY WATERMARK FRONTIER — never from the
+# session date. window.from seeds the KRX witness fetch (fetch_state seeds krx_cursor from it
+# and runs to krx_through), and the ingest's accumulate plan acts only on the ESTABLISHED
+# PREFIX: it stops before the first calendar-Unknown day and never crosses it
+# (established_prefix in src/ingest/mod.rs; enforced_later_session_does_not_cross_the_first_unknown
+# and enforced_range_with_intervening_unknown_stops_and_preserves_state in tests/ingest.rs).
+# So after a MISSED morning the gap spans 2+ sessions, and a session-date window witnesses only
+# the LATEST day — every intermediate day stays Unknown and the bounded ingest stalls at the
+# frontier with nothing advanced. Every civil day in (frontier, session] must be establishable,
+# which makes the frontier itself the only correct seed:
+#   window.from = min(daily watermark) + 1 day, clamped to the session date.
+# The MIN governs because each symbol's plan starts at ITS watermark+1 — the slowest symbol
+# decides how far back the witness fetch must reach. The clamp keeps the window non-inverted
+# once the catalog is already at (or past) the session, which restores the designed
+# one-session-per-morning window exactly.
+window_from="$(python3 -c "
+import json,sys,datetime
+try:
+    w=json.load(open(sys.argv[1]))['watermarks']
+except Exception:
+    sys.exit(1)
+wms=sorted(v for k,v in w.items() if k.endswith('|1-DAY'))
+if not wms:
+    sys.exit(1)
+frontier=datetime.datetime.strptime(wms[0],'%Y%m%d').date()
+session=datetime.datetime.strptime(sys.argv[2],'%Y%m%d').date()
+print(min(frontier+datetime.timedelta(days=1),session).isoformat())" \
+  "$CKPT" "$session_compact")" \
+  || die "could not derive the fetch window start from $CKPT — an unreadable or empty
+  watermark set leaves no honest window.from; fix the checkpoint before refreshing."
+say "fetch window: $window_from..$session_date (daily frontier + 1, clamped to the session)"
+
+# Keyed on the RUN DATE + BOTH WINDOW ENDS. calendar-fetch-inputs refuses to resume a
+# checkpoint whose (window.from, window.through, krx_through) triple differs from the run's
+# (CheckpointMismatch: 'start a fresh state file instead'), and BOTH ends now move within a
+# day: a completed ingest advances the frontier (later window.from on the documented same-day
+# recovery re-run), and a morning run that dies mid-fetch followed by a same-day catch-up
+# targeting the NEXT session changes the end while the start stays put. A key missing either
+# end hands one of those re-runs a stale checkpoint and dies at step [3]. The through-date
+# covers krx_through too — step [3] always passes the session date as both. With the full
+# window in the name, every distinct window gets its own state file: an interrupted fetch
+# (same window) still resumes; any changed window starts fresh, as the binary requires.
+FETCH_CKPT="$STATE/refresh-$(date +%Y%m%d)-from${window_from//-/}-to${session_compact}.calendar-fetch.ckpt"
+
 # ------------------------------------------------------------------------- --dry-run
 if (( dry_run )); then
   step "resolved command sequence (dry run — no traffic issued)"
@@ -286,9 +332,11 @@ if (( dry_run )); then
     cp $SNAPSHOT $ARCHIVE
     cmp $SNAPSHOT $ARCHIVE
 
-[3] fetch witness inputs
+[3] fetch witness inputs  (window START = daily frontier + 1, clamped — covers a
+    multi-session gap after a missed morning; the session date alone would leave
+    intermediate days Unknown and stall the bounded ingest at the frontier)
     $BIN/calendar-fetch-inputs \\
-      --window $session_date..$session_date \\
+      --window $window_from..$session_date \\
       --krx-through $session_date \\
       --inputs-out $INPUTS \\
       --state $FETCH_CKPT \\
@@ -420,8 +468,12 @@ step "[3] fetch witness inputs"
 # --window is REQUIRED and is NOT a synonym for --krx-through: it supplies the START of the
 # witness fetch (fetch_state seeds krx_cursor from window.from and runs it to krx_through), and
 # the KASI year span. --krx-through alone leaves the range with no start and the binary refuses
-# before any network call. Single session per morning is this chain's cadence, so the window is
-# the session date itself; a MISSED morning leaves a multi-session gap this does not cover.
+# before any network call. The window START is $window_from — the daily watermark frontier + 1,
+# clamped to the session date (derived above) — NOT the session date: after a MISSED morning
+# the gap spans 2+ sessions, and a session-date window witnesses only the latest day while the
+# ingest stalls at the first Unknown intermediate day. On the designed one-session-per-morning
+# cadence the frontier is yesterday's session, so the clamp reduces this to the session date
+# and the fetch cost is identical to the old single-day window.
 # --state-root is REQUIRED here even though every path below is absolute. The binary confines
 # all output beneath an owner-local state root that DEFAULTS TO "state" RELATIVE TO CWD, and
 # confine() runs before any network call — so without it the absolute --inputs-out resolves
@@ -429,7 +481,7 @@ step "[3] fetch witness inputs"
 # script is otherwise CWD-independent by construction; passing $STATE keeps step [3] that way.
 LS_CALENDAR_HTTP_TIMEOUT_SECS="${LS_CALENDAR_HTTP_TIMEOUT_SECS:-180}" \
   "$BIN/calendar-fetch-inputs" \
-    --window "$session_date..$session_date" \
+    --window "$window_from..$session_date" \
     --krx-through "$session_date" \
     --inputs-out "$INPUTS" \
     --state "$FETCH_CKPT" \
