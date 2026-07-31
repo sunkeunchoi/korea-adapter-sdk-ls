@@ -18,6 +18,8 @@ tags:
   - tracking-band
   - expectation-band
   - slippage
+  - transaction-cost
+  - commission
   - production-ladder
   - orb-lab
 ---
@@ -36,6 +38,26 @@ Freezing them exposed an asymmetry in data provenance. A paper backtest fills at
 
 - **Economic / outcome bands** (cumulative P&L) are properties of the *strategy's* decisions and are backtest-derivable. The v30 expectation bands are `floor = worst rolling-5 cum P&L × fraction`, `ceiling = best × 1.5 × fraction`.
 - **Execution-divergence bands** (slippage, approximated-fill fraction) measure *live-vs-decision* execution and are **NOT** backtest-derivable. They must be **live-calibrated** — scheduled to freeze from real fills, not frozen up-front.
+
+**Statutory-cost carve-out (amended 2026-07-31, orb-transaction-cost-model).** An earlier
+version of this doc lumped *commission* into the live-calibrated family alongside slippage.
+That does not follow. Commission and the securities transaction tax (증권거래세 + 농어촌특별세)
+are a **third kind of quantity**: a *published rate times a known notional* — known in
+advance, deterministic per fill, needing no live observation at all. Unlike slippage they
+have full signal in a backtest the moment they are modeled, and unlike an invented
+tolerance they are *sourced*, not fabricated. Deferring them alongside slippage silently
+zeroes a cost term that can exceed the measured edge: the ORB head's gross edge measured
+**22.8 bps** of round-trip notional while the deferred statutory + commission term was
+**~23 bps** — the omitted term was larger than the signal, so the head's *sign* was
+unknown until the cost model landed (v35 read net-negative). The rule:
+
+- **Deterministic statutory/brokerage costs** (commission, transaction tax): model them in
+  the backtest from **cited published rates** (`adapters/nautilus/lab/config/transaction-costs.json`),
+  sell-side-asymmetric where the law is. Never defer them to live calibration — there is
+  nothing to calibrate.
+- **Stochastic execution divergence** (slippage, partial fills, queue position, market
+  impact): live-calibrate exactly as this doc already prescribes. Nothing in the carve-out
+  weakens the fail-closed rung-2 tracking band.
 
 The slippage quantity is definitionally a live-minus-decision delta. In `adapters/nautilus/lab/src/dispatch/tracking.rs`:
 
@@ -62,7 +84,7 @@ This is the ladder's version of "every safe verdict fails toward not-safe": the 
 
 - Whenever pre-registering or threshold-setting **any** band, tolerance, or gate value from backtest data — first ask whether the metric even *has signal* in a paper/backtest run, or whether it only exists live.
 - Specifically before each Production Ladder rung's tracking band freezes (rung-2 band from rung-1 live data, rung-3 from rung-2, …, KD3).
-- Generalizes to **any paper-vs-live execution metric**: commission, slippage, partial-fill / approximated-fill fraction, queue position, market impact. If a paper simulation zeroes it out, it cannot be pre-registered from that simulation — schedule it to calibrate from live data and fail closed until it exists.
+- Generalizes to **any paper-vs-live execution metric** that is *stochastic*: slippage, partial-fill / approximated-fill fraction, queue position, market impact. If a paper simulation zeroes it out **and no published rate determines it**, it cannot be pre-registered from that simulation — schedule it to calibrate from live data and fail closed until it exists. Commission and statutory transaction tax are **not** in this family (see the statutory-cost carve-out above): a paper simulation zeroing them out is a modeling *omission* to fix with cited rates, not a quantity to live-calibrate.
 
 ## Examples
 

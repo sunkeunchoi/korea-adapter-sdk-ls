@@ -114,7 +114,7 @@ pub fn head_manifest_pinned(
 /// The ladder head-version pin (`LS_TURN_EXPECT_VERSION`) — the expected head `strategy_version`
 /// the mount / escalation / report key the head params on, robustly identifying the head run even
 /// when older-version same-code runs share the data home. `None` when unset (falls back to the
-/// code-pinned newest run). The rung-1 operator sets `LS_TURN_EXPECT_VERSION=34`.
+/// code-pinned newest run). The rung-1 operator sets `LS_TURN_EXPECT_VERSION=35`.
 pub fn head_version_pin() -> Option<u32> {
     std::env::var("LS_TURN_EXPECT_VERSION").ok().and_then(|v| v.trim().parse().ok())
 }

@@ -85,12 +85,12 @@ domestic KRX).
 
 The certified backtest head runs live at a small dose through the **capital ladder**
 (`config/preregistration.json`, rationale `config/PREREGISTRATION.md`). Rung 1 = **0.10×**
-budget against head **v34**, re-registered to **v2** (`code_change_resets_to_rung_1`; band
-**[−148k, +266k]**). The `lab-live` subcommands drive it:
+budget against head **v35**, re-registered to **v2** (`code_change_resets_to_rung_1`; band
+**[−148k, +266k]** — still v34-derived and zero-cost, see `RUNBOOK-rung1.md`). The `lab-live` subcommands drive it:
 
 | command | who | gate | what |
 |---|---|---|---|
-| `--head` | agent | read-only | prints `strategy_code_hash()` — confirm the binary embeds v34 (`e5bc2ae8…`) |
+| `--head` | agent | read-only | prints `strategy_code_hash()` — confirm the binary embeds v35 (`7571abef…`) |
 | `--rung-report` | agent | read-only | clean/limit-event classification, cum P&L vs the band, N-progress, readiness — appends nothing |
 | `--genesis` | operator | nonce, attended | register the rung-1 chain |
 | `--dispatch` | operator | nonce, attended | the pre-flight gate (exit 0 green / 1 refused / 75 throttled) |

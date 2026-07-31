@@ -1735,3 +1735,95 @@ fn accept_envelope_carries_conditioner_tags_and_the_correct_tier() {
     let legacy_accept = accepts.iter().find(|d| d.symbol == "222222.XKRX").unwrap();
     assert!(legacy_accept.tags.is_none(), "a legacy run carries no tags");
 }
+
+// ---------------------------------------------------------------------------
+// Transaction-cost model (orb-transaction-cost-model)
+// ---------------------------------------------------------------------------
+
+mod transaction_costs {
+    use nautilus_ls_lab::params::OrbParams;
+    use nautilus_ls_lab::strategy::orb::{TransactionCostConfig, TransactionCostModel};
+
+    /// The tax is sell-side by statute: a buy fill pays commission only, a sell fill
+    /// pays commission + tax. A symmetric per-side model would misprice every round
+    /// trip by the tax on the buy leg.
+    #[test]
+    fn fill_cost_is_sell_side_asymmetric() {
+        let m = TransactionCostModel { commission_rate_per_side: 0.00015, sell_tax_rate: 0.0020 };
+        let notional = 10_000_000.0;
+        assert_eq!(m.fill_cost(false, notional), 0.00015 * notional, "buy: commission only");
+        assert_eq!(
+            m.fill_cost(true, notional),
+            (0.00015 + 0.0020) * notional,
+            "sell: commission + statutory tax"
+        );
+    }
+
+    /// Zero rates are the zero-cost sentinel: `from_params` yields no model at all,
+    /// so a zero-rate run takes the pre-model code path untouched (byte-identical
+    /// artifacts — the historical-reproducibility contract).
+    #[test]
+    fn zero_rates_yield_no_model() {
+        let p = OrbParams::default();
+        assert_eq!(p.cost_commission_rate_per_side, 0.0);
+        assert_eq!(p.cost_sell_tax_rate, 0.0);
+        assert!(TransactionCostModel::from_params(&p).is_none(), "0.0/0.0 → None");
+        let armed = OrbParams { cost_sell_tax_rate: 0.0020, ..OrbParams::default() };
+        let m = TransactionCostModel::from_params(&armed).expect("one nonzero rate arms the model");
+        assert_eq!(m.sell_tax_rate, 0.0020);
+        assert_eq!(m.commission_rate_per_side, 0.0);
+    }
+
+    /// A zero-rate model (constructed directly, not via `from_params`) charges
+    /// exactly nothing — rate=0 must reproduce the zero-cost number exactly.
+    #[test]
+    fn zero_rate_model_charges_nothing() {
+        let m = TransactionCostModel { commission_rate_per_side: 0.0, sell_tax_rate: 0.0 };
+        assert_eq!(m.fill_cost(false, 5_000_000.0), 0.0);
+        assert_eq!(m.fill_cost(true, 5_000_000.0), 0.0);
+    }
+
+    /// The config artifact loader schema-gates and surfaces parse errors with the
+    /// path; an unsupported schema_version is refused.
+    #[test]
+    fn config_loader_schema_gates() {
+        let dir = tempfile::TempDir::new().unwrap();
+        let ok = dir.path().join("ok.json");
+        std::fs::write(
+            &ok,
+            br#"{"schema_version":1,"commission_rate_per_side":0.00015,"sell_tax_rate":0.0020,"sources":[],"notes":[]}"#,
+        )
+        .unwrap();
+        let cfg = TransactionCostConfig::load(&ok).unwrap();
+        assert_eq!(cfg.commission_rate_per_side, 0.00015);
+        assert_eq!(cfg.sell_tax_rate, 0.0020);
+
+        let bad = dir.path().join("bad.json");
+        std::fs::write(&bad, br#"{"schema_version":2,"commission_rate_per_side":0.0,"sell_tax_rate":0.0}"#).unwrap();
+        let err = TransactionCostConfig::load(&bad).unwrap_err();
+        assert!(err.contains("schema_version"), "{err}");
+
+        let missing = dir.path().join("missing.json");
+        let err = TransactionCostConfig::load(&missing).unwrap_err();
+        assert!(err.contains("missing.json"), "the path rides in the error: {err}");
+    }
+
+    /// The COMMITTED rate artifact stays loadable and carries the cited 2026 rates:
+    /// LS증권 xing/OPEN API commission 0.015%/side and the uniform 20 bps sell-side
+    /// tax (KOSPI 0.05% 거래세 + 0.15% 농특세; KOSDAQ 0.20% 거래세). Applied to params,
+    /// the rates must pass `validate()` — the artifact and the plausibility gate can
+    /// never drift apart silently.
+    #[test]
+    fn committed_config_artifact_parses_and_validates() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("config/transaction-costs.json");
+        let cfg = TransactionCostConfig::load(&path).expect("committed artifact loads");
+        assert_eq!(cfg.commission_rate_per_side, 0.00015, "LS증권 xing API KRX 0.015%/side");
+        assert_eq!(cfg.sell_tax_rate, 0.0020, "2026 sell-side 20 bps (both boards)");
+        let p = OrbParams {
+            cost_commission_rate_per_side: cfg.commission_rate_per_side,
+            cost_sell_tax_rate: cfg.sell_tax_rate,
+            ..OrbParams::default()
+        };
+        p.validate().expect("committed rates pass the plausibility gate");
+    }
+}

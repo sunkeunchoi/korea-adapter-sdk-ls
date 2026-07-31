@@ -257,6 +257,31 @@ pub struct OrbParams {
     /// `w_hi ≥ 1.0` when armed. Frozen default (see `liquidity_tilt_ref`).
     #[serde(default = "default_liquidity_tilt_w_hi")]
     pub liquidity_tilt_w_hi: f64,
+    /// Per-side brokerage commission rate for the transaction-cost model
+    /// (orb-transaction-cost-model): a fraction of fill notional charged on **every**
+    /// fill, buy and sell (LS Securities xing/OPEN API schedule). `0.0` = zero-cost
+    /// (the pre-cost-model measurement, byte-identical artifacts). Rates are sourced
+    /// from the committed `lab/config/transaction-costs.json`, never assumed — see
+    /// [`crate::strategy::orb::TransactionCostConfig`]. Skipped from serialization
+    /// while `0.0` so zero-cost manifests (and `governed_params_hash`) stay
+    /// byte-identical to the pre-model schema.
+    #[serde(default, skip_serializing_if = "cost_rate_is_off")]
+    pub cost_commission_rate_per_side: f64,
+    /// Sell-side-only statutory transaction tax rate (증권거래세 + 농어촌특별세) for the
+    /// transaction-cost model: a fraction of fill notional charged on **sell fills
+    /// only** — the tax is asymmetric by law, so a symmetric per-side model is wrong
+    /// by construction. `0.0` = zero-cost. Sourced + cited in
+    /// `lab/config/transaction-costs.json`; serialization skipped while `0.0` (see
+    /// [`OrbParams::cost_commission_rate_per_side`]).
+    #[serde(default, skip_serializing_if = "cost_rate_is_off")]
+    pub cost_sell_tax_rate: f64,
+}
+
+/// `skip_serializing_if` predicate for the two transaction-cost rates: `0.0` is the
+/// zero-cost sentinel and serializes as *absent*, so a zero-cost params set is
+/// byte-identical (and `governed_params_hash`-identical) to the pre-model schema.
+fn cost_rate_is_off(rate: &f64) -> bool {
+    *rate == 0.0
 }
 
 /// The frozen pre-registered reference illiquidity (plan 2026-07-16-003 KD2): the median
@@ -391,6 +416,10 @@ impl Default for OrbParams {
             liquidity_tilt_ref: default_liquidity_tilt_ref(),
             liquidity_tilt_w_lo: default_liquidity_tilt_w_lo(),
             liquidity_tilt_w_hi: default_liquidity_tilt_w_hi(),
+            // Transaction-cost model (orb-transaction-cost-model) — zero-cost sentinel;
+            // armed rates come only from the cited config artifact, never a code default.
+            cost_commission_rate_per_side: 0.0,
+            cost_sell_tax_rate: 0.0,
         }
     }
 }
@@ -661,6 +690,24 @@ impl OrbParams {
                      must be a finite value ≥ 1.0 so the neutral weight 1.0 lies inside the band \
                      (KD2)",
                     self.liquidity_tilt_w_hi
+                ));
+            }
+        }
+        // Transaction-cost rates (orb-transaction-cost-model): 0.0 is the zero-cost
+        // sentinel; an armed rate must be a small positive fraction-of-notional. The
+        // 0.05 (500 bps per unit) ceiling is a fat-finger guard — no plausible KRX
+        // commission or statutory tax rate approaches it; a percentage pasted as a
+        // whole number (e.g. `0.2` for 0.2%) must fail loud, not silently erase the
+        // measured edge a hundred times over.
+        for (name, rate) in [
+            ("cost_commission_rate_per_side", self.cost_commission_rate_per_side),
+            ("cost_sell_tax_rate", self.cost_sell_tax_rate),
+        ] {
+            if !rate.is_finite() || rate < 0.0 || rate > 0.05 {
+                return Err(format!(
+                    "{name} {rate} is not a plausible per-unit cost rate — use 0.0 for \
+                     zero-cost or a small positive fraction of notional (e.g. 0.0020 for \
+                     20 bps), sourced from lab/config/transaction-costs.json",
                 ));
             }
         }
@@ -1947,5 +1994,57 @@ mod tests {
         // Just outside the edges (float-adjacent) is rejected.
         assert!(!p.strength_in_band(0.06 - 1e-9));
         assert!(!p.strength_in_band(0.13 + 1e-9));
+    }
+
+    /// Transaction-cost rates (orb-transaction-cost-model): a lever-predating
+    /// manifest deserializes with both rates at the zero-cost sentinel.
+    #[test]
+    fn cost_rates_legacy_manifest_defaults_to_zero_cost() {
+        let legacy = r#"{"strategy_id":"orb","strategy_version":9,"gap_min_pct":0.6,
+            "universe_top_n":40,"max_concurrent":7,"range_open":"09:00:00","range_minutes":20,
+            "flat_time":"15:00:00","notional_per_position":10000000.0}"#;
+        let p: OrbParams = serde_json::from_str(legacy).unwrap();
+        assert_eq!(p.cost_commission_rate_per_side, 0.0, "missing key defaults to zero-cost");
+        assert_eq!(p.cost_sell_tax_rate, 0.0, "missing key defaults to zero-cost");
+    }
+
+    /// Zero-cost params serialize WITHOUT the cost keys — the params serialization
+    /// (and therefore `governed_params_hash` and every zero-cost manifest) is
+    /// byte-identical to the pre-model schema. Armed rates serialize and round-trip.
+    #[test]
+    fn cost_rates_zero_serialize_absent_armed_roundtrip() {
+        let zero = serde_json::to_string(&OrbParams::default()).unwrap();
+        assert!(!zero.contains("cost_"), "zero-cost sentinel keys are skipped: {zero}");
+        let armed = OrbParams {
+            cost_commission_rate_per_side: 0.00015,
+            cost_sell_tax_rate: 0.0020,
+            ..OrbParams::default()
+        };
+        let json = serde_json::to_string(&armed).unwrap();
+        assert!(json.contains("cost_commission_rate_per_side"), "{json}");
+        assert!(json.contains("cost_sell_tax_rate"), "{json}");
+        let back: OrbParams = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, armed, "armed rates round-trip through the manifest");
+    }
+
+    /// The plausibility gate: negative or implausibly large rates are refused —
+    /// a percentage pasted as a whole number must fail loud, not erase the edge.
+    #[test]
+    fn cost_rates_validate_rejects_implausible_rates() {
+        let ok = OrbParams {
+            cost_commission_rate_per_side: 0.00015,
+            cost_sell_tax_rate: 0.0020,
+            ..OrbParams::default()
+        };
+        ok.validate().expect("cited 2026 rates are plausible");
+        for bad in [
+            OrbParams { cost_sell_tax_rate: -0.001, ..OrbParams::default() },
+            OrbParams { cost_sell_tax_rate: 0.2, ..OrbParams::default() },
+            OrbParams { cost_commission_rate_per_side: 0.2, ..OrbParams::default() },
+            OrbParams { cost_commission_rate_per_side: f64::NAN, ..OrbParams::default() },
+        ] {
+            let err = bad.validate().unwrap_err();
+            assert!(err.contains("cost_"), "names the offending rate: {err}");
+        }
     }
 }

@@ -10,6 +10,8 @@ use nautilus_model::position::Position;
 use nautilus_model::types::{Currency, Money};
 use serde::{Deserialize, Serialize};
 
+use crate::strategy::orb::TransactionCostModel;
+
 /// One fill within a trade (the fill ledger, R5).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FillRecord {
@@ -401,7 +403,7 @@ impl PerformanceReport {
     /// per-position risk is joined — every `risk_capital`/`realized_r` is `None` (the
     /// legacy path; the R-metrics fall back to P&L).
     pub fn from_positions(positions: &[Position], starting_balance: f64) -> Self {
-        Self::from_positions_with_risk(positions, &[], starting_balance)
+        Self::from_positions_with_risk(positions, &[], starting_balance, None)
     }
 
     /// Assemble a report from finished positions **plus** an index-aligned slice of
@@ -410,15 +412,25 @@ impl PerformanceReport {
     /// slice leaves the trailing positions risk-less (the legacy path). Populates
     /// each [`TradeRecord`]'s additive `risk_capital`/`realized_r` without disturbing
     /// any existing summary key.
+    ///
+    /// `costs` is the transaction-cost model (orb-transaction-cost-model), applied
+    /// per fill at trade booking — commission on both sides, statutory tax on sell
+    /// notional only — so `realized_pnl`, `realized_r`, the equity curve, and every
+    /// summary stat are **net** of modeled costs. `None` (or zero rates upstream)
+    /// takes the pre-model path untouched: byte-identical artifacts. This is the
+    /// backtest assembly seam only — live-session reports (`assemble` over the fill
+    /// ledger) stay zero-cost, because the rung-1 expectation band was frozen from a
+    /// zero-cost distribution and re-deriving it is a separate governed act.
     pub fn from_positions_with_risk(
         positions: &[Position],
         risks: &[Option<EntryRisk>],
         starting_balance: f64,
+        costs: Option<&TransactionCostModel>,
     ) -> Self {
         let trades = positions
             .iter()
             .enumerate()
-            .map(|(i, p)| trade_from_position(p, risks.get(i).copied().flatten()))
+            .map(|(i, p)| trade_from_position(p, risks.get(i).copied().flatten(), costs))
             .collect();
         Self::assemble(trades, starting_balance)
     }
@@ -705,20 +717,37 @@ impl PerformanceReport {
     }
 }
 
-fn trade_from_position(p: &Position, risk: Option<EntryRisk>) -> TradeRecord {
+fn trade_from_position(
+    p: &Position,
+    risk: Option<EntryRisk>,
+    costs: Option<&TransactionCostModel>,
+) -> TradeRecord {
+    // Modeled transaction costs (orb-transaction-cost-model): per-fill, sell-side
+    // asymmetric, additive to any engine-charged commission (always 0.0 today — the
+    // instruments carry no fee model). Booked into each fill's `commission` and
+    // subtracted from `realized_pnl` BEFORE `joined_risk`, so `realized_r` and every
+    // downstream aggregate are net of costs. With `costs == None` the modeled term
+    // is exactly 0.0 and the record is byte-identical to the pre-model path.
+    let mut modeled_cost_total = 0.0;
     let fills = p
         .events
         .iter()
-        .map(|f| FillRecord {
-            ts_event: f.ts_event.as_u64(),
-            side: format!("{:?}", f.order_side).to_uppercase(),
-            qty: f.last_qty.as_f64(),
-            price: f.last_px.as_f64(),
-            trade_id: f.trade_id.to_string(),
-            commission: f.commission.map(|m| m.as_f64()).unwrap_or(0.0),
+        .map(|f| {
+            let is_sell = matches!(f.order_side, nautilus_model::enums::OrderSide::Sell);
+            let notional = f.last_qty.as_f64() * f.last_px.as_f64();
+            let modeled = costs.map(|c| c.fill_cost(is_sell, notional)).unwrap_or(0.0);
+            modeled_cost_total += modeled;
+            FillRecord {
+                ts_event: f.ts_event.as_u64(),
+                side: format!("{:?}", f.order_side).to_uppercase(),
+                qty: f.last_qty.as_f64(),
+                price: f.last_px.as_f64(),
+                trade_id: f.trade_id.to_string(),
+                commission: f.commission.map(|m| m.as_f64()).unwrap_or(0.0) + modeled,
+            }
         })
         .collect();
-    let realized_pnl = p.realized_pnl.map(|m| m.as_f64()).unwrap_or(0.0);
+    let realized_pnl = p.realized_pnl.map(|m| m.as_f64()).unwrap_or(0.0) - modeled_cost_total;
     let closed = p.ts_closed.is_some();
     let (risk_capital, realized_r) = joined_risk(realized_pnl, closed, risk);
     TradeRecord {
@@ -1527,5 +1556,106 @@ mod tests {
         assert_eq!(e.num_trades, 2, "open leg excluded from the trade count");
         assert_eq!(e.risk_capital_total, Some(400_000.0), "open risk_capital excluded");
         assert!((e.return_on_risk.unwrap() - 0.5).abs() < 1e-9, "RoR over closed only");
+    }
+
+    /// One two-fill round trip through the REAL cost-application seam
+    /// (`trade_from_position`): commission books on both fills, the statutory tax on
+    /// the sell fill only, and `realized_pnl`/`realized_r` net BEFORE `joined_risk` —
+    /// with `costs: None` the identical position reproduces the gross (pre-model)
+    /// record exactly. Guards the wiring the formula-level `fill_cost` tests cannot
+    /// see (double-count, wrong-notional, buy/sell inversion).
+    #[test]
+    fn trade_from_position_nets_sell_asymmetric_costs_before_realized_r() {
+        use nautilus_core::{UnixNanos, UUID4};
+        use nautilus_model::enums::{LiquiditySide, OrderSide, OrderType};
+        use nautilus_model::events::OrderFilled;
+        use nautilus_model::identifiers::{
+            AccountId, ClientOrderId, InstrumentId, PositionId, StrategyId, TradeId, TraderId,
+            VenueOrderId,
+        };
+        use nautilus_model::instruments::{Equity, InstrumentAny};
+        use nautilus_model::position::Position;
+        use nautilus_model::types::{Price, Quantity};
+
+        let id = InstrumentId::from("005930.XKRX");
+        let equity = InstrumentAny::Equity(
+            Equity::new(
+                id,
+                nautilus_model::identifiers::Symbol::from("005930"),
+                None,
+                Currency::KRW(),
+                0,
+                Price::from("1"),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                UnixNanos::default(),
+                UnixNanos::default(),
+            ),
+        );
+        let fill = |order: &str, trade: &str, side: OrderSide, px: &str, ts: u64| {
+            OrderFilled::new(
+                TraderId::from("T-1"),
+                StrategyId::from("S-1"),
+                id,
+                ClientOrderId::from(order),
+                VenueOrderId::from("V-1"),
+                AccountId::from("SIM-1"),
+                TradeId::from(trade),
+                side,
+                OrderType::Market,
+                Quantity::from("10"),
+                Price::from(px),
+                Currency::KRW(),
+                LiquiditySide::Taker,
+                UUID4::new(),
+                UnixNanos::from(ts),
+                UnixNanos::from(ts),
+                false,
+                Some(PositionId::from("P-1")),
+                None, // no engine commission — matches the fee-less backtest instruments
+            )
+        };
+        let mut pos = Position::new(&equity, fill("O-1", "T-A", OrderSide::Buy, "50000", 1));
+        pos.apply(&fill("O-2", "T-B", OrderSide::Sell, "51000", 2));
+        assert!(pos.is_closed(), "round trip closes the position");
+
+        let risk = EntryRisk { risk_per_share: 1000.0, qty: 10.0 };
+
+        // Gross path (costs: None) — the pre-model record: engine P&L, zero commissions.
+        let gross = trade_from_position(&pos, Some(risk), None);
+        assert_eq!(gross.realized_pnl, 10_000.0, "10 sh x (51000 - 50000)");
+        assert_eq!(gross.realized_r, Some(1.0), "10_000 / (1000 x 10)");
+        assert!(gross.fills.iter().all(|f| f.commission == 0.0));
+
+        // Cost-aware path: commission both sides, tax on the sell notional only.
+        let model =
+            TransactionCostModel { commission_rate_per_side: 0.00015, sell_tax_rate: 0.0020 };
+        let net = trade_from_position(&pos, Some(risk), Some(&model));
+        // Expectations mirror `fill_cost`'s association exactly — rate × (qty × price) —
+        // so the comparison is bitwise, not epsilon-fuzzed.
+        let buy_cost = 0.00015 * (10.0 * 50_000.0); // 75.0 — commission only
+        let sell_cost = (0.00015 + 0.0020) * (10.0 * 51_000.0); // 1_096.5 — commission + tax
+        assert_eq!(net.fills[0].commission, buy_cost, "buy fill: no statutory tax");
+        assert_eq!(net.fills[1].commission, sell_cost, "sell fill: commission + tax");
+        assert_eq!(net.realized_pnl, 10_000.0 - buy_cost - sell_cost);
+        assert_eq!(
+            net.realized_r,
+            Some((10_000.0 - buy_cost - sell_cost) / 10_000.0),
+            "realized_r nets costs (subtraction happens before joined_risk)"
+        );
+        // Everything cost-independent is untouched.
+        assert_eq!(net.quantity, gross.quantity);
+        assert_eq!(net.avg_px_open, gross.avg_px_open);
+        assert_eq!(net.avg_px_close, gross.avg_px_close);
+        assert_eq!(net.risk_capital, gross.risk_capital);
     }
 }
