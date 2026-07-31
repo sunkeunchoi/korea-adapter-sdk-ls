@@ -60,6 +60,50 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Governance — rung-1 ladder STAND-DOWN recorded: net-negative cost-aware head; frozen prereg v2 left untouched as the historical record (2026-07-31) — queue rung1-prereg-band-zero-cost-inheritance
+
+- **Verdict: STAND DOWN (the stand-down arm of the queue item's re-derive-or-stand-down
+  choice), the recorded resolution of the zero-cost band inheritance.** The documented head is net-negative after honest costs
+  (v35, net RoR **−0.0006**, entry below), and the ladder's economic gate cites the frozen
+  v2 rung-1 band **[−148k, +266k]** derived from the v34 **zero-cost** distribution — a
+  band whose center is ~1.69M KRW too optimistic over a backtest-length window. With a
+  net-negative expected edge, attended sessions buy expected losses; **no attended
+  session is authorized** until the re-entry condition below is met. This is a
+  governance dispatch — no strategy code, no backtest, no band arithmetic.
+- **Why stand-down and not amendment (v3) — the operator choice, argued and recorded.**
+  The case for keeping rung-1 alive as an execution-calibration instrument fails on
+  inspection: (1) the rung-2 tracking band that rung-1 live fills would calibrate has no
+  consumer — rung-2 can never be authorized on a net-negative head; (2) the frozen
+  `code_change_resets_to_rung_1` rule means the head change a net-positive cost-aware
+  head requires resets the ladder to rung 1 and discards the v35-epoch rung-1 evidence
+  anyway; (3) the cost model's live validation rides the first rung-1 session of the
+  eventual net-positive head at no extra cost. The expected loss at 0.10× is trivial
+  (≈ −1.7k KRW per 24 sessions) — the cost being refused is operator attention and
+  governance integrity, not money. A v3 band centered on a negative edge would exist
+  only to authorize sessions this stand-down forbids.
+- **The frozen file is deliberately untouched.** `config/preregistration.json` remains
+  **v2** byte-for-byte, so every existing dispatch citation (SHA-256) stays valid and
+  the v2 values stand as the historical record. No cost-aware band was derived. The
+  recorded stand-down lives in `config/PREREGISTRATION.md` § Stand-down (status note),
+  this entry, the RUNBOOK/PREFLIGHT banners, and the queue — per the amendment
+  protocol's "recorded, never implied" discipline (KTD1).
+- **Re-entry condition (the unblock):** a net-positive cost-aware head exists — net
+  RoR > 0 with the armed transaction-cost model on a current catalog. That is
+  necessarily a code-hash move (`code_change_resets_to_rung_1`), so re-entry begins
+  with a fresh re-registration (v3+): bands re-derived from that head's closed-trade
+  distribution via the identical Protective formula, derivation reproduced in
+  `lab/tests/prereg_derivation.rs`, before any genesis dispatch.
+- **Doc sweep (this dispatch):** `RUNBOOK-rung1.md` and `RUNG1-PREFLIGHT.md` now open
+  with the suspension banner (PREFLIGHT's step-3 v2/SHA-256 citation stays valid — the
+  file did not change); `README.md` § rung-1 ladder records the stand-down;
+  `config/PREREGISTRATION.md` carries the status line + § Stand-down. Live wiring, the
+  dispatch gates, and the rung-2 fail-closed tracking band are untouched (out of scope),
+  as are the frozen cost rates in `config/transaction-costs.json`.
+- **Queue:** `rung1-prereg-band-zero-cost-inheritance` closes with this entry.
+  `rung1-attended-session-v35` is superseded by `rung1-ladder-reentry-net-positive-head`
+  (parked; unblock condition in its notes). The sibling
+  `session-morning-window-gap-robustness` is untouched.
+
 ## Turn — transaction-cost model (measurement axis): head re-measured NET-NEGATIVE, head → v35, all six kept levers survive the cost-aware re-read (2026-07-31) — queue orb-transaction-cost-model
 
 - **Verdict: the measurement executed and ships as read — the cost-aware head is NET-NEGATIVE.**

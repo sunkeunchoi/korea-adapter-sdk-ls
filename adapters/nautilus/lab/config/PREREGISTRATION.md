@@ -1,6 +1,6 @@
 # Production Ladder — Pre-Registration
 
-**Status:** RE-REGISTERED to **v2** (head v34) · **Date:** 2026-07-16 (v1, head v30) → 2026-07-24 (v2, head v34)
+**Status:** RE-REGISTERED to **v2** (head v34) · **LADDER STOOD DOWN 2026-07-31** (recorded suspension — see § Stand-down below; v2 values unchanged) · **Date:** 2026-07-16 (v1, head v30) → 2026-07-24 (v2, head v34)
 **Machine mirror:** [`preregistration.json`](preregistration.json)
 **Governs:** the capital ladder shipped in PR #154 (`docs/plans/2026-07-16-001-feat-production-ladder-plan.md`).
 
@@ -10,6 +10,33 @@ recorded re-registration dispatch (KTD1). Every value below is a backtest-derive
 no invented numbers. The **current, load-bearing** economics are the **v2 (head v34)** section
 immediately below; the original **v1 (head v30)** derivation is retained beneath it as the
 historical record of the frozen-then-superseded values.
+
+---
+
+## Stand-down — 2026-07-31 (recorded suspension; v2 values unchanged)
+
+**The ladder is suspended.** The documented head moved v34 → v35 (`strategy_code_hash
+e5bc2ae8… → 7571abef…`, run `20260731T023138Z-backtest-orb-v35`) — a
+`code_change_resets_to_rung_1` event — and the v35 re-measurement with the sourced
+transaction-cost model armed reads **net-negative** (net RoR **−0.0006**, 111 closed
+trades; TURN-LOG 2026-07-31). The v2 rung-1 expectation band below derives from the v34
+**zero-cost** distribution, so the economic gate cites a band the head can no longer clear
+in expectation.
+
+**Disposition: stand-down, not amendment.** No v3 band is derived. A band centered on a
+negative edge would exist only to authorize sessions this suspension forbids; rung-2 can
+never be authorized on a net-negative head, so rung-1's calibration output has no
+consumer; and the head change a net-positive edge requires resets to rung 1
+(`code_change_resets_to_rung_1`), discarding v35-epoch rung-1 evidence anyway. The v2
+values below are retained **unchanged** as the historical record, and
+[`preregistration.json`](preregistration.json) is deliberately untouched — every existing
+dispatch citation (SHA-256) remains valid.
+
+**Re-entry protocol:** a net-positive cost-aware head (net RoR > 0 with the armed cost
+model on a current catalog) triggers a fresh re-registration (v3+): bands re-derived from
+that head's closed-trade distribution via the identical Protective formula, reproduced in
+`lab/tests/prereg_derivation.rs`, before any genesis dispatch. Parked as queue
+`rung1-ladder-reentry-net-positive-head`.
 
 ---
 

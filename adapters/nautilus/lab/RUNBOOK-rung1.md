@@ -5,6 +5,16 @@ One page for the operator running the **first live rung**. Values are frozen in
 [`config/PREREGISTRATION.md`](config/PREREGISTRATION.md)). Rung 1 = **0.10×** budget,
 watchdog **90 s** heartbeat, **300,000 KRW** session breaker, **5** clean sessions to escalate.
 
+> **LADDER STOOD DOWN — 2026-07-31 (recorded suspension). Do NOT authorize an attended
+> session.** The documented head (v35) is net-NEGATIVE after honest costs (net RoR −0.0006),
+> so an attended session buys expected losses and the rung-2 escalation it would feed can
+> never be authorized. The frozen prereg stays **v2**, untouched as the historical record —
+> no cost-aware band was derived. Re-entry: a net-positive cost-aware head exists → that is
+> a code-hash move (`code_change_resets_to_rung_1`) → fresh re-registration (v3+) re-derives
+> the bands from that head's distribution before any genesis dispatch. See the TURN-LOG
+> 2026-07-31 governance entry, `config/PREREGISTRATION.md` § Stand-down, and queue
+> `rung1-ladder-reentry-net-positive-head`.
+
 > **Head v35 — cost-aware re-measurement of the v34 identity.** The documented head is **v35**
 > (`strategy_code_hash 7571abef…`, run `20260731T023138Z-backtest-orb-v35` — the
 > orb-transaction-cost-model turn: v34's governed params re-measured with the sourced
@@ -13,8 +23,8 @@ watchdog **90 s** heartbeat, **300,000 KRW** session breaker, **5** clean sessio
 > net-NEGATIVE** (net RoR −0.0006 on the 2026-07-31 catalog) — see TURN-LOG before authorizing
 > any attended session. The v34→v35 code hash change is a `code_change_resets_to_rung_1`
 > event. The frozen v2 economic band **[−148k, +266k]** is still v34-derived and **zero-cost**
-> — a known inheritance awaiting its own governed prereg amendment
-> (queue: `rung1-prereg-band-zero-cost-inheritance`). Confirm the binary embeds
+> — an inheritance resolved 2026-07-31 by the recorded **stand-down** above (the file stays
+> v2 as history; the amendment queue item is retired). Confirm the binary embeds
 > v35 with `lab-live --head` before genesis — the code hash is the sole discriminator (see
 > [`RUNG1-PREFLIGHT.md`](RUNG1-PREFLIGHT.md)).
 
