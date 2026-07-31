@@ -14,6 +14,8 @@ applies_when:
   - "Writing an attended operator script whose exit code IS its contract (a GO/NO-GO or stand-down report)"
   - "Writing a stub that stands in for a binary whose argument contract the script must satisfy"
   - "A dry-run mode prints a hand-maintained transcript of the commands rather than constructing the argv the live path uses"
+  - "A script argument derived from a point value (one date, one id) stands in for a range the binary actually consumes"
+  - "A script names a resumable state/checkpoint file whose identity the consuming binary validates on resume"
 tags:
   - bash
   - shell-testing
@@ -253,6 +255,42 @@ Working reference: `adapters/nautilus/scripts/tests/session-morning.test.sh`, ru
 repo against stubs for the network path, then replays the captured argv against the real
 compiled binary. It also states its scope limit out loud — the steps it never reaches — rather
 than leaving the reader to infer coverage it does not have.
+
+## Third defect class, 2026-07-31 — the replay proves an argv is ACCEPTABLE, not CORRECT
+
+Found the same day the second recurrence was fixed, shipped as PR #240. Step `[3]` passed
+`--window $session_date..$session_date` — syntactically perfect, accepted by the real parser
+and the confinement check, green through the replay oracle above. The value was still wrong:
+`window.from` seeds the start of a *range* fetch (the KRX witness cursor), and the consuming
+ingest acts only on its established prefix — it stops before the first calendar-Unknown day
+and never crosses it. After a missed morning the gap spans two or more sessions; a window
+seeded from the session date (a *point*) witnesses only the latest day, and the ingest stalls
+at the frontier with nothing advanced. The fix derives the start from the state the range must
+cover — `min(daily watermark) + 1 day, clamped to the session date` — instead of the point.
+
+The scope limit this exposes: **the replay validates the argv against the binary's contract;
+it cannot know whether a well-formed value fits the state of the world.** A point date where a
+range start belongs parses, confines, and greens every structural check. Value-correctness
+needs its own harness layer:
+
+- **Assert derived argv values against fixture state**, not just flag presence. The gap test
+  plants watermarks behind the session (deliberately mixed, to prove the MIN governs) and
+  asserts the marshalled `--window` literally reaches back to frontier+1.
+- **Exercise every branch of the derivation.** The clamp's active branch (frontier at/past the
+  session) was initially untested — a derivation stripped of `min()` passed every test, the
+  exact silent-pass class this harness exists to kill. Review caught it; the fixture that
+  proves it is watermarks *past* the session asserting the window collapses to the single day.
+- **Meta-test the value, not just the flag.** A mutation that reverts the derivation to the
+  old point-date argv still produces a *replay-accepted* invocation, so the meta-test must
+  assert the two runs are distinguishable by the value assertion, not by the oracle.
+
+A sibling gotcha from the same fix, same shape (a name keyed on a subset of the identity the
+consumer checks): the fetch's resumable checkpoint file was first keyed on the derived window
+*start* only, but `calendar-fetch-inputs` refuses to resume a checkpoint whose full
+`(window.from, window.through, krx_through)` triple differs. A same-day re-run sharing the
+start but targeting a later session would be handed the stale file and refused. **When a
+script names a resumable state file, key the name on the same tuple the binary's mismatch
+check compares** — keying on part of it converts a legitimate re-run into a refusal.
 
 ## A doc's remedy text, hardcoded into a caller's error handler, becomes a misattribution bug
 
