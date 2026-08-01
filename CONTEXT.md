@@ -220,6 +220,22 @@ _Avoid_: read TR, ordinary implemented TR, harmless control
 A realtime feed that observes broker-side lifecycle state such as order receipt, execution, correction, cancellation, or rejection without itself submitting, modifying, or canceling an order. It requires stricter evidence wording than market quote feeds, but it is not the same as REST order runtime.
 _Avoid_: order runtime, harmless realtime feed, order TR
 
+**Point-in-Time Research Universe**:
+The historical population of KOSPI and KOSDAQ common stocks eligible for strategy research at each past session, including securities that later exited, suspended, or delisted.
+_Avoid_: current constituents, fixed symbol list, backtest watchlist
+
+**Session Tradable Universe**:
+The common-stock subset of the **Point-in-Time Research Universe** eligible to receive orders in one session using only information available before that session.
+_Avoid_: research universe, static universe, current top stocks
+
+**Reference Instrument**:
+An ETF or ETN whose market data and constituent relationships may inform common-stock decisions but which is never eligible to receive an order from the ORB portfolio.
+_Avoid_: tradable instrument, portfolio holding, stock substitute
+
+**Two-Tier Portfolio Simulation**:
+The portfolio evidence model that combines broad point-in-time minute-bar testing with high-fidelity replay of representative ticks, quotes, order books, and market regimes before paper/live calibration.
+_Avoid_: minute-only backtest, full-universe tick replay, paper trading
+
 ## Relationships
 
 - The **Maintained SDK Surface** is the source of truth for SDK behavior.
@@ -243,6 +259,9 @@ _Avoid_: order runtime, harmless realtime feed, order TR
 - Accepted **SDK Maintenance Work Items** and **SDK Expansion Work Items** live in the **Maintenance Work Queue**.
 - A **Completed Maintenance Work Item** is not complete from code changes alone.
 - The **Maintenance Flow** begins with an upstream change signal and does not change the **Maintained SDK Surface** until reviewed work is accepted.
+- The **Session Tradable Universe** is derived from the **Point-in-Time Research Universe** for one session.
+- A **Reference Instrument** may influence selection or risk decisions but never belongs to the **Session Tradable Universe**.
+- **Two-Tier Portfolio Simulation** supplies historical evidence before the portfolio enters paper/live calibration.
 - **Foundation Complete** means the **Maintenance Flow** can be repeated without creating a new process for each work item, and is claimed only after a real SDK-facing work item has proven the flow, not from queue plumbing alone.
 - An **SDK Maintenance Work Item** changes the **Maintained SDK Surface** only after review.
 - A **Dependency Class** owns SDK code organization.
