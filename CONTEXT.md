@@ -228,6 +228,10 @@ _Avoid_: current constituents, fixed symbol list, backtest watchlist
 The common-stock subset of the **Point-in-Time Research Universe** eligible to receive orders in one session using only information available before that session.
 _Avoid_: research universe, static universe, current top stocks
 
+**Intraday Tradability**:
+The event-grained record of whether the market was open for one symbol at one instant during a session — halt onset, VI trigger and release, resumption, and last tradable date.
+_Avoid_: session eligibility, tradable universe membership, halted symbol as an ineligible symbol, missing bars as a halt
+
 **Reference Instrument**:
 An ETF or ETN whose market data and constituent relationships may inform common-stock decisions but which is never eligible to receive an order from the ORB portfolio.
 _Avoid_: tradable instrument, portfolio holding, stock substitute
@@ -261,6 +265,7 @@ _Avoid_: minute-only backtest, full-universe tick replay, paper trading
 - The **Maintenance Flow** begins with an upstream change signal and does not change the **Maintained SDK Surface** until reviewed work is accepted.
 - The **Session Tradable Universe** is derived from the **Point-in-Time Research Universe** for one session.
 - A **Reference Instrument** may influence selection or risk decisions but never belongs to the **Session Tradable Universe**.
+- **Intraday Tradability** is not membership of the **Session Tradable Universe**: the universe is settled before the session and does not move, while intraday tradability changes within it.
 - **Two-Tier Portfolio Simulation** supplies historical evidence before the portfolio enters paper/live calibration.
 - **Foundation Complete** means the **Maintenance Flow** can be repeated without creating a new process for each work item, and is claimed only after a real SDK-facing work item has proven the flow, not from queue plumbing alone.
 - An **SDK Maintenance Work Item** changes the **Maintained SDK Surface** only after review.
