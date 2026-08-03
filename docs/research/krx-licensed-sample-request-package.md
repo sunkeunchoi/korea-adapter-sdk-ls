@@ -162,7 +162,7 @@ are unchanged and still (b) sample-only.
 |---|---|---|
 | 3 | **PARTIALLY SETTLED** | 증권구분 = `SECUGRP_NM`, **served**. But it does not separate 보통주/우선주 (that is `KIND_STKCERT_TP_NM`) and **no field identifies a SPAC**. Three of five classes covered. Completeness untested. |
 | 5 | **SETTLED (public half)** | **가격제한폭 is expressly not applied to 정리매매종목** (업무규정 제20조제3항). ≤7 trading days, 30-min single-price auctions ×14, limit orders only. **F6 has no value to compute — the quantity is undefined by regulation, not missing from a feed.** Returns to #247 as an amendment. |
-| 7 | untouched | Auction phase/imbalance fields remain (b). A2 confirms ST5001/5002 exist at order level; whether they carry auction-phase identifiers is unestablished. |
+| 7 | **NOT SETTLED** | Auction phase and imbalance fields remain (b). A2 established ST5001/5002 are order-level with a 10-level book, but **whether they carry auction-phase identifiers, indicative price or imbalance is not on any public page** — so F3's auction arm is neither rescued nor killed here. |
 | 10 | **NARROWED — materially** | **ST5001 is order-level (MBO), millisecond, with a synchronized 10-level book snapshot on every event** (104 fields); ST5002 carries both-side order attribution (122 fields) and joins to it on receipt IDs. A product that can answer obligation 10 **exists and is priced**. Still a vendor claim, not verified data. |
 | 12 | **PARTIALLY SETTLED** | **15 in-window regime changes enumerated with effective dates.** The load-bearing one: **regular-session close 15:00 → 15:30 on 2016-08-01**, which **arms** the latent `KRX_REGULAR_CLOSE` defect. Price limits ±15%→±30% on 2015-06-15 is `SETTLED` from KRX's own change register. |
 | 14 | **PARTIALLY SETTLED** | Taxonomy fully public and enumerated. **No public per-trade category code exists**, and the OPEN API is daily-aggregate only. Odd-lot **struck** — the trading unit has been 1 share since 2014-06-02. Per-product mapping still (b). |
@@ -170,12 +170,13 @@ are unchanged and still (b) sample-only.
 | 16 | **SETTLED — NEGATIVE** | **업종 is not served** by the basic-information services, and appears nowhere in the ~40-service OPEN API catalogue. It is a **separate acquisition**, not a rider. **M17's near-zero-marginal-cost premise is false, so M9's single-procurement argument needs correcting** — the pre-declared consequence has fired. Belongs to #254. |
 | 17 | **NOT RELEASED** (`shape` holds) | **Two regimes discovered.** Route A (Koscom) has an objective **Original Work** carve-out; Route B (KRX historical, the operative one) pulls **가공한 정보 inside** the restriction and offers only a discretionary 독창성 test a mechanical digest may fail. `may_begin` **stays refused**. |
 | 18 | **NOT RELEASED** (`shape` holds) | Route B defines **no term, no 해지, no expiry** — absent breach nothing requires destruction, ever. But **Art. 11(5) makes KRX's destruction-demand power survive indefinitely with no reciprocal right**, and Art. 9(3) reaches derived information. The asymmetry is the finding. |
-| 19 | **SETTLED — NEGATIVE** | **No published escrow provision on either route** (zero hits for 에스크로/임치 across all 15 Route B articles and both language versions of Route A's Policy). Route B has no approved-third-party mechanism at all. **M5's no-escrow assumption holds.** |
+| 19 | **NEEDS VENDOR — with a clean negative on the published record** | **No published escrow provision on either route** (zero hits for 에스크로/임치 across all 15 Route B articles and both language versions of Route A's Policy). Route B has no approved-third-party mechanism at all. **M5's no-escrow assumption holds on the published record** — but absence from published terms cannot prove an unpublished offering does not exist, so this stays a one-question ask rather than a settled fact. |
 
 **Net effect on the paid ask:** one question struck outright (obl. 15), one
 mostly struck (obl. 5), two narrowed to a residue (obl. 3, 10), one inverted into
 a new acquisition line (obl. 16), one sharpened into named sub-questions
-(obl. 14), one made nameable (obl. 12), and Part D restructured by counterparty.
+(obl. 14), one made nameable (obl. 12), one reduced to a single confirming
+question (obl. 19), and Part D restructured by counterparty.
 **Neither `shape` obligation was released — `may_begin` is still false**, which
 is the honest headline: Part A shrank the ask substantially without unblocking
 construction.
