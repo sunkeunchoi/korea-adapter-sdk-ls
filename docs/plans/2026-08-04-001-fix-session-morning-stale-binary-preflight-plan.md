@@ -24,10 +24,12 @@ and the doc gets corrected (U5).
 `adapters/nautilus/`'s Rust sources, a new exit code, or a change to any step
 after preflight. None of those is in scope, and each signals the approach drifted.
 
-**Execution profile.** Shell and test-harness only — no Rust source changes, so
-`make adapter-check` is not reached. Verification still rebuilds the debug binaries
-and runs the cargo-backed `docs-check`; budget for that separately from the diff. `make script-check` is the load-bearing gate
-and it is fast.
+**Execution profile.** Shell and test-harness only — no Rust source changes. Verification
+still rebuilds the debug binaries and runs the cargo-backed `docs-check`; budget for that
+separately from the diff. `make script-check` is the load-bearing gate and it is fast.
+`make adapter-check` was originally scoped out here on the grounds that no Rust compile is
+reached; that reading is narrower than AGENTS.md's literal trigger, so it **was** run —
+see the reconciliation in the Verification Contract.
 
 **Tail ownership.** Standard: implement, gate, commit, PR. This is a code-bearing
 diff, so it takes the full review path.
@@ -190,8 +192,17 @@ KTD4. **Presence test, not the documented count form.** Use `grep -qa <literal>
 <binary>`, not `strings <binary> | grep -c <literal>`. The count form is fragile in
 the way the source doc itself warns about — `grep -c forward_horizon` returns 3
 only because the compiler did not merge three literals sharing a prefix. Presence
-is immune to merge behavior. It is also faster: 0.01s on a hit, 0.18s worst case
-for a full scan of the 262 MB `ls-ingest`.
+is immune to merge behavior.
+
+> **Correction (post-implementation, 2026-08-04).** This decision originally also claimed
+> presence was "faster: 0.01s on a hit, 0.18s worst case for a full scan of the 262 MB
+> `ls-ingest`." The 0.18s was measured against an interactive shell whose `grep` is aliased
+> to `ugrep`; the script resolves `/usr/bin/grep` (BSD), where an **absent** literal costs
+> **~4.1s** on `ls-ingest` — 23x higher. A miss is a full scan, and a miss is what refuses.
+> The registered 4.8 MB `calendar-refresh` costs 0.05s, so today's cost is nil and KTD4's
+> actual rationale (immunity to literal-merge behavior) is unaffected. But the corrected
+> figure is what must size the "probe literals for the other six binaries" follow-up below:
+> registering the three large binaries puts roughly 12s on the 08:45 path, not ~0.5s.
 
 KTD5. **Refuse with a hand-written exit 64.** 64 is already this script's
 preflight-refusal code and its header states the rationale for keeping 0 / 40 / 41
@@ -329,7 +340,9 @@ disturbing the other six.
   — the lab's `build.rs` fingerprint mechanism weighed and set aside in KTD3. Its
   headline claim needs correction; see U5.
 - Measured in-tree on 2026-08-04: `cargo build --offline --bins` no-op 0.4s; first
-  run after `cargo test` 41s; `grep -qa` worst case 0.18s on `ls-ingest` (262 MB).
+  run after `cargo test` 41s. The `grep -qa` worst case originally recorded here as 0.18s
+  on `ls-ingest` (262 MB) is **corrected to ~4.1s** — see the correction note under KTD4;
+  0.18s came from an interactive shell aliasing `grep` to `ugrep`.
 - **`--dry-run` runs the full preflight.** The `--self-test` block exits before
   preflight is reached, but the `--dry-run` block sits after it. This makes
   `--dry-run` the real-path verification vehicle, and it means every added check
@@ -628,12 +641,20 @@ make docs-check      # regression only — U5 edits hand-authored docs/solutions
                      # green on those two edits; their correctness is review-verified
 ```
 
-`make adapter-check` is **not** required for this diff. AGENTS.md scopes it to
-changes that can reach the adapter's compile, and a script-and-docs diff cannot. If
-the work grows to touch Rust — which is a stop condition, not an expected path —
-then it applies: ~45 minutes, always backgrounded, redirected to a file and never
-piped to `tail`, since a pipe reports tail's exit code and a red gate reads as
-exit 0. A clean run is 70 result lines.
+`make adapter-check` — **reconciled post-implementation, 2026-08-04: it was RUN, and it is
+green.** This section originally argued it was "not required for this diff" on the reading
+that AGENTS.md scopes it to changes reaching the adapter's compile. That reading is narrower
+than AGENTS.md's literal text, which names "any edit under `adapters/nautilus/`" as an
+independent trigger — and the Definition of Done below already conceded exactly that. Two
+statements in one plan disagreeing is how a narrowed gate rule propagates to the next
+scripts-only diff, so the contradiction is resolved in favour of the literal wording rather
+than left to be re-litigated.
+
+Result: **exit 0, 70 result lines, 1367 passed, 0 failed** (~45 min, backgrounded, redirected
+to a file and never piped to `tail` — a pipe reports tail's exit code, so a red gate reads as
+exit 0; every `LS_*` variable stripped first, since this shell exports several that false-red
+the adapter suite). Run it for any edit under `adapters/nautilus/`, including a scripts-only
+one: the cost is bounded and it removes the need to prove a negative about compile reach.
 
 **Real-path proof, beyond the harness.** Run against the actual tree:
 
@@ -686,8 +707,10 @@ adapter suite. Check `env | grep -c '^LS_'` first rather than assuming.
   every mutant has been reverted from a kept pre-mutation copy.
 - All six real-path verification steps have been run and their outcomes recorded in
   the PR body, and step 6 left the tree passing.
-- The PR body states explicitly why `make adapter-check` was not run, since
-  AGENTS.md's literal wording covers any edit under `adapters/nautilus/`.
+- `make adapter-check` has been RUN and its result recorded, since AGENTS.md's literal
+  wording covers any edit under `adapters/nautilus/`. (This item originally read "the PR
+  body states explicitly why it was not run"; running it settles the question instead of
+  arguing it, and the plan's Verification Contract now records the outcome.)
 - No dead-end or experimental code from abandoned approaches remains in the diff —
   in particular, no partial cargo-delegation scaffolding.
 
