@@ -39,9 +39,27 @@
 # That matters because LS_SM_NOW — the obvious clock override — is refused on a
 # real run by design, and these are real runs.
 #
-# SCOPE LIMIT: step [10] (lab-mount-universe) and the step [11] GO/NO-GO report are
-# still never reached — the catch-up runs stop one step short of them by design, and
-# nothing here drives the attended path past the 09:00 guard.
+# FRESHNESS IS A SEPARATE AXIS FROM ARGV, and the argv replay above cannot reach it: its
+# oracle is a hardcoded prebuilt path and nothing here ever runs `cargo build`, so its
+# verdicts are accepted / rejected / no-binary — it reports a MISSING binary, never a STALE
+# one. A pre-merge binary therefore made the chain and its own argv guard agree on stale
+# behaviour, both reading the same artifact and neither able to see that it was old. The
+# preflight freshness section below covers that axis against STUB binaries whose mtimes and
+# contents the fixture controls outright: cargo's dep-info shape is reproduced as one-line
+# `.d` files, staleness is manufactured with `touch -t`, and every registered probe literal
+# is read FROM THE SCRIPT and planted in its stub so the fixture cannot drift from it.
+#
+# SCOPE LIMITS.
+#   * Step [10] (lab-mount-universe) and the step [11] GO/NO-GO report are still never
+#     reached — the catch-up runs stop one step short of them by design, and nothing here
+#     drives the attended path past the 09:00 guard.
+#   * The freshness axes are exercised against STUBS, so they prove the SCRIPT's logic, not
+#     that any real binary is current. Nothing here builds or replays `calendar-refresh` —
+#     the binary that actually carries PR #258's guard remains the structurally least
+#     covered one, which is a real gap on a different axis.
+#   * `make script-check` is not a `make gate-run` step and no CI workflow invokes it, so the
+#     R10 literal-drift assertion below makes a reworded probe literal DIAGNOSABLE, not
+#     preempted: a reword still reaches the 08:45 chain as a hard exit 64.
 
 set -uo pipefail
 
@@ -65,6 +83,14 @@ while read -r v; do [ -n "$v" ] && unset "$v"; done < <(env | sed -n 's/^\(LS_[A
 SESSION_DATE=2026-07-30
 SESSION_COMPACT=20260730
 
+# The probe-literal registry, read FROM THE SCRIPT UNDER TEST rather than restated here. Two
+# things need it — the fixture, which must plant every registered literal in the stub it is
+# registered for, and the drift assertion (R10) — and a second copy in this file would be exactly
+# the hand-kept mirror that the argv replay above exists to avoid.
+registry_entries() { # -> one "<binary>|<literal>|<provenance>" line per registry entry
+  sed -n '/^BIN_PROBE_LITERALS=(/,/^)$/p' "$REAL_SCRIPT" | sed -n 's/^  "\(.*\)"$/\1/p'
+}
+
 # ---------------------------------------------------------------- the fixture repo
 # Builds a throwaway tree with the exact layout session-morning.sh's preflight
 # requires, stubs every binary it invokes, and echoes the root.
@@ -79,6 +105,27 @@ make_fixture() { # [sed_expr] -> repo root on stdout
   local bin="$naut/target/debug"
   mkdir -p "$bin" "$naut/state" "$naut/scripts" "$naut/lab/config" \
            "$root/data/turn4-fresh/catalog" "$root/data/turn4-fresh/state"
+
+  # ---- sources for the freshness axes, written BEFORE the stubs so the stubs are newer -------
+  # The preflight compares each binary against the source set cargo recorded in $BIN/<name>.d,
+  # so the fixture needs sources to compare against. Their paths deliberately MIRROR the real
+  # layout across BOTH workspaces: an adapter-side src/bin file, a ROOT-CRATE file, and a
+  # repo-root metadata/ file — the build-script input that no src/ scan would ever reach and
+  # that a metadata/constraints/*.yaml edit moves without touching any src/ directory. That is
+  # what lets the cross-workspace reach be exercised here rather than only on the operator's tree.
+  #
+  # Write order is load-bearing: sources first, stubs second, so every stub is at least as new as
+  # every source and the DEFAULT fixture is fresh. Staleness is then manufactured explicitly by
+  # the touch -t knobs at the end of this function, never by accident of ordering.
+  local src_bin="$naut/src/bin" src_core="$root/crates/ls-core/src" src_meta="$root/metadata/constraints"
+  mkdir -p "$src_bin" "$src_core" "$src_meta"
+  printf '%s\n' 'fn main() {}' >"$src_core/lib.rs"
+  printf '%s\n' 'fixture: true' >"$src_meta/fixture.yaml"
+  local sb
+  for sb in calendar-fetch-inputs calendar-refresh calendar-activate calendar-status \
+            ls-ingest lab-research lab-mount-universe; do
+    printf '%s\n' 'fn main() {}' >"$src_bin/$sb.rs"
+  done
 
   if [ -n "$mutation" ]; then
     sed "$mutation" "$REAL_SCRIPT" >"$naut/scripts/session-morning.sh"
@@ -196,6 +243,46 @@ exit 0
 STUB
   chmod +x "$bin/ls-ingest"
 
+  # ---- dep-info beside every stub, in cargo's make-rule shape --------------------------------
+  # "<target>: <src> <src> ..." with absolute paths, which is exactly what the preflight parses.
+  # FIXTURE_DROP_DEPINFO_FOR withholds one on purpose: that is how the "freshness UNEVALUABLE"
+  # arm is reached, and it must refuse rather than fall through to pass.
+  for sb in calendar-fetch-inputs calendar-refresh calendar-activate calendar-status \
+            ls-ingest lab-research lab-mount-universe; do
+    [ "$sb" = "${FIXTURE_DROP_DEPINFO_FOR:-}" ] && continue
+    printf '%s: %s %s %s\n' \
+      "$bin/$sb" "$src_bin/$sb.rs" "$src_core/lib.rs" "$src_meta/fixture.yaml" >"$bin/$sb.d"
+  done
+
+  # ---- every REGISTERED probe literal, planted in the stub it is registered for ---------------
+  # Without this the content axis refuses every fixture chain: the calendar-refresh stub is a bash
+  # heredoc containing no such string, so ~30 existing assertions would fail before reaching what
+  # they actually test. A comment line satisfies `grep -qaF`. The registry is read from the script
+  # (registry_entries) rather than restated, so the fixture cannot drift from what it must satisfy.
+  # FIXTURE_OMIT_LITERAL_FOR withholds one deliberately — that, never the default stub, is how the
+  # literal-absent refusal is reached.
+  local rb rlit
+  while IFS='|' read -r rb rlit _; do
+    [ -n "$rb" ] || continue
+    [ "$rb" = "${FIXTURE_OMIT_LITERAL_FOR:-}" ] && continue
+    [ -f "$bin/$rb" ] || continue
+    printf '# probe literal (fixture stub): %s\n' "$rlit" >>"$bin/$rb"
+  done < <(registry_entries)
+
+  # ---- staleness knobs. touch -t is portable across macOS and GNU ----------------------------
+  #   FIXTURE_AGE_BIN=<name>    age ONE stub behind its own sources, so that binary ALONE is stale
+  #                             — the per-binary property a single shared timestamp cannot express
+  #   FIXTURE_STALE_VIA=<rel>   age every stub AND every source, then return ONE source to "now",
+  #                             making that source the sole reason the binaries are stale
+  if [ -n "${FIXTURE_AGE_BIN:-}" ]; then
+    touch -t 202601010000 "$bin/$FIXTURE_AGE_BIN"
+  fi
+  if [ -n "${FIXTURE_STALE_VIA:-}" ]; then
+    find "$bin" -type f -exec touch -t 202601010000 {} +
+    find "$src_bin" "$src_core" "$src_meta" -type f -exec touch -t 202512310000 {} +
+    touch "$root/$FIXTURE_STALE_VIA"
+  fi
+
   printf '%s' "$root"
 }
 
@@ -233,6 +320,7 @@ _run_in() {
 drop_fixture() {
   [ -n "${CHAIN_ROOT:-}" ] && rm -rf "$CHAIN_ROOT"
   CHAIN_ENV=(); FIXTURE_WM_A=""; FIXTURE_WM_B=""; FIXTURE_CKPT=""
+  FIXTURE_AGE_BIN=""; FIXTURE_STALE_VIA=""; FIXTURE_DROP_DEPINFO_FOR=""; FIXTURE_OMIT_LITERAL_FOR=""
   return 0
 }
 
@@ -472,6 +560,258 @@ for flag in --window --state-root; do
     *) no "--dry-run text shows the $flag argument" "$flag in the printed sequence" "$CHAIN_OUT" ;;
   esac
 done
+drop_fixture
+
+# ============================================================ the preflight freshness axes
+# THE FOURTH DEFECT CLASS: the preflight validated all twelve required paths with an EXISTENCE
+# test, so a compiled binary older than the sources it was built from reported `ok`. On 2026-08-04
+# the tree was clean at 92ba1ed while target/debug/calendar-refresh was built 19 minutes BEFORE
+# src/bin/calendar-refresh.rs, and all twelve lines read `ok`. Had the run continued it would have
+# executed a calendar-refresh predating PR #258's forward-horizon guard — and that guard's whole
+# purpose is to make a refusal observable, so the missing line would have read as a clean pass.
+#
+# --dry-run IS THE VEHICLE, and the only one available: the --self-test block exits BEFORE
+# preflight is reached, while the --dry-run block sits AFTER it. So these runs reach every added
+# check and still issue zero traffic.
+#
+# WHY MUTATION IS NOT OPTIONAL HERE. Per
+# docs/solutions/conventions/coverage-only-change-is-verified-by-mutation-not-by-the-gate.md this
+# is a regression guard for an already-fixed bug — the 2026-08-04 binaries have since been rebuilt,
+# so it passes on arrival and a green gate proves nothing about whether it would have caught the
+# original. The two negative meta-tests at the end of this section are the actual proof.
+
+# --- fresh passes, and the registry is sparse ------------------------------------------------
+run_chain --dry-run
+assert_eq "fresh fixture binaries pass both freshness axes" "0" "$CHAIN_RC"
+drop_fixture
+
+# The registry is SPARSE by design: a binary with no entry passes the content axis regardless of
+# its contents. The six unregistered stubs in the run above are exactly that case — none contains
+# any registered literal and none was refused. Pin the sparseness so that if someone ever registers
+# all seven, this claim is re-examined rather than silently voided.
+REG_COUNT="$(registry_entries | grep -c . | tr -d ' ')"
+if [ "$REG_COUNT" -ge 1 ] && [ "$REG_COUNT" -lt 7 ]; then
+  ok "the probe-literal registry is sparse ($REG_COUNT of 7 binaries registered)"
+else
+  no "the probe-literal registry is sparse" "between 1 and 6 entries" "$REG_COUNT"
+fi
+
+# --- stale by mtime, and ONLY the aged binary is implicated -----------------------------------
+FIXTURE_AGE_BIN=calendar-refresh
+run_chain --dry-run
+assert_eq "a binary older than its own sources refuses the preflight (64)" "64" "$CHAIN_RC"
+case "$CHAIN_OUT" in
+  *"are STALE: calendar-refresh"*) ok "the stale refusal names the failing binary" ;;
+  *) no "the stale refusal names the failing binary" "'are STALE: calendar-refresh'" "$CHAIN_OUT" ;;
+esac
+# THE SHARED-TIMESTAMP REGRESSION THIS DESIGN EXISTS TO AVOID. Comparing all seven against one
+# newest-source value is unrecoverable: cargo relinks only DIRTY targets, so rebuilding the touched
+# binary leaves the other six behind the new shared value with cargo declining to rebuild them.
+# The reported COUNT is what proves each binary is compared against its own dep-info set.
+case "$CHAIN_OUT" in
+  *"error: 1 required binary(ies) are STALE:"*)
+    ok "only the aged binary is implicated — each binary has its OWN source set" ;;
+  *) no "only the aged binary is implicated — each binary has its OWN source set" \
+        "exactly 1 stale binary reported" "$CHAIN_OUT" ;;
+esac
+case "$CHAIN_OUT" in
+  *"cargo build --workspace --bin calendar-refresh"*)
+    ok "the stale refusal names the exact rebuild command" ;;
+  *) no "the stale refusal names the exact rebuild command" \
+        "a 'cargo build --workspace --bin calendar-refresh' line" "$CHAIN_OUT" ;;
+esac
+# A bare `cargo build` at the REPO ROOT resolves against the other workspace and cannot produce
+# these binaries at all, so naming the workspace is part of the remedy, not decoration.
+case "$CHAIN_OUT" in
+  *"from the adapters/nautilus workspace"*)
+    ok "the stale refusal names the workspace the rebuild runs from" ;;
+  *) no "the stale refusal names the workspace the rebuild runs from" \
+        "the adapters/nautilus workspace named" "$CHAIN_OUT" ;;
+esac
+case "$CHAIN_LOG" in
+  *calendar-fetch-inputs*|*ls-ingest*)
+    no "a freshness refusal issues no traffic" "no binary invoked" "$CHAIN_LOG" ;;
+  *) ok "a freshness refusal issues no traffic" ;;
+esac
+drop_fixture
+
+# --- the CROSS-WORKSPACE reach: a root-crate source, which no adapter-only scan would see ------
+FIXTURE_STALE_VIA=crates/ls-core/src/lib.rs
+run_chain --dry-run
+assert_eq "a binary older than a ROOT-CRATE source refuses (64) — the cross-workspace axis" \
+          "64" "$CHAIN_RC"
+drop_fixture
+
+# --- and the BUILD-SCRIPT inputs: crates/ls-core/build.rs embeds the repo-root metadata/ tree at
+# compile time, so a metadata/constraints/*.yaml edit changes every binary's behaviour while moving
+# no file under any src/ directory. That is the false-green class this axis exists to close, and it
+# is only reachable because the source set comes from cargo's dep-info rather than a src/ scan.
+FIXTURE_STALE_VIA=metadata/constraints/fixture.yaml
+run_chain --dry-run
+assert_eq "a binary older than a repo-root metadata/ input refuses (64)" "64" "$CHAIN_RC"
+drop_fixture
+
+# --- freshness UNEVALUABLE must refuse, never fall through to pass ----------------------------
+# The script runs under `set -uo pipefail` with NO `-e`, so a failed scan neither aborts nor
+# refuses on its own — an absent answer reading as "fresh" is precisely the false green this
+# closes. count_advanced's -1 sentinel is the shape being copied.
+FIXTURE_DROP_DEPINFO_FOR=calendar-status
+run_chain --dry-run
+assert_eq "a binary with no dep-info file refuses (64) rather than passing" "64" "$CHAIN_RC"
+case "$CHAIN_OUT" in
+  *"UNEVALUABLE for 1 required binary(ies): calendar-status"*)
+    ok "the unevaluable refusal names itself and the binary" ;;
+  *) no "the unevaluable refusal names itself and the binary" \
+        "an 'UNEVALUABLE for 1 required binary(ies): calendar-status' message" "$CHAIN_OUT" ;;
+esac
+# THREE DISTINCT MESSAGES, not one "rebuild and re-run" line. Per
+# docs/solutions/workflow-issues/shell-script-live-path-needs-stubbed-binary-tests.md a handler
+# must discriminate among all the ways it can fire, not assert the one cause its author had in mind.
+case "$CHAIN_OUT" in
+  *"are STALE"*) no "an unevaluable binary is not misreported as stale" \
+                    "no stale message" "$CHAIN_OUT" ;;
+  *) ok "an unevaluable binary is not misreported as stale" ;;
+esac
+drop_fixture
+
+# --- the operator override: mtime axis only, allowed on a real run, announced ------------------
+FIXTURE_AGE_BIN=calendar-refresh
+CHAIN_ENV=("LS_SM_ALLOW_STALE_BINARIES=1")
+run_chain --dry-run
+assert_eq "the override lets a deliberately pinned stale binary through" "0" "$CHAIN_RC"
+case "$CHAIN_OUT" in
+  *"mtime axis is BYPASSED for this run"*)
+    ok "the override announces the bypass in the transcript rather than passing silently" ;;
+  *) no "the override announces the bypass in the transcript rather than passing silently" \
+        "a 'mtime axis is BYPASSED for this run' banner" "$CHAIN_OUT" ;;
+esac
+# Named per binary too, so the transcript records exactly which artifacts the operator vouched for.
+case "$CHAIN_OUT" in
+  *"PIN "*calendar-refresh*) ok "the override names each pinned binary individually" ;;
+  *) no "the override names each pinned binary individually" \
+        "a PIN verdict line for calendar-refresh" "$CHAIN_OUT" ;;
+esac
+drop_fixture
+
+# The override's reach STOPS at the stale-by-mtime verdict. "Stale" is a known state an operator
+# can pin on purpose — that is the whole justification for the escape — while "unevaluable" is the
+# preflight not knowing WHAT it is about to run, which no operator assertion covers.
+FIXTURE_DROP_DEPINFO_FOR=calendar-status
+CHAIN_ENV=("LS_SM_ALLOW_STALE_BINARIES=1")
+run_chain --dry-run
+assert_eq "the override does NOT suppress the unevaluable refusal" "64" "$CHAIN_RC"
+drop_fixture
+
+CHAIN_ENV=("LS_SM_ALLOW_STALE_BINARIES=yes")
+run_chain --dry-run
+assert_eq "a malformed LS_SM_ALLOW_STALE_BINARIES is refused (64), not defaulted" "64" "$CHAIN_RC"
+drop_fixture
+
+# --- the content axis -------------------------------------------------------------------------
+# mtime cannot see an INVERTED binary — newer than every source yet built from older code, which is
+# what a build racing a git pull, a build in another worktree, or `touch target/debug/*` produces.
+# The stub below is FRESH by mtime and simply lacks its registered guard, so the content axis is
+# the only thing that can refuse it.
+FIXTURE_OMIT_LITERAL_FOR=calendar-refresh
+run_chain --dry-run
+assert_eq "a fresh binary missing its REGISTERED guard literal refuses (64)" "64" "$CHAIN_RC"
+case "$CHAIN_OUT" in
+  *"missing their REGISTERED GUARD literal"*)
+    ok "the literal-absent refusal is distinct from the absent and stale messages" ;;
+  *) no "the literal-absent refusal is distinct from the absent and stale messages" \
+        "a 'missing their REGISTERED GUARD literal' message" "$CHAIN_OUT" ;;
+esac
+# R7's containment for the reworded-source case: nothing runs `make script-check` automatically, so
+# the refusal message itself is what lets an operator at 08:45 tell a reworded source from a stale
+# binary in one line — and fix the registry rather than reach for the override.
+case "$CHAIN_OUT" in
+  *"BIN_PROBE_LITERALS entry 'calendar-refresh' expects:"*)
+    ok "the literal-absent refusal names the registry entry" ;;
+  *) no "the literal-absent refusal names the registry entry" \
+        "a \"BIN_PROBE_LITERALS entry 'calendar-refresh' expects:\" line" "$CHAIN_OUT" ;;
+esac
+case "$CHAIN_OUT" in
+  *"make script-check"*) ok "the literal-absent refusal names make script-check as the decider" ;;
+  *) no "the literal-absent refusal names make script-check as the decider" \
+        "make script-check named in the remedy" "$CHAIN_OUT" ;;
+esac
+drop_fixture
+
+# NOT bypassable (R9). A binary pinned on purpose is still pinned to code containing its registered
+# guard, so nothing legitimate needs that escape — and binding both axes to one switch would let
+# the noisy axis train the operator into disabling the quiet one.
+FIXTURE_OMIT_LITERAL_FOR=calendar-refresh
+CHAIN_ENV=("LS_SM_ALLOW_STALE_BINARIES=1")
+run_chain --dry-run
+assert_eq "the override does NOT bypass the content axis" "64" "$CHAIN_RC"
+drop_fixture
+
+# ORDERING. A binary that is BOTH stale and missing its literal must report STALENESS: the literal
+# failure is then merely a downstream symptom, and reporting it would send the operator to the
+# registry when the answer is a rebuild.
+FIXTURE_AGE_BIN=calendar-refresh
+FIXTURE_OMIT_LITERAL_FOR=calendar-refresh
+run_chain --dry-run
+assert_eq "a stale AND literal-less binary still refuses (64)" "64" "$CHAIN_RC"
+if [ -z "${CHAIN_OUT##*are STALE: calendar-refresh*}" ] \
+   && [ -n "${CHAIN_OUT##*REGISTERED GUARD*}" ]; then
+  ok "the content axis runs only after the mtime axis passes, so staleness is reported first"
+else
+  no "the content axis runs only after the mtime axis passes, so staleness is reported first" \
+     "the stale message alone, with no REGISTERED GUARD message" "$CHAIN_OUT"
+fi
+drop_fixture
+
+# --- R10: a registered literal that no longer occurs in the sources is a PERMANENT exit 64 -----
+# Nothing runs `make script-check` automatically — it is not a gate-run step and no CI workflow
+# invokes it — so this cannot PREEMPT a reword reaching the 08:45 chain. It makes it diagnosable.
+REPO_ROOT="$(cd "$HERE/../../../.." && pwd)"
+RUST_ROOTS=("$REPO_ROOT/adapters/nautilus/src" "$REPO_ROOT/adapters/nautilus/lab/src" \
+            "$REPO_ROOT/adapters/nautilus/nautilus-ls-calendar/src" "$REPO_ROOT/crates")
+while IFS='|' read -r RB RLIT _; do
+  [ -n "$RB" ] || continue
+  if grep -rqF --include='*.rs' -- "$RLIT" "${RUST_ROOTS[@]}"; then
+    ok "registered literal for $RB still occurs in the repo's Rust sources"
+  else
+    no "registered literal for $RB still occurs in the repo's Rust sources" \
+       "'$RLIT' present in some *.rs (a reword makes this a hard exit 64 at 08:45 — update BIN_PROBE_LITERALS)" \
+       "not found under ${RUST_ROOTS[*]}"
+  fi
+done < <(registry_entries)
+
+# And that assertion must itself be falsifiable: a fabricated entry has to fail it.
+if grep -rqF --include='*.rs' -- 'REFUSED (asked for something no source ever says' "${RUST_ROOTS[@]}"; then
+  no "the literal-drift assertion can see a fabricated registry entry" \
+     "a fabricated literal to be absent from the Rust sources" "it was found"
+else
+  ok "the literal-drift assertion can see a fabricated registry entry"
+fi
+
+# --- NEGATIVE META-TESTS (R12): prove this harness can SEE each axis removed -------------------
+# Without these the whole section is theatre — which is exactly how the missing --state-root
+# survived the first version of this file.
+
+# Neutralise the mtime comparison. The aged stub must then sail through.
+FIXTURE_AGE_BIN=calendar-refresh
+run_chain_mutated 's/(( bin_mtime < src_mtime || vanished > 0 ))/(( 0 ))/' --dry-run
+assert_eq "harness detects a preflight stripped of the mtime freshness check" "0" "$CHAIN_RC"
+case "$CHAIN_OUT" in
+  *"are STALE"*) no "the mutated preflight no longer refuses the aged binary" \
+                    "no stale refusal from the mutant" "$CHAIN_OUT" ;;
+  *) ok "the mutated preflight no longer refuses the aged binary" ;;
+esac
+drop_fixture
+
+# De-register the probe literal. The literal-less stub must then sail through. Note the fixture
+# still reads the REAL script's registry, so it plants what the mutant has stopped checking.
+FIXTURE_OMIT_LITERAL_FOR=calendar-refresh
+run_chain_mutated '/^  "calendar-refresh|REFUSED/d' --dry-run
+assert_eq "harness detects a preflight whose probe-literal registry was emptied" "0" "$CHAIN_RC"
+case "$CHAIN_OUT" in
+  *"REGISTERED GUARD"*) no "the mutated preflight no longer refuses the literal-less binary" \
+                           "no content-axis refusal from the mutant" "$CHAIN_OUT" ;;
+  *) ok "the mutated preflight no longer refuses the literal-less binary" ;;
+esac
 drop_fixture
 
 # ===================================================================== steps [7]-[9]

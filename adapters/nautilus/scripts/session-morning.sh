@@ -43,6 +43,9 @@
 #   LS_SM_POLL_SECS     ingest progress poll interval, 1..30 seconds (default 30)
 #   LS_SM_OPERATOR      operator id written into the calendar approval (default sunkeunchoi)
 #   LS_SM_LOOKBACK      ingest coverage floor YYYYMMDD               (default 20260518)
+#   LS_SM_ALLOW_STALE_BINARIES  0|1 — proceed on DELIBERATELY PINNED binaries (default 0).
+#                       Allowed on a real run and announced in the transcript. Bypasses the
+#                       preflight mtime axis ONLY; a missing registered guard is never bypassable.
 #
 # Exit codes (the contract — never read success from log text):
 #   0   GO      — universe resolved (or a valid flat-open refusal), report delivered
@@ -50,7 +53,10 @@
 #   40  STAND-DOWN — not on pace; abandoned deliberately, before the universe step
 #   41  CATCH-UP COMPLETE — --catch-up only. The calendar and the catalog advanced IN FULL and
 #       the universe step was refused BY DESIGN. A success, and NOT a stand-down.
-#   64  misconfiguration — refused before issuing any traffic
+#   64  misconfiguration, OR a required binary that is absent, STALE by mtime, of UNEVALUABLE
+#       freshness, or missing a registered guard literal — refused before issuing any traffic.
+#       An existence check is not a freshness check: a binary older than the sources it was
+#       built from runs code nobody is reading, and on 2026-08-04 that reported `ok` twelve times.
 #
 # WHY 41 AND NOT 0 OR 40. Exit 0 is load-bearing: it asserts "a resolved universe is in hand",
 # which is what a wrapper acts on, and a catch-up resolves none — returning 0 would make the one
@@ -114,6 +120,32 @@ esac; done
 poll_secs="${LS_SM_POLL_SECS:-30}"
 if ! [[ "$poll_secs" =~ ^[0-9]+$ ]] || (( poll_secs < 1 || poll_secs > 30 )); then
   echo "error: LS_SM_POLL_SECS must be an integer in 1..30 (got '$poll_secs')." >&2
+  exit 64
+fi
+
+# The operator's escape from the preflight mtime axis, and from THAT AXIS ONLY.
+#
+# Modelled on LS_SM_POLL_SECS above, not on LS_SM_NOW: it is NOT refused on a real run, and it
+# must not be. A deliberately pinned binary is a legitimate operator state — queue item
+# `session-morning-20260730` records a run whose binaries were pinned at 5f38144 with an explicit
+# DO NOT REBUILD — and a test-only seam would leave that operator no route but to edit this script
+# under the 09:05 clock. The chain runs at 08:45, and any `git` operation that touches a source
+# file trips the mtime axis whether or not content changed, so the escape has to be reachable
+# where the cost actually lands.
+#
+# It covers the mtime axis alone. The content axis asserts that a KNOWN GUARD is present in the
+# artifact, and a binary pinned on purpose is still pinned to code containing its registered
+# guard, so nothing legitimate needs that escape. Binding both axes to one switch would let the
+# noisy axis train the operator into disabling the quiet one — and `touch target/debug/*`, the
+# cheapest response to a false-stale, is exactly what produces the mtime inversion only the
+# content axis can see.
+#
+# A malformed value is refused rather than defaulted, in BOTH directions: silently falling back
+# to 0 strands an operator who believes they bypassed the check, and silently falling back to 1
+# would disable the check for a typo.
+allow_stale_bins="${LS_SM_ALLOW_STALE_BINARIES:-0}"
+if [[ "$allow_stale_bins" != "0" && "$allow_stale_bins" != "1" ]]; then
+  echo "error: LS_SM_ALLOW_STALE_BINARIES must be 0 or 1 (got '$allow_stale_bins')." >&2
   exit 64
 fi
 
@@ -204,6 +236,175 @@ if (( self_test )); then
   exit 0
 fi
 
+# ------------------------------------------------------------------- the freshness axes
+# A binary older than the sources it was built from runs code nobody is reading. On 2026-08-04
+# the tree was clean at 92ba1ed while $BIN/calendar-refresh was built 19 minutes BEFORE
+# src/bin/calendar-refresh.rs and src/calendar_refresh/candidate.rs — and the preflight reported
+# `ok` for all twelve paths. Git operations touch sources after a build, so a clean tree is no
+# evidence that the binaries match it. Had that run continued it would have executed a
+# calendar-refresh predating PR #258's forward-horizon guard, whose entire purpose is to make a
+# refusal OBSERVABLE — so the missing refusal line would have read as a clean pass.
+#
+# TWO AXES, because neither subsumes the other. mtime is the general freshness signal; the content
+# literal proves a specific behavior is IN the artifact, which mtime cannot. The literal is the
+# deciding axis in exactly one reachable state — mtime INVERSION, where a binary is newer than
+# every source yet built from older code. That state is produced by a build racing a `git pull`, a
+# build made in another worktree or branch, or the cheapest operator response to a false-stale
+# (`touch target/debug/*`). The last of those is why the content axis sits outside the override's
+# reach. See docs/solutions/workflow-issues/first-run-of-a-new-guard-prove-the-binary-then-\
+# discharge-its-residual.md, which prescribes the pairing and names this residual.
+
+# Freshness inputs for ONE binary, read from the dep-info file cargo writes beside every artifact
+# ($BIN/<name>.d). Echoes "<binary_mtime> <newest_source_mtime> <vanished_source_count>", the
+# first two epoch seconds — or "-1 -1 -1" when the answer is UNKNOWN (no dep-info file, an
+# unreadable one, or not one usable source path inside it). The -1 sentinel mirrors
+# count_advanced's, for the same reason: this script runs under `set -uo pipefail` with NO `-e`,
+# so a failed scan neither aborts nor refuses on its own, and an empty result that reads as
+# "fresh" would be the very false green this axis exists to close.
+#
+# WHY CARGO'S DEP-INFO RATHER THAN A HAND-LISTED SOURCE SCAN. Cargo's per-binary set is the only
+# one that gets all three of these right at once, and it cannot drift as the dependency graph does:
+#   * PER-BINARY, so rebuilding one stale binary clears its own refusal. A single newest-source
+#     value shared across all seven is unrecoverable — cargo relinks only DIRTY targets, so the
+#     rebuild freshens the touched binary and leaves the other six behind the new shared value,
+#     with cargo declining to rebuild them. The live tree shows the spread this cannot tolerate:
+#     the five nautilus-ls binaries and the two lab binaries sit an hour apart, all correct.
+#   * It does not UNDER-report. crates/ls-core/build.rs embeds the repo-root metadata/ tree at
+#     compile time, so a metadata/constraints/*.yaml edit changes every binary's behavior while
+#     moving no file under any src/ directory. calendar-refresh.d lists those paths twelve times;
+#     no src/ scan would ever reach them.
+#   * It does not OVER-report. A hand list broad enough to be safe would include
+#     adapters/nautilus/lab/src, which calendar-refresh.d references ZERO times — every lab edit
+#     would then mark the calendar binaries stale inside the 09:05 deadline, for a dependency
+#     that does not exist.
+#
+# This is NOT delegating the verdict to cargo. Cargo has no check-only mode, so delegating would
+# mean auto-remediation instead of refusal — contradicting both the exit-64 contract and the
+# DO NOT REBUILD precedent above — and an unbounded one at that: measured 0.4s steady-state, but
+# 41s for the first `--bins` after `cargo test`, and minutes when a root crate relinks two ~260 MB
+# binaries. Reading metadata cargo has ALREADY persisted, and refusing on it, is neither a rebuild
+# nor a handoff of the decision.
+#
+# The honest limit: a source file added since the last build is absent from the .d, so dep-info is
+# authoritative about what the binary WAS built from — which is exactly the question being asked.
+dep_freshness() { # $1 = absolute path to the binary
+  python3 -c '
+import os, re, sys
+binary = sys.argv[1]
+try:
+    binary_mtime = int(os.stat(binary).st_mtime)
+except OSError:
+    print("-1 -1 -1"); raise SystemExit
+try:
+    with open(binary + ".d") as handle:
+        rules = handle.read()
+except OSError:
+    print("-1 -1 -1"); raise SystemExit
+# A .d file is a make rule: "<target>: <src> <src> ...", plus bare "<src>:" lines. Everything
+# after the first colon on a line is a source list -- space-separated, with make backslash
+# escaping, and every path ABSOLUTE. So this is a split, not a dependency-graph walk.
+newest, seen, vanished = -1.0, 0, 0
+for line in rules.splitlines():
+    _, sep, sources = line.partition(":")
+    if not sep:
+        continue
+    for path in re.split(r"(?<!\\)\s+", sources.strip()):
+        if not path:
+            continue
+        try:
+            mtime = os.stat(path.replace("\\ ", " ")).st_mtime
+        except OSError:
+            # Cargo built from a source that is gone. Cargo itself calls that target dirty, so
+            # the binary is stale even if every surviving source is older than it.
+            vanished += 1
+            continue
+        seen += 1
+        newest = max(newest, mtime)
+if not seen:
+    print("-1 -1 -1"); raise SystemExit
+print(binary_mtime, int(newest), vanished)' "$1" 2>/dev/null || echo "-1 -1 -1"
+}
+
+# THE PROBE-LITERAL REGISTRY — the content axis's whole input, and deliberately SPARSE (a binary
+# with no entry passes this axis). One entry per line, "<binary-name>|<literal>|<provenance>",
+# where the provenance records the PR that introduced the literal so a future reader can tell what
+# the assertion is protecting rather than guessing.
+#
+# Choose a literal for UNIQUENESS, and test PRESENCE rather than a count. `grep -c forward_horizon`
+# returns 3 today only because the compiler did not merge three verdict literals sharing that
+# prefix — an unrelated edit could collapse it to 1 and turn a healthy binary red. Presence is
+# immune to merge behavior, and faster besides: 0.01s on a hit, 0.18s worst case for a full scan of
+# the 262 MB ls-ingest.
+#
+# The registry grows when a GUARD SHIPS, not on a schedule. Registering an arbitrary literal for a
+# binary with no recent load-bearing change asserts nothing, so the other six stay unregistered
+# until they carry something worth asserting. `make script-check` fails when a registered literal
+# no longer occurs in the repo's Rust sources — that does not PREVENT a reword from reaching the
+# 08:45 chain as a hard exit 64 (nothing runs script-check automatically), but it makes the
+# refusal diagnosable, and the refusal message itself names the entry so the operator can tell a
+# reworded source from a stale binary in one line.
+BIN_PROBE_LITERALS=(
+  "calendar-refresh|REFUSED (asked for|PR #258 forward-horizon guard — the refusal line whose ABSENCE reads as a clean pass"
+)
+
+# The literal registered for a binary, or empty when it is unregistered.
+probe_literal_for() { # $1 = binary basename
+  local entry rest
+  for entry in ${BIN_PROBE_LITERALS[@]+"${BIN_PROBE_LITERALS[@]}"}; do
+    [[ "${entry%%|*}" == "$1" ]] || continue
+    rest="${entry#*|}"; printf '%s' "${rest%%|*}"; return
+  done
+}
+
+# Applies the axes to ONE required binary. Sets $bin_verdict to the word the transcript prints and
+# appends the binary's name to the matching per-cause list, which the refusal blocks below read.
+# At most ONE cause is recorded per binary, and the order is deliberate: a stale binary reports
+# staleness rather than a confusing downstream failure.
+check_binary() { # $1 = absolute path to a required binary
+  local f="$1" name bin_mtime src_mtime vanished literal
+  name="${f##*/}"
+  if [[ ! -x "$f" ]]; then
+    missing=$((missing + 1)); missing_bins+=("$name"); bin_verdict="MISS"; return
+  fi
+  bin_verdict="ok"
+  read -r bin_mtime src_mtime vanished <<<"$(dep_freshness "$f")"
+  # UNEVALUABLE is NOT bypassable by the override, and the distinction is the point. "Stale" is a
+  # KNOWN state an operator can pin on purpose — that is the whole justification for the escape.
+  # "Unevaluable" is this preflight not knowing WHAT it is about to run, and no operator assertion
+  # covers that, so the override's reach stops at the stale-by-mtime verdict alone.
+  if (( src_mtime < 0 )); then
+    unprovable_bins+=("$name"); bin_verdict="NODEP"; return
+  fi
+  if (( bin_mtime < src_mtime || vanished > 0 )); then
+    if (( ! allow_stale_bins )); then
+      stale_bins+=("$name"); bin_verdict="STALE"; return
+    fi
+    # Stale, and taken as deliberately pinned. Reported PER BINARY rather than only through the
+    # banner above, so the transcript names exactly which artifacts the operator vouched for —
+    # and execution continues to the content axis, which the override never reaches.
+    bin_verdict="PIN"
+  fi
+  # THE CONTENT AXIS, reached only once the mtime axis has PASSED or been overridden. Ordering it
+  # last is deliberate: a stale binary must report staleness rather than a literal failure that is
+  # merely a downstream symptom of it.
+  literal="$(probe_literal_for "$name")"
+  if [[ -n "$literal" ]] && ! grep -qaF -- "$literal" "$f"; then
+    noliteral_bins+=("$name|$literal"); bin_verdict="NOSIG"
+  fi
+}
+
+# The exact rebuild command, and the workspace it has to run from. adapters/nautilus is a
+# STANDALONE workspace, so a bare `cargo build` at the repo root resolves against the OTHER one
+# and cannot produce these binaries at all; and --workspace is required even inside it, because
+# lab-research and lab-mount-universe live in the `lab` member rather than the default-run
+# package (`cargo build --bin lab-research` alone fails with "no bin target ... in default-run
+# packages"). One form that works for all seven beats a per-binary package mapping that can drift.
+rebuild_hint() { # $1.. = binary names
+  local b
+  echo "       rebuild, from the adapters/nautilus workspace:" >&2
+  for b in "$@"; do echo "         (cd $NAUT && cargo build --workspace --bin $b)" >&2; done
+}
+
 # ------------------------------------------------------------------------ preflight
 step "preflight"
 if [[ "${LS_TRADING_ENV:-}" != "paper" ]]; then
@@ -227,17 +428,87 @@ fi
 # binary list would let it join the existence check and silently skip freshness, with no signal.
 # The binary class also tests -x rather than -e — an unexecutable artifact is as unusable as an
 # absent one, and turn4-ingest.sh already refuses on -x for exactly this reason.
+if (( allow_stale_bins )); then
+  say "LS_SM_ALLOW_STALE_BINARIES=1 — the preflight mtime axis is BYPASSED for this run."
+  say "  Every required binary is being taken as deliberately pinned. The content axis still"
+  say "  applies: a binary missing its registered guard literal is refused regardless."
+fi
 missing=0
+missing_bins=(); stale_bins=(); unprovable_bins=(); noliteral_bins=()
 for f in "$BIN/calendar-fetch-inputs" "$BIN/calendar-refresh" "$BIN/calendar-activate" \
          "$BIN/calendar-status" "$BIN/ls-ingest" "$BIN/lab-research" "$BIN/lab-mount-universe" \
          "$SNAPSHOT" "$LANE_ENV" "$ENV_CALENDAR" "$UNIVERSE_METADATA" "$CKPT"; do
   if [[ "$f" == "$BIN/"* ]]; then
-    if [[ -x "$f" ]]; then say "ok   $f"; else say "MISS $f"; missing=$((missing+1)); fi
+    check_binary "$f"                       # sets $bin_verdict, appends to the per-cause lists
+    say "$(printf '%-4s' "$bin_verdict") $f"
   else
     if [[ -e "$f" ]]; then say "ok   $f"; else say "MISS $f"; missing=$((missing+1)); fi
   fi
 done
-(( missing )) && { echo "error: $missing required path(s) missing" >&2; exit 64; }
+
+# THE FOUR REFUSAL CAUSES, each carrying its OWN remedy. Collapsing them into one
+# "rebuild and re-run" line would repeat the misattribution recorded in
+# docs/solutions/workflow-issues/shell-script-live-path-needs-stubbed-binary-tests.md: a handler
+# must discriminate among all the ways it can fire, not assert the one cause its author had in
+# mind. Every arm is reached before any gateway traffic, and every arm exits 64 by hand — `die` is
+# hardwired to exit 1, so it cannot carry this verdict, and 64 is already this script's
+# preflight-refusal code (see the exit-code contract in the header).
+refused=0
+if (( missing )); then
+  echo "error: $missing required path(s) missing" >&2
+  if (( ${#missing_bins[@]} )); then
+    echo "       ABSENT BINARY — the chain cannot run what is not there (or is not executable)." >&2
+    rebuild_hint "${missing_bins[@]}"
+  fi
+  refused=1
+fi
+if (( ${#unprovable_bins[@]} )); then
+  echo "error: freshness UNEVALUABLE for ${#unprovable_bins[@]} required binary(ies):" \
+       "${unprovable_bins[*]}" >&2
+  echo "       Each binary's source set is read from the dep-info file cargo writes beside it" >&2
+  echo "       (\$BIN/<name>.d). A missing, unreadable, or source-less one means this preflight" >&2
+  echo "       cannot tell a current binary from a stale one — and an unevaluable check must" >&2
+  echo "       never fall through to pass. Rebuilding regenerates the dep-info file." >&2
+  rebuild_hint "${unprovable_bins[@]}"
+  refused=1
+fi
+if (( ${#stale_bins[@]} )); then
+  echo "error: ${#stale_bins[@]} required binary(ies) are STALE: ${stale_bins[*]}" >&2
+  echo "       Older than a source cargo recorded building them from, or built from a source" >&2
+  echo "       that no longer exists. A clean tree is NOT evidence — git operations touch" >&2
+  echo "       sources after a build, which is exactly how 2026-08-04 reported ok twelve times." >&2
+  rebuild_hint "${stale_bins[@]}"
+  echo "       Only the named binaries are implicated: each is compared against its OWN" >&2
+  echo "       dep-info set, so rebuilding these clears the refusal and leaves the rest alone." >&2
+  echo "       Deliberately pinned binaries: LS_SM_ALLOW_STALE_BINARIES=1 bypasses THIS axis" >&2
+  echo "       only — never an absent binary, never a missing registered guard." >&2
+  refused=1
+fi
+if (( ${#noliteral_bins[@]} )); then
+  echo "error: ${#noliteral_bins[@]} required binary(ies) are missing their REGISTERED GUARD literal:" >&2
+  for e in "${noliteral_bins[@]}"; do
+    echo "         BIN_PROBE_LITERALS entry '${e%%|*}' expects: ${e#*|}" >&2
+  done
+  echo "       TWO causes, needing OPPOSITE fixes — tell them apart before acting:" >&2
+  echo "         * the binary predates the guard, or was built from another tree. The mtime axis" >&2
+  echo "           cannot see that: an INVERTED binary is newer than every source yet built from" >&2
+  echo "           older code, which is what a build racing a git pull, a build in another" >&2
+  echo "           worktree, or \`touch target/debug/*\` produces. Rebuild." >&2
+  echo "         * the SOURCE was reworded, so the registry entry above is now stale. Left alone" >&2
+  echo "           that is a permanent exit 64 on every morning until the entry is updated." >&2
+  echo "       \`make script-check\` decides which: it asserts that every registered literal still" >&2
+  echo "       occurs in the repo's Rust sources. A FAILURE there means fix the registry entry; a" >&2
+  echo "       PASS there means the source still says it and the binary is the problem — rebuild:" >&2
+  noliteral_names=()
+  for e in "${noliteral_bins[@]}"; do noliteral_names+=("${e%%|*}"); done
+  rebuild_hint "${noliteral_names[@]}"
+  echo "       LS_SM_ALLOW_STALE_BINARIES does NOT bypass this axis. A binary pinned on purpose is" >&2
+  echo "       still pinned to code containing its registered guard, so nothing legitimate needs" >&2
+  echo "       that escape — and \`touch target/debug/*\`, the cheapest answer to a false-stale, is" >&2
+  echo "       exactly what makes this the only axis left that can see the truth." >&2
+  refused=1
+fi
+(( refused )) && exit 64
 
 set -a; . "$ENV_CALENDAR"; set +a
 [[ -n "${LS_KRX_APPKEY:-}" && -n "${LS_KASI_SERVICE_KEY:-}" ]] || {
