@@ -11,7 +11,13 @@
 #   4. docs-check          make docs-check
 #   5. lane-check          make lane-check
 #   6. adapter-check       make adapter-check
-#   7. todo-check          make todo-check
+#   7. script-check        make script-check
+#   8. todo-check          make todo-check
+#
+# script-check sits AFTER adapter-check on purpose: it replays the marshalled
+# argv against adapters/nautilus/target/debug/calendar-fetch-inputs, and
+# adapter-check is the step that builds it. There is no earlier position it
+# could occupy, so no fail-fast ordering is being traded away.
 #
 # Resume: invoked with no args it recomputes the tree fingerprint, compares it
 # against each completed step's recorded-at-completion fingerprint, and re-runs
@@ -44,7 +50,7 @@
 # state.json schema (version 1; one step object per line, machine-generated —
 # this script is the only writer and reader):
 #   {"version":1,"steps":[
-#   {"n":<1..7>,"name":"<name>","cmd":"<command>","status":"done|failed|running|pending",
+#   {"n":<1..8>,"name":"<name>","cmd":"<command>","status":"done|failed|running|pending",
 #    "started_at":"<utc|->","ended_at":"<utc|->","exit_code":"<int|->","fingerprint":"<hex64|->"},
 #   ... ]}
 #
@@ -70,8 +76,8 @@ STATE_DIR="$ROOT/.gate-run"
 STATE_FILE="$STATE_DIR/state.json"
 LOCK_DIR="$STATE_DIR/lock"
 
-STEP_NAMES=(docs cargo-test cargo-test-ls-core docs-check lane-check adapter-check todo-check)
-STEP_CMDS=("make docs" "cargo test" "cargo test -p ls-core" "make docs-check" "make lane-check" "make adapter-check" "make todo-check")
+STEP_NAMES=(docs cargo-test cargo-test-ls-core docs-check lane-check adapter-check script-check todo-check)
+STEP_CMDS=("make docs" "cargo test" "cargo test -p ls-core" "make docs-check" "make lane-check" "make adapter-check" "make script-check" "make todo-check")
 NSTEPS=${#STEP_NAMES[@]}
 
 declare -a S_STATUS S_START S_END S_EXIT S_FP EFF

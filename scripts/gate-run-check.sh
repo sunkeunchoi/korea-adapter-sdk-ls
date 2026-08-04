@@ -93,29 +93,32 @@ log_lines()  { wc -l < "$LOG" | tr -d ' '; }
 state_file() { echo "$fix/.gate-run/state.json"; }
 
 # =============================================================================
-# Case A: happy path — all steps stubbed green -> exit 0, seven steps done.
+# Case A: happy path — all steps stubbed green -> exit 0, eight steps done.
+# The expected list is HARDCODED, never derived from gate-run.sh: deriving it from the
+# script under test would make this case unable to see the drift it exists to catch.
 # =============================================================================
 new_fixture A
 reset_log
 run_gate >/dev/null 2>&1; rc=$?
 if [ "$rc" -ne 0 ]; then
   fail A "all-green run exited $rc (expected 0)"
-elif [ "$(log_lines)" != "7" ]; then
-  fail A "expected 7 step invocations, got $(log_lines): $(cat "$LOG")"
+elif [ "$(log_lines)" != "8" ]; then
+  fail A "expected 8 step invocations, got $(log_lines): $(cat "$LOG")"
 elif [ "$(sed -n '1p' "$LOG")" != "make docs" ] \
   || [ "$(sed -n '2p' "$LOG")" != "cargo test" ] \
   || [ "$(sed -n '3p' "$LOG")" != "cargo test -p ls-core" ] \
   || [ "$(sed -n '4p' "$LOG")" != "make docs-check" ] \
   || [ "$(sed -n '5p' "$LOG")" != "make lane-check" ] \
   || [ "$(sed -n '6p' "$LOG")" != "make adapter-check" ] \
-  || [ "$(sed -n '7p' "$LOG")" != "make todo-check" ]; then
+  || [ "$(sed -n '7p' "$LOG")" != "make script-check" ] \
+  || [ "$(sed -n '8p' "$LOG")" != "make todo-check" ]; then
   fail A "step order wrong: $(cat "$LOG")"
-elif [ "$(grep -c '"status":"done"' "$(state_file)")" != "7" ]; then
-  fail A "state.json does not record seven done steps"
+elif [ "$(grep -c '"status":"done"' "$(state_file)")" != "8" ]; then
+  fail A "state.json does not record eight done steps"
 elif git -C "$fix" status --porcelain | grep -q '\.gate-run'; then
   fail A ".gate-run/ leaked into git status in the fixture"
 else
-  ok A "happy path: exit 0, seven steps in AGENTS.md order, seven done in state, .gate-run ignored"
+  ok A "happy path: exit 0, eight steps in AGENTS.md order, eight done in state, .gate-run ignored"
 fi
 
 # --- Case A2: re-run with unchanged tree -> nothing re-runs, exit 0 -----------
@@ -154,8 +157,8 @@ reset_log
 run_gate >/dev/null 2>&1; rc=$?
 if [ "$rc" -ne 0 ]; then
   fail B2 "resume after fix exited $rc (expected 0)"
-elif [ "$(log_lines)" != "5" ]; then
-  fail B2 "resume ran $(log_lines) steps (expected 5): $(cat "$LOG")"
+elif [ "$(log_lines)" != "6" ]; then
+  fail B2 "resume ran $(log_lines) steps (expected 6): $(cat "$LOG")"
 elif [ "$(sed -n '1p' "$LOG")" != "cargo test -p ls-core" ]; then
   fail B2 "resume did not start at step 3: $(cat "$LOG")"
 elif grep -q '^make docs$' "$LOG"; then
@@ -168,8 +171,8 @@ fi
 echo change >> "$fix/file.txt"
 reset_log
 run_gate >/dev/null 2>&1; rc=$?
-if [ "$rc" -ne 0 ] || [ "$(log_lines)" != "7" ]; then
-  fail C "tracked-file edit: expected full 7-step re-run rc=0, got rc=$rc steps=$(log_lines)"
+if [ "$rc" -ne 0 ] || [ "$(log_lines)" != "8" ]; then
+  fail C "tracked-file edit: expected full 8-step re-run rc=0, got rc=$rc steps=$(log_lines)"
 elif [ "$(sed -n '1p' "$LOG")" != "make docs" ]; then
   fail C "invalidated run did not restart at step 1: $(cat "$LOG")"
 else
@@ -183,7 +186,7 @@ fi
 echo note > "$fix/note.txt"
 reset_log
 run_gate >/dev/null 2>&1; rc=$?
-if [ "$rc" -ne 0 ] || [ "$(log_lines)" != "7" ]; then
+if [ "$rc" -ne 0 ] || [ "$(log_lines)" != "8" ]; then
   fail D1 "new untracked file: expected full re-run rc=0, got rc=$rc steps=$(log_lines)"
 else
   ok D1 "new untracked file invalidates and re-runs the recorded steps"
@@ -194,7 +197,7 @@ fi
 echo more >> "$fix/note.txt"
 reset_log
 run_gate >/dev/null 2>&1; rc=$?
-if [ "$rc" -ne 0 ] || [ "$(log_lines)" != "7" ]; then
+if [ "$rc" -ne 0 ] || [ "$(log_lines)" != "8" ]; then
   fail D2 "edited untracked file: expected full re-run rc=0, got rc=$rc steps=$(log_lines)"
 else
   ok D2 "content edit of an already-untracked file invalidates (content-digest arm)"
@@ -284,10 +287,10 @@ elif ! printf '%s\n' "$out" | grep -q '^step=1 name=docs status=pending fingerpr
   fail G1 "fresh --status step line malformed: $out"
 elif ! printf '%s\n' "$out" | grep -q '^next=docs$'; then
   fail G1 "fresh --status next line malformed: $out"
-elif [ "$(printf '%s\n' "$out" | grep -c '^step=')" != "7" ]; then
-  fail G1 "--status did not print seven step lines: $out"
+elif [ "$(printf '%s\n' "$out" | grep -c '^step=')" != "8" ]; then
+  fail G1 "--status did not print eight step lines: $out"
 else
-  ok G1 "--status on fresh repo: seven pending step lines, next=docs, no steps run"
+  ok G1 "--status on fresh repo: eight pending step lines, next=docs, no steps run"
 fi
 
 echo 5 > "$RC_DIR/cargo_test_-p_ls-core"
@@ -308,11 +311,11 @@ fi
 
 run_gate >/dev/null 2>&1
 out="$(run_gate --status)"
-if [ "$(printf '%s\n' "$out" | grep -c ' status=done ')" != "7" ] \
+if [ "$(printf '%s\n' "$out" | grep -c ' status=done ')" != "8" ] \
   || ! printf '%s\n' "$out" | grep -q '^next=none$'; then
-  fail G3 "--status after green run should show seven done + next=none: $out"
+  fail G3 "--status after green run should show eight done + next=none: $out"
 else
-  ok G3 "--status after green run: seven done, next=none"
+  ok G3 "--status after green run: eight done, next=none"
 fi
 
 # =============================================================================
@@ -328,8 +331,8 @@ if [ "$rc" -ne 0 ]; then
   fail H "run with LS_PROBE_CANARY exported exited $rc (expected 0)"
 elif [ -f "$RC_DIR/canary-leak" ]; then
   fail H "steps inherited the operator LS_* env: $(cat "$RC_DIR/canary-leak")"
-elif [ "$(log_lines)" != "7" ]; then
-  fail H "expected 7 step invocations, got $(log_lines): $(cat "$LOG")"
+elif [ "$(log_lines)" != "8" ]; then
+  fail H "expected 8 step invocations, got $(log_lines): $(cat "$LOG")"
 else
   ok H "operator LS_* env scrubbed from every step's environment"
 fi
@@ -350,8 +353,8 @@ reset_log
 run_gate >/dev/null 2>&1; rc=$?
 if [ "$rc" -ne 0 ]; then
   fail I "run after edit behind a dangling symlink exited $rc (expected 0)"
-elif [ "$(log_lines)" != "7" ]; then
-  fail I "digest failure did not invalidate: expected full 7-step re-run, got $(log_lines) (false green)"
+elif [ "$(log_lines)" != "8" ]; then
+  fail I "digest failure did not invalidate: expected full 8-step re-run, got $(log_lines) (false green)"
 else
   ok I "unreadable untracked path: digest failure invalidates recorded steps (re-run, never false green)"
 fi
