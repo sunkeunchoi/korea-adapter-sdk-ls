@@ -62,6 +62,7 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         from: prior.coverage.materialized_from,
         through: args.through,
     };
+    let prior_forward_horizon = prior.freshness.forward_readiness_through;
     let outcome = refresh(
         prior,
         &port,
@@ -86,6 +87,30 @@ fn run() -> Result<ExitCode, Box<dyn std::error::Error>> {
         outcome.diff.high_risk_entries().count(),
         outcome.diff.partial
     );
+
+    // Forward-horizon outcome, reported explicitly. The candidate diff compares rows, coverage
+    // and evidence but NOT freshness, so a refused horizon extension is otherwise indistinguishable
+    // from "there was nothing to extend" — an operator running the runbook's forward-extension
+    // procedure would see an unchanged `stale` verdict with no way to tell which happened.
+    let new_forward_horizon = outcome.candidate.freshness.forward_readiness_through;
+    let fmt = |d: Option<NaiveDate>| d.map(|d| d.to_string()).unwrap_or_else(|| "none".to_string());
+    match (prior_forward_horizon, new_forward_horizon) {
+        (before, after) if before == after && args.through > before.unwrap_or(args.through) => {
+            println!(
+                "forward_horizon={} REFUSED (asked for {}) — the KASI and generated-rule sources \
+                 must both be present, ok, and cover every date past the current horizon; re-check \
+                 the fetch covered the requested window",
+                fmt(after),
+                args.through
+            );
+        }
+        (before, after) if before == after => {
+            println!("forward_horizon={} unchanged", fmt(after));
+        }
+        (before, after) => {
+            println!("forward_horizon={} -> {} advanced", fmt(before), fmt(after));
+        }
+    }
     for entry in outcome.diff.high_risk_entries() {
         println!(
             "  HIGH-RISK {:?} {} {}",

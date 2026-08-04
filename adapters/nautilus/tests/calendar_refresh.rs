@@ -1135,3 +1135,223 @@ fn from_prior_path_stays_byte_identical_through_the_shared_core() {
     assert_eq!(a.predecessor_artifact_id.as_deref(), Some(prior.artifact_id.as_str()));
     KrxCalendar::from_snapshot(a, refresh_now()).expect("from-prior candidate still loads");
 }
+
+// ---------------------------------------------------------------------------------------
+// Forward-horizon refresh cadence: `forward_readiness_through` was writable ONLY by genesis,
+// so the dimension decayed to `stale` with no remedy short of a re-genesis ceremony. It now
+// tracks `scheduled_closure_evaluated_through` — the two are stamped equal at genesis, and a
+// refresh that materializes evidence past the prior horizon has genuinely extended it.
+// ---------------------------------------------------------------------------------------
+
+/// All three sources succeed and claim coverage over the whole `window`, with weekend rules
+/// materialized. The forward weekdays carry no witness and stay honestly Unknown — coverage
+/// is a claim about what was CHECKED, which is exactly what forward readiness asserts.
+fn ok_inputs_covering(window: DateRange) -> RefreshInputs {
+    let mut evidence = Vec::new();
+    let mut cur = window.from;
+    while cur <= window.through {
+        if matches!(cur.weekday(), Weekday::Sat | Weekday::Sun) {
+            evidence.push(ev(
+                &format!("rule-{cur}"),
+                "krx-rule",
+                cur,
+                EvidenceKind::DeterministicRule,
+                false,
+            ));
+        }
+        cur = cur.succ_opt().unwrap();
+    }
+    RefreshInputs {
+        sources: vec![
+            src("krx-daily", SourceKind::KrxDailyMarket),
+            src("kasi", SourceKind::KasiHoliday),
+            src("krx-rule", SourceKind::KrxRule),
+        ],
+        evidence,
+        outcomes: vec![
+            SourceOutcome::ok_covering("krx-daily", SourceKind::KrxDailyMarket, vec![window]),
+            SourceOutcome::ok_covering("kasi", SourceKind::KasiHoliday, vec![window]),
+            SourceOutcome::ok_covering("krx-rule", SourceKind::KrxRule, vec![window]),
+        ],
+    }
+}
+
+#[test]
+fn refresh_advances_the_forward_horizon_when_evidence_materializes_past_it() {
+    // Prior is materialized through 2012-06-05 and forward-ready through 2012-07-15.
+    let prior = prior_snapshot();
+    assert_eq!(prior.freshness.forward_readiness_through, Some(d(2012, 7, 15)));
+
+    // Refresh out to 2012-08-31 — PAST the prior forward horizon — with every source ok.
+    let window = DateRange::new(d(2012, 6, 1), d(2012, 8, 31));
+    let candidate = build_candidate(
+        &prior,
+        &ok_inputs_covering(window),
+        &RefreshScope { from: window.from, through: window.through },
+        RefreshMode::Incremental,
+        refresh_now(),
+    );
+
+    assert_eq!(
+        candidate.coverage.scheduled_closure_evaluated_through,
+        d(2012, 8, 31),
+        "coverage advanced (this always worked)"
+    );
+    assert_eq!(
+        candidate.freshness.forward_readiness_through,
+        Some(d(2012, 8, 31)),
+        "forward readiness tracks the evaluated horizon — the cadence a re-genesis used to own"
+    );
+    KrxCalendar::from_snapshot(candidate, refresh_now()).expect("candidate still loads");
+}
+
+#[test]
+fn a_narrow_refresh_never_retracts_an_earned_forward_horizon() {
+    // The daily morning chain refreshes `--through <session_date>`, well short of the horizon.
+    // That must be a no-op on forward readiness, never a retraction to the session date.
+    let prior = prior_snapshot();
+    let window = DateRange::new(d(2012, 6, 1), d(2012, 6, 6));
+    let candidate = build_candidate(
+        &prior,
+        &ok_inputs_covering(window),
+        &RefreshScope { from: window.from, through: window.through },
+        RefreshMode::Incremental,
+        refresh_now(),
+    );
+
+    assert_eq!(
+        candidate.coverage.scheduled_closure_evaluated_through,
+        d(2012, 6, 6),
+        "the narrow refresh advanced coverage only to the session date"
+    );
+    assert_eq!(
+        candidate.freshness.forward_readiness_through,
+        Some(d(2012, 7, 15)),
+        "the earned horizon is a monotone floor — a narrow refresh must not walk it backwards"
+    );
+}
+
+/// `prior_snapshot()` with the forward horizon moved BEHIND
+/// `coverage.scheduled_closure_evaluated_through` (2012-06-05).
+///
+/// That ordering is what makes the gate tests below discriminating. With the horizon AHEAD of
+/// coverage — the default fixture's shape — the monotone `max` alone produces the expected value,
+/// so an assertion would hold even with every gate deleted. It is also the realistic shape of a
+/// decayed snapshot: coverage kept moving while the horizon stayed frozen.
+fn prior_with_lagging_forward_horizon(horizon: NaiveDate) -> Snapshot {
+    let mut prior = prior_snapshot();
+    prior.freshness.forward_readiness_through = Some(horizon);
+    stamp(prior)
+}
+
+#[test]
+fn a_failed_source_cannot_advance_the_forward_horizon_by_absence() {
+    // The horizon starts BEHIND coverage, so an ungated `max` would move it to 2012-06-05.
+    // Only the evidence gate keeps it at 2012-05-20.
+    let prior = prior_with_lagging_forward_horizon(d(2012, 5, 20));
+    let window = DateRange::new(d(2012, 6, 1), d(2012, 8, 31));
+    let mut inputs = ok_inputs_covering(window);
+    inputs.outcomes[1] = SourceOutcome::failed("kasi", SourceKind::KasiHoliday, "KASI timeout");
+
+    let candidate = build_candidate(
+        &prior,
+        &inputs,
+        &RefreshScope { from: window.from, through: window.through },
+        RefreshMode::Incremental,
+        refresh_now(),
+    );
+
+    assert_eq!(
+        candidate.coverage.scheduled_closure_evaluated_through,
+        d(2012, 6, 5),
+        "a failed source cannot expand coverage"
+    );
+    assert_eq!(
+        candidate.freshness.forward_readiness_through,
+        Some(d(2012, 5, 20)),
+        "a failed KASI fetch leaves the horizon where it was — not at the coverage boundary"
+    );
+}
+
+#[test]
+fn an_ok_source_covering_less_than_the_claim_cannot_advance_the_horizon() {
+    // Every source reports ok, but KASI's covered claim stops a month short of the scope end.
+    // Status alone would pass; only checking the covered ranges against the claimed span refuses.
+    let prior = prior_snapshot();
+    let window = DateRange::new(d(2012, 6, 1), d(2012, 8, 31));
+    let mut inputs = ok_inputs_covering(window);
+    inputs.outcomes[1] = SourceOutcome::ok_covering(
+        "kasi",
+        SourceKind::KasiHoliday,
+        vec![DateRange::new(window.from, d(2012, 7, 31))],
+    );
+
+    let candidate = build_candidate(
+        &prior,
+        &inputs,
+        &RefreshScope { from: window.from, through: window.through },
+        RefreshMode::Incremental,
+        refresh_now(),
+    );
+
+    assert_eq!(
+        candidate.coverage.scheduled_closure_evaluated_through,
+        d(2012, 8, 31),
+        "coverage still widens on ok status — that pre-existing behavior is unchanged"
+    );
+    assert_eq!(
+        candidate.freshness.forward_readiness_through,
+        Some(d(2012, 7, 15)),
+        "but the operator-facing horizon refuses the span August was never checked for"
+    );
+}
+
+#[test]
+fn empty_inputs_cannot_advance_the_horizon_vacuously() {
+    // `all(is_ok)` over zero outcomes is TRUE, so a status-only gate would accept an input set
+    // carrying no evidence whatsoever. Requiring the forward-spanning sources to be PRESENT is
+    // what fails this closed.
+    let prior = prior_snapshot();
+    let window = DateRange::new(d(2012, 6, 1), d(2012, 8, 31));
+
+    let candidate = build_candidate(
+        &prior,
+        &RefreshInputs::empty(),
+        &RefreshScope { from: window.from, through: window.through },
+        RefreshMode::Incremental,
+        refresh_now(),
+    );
+
+    assert_eq!(
+        candidate.freshness.forward_readiness_through,
+        Some(d(2012, 7, 15)),
+        "an empty input set proves nothing and must not stamp a horizon"
+    );
+}
+
+#[test]
+fn genesis_stamps_the_forward_horizon_at_the_window_end() {
+    // Guards the "genesis is unchanged" claim directly rather than by algebra: genesis seeds the
+    // prior horizon AT the window end, so the refresh path's monotone early return fires and the
+    // stamped value is the window end exactly.
+    let window = DateRange::new(d(2026, 6, 13), d(2026, 6, 19));
+    let consumer = DateRange::new(d(2026, 6, 15), d(2026, 6, 19));
+    let inputs = genesis_inputs(
+        window,
+        d(2026, 6, 19),
+        &[d(2026, 6, 15), d(2026, 6, 17), d(2026, 6, 18), d(2026, 6, 19)],
+        &[d(2026, 6, 16)],
+    );
+    let candidate = build_genesis(
+        &genesis_params(window, d(2026, 6, 19), consumer),
+        &inputs,
+        t(2026, 6, 20),
+    )
+    .expect("genesis builds");
+
+    assert_eq!(
+        candidate.freshness.forward_readiness_through,
+        Some(window.through),
+        "genesis still stamps the horizon at the window end"
+    );
+}

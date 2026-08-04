@@ -155,8 +155,55 @@ prohibited per `docs/research/krx-calendar-publication-rights.md`.
 
 After genesis the forward-readiness freshness dimension is stamped at the window end and decays
 to `stale` over time. This is **usable by design** — the loader treats stale as usable, so a
-`stale` outcome in §1 is not a HOLD by itself. Advancing the forward horizon is a deferred
-cadence item, not part of genesis.
+`stale` outcome in §1 is not a HOLD by itself. Advancing the forward horizon is not part of
+genesis.
+
+**To advance it, run an ordinary refresh whose `--through` reaches past the current horizon**
+— it is a cadence item, not a re-genesis. `forward_readiness_through` tracks
+`coverage.scheduled_closure_evaluated_through`, so the horizon advances exactly when evidence
+is actually materialized out to it:
+
+```sh
+cargo run --release --bin calendar-fetch-inputs -- \
+  --window <current-horizon>..<new-horizon> --krx-through <current-horizon> \
+  --inputs-out state/forward.calendar-inputs.json --state state/forward.calendar-fetch.ckpt
+cargo run --release --bin calendar-refresh -- \
+  --active "$LS_CALENDAR_SNAPSHOT" --as-of "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --mode incremental --through <new-horizon> --inputs state/forward.calendar-inputs.json
+```
+
+`<current-horizon>` is the snapshot's present `freshness.forward_readiness_through`. Only the span
+past it needs new evidence, so a **forward-only window is enough** — do not start the window at the
+2010-01-04 history floor, which re-walks the KRX per-weekday loop over fifteen years for nothing.
+KRX daily will legitimately report little or no coverage over a forward window; that is expected.
+
+`calendar-refresh` prints a `forward_horizon=` line saying whether the horizon advanced, was
+unchanged, or was REFUSED. **Read it** — the candidate diff does not cover freshness, so it cannot
+tell you this. Then review the diff and activate normally. Two properties bound this:
+
+- **Monotone.** The new horizon never drops below the earned one, so the daily morning-chain
+  refresh (`--through <session_date>`, far short of the horizon) can never retract it.
+- **Evidenced per source, not merely non-failing.** The KASI and generated-rule sources must both
+  be PRESENT and carry `covered` ranges spanning the newly claimed span — the dates past the
+  previous horizon. A failed fetch, a missing source, an absent (legacy) covered claim, or a
+  covered claim that stops short all leave the horizon where it was. KRX daily is exempt from
+  *this* covered-span requirement, because it witnesses only the past and requiring it to cover a
+  forward span would make the horizon permanently unadvanceable.
+- **But a failed KRX fetch still freezes the horizon**, one level up: `scheduled_closure_evaluated_through`
+  only advances when *every* source reports ok, and the horizon can never exceed it. So the KRX
+  exemption is narrower than it sounds — re-run `calendar-fetch-inputs` until every source reports
+  `ok=true` (the checkpoint resumes, so this costs only the un-fetched days) before refreshing.
+
+Note the asymmetry this creates, and do not read one as the other: `coverage.materialized_through`
+still widens on source *status* alone, while the forward horizon requires covered ranges. A
+candidate can therefore show coverage through the new window end while `forward_readiness_through`
+stays put — that is the guard working, not a bug.
+
+Pick `<new-horizon>` inside the authorization term (`authorization.expires_at`). One residual
+operator judgement remains: KASI holiday facts are published per year, and `fetch_kasi_year`
+treats a parseable empty-year response as a fully covered year rather than "not yet published",
+so a horizon crossing into an unpublished year can still be stamped. Confirm KASI actually
+publishes the target year before choosing a horizon that crosses into it.
 
 ## 0. Preconditions
 

@@ -216,7 +216,30 @@ fn build_from_base(
         } else {
             base.freshness.full_history_reconciled_at
         },
-        forward_readiness_through: base.freshness.forward_readiness_through,
+        // Forward readiness tracks the date scheduled closures have actually been evaluated
+        // through — at genesis the two are stamped to the same window end, and a refresh that
+        // materializes evidence PAST the prior horizon has genuinely extended it. Advancing it
+        // here is what makes the horizon a refresh cadence (RUNBOOK-calendar-snapshot.md,
+        // § Forward-readiness decay); before this the dimension was writable only by genesis, so
+        // it decayed to `stale` with no remedy short of a full re-genesis ceremony.
+        //
+        // `all_sources_ok` alone would NOT be enough to justify the claim. It tests only each
+        // outcome's status, never whether that source's `covered` ranges reach the dates being
+        // claimed — and `RefreshInputs::empty()` satisfies it vacuously, since `all()` over zero
+        // outcomes is true. Coverage above widens on the same weak test, which was harmless while
+        // it moved only bookkeeping; forward readiness is operator-facing, so claiming it over an
+        // unevaluated span would report `fresh` for dates nobody checked. `forward_horizon` is
+        // therefore evidenced per-source against the exact span being claimed (see
+        // [`evidenced_forward_horizon`]), mirroring genesis's [`check_coverage_completeness`].
+        //
+        // Monotone by construction: the helper never returns a value below the prior horizon, so
+        // a deliberately narrow refresh — the daily `--through <session_date>` the morning chain
+        // runs — can never RETRACT a horizon already earned.
+        forward_readiness_through: evidenced_forward_horizon(
+            base.freshness.forward_readiness_through,
+            scheduled_closure_evaluated_through,
+            inputs,
+        ),
         last_incremental_at: if mode == RefreshMode::Incremental && all_sources_ok {
             Some(as_of)
         } else {
@@ -274,8 +297,9 @@ struct BuildBase {
     retrospectively_checked_through: NaiveDate,
     /// Coverage seed used only on the not-all-ok branch (genesis is all-ok).
     scheduled_closure_evaluated_through: NaiveDate,
-    /// Freshness seeds the aging falls back to (genesis: fully-stamped; `forward_readiness`
-    /// and `last_incremental` pass through unchanged).
+    /// Freshness seeds the aging falls back to (genesis: fully-stamped; `last_incremental`
+    /// passes through unchanged; `forward_readiness` is the monotone floor the recomputed
+    /// horizon is `max`ed against).
     freshness: Freshness,
 }
 
@@ -297,6 +321,73 @@ impl BuildBase {
             freshness: prior.freshness.clone(),
         }
     }
+}
+
+/// The forward horizon a candidate may honestly claim, given the prior claim and the recomputed
+/// `scheduled_closure_evaluated_through`. Returns the prior value unchanged unless the span being
+/// newly claimed is itself evidenced.
+///
+/// Monotone: every early return yields `prior`, and the only advancing return is guarded by
+/// `candidate_horizon > prior_horizon`. A narrow refresh can therefore never retract an earned
+/// horizon.
+///
+/// A `None` prior stays `None`. Stamping the first forward-readiness claim is genesis's job — a
+/// refresh has no baseline that would tell it which span such a claim covers, and inventing one
+/// is the same "absence proves something" mistake this guard exists to prevent.
+fn evidenced_forward_horizon(
+    prior: Option<NaiveDate>,
+    candidate_horizon: NaiveDate,
+    inputs: &RefreshInputs,
+) -> Option<NaiveDate> {
+    let prior_horizon = prior?;
+    if candidate_horizon <= prior_horizon {
+        return prior;
+    }
+    // Only the span BEYOND the earned horizon needs fresh evidence; everything at or before it
+    // was justified when it was claimed.
+    let claim = match prior_horizon.succ_opt() {
+        Some(from) => DateRange::new(from, candidate_horizon),
+        None => return prior,
+    };
+    if forward_span_is_evidenced(claim, inputs) {
+        Some(candidate_horizon)
+    } else {
+        prior
+    }
+}
+
+/// Whether every source that must span a FORWARD window carries an `ok` covered claim over
+/// `claim`. Mirrors genesis's [`check_coverage_completeness`] for the from-prior path, with one
+/// deliberate difference: `SourceKind::KrxDailyMarket` is exempt because it witnesses only the
+/// past — the fetcher deliberately stops at the last closed session, so requiring it to cover a
+/// forward span would make the horizon permanently unadvanceable.
+///
+/// Both KASI and the generated rules must be PRESENT, not merely non-failing. Requiring presence
+/// is what makes `RefreshInputs::empty()` — and any inputs artifact that silently omits a source —
+/// fail closed; a bare `all(is_ok)` accepts an empty outcome set vacuously.
+fn forward_span_is_evidenced(claim: DateRange, inputs: &RefreshInputs) -> bool {
+    let mut saw_holiday_facts = false;
+    let mut saw_rules = false;
+    for outcome in &inputs.outcomes {
+        match outcome.kind {
+            SourceKind::KasiHoliday => saw_holiday_facts = true,
+            SourceKind::KrxRule => saw_rules = true,
+            _ => continue,
+        }
+        if !outcome.is_ok() {
+            return false;
+        }
+        match outcome.covered() {
+            // Absent (legacy) coverage proves nothing, exactly as genesis treats it.
+            None => return false,
+            Some(ranges) => {
+                if !uncovered_within(claim, ranges).is_empty() {
+                    return false;
+                }
+            }
+        }
+    }
+    saw_holiday_facts && saw_rules
 }
 
 /// The first civil date of the consumer window R12 guards (the #118 universe-capture start).
