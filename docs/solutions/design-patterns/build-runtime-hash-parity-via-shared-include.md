@@ -70,9 +70,32 @@ parity is **structural**, not conventional: the same walk order, the same NUL
 separators, the same byte reads, by construction. A one-byte change in any hashed
 file moves both hashes together; an unchanged tree yields identical hashes on every
 platform run. This makes "which binary did I actually build?" a decidable question
-— the fingerprint equality is what matters, so path confusion, `CARGO_TARGET_DIR`
-redirection, or a leftover binary can only cause a spurious *halt* (false-stale),
-never a false *green*.
+**for the inputs the fingerprint hashes** — over that set, path confusion,
+`CARGO_TARGET_DIR` redirection, or a leftover binary can only cause a spurious
+*halt* (false-stale), never a false *green*.
+
+**Scope that claim to the hashed input set; it does not generalise past it.**
+`compute_lab_fingerprint` is called with `lab/src` and `lab/Cargo.toml`
+(`build.rs:22`) and hashes nothing else. But `lab/Cargo.toml` carries **path
+dependencies** on `nautilus-ls`, `ls-sdk`, and `ls-core` (`lab/Cargo.toml:38-40`),
+and only the manifest text is hashed — never those crates' sources. Cargo's own
+dep-info records what the fingerprint cannot: `lab-research.d` references
+`crates/ls-sdk/src` 49 times and `crates/ls-core/src` 21 times. So a lab binary
+built *before* a `crates/ls-core` or `crates/ls-sdk` change recomputes a
+**matching** fingerprint while running old SDK code — a false green on exactly the
+cross-workspace axis, which is also the axis the root workspace's `cargo test`
+cannot see (see
+[`cross-workspace-gate-blind-spot-sdk-preflight-changes-redden-adapter`](../workflow-issues/cross-workspace-gate-blind-spot-sdk-preflight-changes-redden-adapter.md)).
+
+The general rule: an embedded fingerprint certifies **parity over what it hashed**,
+nothing wider. Before relying on one as an anti-stale guarantee, read the argument
+list at its call site and compare it against the binary's real dependency set —
+`target/debug/<name>.d` is that set, already written down. Where the two disagree,
+the gap is precisely where a false green lives. This is why
+`session-morning.sh`'s preflight takes its source set from cargo's dep-info instead
+of extending this fingerprint to `nautilus-ls`, and it is the same failure shape as
+a guard trusting a claim its upstream reported — see
+[`first-run-of-a-new-guard-prove-the-binary-then-discharge-its-residual`](../workflow-issues/first-run-of-a-new-guard-prove-the-binary-then-discharge-its-residual.md).
 
 Note the intended two-build cost for a code turn: the orchestrator's own parent
 self-check halts as stale until the operator rebuilds the parent, and it then does

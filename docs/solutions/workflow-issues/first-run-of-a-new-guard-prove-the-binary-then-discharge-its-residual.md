@@ -84,6 +84,22 @@ cargo build --release --bin calendar-fetch-inputs --bin calendar-refresh --bin c
 strings target/release/calendar-refresh | grep -c 'REFUSED (asked for'   # want 1
 ```
 
+Both invocation styles need their own assertion, and the release rebuild above satisfies only one
+of them — the two forms do not share a build directory, so it does not freshen what
+`session-morning.sh` runs. For the `target/debug` artifacts that chain pins:
+
+```sh
+cd adapters/nautilus
+# --workspace is required even from here: lab-research and lab-mount-universe live in the `lab`
+# member, not the default-run package, so a bare --bin fails to resolve them.
+cargo build --workspace --bin calendar-refresh
+grep -qa 'REFUSED (asked for' target/debug/calendar-refresh && echo "guard present in target/debug"
+```
+
+Presence, not a count, and for a reason the paragraph below spells out. Keep both checks: the
+release recipe is what `RUNBOOK-calendar-snapshot.md` drives, the debug one is what the morning
+chain executes, and the whole point of this section is that they drift.
+
 mtime alone is weak evidence — a rebuild for an unrelated reason also bumps it — while the `strings`
 assertion says the **behavior** is in the binary. Do both.
 
@@ -108,7 +124,49 @@ That is the right design for argv, but it does not cover freshness, and three de
 - The replay covers only `calendar-fetch-inputs`. `calendar-refresh` — the binary that actually
   carries the #258 guard — is stubbed and never replayed.
 
-Freshness is a separate property from argv correctness, and nothing currently checks it.
+Freshness is a separate property from argv correctness, and for those three reasons the argv guard
+cannot be stretched to cover it.
+
+### 1a. That residual is now discharged — by two axes, not one
+
+`session-morning.sh`'s preflight no longer merely tests that its twelve required paths exist. The
+seven `$BIN` entries are refused with **exit 64**, before any gateway traffic, on any of four
+*discriminated* causes: **absent**, **stale by mtime**, **registered guard literal absent**, or
+**freshness unevaluable**. Each arm names its own remedy, because a handler that cannot tell apart
+the ways it fires will assert the one cause its author had in mind — see
+[`shell-script-live-path-needs-stubbed-binary-tests`](shell-script-live-path-needs-stubbed-binary-tests.md).
+
+The pairing this section prescribes is load-bearing, and neither half is redundant:
+
+- **mtime** compares each binary against the source set cargo already recorded in
+  `$BIN/<name>.d`. Reading metadata cargo has persisted is not the same as delegating the verdict
+  to cargo — cargo has no check-only mode, so delegating would mean auto-remediation instead of
+  refusal, and an unbounded rebuild inside a 09:05 deadline. Cargo's set also reaches what no
+  hand-listed `src/` scan would: `crates/ls-core/build.rs` embeds the **repo-root `metadata/`
+  tree** at compile time, so a `metadata/constraints/*.yaml` edit changes every binary's behaviour
+  while moving no file under any `src/` directory. And because the set is **per binary**, rebuilding
+  one stale binary clears its own refusal instead of leaving six others behind a shared timestamp
+  that cargo then declines to rebuild.
+- **the content literal** is the only axis that can see an **inverted** binary — newer than every
+  source yet built from older code. A build racing a `git pull`, a build made in another worktree
+  or branch, and `touch target/debug/*` all produce that state, and the last of those is the
+  cheapest operator response to a false-stale. `calendar-refresh` is registered with
+  `REFUSED (asked for` precisely because that is the guard whose absence reads as a clean pass.
+
+Which is why the operator override for deliberately pinned binaries
+(`LS_SM_ALLOW_STALE_BINARIES=1`, permitted on a real run and announced in the transcript) covers
+the **mtime axis only**. A binary pinned on purpose is still pinned to code containing its
+registered guard, so nothing legitimate needs that escape — and binding both axes to one switch
+would let the noisy axis train the operator into disabling the quiet one.
+
+Two limits survive the discharge, and both are real:
+
+- It guards **`target/debug`**, which is what the chain pins. The `--release` artifacts — the ones
+  that were actually stale in this incident — are **not** covered by it. That is why the recipe
+  above keeps both assertions rather than replacing one with the other.
+- `make script-check` still never builds or replays `calendar-refresh`, so the binary carrying the
+  #258 guard remains the structurally least-covered one. The preflight now refuses a *stale* copy
+  of it; nothing yet proves its *argv*. Different axis, still open.
 
 ### 2. Discharge the guard's known residual by probe, BEFORE choosing the input
 
@@ -213,7 +271,14 @@ pass. Where the structural self-check is absent, the check falls to the operator
   prove the artifact producing it postdates the merge — and prefer a content assertion (`strings`,
   `--version`, an embedded fingerprint) over mtime.
 - **Any workflow that has both a `cargo run` recipe and a prebuilt-path script.** They will drift.
-  Audit the script's preflight: an existence check is not a freshness check.
+  Audit the script's preflight: an existence check is not a freshness check. `session-morning.sh`
+  now has one (§1a) — for `target/debug` only, so the release-path recipe still needs running by
+  hand. When adding a freshness check elsewhere, take the source set from cargo's dep-info rather
+  than a hand-listed directory scan, and refuse rather than rebuild.
+- **Whenever a guard ships whose absence is indistinguishable from its refusal.** Register a
+  content literal for it in that script's probe registry, chosen for **uniqueness** rather than
+  convenience, and test presence rather than a count. A sparse registry that grows when a guard
+  ships says something; one filled in on a schedule asserts nothing.
 - **Whenever a guard's own docs or shipping PR name a residual.** A named residual is a checklist
   item, not background reading.
 - **Before choosing a calendar forward horizon**, or any parameter whose validity rests on an
