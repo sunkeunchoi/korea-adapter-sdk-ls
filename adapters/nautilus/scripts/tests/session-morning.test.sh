@@ -972,6 +972,18 @@ ingest_env() { # secs advance_to → CHAIN_ENV for a step [7] run
 # --- normal mode: an elapsed deadline plus a non-advancing ingest still stands down ---
 # The stub is told to run for 10s and to advance nothing, so the only way it can stop is
 # the script killing it. It must never reach its COMPLETED marker.
+#
+# THE LAUNCH IS NOT ASSERTED HERE, deliberately. The stub's first act is to write its own
+# start marker, and its TERM trap is installed on the LINE AFTER that. With LS_SM_POLL_SECS=1
+# against an already-elapsed deadline the first poll kills roughly a second after launch, and
+# bash startup can exceed that second — so SIGTERM legitimately arrives before the marker
+# exists. A `*"ls-ingest "*)` arm reading that empty log as "never started" flaked ~1 run in 3
+# (4 in 11, 2026-08-04), and any positive marker the stub writes races identically. The launch
+# and the kill are proven instead by the two sibling assertions in this block, neither of which
+# can race the stub's startup: exit 40 and `STAND DOWN — not on pace` are both emitted by the
+# script itself, inside the LATE branch and after `kill "$ingest_pid"` (session-morning.sh:1012),
+# and no other site can produce either on this fixture. What survives here is the one fact the
+# race cannot fabricate: a COMPLETED marker means the kill did not land.
 ingest_env 10 ""
 CHAIN_ENV+=("LS_SM_UNIVERSE_BY=23:59")   # irrelevant: step [8] is unreachable from a kill
 run_chain
@@ -979,8 +991,7 @@ assert_eq "normal mode: elapsed deadline + stalled ingest exits 40 (STAND-DOWN)"
 case "$CHAIN_LOG" in
   *"ls-ingest COMPLETED"*)
     no "normal mode: the stalled ingest is killed" "no COMPLETED marker" "$CHAIN_LOG" ;;
-  *"ls-ingest "*) ok "normal mode: the stalled ingest is killed" ;;
-  *) no "normal mode: the stalled ingest is killed" "ls-ingest to have been started" "$CHAIN_LOG" ;;
+  *) ok "normal mode: the stalled ingest is killed" ;;
 esac
 case "$CHAIN_OUT" in
   *"STAND DOWN — not on pace"*) ok "normal mode: reports the pace stand-down" ;;
@@ -1028,9 +1039,10 @@ case "$CHAIN_LOG" in
 esac
 drop_fixture
 
-# --- NEGATIVE META-TESTS: prove the two guards above can be seen to fail ---------------
+# --- NEGATIVE META-TESTS: prove the guards above can be seen to fail -------------------
 # Without these the assertions are unfalsifiable: a catch-up run that exits 41 for some
-# unrelated reason would green both.
+# unrelated reason would green both catch-up guards, and the normal-mode kill assertion is
+# coverage-only — on an unmutated tree a green run proves nothing about what it would catch.
 
 # Delete the `continue` that skips the pace verdict on a catch-up. The run then falls into
 # the same LATE branch normal mode takes, and the kill it is supposed to prevent happens.
@@ -1064,6 +1076,30 @@ case "$CHAIN_LOG" in
   *"ls-ingest COMPLETED"*) ok "the step [8] mutation leaves the step [7] skip intact" ;;
   *) no "the step [8] mutation leaves the step [7] skip intact" \
         "the ingest to still run to completion" "$CHAIN_LOG" ;;
+esac
+drop_fixture
+
+# Disarm the step [7] kill CALL, not the LATE branch — this is the permanent falsifier for the
+# normal-mode kill assertion above, whose one surviving arm reds only on a COMPLETED marker.
+# Deleting `kill "$ingest_pid"` and leaving `wait "$ingest_pid"` in place is what keeps the rest
+# of that block still: `wait` now blocks until the 10s stub finishes, so the stub reaches its
+# COMPLETED marker while the stand-down report and the exit code below it are untouched. Neutering
+# the whole LATE branch would move all three at once and prove nothing about any one of them.
+ingest_env 10 ""
+CHAIN_ENV+=("LS_SM_UNIVERSE_BY=23:59")
+run_chain_mutated 's|^    kill "\$ingest_pid" 2>/dev/null; |    |'
+case "$CHAIN_LOG" in
+  *"ls-ingest COMPLETED"*)
+    ok "harness detects a step [7] LATE branch that no longer kills the ingest" ;;
+  *) no "harness detects a step [7] LATE branch that no longer kills the ingest" \
+        "an 'ls-ingest COMPLETED' marker — the surviving assertion's red condition" "$CHAIN_LOG" ;;
+esac
+assert_eq "the disarmed-kill mutation leaves the stand-down exit code unmoved" "40" "$CHAIN_RC"
+case "$CHAIN_OUT" in
+  *"STAND DOWN — not on pace"*)
+    ok "the disarmed-kill mutation leaves the stand-down report unmoved" ;;
+  *) no "the disarmed-kill mutation leaves the stand-down report unmoved" \
+        "a 'STAND DOWN — not on pace' report" "$CHAIN_OUT" ;;
 esac
 drop_fixture
 
