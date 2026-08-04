@@ -269,6 +269,15 @@ STUB
     printf '# probe literal (fixture stub): %s\n' "$rlit" >>"$bin/$rb"
   done < <(registry_entries)
 
+  # FIXTURE_DELETE_SRC_FOR removes a source that the binary's .d still LISTS, and touches no mtime
+  # at all. That isolates the `vanished` half of the staleness test: every surviving source stays
+  # older than the binary, so the mtime comparison cannot fire and only the vanished-source count
+  # can refuse. Cargo treats a target whose recorded source is gone as dirty, so the binary really
+  # is stale even though nothing it still has is newer than it.
+  if [ -n "${FIXTURE_DELETE_SRC_FOR:-}" ]; then
+    rm -f "$src_bin/$FIXTURE_DELETE_SRC_FOR.rs"
+  fi
+
   # ---- staleness knobs. touch -t is portable across macOS and GNU ----------------------------
   #   FIXTURE_AGE_BIN=<name>    age ONE stub behind its own sources, so that binary ALONE is stale
   #                             — the per-binary property a single shared timestamp cannot express
@@ -321,6 +330,7 @@ drop_fixture() {
   [ -n "${CHAIN_ROOT:-}" ] && rm -rf "$CHAIN_ROOT"
   CHAIN_ENV=(); FIXTURE_WM_A=""; FIXTURE_WM_B=""; FIXTURE_CKPT=""
   FIXTURE_AGE_BIN=""; FIXTURE_STALE_VIA=""; FIXTURE_DROP_DEPINFO_FOR=""; FIXTURE_OMIT_LITERAL_FOR=""
+  FIXTURE_DELETE_SRC_FOR=""
   return 0
 }
 
@@ -635,6 +645,22 @@ case "$CHAIN_LOG" in
 esac
 drop_fixture
 
+# --- the OTHER half of the staleness test, isolated: a source that no longer exists -------------
+# `bin_mtime < src_mtime || vanished > 0` has two independent halves, and every case above exercises
+# only the first. Here a source the .d still lists is DELETED while every surviving source stays
+# older than the binary, so the mtime comparison cannot fire — only the vanished count can refuse.
+# Without this the `|| vanished > 0` clause would have no coverage of its own, and a regression
+# dropping it would pass every other assertion in this file.
+FIXTURE_DELETE_SRC_FOR=calendar-refresh
+run_chain --dry-run
+assert_eq "a binary built from a source that no longer exists refuses (64)" "64" "$CHAIN_RC"
+case "$CHAIN_OUT" in
+  *"are STALE: calendar-refresh"*) ok "the vanished-source case is reported as staleness" ;;
+  *) no "the vanished-source case is reported as staleness" \
+        "'are STALE: calendar-refresh'" "$CHAIN_OUT" ;;
+esac
+drop_fixture
+
 # --- the CROSS-WORKSPACE reach: a root-crate source, which no adapter-only scan would see ------
 FIXTURE_STALE_VIA=crates/ls-core/src/lib.rs
 run_chain --dry-run
@@ -791,15 +817,26 @@ fi
 # Without these the whole section is theatre — which is exactly how the missing --state-root
 # survived the first version of this file.
 
-# Neutralise the mtime comparison. The aged stub must then sail through.
+# Neutralise the mtime COMPARISON, deliberately leaving the `|| vanished > 0` half standing so this
+# mutant and the vanished one below are independent — the aged stub has all its sources, so the
+# surviving half cannot rescue the refusal. Targeting the whole condition instead would make each
+# mutant unable to distinguish a missing half from a working one.
 FIXTURE_AGE_BIN=calendar-refresh
-run_chain_mutated 's/(( bin_mtime < src_mtime || vanished > 0 ))/(( 0 ))/' --dry-run
+run_chain_mutated 's/bin_mtime < src_mtime/0 > 1/' --dry-run
 assert_eq "harness detects a preflight stripped of the mtime freshness check" "0" "$CHAIN_RC"
 case "$CHAIN_OUT" in
   *"are STALE"*) no "the mutated preflight no longer refuses the aged binary" \
                     "no stale refusal from the mutant" "$CHAIN_OUT" ;;
   *) ok "the mutated preflight no longer refuses the aged binary" ;;
 esac
+drop_fixture
+
+# Strip ONLY the vanished-source clause, leaving the mtime comparison intact. This is what makes
+# the two halves independently covered rather than jointly: the mutant above neutralises the whole
+# condition, so on its own it could not tell a missing `|| vanished > 0` from a working one.
+FIXTURE_DELETE_SRC_FOR=calendar-refresh
+run_chain_mutated 's/ || vanished > 0//' --dry-run
+assert_eq "harness detects the vanished-source clause stripped on its own" "0" "$CHAIN_RC"
 drop_fixture
 
 # De-register the probe literal. The literal-less stub must then sail through. Note the fixture
