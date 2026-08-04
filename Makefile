@@ -1148,16 +1148,26 @@ adapter-check:
 ## which would have run a calendar-refresh lacking PR #258's forward-horizon guard —
 ## a missing refusal line reading as a clean pass). Covered here: all four refusal
 ## causes (absent / stale by mtime / registered guard literal absent / freshness
-## unevaluable), the cross-workspace and repo-root metadata/ reach that comes from
-## reading cargo's per-binary dep-info rather than scanning a hand-listed source tree,
-## the LS_SM_ALLOW_STALE_BINARIES override covering the mtime axis ONLY, R10's
-## registry-drift assertion, and two negative meta-tests proving the harness reds when
-## either axis is stripped.
+## unevaluable) plus the -e to -x tightening; the cross-workspace and repo-root
+## metadata/ reach that comes from reading cargo's per-binary dep-info rather than
+## scanning a hand-listed source tree; each of the seven MANIFESTS cargo's dep-info
+## records nowhere (a dep bump or `cargo update` dirties every binary while leaving
+## every recorded source older than it — dep-info alone reported `ok` there); the
+## LS_SM_ALLOW_STALE_BINARIES override covering the mtime axis ONLY; R10's
+## registry-drift assertion plus a structural field-count check (`|` is the registry
+## separator, so a literal containing one is silently truncated on BOTH sides); and
+## three negative meta-tests proving the harness reds when the mtime comparison, the
+## vanished-input clause, or the probe-literal registry is stripped INDEPENDENTLY.
 ## SCOPE LIMITS: step [10] (lab-mount-universe) and the step [11] GO/NO-GO report are
 ## still never reached, and the stubs other than calendar-fetch-inputs/-refresh and
 ## ls-ingest accept any argv. The freshness axes run against STUBS, so they prove the
 ## script's logic — not that any real binary is current; nothing here builds or replays
-## calendar-refresh, the binary that actually carries the #258 guard.
+## calendar-refresh, the binary that actually carries the #258 guard, and nothing
+## asserts the registered literal is present in a REAL compiled artifact (R10 checks
+## the Rust sources, and the fixture PLANTS the literal into its stub).
+## KNOWN FLAKE: `normal mode: the stalled ingest is killed` fails roughly 1 run in 4-6
+## under machine load. It predates the freshness work (reproduced at 92ba1ed) — the
+## step [7] poll races the stub's own 10s sleep. Re-run before investigating.
 ## Not yet a `make gate-run` step; run it when touching adapters/nautilus/scripts/.
 ## That also bounds R10: a reworded probe literal is made DIAGNOSABLE here, not
 ## preempted — nothing runs this target automatically, so a reword still reaches the

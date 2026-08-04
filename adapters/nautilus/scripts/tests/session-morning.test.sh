@@ -83,6 +83,12 @@ while read -r v; do [ -n "$v" ] && unset "$v"; done < <(env | sed -n 's/^\(LS_[A
 SESSION_DATE=2026-07-30
 SESSION_COMPACT=20260730
 
+# The seven binaries the preflight requires, named ONCE. make_fixture needs this list three times
+# over (a source file, a dep-info file, and the stub itself), and three hand-kept copies would drift
+# exactly the way session-morning.sh's own comment warns about for the real preflight loop.
+FIXTURE_STUB_BINS="calendar-fetch-inputs calendar-refresh calendar-activate calendar-status
+ls-ingest lab-research lab-mount-universe"
+
 # The probe-literal registry, read FROM THE SCRIPT UNDER TEST rather than restated here. Two
 # things need it — the fixture, which must plant every registered literal in the stub it is
 # registered for, and the drift assertion (R10) — and a second copy in this file would be exactly
@@ -118,12 +124,19 @@ make_fixture() { # [sed_expr] -> repo root on stdout
   # every source and the DEFAULT fixture is fresh. Staleness is then manufactured explicitly by
   # the touch -t knobs at the end of this function, never by accident of ordering.
   local src_bin="$naut/src/bin" src_core="$root/crates/ls-core/src" src_meta="$root/metadata/constraints"
-  mkdir -p "$src_bin" "$src_core" "$src_meta"
+  mkdir -p "$src_bin" "$src_core" "$src_meta" "$naut/lab" "$naut/nautilus-ls-calendar"
   printf '%s\n' 'fn main() {}' >"$src_core/lib.rs"
   printf '%s\n' 'fixture: true' >"$src_meta/fixture.yaml"
-  local sb
-  for sb in calendar-fetch-inputs calendar-refresh calendar-activate calendar-status \
-            ls-ingest lab-research lab-mount-universe; do
+  # The MANIFESTS cargo's dep-info records nowhere, which the preflight folds in by hand because a
+  # manifest-only change (dep bump, `cargo update`, feature flip, toolchain pin) dirties every
+  # binary while leaving each recorded source older than it. The fixture must carry all of them:
+  # they count toward `vanished` when absent, so a fixture missing one would mark every stub stale.
+  local m
+  for m in "$root/Cargo.toml" "$root/Cargo.lock" "$naut/Cargo.toml" "$naut/Cargo.lock" \
+           "$naut/rust-toolchain.toml" "$naut/lab/Cargo.toml" "$naut/nautilus-ls-calendar/Cargo.toml"; do
+    printf '%s\n' '# fixture manifest' >"$m"
+  done
+  for sb in $FIXTURE_STUB_BINS; do
     printf '%s\n' 'fn main() {}' >"$src_bin/$sb.rs"
   done
 
@@ -247,8 +260,7 @@ STUB
   # "<target>: <src> <src> ..." with absolute paths, which is exactly what the preflight parses.
   # FIXTURE_DROP_DEPINFO_FOR withholds one on purpose: that is how the "freshness UNEVALUABLE"
   # arm is reached, and it must refuse rather than fall through to pass.
-  for sb in calendar-fetch-inputs calendar-refresh calendar-activate calendar-status \
-            ls-ingest lab-research lab-mount-universe; do
+  for sb in $FIXTURE_STUB_BINS; do
     [ "$sb" = "${FIXTURE_DROP_DEPINFO_FOR:-}" ] && continue
     printf '%s: %s %s %s\n' \
       "$bin/$sb" "$src_bin/$sb.rs" "$src_core/lib.rs" "$src_meta/fixture.yaml" >"$bin/$sb.d"
@@ -278,17 +290,33 @@ STUB
     rm -f "$src_bin/$FIXTURE_DELETE_SRC_FOR.rs"
   fi
 
+  # FIXTURE_DROP_BIN removes a stub outright (with its dep-info), reaching the ABSENT arm.
+  # FIXTURE_UNEXEC_BIN strips the execute bit, which the binary class treats as absent too — the
+  # `-e` to `-x` tightening, unreachable while make_fixture chmod +x's every stub.
+  if [ -n "${FIXTURE_DROP_BIN:-}" ]; then
+    rm -f "$bin/$FIXTURE_DROP_BIN" "$bin/$FIXTURE_DROP_BIN.d"
+  fi
+  if [ -n "${FIXTURE_UNEXEC_BIN:-}" ]; then
+    chmod -x "$bin/$FIXTURE_UNEXEC_BIN"
+  fi
+
   # ---- staleness knobs. touch -t is portable across macOS and GNU ----------------------------
-  #   FIXTURE_AGE_BIN=<name>    age ONE stub behind its own sources, so that binary ALONE is stale
+  #   FIXTURE_AGE_BIN=<name>    age ONE stub behind its own inputs, so that binary ALONE is stale
   #                             — the per-binary property a single shared timestamp cannot express
-  #   FIXTURE_STALE_VIA=<rel>   age every stub AND every source, then return ONE source to "now",
-  #                             making that source the sole reason the binaries are stale
+  #   FIXTURE_STALE_VIA=<rel>   age every stub AND every input, then return ONE input to "now",
+  #                             making that input the sole reason the binaries are stale
   if [ -n "${FIXTURE_AGE_BIN:-}" ]; then
     touch -t 202601010000 "$bin/$FIXTURE_AGE_BIN"
   fi
   if [ -n "${FIXTURE_STALE_VIA:-}" ]; then
     find "$bin" -type f -exec touch -t 202601010000 {} +
+    # The MANIFESTS must be aged with the sources. They are part of the compared set, so leaving
+    # them at "now" would make every stub stale for a reason the test did not choose, and this
+    # knob's whole purpose is that ONE named input is the sole cause.
     find "$src_bin" "$src_core" "$src_meta" -type f -exec touch -t 202512310000 {} +
+    touch -t 202512310000 "$root/Cargo.toml" "$root/Cargo.lock" "$naut/Cargo.toml" \
+      "$naut/Cargo.lock" "$naut/rust-toolchain.toml" "$naut/lab/Cargo.toml" \
+      "$naut/nautilus-ls-calendar/Cargo.toml"
     touch "$root/$FIXTURE_STALE_VIA"
   fi
 
@@ -330,7 +358,7 @@ drop_fixture() {
   [ -n "${CHAIN_ROOT:-}" ] && rm -rf "$CHAIN_ROOT"
   CHAIN_ENV=(); FIXTURE_WM_A=""; FIXTURE_WM_B=""; FIXTURE_CKPT=""
   FIXTURE_AGE_BIN=""; FIXTURE_STALE_VIA=""; FIXTURE_DROP_DEPINFO_FOR=""; FIXTURE_OMIT_LITERAL_FOR=""
-  FIXTURE_DELETE_SRC_FOR=""
+  FIXTURE_DELETE_SRC_FOR=""; FIXTURE_DROP_BIN=""; FIXTURE_UNEXEC_BIN=""
   return 0
 }
 
@@ -661,6 +689,53 @@ case "$CHAIN_OUT" in
 esac
 drop_fixture
 
+# --- the ABSENT arm, and the -e -> -x tightening ----------------------------------------------
+# Both were previously reachable only on a real tree. The Makefile's script-check comment claims all
+# four refusal causes are covered, so leaving these two untested made that claim false.
+FIXTURE_DROP_BIN=calendar-refresh
+run_chain --dry-run
+assert_eq "an absent required binary refuses the preflight (64)" "64" "$CHAIN_RC"
+case "$CHAIN_OUT" in
+  *"ABSENT BINARY"*) ok "the absent refusal is distinct from the stale and unevaluable messages" ;;
+  *) no "the absent refusal is distinct from the stale and unevaluable messages" \
+        "an 'ABSENT BINARY' message" "$CHAIN_OUT" ;;
+esac
+case "$CHAIN_OUT" in
+  *"cargo build --workspace"*" --bin calendar-refresh"*)
+    ok "the absent refusal names the rebuild command too" ;;
+  *) no "the absent refusal names the rebuild command too" \
+        "a cargo build line naming calendar-refresh" "$CHAIN_OUT" ;;
+esac
+drop_fixture
+
+# A present-but-unexecutable artifact is as unusable as an absent one, so the binary class tests -x.
+FIXTURE_UNEXEC_BIN=calendar-refresh
+run_chain --dry-run
+assert_eq "a present but NON-EXECUTABLE binary is refused, not reported ok (64)" "64" "$CHAIN_RC"
+case "$CHAIN_OUT" in
+  *"MISS "*calendar-refresh*) ok "the non-executable binary is reported MISS rather than ok" ;;
+  *) no "the non-executable binary is reported MISS rather than ok" \
+        "a MISS verdict line for calendar-refresh" "$CHAIN_OUT" ;;
+esac
+drop_fixture
+
+# --- the MANIFESTS, which cargo's dep-info records nowhere -------------------------------------
+# `calendar-refresh.d` contains zero Cargo.toml / Cargo.lock / toolchain entries, so a
+# manifest-only change (dep bump, `cargo update`, feature flip, toolchain pin) dirties every binary
+# per cargo while leaving every recorded source older than the artifact. Dep-info alone therefore
+# reported `ok` for seven binaries built from superseded dependency code, and the content axis
+# cannot help — a manifest change removes no registered literal. Each manifest gets its own case
+# because they are a hand-listed set: a typo in one would otherwise be invisible.
+for MANIFEST in Cargo.toml Cargo.lock adapters/nautilus/Cargo.toml adapters/nautilus/Cargo.lock \
+                adapters/nautilus/rust-toolchain.toml adapters/nautilus/lab/Cargo.toml \
+                adapters/nautilus/nautilus-ls-calendar/Cargo.toml; do
+  FIXTURE_STALE_VIA="$MANIFEST"
+  run_chain --dry-run
+  assert_eq "a binary older than $MANIFEST refuses (64) — dep-info lists no manifest" \
+            "64" "$CHAIN_RC"
+  drop_fixture
+done
+
 # --- the CROSS-WORKSPACE reach: a root-crate source, which no adapter-only scan would see ------
 FIXTURE_STALE_VIA=crates/ls-core/src/lib.rs
 run_chain --dry-run
@@ -804,6 +879,23 @@ while IFS='|' read -r RB RLIT _; do
        "not found under ${RUST_ROOTS[*]}"
   fi
 done < <(registry_entries)
+
+# The registry's FIELD COUNT, because `|` is the separator. A literal containing a pipe is silently
+# truncated by probe_literal_for AND by registry_entries' own `IFS='|' read` — both sides would then
+# agree on the same wrong value, so no behavioural assertion in this file could ever catch it. Only
+# a structural check on the entry shape can.
+REG_BAD=0
+while IFS= read -r REG_LINE; do
+  [ -n "$REG_LINE" ] || continue
+  REG_FIELDS="$(printf '%s' "$REG_LINE" | awk -F'|' '{print NF}')"
+  if [ "$REG_FIELDS" -ne 3 ]; then
+    no "every BIN_PROBE_LITERALS entry has exactly 3 pipe-separated fields" \
+       "3 fields (binary|literal|provenance) — a literal containing '|' is silently truncated" \
+       "$REG_FIELDS fields in: $REG_LINE"
+    REG_BAD=1
+  fi
+done < <(registry_entries)
+[ "$REG_BAD" -eq 0 ] && ok "every BIN_PROBE_LITERALS entry has exactly 3 pipe-separated fields"
 
 # And that assertion must itself be falsifiable: a fabricated entry has to fail it.
 if grep -rqF --include='*.rs' -- 'REFUSED (asked for something no source ever says' "${RUST_ROOTS[@]}"; then

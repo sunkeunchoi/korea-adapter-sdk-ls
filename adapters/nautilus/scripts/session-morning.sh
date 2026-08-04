@@ -269,10 +269,28 @@ fi
 #     rebuild freshens the touched binary and leaves the other six behind the new shared value,
 #     with cargo declining to rebuild them. The live tree shows the spread this cannot tolerate:
 #     the five nautilus-ls binaries and the two lab binaries sit an hour apart, all correct.
-#   * It does not UNDER-report. crates/ls-core/build.rs embeds the repo-root metadata/ tree at
-#     compile time, so a metadata/constraints/*.yaml edit changes every binary's behavior while
-#     moving no file under any src/ directory. calendar-refresh.d lists those paths twelve times;
-#     no src/ scan would ever reach them.
+#   * It reaches what a src/ scan cannot. crates/ls-core/build.rs embeds the repo-root metadata/
+#     tree at compile time, so a metadata/constraints/*.yaml edit changes every binary's behavior
+#     while moving no file under any src/ directory. calendar-refresh.d lists those paths twelve
+#     times; no src/ scan would ever reach them.
+#
+# WHAT DEP-INFO OMITS, AND WHY THE MANIFESTS ARE ADDED BY HAND. Cargo records SOURCE FILES only:
+# `calendar-refresh.d` contains zero `Cargo.toml`, zero `Cargo.lock`, and zero toolchain entries
+# (verified over all 135 of its paths). So a MANIFEST-ONLY change — a dependency bump, a feature
+# flip, `cargo update` rewriting the lockfile, a `rust-toolchain.toml` edit — makes cargo consider
+# every binary dirty while every path it recorded stays older than the artifact. Dep-info alone
+# therefore reports `ok` for seven binaries built from superseded dependency code, and the content
+# axis cannot help: a manifest change removes no registered literal. That is a false green of
+# exactly the class this preflight exists to close, so the manifests are folded in explicitly.
+# They are a genuinely closed set — one per workspace member plus the two lockfiles and the pinned
+# toolchain — not a source-tree scan, so KTD8's objection to a hand-listed scan does not apply: a
+# new workspace member is a repo-structure change, not a routine edit, and a manifest that goes
+# missing counts toward `vanished` so a typo here fails CLOSED rather than silently covering less.
+BIN_EXTRA_FRESHNESS_INPUTS=(
+  "$R/Cargo.toml" "$R/Cargo.lock"
+  "$NAUT/Cargo.toml" "$NAUT/Cargo.lock" "$NAUT/rust-toolchain.toml"
+  "$NAUT/lab/Cargo.toml" "$NAUT/nautilus-ls-calendar/Cargo.toml"
+)
 #   * It does not OVER-report. A hand list broad enough to be safe would include
 #     adapters/nautilus/lab/src, which calendar-refresh.d references ZERO times — every lab edit
 #     would then mark the calendar binaries stale inside the 09:05 deadline, for a dependency
@@ -287,12 +305,19 @@ fi
 #
 # The honest limit: a source file added since the last build is absent from the .d, so dep-info is
 # authoritative about what the binary WAS built from — which is exactly the question being asked.
-dep_freshness() { # $1 = absolute path to the binary
+#
+# NANOSECOND comparison, not whole seconds. `int(st_mtime)` truncates both sides, so a source
+# written up to 0.99s AFTER the binary inside the same integer second reads as fresh — the
+# sub-second form of "a build racing a git pull", and one the content axis cannot cover for the six
+# unregistered binaries. `st_mtime_ns` is an int, so bash's 64-bit `(( ))` still handles it (and
+# will until the year 2262); the -1 sentinel is unaffected.
+dep_freshness() { # $1 = absolute path to the binary; $2.. = extra inputs cargo's dep-info omits
   python3 -c '
 import os, re, sys
 binary = sys.argv[1]
+extra = sys.argv[2:]
 try:
-    binary_mtime = int(os.stat(binary).st_mtime)
+    binary_mtime = os.stat(binary).st_mtime_ns
 except OSError:
     print("-1 -1 -1"); raise SystemExit
 try:
@@ -300,29 +325,36 @@ try:
         rules = handle.read()
 except OSError:
     print("-1 -1 -1"); raise SystemExit
-# A .d file is a make rule: "<target>: <src> <src> ...", plus bare "<src>:" lines. Everything
-# after the first colon on a line is a source list -- space-separated, with make backslash
-# escaping, and every path ABSOLUTE. So this is a split, not a dependency-graph walk.
-newest, seen, vanished = -1.0, 0, 0
+newest, seen, vanished = -1, 0, 0
+def consider(path):
+    global newest, seen, vanished
+    try:
+        mtime = os.stat(path).st_mtime_ns
+    except OSError:
+        # A recorded input that is gone. Cargo itself calls such a target dirty, so the binary is
+        # stale even when every surviving input is older than it.
+        vanished += 1
+        return
+    seen += 1
+    newest = max(newest, mtime)
+# A .d file is a make rule: "<target>: <src> <src> ...". Cargo may also emit bare "<src>:" lines;
+# every .d in this tree is a single rule line, so that branch is defensive. Everything after the
+# first colon on a line is a source list -- space-separated, with make backslash escaping, and
+# every path ABSOLUTE. So this is a split, not a dependency-graph walk.
 for line in rules.splitlines():
     _, sep, sources = line.partition(":")
     if not sep:
         continue
     for path in re.split(r"(?<!\\)\s+", sources.strip()):
-        if not path:
-            continue
-        try:
-            mtime = os.stat(path.replace("\\ ", " ")).st_mtime
-        except OSError:
-            # Cargo built from a source that is gone. Cargo itself calls that target dirty, so
-            # the binary is stale even if every surviving source is older than it.
-            vanished += 1
-            continue
-        seen += 1
-        newest = max(newest, mtime)
+        if path:
+            consider(path.replace("\\ ", " "))
+# The manifests and lockfiles cargo records nowhere. A missing one counts as vanished, so this
+# list fails CLOSED: a typo or a moved manifest refuses rather than quietly covering less.
+for path in extra:
+    consider(path)
 if not seen:
     print("-1 -1 -1"); raise SystemExit
-print(binary_mtime, int(newest), vanished)' "$1" 2>/dev/null || echo "-1 -1 -1"
+print(binary_mtime, newest, vanished)' "$1" "${@:2}" 2>/dev/null || echo "-1 -1 -1"
 }
 
 # THE PROBE-LITERAL REGISTRY — the content axis's whole input, and deliberately SPARSE (a binary
@@ -330,11 +362,23 @@ print(binary_mtime, int(newest), vanished)' "$1" 2>/dev/null || echo "-1 -1 -1"
 # where the provenance records the PR that introduced the literal so a future reader can tell what
 # the assertion is protecting rather than guessing.
 #
+# FORMAT CONSTRAINT: `|` is the field separator, so a literal containing `|` is silently TRUNCATED
+# by probe_literal_for below and by the test harness's own parse — both would agree on the wrong
+# value, so no test could catch it. `make script-check` asserts the field count for this reason;
+# pick a literal without a pipe, or change the separator here and in registry_entries together.
+#
 # Choose a literal for UNIQUENESS, and test PRESENCE rather than a count. `grep -c forward_horizon`
 # returns 3 today only because the compiler did not merge three verdict literals sharing that
 # prefix — an unrelated edit could collapse it to 1 and turn a healthy binary red. Presence is
-# immune to merge behavior, and faster besides: 0.01s on a hit, 0.18s worst case for a full scan of
-# the 262 MB ls-ingest.
+# immune to merge behavior.
+#
+# COST, measured with the grep a non-interactive script actually resolves (`/usr/bin/grep`, BSD):
+# 0.05s for the registered 4.8 MB calendar-refresh, but ~4.1s for a full scan of the 262 MB
+# ls-ingest when the literal is ABSENT — a full scan is the miss case, and it is the miss case that
+# refuses. (An earlier note here read 0.18s; that was measured against an interactive shell whose
+# `grep` is aliased to `ugrep`, which the script never uses.) Today's registry costs 0.05s, but the
+# deferred "register the other six" follow-up would put ~12s on the 08:45 path for the three large
+# binaries, so size the registry against 4s-per-large-miss rather than the old figure.
 #
 # The registry grows when a GUARD SHIPS, not on a schedule. Registering an arbitrary literal for a
 # binary with no recent load-bearing change asserts nothing, so the other six stay unregistered
@@ -361,13 +405,14 @@ probe_literal_for() { # $1 = binary basename
 # At most ONE cause is recorded per binary, and the order is deliberate: a stale binary reports
 # staleness rather than a confusing downstream failure.
 check_binary() { # $1 = absolute path to a required binary
-  local f="$1" name bin_mtime src_mtime vanished literal
+  local f="$1" name bin_mtime src_mtime vanished literal pinned=0
   name="${f##*/}"
   if [[ ! -x "$f" ]]; then
     missing=$((missing + 1)); missing_bins+=("$name"); bin_verdict="MISS"; return
   fi
   bin_verdict="ok"
-  read -r bin_mtime src_mtime vanished <<<"$(dep_freshness "$f")"
+  read -r bin_mtime src_mtime vanished \
+    <<<"$(dep_freshness "$f" ${BIN_EXTRA_FRESHNESS_INPUTS[@]+"${BIN_EXTRA_FRESHNESS_INPUTS[@]}"})"
   # UNEVALUABLE is NOT bypassable by the override, and the distinction is the point. "Stale" is a
   # KNOWN state an operator can pin on purpose — that is the whole justification for the escape.
   # "Unevaluable" is this preflight not knowing WHAT it is about to run, and no operator assertion
@@ -382,14 +427,18 @@ check_binary() { # $1 = absolute path to a required binary
     # Stale, and taken as deliberately pinned. Reported PER BINARY rather than only through the
     # banner above, so the transcript names exactly which artifacts the operator vouched for —
     # and execution continues to the content axis, which the override never reaches.
-    bin_verdict="PIN"
+    bin_verdict="PIN"; pinned=1
   fi
   # THE CONTENT AXIS, reached only once the mtime axis has PASSED or been overridden. Ordering it
   # last is deliberate: a stale binary must report staleness rather than a literal failure that is
   # merely a downstream symptom of it.
   literal="$(probe_literal_for "$name")"
   if [[ -n "$literal" ]] && ! grep -qaF -- "$literal" "$f"; then
-    noliteral_bins+=("$name|$literal"); bin_verdict="NOSIG"
+    # Carry the PIN fact into the entry rather than discarding it. A pinned binary that ALSO lacks
+    # its guard is not the ambiguous rebuild-or-reword case: the mtime axis already established
+    # that it predates its inputs, so the refusal below can name the answer instead of handing the
+    # operator an open question at 08:45.
+    noliteral_bins+=("$name|$literal|$pinned"); bin_verdict="NOSIG"
   fi
 }
 
@@ -399,10 +448,17 @@ check_binary() { # $1 = absolute path to a required binary
 # lab-research and lab-mount-universe live in the `lab` member rather than the default-run
 # package (`cargo build --bin lab-research` alone fails with "no bin target ... in default-run
 # packages"). One form that works for all seven beats a per-binary package mapping that can drift.
+#
+# ONE command covering every named binary, not one per binary. The cross-workspace case this design
+# targets — a `crates/ls-core` or `metadata/` edit — implicates all seven at once, because all seven
+# dep-info sets share those paths. Printing seven sequential `cargo build` invocations there would
+# hand the operator seven separate relinks under the 09:05 clock when a single invocation rebuilds
+# them together and shares the compile.
 rebuild_hint() { # $1.. = binary names
-  local b
+  local b targets=""
+  for b in "$@"; do targets="$targets --bin $b"; done
   echo "       rebuild, from the adapters/nautilus workspace:" >&2
-  for b in "$@"; do echo "         (cd $NAUT && cargo build --workspace --bin $b)" >&2; done
+  echo "         (cd $NAUT && cargo build --workspace$targets)" >&2
 }
 
 # ------------------------------------------------------------------------ preflight
@@ -430,8 +486,14 @@ fi
 # absent one, and turn4-ingest.sh already refuses on -x for exactly this reason.
 if (( allow_stale_bins )); then
   say "LS_SM_ALLOW_STALE_BINARIES=1 — the preflight mtime axis is BYPASSED for this run."
-  say "  Every required binary is being taken as deliberately pinned. The content axis still"
-  say "  applies: a binary missing its registered guard literal is refused regardless."
+  say "  ALL SEVEN required binaries are taken as deliberately pinned: the switch has no"
+  say "  per-binary form, so pinning one artifact waives the mtime evidence for the other six too."
+  # State the residual coverage HONESTLY rather than reassuringly. "The content axis still applies"
+  # is true but nearly vacuous while the registry holds one entry of seven — the six unregistered
+  # binaries have NO freshness evidence at all on an overridden run, and an operator deciding
+  # whether that is acceptable needs the count, not the principle.
+  say "  Residual coverage this run: the content axis, which is NOT bypassable — but it is"
+  say "  registered for ${#BIN_PROBE_LITERALS[@]} of 7 binaries, so the rest carry no freshness evidence at all."
 fi
 missing=0
 missing_bins=(); stale_bins=(); unprovable_bins=(); noliteral_bins=()
@@ -486,21 +548,34 @@ if (( ${#stale_bins[@]} )); then
 fi
 if (( ${#noliteral_bins[@]} )); then
   echo "error: ${#noliteral_bins[@]} required binary(ies) are missing their REGISTERED GUARD literal:" >&2
+  noliteral_names=(); any_unpinned=0
   for e in "${noliteral_bins[@]}"; do
-    echo "         BIN_PROBE_LITERALS entry '${e%%|*}' expects: ${e#*|}" >&2
+    nl_name="${e%%|*}"; nl_rest="${e#*|}"
+    nl_literal="${nl_rest%|*}"; nl_pinned="${nl_rest##*|}"
+    noliteral_names+=("$nl_name")
+    if (( nl_pinned )); then
+      # The mtime axis already proved this one predates its inputs, so do NOT present the
+      # rebuild-or-reword ambiguity below as an open question for it — the answer is known.
+      echo "         BIN_PROBE_LITERALS entry '$nl_name' expects: $nl_literal" >&2
+      echo "           ^ this binary is ALSO stale by mtime and was let through only by" >&2
+      echo "             LS_SM_ALLOW_STALE_BINARIES. The cause is not ambiguous: REBUILD it." >&2
+    else
+      echo "         BIN_PROBE_LITERALS entry '$nl_name' expects: $nl_literal" >&2
+      any_unpinned=1
+    fi
   done
-  echo "       TWO causes, needing OPPOSITE fixes — tell them apart before acting:" >&2
-  echo "         * the binary predates the guard, or was built from another tree. The mtime axis" >&2
-  echo "           cannot see that: an INVERTED binary is newer than every source yet built from" >&2
-  echo "           older code, which is what a build racing a git pull, a build in another" >&2
-  echo "           worktree, or \`touch target/debug/*\` produces. Rebuild." >&2
-  echo "         * the SOURCE was reworded, so the registry entry above is now stale. Left alone" >&2
-  echo "           that is a permanent exit 64 on every morning until the entry is updated." >&2
-  echo "       \`make script-check\` decides which: it asserts that every registered literal still" >&2
-  echo "       occurs in the repo's Rust sources. A FAILURE there means fix the registry entry; a" >&2
-  echo "       PASS there means the source still says it and the binary is the problem — rebuild:" >&2
-  noliteral_names=()
-  for e in "${noliteral_bins[@]}"; do noliteral_names+=("${e%%|*}"); done
+  if (( any_unpinned )); then
+    echo "       TWO causes, needing OPPOSITE fixes — tell them apart before acting:" >&2
+    echo "         * the binary predates the guard, or was built from another tree. The mtime axis" >&2
+    echo "           cannot see that: an INVERTED binary is newer than every source yet built from" >&2
+    echo "           older code, which is what a build racing a git pull, a build in another" >&2
+    echo "           worktree, or \`touch target/debug/*\` produces. Rebuild." >&2
+    echo "         * the SOURCE was reworded, so the registry entry above is now stale. Left alone" >&2
+    echo "           that is a permanent exit 64 on every morning until the entry is updated." >&2
+    echo "       \`make script-check\` decides which: it asserts that every registered literal still" >&2
+    echo "       occurs in the repo's Rust sources. A FAILURE there means fix the registry entry; a" >&2
+    echo "       PASS there means the source still says it and the binary is the problem — rebuild:" >&2
+  fi
   rebuild_hint "${noliteral_names[@]}"
   echo "       LS_SM_ALLOW_STALE_BINARIES does NOT bypass this axis. A binary pinned on purpose is" >&2
   echo "       still pinned to code containing its registered guard, so nothing legitimate needs" >&2
