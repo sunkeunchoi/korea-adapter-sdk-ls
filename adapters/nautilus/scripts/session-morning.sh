@@ -219,11 +219,23 @@ if [[ -n "${LS_SM_NOW:-}" ]] && (( ! dry_run && ! self_test )); then
   echo "       Unset it, or pass --dry-run / --self-test." >&2
   exit 64
 fi
+# TWO CLASSES, discriminated by LOCATION rather than by a second hand-maintained list.
+# Seven of these twelve paths are compiled artifacts under $BIN and five are state or config
+# the chain reads; only the former can be STALE, so only the former carry the freshness axes
+# below. Classifying on the `$BIN/` prefix is what keeps the two sets from drifting: the next
+# binary added joins this one loop and picks up the freshness axes for free, whereas a separate
+# binary list would let it join the existence check and silently skip freshness, with no signal.
+# The binary class also tests -x rather than -e — an unexecutable artifact is as unusable as an
+# absent one, and turn4-ingest.sh already refuses on -x for exactly this reason.
 missing=0
 for f in "$BIN/calendar-fetch-inputs" "$BIN/calendar-refresh" "$BIN/calendar-activate" \
          "$BIN/calendar-status" "$BIN/ls-ingest" "$BIN/lab-research" "$BIN/lab-mount-universe" \
          "$SNAPSHOT" "$LANE_ENV" "$ENV_CALENDAR" "$UNIVERSE_METADATA" "$CKPT"; do
-  if [[ -e "$f" ]]; then say "ok   $f"; else say "MISS $f"; missing=$((missing+1)); fi
+  if [[ "$f" == "$BIN/"* ]]; then
+    if [[ -x "$f" ]]; then say "ok   $f"; else say "MISS $f"; missing=$((missing+1)); fi
+  else
+    if [[ -e "$f" ]]; then say "ok   $f"; else say "MISS $f"; missing=$((missing+1)); fi
+  fi
 done
 (( missing )) && { echo "error: $missing required path(s) missing" >&2; exit 64; }
 
