@@ -44,6 +44,7 @@ cargo test -p ls-core  # metadata validation + policy index cross-check
 make docs-check      # assert generated docs match committed
 make lane-check      # smoke-harness fail-fast lane guard (offline; no gateway)
 make adapter-check   # standalone nautilus adapter workspace (offline; only if a touched file reaches it)
+make script-check    # session-morning.sh live-path harness (offline; only if a touched file reaches it)
 make todo-check      # legacy TODO-file guard (enforced — cutover verdict is PASS; queue/items.jsonl is the sole staging location)
 ```
 
@@ -56,6 +57,18 @@ root `cargo test` never touches it. Run it whenever a change can reach the adapt
 — any `ls-sdk`/`ls-core` edit the adapter builds on (a constraint-schema/preflight
 change can redden the adapter invisibly), or any edit under `adapters/nautilus/`.
 It also runs on push/PR in CI (`.github/workflows/adapter-check.yml`).
+
+`make script-check` (`adapters/nautilus/scripts/tests/session-morning.test.sh`) is the
+morning chain's live-path harness: it drives `session-morning.sh` against stubbed
+binaries in a throwaway fixture repo, then replays the argv it marshalled against the
+REAL compiled `calendar-fetch-inputs`. Scoped like `adapter-check` — run it by hand
+when a touched file reaches what it covers: anything under
+`adapters/nautilus/scripts/`, or an argv or state-root change in
+`adapters/nautilus/src/bin/calendar-fetch-inputs.rs` (which is *not* under
+`scripts/` — it is the parser the replay exercises). It needs
+`adapters/nautilus/target/debug/calendar-fetch-inputs`, which
+`make adapter-check` builds, so run it after that step and not before. `make gate-run`
+runs it automatically in that position.
 
 ## TR support lifecycle
 

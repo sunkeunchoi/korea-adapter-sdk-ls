@@ -57,9 +57,11 @@
 #     that any real binary is current. Nothing here builds or replays `calendar-refresh` —
 #     the binary that actually carries PR #258's guard remains the structurally least
 #     covered one, which is a real gap on a different axis.
-#   * `make script-check` is not a `make gate-run` step and no CI workflow invokes it, so the
-#     R10 literal-drift assertion below makes a reworded probe literal DIAGNOSABLE, not
-#     preempted: a reword still reaches the 08:45 chain as a hard exit 64.
+#   * `make script-check` runs as step 7 of `make gate-run` (after adapter-check, which
+#     builds the binary the argv replay needs), so the R10 literal-drift assertion below
+#     PREEMPTS a reworded probe literal at the commit gate. No CI workflow invokes the
+#     target, so a commit that never ran the gate can still carry a reword to the 08:45
+#     chain as a hard exit 64 — the refusal message is what stays diagnosable there.
 
 set -uo pipefail
 
@@ -822,9 +824,10 @@ case "$CHAIN_OUT" in
   *) no "the literal-absent refusal is distinct from the absent and stale messages" \
         "a 'missing their REGISTERED GUARD literal' message" "$CHAIN_OUT" ;;
 esac
-# R7's containment for the reworded-source case: nothing runs `make script-check` automatically, so
-# the refusal message itself is what lets an operator at 08:45 tell a reworded source from a stale
-# binary in one line — and fix the registry rather than reach for the override.
+# R7's containment for the reworded-source case: `make script-check` is a `make gate-run` step, but a
+# commit that skipped the gate can still land a reword, so the refusal message itself is what lets an
+# operator at 08:45 tell a reworded source from a stale binary in one line — and fix the registry
+# rather than reach for the override.
 case "$CHAIN_OUT" in
   *"BIN_PROBE_LITERALS entry 'calendar-refresh' expects:"*)
     ok "the literal-absent refusal names the registry entry" ;;
@@ -864,8 +867,9 @@ fi
 drop_fixture
 
 # --- R10: a registered literal that no longer occurs in the sources is a PERMANENT exit 64 -----
-# Nothing runs `make script-check` automatically — it is not a gate-run step and no CI workflow
-# invokes it — so this cannot PREEMPT a reword reaching the 08:45 chain. It makes it diagnosable.
+# `make script-check` is step 7 of `make gate-run`, so this PREEMPTS a reword at the commit gate. No
+# CI workflow invokes the target, so a gate-less commit can still carry one to the 08:45 chain — the
+# refusal message below is what keeps that case diagnosable.
 REPO_ROOT="$(cd "$HERE/../../../.." && pwd)"
 RUST_ROOTS=("$REPO_ROOT/adapters/nautilus/src" "$REPO_ROOT/adapters/nautilus/lab/src" \
             "$REPO_ROOT/adapters/nautilus/nautilus-ls-calendar/src" "$REPO_ROOT/crates")

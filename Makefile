@@ -1165,13 +1165,14 @@ adapter-check:
 ## calendar-refresh, the binary that actually carries the #258 guard, and nothing
 ## asserts the registered literal is present in a REAL compiled artifact (R10 checks
 ## the Rust sources, and the fixture PLANTS the literal into its stub).
-## KNOWN FLAKE: `normal mode: the stalled ingest is killed` fails roughly 1 run in 4-6
-## under machine load. It predates the freshness work (reproduced at 92ba1ed) — the
-## step [7] poll races the stub's own 10s sleep. Re-run before investigating.
-## Not yet a `make gate-run` step; run it when touching adapters/nautilus/scripts/.
-## That also bounds R10: a reworded probe literal is made DIAGNOSABLE here, not
-## preempted — nothing runs this target automatically, so a reword still reaches the
-## 08:45 chain as a hard exit 64.
+## Runs as step 7 of `make gate-run`, immediately after adapter-check — which is the
+## step that builds the calendar-fetch-inputs the argv replay needs, so no earlier
+## position exists. Hand-run scope is AGENTS.md's: anything under
+## adapters/nautilus/scripts/, OR an argv or state-root change in
+## adapters/nautilus/src/bin/calendar-fetch-inputs.rs — which is NOT under scripts/,
+## and is exactly the file the argv replay guards.
+## That is what gives R10 its teeth: a reworded probe literal is now PREEMPTED at the
+## commit gate rather than surfacing as a hard exit 64 on the 08:45 chain.
 script-check:
 	@bash adapters/nautilus/scripts/tests/session-morning.test.sh
 
@@ -1191,9 +1192,11 @@ todo-check:
 .PHONY: gate-run
 
 ## Resumable driver for the AGENTS.md offline gate (plan 2026-07-29-002 U4,
-## KTD4): runs the seven gate steps in order (docs, root cargo test, ls-core,
-## docs-check, lane-check, adapter-check, todo-check), recording per-step completion plus a
-## whole-tree fingerprint to the gitignored .gate-run/state.json. A re-run
+## KTD4): runs the eight gate steps in order (docs, root cargo test, ls-core,
+## docs-check, lane-check, adapter-check, script-check, todo-check), recording
+## per-step completion plus a whole-tree fingerprint to the gitignored
+## .gate-run/state.json. script-check follows adapter-check because that is the
+## step which builds the calendar-fetch-inputs its argv replay needs. A re-run
 ## resumes from the first incomplete or invalidated step — any tree change
 ## invalidates recorded steps (spurious re-run possible, false green never).
 ## `scripts/gate-run.sh --status` prints machine-readable state for lab-next.
