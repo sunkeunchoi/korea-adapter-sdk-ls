@@ -417,6 +417,17 @@ Two further results, both of which correct this package's own premises:
 > operator-runnable, and it would settle obligations 3 and 16's completeness
 > *before* the paid ask. **Recorded as available, not taken: this is an
 > acquisition act and #255's acceptance is acquire-and-verify.**
+>
+> **TAKEN and VERIFIED 2026-08-04.** The 이용신청 was made and approved for **six**
+> services (종목기본정보 and 일별매매정보, each × KOSPI/KOSDAQ/KONEX), all confirmed
+> answering on the production path with the existing `LS_KRX_APPKEY`. The 10-row
+> sample cap is discharged: production returns 943 / 1,820 / 109 rows. obl. 16 is
+> now **settled NEGATIVE on whole-market evidence**, and obl. 3's class authority is
+> mapped — including a **correction**: a SPAC *is* identifiable via `SECT_TP_NM`,
+> subject to three structural limits. Full record in the 2026-08-04 addendum to
+> `krx-part-a-public-pass-findings.md`. Completeness itself remains
+> `UNESTABLISHED` — no independent census has been reconciled. `may_begin` is
+> unchanged and still **false**.
 
 ### A5 — 정리매매 settled, and the answer is a hard NO
 

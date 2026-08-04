@@ -2844,3 +2844,114 @@ that is the main way to shrink the paid conversation further.
     KRX Marketplace purchase for history — which regime governs an artifact derived from
     both?** Route A carves out Original Work; Route B pulls 가공한 정보 in. A hash over a
     dataset spanning both sources currently has two contradictory published answers.
+
+---
+
+# Addendum, 2026-08-04 — the production pass: the 이용신청 verified live
+
+Part A ran entirely against the **sample** endpoint and closed with one free
+acquisition step recorded but untaken: a per-service 이용신청 for the base-info
+services. That application has since been made and **approved for six services**.
+This addendum records the verification probe, which discharges the sample-endpoint
+limitation stated at A6 and **corrects one Part A finding**.
+
+## What was probed
+
+All six services answer on the **production** path with this repository's existing
+production `AUTH_KEY` (`LS_KRX_APPKEY`, `.env.calendar`). `basDd=20260803`, the last
+session with a POSITIVE KRX witness.
+
+| Service | Path | http | rows |
+|---|---|---|---|
+| 유가증권 종목기본정보 | `sto/stk_isu_base_info` | 200 | 943 |
+| 코스닥 종목기본정보 | `sto/ksq_isu_base_info` | 200 | 1,820 |
+| 코넥스 종목기본정보 | `sto/knx_isu_base_info` | 200 | 109 |
+| 유가증권 일별매매정보 | `sto/stk_bydd_trd` | 200 | 943 |
+| 코스닥 일별매매정보 | `sto/ksq_bydd_trd` | 200 | 1,820 |
+| 코넥스 일별매매정보 | `sto/knx_bydd_trd` | 200 | 109 |
+
+**Path trap, recorded so it is not rediscovered.** The market group in the path is
+`sto` for **all** equity services, including KOSDAQ and KONEX. `ksq/ksq_isu_base_info`
+and `knx/knx_isu_base_info` both return `404 {"respMsg":"API referenced by the path
+does not exist."}` — which is indistinguishable at a glance from an unapproved
+service, and would have been misread as a failed 이용신청. Vary the path before
+concluding anything about entitlement.
+
+**The 10-row sample cap is gone.** A6 could not distinguish "the master is complete"
+from "the sample endpoint returns 10 rows for every `basDd`". Production returns
+943 / 1,820 / 109 — whole-market magnitudes. That limitation is **discharged**.
+
+> **Completeness is still not fully established, and this addendum does not claim it.**
+> A6 set the bar at three steps: a real `AUTH_KEY`, a production call, and
+> reconciliation against an **independent** listed-issue census. The first two are
+> done. The third is not. Base-info and 일별매매정보 agree exactly per market
+> (943/1,820/109 both ways), but both are KRX-sourced, so that is **internal
+> consistency, not independent corroboration**. Completeness remains `UNESTABLISHED`
+> in A6's strict sense.
+
+## obl. 16 — 업종 is NOT served. Confirmed on production, whole market.
+
+The base-info record carries **12 fields**: `ISU_CD`, `ISU_SRT_CD`, `ISU_NM`,
+`ISU_ABBRV`, `ISU_ENG_NM`, `LIST_DD`, `MKT_TP_NM`, `SECUGRP_NM`, `SECT_TP_NM`,
+`KIND_STKCERT_TP_NM`, `PARVAL`, `LIST_SHRS`. None is an industry classification.
+
+`SECT_TP_NM` is the only field that could be mistaken for one, and it is not: its
+values are **board sections** (`중견기업부`, `우량기업부`, `벤처기업부`,
+`기술성장기업부`, `일반기업부`) plus status labels. Part A's NEGATIVE answer holds,
+now on production evidence at n=2,872 rather than a 10-row sample. **업종 stays its
+own acquisition line; M17's near-zero-marginal-cost premise stays false.**
+
+## obl. 3 — CORRECTION: a SPAC *is* identifiable, partially, and not where Part A looked
+
+Part A recorded: *"nothing identifies a SPAC (SPAC = `SECUGRP_ID='ST'` like any
+ordinary share)."* That is **true of `SECUGRP_NM` and false of the record as a whole.**
+
+Whole-market distributions at `basDd=20260803`, n=2,872:
+
+- **`SECUGRP_NM`** — `주권` 2,825, `부동산투자회사` 23, `외국주권` 12,
+  `주식예탁증권` 9, `사회간접자본투융자회사` 2, `투자회사` 1. So it **does** separate
+  REIT, foreign and DR, and **does not** separate 보통주/우선주 or mark a SPAC.
+  Part A correct on both counts.
+- **`KIND_STKCERT_TP_NM`** — `보통주` 2,759, `구형우선주` 78, `신형우선주` 23,
+  `종류주권` 12. Preferred separation lives here, 113 non-보통주 issues, every one of
+  them `SECUGRP_NM='주권'`. Part A correct.
+- **`SECT_TP_NM`** — carries an explicit **`SPAC(소속부없음)`** value: **68 issues.**
+  This is the correction.
+
+**Three structural limits on that discriminator, all load-bearing for D3:**
+
+1. **It is KOSPI-blind.** `SECT_TP_NM` is empty for **all 943** KOSPI issues and
+   populated for all 1,820 KOSDAQ and all 109 KONEX. A KOSPI-listed SPAC is not
+   identifiable by this field at all. (All 68 labelled SPACs are KOSDAQ.)
+2. **It is a single slot, so status DISPLACES class.** 71 issues are named
+   `기업인수목적`; only 68 are labelled `SPAC(소속부없음)`. The 3 missing ones —
+   `465320` 교보15호기업인수목적, `471050` 대신밸런스제17호기업인수목적, `472220`
+   신영해피투모로우제10호기업인수목적 — all read `관리종목(소속부없음)` instead. **An
+   administrative designation overwrites the SPAC classification.**
+3. Therefore the discriminator **fails precisely on distressed names**, silently, and
+   fails in the direction that matters: a universe contract loses the knowledge that
+   an issue is a SPAC exactly when that issue enters 관리종목. This is the same shape
+   as #245's `is_tradable = designation.is_none()` concern — a class fact and a status
+   fact competing for one field.
+
+**Consequence for D3.** SPAC class authority is now *partially* available where Part A
+said it was absent, but it cannot be taken from `SECT_TP_NM` alone: doing so
+misclassifies every KOSPI SPAC and every 관리종목 SPAC. A name-pattern fallback on
+`기업인수목적` recovered exactly the 3 missing issues here, but that is a heuristic on
+a free-text field and is offered as an observation, not a rule.
+
+> **Method note.** A first pass matched `'SPAC'` against `ISU_ENG_NM` and returned 78 —
+> contaminated by 7 substring hits on **AEROSPACE**/**Space** (한화에어로스페이스,
+> 한국항공우주산업, 나라스페이스테크놀로지, …). The figures above use
+> `SECT_TP_NM == 'SPAC(소속부없음)'` and the Korean `기업인수목적` on `ISU_NM`. Recorded
+> because the contaminated number was briefly believed.
+
+**Source.** Live production calls to `data-dbg.krx.co.kr/svc/apis/sto/{stk,ksq,knx}_isu_base_info`
+and `.../{stk,ksq,knx}_bydd_trd` at `basDd=20260803`, 2026-08-04 `[PRIMARY]`.
+
+**Status.** 이용신청 verification `SETTLED` — six services live on production. obl. 16
+`SETTLED, NEGATIVE` on whole-market evidence. obl. 3 `PARTIALLY SETTLED` — class
+authority mapped for REIT/foreign/DR/preferred/SPAC, with the SPAC discriminator's
+three limits above as the open residual. Base-info **completeness** remains
+`UNESTABLISHED` pending an independent census. `may_begin` is **unchanged and still
+false**: neither obligation 17 nor 18 is touched by any of this.
