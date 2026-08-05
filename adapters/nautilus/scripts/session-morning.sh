@@ -382,11 +382,13 @@ print(binary_mtime, newest, vanished)' "$1" "${@:2}" 2>/dev/null || echo "-1 -1 
 #
 # The registry grows when a GUARD SHIPS, not on a schedule. Registering an arbitrary literal for a
 # binary with no recent load-bearing change asserts nothing, so the other six stay unregistered
-# until they carry something worth asserting. `make script-check` fails when a registered literal
-# no longer occurs in the repo's Rust sources, and it is a `make gate-run` step, so a reword is
-# normally PREEMPTED at the commit gate. A gate-less commit can still land one, so the refusal
-# message itself names the entry — the operator can tell a reworded source from a stale binary in
-# one line.
+# until they carry something worth asserting. `make script-check` fails on BOTH ends of each entry:
+# when a registered literal no longer occurs in the repo's Rust sources (R10 — a reword), and when
+# it is absent from the real compiled `target/debug` artifact it is registered for (R11 — a stale
+# or inverted build). It is a `make gate-run` step running right after adapter-check builds those
+# artifacts, so either is normally PREEMPTED at the commit gate. A gate-less commit can still land
+# a reword, so the refusal message below names the entry — the operator can tell a reworded source
+# from a stale binary in one line.
 BIN_PROBE_LITERALS=(
   "calendar-refresh|REFUSED (asked for|PR #258 forward-horizon guard — the refusal line whose ABSENCE reads as a clean pass"
 )

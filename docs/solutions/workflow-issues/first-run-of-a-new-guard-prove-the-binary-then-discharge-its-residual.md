@@ -164,9 +164,28 @@ Two limits survive the discharge, and both are real:
 - It guards **`target/debug`**, which is what the chain pins. The `--release` artifacts — the ones
   that were actually stale in this incident — are **not** covered by it. That is why the recipe
   above keeps both assertions rather than replacing one with the other.
-- `make script-check` still never builds or replays `calendar-refresh`, so the binary carrying the
-  #258 guard remains the structurally least-covered one. The preflight now refuses a *stale* copy
-  of it; nothing yet proves its *argv*. Different axis, still open.
+- `make script-check` still never *builds* anything. It now runs as `make gate-run` step 7,
+  immediately after `adapter-check` — which is the step that produces `target/debug` — so it
+  **consumes** those artifacts rather than making them, and reports loudly when one is absent.
+
+The `calendar-refresh` half of that residual is now discharged too, on the two axes the gap
+actually had (`scripts/tests/session-morning.test.sh`):
+
+- **argv.** Step [4]'s marshalled argv is replayed against the real compiled `calendar-refresh`,
+  credentials stripped, from a foreign CWD — the same construction step [3] already had. The
+  oracle is a positive one: `run()` does `Args::parse` and then `KrxCalendar::load_from_path`
+  and nothing else in between (`calendar-refresh.rs:45-49`), so reaching the snapshot-schema error
+  proves every required flag was present and every value parsed, and it is reached long before
+  `write_candidate`, so the replay mutates nothing. Two mutation meta-tests (`--mode` stripped,
+  `--through` stripped) prove the assertion can see a broken step [4].
+- **the registered literal, in the artifact.** R11 greps every `BIN_PROBE_LITERALS` literal out of
+  the real `target/debug/<binary>` with the same `grep -qaF` the preflight runs. This is the axis
+  that was genuinely absent: R10 checks the Rust *sources*, and the fixture *plants* each literal
+  into its stub, so the content-axis tests pass by construction whatever the built tree contains.
+
+What is still uncovered is the **mtime** axis against a real artifact — nothing in the test target
+can tell a current `target/debug` from one built before the last `git pull`. That stays the
+preflight's job at 08:45, deliberately: reproducing it would mean the test target owning a build.
 
 ### 2. Discharge the guard's known residual by probe, BEFORE choosing the input
 

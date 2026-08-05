@@ -27,9 +27,12 @@
 # mirror greens the guard on argv the real binary rejects — the same silent-drift
 # class this file exists to kill. So the chain runs against stubs (no network),
 # and then the argv the script ACTUALLY marshalled is replayed against the real
-# compiled `calendar-fetch-inputs` with credentials stripped. That replay exercises
-# the real `Args::parse` AND the real `confine()` state-root check, and stops at
-# the credential refusal — before any HTTP client is constructed. Zero traffic.
+# compiled binary with credentials stripped. For step [3]'s `calendar-fetch-inputs`
+# that replay exercises the real `Args::parse` AND the real `confine()` state-root
+# check, stopping at the credential refusal — before any HTTP client is constructed.
+# For step [4]'s `calendar-refresh` it exercises the real `Args::parse` and stops at
+# the snapshot-schema load, the first thing that binary does after parsing. Zero
+# traffic on either: the second wires no HTTP client at all.
 #
 # EVERY RUN IS CLOCK-INDEPENDENT, by two different means. The calendar tests pass
 # `--stop-before-activate`, which exits after the step [5] diff gate and never
@@ -54,12 +57,18 @@
 #     reached — the catch-up runs stop one step short of them by design, and nothing here
 #     drives the attended path past the 09:00 guard.
 #   * The freshness axes are exercised against STUBS, so they prove the SCRIPT's logic, not
-#     that any real binary is current. Nothing here builds or replays `calendar-refresh` —
-#     the binary that actually carries PR #258's guard remains the structurally least
-#     covered one, which is a real gap on a different axis.
+#     that any real binary is current. Two assertions reach past the stubs to the artifacts
+#     themselves: step [4]'s argv replay against the real `calendar-refresh`, and R11, which
+#     greps every REGISTERED probe literal out of the real compiled binary it is registered
+#     for. Nothing here still BUILDS anything — both require the artifact that gate step 6
+#     (adapter-check) produced, and report loudly when it is absent.
+#   * What remains uncovered is the MTIME axis against a real artifact: nothing here can tell
+#     a current `target/debug` from one built before the last `git pull`. That is deliberate —
+#     it is the preflight's job at 08:45, and reproducing it would mean this target owning a
+#     build.
 #   * `make script-check` runs as step 7 of `make gate-run` (after adapter-check, which
-#     builds the binary the argv replay needs), so the R10 literal-drift assertion below
-#     PREEMPTS a reworded probe literal at the commit gate. No CI workflow invokes the
+#     builds the binaries the argv replays and R11 need), so the R10/R11 assertions below
+#     PREEMPT a reworded probe literal at the commit gate. No CI workflow invokes the
 #     target, so a commit that never ran the gate can still carry a reword to the 08:45
 #     chain as a hard exit 64 — the refusal message is what stays diagnosable there.
 
@@ -67,7 +76,13 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REAL_SCRIPT="$HERE/../session-morning.sh"
-REAL_BIN="$HERE/../../target/debug/calendar-fetch-inputs"
+# The prebuilt artifacts the replays and R11 read. Derived from ONE directory rather than
+# spelled out per binary: R11 resolves a binary NAMED BY THE REGISTRY, so a second hardcoded
+# path here could disagree with the one the replays use and the two would certify different
+# artifacts under the same green.
+REAL_BIN_DIR="$HERE/../../target/debug"
+REAL_BIN="$REAL_BIN_DIR/calendar-fetch-inputs"
+REAL_REFRESH_BIN="$REAL_BIN_DIR/calendar-refresh"
 
 pass=0
 fail=0
@@ -391,6 +406,42 @@ fetch_argv_from_log() { # stub log -> the calendar-fetch-inputs arguments
   printf '%s\n' "$1" | sed -n 's/^calendar-fetch-inputs //p' | head -1
 }
 
+# The same contract for STEP [4], against the binary that actually carries PR #258's
+# forward-horizon guard. calendar-refresh was the structurally least-covered binary here:
+# the argv replay reached only calendar-fetch-inputs, and every freshness axis below runs
+# against stubs, so nothing proved the real parser accepts what step [4] marshals.
+#
+# THE ORACLE, and why it is a POSITIVE signal rather than "no parse error seen".
+# `run()` (src/bin/calendar-refresh.rs:45-49) does exactly two things in order: `Args::parse`,
+# then `KrxCalendar::load_from_path` on --active. So reaching the snapshot-schema error proves
+# every required flag was present AND every value parsed — the RFC3339 --as-of, the YYYY-MM-DD
+# --through, and a --mode inside the accepted set — because none of those can be reported late.
+# It is also reached long before `write_candidate` (:75), so this replay mutates NOTHING in the
+# fixture, and this binary wires no HTTP client at all, so there is zero traffic by construction.
+#
+# The fixture's active snapshot is a one-line stub that cannot satisfy the schema, which is what
+# makes that error the reliable stopping point. If it ever became schema-valid the replay would
+# run past it and this helper would report `rejected: <output>` — LOUD and wrong-looking rather
+# than a silent green, which is the correct direction for the failure to point.
+replay_real_refresh() { # full stub-log line args -> verdict on stdout
+  local argv="$1" out
+  [ -x "$REAL_REFRESH_BIN" ] || { printf 'nobinary'; return; }
+  # Credentials stripped for the same reason as the fetch replay: --inputs is always passed, so
+  # the live port is unreachable, but unsetting them makes "no credential ever reaches this
+  # replay" structural rather than a property of the argv that happens to hold today.
+  # shellcheck disable=SC2086  # fixture paths are mktemp-generated and space-free
+  out="$(cd / && env -u LS_KRX_APPKEY -u LS_KASI_SERVICE_KEY \
+           "$REAL_REFRESH_BIN" $argv 2>&1)"
+  case "$out" in
+    *"calendar snapshot is not valid JSON for the schema"*) printf 'accepted' ;;
+    *) printf 'rejected: %s' "$(printf '%s' "$out" | tr '\n' ' ')" ;;
+  esac
+}
+
+refresh_argv_from_log() { # stub log -> the calendar-refresh arguments
+  printf '%s\n' "$1" | sed -n 's/^calendar-refresh //p' | head -1
+}
+
 # ------------------------------------------------------------------------ tests
 run_chain --stop-before-activate
 
@@ -441,6 +492,24 @@ case "$CHAIN_LOG" in
        "a calendar-refresh --through $SESSION_DATE call" "$CHAIN_LOG" ;;
 esac
 
+# And step [4]'s argv against the REAL parser, exactly as step [3]'s is. The stub above accepts
+# any argv containing --active and --through, so on its own it certifies nothing about the binary
+# the 08:45 chain actually runs.
+REFRESH_ARGV="$(refresh_argv_from_log "$CHAIN_LOG")"
+if [ -z "$REFRESH_ARGV" ]; then
+  no "step [4] argv is replayable against the real binary" "a logged argv" "$CHAIN_LOG"
+else
+  VERDICT="$(replay_real_refresh "$REFRESH_ARGV")"
+  case "$VERDICT" in
+    accepted) ok "real calendar-refresh accepts step [4]'s argv from a foreign CWD" ;;
+    nobinary) no "real calendar-refresh accepts step [4]'s argv from a foreign CWD" \
+                 "a compiled $REAL_REFRESH_BIN (run: cargo build --workspace --bin calendar-refresh)" \
+                 "binary not built" ;;
+    *)        no "real calendar-refresh accepts step [4]'s argv from a foreign CWD" \
+                 "argument parsing to pass and the run to stop at the snapshot load" "$VERDICT" ;;
+  esac
+fi
+
 case "$CHAIN_LOG" in
   *lab-mount-universe*|*ls-ingest*)
     no "no ingest/universe work before the activation stop" "neither binary called" "$CHAIN_LOG" ;;
@@ -477,6 +546,44 @@ else
     nobinary)  no "harness detects a step [3] stripped of --state" \
                   "a compiled $REAL_BIN" "binary not built" ;;
     accepted)  no "harness detects a step [3] stripped of --state" \
+                  "the real binary to REFUSE the mutated argv" "it accepted it" ;;
+  esac
+fi
+drop_fixture
+
+# NEGATIVE META-TESTS for the step [4] replay. Same reasoning as step [3]'s: an assertion whose
+# failure mode was never observed is theatre. Both sed expressions target the LIVE invocation
+# only — `--mode incremental --through` and `--through "$session_date"` are single-line forms
+# unique to session-morning.sh:863-866, while the --dry-run heredoc carries the same flags on
+# separate unquoted lines, so neither mutant edits the printed prose instead of the real call.
+run_chain_mutated 's/--mode incremental --through/--through/' --stop-before-activate
+MUT_ARGV="$(refresh_argv_from_log "$CHAIN_LOG")"
+if [ -z "$MUT_ARGV" ]; then
+  no "harness detects a step [4] stripped of --mode" "a logged argv" "$CHAIN_LOG"
+else
+  case "$(replay_real_refresh "$MUT_ARGV")" in
+    rejected*) ok "harness detects a step [4] stripped of --mode" ;;
+    nobinary)  no "harness detects a step [4] stripped of --mode" \
+                  "a compiled $REAL_REFRESH_BIN" "binary not built" ;;
+    accepted)  no "harness detects a step [4] stripped of --mode" \
+                  "the real binary to REFUSE the mutated argv" "it accepted it" ;;
+  esac
+fi
+drop_fixture
+
+# --through is the flag the forward-horizon guard reads (calendar-refresh.rs:98 compares it
+# against the prior horizon), so a step [4] that stopped passing it would disarm the very
+# refusal the content axis registers a literal for — while the stub kept logging happily.
+run_chain_mutated 's/--through "\$session_date" //' --stop-before-activate
+MUT_ARGV="$(refresh_argv_from_log "$CHAIN_LOG")"
+if [ -z "$MUT_ARGV" ]; then
+  no "harness detects a step [4] stripped of --through" "a logged argv" "$CHAIN_LOG"
+else
+  case "$(replay_real_refresh "$MUT_ARGV")" in
+    rejected*) ok "harness detects a step [4] stripped of --through" ;;
+    nobinary)  no "harness detects a step [4] stripped of --through" \
+                  "a compiled $REAL_REFRESH_BIN" "binary not built" ;;
+    accepted)  no "harness detects a step [4] stripped of --through" \
                   "the real binary to REFUSE the mutated argv" "it accepted it" ;;
   esac
 fi
@@ -907,6 +1014,51 @@ if grep -rqF --include='*.rs' -- 'REFUSED (asked for something no source ever sa
      "a fabricated literal to be absent from the Rust sources" "it was found"
 else
   ok "the literal-drift assertion can see a fabricated registry entry"
+fi
+
+# --- R11: every registered literal must be in the REAL COMPILED ARTIFACT, not just the sources --
+# R10 above proves the registry has not drifted from the Rust SOURCES; the freshness section
+# proves the SCRIPT refuses a stub the fixture deliberately withheld the literal from. Neither
+# touches the artifact the 08:45 chain actually greps — the fixture PLANTS the literal into its
+# stub, so the content axis passes there by construction whatever `target/debug` contains.
+#
+# That gap is the exact shape of
+# docs/solutions/workflow-issues/first-run-of-a-new-guard-prove-the-binary-then-discharge-its-residual.md:
+# a guard's verdict certifies neither its own presence nor its inputs. This is the assertion that
+# certifies its presence, and it is the same `grep -qaF` the preflight itself runs
+# (session-morning.sh:438) — PRESENCE, never a count, because all three forward_horizon verdicts
+# share a byte-identical prefix and a count is an artifact of literal merging (KTD4).
+#
+# The real binary is REQUIRED, reported loudly when absent exactly as the argv replay does. This
+# target is `make gate-run` step 7, immediately after adapter-check, which is the step that builds
+# these artifacts — so an absent binary means the gate was run out of order, not that the check is
+# optional.
+while IFS='|' read -r RB RLIT _; do
+  [ -n "$RB" ] || continue
+  if [ ! -x "$REAL_BIN_DIR/$RB" ]; then
+    no "registered literal for $RB is present in the real compiled artifact" \
+       "a compiled $REAL_BIN_DIR/$RB (run: cargo build --workspace --bin $RB, from adapters/nautilus)" \
+       "binary not built"
+  elif grep -qaF -- "$RLIT" "$REAL_BIN_DIR/$RB"; then
+    ok "registered literal for $RB is present in the real compiled artifact"
+  else
+    no "registered literal for $RB is present in the real compiled artifact" \
+       "'$RLIT' in $REAL_BIN_DIR/$RB — the preflight would refuse this binary at 08:45 (exit 64)" \
+       "absent from the built artifact; rebuild it, or fix BIN_PROBE_LITERALS if the source was reworded"
+  fi
+done < <(registry_entries)
+
+# Falsifiable in its own right: the grep must be able to return ABSENT against the same artifact.
+# Without this a `grep` invocation that silently succeeded on everything would green the block
+# above, which is the failure mode R10's fabricated-entry check exists to rule out for sources.
+if [ ! -x "$REAL_REFRESH_BIN" ]; then
+  no "the artifact-literal assertion can see a fabricated literal" \
+     "a compiled $REAL_REFRESH_BIN" "binary not built"
+elif grep -qaF -- 'REFUSED (asked for something no binary ever says' "$REAL_REFRESH_BIN"; then
+  no "the artifact-literal assertion can see a fabricated literal" \
+     "a fabricated literal to be absent from the built artifact" "it was found"
+else
+  ok "the artifact-literal assertion can see a fabricated literal"
 fi
 
 # --- NEGATIVE META-TESTS (R12): prove this harness can SEE each axis removed -------------------
