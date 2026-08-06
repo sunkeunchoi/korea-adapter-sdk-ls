@@ -60,6 +60,42 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Falsified candidates — two pieces of in-tree guidance retired so the next agent is not sent at an already-dead lever (2026-08-06) — plan 2026-08-05-001 (U7)
+
+Documentation and one doc comment only. **No behavioral edit**: `strategy_code_hash` is
+unchanged before and after (`7571abef…`), so head identity does not move.
+
+- **FALSIFIED BY MEASUREMENT — a minimum opening-range-width entry filter. It has no
+  population to cut.** The idea is that a breakout whose range `R` is narrow relative to
+  the round-trip cost cannot pay for itself, so those entries should be filtered out.
+  Measured on the v35 run (`20260731T023138Z-backtest-orb-v35`, catalog `ac026541`,
+  139 breakout envelopes), under the head's armed `stop_mode = RangeLow` — where `R` *is*
+  the opening-range width — the range width as a fraction of the breakout price is:
+
+  | | min | p05 | p25 | p50 | p75 | max |
+  |---|---|---|---|---|---|---|
+  | OR width | 127.0 bps | 158.5 bps | 250.0 bps | 358.7 bps | 443.2 bps | 1,224.9 bps |
+  | × the 23 bps round-trip hurdle | **5.5×** | 6.9× | 10.9× | 15.6× | 19.3× | 53.3× |
+
+  **Zero of 139** breakouts sit below the hurdle, and only two below six times it. The
+  *narrowest* range in the whole sample already clears the statutory + brokerage cost by
+  5.5×. A minimum-width floor set anywhere near the hurdle cuts nothing; set high enough to
+  cut anything, it is no longer a cost argument but an ordinary width sweep — and
+  `or_width_max_atr` (kept at 0.666) already governs the width axis from the other side.
+  The hurdle is 20 bps statutory sell tax + 1.5 bps/side commission
+  (`cost_sell_tax_rate 0.002`, `cost_commission_rate_per_side 0.00015`).
+
+  Do not spend a turn on it. If it is re-proposed, the answer is this table.
+
+- **CORRECTED — the `profit_target_r` doc comment no longer advertises 1.5 as an
+  unexplored optimum.** `lab/src/params.rs` described **1.5** as "the Step-0 sim optimum
+  reserved for a later param-turn sweep". That sweep already ran. Turn 9 swept
+  `profit_target_r` off v9 in both directions and **both legs were worse** — 1.5 gave
+  expectancy −4,406 KRW/trade against v9's −3,157, and 1.05 gave −35,969; turn 11's 0.75
+  leg was a further Phase-A STOP. The winner-MFE cluster peaks just above 1.0R, so 1.0 sits
+  on the peak. The comment now records that, and points at
+  `docs/solutions/conventions/strategy-loop-turn-9-profit-target-sweep-and-mfe-distribution.md`.
+
 ## Governance — rung-1 ladder STAND-DOWN recorded: net-negative cost-aware head; frozen prereg v2 left untouched as the historical record (2026-07-31) — queue rung1-prereg-band-zero-cost-inheritance
 
 - **Verdict: STAND DOWN (the stand-down arm of the queue item's re-derive-or-stand-down

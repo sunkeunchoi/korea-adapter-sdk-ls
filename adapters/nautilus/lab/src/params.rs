@@ -41,9 +41,16 @@ pub struct OrbParams {
     pub notional_per_position: f64,
     /// Fixed profit target in R-multiples of the opening range
     /// (`R = range_high − range_low`): while Long, exit when a bar's high reaches
-    /// `entry_price + profit_target_r · R`. Provisional default **1.0**; **1.5** is
-    /// the Step-0 sim optimum reserved for a later param-turn sweep. Prior manifests
+    /// `entry_price + profit_target_r · R`. Default **1.0**. Prior manifests
     /// lacking this key still deserialize (KTD3) — hence the `serde(default)`.
+    ///
+    /// **Do not re-tune this.** Turn 9 already swept it off v9 in both directions
+    /// and *both legs were worse*: 1.5 (the Step-0 sim's optimum, which this
+    /// comment used to advertise as unexplored) un-clipped the runners but stopped
+    /// the 1.0–1.5R band banking, and 1.05 was decisively worse still. Turn 11's
+    /// 0.75 leg was a further STOP. The winner-MFE cluster peaks just above 1.0R,
+    /// so 1.0 sits on the peak rather than beside it. See
+    /// `docs/solutions/conventions/strategy-loop-turn-9-profit-target-sweep-and-mfe-distribution.md`.
     #[serde(default = "default_profit_target_r")]
     pub profit_target_r: f64,
     /// Entry breakout-strength band-pass floor (turn 10, R1/KTD2). At the
