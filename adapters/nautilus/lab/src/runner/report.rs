@@ -797,6 +797,49 @@ pub struct SampleMarginOutcome {
     pub requires_rederivation: bool,
 }
 
+/// One row of the target-effect band (U5): required n is proportional to the
+/// inverse square of the target, so a single point estimate hides how sharply
+/// the answer moves. The band spans the gross edge's own confidence interval.
+#[derive(Debug, Clone, PartialEq)]
+pub struct TargetEffectRow {
+    /// Where in the interval this target sits.
+    pub label: String,
+    /// The per-trade effect the row is computed at.
+    pub target_effect: f64,
+    /// Closed trades required there (design-effect inflated).
+    pub required_trades: f64,
+    /// Sessions required there, at the observed trades-per-session rate.
+    pub required_sessions: f64,
+    /// Whether the catalog's coverage supplies them.
+    pub reachable: Option<bool>,
+}
+
+/// The catalog supply probe and its acquisition verdict (U5; R4, R5, R9).
+#[derive(Debug, Clone, PartialEq)]
+pub struct SupplyOutcome {
+    /// The catalog the coverage was read from.
+    pub catalog_path: PathBuf,
+    /// Distinct KST sessions the catalog's daily bars cover. `None` when the
+    /// catalog is absent or unreadable — supply is then UNESTABLISHED, which
+    /// fails closed to a stand-down rather than assuming a number.
+    pub available_sessions: Option<usize>,
+    /// Earliest covered KST session.
+    pub first_session: Option<NaiveDate>,
+    /// Latest covered KST session.
+    pub last_session: Option<NaiveDate>,
+    /// Observed closed trades per session in the source run.
+    pub trades_per_session: f64,
+    /// The run's `max_concurrent` — the hard ceiling on trades per session,
+    /// whatever the universe width.
+    pub max_concurrent: f64,
+    /// Sessions required at the pinned target effect.
+    pub required_sessions: f64,
+    /// Whether the required sessions fit inside the coverage.
+    pub reachable: bool,
+    /// Sessions short, when they do not.
+    pub shortfall_sessions: f64,
+}
+
 /// A `report sample` outcome: structured figures for tests + the printed lines.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SampleOutcome {
@@ -832,6 +875,10 @@ pub struct SampleOutcome {
     pub net_ror: BootstrapOutcome,
     /// Naive, few-cluster (t), and wild-cluster intervals — diagnostics (KTD5).
     pub intervals: Vec<Interval>,
+    /// Required trades and sessions across a band of target effects (U5).
+    pub band: Vec<TargetEffectRow>,
+    /// The catalog supply probe and its acquisition verdict (U5).
+    pub supply: SupplyOutcome,
     /// The margin adjudication.
     pub margin: SampleMarginOutcome,
     /// The printed report lines.
@@ -997,6 +1044,101 @@ pub async fn report_sample(cfg: &SampleConfig) -> anyhow::Result<SampleOutcome> 
         .map_err(|e| anyhow::anyhow!("run {run_id}: {e}"))?,
     ];
 
+    // ---- U5: the target-effect band, the supply probe, the verdict ---------
+    //
+    // Required n scales as the inverse square of the target effect, and the
+    // pinned +0.0284 R is itself a noisy estimate — so the answer is reported
+    // across the gross edge's own confidence interval, not at one point.
+    let gross_sd = stats::sample_sd(&gross_r).map_err(|e| anyhow::anyhow!("run {run_id}: {e}"))?;
+    let z = stats::two_sided_z(SAMPLE_CONFIDENCE).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let se_naive = gross_sd / (trades.len() as f64).sqrt();
+    let se_clustered = gross_sd / clus.effective_n.sqrt();
+    let trades_per_session = trades.len() as f64 / clus.clusters as f64;
+
+    let mut band_targets: Vec<(String, f64)> = vec![
+        (
+            format!("gross CI upper, design-effect corrected (SE {se_clustered:.6})"),
+            gross_r_mean + z * se_clustered,
+        ),
+        (format!("gross CI upper, naive (SE {se_naive:.6})"), gross_r_mean + z * se_naive),
+        ("gross point estimate — the KTD11 target".to_string(), gross_r_mean),
+        (
+            format!("gross CI lower, naive (SE {se_naive:.6})"),
+            gross_r_mean - z * se_naive,
+        ),
+        (
+            format!("gross CI lower, design-effect corrected (SE {se_clustered:.6})"),
+            gross_r_mean - z * se_clustered,
+        ),
+    ];
+    band_targets.sort_by(|a, b| b.1.partial_cmp(&a.1).expect("finite targets"));
+
+    // Supply: read the catalog's coverage rather than assuming it, and read it
+    // WITHOUT an operator-supplied expected range — an asserted span across all
+    // bar kinds forces a false NO-GO on a healthy catalog. Coverage here is the
+    // distinct KST sessions the catalog's DAILY bars actually hold.
+    let catalog_path = cfg.data_home.join("catalog");
+    let (available_sessions, first_session, last_session) = if catalog_path.exists() {
+        match nautilus_ls::ingest::read_all_bars(&catalog_path).await {
+            Ok(bars) => {
+                use crate::runner::backtest::{is_daily, kst_date_of as bar_date};
+                let mut dates: Vec<NaiveDate> =
+                    bars.iter().filter(|b| is_daily(b)).map(bar_date).collect();
+                dates.sort_unstable();
+                dates.dedup();
+                (Some(dates.len()), dates.first().copied(), dates.last().copied())
+            }
+            Err(_) => (None, None, None),
+        }
+    } else {
+        (None, None, None)
+    };
+
+    let required_sessions = (required / trades_per_session).ceil();
+    let reachable = available_sessions.is_some_and(|n| required_sessions <= n as f64);
+    let shortfall_sessions =
+        available_sessions.map_or(required_sessions, |n| (required_sessions - n as f64).max(0.0));
+    let max_concurrent = manifest.params.max_concurrent as f64;
+    let supply = SupplyOutcome {
+        catalog_path: catalog_path.clone(),
+        available_sessions,
+        first_session,
+        last_session,
+        trades_per_session,
+        max_concurrent,
+        required_sessions,
+        reachable,
+        shortfall_sessions,
+    };
+
+    let band: Vec<TargetEffectRow> = band_targets
+        .into_iter()
+        .map(|(label, target)| {
+            let (req_trades, req_sessions, row_reachable) = match required_trades(
+                target,
+                net_r_sd,
+                clus.design_effect,
+                SAMPLE_CONFIDENCE,
+                SAMPLE_POWER,
+            ) {
+                Ok(t) => {
+                    let s = (t / trades_per_session).ceil();
+                    (t, s, available_sessions.map(|n| s <= n as f64))
+                }
+                // A non-positive target is not detectable at any sample size —
+                // reported as infinite rather than silently dropped.
+                Err(_) => (f64::INFINITY, f64::INFINITY, Some(false)),
+            };
+            TargetEffectRow {
+                label,
+                target_effect: target,
+                required_trades: req_trades,
+                required_sessions: req_sessions,
+                reachable: row_reachable,
+            }
+        })
+        .collect();
+
     // The frozen margin (U3): loaded, adjudicated, and printed as an explicit
     // pass/fail line, so the bar has a carrier in running code rather than
     // existing only as a document claim.
@@ -1103,6 +1245,104 @@ pub async fn report_sample(cfg: &SampleConfig) -> anyhow::Result<SampleOutcome> 
         ));
     }
 
+    // ---- U5 output: band, supply, acquisition verdict ----------------------
+    lines.push(format!(
+        "required sample across the gross edge's own {:.0}% interval (required n scales as the \
+         inverse square of the target, so one point estimate hides the sensitivity):",
+        SAMPLE_CONFIDENCE * 100.0
+    ));
+    lines.push(format!(
+        "  {:<13} {:>12} {:>9} {:>7}  {:<16} {}",
+        "target", "required n", "sessions", "years*", "within coverage", "where in the interval"
+    ));
+    for row in &band {
+        let fits = match row.reachable {
+            Some(true) => "yes",
+            Some(false) => "NO",
+            None => "coverage unread",
+        };
+        if row.required_trades.is_finite() {
+            lines.push(format!(
+                "  {:+.6} R {:>12.0} {:>9.0} {:>7.1}  {fits:<16} {}",
+                row.target_effect,
+                row.required_trades.ceil(),
+                row.required_sessions,
+                row.required_sessions / 250.0,
+                row.label
+            ));
+        } else {
+            lines.push(format!(
+                "  {:+.6} R {:>12} {:>9} {:>7}  {:<16} {} — NON-POSITIVE, undetectable at any \
+                 sample size",
+                row.target_effect, "n/a", "n/a", "n/a", "n/a", row.label
+            ));
+        }
+    }
+    lines.push("  * years at ~250 KRX trading sessions.".to_string());
+
+    lines.push("supply — read from the catalog's own coverage (U5, R5):".to_string());
+    lines.push(format!(
+        "  observed rate {trades_per_session:.4} closed trades per session; run max_concurrent \
+         {max_concurrent:.0} caps it at {max_concurrent:.0} per session regardless of universe \
+         width"
+    ));
+    match supply.available_sessions {
+        Some(n) => lines.push(format!(
+            "  catalog {} holds {n} distinct KST daily-bar sessions ({} .. {}) — coverage read, \
+             not asserted (no expected range supplied)",
+            supply.catalog_path.display(),
+            supply.first_session.map_or_else(|| "?".into(), |d| d.format("%Y%m%d").to_string()),
+            supply.last_session.map_or_else(|| "?".into(), |d| d.format("%Y%m%d").to_string()),
+        )),
+        None => lines.push(format!(
+            "  catalog {} is absent or unreadable — supply UNESTABLISHED",
+            supply.catalog_path.display()
+        )),
+    }
+    lines.push(format!(
+        "  required sessions at the target effect {target_effect:+.6} R: {:.0}",
+        supply.required_sessions
+    ));
+
+    if supply.reachable {
+        lines.push(format!(
+            "ACQUISITION VERDICT: REACHABLE at {target_effect:+.6} R — the recommended range is \
+             {:.0} KST sessions (~{:.1} years), against {} covered.",
+            supply.required_sessions,
+            supply.required_sessions / 250.0,
+            supply.available_sessions.unwrap_or(0)
+        ));
+    } else {
+        lines.push(format!(
+            "ACQUISITION VERDICT: STAND DOWN at {target_effect:+.6} R — {:.0} sessions required, \
+             {} covered, SHORTFALL {:.0} sessions (~{:.1} years).",
+            supply.required_sessions,
+            supply
+                .available_sessions
+                .map_or_else(|| "UNESTABLISHED".to_string(), |n| n.to_string()),
+            supply.shortfall_sessions,
+            supply.shortfall_sessions / 250.0
+        ));
+    }
+    lines.push(
+        "  The acquisition path is a FRESH CATALOG at a wider lookback, not an incremental \
+         extension: `accumulate` never fetches below the watermark. Its cost therefore includes \
+         a moved catalog fingerprint, a moved universe hash and a moved data range — and with \
+         them the loss of comparability with every prior measurement, this one included (AE3)."
+            .to_string(),
+    );
+    lines.push(format!(
+        "  Lengthen HISTORY, not breadth: at ICC {:.4} and cluster size {:.4}, added sessions \
+         raise effective n roughly in proportion while added breadth adds trades inside blocks \
+         already held — and max_concurrent {max_concurrent:.0} caps how much breadth converts at \
+         all.",
+        clus.icc, clus.kish_cluster_size
+    ));
+    lines.push(
+        "  This turn stops at the verdict and executes NO acquisition and NO ingest (KTD7, R8)."
+            .to_string(),
+    );
+
     lines.push(format!(
         "margin — frozen {} (sha256 {}):",
         frozen.frozen_utc, margin_outcome.content_hash
@@ -1150,6 +1390,8 @@ pub async fn report_sample(cfg: &SampleConfig) -> anyhow::Result<SampleOutcome> 
         sufficient,
         net_ror,
         intervals,
+        band,
+        supply,
         margin: margin_outcome,
         lines,
     })

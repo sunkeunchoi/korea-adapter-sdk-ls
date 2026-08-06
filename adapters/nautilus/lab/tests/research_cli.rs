@@ -2741,6 +2741,233 @@ mod report_sample {
         assert!(err.to_string().contains("≥2 KST sessions"), "{err}");
     }
 
+    // =======================================================================
+    // U5 — catalog supply probe and the acquisition verdict (R4, R5, R9)
+    // =======================================================================
+
+    /// Write `sessions` consecutive weekday daily bars for one symbol into the
+    /// run's catalog, so the supply probe has real coverage to read.
+    async fn write_coverage(data_home: &Path, sessions: usize) {
+        let catalog = data_home.join("catalog");
+        let id = InstrumentId::from("005930.XKRX");
+        let bt = BarKind::Daily.bar_type(id).unwrap();
+        let mut day = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let mut bars: Vec<Bar> = Vec::with_capacity(sessions);
+        while bars.len() < sessions {
+            if !matches!(day.weekday(), Weekday::Sat | Weekday::Sun) {
+                let row = daily_json(
+                    &day.format("%Y%m%d").to_string(),
+                    "59000",
+                    "60500",
+                    "58500",
+                    "60000",
+                    "1000000",
+                );
+                bars.push(
+                    build_daily_bar(bt, &serde_json::from_value(row).unwrap()).unwrap().unwrap(),
+                );
+            }
+            day = day.succ_opt().unwrap();
+        }
+        write_bars(&catalog, bars).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn required_sessions_is_required_trades_over_the_observed_rate_at_every_band_target() {
+        let (dir, run_id) = write_run(fixture_trades(), &frozen_fingerprint());
+        let out = report_sample(&cfg(dir.path(), Some(&run_id))).await.unwrap();
+
+        // Eight closed trades over four sessions.
+        assert!(
+            (out.supply.trades_per_session - 2.0).abs() < 1e-12,
+            "observed rate: {}",
+            out.supply.trades_per_session
+        );
+        assert!(
+            (out.supply.required_sessions - (out.required_trades / 2.0).ceil()).abs() < 1e-12,
+            "required sessions is required trades / rate, rounded up"
+        );
+        assert!(out.band.len() >= 3, "the band spans the interval: {:?}", out.band);
+        for row in &out.band {
+            if row.required_trades.is_finite() {
+                assert!(
+                    (row.required_sessions - (row.required_trades / 2.0).ceil()).abs() < 1e-12,
+                    "row {} maps trades to sessions the same way",
+                    row.label
+                );
+            }
+        }
+        // The band brackets the point estimate: a larger target needs fewer
+        // trades, a smaller one more.
+        let point = out
+            .band
+            .iter()
+            .find(|r| (r.target_effect - out.target_effect).abs() < 1e-12)
+            .expect("the pinned target is a band row");
+        let upper = out.band.first().expect("non-empty band");
+        assert!(upper.target_effect > point.target_effect, "the band reaches above the point");
+        assert!(
+            upper.required_trades < point.required_trades,
+            "a larger target needs fewer trades: {} vs {}",
+            upper.required_trades,
+            point.required_trades
+        );
+        assert!(
+            out.band.iter().any(|r| !r.required_trades.is_finite()),
+            "the interval's non-positive end is reported, not silently dropped"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_output_names_max_concurrent_and_the_per_session_ceiling_it_implies() {
+        let (dir, run_id) = write_run(fixture_trades(), &frozen_fingerprint());
+        let out = report_sample(&cfg(dir.path(), Some(&run_id))).await.unwrap();
+        let want = OrbParams::default().max_concurrent as f64;
+        assert!((out.supply.max_concurrent - want).abs() < 1e-12);
+        let joined = out.lines.join("\n");
+        assert!(
+            joined.contains(&format!("max_concurrent {want:.0} caps it at {want:.0} per session")),
+            "the ceiling is stated: {joined}"
+        );
+        assert!(
+            joined.contains("regardless of universe width"),
+            "and stated as a hard cap on what breadth can convert: {joined}"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_verdict_line_names_the_target_effect_it_was_computed_at() {
+        let (dir, run_id) = write_run(fixture_trades(), &frozen_fingerprint());
+        let out = report_sample(&cfg(dir.path(), Some(&run_id))).await.unwrap();
+        let verdict = out
+            .lines
+            .iter()
+            .find(|l| l.starts_with("ACQUISITION VERDICT"))
+            .expect("an acquisition verdict line");
+        assert!(
+            verdict.contains(&format!("{:+.6} R", out.target_effect)),
+            "the verdict names its target: {verdict}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_shortfall_stands_down_and_names_it() {
+        // Four sessions of coverage against a head needing thousands.
+        let (dir, run_id) = write_run(fixture_trades(), &frozen_fingerprint());
+        write_coverage(dir.path(), 4).await;
+        let out = report_sample(&cfg(dir.path(), Some(&run_id))).await.unwrap();
+        assert_eq!(out.supply.available_sessions, Some(4));
+        assert!(!out.supply.reachable);
+        assert!(
+            (out.supply.shortfall_sessions - (out.supply.required_sessions - 4.0)).abs() < 1e-12,
+            "shortfall is required minus covered"
+        );
+        let joined = out.lines.join("\n");
+        assert!(joined.contains("ACQUISITION VERDICT: STAND DOWN"), "{joined}");
+        assert!(
+            joined.contains(&format!("SHORTFALL {:.0} sessions", out.supply.shortfall_sessions)),
+            "the shortfall is named: {joined}"
+        );
+        assert!(joined.contains("executes NO acquisition and NO ingest"), "{joined}");
+    }
+
+    #[tokio::test]
+    async fn a_reachable_requirement_names_the_range_as_a_fresh_catalog_build_this_turn_wont_run() {
+        // The large-edge head needs a single session; twenty are covered.
+        let big = vec![
+            trade(1, 1.00),
+            trade(1, 1.02),
+            trade(2, 0.98),
+            trade(2, 1.00),
+            trade(3, 1.01),
+            trade(3, 0.99),
+            trade(4, 1.00),
+            trade(4, 1.00),
+        ];
+        let (dir, run_id) = write_run(big, &frozen_fingerprint());
+        write_coverage(dir.path(), 20).await;
+        let out = report_sample(&cfg(dir.path(), Some(&run_id))).await.unwrap();
+        assert_eq!(out.supply.available_sessions, Some(20));
+        assert!(out.supply.reachable, "required {:.0} sessions", out.supply.required_sessions);
+        let joined = out.lines.join("\n");
+        assert!(joined.contains("ACQUISITION VERDICT: REACHABLE"), "{joined}");
+        assert!(
+            joined.contains(&format!("{:.0} KST sessions", out.supply.required_sessions)),
+            "the recommended range is named: {joined}"
+        );
+        assert!(joined.contains("FRESH CATALOG at a wider lookback"), "{joined}");
+        assert!(
+            joined.contains("`accumulate` never fetches below the watermark"),
+            "and why it cannot be incremental: {joined}"
+        );
+        assert!(joined.contains("executes NO acquisition and NO ingest"), "{joined}");
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_catalog_leaves_supply_unestablished_and_fails_closed() {
+        // No catalog at all: supply is not assumed to be zero OR infinite — it
+        // is UNESTABLISHED, which fails closed to a stand-down.
+        let (dir, run_id) = write_run(fixture_trades(), &frozen_fingerprint());
+        let out = report_sample(&cfg(dir.path(), Some(&run_id))).await.unwrap();
+        assert_eq!(out.supply.available_sessions, None);
+        assert!(!out.supply.reachable, "unestablished supply is not a reachable one");
+        let joined = out.lines.join("\n");
+        assert!(joined.contains("supply UNESTABLISHED"), "{joined}");
+        assert!(joined.contains("ACQUISITION VERDICT: STAND DOWN"), "{joined}");
+    }
+
+    #[tokio::test]
+    async fn the_recommendation_names_history_over_breadth_with_the_effective_n_reason() {
+        let (dir, run_id) = write_run(fixture_trades(), &frozen_fingerprint());
+        let out = report_sample(&cfg(dir.path(), Some(&run_id))).await.unwrap();
+        let joined = out.lines.join("\n");
+        assert!(joined.contains("Lengthen HISTORY, not breadth"), "{joined}");
+        assert!(
+            joined.contains("raise effective n roughly in proportion"),
+            "the effective-n reason is stated, not asserted: {joined}"
+        );
+        assert!(
+            joined.contains("adds trades inside blocks already held"),
+            "and why breadth does not: {joined}"
+        );
+    }
+
+    /// No branch of the report reaches an acquisition path. Asserted on the
+    /// source rather than the output: an ingest entry point could be called
+    /// without printing anything, so the output is not evidence about it.
+    #[test]
+    fn no_code_path_in_the_sample_report_reaches_an_ingest_entry_point() {
+        let src = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join("runner").join("report.rs"),
+        )
+        .unwrap();
+        let body = src
+            .split_once("pub async fn report_sample(")
+            .expect("report_sample exists")
+            .1
+            .split_once("\n#[cfg(test)]")
+            .expect("the test module terminates the non-test source")
+            .0;
+        // Call-shaped needles, so the prose explaining WHY the acquisition
+        // cannot be incremental does not trip its own guard.
+        for banned in [
+            "accumulate(",
+            "run_accumulate",
+            "write_bars(",
+            "write_instruments(",
+            "delete_bar_series(",
+            "heal(",
+            "fetch(",
+        ] {
+            assert!(
+                !body.contains(banned),
+                "report_sample must not reach {banned:?} — the turn stops at the verdict (KTD7)"
+            );
+        }
+        // The one catalog call it DOES make is a read.
+        assert!(body.contains("read_all_bars"), "the supply probe reads coverage");
+    }
+
     /// Dispatch: `report sample` is reachable through the compiled bin, and the
     /// unknown-mode bail enumerates it among the valid report modes.
     #[test]
