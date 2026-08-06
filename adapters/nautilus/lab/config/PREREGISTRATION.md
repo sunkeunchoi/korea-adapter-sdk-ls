@@ -1,6 +1,6 @@
 # Production Ladder — Pre-Registration
 
-**Status:** RE-REGISTERED to **v2** (head v34) · **LADDER STOOD DOWN 2026-07-31** (recorded suspension — see § Stand-down below; v2 values unchanged) · **Date:** 2026-07-16 (v1, head v30) → 2026-07-24 (v2, head v34)
+**Status:** RE-REGISTERED to **v2** (head v34) · **LADDER STOOD DOWN 2026-07-31** (recorded suspension — see § Stand-down below; v2 values unchanged) · **RE-ENTRY CONDITION TIGHTENED 2026-08-06** — the unblock is no longer `net RoR > 0` but the pre-registered [sample margin](SAMPLE-MARGIN.md) · **Date:** 2026-07-16 (v1, head v30) → 2026-07-24 (v2, head v34)
 **Machine mirror:** [`preregistration.json`](preregistration.json)
 **Governs:** the capital ladder shipped in PR #154 (`docs/plans/2026-07-16-001-feat-production-ladder-plan.md`).
 
@@ -32,11 +32,29 @@ values below are retained **unchanged** as the historical record, and
 [`preregistration.json`](preregistration.json) is deliberately untouched — every existing
 dispatch citation (SHA-256) remains valid.
 
-**Re-entry protocol:** a net-positive cost-aware head (net RoR > 0 with the armed cost
-model on a current catalog) triggers a fresh re-registration (v3+): bands re-derived from
-that head's closed-trade distribution via the identical Protective formula, reproduced in
-`lab/tests/prereg_derivation.rs`, before any genesis dispatch. Parked as queue
-`rung1-ladder-reentry-net-positive-head`.
+**Re-entry protocol:** a candidate head that **clears the pre-registered
+[sample margin](SAMPLE-MARGIN.md)** triggers a fresh re-registration (v3+): bands
+re-derived from that head's closed-trade distribution via the identical Protective
+formula, reproduced in `lab/tests/prereg_derivation.rs`, before any genesis dispatch.
+Parked as queue `rung1-ladder-reentry-margin-clearing-head`.
+
+> **AMENDED 2026-08-06 (sample-sufficiency turn, plan 2026-08-05-001; TURN-LOG 2026-08-06).**
+> The re-entry condition above used to read *"net RoR > 0 with the armed cost model on a
+> current catalog"*. That condition is **satisfiable by luck**: on the v35 sample the
+> session-block bootstrap puts the share of null replicates above zero at 0.4955, so a
+> coin-flip head meets it about half the time. It is replaced by the frozen margin —
+> `net RoR > E[max of 29 null trials] + z(95%) · SE(candidate)` — which corrects for the
+> arms already evaluated against this data and scales its sampling term to the candidate's
+> own sample. This tightens the gate only; it derives no new band, and
+> [`preregistration.json`](preregistration.json) stays byte-identical (a test pins its
+> SHA-256). The margin's own package is `sample-margin.json`, deliberately **not** this
+> file: the no-consumer test forbids re-deriving a frozen artifact whose honest value would
+> forbid the activity it gates.
+>
+> Note what the same turn established about the sample: the head's gross edge sits about
+> nine times below this sample's detection floor, and ~8,600 closed trades (~1,866 sessions,
+> ~7.5 years) would be needed to resolve it, against 54 covered. Re-entry is therefore
+> **not** expected to arrive by a lever search on the current catalog.
 
 ---
 
