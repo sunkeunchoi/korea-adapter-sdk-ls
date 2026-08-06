@@ -144,12 +144,35 @@ Catalog reproducibility is not assumed here: the fingerprint already moved `363f
 per-arm figures and the dispersion are catalog-specific (AE3). `report sample` prints
 `RE-DERIVATION REQUIRED` rather than adjudicating silently when the fingerprints disagree.
 
-## Falsification
+## Falsification — measured, not asserted
 
-The margin is not a document claim. `tests/research_cli.rs` (U4) measures the rate at which
-permuted-label null blocks clear it, asserts the v35 head is refused, asserts a synthetic
-large-edge head clears, and **disarms the comparison in-process to prove the assertion reds**
-— a standing falsifier, not a one-time manual check.
+The margin is not a document claim. `tests/sample_margin.rs § calibration` builds null
+replicates from the committed v35 distribution (`tests/fixtures/v35-closed-trades.json`;
+`data/` is gitignored) and measures the rate at which a max-of-29 null block clears the bar:
+
+| | |
+|---|---|
+| realized null clearance | **0.0140** |
+| nominal | 0.0250 |
+| threshold at the head's own SE (0.087002) | +0.224823 net RoR |
+| a bar set at 2·SE (+0.174004) instead | clears at **0.1060** — 4.2× nominal |
+
+That last row is the point. KTD10's concern is that a single permuted-label refusal is
+satisfied by *any* bar above roughly two standard errors, including one set far too low.
+Measuring the 2·SE bar directly shows this calibration discriminates: it fails, and the
+frozen bar passes.
+
+The null is built by **permuting the centred per-trade R-multiples across trades** (so the
+true edge is exactly zero while cluster sizes, session structure and the risk-capital total
+are untouched) and then drawing one session-block resample. It has to be the R-multiple that
+moves: `Σnum/Σden` is exactly invariant under a permutation of the *numerators*, so a null
+built that way would have zero dispersion and any bar would clear it vacuously.
+
+The suite also asserts the v35 head is refused, that a synthetic head with a real edge and
+~36× the sample clears while the *same* edge on the thin sample does not, and — via the
+`MarginArm` seam — that **disarming the comparison in-process reds the null-rate assertion**
+(observed: 1.0000 against a 0.0250 nominal). That is a standing falsifier, not a one-time
+edit-and-restore.
 
 ## Why not the ladder pre-registration
 

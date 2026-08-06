@@ -873,19 +873,34 @@ pub fn wild_cluster_interval(
     })
 }
 
-/// Permute the per-trade outcomes across trades while holding the block
-/// structure and every denominator in place — the null replicate KTD10 calls
-/// for. Only the numerators move, so session count, cluster sizes, and the
-/// risk-capital total are all invariant by construction.
+/// Build one null replicate by permuting per-trade **R-multiples** across
+/// trades — the null KTD10 calls for. `blocks` are `(realized_r, risk_capital)`
+/// pairs grouped by session; the R-multiples move while every trade keeps its
+/// own risk capital and its own session, so cluster count, cluster sizes and
+/// the risk-capital total are invariant by construction. The result is returned
+/// as `(numerator, denominator)` blocks ready for [`ratio_statistic`].
+///
+/// **It has to be the R-multiple that moves, not the numerator.** `Σnum / Σden`
+/// is *exactly* invariant under a permutation of the numerators — the sum of a
+/// permuted list is the same sum — so permuting those would produce a "null"
+/// with zero dispersion that any bar clears, and the calibration would pass
+/// vacuously. Re-pairing an R-multiple with a different risk capital is what
+/// actually moves the ratio.
+///
+/// Centring is the caller's job: pass `r − mean(r)` for a null whose true
+/// per-trade edge is exactly zero.
 ///
 /// # Errors
 ///
 /// Refuses an empty block set.
-pub fn permute_outcomes(blocks: &[Block], rng: &mut SplitMix64) -> Result<Vec<Block>, StatsError> {
+pub fn permute_r_multiples(
+    blocks: &[Block],
+    rng: &mut SplitMix64,
+) -> Result<Vec<Block>, StatsError> {
     if blocks.is_empty() {
         return Err(StatsError::Empty { what: "permutation", need: 1 });
     }
-    let mut pool: Vec<f64> = blocks.iter().flatten().map(|(a, _)| *a).collect();
+    let mut pool: Vec<f64> = blocks.iter().flatten().map(|(r, _)| *r).collect();
     // Fisher–Yates, from the top down.
     for i in (1..pool.len()).rev() {
         let j = rng.below(i + 1);
@@ -894,6 +909,13 @@ pub fn permute_outcomes(blocks: &[Block], rng: &mut SplitMix64) -> Result<Vec<Bl
     let mut it = pool.into_iter();
     Ok(blocks
         .iter()
-        .map(|b| b.iter().map(|(_, d)| (it.next().expect("pool is the same length"), *d)).collect())
+        .map(|b| {
+            b.iter()
+                .map(|(_, weight)| {
+                    let r = it.next().expect("pool is the same length");
+                    (r * weight, *weight)
+                })
+                .collect()
+        })
         .collect())
 }

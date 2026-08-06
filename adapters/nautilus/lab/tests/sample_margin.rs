@@ -175,3 +175,282 @@ fn loading_cites_the_exact_bytes() {
         "fewer declared trials buys a lower selection tax — which is why the count is frozen"
     );
 }
+
+// ===========================================================================
+// U4 — empirical calibration of the margin (R6, KTD10)
+// ===========================================================================
+//
+// KTD10's point: a single permuted-label refusal is satisfied by any bar above
+// roughly two standard errors, including one set far too low, and the
+// threshold is a max-of-N-trials quantity that one draw cannot exercise. So the
+// calibration generates null replicates, groups them into max-of-N blocks
+// matching the threshold's own construction, and measures the rate at which a
+// null block clears the margin.
+//
+// These tests live here rather than in `research_cli.rs` (which the plan names)
+// because U3's container decision put the margin in its own package: they
+// exercise the margin record and the statistics core directly, with no CLI in
+// the path. `data/` is gitignored, so the v35 distribution they calibrate
+// against is committed at `tests/fixtures/v35-closed-trades.json`.
+
+mod calibration {
+    use nautilus_ls_lab::margin::{self, frozen_margin_path, SampleMargin};
+    use nautilus_ls_lab::stats::{
+        block_bootstrap_ratio, mean, permute_r_multiples, ratio_statistic, Block, MarginArm,
+        SplitMix64,
+    };
+
+    use super::crate_dir;
+
+    /// Bootstrap settings matching `report sample`'s defaults, so the standard
+    /// error here is the one the report prints.
+    const REPLICATES: usize = 10_000;
+    const SEED: u64 = 20_260_805;
+    /// Max-of-N blocks drawn for the calibration. Fixed seed → deterministic.
+    const NULL_BLOCKS: usize = 1_000;
+
+    struct Fixture {
+        /// `(realized_r, risk_capital)` grouped by KST session.
+        r_blocks: Vec<Block>,
+        /// `(realized_pnl, risk_capital)` grouped by KST session.
+        pnl_blocks: Vec<Block>,
+        sessions: usize,
+        closed_trades: usize,
+        risk_capital_total: f64,
+        catalog_fingerprint: String,
+    }
+
+    fn v35() -> Fixture {
+        let path = crate_dir().join("tests").join("fixtures").join("v35-closed-trades.json");
+        let v: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).expect("fixture is readable"))
+                .expect("fixture parses");
+        let mut by_session: std::collections::BTreeMap<String, (Block, Block)> =
+            std::collections::BTreeMap::new();
+        let mut risk_capital_total = 0.0;
+        let mut closed_trades = 0;
+        for t in v["trades"].as_array().expect("trades array") {
+            let session = t["session"].as_str().expect("session").to_string();
+            let r = t["realized_r"].as_f64().expect("realized_r");
+            let rc = t["risk_capital"].as_f64().expect("risk_capital");
+            let pnl = t["realized_pnl"].as_f64().expect("realized_pnl");
+            let e = by_session.entry(session).or_default();
+            e.0.push((r, rc));
+            e.1.push((pnl, rc));
+            risk_capital_total += rc;
+            closed_trades += 1;
+        }
+        let sessions = by_session.len();
+        let (r_blocks, pnl_blocks): (Vec<Block>, Vec<Block>) = by_session.into_values().unzip();
+        Fixture {
+            r_blocks,
+            pnl_blocks,
+            sessions,
+            closed_trades,
+            risk_capital_total,
+            catalog_fingerprint: v["catalog_fingerprint"]
+                .as_str()
+                .expect("fingerprint")
+                .to_string(),
+        }
+    }
+
+    fn frozen() -> SampleMargin {
+        margin::load(&frozen_margin_path()).expect("frozen margin parses").values
+    }
+
+    /// The v35 head's own session-block bootstrap standard error — the sampling
+    /// term the margin is evaluated at.
+    fn v35_standard_error(f: &Fixture) -> f64 {
+        block_bootstrap_ratio(&f.pnl_blocks, REPLICATES, SEED, 0.95)
+            .expect("the fixture bootstraps")
+            .standard_error
+    }
+
+    /// The v35 blocks with the per-trade edge removed: the R-multiple multiset
+    /// is centred on zero, so a replicate built from it has a **true** edge of
+    /// exactly zero while keeping the observed dispersion, cluster sizes and
+    /// risk-capital distribution.
+    fn centred_r_blocks(f: &Fixture) -> Vec<Block> {
+        let all: Vec<f64> = f.r_blocks.iter().flatten().map(|(r, _)| *r).collect();
+        let m = mean(&all).expect("non-empty");
+        f.r_blocks.iter().map(|b| b.iter().map(|(r, rc)| (r - m, *rc)).collect()).collect()
+    }
+
+    /// One null replicate: permute the centred R-multiples across trades, then
+    /// draw one session-block resample of the result. The permutation breaks
+    /// the outcome↔risk-capital pairing; the resample reproduces the sampling
+    /// variation a real re-measurement would carry.
+    fn null_replicate(centred: &[Block], rng: &mut SplitMix64) -> f64 {
+        let permuted = permute_r_multiples(centred, rng).expect("non-empty");
+        let mut num = 0.0;
+        let mut den = 0.0;
+        for _ in 0..permuted.len() {
+            for (a, b) in &permuted[rng.below(permuted.len())] {
+                num += a;
+                den += b;
+            }
+        }
+        num / den
+    }
+
+    /// The realized rate at which the maximum of `trial_count` null replicates
+    /// clears `arm`'s margin verdict, over `NULL_BLOCKS` such blocks.
+    /// Returns `(realized, nominal, threshold)`.
+    fn null_clearance_rate(arm: MarginArm) -> (f64, f64, f64) {
+        let f = v35();
+        let m = frozen();
+        let se = v35_standard_error(&f);
+        let centred = centred_r_blocks(&f);
+        let mut rng = SplitMix64::new(SEED ^ 0xC0FF_EE00);
+        let mut cleared = 0usize;
+        for _ in 0..NULL_BLOCKS {
+            let mut best = f64::NEG_INFINITY;
+            for _ in 0..m.trial_count {
+                best = best.max(null_replicate(&centred, &mut rng));
+            }
+            if m.adjudicate(best, se, arm).expect("adjudicates").clears {
+                cleared += 1;
+            }
+        }
+        let nominal = (1.0 - m.confidence) / 2.0;
+        (cleared as f64 / NULL_BLOCKS as f64, nominal, m.threshold(se).unwrap())
+    }
+
+    #[test]
+    fn null_blocks_clear_the_margin_at_or_below_the_nominal_rate() {
+        let (realized, nominal, threshold) = null_clearance_rate(MarginArm::Armed);
+        println!(
+            "null clearance: realized {realized:.4} vs nominal {nominal:.4} \
+             (threshold {threshold:+.6} net RoR, {NULL_BLOCKS} max-of-N blocks)"
+        );
+        assert!(
+            realized <= nominal,
+            "realized null clearance {realized:.4} exceeds the nominal {nominal:.4}"
+        );
+    }
+
+    #[test]
+    fn disarming_the_margin_comparison_reds_the_null_rate_assertion() {
+        // The standing falsifier. The margin comparison takes an explicit arm
+        // rather than being hardwired, so a test can bypass it IN PROCESS and
+        // show that the assertion above is load-bearing — no edit-and-restore,
+        // which is a one-time check rather than a standing guard.
+        let (realized, nominal, _) = null_clearance_rate(MarginArm::Disarmed);
+        assert!(
+            realized > nominal,
+            "with the comparison disarmed the null-rate assertion MUST fail; it reported \
+             {realized:.4} against a nominal {nominal:.4}, so the armed assertion proves nothing"
+        );
+        assert_eq!(realized, 1.0, "a disarmed comparison clears everything");
+    }
+
+    #[test]
+    fn the_calibration_discriminates_a_bar_set_too_low() {
+        // KTD10's actual concern: a single permuted-label refusal is satisfied
+        // by any bar above roughly two standard errors. Measure that bar
+        // directly — if it also came in under nominal, the test above would be
+        // passing for free.
+        let f = v35();
+        let m = frozen();
+        let se = v35_standard_error(&f);
+        let centred = centred_r_blocks(&f);
+        let too_low = 2.0 * se;
+        let mut rng = SplitMix64::new(SEED ^ 0xC0FF_EE00);
+        let mut cleared = 0usize;
+        for _ in 0..NULL_BLOCKS {
+            let mut best = f64::NEG_INFINITY;
+            for _ in 0..m.trial_count {
+                best = best.max(null_replicate(&centred, &mut rng));
+            }
+            if best > too_low {
+                cleared += 1;
+            }
+        }
+        let realized = cleared as f64 / NULL_BLOCKS as f64;
+        let nominal = (1.0 - m.confidence) / 2.0;
+        println!("a 2-SE bar ({too_low:+.6}) clears at {realized:.4} against nominal {nominal:.4}");
+        assert!(
+            realized > nominal,
+            "a 2-SE bar must FAIL the calibration ({realized:.4} vs {nominal:.4}) — otherwise \
+             the frozen margin's pass is not evidence about the frozen margin"
+        );
+        assert!(m.threshold(se).unwrap() > too_low, "and the frozen threshold sits above it");
+    }
+
+    #[test]
+    fn the_v35_head_is_refused_by_the_frozen_margin() {
+        // The plan's Success Criteria names the CURRENT head, not only a
+        // synthetic null: the margin is demonstrated by running v35 through it.
+        let f = v35();
+        let m = frozen();
+        let se = v35_standard_error(&f);
+        let net_ror = ratio_statistic(&f.pnl_blocks).expect("the observed ratio");
+        let verdict = m.adjudicate(net_ror, se, MarginArm::Armed).unwrap();
+        assert!(
+            !verdict.clears,
+            "v35 net RoR {net_ror:+.6} against threshold {:+.6}",
+            verdict.threshold
+        );
+        assert!(net_ror < 0.0, "and it is net-negative to begin with: {net_ror:+.6}");
+        assert!(
+            !margin::requires_rederivation(&m, &f.catalog_fingerprint),
+            "the fixture is the catalog the margin was frozen against, so the refusal binds"
+        );
+    }
+
+    #[test]
+    fn a_synthetic_head_with_a_large_true_edge_and_sufficient_n_clears_the_margin() {
+        // The converse, so the refusal above is not vacuous: a head with a real
+        // edge and enough data to resolve it must pass.
+        let m = frozen();
+        let head_se = v35_standard_error(&v35());
+        let se_at_scale = head_se / 6.0; // ~36x the sample
+        let real_edge = 0.15;
+        let verdict = m.adjudicate(real_edge, se_at_scale, MarginArm::Armed).unwrap();
+        assert!(
+            verdict.clears,
+            "a +0.15 net RoR at SE {se_at_scale:.6} must clear threshold {:+.6}",
+            verdict.threshold
+        );
+        // …and the SAME edge on the thin sample must not, so what changed is
+        // the evidence, not the edge.
+        assert!(
+            !m.adjudicate(real_edge, head_se, MarginArm::Armed).unwrap().clears,
+            "the same edge on 111 clustered trades is not yet evidence"
+        );
+    }
+
+    #[test]
+    fn the_null_fixture_preserves_the_source_runs_session_count_and_risk_capital_total() {
+        // The permutation must change ONLY the outcomes. If it moved a trade
+        // between sessions or altered a risk capital, the null would be
+        // calibrating a different design than the one being judged.
+        let f = v35();
+        assert_eq!(f.sessions, 24, "the source run's session count");
+        assert_eq!(f.closed_trades, 111, "the source run's closed-trade count");
+        assert!(
+            (f.risk_capital_total - 27_869_870.0).abs() < 1e-6,
+            "the source run's risk-capital total: {}",
+            f.risk_capital_total
+        );
+
+        let centred = centred_r_blocks(&f);
+        let mut rng = SplitMix64::new(11);
+        let permuted = permute_r_multiples(&centred, &mut rng).unwrap();
+        assert_eq!(permuted.len(), f.sessions, "session count unchanged by the permutation");
+        assert_eq!(
+            permuted.iter().map(Vec::len).collect::<Vec<_>>(),
+            f.r_blocks.iter().map(Vec::len).collect::<Vec<_>>(),
+            "every cluster keeps its size"
+        );
+        let permuted_risk: f64 = permuted.iter().flatten().map(|(_, rc)| *rc).sum();
+        assert!(
+            (permuted_risk - f.risk_capital_total).abs() < 1e-6,
+            "risk-capital total unchanged: {permuted_risk}"
+        );
+        // The centred multiset really is centred, so the null's true edge is 0.
+        let all: Vec<f64> = centred.iter().flatten().map(|(r, _)| *r).collect();
+        assert!(mean(&all).unwrap().abs() < 1e-12, "the null's true per-trade edge is zero");
+    }
+}

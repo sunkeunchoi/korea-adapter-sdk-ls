@@ -9,7 +9,7 @@
 
 use nautilus_ls_lab::stats::{
     block_bootstrap_ratio, clustering, design_effect, expected_max_null, interval_normal,
-    interval_t_few_clusters, margin_verdict, mean, minimum_detectable_edge, permute_outcomes,
+    interval_t_few_clusters, margin_verdict, mean, minimum_detectable_edge, permute_r_multiples,
     power_z, probit, ratio_statistic, required_trades, sample_sd, t_quantile,
     trials_corrected_threshold, two_sided_z, Block, MarginArm, SplitMix64, StatsError,
     EULER_MASCHERONI,
@@ -309,9 +309,12 @@ fn the_few_cluster_interval_is_wider_than_the_naive_one() {
 
 #[test]
 fn permutation_preserves_the_block_structure_and_every_denominator() {
-    let blocks = two_by_two();
+    // R-multiple blocks: (realized_r, risk_capital), unequal risk capital so
+    // the re-pairing actually bites.
+    let blocks: Vec<Block> =
+        vec![vec![(0.4, 10.0), (-0.2, 30.0)], vec![(0.1, 20.0), (-0.5, 40.0)]];
     let mut rng = SplitMix64::new(7);
-    let permuted = permute_outcomes(&blocks, &mut rng).unwrap();
+    let permuted = permute_r_multiples(&blocks, &mut rng).unwrap();
     assert_eq!(permuted.len(), blocks.len(), "session count is invariant");
     for (a, b) in blocks.iter().zip(&permuted) {
         assert_eq!(a.len(), b.len(), "cluster sizes are invariant");
@@ -319,11 +322,64 @@ fn permutation_preserves_the_block_structure_and_every_denominator() {
             assert_close!(x.1, y.1, 1e-15, "risk capital never moves");
         }
     }
-    let mut before: Vec<f64> = blocks.iter().flatten().map(|(a, _)| *a).collect();
-    let mut after: Vec<f64> = permuted.iter().flatten().map(|(a, _)| *a).collect();
+    let total_before: f64 = blocks.iter().flatten().map(|(_, d)| *d).sum();
+    let total_after: f64 = permuted.iter().flatten().map(|(_, d)| *d).sum();
+    assert_close!(total_after, total_before, 1e-12, "the risk-capital total is invariant");
+
+    // The R-multiple multiset is a permutation, not a resample.
+    let mut before: Vec<f64> = blocks.iter().flatten().map(|(r, _)| *r).collect();
+    let mut after: Vec<f64> =
+        permuted.iter().flatten().map(|(num, den)| num / den).collect();
     before.sort_by(|a, b| a.partial_cmp(b).unwrap());
     after.sort_by(|a, b| a.partial_cmp(b).unwrap());
-    assert_eq!(before, after, "the outcome multiset is a permutation, not a resample");
+    for (x, y) in before.iter().zip(&after) {
+        assert_close!(*y, *x, 1e-12, "the R-multiple multiset is preserved");
+    }
+}
+
+#[test]
+fn permuting_r_multiples_moves_the_ratio_where_permuting_numerators_could_not() {
+    // The trap this helper exists to avoid: `sum(num)/sum(den)` is EXACTLY
+    // invariant under a permutation of the numerators, so a null built that way
+    // has zero dispersion and any bar clears it vacuously. Re-pairing an
+    // R-multiple with a different risk capital is what actually moves the
+    // statistic.
+    let blocks: Vec<Block> =
+        vec![vec![(0.4, 10.0), (-0.2, 30.0)], vec![(0.1, 20.0), (-0.5, 40.0)]];
+    let observed = ratio_statistic(
+        &blocks.iter().map(|b| b.iter().map(|(r, d)| (r * d, *d)).collect()).collect::<Vec<_>>(),
+    )
+    .unwrap();
+
+    // Permuting the NUMERATORS: the total is unchanged, so the ratio is too.
+    let numerators: Vec<Block> =
+        blocks.iter().map(|b| b.iter().map(|(r, d)| (r * d, *d)).collect()).collect();
+    let shuffled_numerators: Vec<Block> = vec![
+        vec![numerators[1][1], numerators[0][0]],
+        vec![numerators[1][0], numerators[0][1]],
+    ]
+    .into_iter()
+    .map(|b: Vec<(f64, f64)>| {
+        // keep each slot's own denominator, move only the numerator
+        b.into_iter().collect()
+    })
+    .collect();
+    let numerator_total: f64 = shuffled_numerators.iter().flatten().map(|(n, _)| *n).sum();
+    let original_total: f64 = numerators.iter().flatten().map(|(n, _)| *n).sum();
+    assert_close!(
+        numerator_total,
+        original_total,
+        1e-12,
+        "permuting numerators cannot change their sum — hence cannot change the ratio"
+    );
+
+    // Permuting the R-MULTIPLES does move it, for at least one seed.
+    let moved = (0..8u64).any(|seed| {
+        let mut rng = SplitMix64::new(seed);
+        let p = permute_r_multiples(&blocks, &mut rng).unwrap();
+        (ratio_statistic(&p).unwrap() - observed).abs() > 1e-9
+    });
+    assert!(moved, "re-pairing R-multiples with different risk capital moves the ratio");
 }
 
 // ===========================================================================
