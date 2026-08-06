@@ -1652,7 +1652,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
 // ===========================================================================
 
 /// A usage string enumerating the valid subcommands (KTD2).
-const USAGE: &str = "usage: lab-research <turn | turn diagnose | turn governed | runs compare | replay | catalog status | catalog compact | analyze --scaffold | report mfe | report tiers | fingerprint | trials count | trials record>";
+const USAGE: &str = "usage: lab-research <turn | turn diagnose | turn governed | runs compare | replay | catalog status | catalog compact | analyze --scaffold | report mfe | report tiers | report sample | fingerprint | trials count | trials record>";
 
 /// Parse an optional `YYYYMMDD` range from a pair of env vars, returning `None`
 /// when neither is set and erroring when only one is.
@@ -1852,7 +1852,16 @@ fn dispatch() -> anyhow::Result<ExitCode> {
                 // the exit code reflects integrity + I/O only.
                 Ok(ExitCode::SUCCESS)
             }
-            other => anyhow::bail!("unknown `report` subcommand {other:?} — want `report mfe` | `report tiers`\n{USAGE}"),
+            Some("sample") => {
+                let rt = tokio::runtime::Runtime::new()?;
+                let out = rt.block_on(crate::runner::report::report_sample(&sample_config_from_env()?))?;
+                print_lines(&out.lines);
+                // An insufficient sample and a refused margin are both valid
+                // completions (R9 — a stand-down is a verdict, not a failure);
+                // the exit code reflects I/O and input integrity only.
+                Ok(ExitCode::SUCCESS)
+            }
+            other => anyhow::bail!("unknown `report` subcommand {other:?} — want `report mfe` | `report tiers` | `report sample`\n{USAGE}"),
         },
         Some("trials") => match std::env::args().nth(2).as_deref() {
             Some("count") => {
@@ -1981,6 +1990,33 @@ fn tiers_config_from_env() -> anyhow::Result<crate::runner::report::TiersConfig>
             .ok()
             .filter(|s| !s.trim().is_empty())
             .map(std::path::PathBuf::from),
+    })
+}
+
+fn sample_config_from_env() -> anyhow::Result<crate::runner::report::SampleConfig> {
+    // A usize/u64 override that is present but unparseable is a loud refusal:
+    // silently falling back to the default would report a seed the run did not
+    // actually use, and the whole point of the seed is re-derivability.
+    fn parsed<T: std::str::FromStr>(var: &str, default: T) -> anyhow::Result<T>
+    where
+        T::Err: std::fmt::Display,
+    {
+        match std::env::var(var).ok().filter(|s| !s.trim().is_empty()) {
+            None => Ok(default),
+            Some(s) => s.trim().parse::<T>().map_err(|e| anyhow::anyhow!("{var}={s:?}: {e}")),
+        }
+    }
+    Ok(crate::runner::report::SampleConfig {
+        data_home: data_home_from_env()?,
+        // Absent → the latest finalized run, marked as defaulted in the header.
+        // Safe only because this report writes nothing.
+        run_id: std::env::var("LS_REPORT_RUN").ok().filter(|s| !s.trim().is_empty()),
+        margin_path: std::env::var("LS_SAMPLE_MARGIN")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .map(PathBuf::from),
+        replicates: parsed("LS_SAMPLE_REPLICATES", crate::runner::report::SAMPLE_REPLICATES)?,
+        seed: parsed("LS_SAMPLE_SEED", crate::runner::report::SAMPLE_SEED)?,
     })
 }
 

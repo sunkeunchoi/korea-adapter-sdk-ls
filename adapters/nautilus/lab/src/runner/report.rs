@@ -28,9 +28,16 @@ use nautilus_ls::reference::universe_metadata::Stratum;
 use crate::agent::envelope::{Decision, DecisionEnvelope, SignalKind};
 use crate::agent::replay::read_envelopes;
 use crate::artifacts::manifest::Manifest;
-use crate::artifacts::DECISIONS_FILE;
+use crate::artifacts::performance::PerformanceReport;
+use crate::artifacts::{DECISIONS_FILE, PERFORMANCE_FILE};
+use crate::margin::{self, LoadedMargin};
 use crate::params::StopMode;
 use crate::runner::research::{latest_finalized_run, read_manifest, PROPOSAL_BOUNDS_CAP};
+use crate::stats::{
+    self, block_bootstrap_ratio, clustering, interval_normal, interval_t_few_clusters,
+    minimum_detectable_edge, required_trades, wild_cluster_interval, Block, BootstrapOutcome,
+    Clustering, Interval, MarginArm, MarginVerdict,
+};
 
 /// The candidate rounding step (KTD6): the empirical p70 is rounded to the
 /// nearest 0.05, and a candidate at or within one step of the source run's own
@@ -736,6 +743,414 @@ pub fn report_mfe(cfg: &ReportConfig) -> anyhow::Result<ReportOutcome> {
         orphan_exits,
         degenerate_ranges,
         candidate,
+        lines,
+    })
+}
+
+// ===========================================================================
+// `report sample` — the sample-sufficiency verdict (plan 2026-08-05-001, U2)
+// ===========================================================================
+
+/// Two-sided confidence, pinned by KTD11 **before any reading**. Named here and
+/// nowhere else so the multiplier cannot be retuned once an answer is visible.
+pub const SAMPLE_CONFIDENCE: f64 = 0.95;
+
+/// Statistical power, pinned by KTD11 before any reading.
+pub const SAMPLE_POWER: f64 = 0.80;
+
+/// Default bootstrap replicates (`LS_SAMPLE_REPLICATES` overrides).
+pub const SAMPLE_REPLICATES: usize = 10_000;
+
+/// Default resampler seed (`LS_SAMPLE_SEED` overrides). Fixed so a recorded
+/// interval is re-derivable.
+pub const SAMPLE_SEED: u64 = 20_260_805;
+
+/// `report sample` config.
+#[derive(Debug, Clone)]
+pub struct SampleConfig {
+    /// The data home.
+    pub data_home: PathBuf,
+    /// The run to report on (`LS_REPORT_RUN`); `None` = latest finalized.
+    pub run_id: Option<String>,
+    /// The frozen margin record (`LS_SAMPLE_MARGIN`); `None` = the committed
+    /// `config/sample-margin.json`.
+    pub margin_path: Option<PathBuf>,
+    /// Bootstrap replicates.
+    pub replicates: usize,
+    /// Resampler seed.
+    pub seed: u64,
+}
+
+/// The margin adjudication for the reported run.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SampleMarginOutcome {
+    /// SHA-256 of the margin file the verdict cites.
+    pub content_hash: String,
+    /// `E[max]` at the frozen trial count and dispersion.
+    pub expected_max_null: f64,
+    /// The threshold at this run's own bootstrap standard error.
+    pub threshold: f64,
+    /// The adjudication.
+    pub verdict: MarginVerdict,
+    /// Whether the margin must be re-derived before it binds (the run's catalog
+    /// fingerprint differs from the frozen one).
+    pub requires_rederivation: bool,
+}
+
+/// A `report sample` outcome: structured figures for tests + the printed lines.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SampleOutcome {
+    /// The reported run.
+    pub run_id: String,
+    /// Whether the run was defaulted to the latest finalized one.
+    pub defaulted_run: bool,
+    /// The catalog fingerprint the figures were read at.
+    pub catalog_fingerprint: String,
+    /// Closed trades in the run.
+    pub closed_trades: usize,
+    /// Trade records in the run (closed + open).
+    pub trade_records: usize,
+    /// Measured session clustering.
+    pub clustering: Clustering,
+    /// Per-trade **net** r mean and sample sd (KTD4 — the cost-aware series).
+    pub net_r_mean: f64,
+    /// Per-trade net r sample sd.
+    pub net_r_sd: f64,
+    /// Per-trade **gross** r mean — the target effect (KTD11: the largest edge
+    /// this strategy has demonstrated; targeting more assumes an edge never
+    /// observed).
+    pub gross_r_mean: f64,
+    /// The smallest per-trade edge this sample can distinguish from zero.
+    pub minimum_detectable_edge: f64,
+    /// The target effect the required count was computed at.
+    pub target_effect: f64,
+    /// Closed trades required at the target effect, design-effect inflated.
+    pub required_trades: f64,
+    /// Whether the sample already meets the requirement.
+    pub sufficient: bool,
+    /// Session-block bootstrap of net RoR.
+    pub net_ror: BootstrapOutcome,
+    /// Naive, few-cluster (t), and wild-cluster intervals — diagnostics (KTD5).
+    pub intervals: Vec<Interval>,
+    /// The margin adjudication.
+    pub margin: SampleMarginOutcome,
+    /// The printed report lines.
+    pub lines: Vec<String>,
+}
+
+/// One trade, reduced to what the derivation needs.
+struct SampleTrade {
+    session: NaiveDate,
+    net_r: f64,
+    gross_r: f64,
+    realized_pnl: f64,
+    risk_capital: f64,
+}
+
+/// Reduce a run's performance artifact to its closed, risk-joined trades, or
+/// refuse with the reason. A refusal here is a **missing input**, not a
+/// verdict — the verdict itself never fails the command (KTD1).
+fn sample_trades(report: &PerformanceReport, run_id: &str) -> anyhow::Result<Vec<SampleTrade>> {
+    let records = report.trades.len();
+    let closed: Vec<_> = report.trades.iter().filter(|t| t.ts_closed.is_some()).collect();
+    if closed.is_empty() {
+        anyhow::bail!(
+            "run {run_id} has no CLOSED trades ({records} trade record(s) in {PERFORMANCE_FILE}) \
+             — the sample-sufficiency derivation needs a realized per-trade distribution, and \
+             an empty one is a refusal, not a sample of size zero"
+        );
+    }
+    let mut out = Vec::with_capacity(closed.len());
+    for t in &closed {
+        let (Some(risk_capital), Some(net_r)) = (t.risk_capital, t.realized_r) else {
+            anyhow::bail!(
+                "run {run_id} carries closed trades with a null `risk_capital`/`realized_r` \
+                 (first: {} closed at {:?}) — this is a PRE-FIELD vintage artifact written \
+                 before the entry-risk join (R4) landed, so it has no size-invariant per-trade \
+                 series to derive from. Re-run the backtest on the current tree rather than \
+                 deriving from the legacy P&L path",
+                t.symbol,
+                t.ts_closed
+            );
+        };
+        if !(risk_capital > 0.0) || !net_r.is_finite() {
+            anyhow::bail!(
+                "run {run_id}: closed trade {} carries a degenerate risk_capital ({risk_capital}) \
+                 or realized_r ({net_r})",
+                t.symbol
+            );
+        }
+        let commission: f64 = t.fills.iter().map(|f| f.commission).sum();
+        out.push(SampleTrade {
+            session: kst_date_of(UnixNanos::from(t.ts_opened)),
+            net_r,
+            gross_r: (t.realized_pnl + commission) / risk_capital,
+            realized_pnl: t.realized_pnl,
+            risk_capital,
+        });
+    }
+    Ok(out)
+}
+
+/// Build the sample-sufficiency report for one run (U2; R1, R3, R6, R8).
+///
+/// Read-only in the strongest sense: it opens the run's `performance.json` and
+/// `manifest.json`, writes no run-dir artifact, touches no strategy code and no
+/// governed param, and therefore moves neither `strategy_code_hash` nor head
+/// identity. Every verdict — insufficient sample, refused margin — is a
+/// **successful** completion; only a missing or unusable input fails.
+///
+/// The staging guard (mirroring the tier report's): the run's P&L figures build
+/// the distribution, but no profitability number reaches the output. A power
+/// question must not be decided by a profitability number.
+///
+/// # Errors
+///
+/// On an unknown/absent run, an unreadable performance artifact, a run with no
+/// closed trades, a pre-field vintage carrying null risk fields, a single-session
+/// sample, or an unreadable margin record.
+pub async fn report_sample(cfg: &SampleConfig) -> anyhow::Result<SampleOutcome> {
+    let defaulted_run = cfg.run_id.is_none();
+    let (run_id, manifest): (String, Manifest) = match &cfg.run_id {
+        Some(id) => (id.clone(), read_manifest(&cfg.data_home, id)?),
+        None => latest_finalized_run(&cfg.data_home)?.ok_or_else(|| {
+            anyhow::anyhow!(
+                "no finalized runs under {} — set LS_REPORT_RUN or run a backtest first",
+                cfg.data_home.display()
+            )
+        })?,
+    };
+
+    let perf_path = cfg.data_home.join("runs").join(&run_id).join(PERFORMANCE_FILE);
+    let perf_text = std::fs::read_to_string(&perf_path)
+        .map_err(|e| anyhow::anyhow!("reading {}: {e}", perf_path.display()))?;
+    let report: PerformanceReport = serde_json::from_str(&perf_text)
+        .map_err(|e| anyhow::anyhow!("parsing {}: {e}", perf_path.display()))?;
+    let trade_records = report.trades.len();
+    let trades = sample_trades(&report, &run_id)?;
+
+    // Session index: the clustering unit, and the resampling block (Q1).
+    let mut session_ids: BTreeMap<NaiveDate, usize> = BTreeMap::new();
+    for t in &trades {
+        let next = session_ids.len();
+        session_ids.entry(t.session).or_insert(next);
+    }
+    let cluster_ids: Vec<usize> = trades.iter().map(|t| session_ids[&t.session]).collect();
+    let net_r: Vec<f64> = trades.iter().map(|t| t.net_r).collect();
+    let gross_r: Vec<f64> = trades.iter().map(|t| t.gross_r).collect();
+
+    let clus = clustering(&net_r, &cluster_ids)
+        .map_err(|e| anyhow::anyhow!("run {run_id}: {e} (the derivation needs ≥2 KST sessions)"))?;
+    let net_r_mean = stats::mean(&net_r).map_err(|e| anyhow::anyhow!("run {run_id}: {e}"))?;
+    let net_r_sd = stats::sample_sd(&net_r).map_err(|e| anyhow::anyhow!("run {run_id}: {e}"))?;
+    let gross_r_mean = stats::mean(&gross_r).map_err(|e| anyhow::anyhow!("run {run_id}: {e}"))?;
+
+    let mde =
+        minimum_detectable_edge(net_r_sd, clus.effective_n, SAMPLE_CONFIDENCE, SAMPLE_POWER)
+            .map_err(|e| anyhow::anyhow!("run {run_id}: {e}"))?;
+    // KTD11's target: the measured gross per-trade edge — the largest this
+    // strategy has demonstrated. A non-positive gross edge is not a detectable
+    // target at any sample size, and the report says so rather than dividing.
+    let target_effect = gross_r_mean;
+    let required = required_trades(
+        target_effect,
+        net_r_sd,
+        clus.design_effect,
+        SAMPLE_CONFIDENCE,
+        SAMPLE_POWER,
+    )
+    .map_err(|e| {
+        anyhow::anyhow!(
+            "run {run_id}: cannot derive a required trade count — {e}. The target effect is the \
+             measured gross per-trade edge (KTD11); a non-positive one is undetectable at any \
+             sample size"
+        )
+    })?;
+    let sufficient = (trades.len() as f64) >= required;
+
+    // Session-block bootstrap of net RoR (Σ realized / Σ risk capital).
+    let mut by_session: BTreeMap<usize, Block> = BTreeMap::new();
+    for (t, id) in trades.iter().zip(&cluster_ids) {
+        by_session.entry(*id).or_default().push((t.realized_pnl, t.risk_capital));
+    }
+    let blocks: Vec<Block> = by_session.into_values().collect();
+    let net_ror = block_bootstrap_ratio(&blocks, cfg.replicates, cfg.seed, SAMPLE_CONFIDENCE)
+        .map_err(|e| anyhow::anyhow!("run {run_id}: {e}"))?;
+
+    let intervals = vec![
+        interval_normal(net_ror.point, net_ror.standard_error, SAMPLE_CONFIDENCE)
+            .map_err(|e| anyhow::anyhow!("run {run_id}: {e}"))?,
+        interval_t_few_clusters(
+            net_ror.point,
+            net_ror.standard_error,
+            SAMPLE_CONFIDENCE,
+            clus.clusters,
+        )
+        .map_err(|e| anyhow::anyhow!("run {run_id}: {e}"))?,
+        wild_cluster_interval(
+            &blocks,
+            net_ror.standard_error,
+            SAMPLE_CONFIDENCE,
+            cfg.replicates,
+            cfg.seed.wrapping_add(1),
+        )
+        .map_err(|e| anyhow::anyhow!("run {run_id}: {e}"))?,
+    ];
+
+    // The frozen margin (U3): loaded, adjudicated, and printed as an explicit
+    // pass/fail line, so the bar has a carrier in running code rather than
+    // existing only as a document claim.
+    let margin_path = cfg.margin_path.clone().unwrap_or_else(margin::frozen_margin_path);
+    let LoadedMargin { values: frozen, content_hash } = margin::load(&margin_path)?;
+    let expected_max = frozen
+        .derived_expected_max_null()
+        .map_err(|e| anyhow::anyhow!("margin {}: {e}", margin_path.display()))?;
+    let verdict = frozen
+        .adjudicate(net_ror.point, net_ror.standard_error, MarginArm::Armed)
+        .map_err(|e| anyhow::anyhow!("margin {}: {e}", margin_path.display()))?;
+    let requires_rederivation =
+        margin::requires_rederivation(&frozen, &manifest.catalog_fingerprint);
+    let margin_outcome = SampleMarginOutcome {
+        content_hash: content_hash.clone(),
+        expected_max_null: expected_max,
+        threshold: verdict.threshold,
+        verdict,
+        requires_rederivation,
+    };
+
+    let mut lines = Vec::new();
+    lines.push(format!(
+        "report sample: run {run_id} (strategy v{}, catalog {})",
+        manifest.strategy_version, manifest.catalog_fingerprint
+    ));
+    lines.push(format!(
+        "  run resolution: {}",
+        if defaulted_run {
+            "DEFAULTED to the latest finalized run (LS_REPORT_RUN unset)"
+        } else {
+            "LS_REPORT_RUN"
+        }
+    ));
+    lines.push(format!(
+        "  data range {}..{} | {} closed trades of {trade_records} records over {} KST sessions",
+        manifest.data_range.start,
+        manifest.data_range.end,
+        trades.len(),
+        clus.clusters
+    ));
+
+    lines.push("observed dispersion — net, cost-aware (KTD4):".to_string());
+    lines.push(format!("  per-trade net r:   mean {net_r_mean:+.6}  sd {net_r_sd:.6}"));
+    lines.push(format!("  per-trade gross r: mean {gross_r_mean:+.6}"));
+
+    lines.push("measured clustering (R1):".to_string());
+    lines.push(format!(
+        "  sessions {} | mean cluster size {:.4} | Kish cluster size {:.4} | ICC {:.6}",
+        clus.clusters, clus.mean_cluster_size, clus.kish_cluster_size, clus.icc
+    ));
+    lines.push(format!(
+        "  design effect {:.4} -> effective n {:.2} of {}",
+        clus.design_effect,
+        clus.effective_n,
+        trades.len()
+    ));
+    lines.push(format!(
+        "  FRAGILITY (R3): the design effect is itself estimated from {} clusters; below ~30 \
+         clusters it and every interval below inherit that instability",
+        clus.clusters
+    ));
+
+    lines.push(format!(
+        "detectability at {:.0}% confidence / {:.0}% power (KTD11 — pinned before any reading):",
+        SAMPLE_CONFIDENCE * 100.0,
+        SAMPLE_POWER * 100.0
+    ));
+    lines.push(format!("  minimum detectable edge: {mde:+.4} R"));
+    lines.push(format!(
+        "  target effect (measured gross per-trade edge): {target_effect:+.6} R"
+    ));
+    lines.push(format!(
+        "  required closed trades: {:.0} (naive {:.0} x design effect {:.4})",
+        required.ceil(),
+        (required / clus.design_effect).ceil(),
+        clus.design_effect
+    ));
+    lines.push(format!(
+        "  VERDICT: sample {} — {} closed trades against {:.0} required at {target_effect:+.6} R",
+        if sufficient { "SUFFICIENT" } else { "INSUFFICIENT" },
+        trades.len(),
+        required.ceil()
+    ));
+
+    lines.push(format!(
+        "net RoR, session-block bootstrap (block = 1 KST session — Q1; {} replicates, seed {}):",
+        net_ror.replicates, net_ror.seed
+    ));
+    lines.push(format!(
+        "  point {:+.6} | {:.0}% [{:+.4}, {:+.4}] | SE {:.6} | share of replicates above zero {:.4}",
+        net_ror.point,
+        SAMPLE_CONFIDENCE * 100.0,
+        net_ror.lo,
+        net_ror.hi,
+        net_ror.standard_error,
+        net_ror.p_positive
+    ));
+    lines.push("few-cluster corrections (KTD5 — diagnostics, NOT the gate):".to_string());
+    for i in &intervals {
+        lines.push(format!(
+            "  {:<40} crit {:.4}  [{:+.4}, {:+.4}]",
+            i.label, i.critical_value, i.lo, i.hi
+        ));
+    }
+
+    lines.push(format!(
+        "margin — frozen {} (sha256 {}):",
+        frozen.frozen_utc, margin_outcome.content_hash
+    ));
+    lines.push(format!("  rule: {}", frozen.rule));
+    lines.push(format!(
+        "  E[max | N={} trials, sigma={:.8}] = {:.8}",
+        frozen.trial_count, frozen.cross_trial_sd, margin_outcome.expected_max_null
+    ));
+    lines.push(format!(
+        "  threshold at this run's SE {:.6} = {:+.6}; candidate net RoR {:+.6}",
+        net_ror.standard_error, margin_outcome.threshold, net_ror.point
+    ));
+    lines.push(format!(
+        "  MARGIN VERDICT: {}",
+        if margin_outcome.verdict.clears {
+            "CLEARED — evidence exceeds the trials-corrected threshold"
+        } else {
+            "REFUSED — evidence does not exceed the trials-corrected threshold"
+        }
+    ));
+    lines.push(if margin_outcome.requires_rederivation {
+        format!(
+            "  RE-DERIVATION REQUIRED: this run's catalog {} differs from the frozen {} — the \
+             margin must be re-derived before it binds (AE3)",
+            manifest.catalog_fingerprint, frozen.provenance.catalog_fingerprint
+        )
+    } else {
+        "  catalog fingerprint matches the frozen one — the margin binds as recorded".to_string()
+    });
+
+    Ok(SampleOutcome {
+        run_id,
+        defaulted_run,
+        catalog_fingerprint: manifest.catalog_fingerprint.clone(),
+        closed_trades: trades.len(),
+        trade_records,
+        clustering: clus,
+        net_r_mean,
+        net_r_sd,
+        gross_r_mean,
+        minimum_detectable_edge: mde,
+        target_effect,
+        required_trades: required,
+        sufficient,
+        net_ror,
+        intervals,
+        margin: margin_outcome,
         lines,
     })
 }
