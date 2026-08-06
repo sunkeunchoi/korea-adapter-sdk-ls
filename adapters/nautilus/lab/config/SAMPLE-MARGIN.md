@@ -32,7 +32,8 @@ E[max]  =  0                                                              (N = 1
 
 The closed form is Bailey & López de Prado's False Strategy Theorem: the expected maximum
 of `N` null trials. `trials_corrected_threshold` in `src/stats.rs` is the implementation;
-`report sample` is the carrier that prints the verdict.
+`margin::SampleMargin::threshold` delegates to it, so the frozen record and the statistics
+core cannot disagree about the rule. `report sample` is the carrier that prints the verdict.
 
 ### Why a rule and not a level
 
@@ -66,8 +67,8 @@ evaluated against this data. Correcting for those arms is what makes the bar unf
 | `confidence` | 0.95 (two-sided) | KTD11, pinned before any reading |
 | `power` | 0.80 | KTD11 (carried for provenance; the threshold itself is a confidence statement) |
 | `trial_count` `N` | 29 | `trials::count_trials` over `ledger/trials.jsonl` |
-| `cross_trial_sd` `σ_trials` | 0.026367936878680803 | sample sd of the seven per-arm net RoR figures below |
-| `expected_max_null` | 0.054301595090248275 | the closed form at those two |
+| `cross_trial_sd` `σ_trials` | 0.026367936878680807 | sample sd of the seven per-arm net RoR figures below |
+| `expected_max_null` | 0.05430159509024828 | the closed form at those two |
 
 Both derived numbers are re-derived from their inputs by
 `tests/sample_margin.rs`, so the frozen values are **auditable, not typed in**.
@@ -104,7 +105,7 @@ recorded sweep predates the cost model, so its RoR figures are gross and not com
 | `ratio_atr_alpha` 1.0→0.0 | −0.0275 |
 | `gap_retention_min` 0.5→1.0 (OFF) | −0.0591 |
 
-Sample sd = **0.026367936878680803**.
+Sample sd = **0.026367936878680807**.
 
 ### Justifying the value
 
@@ -116,7 +117,7 @@ above the noise the screen itself produces.
   selection tax alone is *not* the binding term at this sample — `z·SE` is. The margin is
   not a bar invented to be unreachable; it is dominated by ordinary sampling error until
   the sample grows.
-- **Below the smallest kept gain.** The kept levers moved net RoR by 0.0237 to 0.0810 each
+- **Below the smallest kept gain.** The kept levers moved net RoR by 0.0237 to 0.0811 each
   (the off-flip deltas above). A head whose whole edge is smaller than one kept lever's
   contribution is not a head. `E[max]` at 0.0543 sits inside that range, so the bar
   discriminates among plausible heads rather than excluding all of them.

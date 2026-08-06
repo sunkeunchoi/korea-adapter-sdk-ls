@@ -2399,7 +2399,7 @@ mod report_sample {
     use nautilus_ls_lab::margin;
     use nautilus_ls_lab::params::OrbParams;
     use nautilus_ls_lab::runner::report::{
-        report_sample, SampleConfig, SAMPLE_CONFIDENCE, SAMPLE_POWER,
+        report_sample, RateBasis, SampleConfig, SAMPLE_CONFIDENCE, SAMPLE_POWER,
     };
     use tempfile::tempdir;
 
@@ -2746,14 +2746,18 @@ mod report_sample {
     // =======================================================================
 
     /// Write `sessions` consecutive weekday daily bars for one symbol into the
-    /// run's catalog, so the supply probe has real coverage to read.
-    async fn write_coverage(data_home: &Path, sessions: usize) {
+    /// run's catalog, starting at `start` and refusing to run past `end`, so the
+    /// supply probe has real coverage to read *inside the run's own data range*
+    /// — which is what the trades-per-calendar-session rate is denominated over.
+    async fn write_coverage_over(data_home: &Path, start: &str, end: &str, sessions: usize) {
         let catalog = data_home.join("catalog");
         let id = InstrumentId::from("005930.XKRX");
         let bt = BarKind::Daily.bar_type(id).unwrap();
-        let mut day = NaiveDate::from_ymd_opt(2024, 1, 1).unwrap();
+        let last = NaiveDate::parse_from_str(end, "%Y%m%d").unwrap();
+        let mut day = NaiveDate::parse_from_str(start, "%Y%m%d").unwrap();
         let mut bars: Vec<Bar> = Vec::with_capacity(sessions);
         while bars.len() < sessions {
+            assert!(day <= last, "the requested {sessions} sessions do not fit in {start}..{end}");
             if !matches!(day.weekday(), Weekday::Sat | Weekday::Sun) {
                 let row = daily_json(
                     &day.format("%Y%m%d").to_string(),
@@ -2770,6 +2774,11 @@ mod report_sample {
             day = day.succ_opt().unwrap();
         }
         write_bars(&catalog, bars).await.unwrap();
+    }
+
+    /// `write_coverage_over` across the fixture run's own data range.
+    async fn write_coverage(data_home: &Path, sessions: usize) {
+        write_coverage_over(data_home, "20260601", "20260630", sessions).await;
     }
 
     #[tokio::test]
@@ -2826,13 +2835,105 @@ mod report_sample {
         assert!((out.supply.max_concurrent - want).abs() < 1e-12);
         let joined = out.lines.join("\n");
         assert!(
-            joined.contains(&format!("max_concurrent {want:.0} caps it at {want:.0} per session")),
+            joined.contains(&format!(
+                "max_concurrent {want:.0} caps the per-session trade count at {want:.0}"
+            )),
             "the ceiling is stated: {joined}"
         );
         assert!(
             joined.contains("regardless of universe width"),
             "and stated as a hard cap on what breadth can convert: {joined}"
         );
+    }
+
+    #[tokio::test]
+    async fn the_session_rate_is_denominated_in_calendar_sessions_not_trade_producing_ones() {
+        // The unit that converts required TRADES into required SESSIONS must
+        // match the unit of the coverage it is compared against. The fixture
+        // trades on 4 sessions but the catalog covers 10 in the run's range, so
+        // a trade-producing denominator would understate the requirement by
+        // 2.5x and could turn an unreachable target into a reachable one.
+        let (dir, run_id) = write_run(fixture_trades(), &frozen_fingerprint());
+        write_coverage_over(dir.path(), "20260601", "20260630", 10).await;
+        let out = report_sample(&cfg(dir.path(), Some(&run_id))).await.unwrap();
+
+        assert_eq!(out.supply.in_range_sessions, Some(10), "10 calendar sessions in range");
+        assert!(
+            matches!(out.supply.rate_basis, RateBasis::CalendarSessions { in_range_sessions: 10 }),
+            "{:?}",
+            out.supply.rate_basis
+        );
+        assert!(
+            (out.supply.trades_per_session - 0.8).abs() < 1e-12,
+            "8 closed trades over 10 calendar sessions: {}",
+            out.supply.trades_per_session
+        );
+        assert!(
+            (out.supply.trades_per_trade_session - 2.0).abs() < 1e-12,
+            "the trade-producing rate is still reported, at 8 over 4: {}",
+            out.supply.trades_per_trade_session
+        );
+        assert!(
+            out.supply.trades_per_session < out.supply.trades_per_trade_session,
+            "the calendar rate is the lower, honest one"
+        );
+        assert!(
+            (out.supply.required_sessions - (out.required_trades / 0.8).ceil()).abs() < 1e-12,
+            "required sessions divides by the CALENDAR rate"
+        );
+        let joined = out.lines.join("\n");
+        assert!(joined.contains("closed trades per CALENDAR session"), "{joined}");
+        assert!(
+            joined.contains("is NOT what a session requirement may be divided by"),
+            "the trap is named for the next reader: {joined}"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_unreadable_coverage_falls_back_to_the_trade_rate_and_says_it_is_a_lower_bound() {
+        // No catalog at all: there is nothing to denominate calendar sessions
+        // with, so the optimistic trade-producing rate is used -- and labelled,
+        // because every session count it produces is a lower bound.
+        let (dir, run_id) = write_run(fixture_trades(), &frozen_fingerprint());
+        let out = report_sample(&cfg(dir.path(), Some(&run_id))).await.unwrap();
+        assert_eq!(out.supply.in_range_sessions, None);
+        assert!(matches!(out.supply.rate_basis, RateBasis::TradeProducingSessionsFallback));
+        assert!((out.supply.trades_per_session - 2.0).abs() < 1e-12);
+        let joined = out.lines.join("\n");
+        assert!(joined.contains("OPTIMISTIC fallback"), "{joined}");
+        assert!(joined.contains("LOWER BOUND on the true requirement"), "{joined}");
+    }
+
+    #[tokio::test]
+    async fn a_non_positive_gross_edge_is_a_verdict_not_a_crash() {
+        // The target effect is the MEASURED gross per-trade edge. A head whose
+        // gross edge is negative has no detectable target at any sample size --
+        // which is a verdict the report must print, not an error that aborts it
+        // before the operator sees anything.
+        let losers = vec![
+            trade(1, -0.40),
+            trade(1, -0.20),
+            trade(2, -0.30),
+            trade(2, -0.10),
+            trade(3, -0.25),
+            trade(3, -0.15),
+            trade(4, -0.35),
+            trade(4, -0.05),
+        ];
+        let (dir, run_id) = write_run(losers, &frozen_fingerprint());
+        let out = report_sample(&cfg(dir.path(), Some(&run_id))).await.unwrap();
+        assert!(out.target_effect < 0.0, "gross edge is negative: {}", out.target_effect);
+        assert!(!out.required_trades.is_finite(), "no sample size resolves it");
+        assert!(!out.sufficient);
+        let joined = out.lines.join("\n");
+        assert!(joined.contains("required closed trades: UNDETECTABLE"), "{joined}");
+        assert!(
+            joined.contains("more data cannot fix it"),
+            "and it says why more data is not the answer: {joined}"
+        );
+        // The rest of the report still renders -- the margin verdict included.
+        assert!(joined.contains("MARGIN VERDICT:"), "{joined}");
+        assert!(joined.contains("ACQUISITION VERDICT:"), "{joined}");
     }
 
     #[tokio::test]
@@ -2857,6 +2958,7 @@ mod report_sample {
         write_coverage(dir.path(), 4).await;
         let out = report_sample(&cfg(dir.path(), Some(&run_id))).await.unwrap();
         assert_eq!(out.supply.available_sessions, Some(4));
+        assert_eq!(out.supply.in_range_sessions, Some(4), "all four sit in the run's range");
         assert!(!out.supply.reachable);
         assert!(
             (out.supply.shortfall_sessions - (out.supply.required_sessions - 4.0)).abs() < 1e-12,

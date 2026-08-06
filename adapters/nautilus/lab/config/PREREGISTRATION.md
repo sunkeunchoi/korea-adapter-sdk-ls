@@ -52,8 +52,8 @@ Parked as queue `rung1-ladder-reentry-margin-clearing-head`.
 > forbid the activity it gates.
 >
 > Note what the same turn established about the sample: the head's gross edge sits about
-> nine times below this sample's detection floor, and ~8,600 closed trades (~1,866 sessions,
-> ~7.5 years) would be needed to resolve it, against 54 covered. Re-entry is therefore
+> nine times below this sample's detection floor, and ~8,600 closed trades (~3,499 calendar
+> sessions, ~14 years) would be needed to resolve it, against 54 covered. Re-entry is therefore
 > **not** expected to arrive by a lever search on the current catalog.
 
 ---

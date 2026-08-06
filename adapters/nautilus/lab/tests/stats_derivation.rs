@@ -9,10 +9,10 @@
 
 use nautilus_ls_lab::stats::{
     block_bootstrap_ratio, clustering, design_effect, expected_max_null, interval_normal,
-    interval_t_few_clusters, margin_verdict, mean, minimum_detectable_edge, permute_r_multiples,
-    power_z, probit, ratio_statistic, required_trades, sample_sd, t_quantile,
-    trials_corrected_threshold, two_sided_z, Block, MarginArm, SplitMix64, StatsError,
-    EULER_MASCHERONI,
+    interval_t_few_clusters, margin_verdict, mean, minimum_detectable_edge, percentile,
+    permute_r_multiples, power_z, probit, ratio_statistic, required_trades, sample_sd, t_quantile,
+    trials_corrected_threshold, two_sided_z, wild_cluster_interval, Block, MarginArm, SplitMix64,
+    StatsError, EULER_MASCHERONI,
 };
 
 /// The confidence and power pinned by KTD11, before any reading.
@@ -210,12 +210,15 @@ fn expected_max_null_is_the_false_strategy_theorem() {
     assert_close!(expected_max_null(n, sigma).unwrap(), want, 1e-12, "the FST closed form");
 }
 
+/// A representative candidate standard error, in the statistic's own units.
+const SE: f64 = 0.087_002;
+
 #[test]
 fn the_threshold_is_strictly_increasing_in_the_trial_count() {
     let sigma = 0.3;
-    let mut prev = trials_corrected_threshold(1, sigma, CONFIDENCE).unwrap();
+    let mut prev = trials_corrected_threshold(1, sigma, CONFIDENCE, SE).unwrap();
     for n in 2..=60usize {
-        let cur = trials_corrected_threshold(n, sigma, CONFIDENCE).unwrap();
+        let cur = trials_corrected_threshold(n, sigma, CONFIDENCE, SE).unwrap();
         assert!(cur > prev, "threshold rises from {} trials to {n}: {prev} → {cur}", n - 1);
         prev = cur;
     }
@@ -223,32 +226,62 @@ fn the_threshold_is_strictly_increasing_in_the_trial_count() {
 
 #[test]
 fn the_threshold_is_increasing_in_the_cross_trial_variance() {
-    let a = trials_corrected_threshold(29, 0.10, CONFIDENCE).unwrap();
-    let b = trials_corrected_threshold(29, 0.30, CONFIDENCE).unwrap();
+    let a = trials_corrected_threshold(29, 0.10, CONFIDENCE, SE).unwrap();
+    let b = trials_corrected_threshold(29, 0.30, CONFIDENCE, SE).unwrap();
     assert!(b > a, "more dispersed trials buy more luck: {a} → {b}");
+}
+
+#[test]
+fn the_threshold_is_every_term_in_the_statistics_own_units() {
+    // The whole rule, written out longhand: selection tax plus sampling term,
+    // both in net-RoR units. A threshold that mixed a unitless z into a
+    // RoR-denominated selection tax would be meaningless — and would silently
+    // pass a candidate whose evidence is orders of magnitude smaller.
+    let sigma = 0.026_367_936_878_680_807;
+    let got = trials_corrected_threshold(29, sigma, CONFIDENCE, SE).unwrap();
+    let want = expected_max_null(29, sigma).unwrap() + Z_975 * SE;
+    assert_close!(got, want, 1e-15, "threshold = E[max] + z x candidate SE");
+    // The sampling term shrinks with the candidate's own sample; the selection
+    // tax does not. That asymmetry is what keeps the bar reachable.
+    let quarter = trials_corrected_threshold(29, sigma, CONFIDENCE, SE / 4.0).unwrap();
+    assert_close!(
+        quarter,
+        expected_max_null(29, sigma).unwrap() + Z_975 * SE / 4.0,
+        1e-15,
+        "a 16x larger sample quarters only the sampling term"
+    );
+    assert!(quarter < got, "more data lowers the bar: {quarter} < {got}");
+    assert!(
+        quarter > expected_max_null(29, sigma).unwrap(),
+        "but never below the selection tax the search already spent"
+    );
+    assert!(
+        trials_corrected_threshold(29, sigma, CONFIDENCE, -1.0).is_err(),
+        "a negative standard error is a refusal"
+    );
 }
 
 #[test]
 fn the_threshold_reduces_to_the_single_trial_case_at_one() {
     assert_close!(expected_max_null(1, 0.3).unwrap(), 0.0, 1e-15, "no selection to correct at N=1");
     assert_close!(
-        trials_corrected_threshold(1, 0.3, CONFIDENCE).unwrap(),
-        Z_975,
-        1e-12,
+        trials_corrected_threshold(1, 0.3, CONFIDENCE, SE).unwrap(),
+        Z_975 * SE,
+        1e-15,
         "at N=1 the margin is the plain two-sided test"
     );
     // Cross-trial dispersion is irrelevant when nothing was selected.
     assert_close!(
-        trials_corrected_threshold(1, 9.9, CONFIDENCE).unwrap(),
-        Z_975,
-        1e-12,
+        trials_corrected_threshold(1, 9.9, CONFIDENCE, SE).unwrap(),
+        Z_975 * SE,
+        1e-15,
         "σ does not move the single-trial bar"
     );
 }
 
 #[test]
 fn the_margin_comparison_binds_when_armed_and_clears_everything_when_disarmed() {
-    let threshold = trials_corrected_threshold(29, 0.3, CONFIDENCE).unwrap();
+    let threshold = trials_corrected_threshold(29, 0.3, CONFIDENCE, SE).unwrap();
     let below = margin_verdict(threshold - 0.001, threshold, MarginArm::Armed);
     assert!(!below.clears, "armed: evidence at the threshold does not clear it");
     let above = margin_verdict(threshold + 0.001, threshold, MarginArm::Armed);
@@ -305,6 +338,67 @@ fn the_few_cluster_interval_is_wider_than_the_naive_one() {
     assert_close!(naive.critical_value, Z_975, 1e-12, "the naive interval uses z");
     assert_close!(few.critical_value, 2.068_658, 1e-4, "the corrected one uses t at G−1 = 23");
     assert!(few.hi > naive.hi && few.lo < naive.lo, "the correction widens, never tightens");
+}
+
+#[test]
+fn the_wild_cluster_interval_is_seed_reproducible_and_centred_on_the_point() {
+    // The third KTD5 diagnostic. It is printed beside the other two, so a
+    // silent change in it would misreport how optimistic the naive interval is.
+    let blocks = six_sessions();
+    let point = ratio_statistic(&blocks).unwrap();
+    let se = 0.05;
+    let a = wild_cluster_interval(&blocks, se, CONFIDENCE, 400, 20_260_806).unwrap();
+    let b = wild_cluster_interval(&blocks, se, CONFIDENCE, 400, 20_260_806).unwrap();
+    assert_eq!(a, b, "one seed → byte-identical output");
+    let c = wild_cluster_interval(&blocks, se, CONFIDENCE, 400, 20_260_807).unwrap();
+    assert_ne!(a.critical_value, c.critical_value, "a different seed draws differently");
+
+    assert_close!(a.point, point, 1e-15, "centred on the observed ratio, not a replicate mean");
+    assert!(a.lo < a.point && a.point < a.hi, "the interval brackets the point estimate");
+    assert!(a.critical_value > 0.0, "the reported critical value is the wider tail");
+    // Rademacher weights are symmetric, so the percentile-t tails are roughly
+    // balanced — a one-sided implementation would fail this.
+    let half_width_lo = a.point - a.lo;
+    let half_width_hi = a.hi - a.point;
+    assert!(
+        (half_width_lo - half_width_hi).abs() < 0.6 * half_width_hi.max(half_width_lo),
+        "Rademacher tails are roughly symmetric: [{}, {}]",
+        a.lo,
+        a.hi
+    );
+    assert_eq!(a.label, "wild-cluster (Rademacher, percentile-t)");
+
+    assert!(
+        wild_cluster_interval(&blocks, 0.0, CONFIDENCE, 400, 1).is_err(),
+        "a zero standard error is a refusal, not a division"
+    );
+    assert!(
+        wild_cluster_interval(&blocks[..1], 0.05, CONFIDENCE, 400, 1).is_err(),
+        "a single block cannot be resampled"
+    );
+    assert!(
+        wild_cluster_interval(&blocks, 0.05, CONFIDENCE, 0, 1).is_err(),
+        "zero replicates is a refusal"
+    );
+}
+
+#[test]
+fn percentile_reproduces_nearest_rank_at_odd_and_even_counts() {
+    // `report.rs` aliases its `nearest_rank` to this function, so the six
+    // existing MFE-report call sites depend on exactly these values.
+    let odd = [1.0, 2.0, 3.0, 4.0, 5.0];
+    assert_eq!(percentile(&odd, 50.0), Some(3.0));
+    assert_eq!(percentile(&odd, 70.0), Some(4.0), "rank ceil(3.5)=4");
+    assert_eq!(percentile(&odd, 90.0), Some(5.0));
+    let even = [1.0, 2.0, 3.0, 4.0];
+    assert_eq!(percentile(&even, 50.0), Some(2.0));
+    assert_eq!(percentile(&even, 75.0), Some(3.0));
+    assert_eq!(percentile(&even, 0.0), Some(1.0), "rank floors at 1, never 0");
+    assert_eq!(percentile(&even, 100.0), Some(4.0));
+    assert_eq!(percentile(&[7.0], 25.0), Some(7.0));
+    assert_eq!(percentile(&[], 50.0), None, "an empty sample has no percentile");
+    assert_eq!(percentile(&even, -1.0), None, "out-of-range pct is None, not a panic");
+    assert_eq!(percentile(&even, 101.0), None);
 }
 
 #[test]

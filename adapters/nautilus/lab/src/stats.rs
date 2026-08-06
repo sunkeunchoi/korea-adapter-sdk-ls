@@ -504,28 +504,47 @@ pub fn expected_max_null(n_trials: usize, cross_trial_sd: f64) -> Result<f64, St
     Ok(cross_trial_sd * ((1.0 - EULER_MASCHERONI) * a + EULER_MASCHERONI * b))
 }
 
-/// The margin a candidate's standardized evidence must exceed: the expected
-/// maximum of `n_trials` null draws **plus** the ordinary two-sided critical
-/// value at `confidence`.
+/// The margin a candidate's evidence must exceed: the expected maximum of
+/// `n_trials` null draws **plus** the ordinary two-sided critical value at
+/// `confidence`, scaled by the candidate's own standard error.
 ///
-/// The threshold is denominated in standard errors of the candidate's own
-/// statistic, so it is a *rule*, not a level: a candidate with more data has a
-/// smaller standard error and therefore a reachable bar. Freezing a fixed
-/// effect-size level instead would be unclearable at any sample size, which
-/// strands a viable strategy permanently.
+/// ```text
+/// threshold = E[max | n_trials, cross_trial_sd]  +  z(confidence) · candidate_standard_error
+/// ```
+///
+/// Every term is in the statistic's own units — `cross_trial_sd` and the
+/// returned threshold are both net RoR for this turn's margin. Passing the
+/// candidate's standard error is what makes this a *rule* rather than a level:
+/// a candidate with more data has a smaller standard error and therefore a
+/// reachable bar. Freezing a fixed effect-size level instead would be
+/// unclearable at any sample size, which strands a viable strategy permanently.
+///
+/// [`crate::margin::SampleMargin::threshold`] delegates here, so the frozen
+/// record and this helper can never disagree.
 ///
 /// Strictly increasing in `n_trials` and in `cross_trial_sd`; at `n_trials = 1`
-/// it reduces to the plain two-sided significance test.
+/// the selection term vanishes and it reduces to the plain two-sided
+/// significance test, `z · candidate_standard_error`.
 ///
 /// # Errors
 ///
-/// Propagates [`expected_max_null`] and [`two_sided_z`].
+/// Propagates [`expected_max_null`] and [`two_sided_z`]; refuses a negative or
+/// non-finite standard error.
 pub fn trials_corrected_threshold(
     n_trials: usize,
     cross_trial_sd: f64,
     confidence: f64,
+    candidate_standard_error: f64,
 ) -> Result<f64, StatsError> {
-    Ok(expected_max_null(n_trials, cross_trial_sd)? + two_sided_z(confidence)?)
+    if !candidate_standard_error.is_finite() || candidate_standard_error < 0.0 {
+        return Err(domain(
+            "candidate standard error",
+            "finite and non-negative",
+            candidate_standard_error,
+        ));
+    }
+    Ok(expected_max_null(n_trials, cross_trial_sd)?
+        + two_sided_z(confidence)? * candidate_standard_error)
 }
 
 /// Whether the margin comparison is live.
@@ -546,7 +565,8 @@ pub enum MarginArm {
 /// A margin adjudication.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MarginVerdict {
-    /// The candidate's standardized evidence (statistic ÷ its standard error).
+    /// The candidate's evidence, in the statistic's own units (net RoR for this
+    /// turn's margin) — **not** standardized; the threshold carries the scaling.
     pub statistic: f64,
     /// The trials-corrected threshold it had to beat.
     pub threshold: f64,

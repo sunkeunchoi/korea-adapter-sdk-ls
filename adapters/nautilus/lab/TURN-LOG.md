@@ -81,7 +81,17 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   | design effect | **2.1579** → effective n **51.44** of 111 |
   | minimum detectable edge (95% / 80%) | **+0.2506 R** |
   | required closed trades at the gross edge | **8,629** (naive 3,999 × design effect) |
-  | required sessions at 4.625 trades/session | **1,866** (~7.5 years) |
+  | required sessions at 2.4667 trades per **calendar** session | **3,499** (~14.0 years) |
+
+  > **Unit correction, same turn (review finding).** An earlier draft of this entry — and the
+  > plan's own Problem Frame — divided the required trade count by **4.625 trades per
+  > *trade-producing* session** and compared the result against *calendar* coverage, giving
+  > ~1,870 sessions (~7.5 years). Those are different units. The head trades on only 24 of the
+  > **45** calendar sessions its data range covers, so the honest rate is **2.4667 per calendar
+  > session** and the requirement is **3,499 sessions**, not 1,866. The verdict direction is
+  > unchanged — it is a stand-down either way — but the shortfall is roughly **double** what
+  > the first reading said, and one band row flips (see below). `report sample` now prints both
+  > rates and uses only the calendar one for a verdict.
 
   The smallest edge this sample can distinguish from zero is **roughly nine times the
   entire gross edge** — and that is with costs switched *off*. **The problem is not the
@@ -93,17 +103,22 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   individually sound — **at this effective sample size nothing is attributable to
   anything.**
 
-- **SUPPLY: STAND DOWN.** 1,866 sessions required against **54** distinct KST daily-bar
-  sessions in the catalog — a shortfall of **1,812 sessions (~7.2 years)**. Reported across
+- **SUPPLY: STAND DOWN.** 3,499 sessions required against **54** distinct KST daily-bar
+  sessions in the catalog — a shortfall of **3,445 sessions (~13.8 years)**. Reported across
   the gross edge's own 95% interval rather than at one point, because required n scales as
   the inverse square of the target:
 
   | target effect | required n | sessions | years | within coverage |
   |---|---|---|---|---|
-  | +0.204107 R (CI upper, design-effect corrected) | 168 | 37 | 0.1 | yes |
-  | +0.148018 R (CI upper, naive) | 319 | 69 | 0.3 | NO |
-  | **+0.028422 R (the pinned target)** | **8,629** | **1,866** | **7.5** | **NO** |
+  | +0.204107 R (CI upper, design-effect corrected) | 168 | 68 | 0.3 | NO |
+  | +0.148018 R (CI upper, naive) | 319 | 129 | 0.5 | NO |
+  | **+0.028422 R (the pinned target)** | **8,629** | **3,499** | **14.0** | **NO** |
   | −0.091 R / −0.147 R (CI lower) | undetectable at any sample size | | | |
+
+  **No row is reachable.** On the earlier trade-producing-session rate the top row read 37
+  sessions and "yes" — i.e. the most optimistic end of the interval looked already satisfied.
+  It is not: at 68 calendar sessions it exceeds the 54 covered. That flip is the practical
+  cost of the unit error and the reason the correction was worth making.
 
   An unreachable sample is a **valid completion**, not a failure. Nothing was acquired and
   no ingest ran; a test asserts on `report_sample`'s source that no branch reaches an

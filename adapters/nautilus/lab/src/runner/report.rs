@@ -134,14 +134,12 @@ struct TradeRow {
 
 /// Nearest-rank percentile over a **sorted** slice (KTD5): the smallest sample
 /// value with at least `pct`% of the sample at or below it.
-fn nearest_rank(sorted: &[f64], pct: f64) -> Option<f64> {
-    if sorted.is_empty() {
-        return None;
-    }
-    let n = sorted.len();
-    let rank = ((pct / 100.0) * n as f64).ceil() as usize;
-    Some(sorted[rank.clamp(1, n) - 1])
-}
+///
+/// One implementation, in [`crate::stats::percentile`]. This alias keeps the
+/// six existing call sites and `nearest_rank_at_odd_and_even_counts` reading as
+/// they did, while the statistics core owns the arithmetic — a second copy of
+/// the same formula is a place for the two to drift.
+use crate::stats::percentile as nearest_rank;
 
 /// Sort an f64 sample ascending. The unwrap is safe for every sample this
 /// report builds: `mfe_r` arrives via serde_json (which cannot carry NaN) and
@@ -814,6 +812,24 @@ pub struct TargetEffectRow {
     pub reachable: Option<bool>,
 }
 
+/// Which unit the trades-per-session rate is denominated in. The rate converts
+/// a required TRADE count into a required SESSION count, and that count is
+/// compared against calendar coverage — so the two must share a unit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RateBasis {
+    /// Calendar sessions inside the source run's own data range. The correct
+    /// basis, used whenever the catalog's coverage is readable.
+    CalendarSessions {
+        /// Sessions the run's data range actually covers.
+        in_range_sessions: usize,
+    },
+    /// Trade-producing sessions only — the optimistic fallback used when the
+    /// catalog cannot be read. It overstates the rate (sessions that produced
+    /// no trade are excluded from the denominator), so every session count
+    /// derived from it is a **lower bound** on the true requirement.
+    TradeProducingSessionsFallback,
+}
+
 /// The catalog supply probe and its acquisition verdict (U5; R4, R5, R9).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SupplyOutcome {
@@ -823,12 +839,24 @@ pub struct SupplyOutcome {
     /// catalog is absent or unreadable — supply is then UNESTABLISHED, which
     /// fails closed to a stand-down rather than assuming a number.
     pub available_sessions: Option<usize>,
+    /// Of those, the ones inside the source run's own data range — the
+    /// denominator of [`Self::trades_per_session`].
+    pub in_range_sessions: Option<usize>,
+    /// Why the catalog could not be read, when it exists but failed. `None`
+    /// when the catalog read succeeded or the catalog is simply absent.
+    pub catalog_error: Option<String>,
     /// Earliest covered KST session.
     pub first_session: Option<NaiveDate>,
     /// Latest covered KST session.
     pub last_session: Option<NaiveDate>,
-    /// Observed closed trades per session in the source run.
+    /// Closed trades per **calendar** session in the source run's data range —
+    /// the rate that drives every session count and the reachability verdict.
     pub trades_per_session: f64,
+    /// Closed trades per **trade-producing** session. Reported for continuity
+    /// with the clustering figures; never used for a verdict.
+    pub trades_per_trade_session: f64,
+    /// Which unit [`Self::trades_per_session`] is denominated in.
+    pub rate_basis: RateBasis,
     /// The run's `max_concurrent` — the hard ceiling on trades per session,
     /// whatever the universe width.
     pub max_concurrent: f64,
@@ -947,9 +975,15 @@ fn sample_trades(report: &PerformanceReport, run_id: &str) -> anyhow::Result<Vec
 /// identity. Every verdict — insufficient sample, refused margin — is a
 /// **successful** completion; only a missing or unusable input fails.
 ///
-/// The staging guard (mirroring the tier report's): the run's P&L figures build
-/// the distribution, but no profitability number reaches the output. A power
-/// question must not be decided by a profitability number.
+/// The staging guard, mirroring the tier report's: the run's KRW P&L builds the
+/// distribution, but **no KRW-denominated P&L or expectancy figure reaches the
+/// output**. A power question must not be decided by a profitability number.
+///
+/// The guard is deliberately narrower than "no profitability number at all":
+/// net RoR *is* printed, because it is the statistic the margin adjudicates and
+/// suppressing it would leave the margin verdict unauditable. What the guard
+/// keeps out is the KRW-scale P&L that would invite reading this report as a
+/// profitability report. `tests/research_cli.rs` enforces exactly that.
 ///
 /// # Errors
 ///
@@ -997,7 +1031,9 @@ pub async fn report_sample(cfg: &SampleConfig) -> anyhow::Result<SampleOutcome> 
             .map_err(|e| anyhow::anyhow!("run {run_id}: {e}"))?;
     // KTD11's target: the measured gross per-trade edge — the largest this
     // strategy has demonstrated. A non-positive gross edge is not a detectable
-    // target at any sample size, and the report says so rather than dividing.
+    // target at any sample size; that is a VERDICT ("undetectable"), not a
+    // failure, so it is reported as an infinite requirement rather than
+    // aborting the whole report — the same handling the band rows use.
     let target_effect = gross_r_mean;
     let required = required_trades(
         target_effect,
@@ -1006,13 +1042,7 @@ pub async fn report_sample(cfg: &SampleConfig) -> anyhow::Result<SampleOutcome> 
         SAMPLE_CONFIDENCE,
         SAMPLE_POWER,
     )
-    .map_err(|e| {
-        anyhow::anyhow!(
-            "run {run_id}: cannot derive a required trade count — {e}. The target effect is the \
-             measured gross per-trade edge (KTD11); a non-positive one is undetectable at any \
-             sample size"
-        )
-    })?;
+    .unwrap_or(f64::INFINITY);
     let sufficient = (trades.len() as f64) >= required;
 
     // Session-block bootstrap of net RoR (Σ realized / Σ risk capital).
@@ -1053,7 +1083,6 @@ pub async fn report_sample(cfg: &SampleConfig) -> anyhow::Result<SampleOutcome> 
     let z = stats::two_sided_z(SAMPLE_CONFIDENCE).map_err(|e| anyhow::anyhow!("{e}"))?;
     let se_naive = gross_sd / (trades.len() as f64).sqrt();
     let se_clustered = gross_sd / clus.effective_n.sqrt();
-    let trades_per_session = trades.len() as f64 / clus.clusters as f64;
 
     let mut band_targets: Vec<(String, f64)> = vec![
         (
@@ -1078,7 +1107,10 @@ pub async fn report_sample(cfg: &SampleConfig) -> anyhow::Result<SampleOutcome> 
     // bar kinds forces a false NO-GO on a healthy catalog. Coverage here is the
     // distinct KST sessions the catalog's DAILY bars actually hold.
     let catalog_path = cfg.data_home.join("catalog");
-    let (available_sessions, first_session, last_session) = if catalog_path.exists() {
+    let mut catalog_error: Option<String> = None;
+    let (available_sessions, in_range_sessions, first_session, last_session) = if catalog_path
+        .exists()
+    {
         match nautilus_ls::ingest::read_all_bars(&catalog_path).await {
             Ok(bars) => {
                 use crate::runner::backtest::{is_daily, kst_date_of as bar_date};
@@ -1086,12 +1118,45 @@ pub async fn report_sample(cfg: &SampleConfig) -> anyhow::Result<SampleOutcome> 
                     bars.iter().filter(|b| is_daily(b)).map(bar_date).collect();
                 dates.sort_unstable();
                 dates.dedup();
-                (Some(dates.len()), dates.first().copied(), dates.last().copied())
+                // Sessions inside the SOURCE RUN's own data range — the
+                // denominator of the trades-per-session rate below.
+                let start = NaiveDate::parse_from_str(manifest.data_range.start.trim(), "%Y%m%d");
+                let end = NaiveDate::parse_from_str(manifest.data_range.end.trim(), "%Y%m%d");
+                let in_range = match (start, end) {
+                    (Ok(s), Ok(e)) => Some(dates.iter().filter(|d| **d >= s && **d <= e).count()),
+                    _ => None,
+                };
+                (Some(dates.len()), in_range, dates.first().copied(), dates.last().copied())
             }
-            Err(_) => (None, None, None),
+            Err(e) => {
+                // Fail closed, but never silently: a corrupt or unreadable
+                // catalog must not render the same line as an absent one.
+                catalog_error = Some(format!("{e}"));
+                (None, None, None, None)
+            }
         }
     } else {
-        (None, None, None)
+        (None, None, None, None)
+    };
+
+    // The rate that converts a required TRADE count into a required SESSION
+    // count has to be denominated in the same unit as the coverage it is later
+    // compared against: **calendar** sessions, not the subset that happened to
+    // produce a trade. The head trades on 4.6 of its *trading* sessions but on
+    // far fewer of the catalog's *calendar* sessions, and using the former
+    // against the latter understates the requirement — the exact unit slip that
+    // makes a shortfall look smaller than it is. Both rates are reported; only
+    // the calendar rate drives a verdict.
+    let trades_per_trade_session = trades.len() as f64 / clus.clusters as f64;
+    let (trades_per_session, rate_basis) = match in_range_sessions {
+        Some(n) if n > 0 => (
+            trades.len() as f64 / n as f64,
+            RateBasis::CalendarSessions { in_range_sessions: n },
+        ),
+        // No readable coverage to denominate against. Fall back to the
+        // trade-producing rate and SAY SO — it is the optimistic end, so the
+        // shortfall it produces is a lower bound, never a reassurance.
+        _ => (trades_per_trade_session, RateBasis::TradeProducingSessionsFallback),
     };
 
     let required_sessions = (required / trades_per_session).ceil();
@@ -1102,9 +1167,13 @@ pub async fn report_sample(cfg: &SampleConfig) -> anyhow::Result<SampleOutcome> 
     let supply = SupplyOutcome {
         catalog_path: catalog_path.clone(),
         available_sessions,
+        in_range_sessions,
+        catalog_error: catalog_error.clone(),
         first_session,
         last_session,
         trades_per_session,
+        trades_per_trade_session,
+        rate_basis,
         max_concurrent,
         required_sessions,
         reachable,
@@ -1211,18 +1280,31 @@ pub async fn report_sample(cfg: &SampleConfig) -> anyhow::Result<SampleOutcome> 
     lines.push(format!(
         "  target effect (measured gross per-trade edge): {target_effect:+.6} R"
     ));
-    lines.push(format!(
-        "  required closed trades: {:.0} (naive {:.0} x design effect {:.4})",
-        required.ceil(),
-        (required / clus.design_effect).ceil(),
-        clus.design_effect
-    ));
-    lines.push(format!(
-        "  VERDICT: sample {} — {} closed trades against {:.0} required at {target_effect:+.6} R",
-        if sufficient { "SUFFICIENT" } else { "INSUFFICIENT" },
-        trades.len(),
-        required.ceil()
-    ));
+    if required.is_finite() {
+        lines.push(format!(
+            "  required closed trades: {:.0} (naive {:.0} x design effect {:.4})",
+            required.ceil(),
+            (required / clus.design_effect).ceil(),
+            clus.design_effect
+        ));
+        lines.push(format!(
+            "  VERDICT: sample {} — {} closed trades against {:.0} required at \
+             {target_effect:+.6} R",
+            if sufficient { "SUFFICIENT" } else { "INSUFFICIENT" },
+            trades.len(),
+            required.ceil()
+        ));
+    } else {
+        lines.push(
+            "  required closed trades: UNDETECTABLE — the measured gross per-trade edge is not \
+             positive, so no sample size can distinguish it from zero"
+                .to_string(),
+        );
+        lines.push(format!(
+            "  VERDICT: sample INSUFFICIENT — the target effect itself is {target_effect:+.6} R; \
+             this is not a sample-size problem and more data cannot fix it"
+        ));
+    }
 
     lines.push(format!(
         "net RoR, session-block bootstrap (block = 1 KST session — Q1; {} replicates, seed {}):",
@@ -1281,11 +1363,6 @@ pub async fn report_sample(cfg: &SampleConfig) -> anyhow::Result<SampleOutcome> 
     lines.push("  * years at ~250 KRX trading sessions.".to_string());
 
     lines.push("supply — read from the catalog's own coverage (U5, R5):".to_string());
-    lines.push(format!(
-        "  observed rate {trades_per_session:.4} closed trades per session; run max_concurrent \
-         {max_concurrent:.0} caps it at {max_concurrent:.0} per session regardless of universe \
-         width"
-    ));
     match supply.available_sessions {
         Some(n) => lines.push(format!(
             "  catalog {} holds {n} distinct KST daily-bar sessions ({} .. {}) — coverage read, \
@@ -1294,11 +1371,40 @@ pub async fn report_sample(cfg: &SampleConfig) -> anyhow::Result<SampleOutcome> 
             supply.first_session.map_or_else(|| "?".into(), |d| d.format("%Y%m%d").to_string()),
             supply.last_session.map_or_else(|| "?".into(), |d| d.format("%Y%m%d").to_string()),
         )),
-        None => lines.push(format!(
-            "  catalog {} is absent or unreadable — supply UNESTABLISHED",
-            supply.catalog_path.display()
+        None => lines.push(match &supply.catalog_error {
+            Some(e) => format!(
+                "  catalog {} EXISTS but could not be read ({e}) — supply UNESTABLISHED",
+                supply.catalog_path.display()
+            ),
+            None => format!(
+                "  catalog {} is absent — supply UNESTABLISHED",
+                supply.catalog_path.display()
+            ),
+        }),
+    }
+    match supply.rate_basis {
+        RateBasis::CalendarSessions { in_range_sessions } => lines.push(format!(
+            "  rate {trades_per_session:.4} closed trades per CALENDAR session ({} closed trades \
+             over {in_range_sessions} sessions the run's range {}..{} covers). The head trades on \
+             only {} of them, at {:.4} per trade-producing session — that higher rate is the \
+             clustering unit and is NOT what a session requirement may be divided by.",
+            trades.len(),
+            manifest.data_range.start,
+            manifest.data_range.end,
+            clus.clusters,
+            supply.trades_per_trade_session
+        )),
+        RateBasis::TradeProducingSessionsFallback => lines.push(format!(
+            "  rate {trades_per_session:.4} closed trades per TRADE-PRODUCING session — the \
+             coverage needed to denominate calendar sessions is unreadable, so this is the \
+             OPTIMISTIC fallback and every session count below is a LOWER BOUND on the true \
+             requirement"
         )),
     }
+    lines.push(format!(
+        "  run max_concurrent {max_concurrent:.0} caps the per-session trade count at \
+         {max_concurrent:.0} regardless of universe width"
+    ));
     lines.push(format!(
         "  required sessions at the target effect {target_effect:+.6} R: {:.0}",
         supply.required_sessions

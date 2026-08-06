@@ -26,7 +26,7 @@ run (nonce-gated, attended, refused in a no-TTY shell). Run the operator sequenc
 >
 > Read the same turn's other finding before planning re-entry: the head's gross edge sits
 > about **nine times below this sample's detection floor**, and clearing the margin would
-> need on the order of **8,600 closed trades (~1,866 sessions, ~7.5 years)** against 54
+> need on the order of **8,600 closed trades (~3,499 calendar sessions, ~14 years)** against 54
 > sessions covered. Re-entry is not expected to arrive by a lever search on the current
 > catalog; the staged successor is queue `orb-sample-acquisition-decision`.
 

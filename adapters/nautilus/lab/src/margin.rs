@@ -46,8 +46,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use crate::stats::{
-    expected_max_null, margin_verdict, sample_sd, two_sided_z, MarginArm, MarginVerdict,
-    StatsError,
+    expected_max_null, margin_verdict, sample_sd, trials_corrected_threshold, MarginArm,
+    MarginVerdict, StatsError,
 };
 
 /// The frozen margin record's filename under `config/`.
@@ -190,14 +190,20 @@ impl SampleMargin {
     }
 
     /// The threshold a candidate with bootstrap standard error
-    /// `candidate_standard_error` must exceed.
+    /// `candidate_standard_error` must exceed. Delegates to
+    /// [`trials_corrected_threshold`] so the frozen record and the statistics
+    /// core can never disagree about what the rule is.
     ///
     /// # Errors
     ///
-    /// Propagates [`expected_max_null`] and [`two_sided_z`].
+    /// Propagates [`trials_corrected_threshold`].
     pub fn threshold(&self, candidate_standard_error: f64) -> Result<f64, StatsError> {
-        Ok(self.derived_expected_max_null()?
-            + two_sided_z(self.confidence)? * candidate_standard_error)
+        trials_corrected_threshold(
+            self.trial_count,
+            self.cross_trial_sd,
+            self.confidence,
+            candidate_standard_error,
+        )
     }
 
     /// Adjudicate one candidate. `arm` is [`MarginArm::Armed`] everywhere except

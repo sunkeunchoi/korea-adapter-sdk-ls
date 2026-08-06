@@ -317,6 +317,16 @@ mod calibration {
         (cleared as f64 / NULL_BLOCKS as f64, nominal, m.threshold(se).unwrap())
     }
 
+    /// The figures `config/SAMPLE-MARGIN.md` records as measured facts. An
+    /// inequality assertion alone would let the generator, seed or fixture drift
+    /// while the suite stays green and the governance document goes stale, so
+    /// the exact values are pinned here — the document and the test move
+    /// together or the test reds.
+    const DOCUMENTED_NULL_CLEARANCE: f64 = 0.0140;
+    const DOCUMENTED_THRESHOLD: f64 = 0.224_823;
+    const DOCUMENTED_TWO_SE_CLEARANCE: f64 = 0.1060;
+    const DOCUMENTED_TWO_SE_BAR: f64 = 0.174_004;
+
     #[test]
     fn null_blocks_clear_the_margin_at_or_below_the_nominal_rate() {
         let (realized, nominal, threshold) = null_clearance_rate(MarginArm::Armed);
@@ -327,6 +337,17 @@ mod calibration {
         assert!(
             realized <= nominal,
             "realized null clearance {realized:.4} exceeds the nominal {nominal:.4}"
+        );
+        assert!(
+            (realized - DOCUMENTED_NULL_CLEARANCE).abs() < 5e-4,
+            "config/SAMPLE-MARGIN.md records a realized null clearance of \
+             {DOCUMENTED_NULL_CLEARANCE:.4}; this run measured {realized:.4}. Re-measure and \
+             move the document, or find out what changed the null."
+        );
+        assert!(
+            (threshold - DOCUMENTED_THRESHOLD).abs() < 5e-6,
+            "config/SAMPLE-MARGIN.md records a threshold of {DOCUMENTED_THRESHOLD:+.6} at the \
+             head's own SE; this run computed {threshold:+.6}"
         );
     }
 
@@ -376,6 +397,13 @@ mod calibration {
              the frozen margin's pass is not evidence about the frozen margin"
         );
         assert!(m.threshold(se).unwrap() > too_low, "and the frozen threshold sits above it");
+        assert!(
+            (too_low - DOCUMENTED_TWO_SE_BAR).abs() < 5e-6
+                && (realized - DOCUMENTED_TWO_SE_CLEARANCE).abs() < 5e-4,
+            "config/SAMPLE-MARGIN.md records a 2-SE bar of {DOCUMENTED_TWO_SE_BAR:+.6} clearing \
+             at {DOCUMENTED_TWO_SE_CLEARANCE:.4}; this run measured {too_low:+.6} at \
+             {realized:.4}"
+        );
     }
 
     #[test]
