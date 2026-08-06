@@ -12,9 +12,23 @@ run (nonce-gated, attended, refused in a no-TTY shell). Run the operator sequenc
 > authorized while the documented head is net-negative under costs (TURN-LOG 2026-07-31
 > governance entry; `config/PREREGISTRATION.md` § Stand-down). The frozen prereg stays **v2**
 > — step 3's SHA-256 citation remains valid because the stand-down deliberately left
-> `config/preregistration.json` untouched. Unblock: queue
-> `rung1-ladder-reentry-net-positive-head` (a net-positive cost-aware head + fresh
-> re-registration, which re-derives the bands and moves this file's step-3 literals).
+> `config/preregistration.json` untouched.
+>
+> **UNBLOCK CONDITION TIGHTENED — 2026-08-06** (sample-sufficiency turn, plan
+> `2026-08-05-001`; TURN-LOG 2026-08-06). Re-entry is queue
+> `rung1-ladder-reentry-margin-clearing-head`: a head that **clears the pre-registered
+> [sample margin](config/SAMPLE-MARGIN.md)** — `net RoR > E[max of 29 null trials] +
+> z(95%) · SE(candidate)` — plus a fresh re-registration, which re-derives the bands and
+> moves this file's step-3 literals. It is **no longer** the bare `net RoR > 0`: on the v35
+> sample that condition is met by chance about half the time (bootstrap share of null
+> replicates above zero, 0.4955). Check a candidate with
+> `lab-research report sample` — its `MARGIN VERDICT` line is the gate.
+>
+> Read the same turn's other finding before planning re-entry: the head's gross edge sits
+> about **nine times below this sample's detection floor**, and clearing the margin would
+> need on the order of **8,600 closed trades (~3,499 calendar sessions, ~14 years)** against 54
+> sessions covered. Re-entry is not expected to arrive by a lever search on the current
+> catalog; the staged successor is queue `orb-sample-acquisition-decision`.
 
 > **The agent NEVER drives `--genesis`, `--dispatch`, `--mount`, `--escalate`, `--reregister`, or
 > `--clear-killswitch`.** Those are nonce-gated, attended, and refuse loudly in a no-TTY shell

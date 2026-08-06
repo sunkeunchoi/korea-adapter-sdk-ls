@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "frozen_utc": "2026-08-06T00:00:00+00:00",
+  "statistic": "net RoR (sum realized / sum risk_capital), session-block bootstrap",
+  "rule": "net RoR > E[max of N null trials] + z(confidence) * candidate session-block bootstrap SE",
+  "closed_form": "E[max] = sigma_trials * ((1 - gamma) * Phi^-1(1 - 1/N) + gamma * Phi^-1(1 - 1/(N*e))); gamma = Euler-Mascheroni; E[max] = 0 at N = 1",
+  "confidence": 0.95,
+  "power": 0.8,
+  "trial_count": 29,
+  "trial_count_basis": "every record in ledger/trials.jsonl at freeze time, via trials::count_trials. KTD2 asks for the count scoped to the v35 catalog lineage; that scoping is not available against the committed ledger, because v35's catalog fingerprint (ac026541...) appears in no record and no record declares a parent link into it -- the ledger's three lineage roots are era-167 (19), 3b6be31b (8) and 363f199d (2). Taking the 2-record 363f199d slice would set the bar at its lowest available value, and an undercounted trial count setting the bar too low is a named risk of this plan. The whole-ledger count is the strict reading and is what is frozen here.",
+  "trial_ledger_records": 29,
+  "cross_trial_arms": [
+    { "arm": "v35 baseline (all six levers ON)", "net_ror": -0.0006 },
+    { "arm": "entry_confirm 1.0->0.0", "net_ror": -0.0325 },
+    { "arm": "or_width_max_atr 0.666->0.0", "net_ror": -0.0243 },
+    { "arm": "breakeven_trigger_r 0.41->0.0", "net_ror": -0.0817 },
+    { "arm": "risk_per_trade_krw 299,340->0.0", "net_ror": -0.0479 },
+    { "arm": "ratio_atr_alpha 1.0->0.0", "net_ror": -0.0275 },
+    { "arm": "gap_retention_min 0.5->1.0 (OFF)", "net_ror": -0.0591 }
+  ],
+  "cross_trial_sd": 0.026367936878680807,
+  "expected_max_null": 0.05430159509024828,
+  "provenance": {
+    "catalog_fingerprint": "ac0265415d79a0917239dd3749c92332bd06bb887de1c09d0d2985071219109e",
+    "run_id": "20260731T023138Z-backtest-orb-v35",
+    "strategy_version": 35,
+    "session_span": "20260521..20260722",
+    "sessions": 24,
+    "closed_trades": 111,
+    "net_r_mean": -0.033320248457115884,
+    "net_r_sd": 0.6415229271189272,
+    "icc": 0.32733403046930187,
+    "kish_cluster_size": 4.537406972189581,
+    "design_effect": 2.157913681617025
+  },
+  "rederivation_trigger": "A candidate head judged on a catalog whose fingerprint differs from provenance.catalog_fingerprint must have this margin re-derived before it binds. In-range content growth changes the trade set, so both the cross-trial dispersion and the per-arm figures above are catalog-specific (AE3)."
+}

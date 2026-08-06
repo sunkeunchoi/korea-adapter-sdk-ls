@@ -60,6 +60,155 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   comparison against v34's `0.0398`, and the power-label speaks only to per-tier trade
   counts (KTD5).
 
+## Turn — sample sufficiency (measurement axis): the head's edge is BELOW ITS OWN DETECTION FLOOR; required sample UNREACHABLE, acquisition STANDS DOWN, head stays v35 (2026-08-06) — plan 2026-08-05-001
+
+- **Verdict: the sample question gates every lever question, and the answer is that this
+  sample cannot resolve this edge.** No strategy code, no governed param, no ingest, no
+  run. `strategy_code_hash` unchanged at `7571abef…`; head stays **v35**. The turn's output
+  is a report (`lab-research report sample`), a frozen margin, and this record.
+
+- **The near-miss framing was wrong.** v35 reads a 22.8 bps gross edge against a 23 bps
+  round-trip hurdle — a ~0.9% shortfall, which invites "find 1% more edge and the sign
+  flips". The head's own artifact says otherwise. Measured on
+  `20260731T023138Z-backtest-orb-v35` (catalog `ac026541`, 111 closed trades over 24 KST
+  sessions):
+
+  | | |
+  |---|---|
+  | per-trade net r | mean **−0.033320**, sd **0.641523** |
+  | per-trade gross r | mean **+0.028422** |
+  | intra-session correlation (one-way ANOVA) | **0.327334** at Kish cluster size **4.5374** |
+  | design effect | **2.1579** → effective n **51.44** of 111 |
+  | minimum detectable edge (95% / 80%) | **+0.2506 R** |
+  | required closed trades at the gross edge | **8,629** (naive 3,999 × design effect) |
+  | required sessions at 2.4667 trades per **calendar** session | **3,499** (~14.0 years) |
+
+  > **Unit correction, same turn (review finding).** An earlier draft of this entry — and the
+  > plan's own Problem Frame — divided the required trade count by **4.625 trades per
+  > *trade-producing* session** and compared the result against *calendar* coverage, giving
+  > ~1,870 sessions (~7.5 years). Those are different units. The head trades on only 24 of the
+  > **45** calendar sessions its data range covers, so the honest rate is **2.4667 per calendar
+  > session** and the requirement is **3,499 sessions**, not 1,866. The verdict direction is
+  > unchanged — it is a stand-down either way — but the shortfall is roughly **double** what
+  > the first reading said, and one band row flips (see below). `report sample` now prints both
+  > rates and uses only the calendar one for a verdict.
+
+  The smallest edge this sample can distinguish from zero is **roughly nine times the
+  entire gross edge** — and that is with costs switched *off*. **The problem is not the
+  cost model.** Two consequences: any lever reporting net RoR > 0 here has about even odds
+  of doing so by chance (session-block bootstrap: 95% interval [−0.181, +0.165], share of
+  replicates above zero **0.4955**), and the previous unblock condition `net RoR > 0` was
+  therefore satisfiable by luck half the time. The standing claim that the negative edge
+  "is not attributable to any kept lever" is correct, but not because the levers are
+  individually sound — **at this effective sample size nothing is attributable to
+  anything.**
+
+- **SUPPLY: STAND DOWN.** 3,499 sessions required against **54** distinct KST daily-bar
+  sessions in the catalog — a shortfall of **3,445 sessions (~13.8 years)**. Reported across
+  the gross edge's own 95% interval rather than at one point, because required n scales as
+  the inverse square of the target:
+
+  | target effect | required n | sessions | years | within coverage |
+  |---|---|---|---|---|
+  | +0.204107 R (CI upper, design-effect corrected) | 168 | 68 | 0.3 | NO |
+  | +0.148018 R (CI upper, naive) | 319 | 129 | 0.5 | NO |
+  | **+0.028422 R (the pinned target)** | **8,629** | **3,499** | **14.0** | **NO** |
+  | −0.091 R / −0.147 R (CI lower) | undetectable at any sample size | | | |
+
+  **No row is reachable.** On the earlier trade-producing-session rate the top row read 37
+  sessions and "yes" — i.e. the most optimistic end of the interval looked already satisfied.
+  It is not: at 68 calendar sessions it exceeds the 54 covered. That flip is the practical
+  cost of the unit error and the reason the correction was worth making.
+
+  An unreachable sample is a **valid completion**, not a failure. Nothing was acquired and
+  no ingest ran; a test asserts on `report_sample`'s source that no branch reaches an
+  acquisition entry point, because an ingest call could run without printing anything.
+
+- **The recommendation is HISTORY, not breadth — and it is a fresh catalog, not an
+  extension.** At ICC 0.327 and cluster size 4.54, added sessions raise effective n roughly
+  in proportion while added breadth adds trades inside blocks already held; `max_concurrent
+  7` caps how much breadth converts at all. And the history cannot be extended
+  incrementally — `accumulate` never fetches below the watermark — so the acquisition is a
+  fresh catalog at a wider lookback, whose cost includes a moved fingerprint, a moved
+  universe hash and a moved data range, and with them the loss of comparability with every
+  prior measurement, this one included. That is its own budget-bound decision; **this turn
+  stops at the verdict** (KTD7).
+
+- **Pre-registered margin FROZEN — `config/sample-margin.json` + `SAMPLE-MARGIN.md`.**
+  Replaces the gameable `net RoR > 0`:
+
+      net RoR  >  E[max of 29 null trials]  +  z(95%) · SE(candidate)
+
+  Bailey & López de Prado's False Strategy Theorem at the frozen trial count (29, every
+  record in `ledger/trials.jsonl` via `trials::count_trials`) and cross-trial dispersion
+  (0.02636794, the sample sd of the seven same-catalog net-RoR arms in the 2026-07-31
+  off-flip table). **A rule, not a level:** a scalar scaled at 111 trades would be
+  unclearable at any sample size, which strands a viable strategy permanently — only the
+  *selection*-bias inputs are frozen, and the sampling term shrinks as the candidate's own
+  sample grows. Frozen **before** any candidate is read, and it **refuses the current
+  head**: v35's net RoR −0.000607 against a threshold of +0.224823 at its own SE 0.087002.
+
+  Empirically calibrated, not asserted (KTD10): over 1,000 max-of-29 null blocks built by
+  permuting the centred per-trade R-multiples and session-block resampling, the realized
+  clearance rate is **0.0140** against a **0.0250** nominal — and a bar set at 2·SE instead
+  clears at **0.1060**, four times nominal, so the calibration discriminates a bar set too
+  low. Disarming the comparison through an in-process seam reds the assertion (1.0000).
+
+- **`config/preregistration.json` is byte-identical** (KTD3, now pinned by SHA-256 in
+  `tests/sample_margin.rs`). The margin gets its own container: the amendment protocol's
+  no-consumer test forbids re-deriving a frozen artifact whose honest value would forbid
+  the activity it gates, and the ladder is already stood down.
+
+- **KTD2 deviation, recorded.** It asks for the trial count scoped to the v35 catalog
+  lineage. That scoping is unavailable against the committed ledger: v35's fingerprint
+  appears in no record and none links into it (roots are `era-167` 19, `3b6be31b` 8,
+  `363f199d` 2). The 2-record slice would set E[max] at 0.0137 instead of 0.0543 — its
+  lowest available value — and an undercounted trial count setting the bar too low is a
+  named risk. The strict whole-ledger count is frozen; the reason is recorded in the record
+  itself and guarded by a test.
+
+- **Queue.** `rung1-ladder-reentry-net-positive-head` is superseded by
+  `rung1-ladder-reentry-margin-clearing-head`, whose unblock condition carries the margin
+  rather than a bare sign test. The verdict's successor —
+  `orb-sample-acquisition-decision` — is staged so neither branch terminates without a
+  `make next`-visible next step.
+
+## Falsified candidates — two pieces of in-tree guidance retired so the next agent is not sent at an already-dead lever (2026-08-06) — plan 2026-08-05-001 (U7)
+
+Documentation and one doc comment only. **No behavioral edit**: `strategy_code_hash` is
+unchanged before and after (`7571abef…`), so head identity does not move.
+
+- **FALSIFIED BY MEASUREMENT — a minimum opening-range-width entry filter. It has no
+  population to cut.** The idea is that a breakout whose range `R` is narrow relative to
+  the round-trip cost cannot pay for itself, so those entries should be filtered out.
+  Measured on the v35 run (`20260731T023138Z-backtest-orb-v35`, catalog `ac026541`,
+  139 breakout envelopes), under the head's armed `stop_mode = RangeLow` — where `R` *is*
+  the opening-range width — the range width as a fraction of the breakout price is:
+
+  | | min | p05 | p25 | p50 | p75 | max |
+  |---|---|---|---|---|---|---|
+  | OR width | 127.0 bps | 158.5 bps | 250.0 bps | 358.7 bps | 443.2 bps | 1,224.9 bps |
+  | × the 23 bps round-trip hurdle | **5.5×** | 6.9× | 10.9× | 15.6× | 19.3× | 53.3× |
+
+  **Zero of 139** breakouts sit below the hurdle, and only two below six times it. The
+  *narrowest* range in the whole sample already clears the statutory + brokerage cost by
+  5.5×. A minimum-width floor set anywhere near the hurdle cuts nothing; set high enough to
+  cut anything, it is no longer a cost argument but an ordinary width sweep — and
+  `or_width_max_atr` (kept at 0.666) already governs the width axis from the other side.
+  The hurdle is 20 bps statutory sell tax + 1.5 bps/side commission
+  (`cost_sell_tax_rate 0.002`, `cost_commission_rate_per_side 0.00015`).
+
+  Do not spend a turn on it. If it is re-proposed, the answer is this table.
+
+- **CORRECTED — the `profit_target_r` doc comment no longer advertises 1.5 as an
+  unexplored optimum.** `lab/src/params.rs` described **1.5** as "the Step-0 sim optimum
+  reserved for a later param-turn sweep". That sweep already ran. Turn 9 swept
+  `profit_target_r` off v9 in both directions and **both legs were worse** — 1.5 gave
+  expectancy −4,406 KRW/trade against v9's −3,157, and 1.05 gave −35,969; turn 11's 0.75
+  leg was a further Phase-A STOP. The winner-MFE cluster peaks just above 1.0R, so 1.0 sits
+  on the peak. The comment now records that, and points at
+  `docs/solutions/conventions/strategy-loop-turn-9-profit-target-sweep-and-mfe-distribution.md`.
+
 ## Governance — rung-1 ladder STAND-DOWN recorded: net-negative cost-aware head; frozen prereg v2 left untouched as the historical record (2026-07-31) — queue rung1-prereg-band-zero-cost-inheritance
 
 - **Verdict: STAND DOWN (the stand-down arm of the queue item's re-derive-or-stand-down

@@ -9,11 +9,22 @@ watchdog **90 s** heartbeat, **300,000 KRW** session breaker, **5** clean sessio
 > session.** The documented head (v35) is net-NEGATIVE after honest costs (net RoR −0.0006),
 > so an attended session buys expected losses and the rung-2 escalation it would feed can
 > never be authorized. The frozen prereg stays **v2**, untouched as the historical record —
-> no cost-aware band was derived. Re-entry: a net-positive cost-aware head exists → that is
-> a code-hash move (`code_change_resets_to_rung_1`) → fresh re-registration (v3+) re-derives
-> the bands from that head's distribution before any genesis dispatch. See the TURN-LOG
-> 2026-07-31 governance entry, `config/PREREGISTRATION.md` § Stand-down, and queue
-> `rung1-ladder-reentry-net-positive-head`.
+> no cost-aware band was derived. See the TURN-LOG 2026-07-31 governance entry and
+> `config/PREREGISTRATION.md` § Stand-down.
+>
+> **RE-ENTRY CONDITION TIGHTENED — 2026-08-06** (sample-sufficiency turn, plan
+> `2026-08-05-001`; TURN-LOG 2026-08-06). Re-entry is queue
+> `rung1-ladder-reentry-margin-clearing-head`: a head that **clears the pre-registered
+> [sample margin](config/SAMPLE-MARGIN.md)** — `net RoR > E[max of 29 null trials] +
+> z(95%) · SE(candidate)` — checked with `report sample`'s `MARGIN VERDICT` line. It is **no
+> longer** the bare "a net-positive cost-aware head exists": on the v35 sample that condition
+> is met by chance about half the time. Clearing it is still a code-hash move
+> (`code_change_resets_to_rung_1`), so re-entry then starts with a fresh re-registration
+> (v3+) re-deriving the bands from that head's distribution before any genesis dispatch. The
+> same turn found the head's gross edge sits about nine times below this sample's detection
+> floor — resolving it needs ~8,600 closed trades (~3,499 calendar sessions, ~14 years)
+> against 54 covered — so do not expect a lever search on the current catalog to get there.
+> See queue `orb-sample-acquisition-decision`.
 
 > **Head v35 — cost-aware re-measurement of the v34 identity.** The documented head is **v35**
 > (`strategy_code_hash 7571abef…`, run `20260731T023138Z-backtest-orb-v35` — the
