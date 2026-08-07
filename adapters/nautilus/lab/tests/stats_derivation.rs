@@ -9,10 +9,11 @@
 
 use nautilus_ls_lab::stats::{
     block_bootstrap_ratio, clustering, design_effect, expected_max_null, interval_normal,
-    interval_t_few_clusters, margin_verdict, mean, minimum_detectable_edge, percentile,
-    permute_r_multiples, power_z, probit, ratio_statistic, required_trades, sample_sd, t_quantile,
-    trials_corrected_threshold, two_sided_z, wild_cluster_interval, Block, MarginArm, SplitMix64,
-    StatsError, EULER_MASCHERONI,
+    interval_t_few_clusters, margin_verdict, mean, minimum_detectable_edge,
+    paired_block_bootstrap_difference, percentile, permute_r_multiples, power_z, probit,
+    ratio_statistic, required_trades, sample_sd, t_quantile, trials_corrected_threshold,
+    two_sided_z, wild_cluster_interval, Block, MarginArm, PairedBlock, SplitMix64, StatsError,
+    EULER_MASCHERONI,
 };
 
 /// The confidence and power pinned by KTD11, before any reading.
@@ -474,6 +475,204 @@ fn permuting_r_multiples_moves_the_ratio_where_permuting_numerators_could_not() 
         (ratio_statistic(&p).unwrap() - observed).abs() > 1e-9
     });
     assert!(moved, "re-pairing R-multiples with different risk capital moves the ratio");
+}
+
+// ===========================================================================
+// The PAIRED resampler (plan 2026-08-07-001, U1; R8, KTD2/KTD3/KTD5)
+// ===========================================================================
+//
+// The unpaired resampler above answers "is this arm's edge distinguishable from
+// zero". Every lever turn asks a different question — does armed beat off-flip
+// over the SAME sessions — and that difference has its own standard error. The
+// pairing is what cancels the session-level common shock; drawing each arm's
+// blocks independently would silently produce the unpaired SE instead.
+
+const PAIRED_SEED: u64 = 20_260_807;
+
+fn paired(head: &[(f64, f64)], arm: &[(f64, f64)]) -> PairedBlock {
+    PairedBlock { head: head.to_vec(), arm: arm.to_vec() }
+}
+
+/// Eight sessions carrying a large common shock, with the arm differing from
+/// the head by a small constant per trade. The shock dominates each arm's own
+/// dispersion, so the paired difference is nearly deterministic while either
+/// arm alone is not.
+fn shared_shock_sessions() -> Vec<PairedBlock> {
+    [12.0f64, -9.0, 15.0, -11.0, 7.0, -14.0, 10.0, -8.0]
+        .iter()
+        .enumerate()
+        .map(|(i, shock)| {
+            let risk = 10.0 + i as f64;
+            paired(&[(*shock, risk)], &[(*shock + 0.5, risk)])
+        })
+        .collect()
+}
+
+#[test]
+fn two_identical_arms_pair_to_exactly_zero_with_exactly_zero_dispersion() {
+    // The degenerate case that proves the pairing is real: if the same index is
+    // applied to both halves, every replicate accumulates bit-identical sums and
+    // their difference is exactly 0.0. Independent draws would not be exact.
+    let blocks = vec![
+        paired(&[(1.0, 10.0), (-2.0, 12.0)], &[(1.0, 10.0), (-2.0, 12.0)]),
+        paired(&[(3.0, 11.0)], &[(3.0, 11.0)]),
+        paired(&[(-1.5, 8.0), (0.5, 9.0)], &[(-1.5, 8.0), (0.5, 9.0)]),
+    ];
+    let out = paired_block_bootstrap_difference(&blocks, 200, PAIRED_SEED, CONFIDENCE).unwrap();
+    assert_eq!(out.point, 0.0, "identical arms differ by exactly zero");
+    assert_eq!(out.standard_error, 0.0, "and by exactly zero in every replicate");
+    assert_eq!(out.lo, 0.0);
+    assert_eq!(out.hi, 0.0);
+    assert_eq!(out.p_positive, 0.0, "no replicate has the head strictly ahead");
+    assert_eq!(out.blocks, 3, "the union session count");
+    assert_eq!(out.seed, PAIRED_SEED);
+}
+
+#[test]
+fn the_paired_point_estimate_is_the_closed_form_difference_of_ratios() {
+    // head Σnum = 1 − 2 + 3 + 4 = 6 over Σden 40 → 0.15
+    // arm  is the head with every numerator shifted +1 → Σnum 10 over Σden 40 → 0.25
+    let blocks = vec![
+        paired(&[(1.0, 10.0), (-2.0, 10.0)], &[(2.0, 10.0), (-1.0, 10.0)]),
+        paired(&[(3.0, 10.0), (4.0, 10.0)], &[(4.0, 10.0), (5.0, 10.0)]),
+    ];
+    let out = paired_block_bootstrap_difference(&blocks, 200, PAIRED_SEED, CONFIDENCE).unwrap();
+    assert_close!(
+        out.point,
+        6.0 / 40.0 - 10.0 / 40.0,
+        1e-15,
+        "Σnum_head/Σden_head − Σnum_arm/Σden_arm over the whole union, not a replicate average"
+    );
+    assert_close!(out.point, -0.10, 1e-15, "the closed form");
+}
+
+#[test]
+fn pairing_beats_independent_resampling_when_the_session_shock_is_shared() {
+    // The property that makes the measurement worth taking. Drawing one index
+    // per slot and applying it to BOTH halves cancels the common shock; drawing
+    // each arm's blocks independently leaves it in both standard errors.
+    let blocks = shared_shock_sessions();
+    let head: Vec<Block> = blocks.iter().map(|b| b.head.clone()).collect();
+    let arm: Vec<Block> = blocks.iter().map(|b| b.arm.clone()).collect();
+
+    let pairedd = paired_block_bootstrap_difference(&blocks, 2_000, PAIRED_SEED, CONFIDENCE)
+        .expect("the paired draw");
+    let h = block_bootstrap_ratio(&head, 2_000, PAIRED_SEED, CONFIDENCE).unwrap();
+    let a = block_bootstrap_ratio(&arm, 2_000, PAIRED_SEED.wrapping_add(1), CONFIDENCE).unwrap();
+    let independent = (h.standard_error.powi(2) + a.standard_error.powi(2)).sqrt();
+
+    assert!(
+        pairedd.standard_error < independent,
+        "paired SE {} must be strictly below the independent SE {independent}",
+        pairedd.standard_error
+    );
+    // Not merely smaller — an order of magnitude smaller, because the shock is
+    // an order of magnitude larger than the lever delta it hides.
+    assert!(
+        pairedd.standard_error * 10.0 < independent,
+        "paired SE {} vs independent {independent}: the shock should dominate",
+        pairedd.standard_error
+    );
+}
+
+#[test]
+fn an_empty_head_half_contributes_to_the_arm_sums_and_not_to_the_head_sums() {
+    // The union-block case (KTD4): a session the head never traded still carries
+    // the arm's trades, and contributes nothing at all to the head's ratio.
+    let blocks = vec![
+        paired(&[(1.0, 10.0)], &[(2.0, 10.0)]),
+        paired(&[(3.0, 20.0)], &[(1.0, 20.0)]),
+        paired(&[], &[(6.0, 30.0)]),
+    ];
+    let out = paired_block_bootstrap_difference(&blocks, 200, PAIRED_SEED, CONFIDENCE).unwrap();
+    // head sums skip the third session entirely: (1+3)/(10+20) = 4/30
+    // arm sums carry it:                         (2+1+6)/(10+20+30) = 9/60
+    assert_close!(
+        out.point,
+        4.0 / 30.0 - 9.0 / 60.0,
+        1e-15,
+        "the empty half contributes nothing to the head, everything to the arm"
+    );
+    assert_eq!(out.blocks, 3, "the union counts the session the head did not trade");
+}
+
+#[test]
+fn a_set_with_every_head_half_empty_is_refused_rather_than_reported_as_zero() {
+    let blocks =
+        vec![paired(&[], &[(2.0, 10.0)]), paired(&[], &[(3.0, 20.0)]), paired(&[], &[(1.0, 5.0)])];
+    assert!(
+        matches!(
+            paired_block_bootstrap_difference(&blocks, 200, PAIRED_SEED, CONFIDENCE),
+            Err(StatsError::Domain { .. })
+        ),
+        "an arm with no head to pair against is a missing input, not a difference of zero"
+    );
+}
+
+#[test]
+fn a_zero_denominator_draw_is_skipped_rather_than_drawn_as_non_finite() {
+    // Two blocks, one with an empty head: a replicate that draws that block
+    // twice has a zero head denominator. It is skipped, so the reported
+    // replicate count falls below the requested one and every figure stays
+    // finite. Silently keeping it would put a NaN in the sd.
+    let blocks = vec![paired(&[(1.0, 10.0)], &[(2.0, 10.0)]), paired(&[], &[(3.0, 20.0)])];
+    let out = paired_block_bootstrap_difference(&blocks, 400, PAIRED_SEED, CONFIDENCE).unwrap();
+    assert!(out.replicates < 400, "the all-empty-head draws are dropped, not kept");
+    assert!(out.replicates > 1, "and enough survive to report");
+    for x in [out.point, out.standard_error, out.lo, out.hi] {
+        assert!(x.is_finite(), "no dropped draw leaks a non-finite figure: {x}");
+    }
+}
+
+#[test]
+fn the_paired_resampler_is_seed_reproducible() {
+    let blocks = shared_shock_sessions();
+    let a = paired_block_bootstrap_difference(&blocks, 500, PAIRED_SEED, CONFIDENCE).unwrap();
+    let b = paired_block_bootstrap_difference(&blocks, 500, PAIRED_SEED, CONFIDENCE).unwrap();
+    assert_eq!(a, b, "one seed → byte-identical output");
+    let c =
+        paired_block_bootstrap_difference(&blocks, 500, PAIRED_SEED.wrapping_add(1), CONFIDENCE)
+            .unwrap();
+    assert_ne!(a.standard_error, c.standard_error, "a different seed draws a different sample");
+    assert_close!(a.point, c.point, 1e-15, "but the point estimate is observed, not resampled");
+}
+
+#[test]
+fn the_paired_resampler_refuses_every_degenerate_parameter() {
+    let blocks = shared_shock_sessions();
+    assert!(
+        matches!(
+            paired_block_bootstrap_difference(&blocks[..1], 200, PAIRED_SEED, CONFIDENCE),
+            Err(StatsError::TooShort { need: 2, got: 1, .. })
+        ),
+        "a single block cannot be resampled"
+    );
+    assert!(
+        matches!(
+            paired_block_bootstrap_difference(&blocks, 0, PAIRED_SEED, CONFIDENCE),
+            Err(StatsError::Domain { .. })
+        ),
+        "zero replicates is a refusal"
+    );
+    for bad in [0.0, 1.0, -0.5, 1.5, f64::NAN] {
+        assert!(
+            matches!(
+                paired_block_bootstrap_difference(&blocks, 200, PAIRED_SEED, bad),
+                Err(StatsError::Domain { .. })
+            ),
+            "confidence {bad} is outside (0, 1)"
+        );
+    }
+    // The usable-replicate floor: one requested replicate can never clear the
+    // two the sample sd needs, and that is an explicit refusal rather than a
+    // standard error computed from a single draw.
+    assert!(
+        matches!(
+            paired_block_bootstrap_difference(&blocks, 1, PAIRED_SEED, CONFIDENCE),
+            Err(StatsError::TooShort { need: 2, .. })
+        ),
+        "fewer than two usable replicates is a refusal (KTD5)"
+    );
 }
 
 // ===========================================================================

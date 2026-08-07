@@ -755,6 +755,136 @@ pub fn block_bootstrap_ratio(
     })
 }
 
+/// One **paired** resampling block: a single KST session's head-side and
+/// arm-side `(numerator, denominator)` records. Either side may be empty — the
+/// blocks span the *union* of the sessions the two arms traded (KTD4), and a
+/// session one arm never traded contributes nothing to that arm's sums.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct PairedBlock {
+    /// The head arm's trades in this session.
+    pub head: Block,
+    /// The variant arm's trades in this session.
+    pub arm: Block,
+}
+
+/// Paired session-block bootstrap of the **difference** between two arms' ratio
+/// statistics: `Σnum_head/Σden_head − Σnum_arm/Σden_arm`.
+///
+/// This is [`block_bootstrap_ratio`] pointed at a difference, and the pairing is
+/// the whole point. One session index is drawn per slot and applied to **both**
+/// halves, so the session-level common shock — the market day both arms traded
+/// through — cancels inside every replicate. Drawing each arm's blocks
+/// independently would silently produce the *unpaired* standard error, which is
+/// the quantity the absolute-detectability verdict already reports and not the
+/// one a lever comparison needs.
+///
+/// The cancellation applies only to blocks both arms actually traded. For an arm
+/// that adds sessions of its own, the reported standard error is a hybrid: the
+/// shared blocks contribute a paired variance and the arm-only blocks contribute
+/// an unpaired one. Callers that need those apart should report the union and
+/// intersection block counts beside the figure rather than leave it implicit.
+///
+/// `point` is the observed difference over the whole union, `p_positive` is the
+/// share of replicates in which the head is strictly ahead of the arm, and
+/// `blocks` is the union session count.
+///
+/// # Errors
+///
+/// Refuses fewer than two blocks, zero replicates, a confidence outside
+/// `(0, 1)`, and a non-positive observed denominator on either side (an arm with
+/// no trades to pair against is a missing input, not a difference of zero). A
+/// replicate whose head or arm denominator is non-positive is skipped rather
+/// than drawn as a non-finite value, and fewer than two surviving replicates is
+/// itself a refusal — a silently-dropped replicate set would understate the
+/// standard error (KTD5).
+pub fn paired_block_bootstrap_difference(
+    blocks: &[PairedBlock],
+    replicates: usize,
+    seed: u64,
+    confidence: f64,
+) -> Result<BootstrapOutcome, StatsError> {
+    if blocks.len() < 2 {
+        return Err(StatsError::TooShort {
+            what: "paired block bootstrap (blocks)",
+            need: 2,
+            got: blocks.len(),
+        });
+    }
+    if replicates == 0 {
+        return Err(domain("replicates", "at least 1", 0.0));
+    }
+    if !confidence.is_finite() || confidence <= 0.0 || confidence >= 1.0 {
+        return Err(domain("confidence", "strictly inside (0, 1)", confidence));
+    }
+
+    // Pre-fold both halves of each block to their (Σnum, Σden) pairs before the
+    // replicate loop, mirroring `block_bootstrap_ratio`: the ratio statistic only
+    // ever sees block totals, so the loop stays linear in sessions rather than in
+    // trades.
+    let folded: Vec<((f64, f64), (f64, f64))> = blocks
+        .iter()
+        .map(|b| {
+            let fold = |side: &Block| {
+                (
+                    side.iter().map(|(a, _)| *a).sum::<f64>(),
+                    side.iter().map(|(_, d)| *d).sum::<f64>(),
+                )
+            };
+            (fold(&b.head), fold(&b.arm))
+        })
+        .collect();
+
+    let head_den: f64 = folded.iter().map(|(h, _)| h.1).sum();
+    let arm_den: f64 = folded.iter().map(|(_, a)| a.1).sum();
+    require_finite_positive("head denominator total", head_den)?;
+    require_finite_positive("arm denominator total", arm_den)?;
+    let head_num: f64 = folded.iter().map(|(h, _)| h.0).sum();
+    let arm_num: f64 = folded.iter().map(|(_, a)| a.0).sum();
+    let point = head_num / head_den - arm_num / arm_den;
+
+    let mut rng = SplitMix64::new(seed);
+    let mut draws = Vec::with_capacity(replicates);
+    for _ in 0..replicates {
+        let (mut hn, mut hd, mut an, mut ad) = (0.0, 0.0, 0.0, 0.0);
+        for _ in 0..folded.len() {
+            // ONE index, BOTH halves. This line is the pairing.
+            let ((h_num, h_den), (a_num, a_den)) = folded[rng.below(folded.len())];
+            hn += h_num;
+            hd += h_den;
+            an += a_num;
+            ad += a_den;
+        }
+        if hd > 0.0 && ad > 0.0 {
+            draws.push(hn / hd - an / ad);
+        }
+    }
+    if draws.len() < 2 {
+        return Err(StatsError::TooShort {
+            what: "paired block bootstrap (usable replicates)",
+            need: 2,
+            got: draws.len(),
+        });
+    }
+    let p_positive = draws.iter().filter(|x| **x > 0.0).count() as f64 / draws.len() as f64;
+    let standard_error = sample_sd(&draws)?;
+    let mut sorted = draws;
+    sorted.sort_by(|a, b| a.partial_cmp(b).expect("bootstrap draws are finite"));
+    let tail = (1.0 - confidence) / 2.0 * 100.0;
+    let lo = percentile(&sorted, tail).expect("non-empty");
+    let hi = percentile(&sorted, 100.0 - tail).expect("non-empty");
+
+    Ok(BootstrapOutcome {
+        point,
+        standard_error,
+        lo,
+        hi,
+        p_positive,
+        replicates: sorted.len(),
+        seed,
+        blocks: blocks.len(),
+    })
+}
+
 /// An interval around a point estimate, with the critical value that built it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Interval {
