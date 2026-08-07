@@ -32,7 +32,7 @@ use crate::artifacts::performance::PerformanceReport;
 use crate::artifacts::{DECISIONS_FILE, PERFORMANCE_FILE};
 use crate::margin::{self, LoadedMargin};
 use crate::params::{OrbParams, StopMode};
-use crate::runner::research::{latest_finalized_run, read_manifest, PROPOSAL_BOUNDS_CAP};
+use crate::runner::research::{self, latest_finalized_run, read_manifest, PROPOSAL_BOUNDS_CAP};
 use crate::stats::{
     self, block_bootstrap_ratio, clustering, interval_normal, interval_t_few_clusters,
     minimum_detectable_edge, paired_block_bootstrap_difference, required_trades,
@@ -923,6 +923,23 @@ struct SampleTrade {
     risk_capital: f64,
 }
 
+/// Read a run's `performance.json` and reduce it to its closed, risk-joined
+/// trades, returning the parsed report alongside them (callers need its record
+/// count). Shared by `report sample` and `report paired`, which resolve their
+/// runs differently but load them identically.
+fn load_performance(
+    data_home: &Path,
+    run_id: &str,
+) -> anyhow::Result<(PerformanceReport, Vec<SampleTrade>)> {
+    let perf_path = data_home.join("runs").join(run_id).join(PERFORMANCE_FILE);
+    let perf_text = std::fs::read_to_string(&perf_path)
+        .map_err(|e| anyhow::anyhow!("reading {}: {e}", perf_path.display()))?;
+    let report: PerformanceReport = serde_json::from_str(&perf_text)
+        .map_err(|e| anyhow::anyhow!("parsing {}: {e}", perf_path.display()))?;
+    let trades = sample_trades(&report, run_id)?;
+    Ok((report, trades))
+}
+
 /// Reduce a run's performance artifact to its closed, risk-joined trades, or
 /// refuse with the reason. A refusal here is a **missing input**, not a
 /// verdict — the verdict itself never fails the command (KTD1).
@@ -1003,13 +1020,8 @@ pub async fn report_sample(cfg: &SampleConfig) -> anyhow::Result<SampleOutcome> 
         })?,
     };
 
-    let perf_path = cfg.data_home.join("runs").join(&run_id).join(PERFORMANCE_FILE);
-    let perf_text = std::fs::read_to_string(&perf_path)
-        .map_err(|e| anyhow::anyhow!("reading {}: {e}", perf_path.display()))?;
-    let report: PerformanceReport = serde_json::from_str(&perf_text)
-        .map_err(|e| anyhow::anyhow!("parsing {}: {e}", perf_path.display()))?;
+    let (report, trades) = load_performance(&cfg.data_home, &run_id)?;
     let trade_records = report.trades.len();
-    let trades = sample_trades(&report, &run_id)?;
 
     // Session index: the clustering unit, and the resampling block (Q1).
     let mut session_ids: BTreeMap<NaiveDate, usize> = BTreeMap::new();
@@ -1633,12 +1645,7 @@ struct PairedRun {
 
 fn load_paired_run(data_home: &Path, run_id: &str) -> anyhow::Result<PairedRun> {
     let manifest = read_manifest(data_home, run_id)?;
-    let perf_path = data_home.join("runs").join(run_id).join(PERFORMANCE_FILE);
-    let perf_text = std::fs::read_to_string(&perf_path)
-        .map_err(|e| anyhow::anyhow!("reading {}: {e}", perf_path.display()))?;
-    let report: PerformanceReport = serde_json::from_str(&perf_text)
-        .map_err(|e| anyhow::anyhow!("parsing {}: {e}", perf_path.display()))?;
-    let trades = sample_trades(&report, run_id)?;
+    let (_, trades) = load_performance(data_home, run_id)?;
     Ok(PairedRun { manifest, trades })
 }
 
@@ -1653,14 +1660,27 @@ fn by_session(trades: &[SampleTrade]) -> BTreeMap<NaiveDate, (f64, f64)> {
     out
 }
 
-/// `Σnum / Σden` over a session fold, or `None` when the denominator is not
-/// positive (an arm that traded nothing over the selected sessions).
+/// `Σnum / Σden` over a session fold, through the crate's single definition of
+/// the ratio statistic. `None` when the denominator is not positive — an arm
+/// that traded nothing over the selected sessions.
+///
+/// Delegating rather than re-folding matters here specifically: KTD3 pins net
+/// RoR as *the* statistic these arms are adjudicated on, so a second
+/// implementation of it in the production path is exactly the drift this turn
+/// would be unable to detect. (The derivation guard in `tests/paired_power.rs`
+/// re-states the formula by hand on purpose — that independence is a property
+/// of the test, not of the report.)
 fn fold_ratio<'a>(entries: impl Iterator<Item = &'a (f64, f64)>) -> Option<f64> {
-    let (num, den) = entries.fold((0.0, 0.0), |(n, d), (a, b)| (n + a, d + b));
-    (den > 0.0).then_some(num / den)
+    let block: Block = entries.copied().collect();
+    stats::ratio_statistic(&[block]).ok()
 }
 
-/// The manifest param diff between head and arm, `strategy_version` excluded.
+/// The manifest param diff between head and arm, `strategy_version` excluded,
+/// as `(param, head value, arm value)`.
+///
+/// The diverged-key set comes from [`research::param_diff`], the same seam
+/// `runs compare` reports against, so the two can never disagree about what
+/// counts as a changed param. Only the value rendering is this report's own.
 ///
 /// The exclusion is load-bearing: `strategy_version` differs on every arm by
 /// construction — it is the run's identity, not a lever — so without it every
@@ -1672,19 +1692,15 @@ fn param_diff(head: &OrbParams, arm: &OrbParams) -> Vec<(String, String, String)
         _ => BTreeMap::new(),
     };
     let (h, a) = (to_map(head), to_map(arm));
-    let mut keys: Vec<&String> = h.keys().chain(a.keys()).collect();
-    keys.sort_unstable();
-    keys.dedup();
-    keys.into_iter()
-        .filter(|k| k.as_str() != "strategy_version")
-        .filter_map(|k| {
-            let (hv, av) = (h.get(k), a.get(k));
-            (hv != av).then(|| {
-                let show = |v: Option<&serde_json::Value>| {
-                    v.map_or_else(|| "absent".to_string(), ToString::to_string)
-                };
-                (k.clone(), show(hv), show(av))
-            })
+    let show = |v: Option<&serde_json::Value>| {
+        v.map_or_else(|| "absent".to_string(), ToString::to_string)
+    };
+    research::param_diff(head, arm)
+        .into_iter()
+        .filter(|k| k != "strategy_version")
+        .map(|k| {
+            let (hv, av) = (show(h.get(&k)), show(a.get(&k)));
+            (k, hv, av)
         })
         .collect()
 }
