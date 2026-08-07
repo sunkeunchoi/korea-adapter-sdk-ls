@@ -1652,7 +1652,7 @@ fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> anyhow::Result<T> {
 // ===========================================================================
 
 /// A usage string enumerating the valid subcommands (KTD2).
-const USAGE: &str = "usage: lab-research <turn | turn diagnose | turn governed | runs compare | replay | catalog status | catalog compact | analyze --scaffold | report mfe | report tiers | report sample | fingerprint | trials count | trials record>";
+const USAGE: &str = "usage: lab-research <turn | turn diagnose | turn governed | runs compare | replay | catalog status | catalog compact | analyze --scaffold | report mfe | report tiers | report sample | report paired | fingerprint | trials count | trials record>";
 
 /// Parse an optional `YYYYMMDD` range from a pair of env vars, returning `None`
 /// when neither is set and erroring when only one is.
@@ -1861,7 +1861,15 @@ fn dispatch() -> anyhow::Result<ExitCode> {
                 // the exit code reflects I/O and input integrity only.
                 Ok(ExitCode::SUCCESS)
             }
-            other => anyhow::bail!("unknown `report` subcommand {other:?} — want `report mfe` | `report tiers` | `report sample`\n{USAGE}"),
+            Some("paired") => {
+                let out = crate::runner::report::report_paired(&paired_config_from_env()?)?;
+                print_lines(&out.lines);
+                // Attributable, unattributable, or a mixture are all valid
+                // completions (R9 — a stand-down is a verdict, not a failure);
+                // the exit code reflects I/O and input integrity only.
+                Ok(ExitCode::SUCCESS)
+            }
+            other => anyhow::bail!("unknown `report` subcommand {other:?} — want `report mfe` | `report tiers` | `report sample` | `report paired`\n{USAGE}"),
         },
         Some("trials") => match std::env::args().nth(2).as_deref() {
             Some("count") => {
@@ -1993,19 +2001,69 @@ fn tiers_config_from_env() -> anyhow::Result<crate::runner::report::TiersConfig>
     })
 }
 
-fn sample_config_from_env() -> anyhow::Result<crate::runner::report::SampleConfig> {
-    // A usize/u64 override that is present but unparseable is a loud refusal:
-    // silently falling back to the default would report a seed the run did not
-    // actually use, and the whole point of the seed is re-derivability.
-    fn parsed<T: std::str::FromStr>(var: &str, default: T) -> anyhow::Result<T>
-    where
-        T::Err: std::fmt::Display,
-    {
-        match std::env::var(var).ok().filter(|s| !s.trim().is_empty()) {
-            None => Ok(default),
-            Some(s) => s.trim().parse::<T>().map_err(|e| anyhow::anyhow!("{var}={s:?}: {e}")),
-        }
+/// A numeric override that is present but unparseable is a loud refusal:
+/// silently falling back to the default would report a seed the run did not
+/// actually use, and the whole point of the seed is re-derivability.
+fn env_parsed<T: std::str::FromStr>(var: &str, default: T) -> anyhow::Result<T>
+where
+    T::Err: std::fmt::Display,
+{
+    match std::env::var(var).ok().filter(|s| !s.trim().is_empty()) {
+        None => Ok(default),
+        Some(s) => s.trim().parse::<T>().map_err(|e| anyhow::anyhow!("{var}={s:?}: {e}")),
     }
+}
+
+/// `report paired` config. Two data homes: the head lives under `turn4-fresh`
+/// and the cost-aware off-flip arms under `turn4-cost-scratch`, so
+/// `sample_config_from_env`'s single home cannot be copied.
+fn paired_config_from_env() -> anyhow::Result<crate::runner::report::PairedConfig> {
+    let head_home = data_home_from_env()?;
+    // The head run is REQUIRED. `report sample` may default to the latest
+    // finalized run because it names what it did in the header; here that
+    // default would silently pair against whatever ran last under the head home
+    // — which under `turn4-fresh` is not v35.
+    let head_run = std::env::var("LS_REPORT_RUN")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "LS_REPORT_RUN is required for `report paired` — it names the HEAD run. Unlike \
+                 `report sample` this verb never defaults to the latest finalized run: pairing \
+                 against an unintended head would report a difference nobody asked for"
+            )
+        })?;
+    let arm_runs: Vec<String> = std::env::var("LS_PAIRED_ARMS")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect())
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "LS_PAIRED_ARMS is required for `report paired` — a comma-separated list of the \
+                 off-flip arm run ids to pair the head against"
+            )
+        })?;
+    Ok(crate::runner::report::PairedConfig {
+        // Absent → the arms share the head's home. Stated in the header either
+        // way, so a single-home run is never ambiguous.
+        arm_home: std::env::var("LS_PAIRED_ARM_HOME")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .map_or_else(|| head_home.clone(), PathBuf::from),
+        head_home,
+        head_run,
+        arm_runs,
+        margin_path: std::env::var("LS_SAMPLE_MARGIN")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .map(PathBuf::from),
+        replicates: env_parsed("LS_SAMPLE_REPLICATES", crate::runner::report::SAMPLE_REPLICATES)?,
+        seed: env_parsed("LS_SAMPLE_SEED", crate::runner::report::SAMPLE_SEED)?,
+    })
+}
+
+fn sample_config_from_env() -> anyhow::Result<crate::runner::report::SampleConfig> {
     Ok(crate::runner::report::SampleConfig {
         data_home: data_home_from_env()?,
         // Absent → the latest finalized run, marked as defaulted in the header.
@@ -2015,8 +2073,8 @@ fn sample_config_from_env() -> anyhow::Result<crate::runner::report::SampleConfi
             .ok()
             .filter(|s| !s.trim().is_empty())
             .map(PathBuf::from),
-        replicates: parsed("LS_SAMPLE_REPLICATES", crate::runner::report::SAMPLE_REPLICATES)?,
-        seed: parsed("LS_SAMPLE_SEED", crate::runner::report::SAMPLE_SEED)?,
+        replicates: env_parsed("LS_SAMPLE_REPLICATES", crate::runner::report::SAMPLE_REPLICATES)?,
+        seed: env_parsed("LS_SAMPLE_SEED", crate::runner::report::SAMPLE_SEED)?,
     })
 }
 

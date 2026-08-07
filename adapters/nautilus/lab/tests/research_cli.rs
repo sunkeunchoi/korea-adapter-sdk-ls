@@ -2407,7 +2407,7 @@ mod report_sample {
 
     /// The v35 catalog fingerprint the committed margin is frozen against, so a
     /// fixture run does not spuriously trip the re-derivation trigger.
-    fn frozen_fingerprint() -> String {
+    pub(super) fn frozen_fingerprint() -> String {
         margin::load(&margin::frozen_margin_path())
             .unwrap()
             .values
@@ -2423,7 +2423,7 @@ mod report_sample {
     /// One closed trade on session `day` with per-trade R-multiple `r`,
     /// risk capital 100 and a single 5-unit commission — so its **gross** R is
     /// exactly `r + 0.05`.
-    fn trade(day: u32, r: f64) -> TradeRecord {
+    pub(super) fn trade(day: u32, r: f64) -> TradeRecord {
         TradeRecord {
             symbol: format!("00{day:04}.XKRX"),
             entry_side: "BUY".to_string(),
@@ -2450,21 +2450,45 @@ mod report_sample {
     fn write_run(trades: Vec<TradeRecord>, fingerprint: &str) -> (tempfile::TempDir, String) {
         let dir = tempdir().unwrap();
         let run_id = "20260601T000000Z-backtest-orb-v35".to_string();
-        let run_dir = dir.path().join("runs").join(&run_id);
-        std::fs::create_dir_all(&run_dir).unwrap();
-
         let mut params = OrbParams::default();
         params.strategy_version = 35;
+        write_run_into(dir.path(), &run_id, trades, fingerprint, "uh", "ch", params);
+        (dir, run_id)
+    }
+
+    /// Write a finalized run into an EXISTING data home, with every field the
+    /// comparability gate reads under the caller's control.
+    ///
+    /// [`write_run`] hardcodes the run id and all three hashes, which is right
+    /// for the single-run sample report but cannot express what `report paired`
+    /// needs: two runs in two homes, several arms in one home, and a manifest
+    /// that diverges from the head on exactly one of the three hashes. Both
+    /// helpers share this one body, so the 22 existing `report_sample` call
+    /// sites are untouched.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn write_run_into(
+        data_home: &Path,
+        run_id: &str,
+        trades: Vec<TradeRecord>,
+        fingerprint: &str,
+        universe_hash: &str,
+        strategy_code_hash: &str,
+        params: OrbParams,
+    ) {
+        let run_dir = data_home.join("runs").join(run_id);
+        std::fs::create_dir_all(&run_dir).unwrap();
+
+        let strategy_version = params.strategy_version;
         let manifest = Manifest {
-            run_id: run_id.clone(),
+            run_id: run_id.to_string(),
             source: RunSource::Backtest,
             strategy_id: "orb".to_string(),
-            strategy_version: 35,
+            strategy_version,
             params,
             data_range: DataRange { start: "20260601".to_string(), end: "20260630".to_string() },
             catalog_fingerprint: fingerprint.to_string(),
-            universe_hash: "uh".to_string(),
-            strategy_code_hash: "ch".to_string(),
+            universe_hash: universe_hash.to_string(),
+            strategy_code_hash: strategy_code_hash.to_string(),
             lab_src_fingerprint: None,
             checkpoint_hash: None,
             universe_metadata_hash: None,
@@ -2480,7 +2504,6 @@ mod report_sample {
         };
         std::fs::write(run_dir.join(PERFORMANCE_FILE), serde_json::to_string(&perf).unwrap())
             .unwrap();
-        (dir, run_id)
     }
 
     fn cfg(data_home: &Path, run_id: Option<&str>) -> SampleConfig {
@@ -3080,5 +3103,437 @@ mod report_sample {
         assert!(stderr.contains("report sample"), "{stderr}");
         assert!(stderr.contains("report mfe") && stderr.contains("report tiers"), "{stderr}");
         let _ = PathBuf::new();
+    }
+}
+
+// ===========================================================================
+// `report paired` — the paired-power measurement (plan 2026-08-07-001, U4)
+// ===========================================================================
+
+mod report_paired {
+    use std::path::Path;
+
+    use nautilus_ls_lab::artifacts::performance::TradeRecord;
+    use nautilus_ls_lab::params::OrbParams;
+    use nautilus_ls_lab::runner::report::{report_paired, PairedConfig, PairedOutcome};
+    use tempfile::tempdir;
+
+    use super::report_sample::{frozen_fingerprint, trade, write_run_into};
+    use super::*;
+
+    const HEAD_RUN: &str = "20260601T000000Z-backtest-orb-v35";
+    const ARM_RUN: &str = "20260601T000100Z-backtest-orb-v92";
+
+    fn params(version: u32) -> OrbParams {
+        let mut p = OrbParams::default();
+        p.strategy_version = version;
+        p
+    }
+
+    /// A config over `head_home`/`arm_home` with the CLI's own seed and a small
+    /// replicate count.
+    fn cfg(head_home: &Path, arm_home: &Path, arms: &[&str]) -> PairedConfig {
+        PairedConfig {
+            head_home: head_home.to_path_buf(),
+            head_run: HEAD_RUN.to_string(),
+            arm_home: arm_home.to_path_buf(),
+            arm_runs: arms.iter().map(|s| (*s).to_string()).collect(),
+            margin_path: None,
+            replicates: 2_000,
+            seed: 20_260_805,
+        }
+    }
+
+    /// `trade(day, r)` carries `realized_pnl = r × 100` on `risk_capital = 100`,
+    /// so a run's net RoR — `Σ realized_pnl / Σ risk_capital` — is exactly the
+    /// MEAN of its `r` values. Every figure below is hand-computed from that.
+    ///
+    /// ```text
+    /// head  session 1: +0.4, −0.2     session 2: +0.6, +0.4
+    ///       net RoR = 1.2 / 4 = +0.3
+    /// arm   session 1: +0.1, +0.1     session 2: +0.3, −0.1     session 3: +0.5, +0.3
+    ///       net RoR over the UNION        = 1.2 / 6 = +0.2   → delta +0.1
+    ///       net RoR over the INTERSECTION = 0.4 / 4 = +0.1   → delta +0.2
+    /// ```
+    ///
+    /// The two disagree by construction: session 3 is the arm's own, and its
+    /// trades are chosen so dropping it MOVES the arm's ratio. An
+    /// intersection-only build therefore fails AE5 rather than passing it by
+    /// coincidence — which is the whole reason KTD4 pins the union.
+    fn head_trades() -> Vec<TradeRecord> {
+        vec![trade(1, 0.4), trade(1, -0.2), trade(2, 0.6), trade(2, 0.4)]
+    }
+    fn arm_trades() -> Vec<TradeRecord> {
+        vec![
+            trade(1, 0.1),
+            trade(1, 0.1),
+            trade(2, 0.3),
+            trade(2, -0.1),
+            trade(3, 0.5),
+            trade(3, 0.3),
+        ]
+    }
+    const HEAD_NET_ROR: f64 = 0.3;
+    const ARM_NET_ROR: f64 = 0.2;
+    /// What the arm's ratio would be if the blocks were built over the
+    /// intersection instead of the union. Named so the assertion below can say
+    /// explicitly which quantity it is refusing.
+    const ARM_NET_ROR_INTERSECTION_ONLY: f64 = 0.1;
+
+    fn two_homes() -> (tempfile::TempDir, tempfile::TempDir) {
+        let head = tempdir().unwrap();
+        let arm = tempdir().unwrap();
+        let fp = frozen_fingerprint();
+        write_run_into(head.path(), HEAD_RUN, head_trades(), &fp, "uh", "ch", params(35));
+        write_run_into(arm.path(), ARM_RUN, arm_trades(), &fp, "uh", "ch", params(92));
+        (head, arm)
+    }
+
+    /// **AE5.** The point estimate is the head's whole-run net RoR minus the
+    /// arm's — the quantity TURN-LOG recorded — and not a differently-scoped one.
+    ///
+    /// This is the assertion the union-block choice (KTD4) exists to satisfy,
+    /// and it is written to FAIL under an intersection build rather than to pass
+    /// under both: see the fixture's doc comment for why the two disagree here.
+    #[test]
+    fn ae5_the_point_estimate_is_the_recorded_whole_run_delta() {
+        let (head, arm) = two_homes();
+        let out = report_paired(&cfg(head.path(), arm.path(), &[ARM_RUN])).unwrap();
+        assert_eq!(out.arms.len(), 1);
+        let a = &out.arms[0];
+        assert!(
+            (a.head_net_ror - HEAD_NET_ROR).abs() < 1e-12,
+            "head net RoR {} != {HEAD_NET_ROR}",
+            a.head_net_ror
+        );
+        assert!(
+            (a.arm_net_ror - ARM_NET_ROR).abs() < 1e-12,
+            "arm net RoR {} != {ARM_NET_ROR} — the arm's ratio is taken over the UNION",
+            a.arm_net_ror
+        );
+        assert!(
+            (a.arm_net_ror - ARM_NET_ROR_INTERSECTION_ONLY).abs() > 1e-9,
+            "the fixture must discriminate: the union and intersection ratios coincide, so this \
+             assertion proves nothing"
+        );
+        assert!(
+            (a.bootstrap.point - (HEAD_NET_ROR - ARM_NET_ROR)).abs() < 1e-12,
+            "point {} != head − arm = {}",
+            a.bootstrap.point,
+            HEAD_NET_ROR - ARM_NET_ROR
+        );
+        assert_eq!(a.union_blocks, 3, "the union counts the session only the arm traded");
+        assert_eq!(a.intersection_blocks, 2, "the head traded two of the three");
+    }
+
+    #[test]
+    fn an_arm_sharing_no_session_with_the_head_is_still_measurable_over_the_union() {
+        // Disjoint sessions: the union is every session either traded, the
+        // intersection is empty, and the head contributes nothing at all to the
+        // sessions it did not trade. The point estimate is still the whole-run
+        // delta, because that is a property of the union and not of any overlap.
+        let head = tempdir().unwrap();
+        let arm = tempdir().unwrap();
+        let fp = frozen_fingerprint();
+        write_run_into(head.path(), HEAD_RUN, head_trades(), &fp, "uh", "ch", params(35));
+        write_run_into(
+            arm.path(),
+            ARM_RUN,
+            // sessions 7 and 8 — the head trades neither. mean r = 0.4/4 = +0.1
+            vec![trade(7, 0.3), trade(7, -0.1), trade(8, 0.1), trade(8, 0.1)],
+            &fp,
+            "uh",
+            "ch",
+            params(92),
+        );
+        let out = report_paired(&cfg(head.path(), arm.path(), &[ARM_RUN])).unwrap();
+        let a = &out.arms[0];
+        assert_eq!(a.union_blocks, 4, "two head sessions + two arm sessions");
+        assert_eq!(a.intersection_blocks, 0, "they share none");
+        assert_eq!(a.head_only_blocks, 2);
+        assert_eq!(a.arm_only_blocks, 2);
+        assert!((a.head_net_ror - HEAD_NET_ROR).abs() < 1e-12);
+        assert!((a.arm_net_ror - 0.1).abs() < 1e-12);
+        assert!(
+            (a.bootstrap.point - (HEAD_NET_ROR - 0.1)).abs() < 1e-12,
+            "still the whole-run delta: {}",
+            a.bootstrap.point
+        );
+        // With no shared session there is no common shock to cancel, so the
+        // shared component is not a number — reported as such rather than as 0.0.
+        assert!(a.shared_component.is_nan(), "an empty intersection has no shared component");
+    }
+
+    // --- The three-hash comparability gate (KTD7) ---------------------------
+    //
+    // A fingerprint is range-scoped over hashed bars only, so an identical
+    // fingerprint does not prove an identical derived universe. Each hash is
+    // asserted independently, and the universe-hash case is specifically the one
+    // a fingerprint-only gate would wave through.
+
+    fn refusal_with(fp: &str, universe: &str, code: &str) -> String {
+        let head = tempdir().unwrap();
+        let arm = tempdir().unwrap();
+        write_run_into(
+            head.path(),
+            HEAD_RUN,
+            head_trades(),
+            &frozen_fingerprint(),
+            "uh",
+            "ch",
+            params(35),
+        );
+        write_run_into(arm.path(), ARM_RUN, arm_trades(), fp, universe, code, params(92));
+        let err = report_paired(&cfg(head.path(), arm.path(), &[ARM_RUN]))
+            .expect_err("a non-comparable pair is refused");
+        format!("{err:#}")
+    }
+
+    #[test]
+    fn an_arm_on_a_different_catalog_fingerprint_is_refused_by_name() {
+        let msg = refusal_with("a-different-catalog-fingerprint", "uh", "ch");
+        assert!(msg.contains("catalog_fingerprint"), "{msg}");
+        assert!(msg.contains("NOT comparable"), "{msg}");
+        assert!(msg.contains("MISSING INPUT"), "a refusal here is an input problem: {msg}");
+    }
+
+    #[test]
+    fn an_arm_on_a_different_universe_hash_is_refused_even_when_the_fingerprint_matches() {
+        let msg = refusal_with(&frozen_fingerprint(), "a-different-universe-hash", "ch");
+        assert!(
+            msg.contains("universe_hash"),
+            "the case a fingerprint-only gate would pass: {msg}"
+        );
+        assert!(!msg.contains("`catalog_fingerprint` diverges"), "{msg}");
+    }
+
+    #[test]
+    fn an_arm_on_a_different_strategy_code_hash_is_refused_by_name() {
+        let msg = refusal_with(&frozen_fingerprint(), "uh", "a-different-code-hash");
+        assert!(msg.contains("strategy_code_hash"), "{msg}");
+    }
+
+    // --- Missing and unusable inputs ----------------------------------------
+
+    #[test]
+    fn an_arm_with_no_closed_trades_is_refused_as_a_missing_input() {
+        let head = tempdir().unwrap();
+        let arm = tempdir().unwrap();
+        let fp = frozen_fingerprint();
+        write_run_into(head.path(), HEAD_RUN, head_trades(), &fp, "uh", "ch", params(35));
+        let mut open_only = trade(1, 0.5);
+        open_only.ts_closed = None;
+        write_run_into(arm.path(), ARM_RUN, vec![open_only], &fp, "uh", "ch", params(92));
+        let err = report_paired(&cfg(head.path(), arm.path(), &[ARM_RUN])).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("no CLOSED trades"), "{msg}");
+    }
+
+    #[test]
+    fn an_arm_carrying_a_null_risk_capital_is_refused_as_a_pre_field_vintage() {
+        let head = tempdir().unwrap();
+        let arm = tempdir().unwrap();
+        let fp = frozen_fingerprint();
+        write_run_into(head.path(), HEAD_RUN, head_trades(), &fp, "uh", "ch", params(35));
+        let mut legacy = trade(1, 0.5);
+        legacy.risk_capital = None;
+        write_run_into(
+            arm.path(),
+            ARM_RUN,
+            vec![legacy, trade(2, 0.1)],
+            &fp,
+            "uh",
+            "ch",
+            params(92),
+        );
+        let err = report_paired(&cfg(head.path(), arm.path(), &[ARM_RUN])).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(msg.contains("PRE-FIELD vintage"), "{msg}");
+    }
+
+    #[test]
+    fn an_empty_arm_list_is_refused_rather_than_reported_as_nothing_to_see() {
+        let (head, arm) = two_homes();
+        let err = report_paired(&cfg(head.path(), arm.path(), &[])).unwrap_err();
+        assert!(format!("{err:#}").contains("LS_PAIRED_ARMS"), "{err:#}");
+    }
+
+    // --- Labels (KTD6) ------------------------------------------------------
+
+    /// The head with both risk levers ARMED, mirroring the real v35 head.
+    /// `OrbParams::default()` leaves both at `0.0`, which is the OFF state — so
+    /// an arm built from the default differs from this head by exactly the
+    /// levers it leaves off.
+    fn armed_head_params() -> OrbParams {
+        let mut p = params(35);
+        p.risk_per_trade_krw = 299_340.0;
+        p.ratio_atr_alpha = 1.0;
+        p
+    }
+
+    /// Pair an armed head against an arm whose params are `arm_params`, and
+    /// return the outcome.
+    fn paired_with_params(arm_params: OrbParams) -> (tempfile::TempDir, tempfile::TempDir, PairedOutcome) {
+        let head = tempdir().unwrap();
+        let arm = tempdir().unwrap();
+        let fp = frozen_fingerprint();
+        write_run_into(head.path(), HEAD_RUN, head_trades(), &fp, "uh", "ch", armed_head_params());
+        write_run_into(arm.path(), ARM_RUN, arm_trades(), &fp, "uh", "ch", arm_params);
+        let out = report_paired(&cfg(head.path(), arm.path(), &[ARM_RUN])).unwrap();
+        (head, arm, out)
+    }
+
+    #[test]
+    fn an_arm_flipping_two_params_prints_both_and_is_marked_confounded() {
+        // The real v95 arm: `risk_per_trade_krw` 299,340 -> 0 AND
+        // `ratio_atr_alpha` 1.0 -> 0, while the frozen record labels it by the
+        // first alone. KTD6 — print the confound, do not drop the arm.
+        let mut two = armed_head_params();
+        two.strategy_version = 92;
+        two.risk_per_trade_krw = 0.0;
+        two.ratio_atr_alpha = 0.0;
+        let (_h, _a, out) = paired_with_params(two);
+        let a = &out.arms[0];
+        assert_eq!(a.param_diff.len(), 2, "both flips are recorded: {:?}", a.param_diff);
+        assert!(a.label.contains("risk_per_trade_krw"), "{}", a.label);
+        assert!(a.label.contains("ratio_atr_alpha"), "{}", a.label);
+        assert!(
+            !a.label.contains("strategy_version"),
+            "strategy_version is the run's identity, not a lever — without the exclusion every \
+             arm prints as multi-param and the confound signal is destroyed: {}",
+            a.label
+        );
+        assert!(out.lines.iter().any(|l| l.contains("CONFOUNDED")), "the confound is printed");
+    }
+
+    #[test]
+    fn a_single_param_arm_prints_one_lever_and_is_not_marked_confounded() {
+        // The falsifier for the test above, on data that differs from the head:
+        // one lever off, and the marker stays silent. If `strategy_version`
+        // leaked into the diff this would print CONFOUNDED too and the marker
+        // would carry no information at all.
+        let mut one = armed_head_params();
+        one.strategy_version = 92;
+        one.ratio_atr_alpha = 0.0;
+        let (_h, _a, out) = paired_with_params(one);
+        let arm = &out.arms[0];
+        assert_eq!(arm.param_diff.len(), 1, "exactly one lever moved: {:?}", arm.param_diff);
+        assert!(arm.label.contains("ratio_atr_alpha"), "{}", arm.label);
+        assert!(!arm.label.contains("risk_per_trade_krw"), "{}", arm.label);
+        assert!(!out.lines.iter().any(|l| l.contains("CONFOUNDED")), "{:?}", out.lines);
+    }
+
+    // --- The staging guard and the exit contract ----------------------------
+
+    #[test]
+    fn the_staging_guard_holds_no_krw_profitability_number_reaches_the_output() {
+        // A power question must not be decided by a profitability number. Net
+        // RoR IS printed — it is the statistic being adjudicated — but the KRW
+        // sums it is a ratio of are not.
+        let (head, arm) = two_homes();
+        let out = report_paired(&cfg(head.path(), arm.path(), &[ARM_RUN])).unwrap();
+        let joined = out.lines.join("\n").to_lowercase();
+        for banned in ["expectancy", "pnl", "p&l"] {
+            assert!(!joined.contains(banned), "staging guard: {banned:?} reached the output");
+        }
+        assert!(joined.contains("net ror"), "the adjudicated statistic is still printed");
+    }
+
+    #[test]
+    fn the_verb_completes_when_no_arm_is_attributable_because_a_stand_down_is_a_verdict() {
+        let (head, arm) = two_homes();
+        let out = report_paired(&cfg(head.path(), arm.path(), &[ARM_RUN])).unwrap();
+        assert!(
+            !out.arms[0].attributable,
+            "this two-block fixture cannot resolve a +0.1 difference"
+        );
+        assert!(
+            out.lines.iter().any(|l| l.starts_with("SUMMARY at the sample held: 0 of 1")),
+            "{:?}",
+            out.lines
+        );
+    }
+
+    // --- CLI wiring ---------------------------------------------------------
+
+    #[test]
+    fn a_present_but_unparseable_replicate_or_seed_override_is_a_loud_refusal() {
+        for (var, bad) in [("LS_SAMPLE_REPLICATES", "many"), ("LS_SAMPLE_SEED", "-1")] {
+            let out = bin()
+                .args(["report", "paired"])
+                .env("LS_DATA_HOME", "/nonexistent-head-home")
+                .env("LS_REPORT_RUN", HEAD_RUN)
+                .env("LS_PAIRED_ARMS", ARM_RUN)
+                .env(var, bad)
+                .output()
+                .unwrap();
+            assert!(!out.status.success(), "{var}={bad} must not silently default");
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert!(stderr.contains(var), "the refusal names the variable: {stderr}");
+        }
+    }
+
+    #[test]
+    fn an_absent_head_run_is_refused_rather_than_defaulted_to_the_latest_finalized_run() {
+        let out = bin()
+            .args(["report", "paired"])
+            .env("LS_DATA_HOME", "/nonexistent-head-home")
+            .env("LS_PAIRED_ARMS", ARM_RUN)
+            .env_remove("LS_REPORT_RUN")
+            .output()
+            .unwrap();
+        assert!(!out.status.success());
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("LS_REPORT_RUN is required"), "{stderr}");
+        assert!(stderr.contains("never defaults"), "{stderr}");
+    }
+
+    #[test]
+    fn the_verb_is_enumerated_by_the_compiled_bins_usage_and_unknown_mode_bail() {
+        let out = bin().args(["report", "bogus-paired"]).output().unwrap();
+        assert!(!out.status.success());
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains("report paired"), "the bail enumerates it: {stderr}");
+        assert!(stderr.contains("report sample"), "beside the existing verbs: {stderr}");
+        // And in USAGE, which the same bail appends.
+        assert!(stderr.contains("usage: lab-research"), "{stderr}");
+        let usage_line =
+            stderr.lines().find(|l| l.contains("usage: lab-research")).expect("a usage line");
+        assert!(usage_line.contains("report paired"), "{usage_line}");
+    }
+
+    /// No branch of the paired report reaches an acquisition path. Asserted on
+    /// the source rather than the output: an ingest entry point could be called
+    /// without printing anything, so the output is not evidence about it.
+    #[test]
+    fn no_code_path_in_the_paired_report_reaches_an_ingest_entry_point() {
+        let src = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join("runner").join("report.rs"),
+        )
+        .unwrap();
+        let body = src
+            .split_once("pub fn report_paired(")
+            .expect("report_paired exists")
+            .1
+            .split_once("\n#[cfg(test)]")
+            .expect("the test module terminates the non-test source")
+            .0;
+        for banned in [
+            "accumulate(",
+            "run_accumulate",
+            "write_bars(",
+            "write_instruments(",
+            "delete_bar_series(",
+            "heal(",
+            "fetch(",
+            // Unlike `report sample`, the paired report reads NO catalog at all.
+            "read_all_bars",
+        ] {
+            assert!(
+                !body.contains(banned),
+                "report_paired must not reach {banned:?} — the measurement is a read-only fold \
+                 from two run directories to one verdict"
+            );
+        }
     }
 }
