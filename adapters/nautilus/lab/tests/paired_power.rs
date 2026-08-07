@@ -451,10 +451,19 @@ fn the_reachable_supply_projection_is_the_measured_se_scaled_by_the_session_root
         )
         .unwrap();
         let projected = out.standard_error * factor;
+        // The root-n law in its INVARIANT form: variance x sessions is
+        // conserved. Asserting `projected / se == factor` would be a tautology
+        // — `projected` was just defined as that product — and would hold for
+        // an inverted ratio too. This form does not: `sqrt(237/45)` conserves
+        // nothing and fails here.
         assert!(
-            (projected / out.standard_error - factor).abs() < 1e-12,
-            "v{version}: the projection is a scaling, not a re-measurement"
+            (projected.powi(2) * PAIRED_REACHABLE_CALENDAR_SESSIONS
+                - out.standard_error.powi(2) * PAIRED_HEAD_CALENDAR_SESSIONS)
+                .abs()
+                < 1e-12,
+            "v{version}: variance x sessions is not conserved by the projection"
         );
+        assert!(projected < out.standard_error, "v{version}: more sessions shrink the SE");
         // The minimum detectable paired difference at each supply level
         // (KTD11): `(z_{1−α/2} + z_power) x SE`.
         let mdd_now = (z + z_power) * out.standard_error;

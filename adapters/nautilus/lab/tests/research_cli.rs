@@ -3115,7 +3115,12 @@ mod report_paired {
 
     use nautilus_ls_lab::artifacts::performance::TradeRecord;
     use nautilus_ls_lab::params::OrbParams;
-    use nautilus_ls_lab::runner::report::{report_paired, PairedConfig, PairedOutcome};
+    use nautilus_ls_lab::runner::report::{
+        report_paired, PairedConfig, PairedOutcome, PAIRED_HEAD_CALENDAR_SESSIONS,
+        PAIRED_HEAD_CALENDAR_SESSIONS_RUN, PAIRED_REACHABLE_CALENDAR_SESSIONS, SAMPLE_CONFIDENCE,
+        SAMPLE_POWER,
+    };
+    use nautilus_ls_lab::stats::{power_z, two_sided_z};
     use tempfile::tempdir;
 
     use super::report_sample::{frozen_fingerprint, trade, write_run_into};
@@ -3260,8 +3265,20 @@ mod report_paired {
             a.bootstrap.point
         );
         // With no shared session there is no common shock to cancel, so the
-        // shared component is not a number — reported as such rather than as 0.0.
-        assert!(a.shared_component.is_nan(), "an empty intersection has no shared component");
+        // shared component is UNAVAILABLE — reported as such rather than as 0.0
+        // or as a NaN that would propagate into a printed governance figure.
+        assert_eq!(a.shared_component, None, "an empty intersection has no shared component");
+        assert_eq!(a.unshared_residual, None, "and no residual to take against it");
+        assert!(
+            out.lines.iter().any(|l| l.contains("shared-session component UNAVAILABLE")),
+            "the output says so rather than printing NaN: {:?}",
+            out.lines
+        );
+        assert!(
+            !out.lines.iter().any(|l| l.contains("NaN")),
+            "no NaN reaches the output: {:?}",
+            out.lines
+        );
     }
 
     // --- The three-hash comparability gate (KTD7) ---------------------------
@@ -3452,6 +3469,281 @@ mod report_paired {
             "{:?}",
             out.lines
         );
+    }
+
+    // --- The reachable-supply projection and the multiplicity line ----------
+    //
+    // Both reach the printed governance summary, so both are asserted THROUGH
+    // `report_paired` rather than only against the formula in the hermetic
+    // guard — a wiring bug between the two would otherwise ship green.
+
+    /// The head the KTD10 projection root was measured against. Writing the
+    /// pinned run id — rather than this module's synthetic `HEAD_RUN` — is what
+    /// makes the projection apply.
+    fn two_homes_with_the_pinned_head() -> (tempfile::TempDir, tempfile::TempDir) {
+        let head = tempdir().unwrap();
+        let arm = tempdir().unwrap();
+        let fp = frozen_fingerprint();
+        write_run_into(
+            head.path(),
+            PAIRED_HEAD_CALENDAR_SESSIONS_RUN,
+            head_trades(),
+            &fp,
+            "uh",
+            "ch",
+            params(35),
+        );
+        write_run_into(arm.path(), ARM_RUN, arm_trades(), &fp, "uh", "ch", params(92));
+        (head, arm)
+    }
+
+    #[test]
+    fn the_reachable_supply_projection_is_wired_through_the_report() {
+        let (head, arm) = two_homes_with_the_pinned_head();
+        let mut c = cfg(head.path(), arm.path(), &[ARM_RUN]);
+        c.head_run = PAIRED_HEAD_CALENDAR_SESSIONS_RUN.to_string();
+        let out = report_paired(&c).unwrap();
+        let a = &out.arms[0];
+        let (z, zp) = (two_sided_z(SAMPLE_CONFIDENCE).unwrap(), power_z(SAMPLE_POWER).unwrap());
+
+        let factor = (PAIRED_HEAD_CALENDAR_SESSIONS / PAIRED_REACHABLE_CALENDAR_SESSIONS).sqrt();
+        let got_factor = out.projection_factor.expect("the pinned head projects");
+        assert!((got_factor - factor).abs() < 1e-12, "{got_factor}");
+
+        let se = a.projected_standard_error.expect("the pinned head projects");
+        assert!(
+            (se - a.bootstrap.standard_error * factor).abs() < 1e-12,
+            "projected SE {se} is not the measured SE scaled by {factor}"
+        );
+        // Variance x sessions is conserved. An INVERTED ratio still satisfies
+        // "projected = SE x some factor" but fails this, so this is the
+        // assertion that actually pins the direction.
+        assert!(
+            (se.powi(2) * PAIRED_REACHABLE_CALENDAR_SESSIONS
+                - a.bootstrap.standard_error.powi(2) * PAIRED_HEAD_CALENDAR_SESSIONS)
+                .abs()
+                < 1e-12,
+            "variance x sessions is not conserved"
+        );
+        assert!(se < a.bootstrap.standard_error);
+
+        // KTD11's minimum detectable paired difference at each supply level.
+        assert!(
+            (a.minimum_detectable_difference - (z + zp) * a.bootstrap.standard_error).abs() < 1e-12
+        );
+        assert!(
+            (a.projected_minimum_detectable_difference.unwrap() - (z + zp) * se).abs() < 1e-12
+        );
+
+        // R9's second question: the verdict at the reachable supply is the SAME
+        // observed difference against the PROJECTED bar.
+        assert_eq!(a.attributable_at_reachable_supply, Some(a.bootstrap.point.abs() > z * se));
+        // The projected bar is strictly lower, so an arm attributable now can
+        // never read as unattributable there. A swapped comparison would.
+        assert!(
+            !(a.attributable && a.attributable_at_reachable_supply == Some(false)),
+            "the projected verdict must be at least as permissive as the current one"
+        );
+
+        assert!(
+            out.lines.iter().any(|l| l.contains("projected to the reachable supply")),
+            "the per-arm projection line reaches the output"
+        );
+        assert!(
+            out.lines.iter().any(|l| l.starts_with("SUMMARY projected to the reachable supply:")
+                && !l.contains("WITHHELD")),
+            "and so does the summary count: {:?}",
+            out.lines
+        );
+    }
+
+    #[test]
+    fn the_projection_is_withheld_for_a_head_it_was_not_measured_against() {
+        // The projection root is 45 CALENDAR sessions measured on ONE run, but
+        // `head_run` is a free-form required parameter. Scaling a different
+        // head's SE by that root would print an authoritative-looking figure
+        // that is simply wrong — so it is withheld, not guessed.
+        let (head, arm) = two_homes();
+        let out = report_paired(&cfg(head.path(), arm.path(), &[ARM_RUN])).unwrap();
+        assert_ne!(HEAD_RUN, PAIRED_HEAD_CALENDAR_SESSIONS_RUN, "the fixture head is a different run");
+        assert_eq!(out.projection_factor, None);
+        let a = &out.arms[0];
+        assert_eq!(a.projected_standard_error, None);
+        assert_eq!(a.projected_minimum_detectable_difference, None);
+        assert_eq!(a.attributable_at_reachable_supply, None);
+
+        // The measurement at the sample held is unaffected — only the
+        // projection is withheld.
+        assert!(a.bootstrap.standard_error > 0.0);
+        assert!(a.minimum_detectable_difference > 0.0);
+
+        let joined = out.lines.join("\n");
+        assert!(joined.contains("WITHHELD"), "{joined}");
+        assert!(
+            joined.contains(PAIRED_HEAD_CALENDAR_SESSIONS_RUN),
+            "the refusal names the run the root WAS measured for: {joined}"
+        );
+        assert!(
+            joined.contains("unanswered for this head, not answered negatively"),
+            "a withheld projection must not read as a negative verdict: {joined}"
+        );
+        // And no stale projected figure leaks into the output.
+        assert!(
+            !out.lines.iter().any(|l| l.contains("projection (KTD10): the paired SE scales")),
+            "the scaling line must not print when the root does not apply"
+        );
+    }
+
+    /// Write `n` arms into one arm home, each differing from the head by a
+    /// different lever so their standard errors are not identical.
+    fn write_n_arms(arm_home: &Path, n: usize) -> Vec<String> {
+        let fp = frozen_fingerprint();
+        (0..n)
+            .map(|i| {
+                let run_id = format!("20260601T00{:02}00Z-backtest-orb-v{}", i + 1, 92 + i);
+                let mut p = armed_head_params();
+                p.strategy_version = 92 + i as u32;
+                match i {
+                    0 => p.ratio_atr_alpha = 0.0,
+                    1 => p.risk_per_trade_krw = 0.0,
+                    _ => p.entry_confirm = 0.0,
+                }
+                // Vary the trades so the arms do not collapse to one SE.
+                let trades = vec![
+                    trade(1, 0.1 + i as f64 * 0.05),
+                    trade(1, 0.1),
+                    trade(2, 0.3 - i as f64 * 0.05),
+                    trade(2, -0.1),
+                    trade(3, 0.5),
+                    trade(3, 0.3),
+                ];
+                write_run_into(arm_home, &run_id, trades, &fp, "uh", "ch", p);
+                run_id
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_family_wide_critical_value_is_bonferroni_over_the_supplied_arms() {
+        let z = two_sided_z(SAMPLE_CONFIDENCE).unwrap();
+
+        // One arm: no multiplicity to correct for, so the family value IS the
+        // per-arm value. A hard-coded six-arm divisor would fail here.
+        let (h1, a1) = two_homes();
+        let one = report_paired(&cfg(h1.path(), a1.path(), &[ARM_RUN])).unwrap();
+        assert!((one.critical_value - z).abs() < 1e-12);
+        assert!(
+            (one.family_critical_value - z).abs() < 1e-12,
+            "at one arm the family bar is the per-arm bar, got {}",
+            one.family_critical_value
+        );
+
+        // Three arms: two-sided alpha 0.05 split three ways.
+        let head = tempdir().unwrap();
+        let arms_home = tempdir().unwrap();
+        write_run_into(
+            head.path(),
+            HEAD_RUN,
+            head_trades(),
+            &frozen_fingerprint(),
+            "uh",
+            "ch",
+            armed_head_params(),
+        );
+        let ids = write_n_arms(arms_home.path(), 3);
+        let refs: Vec<&str> = ids.iter().map(String::as_str).collect();
+        let three = report_paired(&cfg(head.path(), arms_home.path(), &refs)).unwrap();
+        assert_eq!(three.arms.len(), 3);
+
+        let want = two_sided_z(1.0 - (1.0 - SAMPLE_CONFIDENCE) / 3.0).unwrap();
+        assert!(
+            (three.family_critical_value - want).abs() < 1e-12,
+            "family critical value {} != Bonferroni z at alpha/3 = {want}",
+            three.family_critical_value
+        );
+        assert!(
+            three.family_critical_value > three.critical_value,
+            "correcting for multiplicity can only RAISE the bar"
+        );
+        // And the family verdict is never more permissive than the per-arm one.
+        for a in &three.arms {
+            assert!(
+                !(a.attributable_family_wide && !a.attributable),
+                "arm {} clears the family bar but not its own",
+                a.run_id
+            );
+        }
+        assert!(
+            three.lines.iter().any(|l| l.contains("family-wide Bonferroni over 3 arms")),
+            "the arm count reaches the printed critical-value line: {:?}",
+            three.lines
+        );
+    }
+
+    #[test]
+    fn an_arm_within_monte_carlo_error_of_its_bar_is_reported_as_marginal() {
+        // A bootstrap SD carries its own sampling error, SE / sqrt(2(B-1)) —
+        // about 0.7% of the SE at 10,000 replicates. An arm inside that band of
+        // its own threshold flips its verdict on a different seed with
+        // identical data, so a bare boolean would publish a coin flip. The
+        // report must say so.
+        let (head, arm) = two_homes();
+        let out = report_paired(&cfg(head.path(), arm.path(), &[ARM_RUN])).unwrap();
+        let a = &out.arms[0];
+        let z = two_sided_z(SAMPLE_CONFIDENCE).unwrap();
+
+        // `bar_ratio` is the distance to the bar, and it decides the verdict.
+        assert!(
+            (a.bar_ratio - a.bootstrap.point.abs() / (z * a.bootstrap.standard_error)).abs()
+                < 1e-12
+        );
+        assert_eq!(
+            a.attributable,
+            a.bar_ratio > 1.0,
+            "attributable is exactly `|point| exceeds the bar`"
+        );
+
+        // The marginality band, recomputed from the formula.
+        let band = (z * a.bootstrap.standard_error)
+            / (2.0 * (a.bootstrap.replicates - 1) as f64).sqrt();
+        let distance = (a.bootstrap.point.abs() - z * a.bootstrap.standard_error).abs();
+        assert_eq!(a.marginal, distance <= band, "marginal is the Monte-Carlo band test");
+        assert!(band > 0.0 && band < z * a.bootstrap.standard_error, "the band is a small slice");
+
+        // Whatever this fixture happens to be, marginality must reach the
+        // output whenever it is true, and never claim it when it is false.
+        let joined = out.lines.join("\n");
+        assert_eq!(
+            a.marginal,
+            joined.contains("MARGINAL"),
+            "marginality must be printed iff it holds: {joined}"
+        );
+        // And the per-arm distance is always readable, marginal or not.
+        assert!(
+            joined.contains(&format!("{:.4} of the bar", a.bar_ratio)),
+            "the distance to the bar is printed: {joined}"
+        );
+    }
+
+    #[test]
+    fn a_seed_change_cannot_silently_move_a_non_marginal_verdict() {
+        // The falsifier for the marginality machinery: on an arm that is NOT
+        // marginal, the verdict must be stable across seeds. If this ever fails,
+        // the band is too narrow to be doing its job.
+        let (head, arm) = two_homes();
+        let mut a_cfg = cfg(head.path(), arm.path(), &[ARM_RUN]);
+        let base = report_paired(&a_cfg).unwrap();
+        if base.arms[0].marginal {
+            return; // this fixture is marginal; the assertion above covers it
+        }
+        for seed in [1_u64, 42, 999, 20_260_806] {
+            a_cfg.seed = seed;
+            let out = report_paired(&a_cfg).unwrap();
+            assert_eq!(
+                out.arms[0].attributable, base.arms[0].attributable,
+                "a non-marginal verdict moved at seed {seed} — the band is too narrow"
+            );
+        }
     }
 
     // --- CLI wiring ---------------------------------------------------------

@@ -91,9 +91,11 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   | v97 | `gap_retention_min` 0.5→1.0 | 41 / 24 | +0.058478 | 0.067473 | 0.132244 | +0.189030 | NOT attributable |
 
   **0 of 6 per-arm; 0 of 6 family-wide** (Bonferroni over six arms, z 2.6383). Every arm's
-  own difference lands between 0.44× and 0.91× its bar — near-misses, not a degenerate
+  own difference lands between **0.4357× and 0.9063×** its bar — near-misses, not a degenerate
   standard error, which is asserted as a band in `tests/paired_power.rs` so a future estimator
   returning an enormous SE could not pass this as "not attributable" for the wrong reason.
+  **This headline is robust:** the closest arm (v95, 0.9063) sits far outside the bootstrap's
+  own Monte-Carlo error, so no arm's verdict here moves with the seed.
 
 - **VERDICT ROUTING: the "no, for every arm" exit. The ORB arc IS sample-blocked for lever
   work, and the stand-down now rests on a measurement of the right question rather than on a
@@ -107,23 +109,31 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   cannot resolve one even in principle. Detecting a whole-lever flip would not have
   established that a marginal turn is measurable; failing to detect one settles it.
 
-- **At the reachable supply, 5 of 6 would flip — and it still does not buy lever work.**
+- **At the reachable supply, 5-or-6 of 6 would flip — and it still does not buy lever work.**
   Scaling the paired SE by `sqrt(45 / 237)` = 0.435745 (the head's in-range **calendar**
   sessions over the vendor's reachable ceiling — 45, *not* the 24 trade-producing ones):
 
   | | at the 45 sessions held | projected to 237 |
   |---|---|---|
-  | arms attributable, per-arm | **0 of 6** | **5 of 6** |
+  | arms attributable, per-arm | **0 of 6** (robust) | **5 or 6 of 6** (not reproducible) |
   | smallest minimum detectable paired difference | +0.051570 | **+0.022472** |
 
   So a max-depth pull *would* buy paired attributability for lever-**OFF**-sized effects,
   which is more than it buys for absolute detectability (where it changes no decision at all).
   But at 237 sessions the paired detection floor is still **+0.0225 — roughly the size of the
   entire head gross edge (+0.0284)**. The arc would remain unable to adjudicate a marginal
-  lever turn. v92 is the one arm that stays unattributable, and by 5×10⁻⁶ (+0.031857 against a
-  bar of +0.031861) — a coin flip, reported as a figure and not as a finding.
-  This is a **projection** under an unchanged clustering structure and an unchanged effect,
-  not a measurement.
+  lever turn. This is a **projection** under an unchanged clustering structure and an unchanged
+  effect, not a measurement.
+
+  > **The projected count is NOT a fact, and the verb now says so.** v92 lands at **0.9999 of
+  > its projected bar** (+0.031857 against +0.031861) — four parts in a hundred thousand, far
+  > inside the Monte-Carlo error of a 10,000-replicate bootstrap SD (`SE/√(2(B−1))`, ~0.7%).
+  > An independent cross-model review re-implemented the resampler and swept the seed: seeds
+  > `20260805`/`1`/`20260804` give 5 of 6, seeds `20260806`/`20260807`/`42`/`999` give 6 of 6.
+  > Same data, same code, different governance sentence. `report paired` therefore computes
+  > that Monte-Carlo band, marks such an arm **MARGINAL**, prints each arm's distance to its
+  > bar as a ratio, and refuses to print the projected count without the caveat. **The
+  > headline verdict above is unaffected** — no arm is marginal at the sample held.
 
 - **Attributability here means out-of-sample replication over the session-generating
   process** — the delta would survive a different draw of sessions from the same regime. The
@@ -144,6 +154,20 @@ version-pin decision only — **no backtest, no `orb.rs`/`params.rs` edit, head
   to 41 sessions against the head's 111 over 24. `20260731T022007Z-…-v90` and `-v91` are
   excluded: their `performance.json` files carry no cost-model fields, so pairing them would
   confound the lever flip with the cost model.
+
+- **What review changed, recorded because the numbers moved.** An independent cross-model
+  adversarial pass (Codex, `independence_verified`) plus five in-context reviewers found four
+  wrong-number paths that all *printed cleanly*, and each is now closed: the reachable-supply
+  projection was applied to **any** operator-supplied head though its 45-session root is v35's
+  alone (now withheld unless the head is the pinned run); the frozen cross-check quoted v35's
+  `cross_trial_arms` for **any** head (now gated on the frozen provenance); the arm→frozen-row
+  match took the **first** hit though a frozen label carries a param name but not its value
+  (ambiguity is now UNAVAILABLE); and `arm_only_component` was a **residual** mislabelled as a
+  per-side contribution, NaN on an empty intersection (now `unshared_residual`, `Option`, and
+  never NaN in the output). One reviewer read `PAIRED_REACHABLE_CALENDAR_SESSIONS = 237` as
+  stale because the doc comment described the *fixed*-floor span (`20250715..20260709`, which
+  counts 241); the constant is correct for the **rolling** floor (`20250813..20260807` = 237,
+  matching the plan's supply table), and the comment now states which reading it is.
 
 - **What guards this.** `tests/paired_power.rs` recomputes every figure above from
   `tests/fixtures/paired-arms-closed-trades.json` through `stats.rs` — hermetic, so it runs in
